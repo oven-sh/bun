@@ -32,6 +32,7 @@ use bun_jsc::zig_string::ZigString;
 // opaque handles); they resolve to the same module, so alias both names.
 use bun_lolhtml_sys::lol_html as lolhtml;
 use bun_lolhtml_sys::lol_html as lolhtml_sys;
+use bun_lolhtml_sys::lol_html::Opaque as _;
 use crate::webcore::{self, Blob, Body, Response};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
@@ -1491,24 +1492,22 @@ impl TextChunk {
 
     fn content_handler(
         &mut self,
-        callback: unsafe fn(*mut lolhtml::TextChunk, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: fn(&mut lolhtml::TextChunk, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        if self.text_chunk.is_null() {
+        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk) else {
             return JSValue::UNDEFINED;
-        }
+        };
         let content_slice = content.to_slice();
 
-        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        if unsafe { callback(
-            self.text_chunk,
+        if callback(
+            chunk,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        ) }
+        )
         .is_err()
         {
             return create_lolhtml_error(global_object);
@@ -1566,43 +1565,35 @@ impl TextChunk {
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        if self.text_chunk.is_null() {
+        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        unsafe { lolhtml::TextChunk::remove(self.text_chunk) };
+        };
+        chunk.remove();
         Ok(call_frame.this())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_text(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        if self.text_chunk.is_null() {
+        let Some(chunk) = lolhtml::TextChunk::from_ptr(self.text_chunk) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        bun_string_jsc::create_utf8_for_js(global, unsafe { lolhtml::TextChunk::get_content(self.text_chunk) }.slice())
+        };
+        bun_string_jsc::create_utf8_for_js(global, chunk.get_content().slice())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        if self.text_chunk.is_null() {
-            return JSValue::UNDEFINED;
+        match lolhtml::TextChunk::from_ptr(self.text_chunk) {
+            Some(chunk) => JSValue::from(chunk.is_removed()),
+            None => JSValue::UNDEFINED,
         }
-        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        JSValue::from(unsafe { lolhtml::TextChunk::is_removed(self.text_chunk) })
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn last_in_text_node(&self, _global: &JSGlobalObject) -> JSValue {
-        if self.text_chunk.is_null() {
-            return JSValue::UNDEFINED;
+        match lolhtml::TextChunk::from_ptr(self.text_chunk) {
+            Some(chunk) => JSValue::from(chunk.is_last_in_text_node()),
+            None => JSValue::UNDEFINED,
         }
-        // SAFETY: self.text_chunk is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        JSValue::from(unsafe { lolhtml::TextChunk::is_last_in_text_node(self.text_chunk) })
     }
 
     pub fn finalize(this: *mut TextChunk) {
@@ -1659,12 +1650,10 @@ impl DocType {
     /// The doctype name.
     #[bun_jsc::host_fn(getter)]
     pub fn name(&self, global_object: &JSGlobalObject) -> JSValue {
-        if self.doctype.is_null() {
+        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype) else {
             return JSValue::UNDEFINED;
-        }
-        // SAFETY: self.doctype is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        let owned = unsafe { lolhtml::DocType::get_name(self.doctype) };
+        };
+        let owned = dt.get_name();
         let str = owned.slice();
         if str.is_empty() {
             return JSValue::NULL;
@@ -1674,12 +1663,10 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub fn system_id(&self, global_object: &JSGlobalObject) -> JSValue {
-        if self.doctype.is_null() {
+        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype) else {
             return JSValue::UNDEFINED;
-        }
-        // SAFETY: self.doctype is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        let owned = unsafe { lolhtml::DocType::get_system_id(self.doctype) };
+        };
+        let owned = dt.get_system_id();
         let str = owned.slice();
         if str.is_empty() {
             return JSValue::NULL;
@@ -1689,12 +1676,10 @@ impl DocType {
 
     #[bun_jsc::host_fn(getter)]
     pub fn public_id(&self, global_object: &JSGlobalObject) -> JSValue {
-        if self.doctype.is_null() {
+        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype) else {
             return JSValue::UNDEFINED;
-        }
-        // SAFETY: self.doctype is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        let owned = unsafe { lolhtml::DocType::get_public_id(self.doctype) };
+        };
+        let owned = dt.get_public_id();
         let str = owned.slice();
         if str.is_empty() {
             return JSValue::NULL;
@@ -1704,23 +1689,19 @@ impl DocType {
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        if self.doctype.is_null() {
+        let Some(dt) = lolhtml::DocType::from_ptr(self.doctype) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        // SAFETY: self.doctype is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        unsafe { lolhtml::DocType::remove(self.doctype) };
+        };
+        dt.remove();
         Ok(call_frame.this())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        if self.doctype.is_null() {
-            return JSValue::UNDEFINED;
+        match lolhtml::DocType::from_ptr(self.doctype) {
+            Some(dt) => JSValue::from(dt.is_removed()),
+            None => JSValue::UNDEFINED,
         }
-        // SAFETY: self.doctype is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        JSValue::from(unsafe { lolhtml::DocType::is_removed(self.doctype) })
     }
 }
 
@@ -1767,24 +1748,22 @@ impl DocEnd {
 
     fn content_handler(
         &mut self,
-        callback: unsafe fn(*mut lolhtml::DocEnd, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: fn(&mut lolhtml::DocEnd, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        if self.doc_end.is_null() {
+        let Some(doc_end) = lolhtml::DocEnd::from_ptr(self.doc_end) else {
             return JSValue::NULL;
-        }
+        };
         let content_slice = content.to_slice();
 
-        // SAFETY: self.doc_end is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        if unsafe { callback(
-            self.doc_end,
+        if callback(
+            doc_end,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        ) }
+        )
         .is_err()
         {
             return create_lolhtml_error(global_object);
@@ -1858,24 +1837,22 @@ impl Comment {
 
     fn content_handler(
         &mut self,
-        callback: unsafe fn(*mut lolhtml::Comment, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: fn(&mut lolhtml::Comment, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        if self.comment.is_null() {
+        let Some(comment) = lolhtml::Comment::from_ptr(self.comment) else {
             return JSValue::NULL;
-        }
+        };
         let content_slice = content.to_slice();
 
-        // SAFETY: self.comment is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        if unsafe { callback(
-            self.comment,
+        if callback(
+            comment,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        ) }
+        )
         .is_err()
         {
             return create_lolhtml_error(global_object);
@@ -1933,23 +1910,19 @@ impl Comment {
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        if self.comment.is_null() {
+        let Some(comment) = lolhtml::Comment::from_ptr(self.comment) else {
             return Ok(JSValue::NULL);
-        }
-        // SAFETY: self.comment is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        unsafe { lolhtml::Comment::remove(self.comment) };
+        };
+        comment.remove();
         Ok(call_frame.this())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_text(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        if self.comment.is_null() {
+        let Some(comment) = lolhtml::Comment::from_ptr(self.comment) else {
             return Ok(JSValue::NULL);
-        }
-        // SAFETY: self.comment is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        html_string_to_js(unsafe { lolhtml::Comment::get_text(self.comment) }, global_object)
+        };
+        html_string_to_js(comment.get_text(), global_object)
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
@@ -1957,13 +1930,11 @@ impl Comment {
     // `JsResult<()>`); the proc-macro shim would emit a second, conflicting
     // `JsResult<bool>` wrapper.
     pub fn set_text(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        if self.comment.is_null() {
+        let Some(comment) = lolhtml::Comment::from_ptr(self.comment) else {
             return Ok(());
-        }
+        };
         let text = value.to_slice(global)?;
-        // SAFETY: self.comment is non-null (checked above) and valid for the
-        // duration of the lol-html callback that owns it.
-        if unsafe { lolhtml::Comment::set_text(self.comment, text.slice()) }.is_err() {
+        if comment.set_text(text.slice()).is_err() {
             return Err(global.throw_value(create_lolhtml_error(global)));
         }
         Ok(())
@@ -1971,12 +1942,10 @@ impl Comment {
 
     #[bun_jsc::host_fn(getter)]
     pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        if self.comment.is_null() {
-            return JSValue::UNDEFINED;
+        match lolhtml::Comment::from_ptr(self.comment) {
+            Some(comment) => JSValue::from(comment.is_removed()),
+            None => JSValue::UNDEFINED,
         }
-        // SAFETY: self.comment is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        JSValue::from(unsafe { lolhtml::Comment::is_removed(self.comment) })
     }
 
     pub fn finalize(this: *mut Comment) {
@@ -2061,24 +2030,22 @@ impl EndTag {
 
     fn content_handler(
         &mut self,
-        callback: unsafe fn(*mut lolhtml::EndTag, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: fn(&mut lolhtml::EndTag, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        if self.end_tag.is_null() {
+        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag) else {
             return JSValue::NULL;
-        }
+        };
         let content_slice = content.to_slice();
 
-        // SAFETY: self.end_tag is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        if unsafe { callback(
-            self.end_tag,
+        if callback(
+            end_tag,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        ) }
+        )
         .is_err()
         {
             return create_lolhtml_error(global_object);
@@ -2137,35 +2104,29 @@ impl EndTag {
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        if self.end_tag.is_null() {
+        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        // SAFETY: self.end_tag is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        unsafe { lolhtml::EndTag::remove(self.end_tag) };
+        };
+        end_tag.remove();
         Ok(call_frame.this())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        if self.end_tag.is_null() {
+        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        // SAFETY: self.end_tag is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        html_string_to_js(unsafe { lolhtml::EndTag::get_name(self.end_tag) }, global_object)
+        };
+        html_string_to_js(end_tag.get_name(), global_object)
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `EndTagPrototype__setName` via `host_setter_result`.
     pub fn set_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        if self.end_tag.is_null() {
+        let Some(end_tag) = lolhtml::EndTag::from_ptr(self.end_tag) else {
             return Ok(());
-        }
+        };
         let text = value.to_slice(global)?;
-        // SAFETY: self.end_tag is non-null (checked above) and valid for the
-        // duration of the lol-html callback that owns it.
-        if unsafe { lolhtml::EndTag::set_name(self.end_tag, text.slice()) }.is_err() {
+        if end_tag.set_name(text.slice()).is_err() {
             return Err(global.throw_value(create_lolhtml_error(global)));
         }
         Ok(())
@@ -2217,9 +2178,8 @@ impl AttributeIterator {
     }
 
     fn detach(&mut self) {
-        if !self.iterator.is_null() {
-            // SAFETY: iterator allocated by lol-html; freed exactly once here.
-            unsafe { lolhtml::AttributeIterator::destroy(self.iterator) };
+        if let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator) {
+            it.destroy();
             self.iterator = core::ptr::null_mut();
         }
     }
@@ -2236,7 +2196,7 @@ impl AttributeIterator {
         let done_label = bun_string::ZigString::init(b"done");
         let value_label = bun_string::ZigString::init(b"value");
 
-        if self.iterator.is_null() {
+        let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator) else {
             return JSValue::create_object2(
                 global_object,
                 &done_label,
@@ -2244,13 +2204,10 @@ impl AttributeIterator {
                 JSValue::TRUE,
                 JSValue::UNDEFINED,
             );
-        }
+        };
 
-        // SAFETY: self.iterator is non-null (checked above) and valid until
-        // detached by Element::invalidate or exhausted below.
-        let Some(attribute) = (unsafe { lolhtml::AttributeIterator::next(self.iterator) }) else {
-            // SAFETY: iterator non-null (checked above); freed once here.
-            unsafe { lolhtml::AttributeIterator::destroy(self.iterator) };
+        let Some(attribute) = it.next() else {
+            it.destroy();
             self.iterator = core::ptr::null_mut();
             return JSValue::create_object2(
                 global_object,
@@ -2353,9 +2310,9 @@ impl Element {
         function: JSValue,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return Ok(JSValue::NULL);
-        }
+        };
         if function.is_undefined_or_null() || !function.is_callable() {
             return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
         }
@@ -2365,17 +2322,12 @@ impl Element {
             callback: Some(function),
         }));
 
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback; end_tag_handler is a fresh Box
-        // whose ownership transfers to lol-html on success.
-        if unsafe {
-            lolhtml::Element::on_end_tag(
-                self.element,
+        if el
+            .on_end_tag(
                 EndTagHandler::ON_END_TAG_HANDLER,
                 end_tag_handler.cast::<core::ffi::c_void>(),
             )
-        }
-        .is_err()
+            .is_err()
         {
             // SAFETY: end_tag_handler allocated above and not yet handed to lol-html.
             unsafe { drop(bun_core::heap::take(end_tag_handler)) };
@@ -2389,13 +2341,11 @@ impl Element {
 
     /// Returns the value for a given attribute name on the element, or null if it is not found.
     pub fn get_attribute_(&mut self, global_object: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return Ok(JSValue::NULL);
-        }
+        };
         let slice = name.to_slice();
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        let attr = unsafe { lolhtml::Element::get_attribute(self.element, slice.slice()) };
+        let attr = el.get_attribute(slice.slice());
 
         if attr.len == 0 {
             return Ok(JSValue::NULL);
@@ -2406,13 +2356,11 @@ impl Element {
 
     /// Returns a boolean indicating whether an attribute exists on the element.
     pub fn has_attribute_(&mut self, global: &JSGlobalObject, name: ZigString) -> JSValue {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return JSValue::FALSE;
-        }
+        };
         let slice = name.to_slice();
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        match unsafe { lolhtml::Element::has_attribute(self.element, slice.slice()) } {
+        match el.has_attribute(slice.slice()) {
             Ok(b) => JSValue::from(b),
             Err(_) => create_lolhtml_error(global),
         }
@@ -2426,9 +2374,9 @@ impl Element {
         name_: ZigString,
         value_: ZigString,
     ) -> JSValue {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return JSValue::UNDEFINED;
-        }
+        };
 
         // Mutating the attribute Vec (push → possible realloc) invalidates the
         // slice::Iter any live AttributeIterator borrows from.
@@ -2436,9 +2384,7 @@ impl Element {
 
         let name_slice = name_.to_slice();
         let value_slice = value_.to_slice();
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        if unsafe { lolhtml::Element::set_attribute(self.element, name_slice.slice(), value_slice.slice()) }.is_err() {
+        if el.set_attribute(name_slice.slice(), value_slice.slice()).is_err() {
             return create_lolhtml_error(global_object);
         }
         call_frame.this()
@@ -2451,18 +2397,16 @@ impl Element {
         global_object: &JSGlobalObject,
         name: ZigString,
     ) -> JSValue {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return JSValue::UNDEFINED;
-        }
+        };
 
         // Vec::remove shifts trailing elements and shrinks len, leaving any
         // live slice::Iter's end pointer past the new end.
         self.detach_attribute_iterators();
 
         let name_slice = name.to_slice();
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        if unsafe { lolhtml::Element::remove_attribute(self.element, name_slice.slice()) }.is_err() {
+        if el.remove_attribute(name_slice.slice()).is_err() {
             return create_lolhtml_error(global_object);
         }
         call_frame.this()
@@ -2508,24 +2452,22 @@ impl Element {
 
     fn content_handler(
         &mut self,
-        callback: unsafe fn(*mut lolhtml::Element, &[u8], bool) -> Result<(), lolhtml::Error>,
+        callback: fn(&mut lolhtml::Element, &[u8], bool) -> Result<(), lolhtml::Error>,
         this_object: JSValue,
         global_object: &JSGlobalObject,
         content: ZigString,
         content_options: Option<ContentOptions>,
     ) -> JSValue {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return JSValue::UNDEFINED;
-        }
+        };
         let content_slice = content.to_slice();
 
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        if unsafe { callback(
-            self.element,
+        if callback(
+            el,
             content_slice.slice(),
             content_options.map_or(false, |o| o.html),
-        ) }
+        )
         .is_err()
         {
             return create_lolhtml_error(global_object);
@@ -2599,47 +2541,39 @@ impl Element {
     /// Removes the element with all its content.
     #[bun_jsc::host_fn(method)]
     pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        unsafe { lolhtml::Element::remove(self.element) };
+        };
+        el.remove();
         Ok(call_frame.this())
     }
 
     /// Removes the start tag and end tag of the element but keeps its inner content intact.
     #[bun_jsc::host_fn(method)]
     pub fn remove_and_keep_content(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        unsafe { lolhtml::Element::remove_and_keep_content(self.element) };
+        };
+        el.remove_and_keep_content();
         Ok(call_frame.this())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_tag_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return Ok(JSValue::UNDEFINED);
-        }
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        html_string_value(unsafe { lolhtml::Element::tag_name(self.element) }, global_object)
+        };
+        html_string_value(el.tag_name(), global_object)
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `ElementPrototype__setTagName` via `host_setter_result`.
     pub fn set_tag_name(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return Ok(());
-        }
+        };
         let text = value.to_slice(global)?;
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback that owns it.
-        if unsafe { lolhtml::Element::set_tag_name(self.element, text.slice()) }.is_err() {
+        if el.set_tag_name(text.slice()).is_err() {
             return Err(global.throw_value(create_lolhtml_error(global)));
         }
         Ok(())
@@ -2647,41 +2581,35 @@ impl Element {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_removed(&self, _global: &JSGlobalObject) -> JSValue {
-        if self.element.is_null() {
-            return JSValue::UNDEFINED;
+        match lolhtml::Element::from_ptr(self.element) {
+            Some(el) => JSValue::from(el.is_removed()),
+            None => JSValue::UNDEFINED,
         }
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        JSValue::from(unsafe { lolhtml::Element::is_removed(self.element) })
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_self_closing(&self, _global: &JSGlobalObject) -> JSValue {
-        if self.element.is_null() {
-            return JSValue::UNDEFINED;
+        match lolhtml::Element::from_ptr(self.element) {
+            Some(el) => JSValue::from(el.is_self_closing()),
+            None => JSValue::UNDEFINED,
         }
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        JSValue::from(unsafe { lolhtml::Element::is_self_closing(self.element) })
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_can_have_content(&self, _global: &JSGlobalObject) -> JSValue {
-        if self.element.is_null() {
-            return JSValue::UNDEFINED;
+        match lolhtml::Element::from_ptr(self.element) {
+            Some(el) => JSValue::from(el.can_have_content()),
+            None => JSValue::UNDEFINED,
         }
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        JSValue::from(unsafe { lolhtml::Element::can_have_content(self.element) })
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_namespace_uri(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return Ok(JSValue::UNDEFINED);
-        }
+        };
         // SAFETY: namespaceURI returns a NUL-terminated C string owned by lol-html.
-        let ns = unsafe { bun_core::ffi::cstr(lolhtml::Element::namespace_uri(self.element)) };
+        let ns = unsafe { bun_core::ffi::cstr(el.namespace_uri()) };
         bun_string_jsc::create_utf8_for_js(global_object, ns.to_bytes())
     }
 
@@ -2689,13 +2617,11 @@ impl Element {
     // to push into `attribute_iterators`. Dropped the macro attribute until
     // the codegen supports `&mut self` getters (Phase B).
     pub fn get_attributes(&mut self, global_object: &JSGlobalObject) -> JSValue {
-        if self.element.is_null() {
+        let Some(el) = lolhtml::Element::from_ptr(self.element) else {
             return JSValue::UNDEFINED;
-        }
+        };
 
-        // SAFETY: self.element is non-null (checked above) and valid for the
-        // duration of the lol-html callback.
-        let Some(iter) = (unsafe { lolhtml::Element::attributes(self.element) }) else {
+        let Some(iter) = el.attributes() else {
             return create_lolhtml_error(global_object);
         };
         let attr_iter = bun_core::heap::into_raw(Box::new(AttributeIterator {

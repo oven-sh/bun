@@ -19,9 +19,15 @@ pub struct NewWebSocket<const SSL_FLAG: i32> {
 }
 
 impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
+    /// Reborrow as the un-parameterized handle type. Both `NewWebSocket<_>` and
+    /// `RawWebSocket` are `#[repr(C)]` opaque ZSTs over `UnsafeCell<[u8; 0]>`,
+    /// so this is a same-address, same-layout reborrow with no `noalias`
+    /// implications.
     #[inline]
-    pub fn raw(&mut self) -> *mut RawWebSocket {
-        std::ptr::from_mut::<Self>(self).cast::<RawWebSocket>()
+    pub fn raw(&mut self) -> &mut RawWebSocket {
+        // SAFETY: layout-identical opaque ZSTs (see doc comment); the reborrow
+        // covers zero bytes and `UnsafeCell` suppresses `noalias`.
+        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<RawWebSocket>() }
     }
 
     /// Cast the C-side user data pointer to `&mut T`.
@@ -39,8 +45,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     }
 
     pub fn close(&mut self) {
-        // SAFETY: self.raw() is a live uWS-owned socket.
-        unsafe { c::uws_ws_close(SSL_FLAG, self.raw()) }
+        c::uws_ws_close(SSL_FLAG, self.raw())
     }
 
     pub fn send(&mut self, message: &[u8], opcode: Opcode) -> SendStatus {
@@ -70,8 +75,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     }
 
     pub fn memory_cost(&mut self) -> usize {
-        // SAFETY: self.raw() is a valid live socket.
-        unsafe { (*self.raw()).memory_cost(SSL_FLAG) }
+        self.raw().memory_cost(SSL_FLAG)
     }
 
     pub fn send_last_fragment(&mut self, message: &[u8], compress: bool) -> SendStatus {
@@ -177,8 +181,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     pub fn get_buffered_amount(&mut self) -> u32 {
         // TODO(port): C decl returns usize but Zig wrapper types this as u32 —
         // verify which is correct in Phase B.
-        // SAFETY: self.raw() is a live uWS-owned socket.
-        u32::try_from(unsafe { c::uws_ws_get_buffered_amount(SSL_FLAG, self.raw()) }).unwrap()
+        u32::try_from(c::uws_ws_get_buffered_amount(SSL_FLAG, self.raw())).unwrap()
     }
 
     pub fn get_remote_address<'a>(&mut self, buf: &'a mut [u8]) -> &'a mut [u8] {
@@ -203,8 +206,7 @@ pub struct RawWebSocket {
 
 impl RawWebSocket {
     pub fn memory_cost(&mut self, ssl_flag: i32) -> usize {
-        // SAFETY: `self` is a live uWS-owned socket.
-        unsafe { c::uws_ws_memory_cost(ssl_flag, self) }
+        c::uws_ws_memory_cost(ssl_flag, self)
     }
 
     /// They're the same memory address.
@@ -244,26 +246,34 @@ impl AnyWebSocket {
         // (effectively 'static from Rust's view; uWS frees on close).
         // TODO(port): lifetime — returning an unbounded `&mut` is a placeholder; Phase
         // B should scope this to the callback frame or return *mut T.
-        unsafe {
-            match self {
-                AnyWebSocket::Ssl(p) => c::uws_ws_get_user_data(1, p).cast::<T>().as_mut(),
-                AnyWebSocket::Tcp(p) => c::uws_ws_get_user_data(0, p).cast::<T>().as_mut(),
-            }
-        }
+        let (ssl, ws) = self.split();
+        unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>().as_mut() }
+    }
+
+    /// (ssl_flag, &mut socket) pair for the C shims that take both.
+    ///
+    /// `RawWebSocket` is an opaque `UnsafeCell<[u8; 0]>` — `&mut` carries no
+    /// `noalias`, dereferences zero bytes, and uWS guarantees the pointer is
+    /// non-null for a live `AnyWebSocket`. The unbounded lifetime is harmless
+    /// for the same reason: there are no bytes for it to claim validity over.
+    #[inline]
+    fn split<'a>(self) -> (i32, &'a mut RawWebSocket) {
+        let (ssl, p) = match self {
+            AnyWebSocket::Ssl(p) => (1, p),
+            AnyWebSocket::Tcp(p) => (0, p),
+        };
+        // SAFETY: see doc comment.
+        (ssl, unsafe { &mut *p })
     }
 
     pub fn memory_cost(self) -> usize {
-        // SAFETY: `p` is a live uWS-owned socket for the lifetime of self.
-        match self {
-            AnyWebSocket::Ssl(p) => unsafe { (*p).memory_cost(1) },
-            AnyWebSocket::Tcp(p) => unsafe { (*p).memory_cost(0) },
-        }
+        let (ssl, ws) = self.split();
+        ws.memory_cost(ssl)
     }
 
     pub fn close(self) {
-        let ssl_flag = matches!(self, AnyWebSocket::Ssl(_)) as i32;
-        // SAFETY: self.raw() is a live uWS-owned socket.
-        unsafe { c::uws_ws_close(ssl_flag, self.raw()) }
+        let (ssl, ws) = self.split();
+        c::uws_ws_close(ssl, ws)
     }
 
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
@@ -405,11 +415,8 @@ impl AnyWebSocket {
     }
 
     pub fn get_buffered_amount(self) -> usize {
-        // SAFETY: `p` is a live uWS-owned socket.
-        match self {
-            AnyWebSocket::Ssl(p) => unsafe { c::uws_ws_get_buffered_amount(1, p) },
-            AnyWebSocket::Tcp(p) => unsafe { c::uws_ws_get_buffered_amount(0, p) },
-        }
+        let (ssl, ws) = self.split();
+        c::uws_ws_get_buffered_amount(ssl, ws)
     }
 
     pub fn get_remote_address<'a>(self, buf: &'a mut [u8]) -> &'a mut [u8] {
@@ -630,8 +637,13 @@ pub mod c {
 
     pub type uws_compress_options_t = i32;
 
+    // `RawWebSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` —
+    // `&RawWebSocket`/`&mut RawWebSocket` are ABI-identical to a non-null
+    // pointer with no `readonly`/`noalias`. Shims whose only pointer argument
+    // is the socket itself (plus value types) are `safe fn`; (ptr,len) shims
+    // and out-param shims stay unsafe.
     unsafe extern "C" {
-        pub fn uws_ws_memory_cost(ssl: i32, ws: *mut RawWebSocket) -> usize;
+        pub safe fn uws_ws_memory_cost(ssl: i32, ws: &mut RawWebSocket) -> usize;
         pub fn uws_ws(
             ssl: i32,
             app: *mut uws_app_t,
@@ -641,8 +653,8 @@ pub mod c {
             id: usize,
             behavior: *const WebSocketBehavior,
         );
-        pub fn uws_ws_get_user_data(ssl: i32, ws: *mut RawWebSocket) -> *mut c_void;
-        pub fn uws_ws_close(ssl: i32, ws: *mut RawWebSocket);
+        pub safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
+        pub safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
         pub fn uws_ws_send(
             ssl: i32,
             ws: *mut RawWebSocket,
@@ -744,7 +756,7 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
         ) -> bool;
-        pub fn uws_ws_get_buffered_amount(ssl: i32, ws: *mut RawWebSocket) -> usize;
+        pub safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
         pub fn uws_ws_get_remote_address(
             ssl: i32,
             ws: *mut RawWebSocket,

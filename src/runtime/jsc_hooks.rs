@@ -2516,25 +2516,20 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :417-466 — RuntimeTranspilerCache hit: skip print.
-                // PORT NOTE: `cache.entry` is `Option<*mut ()>` (type-erased in
-                // T2 `bun_js_parser`); the concrete payload is the T4
-                // `bun_bundler::cache::RuntimeTranspilerCacheEntry` — round-trip
-                // via cast.
-                if let Some(entry_ptr) = cache.entry {
-                    // SAFETY: `cache.entry` is set by `RuntimeTranspilerCache::get`
-                    // (T6 vtable) to a `heap::alloc(RuntimeTranspilerCacheEntry)`;
-                    // we hold the only reference for this synchronous transpile.
-                    let entry = unsafe {
-                        &mut *entry_ptr.cast::<bun_bundler::cache::RuntimeTranspilerCacheEntry>()
+                // `cache.entry` is `Option<*mut ()>` (type-erased in T2
+                // `bun_js_parser`); the concrete payload is the T6
+                // `bun_jsc::runtime_transpiler_cache::Entry` boxed by
+                // `JSC_PARSER_CACHE_VTABLE.get`.
+                if let Some(entry_ptr) = cache.entry.take() {
+                    use bun_jsc::runtime_transpiler_cache::{
+                        Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
                     };
+                    // SAFETY: `entry_ptr` was produced by `heap::leak(Box<CacheEntry>)`
+                    // in `JSC_PARSER_CACHE_VTABLE.get`; sole owner.
+                    let mut entry: Box<CacheEntry> =
+                        unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
                     // Spec :418-421 — register the cached sourcemap so error
                     // stacks remap to original positions even on a cache hit.
-                    // PORT NOTE: spec wraps `entry.sourcemap` in a
-                    // `MutableString` view (`.{ .list = .{ .items = … } }`);
-                    // here `sourcemap` is an owned `Box<[u8]>`, so move it
-                    // into `MutableString.list` (the callee takes by value).
-                    // `put_mappings` re-boxes the bytes into the
-                    // `SavedSourceMap` table; spec `catch {}` → `let _ =`.
                     let _ = unsafe { &mut (*jsc_vm).source_mappings }.put_mappings(
                         source,
                         bun_string::MutableString {
@@ -2542,54 +2537,16 @@ fn transpile_source_code_inner(
                         },
                     );
                     // TODO(b2-blocked): `ModuleInfoDeserialized::create_from_cached_record`.
-                    // PORT NOTE: bundler-side `Entry::output_code` is a flat
-                    // `Box<[u8]>` (the `OutputCode::{String,Utf8}` enum lives
-                    // on the T6 `bun_jsc::RuntimeTranspilerCache` mirror).
-                    // Spec dispatches on `entry.metadata.output_encoding`
-                    // (RuntimeTranspilerCache.zig:405 `Encoding`: none=0,
-                    // utf8=1, utf16=2, latin1=3) to pick the WTFString clone
-                    // path; mirror that here. Do NOT compare against
-                    // `ExportsKind` — unrelated AST enum.
-                    use bun_bundler::cache::CacheEncoding;
-                    let source_code = match entry.metadata.output_encoding {
-                        x if x == CacheEncoding::Utf8 as u8 => {
-                            bun_string::String::clone_utf8(&entry.output_code)
+                    let source_code = match &mut entry.output_code {
+                        OutputCode::String(s) => *s,
+                        OutputCode::Utf8(utf8) => {
+                            let result = bun_string::String::clone_utf8(utf8);
+                            *utf8 = Box::default();
+                            result
                         }
-                        x if x == CacheEncoding::Latin1 as u8 => {
-                            bun_string::String::clone_latin1(&entry.output_code)
-                        }
-                        // Encoding::UTF16 — bytes are raw native-endian u16s.
-                        x if x == CacheEncoding::Utf16 as u8 => {
-                            debug_assert!(entry.output_code.len() % 2 == 0);
-                            // SAFETY: cache writer stored a `[u16]` view
-                            // byte-for-byte (RuntimeTranspilerCache.rs:510);
-                            // simdutf reads byte-aligned on every supported
-                            // target (see resolver/fs.rs `BOM` PORT NOTE).
-                            let utf16: &[u16] = unsafe {
-                                core::slice::from_raw_parts(
-                                    entry.output_code.as_ptr().cast::<u16>(),
-                                    entry.output_code.len() / 2,
-                                )
-                            };
-                            bun_string::String::clone_utf16(utf16)
-                        }
-                        // Encoding::none — unreachable per spec :430 (rejected
-                        // as `error.UnknownEncoding` at decode time).
-                        _ => unreachable!("RuntimeTranspilerCache: Encoding::none"),
                     };
-                    // PORT NOTE: spec frees via `cache.output_code_allocator`;
-                    // `Box<[u8]>` drops on its own.
-                    entry.output_code = Box::default();
-                    // PORT NOTE: `entry.metadata.module_type` is
-                    // `cache::MetadataModuleType` (none=0, esm=1, cjs=2 —
-                    // RuntimeTranspilerCache.zig:399), NOT
-                    // `bun_bundler::options::ModuleType` (Unknown=0, Cjs=1,
-                    // Esm=2) — the discriminants are inverted. Spec
-                    // ModuleLoader.zig:446 compares against the cache enum's
-                    // `.cjs`.
-                    use bun_bundler::cache::MetadataModuleType;
                     let is_commonjs_module =
-                        matches!(entry.metadata.module_type, MetadataModuleType::Cjs);
+                        entry.metadata.module_type == CacheModuleType::Cjs;
                     // Spec :448-464 — when the cached entry was detected as
                     // CJS but lives inside a `"type":"module"` package, emit
                     // `package_json_type_module` so the C++ loader applies the

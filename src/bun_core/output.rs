@@ -2460,6 +2460,10 @@ macro_rules! debug_warn {
 // TODO(port): the comptime-literal fast path (is_comptime_name) is dropped — Phase B can
 // recover it with a proc-macro overload that detects string literals.
 pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
+    // Zig concatenates `fmt` into the prettyErrorln template, whose trailing-\n
+    // check then sees the caller's newline. Here `fmt` is rendered into a `{}`
+    // arg, so strip a trailing \n and let pretty_errorln! add exactly one.
+    let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
     if let Some(e) = error_name.as_sys_err_info() {
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
@@ -2499,6 +2503,7 @@ pub fn err_tag(tag: &str, body: core::fmt::Arguments<'_>) {
 /// a `<tag>`-rewritten template + positional args.
 #[inline]
 pub fn err_generic(fmt: &str, args: impl FmtTuple) {
+    let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     pretty_errorln!(
         "<r><red>error<r><d>:<r> {}",
         pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),

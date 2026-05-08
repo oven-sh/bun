@@ -284,6 +284,17 @@ static ZigString toZigString(WTF::StringImpl& str)
               str.length() };
 }
 
+// Overload for `StringImpl*` so callers like `toZigString(string.impl())` resolve here
+// instead of implicitly constructing a temporary `WTF::StringView` (which, in debug builds
+// with CHECK_STRINGVIEW_LIFETIME, takes a lock and heap-allocates an UnderlyingString entry).
+static ZigString toZigString(const WTF::StringImpl* str)
+{
+    return (!str || str->isEmpty())
+        ? ZigStringEmpty
+        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
+              str->length() };
+}
+
 static ZigString toZigString(WTF::StringView& str)
 {
     return str.isEmpty()

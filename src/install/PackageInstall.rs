@@ -101,7 +101,7 @@ impl Method {
             2 => Method::Hardlink,
             3 => Method::Copyfile,
             4 => Method::Symlink,
-            // PERF(port): was @enumFromInt — branch is unreachable.
+            // Was @enumFromInt; cold atomic-load decode so the panic branch is fine.
             _ => unreachable!(),
         }
     }

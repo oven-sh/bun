@@ -88,6 +88,7 @@ pub fn generate_symbol_for_function(
 
             if val.is_any_int() {
                 let int = val.to_int32();
+                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     abi_types.push(t);
                     // PERF(port): was appendAssumeCapacity
@@ -128,6 +129,7 @@ pub fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, b"returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
+                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     return_type = t;
                     break 'brk;

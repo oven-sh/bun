@@ -748,8 +748,7 @@ impl Step {
             6 => Step::RunPostInstallAndPrePostPrepare,
             7 => Step::Done,
             8 => Step::Blocked,
-            // PERF(port): was @enumFromInt — branch is unreachable; LLVM
-            // collapses this to the identity load after the debug build.
+            // Was @enumFromInt; cold atomic-load decode so the panic branch is fine.
             _ => unreachable!(),
         }
     }

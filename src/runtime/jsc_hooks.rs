@@ -2686,7 +2686,8 @@ fn transpile_source_code_inner(
                                 // a `.cjs` under `"type":"module"` still tags as
                                 // `PackageJsonTypeModule` (mirrors the cache-hit
                                 // branch above).
-                                if !path.is_file() {
+                                let dir = path.name.dir;
+                                if !path.is_file() || !bun_paths::is_absolute(dir) {
                                     return None;
                                 }
                                 // SAFETY: per fn contract — `transpiler.resolver`
@@ -2694,7 +2695,7 @@ fn transpile_source_code_inner(
                                 // re-entrant on the JS thread and returns a
                                 // stable cache slot.
                                 match unsafe {
-                                    (*jsc_vm).transpiler.resolver.read_dir_info(path.name.dir)
+                                    (*jsc_vm).transpiler.resolver.read_dir_info(dir)
                                 } {
                                     Ok(Some(dir_info)) => {
                                         // SAFETY: `*mut DirInfo` is interned in

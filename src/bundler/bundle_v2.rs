@@ -6639,7 +6639,7 @@ impl CrossChunkImport {
             // would leave the map slot empty and break that consumer.
             list.push(CrossChunkImport {
                 chunk_index,
-                sorted_import_items: core::mem::ManuallyDrop::into_inner(import_items.shallow_copy()),
+                sorted_import_items: import_items.shallow_copy(),
             });
         }
 

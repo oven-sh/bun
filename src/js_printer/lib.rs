@@ -6469,12 +6469,15 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.advance_by(count);
         // PERF(port): @intCast — output never approaches 2 GiB; checked add of
         // a u64→i32 here was a measurable branch in the per-token print path.
+        // Keep Zig's debug-mode @intCast contract without paying for it in release.
+        debug_assert!(count <= i32::MAX as u64);
         self.written = self.written.wrapping_add(count as i32);
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
         let written = self.written.max(0);
         self.print_slice(bytes);
+        debug_assert!(self.written >= 0);
         Ok((self.written as usize).wrapping_sub(written as usize))
     }
 

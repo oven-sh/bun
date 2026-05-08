@@ -138,9 +138,6 @@ edition = "2024"
 [profile.release]
 lto = "fat"
 codegen-units = 1
-# Line tables for `perf record` attribution; ~3% binary growth, no opt impact.
-debug = "line-tables-only"
-strip = "none"
 
 # Fast-iteration release build for local benching when fat LTO's link time
 # (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.

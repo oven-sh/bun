@@ -1251,27 +1251,35 @@ lexer_impl_header! {
         }
 
         let cp_len = strings::wtf8_byte_sequence_length_with_invalid(first) as usize;
-        // SAFETY: `self.current < len` (checked above) and `cp_len ∈ 1..=4`, so the
-        // slice start is in-bounds; the end is clamped to `len` so the resulting
-        // slice never exceeds `contents`. Matches Zig's `it.source.contents.ptr[...]`.
         let avail = len - self.current;
-        let take = cp_len.min(avail);
-        let slice = unsafe { contents.get_unchecked(self.current..self.current + take) };
 
-        let code_point: CodePoint = if take < 2 {
-            // truncated multibyte at EOF
+        // Zig spec (lexer.zig nextCodepoint): `switch (slice.len) { 0 => -1, 1 => slice[0], else => decode }`
+        // where `slice` is empty when `cp_len + current > len` and `cp_len` bytes otherwise.
+        // The ASCII fast path above handled `first < 0x80`; here `first >= 0x80` but `cp_len`
+        // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
+        // raw byte, NOT the EOF sentinel, so the main lex loop falls through to its syntax-error
+        // arm instead of silently emitting TEndOfFile mid-stream.
+        let code_point: CodePoint = if cp_len == 1 {
+            first as CodePoint
+        } else if avail < cp_len {
+            // truncated multibyte at EOF → Zig's empty-slice arm
             -1
         } else {
-            // SAFETY: `take` ∈ 2..=4 (cp_len ≤ 4, take ≥ 2 here) and `slice.len() == take`,
-            // so reading the first `take` bytes is in-bounds. `decode_wtf8_rune_t_multibyte`
-            // only dereferences `p[0..len]`; pad bytes are never read.
+            // SAFETY: `self.current < len` (checked above), `cp_len ∈ 2..=4`, and
+            // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
+            // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
+            // never read.
             let mut quad = [0u8; 4];
             unsafe {
-                core::ptr::copy_nonoverlapping(slice.as_ptr(), quad.as_mut_ptr(), take);
+                core::ptr::copy_nonoverlapping(
+                    contents.as_ptr().add(self.current),
+                    quad.as_mut_ptr(),
+                    cp_len,
+                );
             }
             strings::decode_wtf8_rune_t_multibyte(
                 &quad,
-                take as u8,
+                cp_len as u8,
                 strings::UNICODE_REPLACEMENT as CodePoint,
             )
         };

@@ -3048,6 +3048,29 @@ impl Timespec {
         t
     }
 
+    /// Advance by a fractional millisecond count, preserving sub-ms precision
+    /// as nanoseconds (matches sinon/fake-timers `tick(msFloat)` semantics).
+    pub fn add_ms_float(&self, interval_ms: f64) -> Timespec {
+        const MS_PER_S: i64 = 1000;
+        let ns_per_ms_f = Self::NS_PER_MS as f64;
+        let mut t = *self;
+        let ms_inc = interval_ms.floor() as i64;
+        // nanoRemainder: floor((msFloat * 1e6) % 1e6)
+        let nsec_inc = (interval_ms * ns_per_ms_f).rem_euclid(ns_per_ms_f).floor() as i64;
+        let sec_inc = ms_inc / MS_PER_S;
+        let ms_remainder = ms_inc.rem_euclid(MS_PER_S);
+        t.sec = t.sec.wrapping_add(sec_inc);
+        t.nsec = t.nsec.wrapping_add(ms_remainder * Self::NS_PER_MS + nsec_inc);
+        if t.nsec >= Self::NS_PER_S {
+            t.sec = t.sec.wrapping_add(1);
+            t.nsec -= Self::NS_PER_S;
+        } else if t.nsec < 0 {
+            t.sec = t.sec.wrapping_sub(1);
+            t.nsec += Self::NS_PER_S;
+        }
+        t
+    }
+
     #[inline] pub fn min(a: Timespec, b: Timespec) -> Timespec { if a.order(&b).is_lt() { a } else { b } }
     #[inline] pub fn max(a: Timespec, b: Timespec) -> Timespec { if a.order(&b).is_gt() { a } else { b } }
 

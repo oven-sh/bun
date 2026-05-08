@@ -437,7 +437,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     // This is because setTimeout(fn, 0) is internally scheduled with a 1ms delay per HTML spec,
     // and Jest/testing-library expect advanceTimersByTime(0) to fire such "immediate" timers.
     let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
-    let target = current.add_ms(effective_advance as i64);
+    let target = current.add_ms_float(effective_advance);
 
     this.execute_until(global, target);
     CURRENT_TIME.set(global, &target, None);

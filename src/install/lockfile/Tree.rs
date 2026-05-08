@@ -24,6 +24,12 @@ use crate::package_manager::{PackageManager, WorkspaceFilter};
 // Tree
 // ──────────────────────────────────────────────────────────────────────────
 
+// PORT NOTE: `#[repr(C)]` pins field order to declaration order so the raw
+// in-memory bytes match the `[u8; 20]` `External` encoding read by
+// `Buffers::load` (which decodes via `to_tree` assuming
+// id|dep_id|parent|off|len). Under `repr(Rust)` rustc may reorder fields and
+// the binary lockfile round-trip silently corrupts `dependencies`.
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Tree {
     pub id: Id,
@@ -90,6 +96,10 @@ impl Tree {
         out[12..16].copy_from_slice(&self.dependencies.off.to_ne_bytes());
         out[16..20].copy_from_slice(&self.dependencies.len.to_ne_bytes());
         const _: () = assert!(EXTERNAL_SIZE == 20, "Tree.External is not 20 bytes");
+        const _: () = assert!(
+            core::mem::size_of::<Tree>() == EXTERNAL_SIZE,
+            "Tree in-memory layout must match External encoding"
+        );
         out
     }
 

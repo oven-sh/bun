@@ -277,7 +277,39 @@ where
     }
 
     // -- trees --
-    save_generic_field!(trees, "trees", Tree);
+    {
+        if options.log_level.is_verbose() {
+            Output::pretty_errorln(format_args!(
+                "Saving {} {}",
+                buffers.trees.len(),
+                "trees"
+            ));
+        }
+        // PORT NOTE: Zig's `if (comptime Type == Tree)` arm (Buffers.zig:248)
+        // never fires because `Type` is `[]Tree`, so Zig writes raw `Tree`
+        // bytes — which works only because Zig's auto-layout for `Tree` happens
+        // to match the `[id|dep_id|parent|off|len]` encoding that `load`
+        // decodes via `Tree.toTree`. We instead write the explicit
+        // `Tree.External` form so the on-disk layout is independent of
+        // `repr(Rust)` field order. This is byte-identical to what Zig emits
+        // (both are 20 bytes/tree, same field order).
+        let mut clone: Vec<tree::External> = Vec::with_capacity(buffers.trees.len());
+        for &item in buffers.trees.as_slice() {
+            clone.push(Tree::to_external(item));
+        }
+        write_array(
+            stream,
+            clone.as_slice(),
+            // TODO(port): @typeName parity — Zig emits fully-qualified name
+            "Tree",
+            size_of::<tree::External>(),
+            align_of::<tree::External>(),
+        )?;
+        #[cfg(debug_assertions)]
+        {
+            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "trees", pos, stream.get_pos()?));
+        }
+    }
 
     // -- hoisted_dependencies --
     save_generic_field!(hoisted_dependencies, "hoisted_dependencies", DependencyID);

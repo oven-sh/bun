@@ -43,7 +43,8 @@ pub mod options {
             }
         }
 
-        /// Port of `options.JSX.Pragma` — fields the resolver reads/writes.
+        /// Port of `options.JSX.Pragma`. Carries the full field set so the
+        /// resolver `Result.jsx` round-trips losslessly into `ParseTask.jsx`.
         #[derive(Clone)]
         pub struct Pragma {
             pub factory: Vec<Box<[u8]>>,
@@ -53,8 +54,11 @@ pub mod options {
             /// Facilitates automatic JSX importing
             /// Set on a per file basis like this:
             /// /** @jsxImportSource @emotion/core */
+            pub classic_import_source: Box<[u8]>,
             pub package_name: Box<[u8]>,
             pub development: bool,
+            pub parse: bool,
+            pub side_effects: bool,
         }
 
         impl Default for Pragma {
@@ -64,8 +68,11 @@ pub mod options {
                     fragment: Vec::new(),
                     runtime: Runtime::default(),
                     import_source: ImportSource::default(),
+                    classic_import_source: Box::from(b"react".as_slice()),
                     package_name: Box::from(b"react".as_slice()),
                     development: true,
+                    parse: true,
+                    side_effects: false,
                 }
             }
         }

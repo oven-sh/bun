@@ -535,9 +535,6 @@ use bun_resolver::tsconfig_json::{JsxField, TSConfigJSON};
 /// into the bundler-side `options_impl::jsx::Pragma`. The two are structurally
 /// the same value type but nominally distinct until the move-down to
 /// `bun_options_types` lands (see resolver/tsconfig_json.rs:13 CYCLEBREAK note).
-/// Fields the resolver subset doesn't carry (`classic_import_source`, `parse`,
-/// `side_effects`) keep the bundler `Default`, matching Zig's struct-literal
-/// defaults (options.zig:1196-1204).
 fn jsx_pragma_from_resolver(
     src: &bun_resolver::tsconfig_json::options::jsx::Pragma,
 ) -> crate::options_impl::jsx::Pragma {
@@ -555,9 +552,11 @@ fn jsx_pragma_from_resolver(
             development: src.import_source.development.clone(),
             production: src.import_source.production.clone(),
         },
+        classic_import_source: src.classic_import_source.clone(),
         package_name: src.package_name.clone(),
         development: src.development,
-        ..jsx::Pragma::default()
+        parse: src.parse,
+        side_effects: src.side_effects,
     }
 }
 
@@ -1053,8 +1052,11 @@ pub(crate) fn resolver_bundle_options_subset(
                 development: src.jsx.import_source.development.clone(),
                 production: src.jsx.import_source.production.clone(),
             },
+            classic_import_source: src.jsx.classic_import_source.clone(),
             package_name: src.jsx.package_name.clone(),
             development: src.jsx.development,
+            parse: src.jsx.parse,
+            side_effects: src.jsx.side_effects,
         },
         // Spec `options.ResolveFileExtensions` — clone all four owned slices so
         // the resolver honours user `--extension-order` and the per-target

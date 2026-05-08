@@ -1356,10 +1356,7 @@ pub mod jsx {
     // ── CYCLEBREAK conversions ────────────────────────────────────────────
     // `bun_resolver::tsconfig_json::options::jsx::Pragma` and this `Pragma`
     // are nominally distinct until the move-down to `bun_options_types`
-    // lands (see resolver/tsconfig_json.rs:13). Field-wise copy; resolver
-    // subset omits `classic_import_source`/`parse`/`side_effects`, which keep
-    // the bundler `Default` (matches Zig struct-literal defaults
-    // options.zig:1196-1204).
+    // lands (see resolver/tsconfig_json.rs:13). Field-wise copy.
     impl From<bun_resolver::tsconfig_json::options::jsx::Pragma> for Pragma {
         fn from(src: bun_resolver::tsconfig_json::options::jsx::Pragma) -> Self {
             use bun_resolver::tsconfig_json::options::jsx::Runtime as R;
@@ -1375,17 +1372,17 @@ pub mod jsx {
                     development: src.import_source.development,
                     production: src.import_source.production,
                 },
+                classic_import_source: src.classic_import_source,
                 package_name: src.package_name,
                 development: src.development,
-                ..Pragma::default()
+                parse: src.parse,
+                side_effects: src.side_effects,
             }
         }
     }
 
     // Reverse direction so callers can round-trip through
     // `TSConfigJSON::merge_jsx` (which is typed on the resolver-side Pragma).
-    // Fields the resolver subset omits (`classic_import_source`/`parse`/
-    // `side_effects`) are dropped — `merge_jsx` never reads them.
     impl From<Pragma> for bun_resolver::tsconfig_json::options::jsx::Pragma {
         fn from(src: Pragma) -> Self {
             use bun_resolver::tsconfig_json::options::jsx as r;
@@ -1401,8 +1398,11 @@ pub mod jsx {
                     development: src.import_source.development,
                     production: src.import_source.production,
                 },
+                classic_import_source: src.classic_import_source,
                 package_name: src.package_name,
                 development: src.development,
+                parse: src.parse,
+                side_effects: src.side_effects,
             }
         }
     }

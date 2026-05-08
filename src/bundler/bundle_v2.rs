@@ -2240,6 +2240,14 @@ impl<'a> BundleV2<'a> {
         bun_core::scoped_log!(Bundle, "Parsed {} files, producing {} ASTs", self.graph.input_files.len(), self.graph.ast.len());
     }
 
+    /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
+    /// idle/busy time since the previous call. No-op when env var unset.
+    #[inline]
+    pub fn dump_pool_stats(&self, label: &str) {
+        // SAFETY: `pool` and its `worker_pool` are live for the bundle lifetime.
+        unsafe { (*self.graph.pool.as_ref().worker_pool).dump_stats(label) };
+    }
+
     pub fn scan_for_secondary_paths(&mut self) {
         if !self.graph.has_any_secondary_paths {
             // Assert the boolean is accurate.
@@ -3553,6 +3561,7 @@ impl<'a> BundleV2<'a> {
         }
 
         this.wait_for_parse();
+        this.dump_pool_stats("parse");
 
         *minify_duration = (((bun_core::time::nano_timestamp() as i64) - (bun_core::start_time() as i64)) / (bun_core::time::NS_PER_MS as i64)) as u64;
         *source_code_size = this.source_code_length as u64;
@@ -3595,6 +3604,7 @@ impl<'a> BundleV2<'a> {
                 &mut reachable_files,
             )?
         };
+        this.dump_pool_stats("link");
 
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if let Some(fetch) = fetcher {
@@ -3607,6 +3617,7 @@ impl<'a> BundleV2<'a> {
         }
 
         let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut this.linker, &mut chunks)?;
+        this.dump_pool_stats("print");
 
         // Generate metafile if requested (CLI writes files in build_command.zig)
         let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {

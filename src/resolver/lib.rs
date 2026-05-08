@@ -7737,11 +7737,14 @@ impl<'a> Resolver<'a> {
                 // ensure trailing slash
                 if _safe_path.is_none() {
                     // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
-                    if path[path.len() - 1] != SEP {
-                        let parts: [&[u8]; 2] = [path, SEP_STR.as_bytes()];
+                    // `path` spans `input_path_len + 1` for the NUL-splice above; the
+                    // logical input is `path[..input_path_len]` (Zig resolver.zig:2750).
+                    let input = &path[..input_path_len];
+                    if input[input.len() - 1] != SEP {
+                        let parts: [&[u8]; 2] = [input, SEP_STR.as_bytes()];
                         _safe_path = Some(self.fs_ref().dirname_store.append_parts(&parts)?);
                     } else {
-                        _safe_path = Some(self.fs_ref().dirname_store.append_slice(path)?);
+                        _safe_path = Some(self.fs_ref().dirname_store.append_slice(input)?);
                     }
                 }
 

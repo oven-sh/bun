@@ -15,6 +15,7 @@
 //! `bun_tcc_sys::tcc` un-gates). The full TCC body is preserved in
 //! `ffi_body.rs` (``) for reference.
 
+use std::ffi::c_void;
 use std::io::Write as _;
 
 use bstr::BStr;

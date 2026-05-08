@@ -85,12 +85,9 @@ impl PBKDF2 {
         true
     }
 
-    /// Plain `deinit` — free owned `StringOrBuffer` fields. Idempotent (fields replaced
-    /// with empty sentinels) so a subsequent `Drop` is a no-op.
-    pub fn deinit(&mut self) {
-        core::mem::take(&mut self.password).deinit();
-        core::mem::take(&mut self.salt).deinit();
-    }
+    // Zig `deinit()` only freed `password`/`salt`; both are `StringOrBuffer`
+    // whose `Drop` releases the slice/WTF ref, so the explicit hook is gone —
+    // dropping `PBKDF2` is sufficient for the sync path.
 
     // `deinit_and_unprotect` is kept as an explicit method because async callers must additionally
     // unprotect JS-rooted buffers. The fields are moved out and replaced with empty sentinels so

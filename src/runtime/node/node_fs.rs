@@ -829,35 +829,33 @@ pub trait FsArgument: Sized {
     /// `from_js`; the trait forwards to it so the generic `Bindings` in
     /// `node_fs_binding.rs` can call it without per-type macro arms.
     fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
-    /// `args.deinit()` — synchronous-path cleanup (paths, buffers). Called by
-    /// `runSync` after the syscall returns.
-    fn deinit(&self);
     fn to_thread_safe(&mut self);
+    /// Async-path cleanup: undo the `protect()` taken by [`to_thread_safe`].
+    /// String/slice ownership is handled by each field's `Drop` (PathLike,
+    /// StringOrBuffer, Vec); only the JS-side `unprotect()` is explicit.
     fn deinit_and_unprotect(&mut self);
     fn signal(&self) -> Option<&AbortSignal> { None }
 }
 
-/// Forward [`FsArgument`] to the inherent `from_js` / `deinit` /
-/// `to_thread_safe` / `deinit_and_unprotect` methods each `args::*` struct
-/// already defines (1:1 with `Arguments.*` in `node_fs.zig`).
+/// Forward [`FsArgument`] to the inherent `from_js` / `to_thread_safe` /
+/// `deinit_and_unprotect` methods each `args::*` struct already defines
+/// (1:1 with `Arguments.*` in `node_fs.zig`).
 macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
-            #[inline] fn deinit(&self) { <$ty>::deinit(self) }
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
             #[inline] fn deinit_and_unprotect(&mut self) { <$ty>::deinit_and_unprotect(self) }
         } )+
     };
     // Fd-only types — Zig has only `toThreadSafe(_: *const @This()) void {}`
     // and no `deinitAndUnprotect`; spec node_fs.zig:325 falls back to
-    // `deinit()` (also a no-op for these).
+    // `deinit()` (a no-op — these hold only `FD`/scalars).
     ( @fd $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
-            #[inline] fn deinit(&self) { <$ty>::deinit(self) }
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
-            #[inline] fn deinit_and_unprotect(&mut self) { <$ty>::deinit(self) }
+            #[inline] fn deinit_and_unprotect(&mut self) {}
         } )+
     };
 }
@@ -880,22 +878,20 @@ impl_fs_argument!(@fd
 impl FsArgument for args::ReadFile {
     const HAVE_ABORT_SIGNAL: bool = true;
     #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { args::ReadFile::from_js(ctx, arguments) }
-    #[inline] fn deinit(&self) { args::ReadFile::deinit(self) }
     #[inline] fn to_thread_safe(&mut self) { args::ReadFile::to_thread_safe(self) }
     #[inline] fn deinit_and_unprotect(&mut self) { args::ReadFile::deinit_and_unprotect(self) }
     #[inline] fn signal(&self) -> Option<&AbortSignal> {
-        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `deinit`.
+        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `Drop`.
         self.signal.map(|s| unsafe { s.as_ref() })
     }
 }
 impl FsArgument for args::WriteFile {
     const HAVE_ABORT_SIGNAL: bool = true;
     #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { args::WriteFile::from_js(ctx, arguments) }
-    #[inline] fn deinit(&self) { args::WriteFile::deinit(self) }
     #[inline] fn to_thread_safe(&mut self) { args::WriteFile::to_thread_safe(self) }
     #[inline] fn deinit_and_unprotect(&mut self) { args::WriteFile::deinit_and_unprotect(self) }
     #[inline] fn signal(&self) -> Option<&AbortSignal> {
-        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `deinit`.
+        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `Drop`.
         self.signal.map(|s| unsafe { s.as_ref() })
     }
 }
@@ -1502,7 +1498,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // PORT NOTE: Zig `err.deinit()` freed the path slice; Rust `bun_sys::Error`
         // owns `Box<[u8]>` and frees on Drop (in `heap::take` below).
         if !IS_SHELL { this_ref.r#ref.unref(event_loop_handle_to_ctx(this_ref.evtloop)); }
-        this_ref.args.deinit();
+        // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
         drop(unsafe { bun_core::heap::take(this) });
@@ -2229,7 +2225,7 @@ impl AsyncReaddirRecursiveTask {
         // Zig passed `bunVM()`; Rust `KeepAlive::unref` takes the type-erased
         // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
         this_ref.r#ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
-        this_ref.args.deinit();
+        // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
         this_ref.free_root_path();
         this_ref.clear_result_list();
         // Zig `promise.deinit()` — `JSPromiseStrong` releases on Drop (via heap::take below).
@@ -2306,17 +2302,16 @@ pub mod args {
         pub new_path: PathLike,
     }
     impl Rename {
-        pub fn deinit(&self) { self.old_path.deinit(); self.new_path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.old_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.old_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rename> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(b"oldPath", b"string or an instance of Buffer or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))
             })?;
-            let new_path = match PathLike::from_js(ctx, arguments)? {
-                Some(p) => p,
-                None => { old_path.deinit(); return Err(ctx.throw_invalid_argument_type_value(b"newPath", b"string or an instance of Buffer or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))); }
-            };
+            // `errdefer old_path.deinit()` → `Drop for PathLike` on early return.
+            let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
+                ctx.throw_invalid_argument_type_value(b"newPath", b"string or an instance of Buffer or URL", arguments.next().unwrap_or(JSValue::UNDEFINED))
+            })?;
             Ok(Rename { old_path, new_path })
         }
     }
@@ -2331,7 +2326,6 @@ pub mod args {
         fn default() -> Self { Self { path: PathOrFileDescriptor::default(), len: 0, flags: 0 } }
     }
     impl Truncate {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Truncate> {
@@ -2352,7 +2346,6 @@ pub mod args {
         pub position: Option<u64>, // u52
     }
     impl Writev {
-        pub fn deinit(&self) {}
         pub fn deinit_and_unprotect(&mut self) {
             self.buffers.value.unprotect();
             // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
@@ -2388,7 +2381,6 @@ pub mod args {
         pub position: Option<u64>, // u52
     }
     impl Readv {
-        pub fn deinit(&self) {}
         pub fn deinit_and_unprotect(&mut self) {
             self.buffers.value.unprotect();
             // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
@@ -2423,7 +2415,6 @@ pub mod args {
         pub len: Option<BlobSizeType>,
     }
     impl FTruncate {
-        pub fn deinit(&self) {}
         pub fn deinit_and_unprotect(&mut self) {}
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FTruncate> {
@@ -2450,14 +2441,12 @@ pub mod args {
         pub gid: GidT,
     }
     impl Chown {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chown> {
+            // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers every
+            // error return below (including `try validateInteger`).
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
-            // Zig: `errdefer path.deinit()` — fires on every error return, including
-            // `try validateInteger`. Model with scopeguard, defused on success.
-            let path = scopeguard::guard(path, |p| p.deinit());
             let uid: UidT = 'brk: {
                 let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments(format_args!("uid is required"))); };
                 arguments.eat();
@@ -2468,7 +2457,7 @@ pub mod args {
                 arguments.eat();
                 break 'brk wrap_to::<GidT>(validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
             };
-            Ok(Chown { path: scopeguard::ScopeGuard::into_inner(path), uid, gid })
+            Ok(Chown { path, uid, gid })
         }
     }
 
@@ -2478,7 +2467,6 @@ pub mod args {
         pub gid: GidT,
     }
     impl Fchown {
-        pub fn deinit(&self) {}
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fchown> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -2516,20 +2504,19 @@ pub mod args {
         pub mtime: TimeLike,
     }
     impl Lutimes {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
+            // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
+            // `try timeLikeFromJS` throws below.
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
-            // Zig: `errdefer path.deinit()` — also covers the `try timeLikeFromJS` throws.
-            let path = scopeguard::guard(path, |p| p.deinit());
             let atime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime is required")))?)?
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date")))?;
             arguments.eat();
             let mtime = node::time_like_from_js(ctx, arguments.next().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("mtime is required")))?)?
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date")))?;
             arguments.eat();
-            Ok(Lutimes { path: scopeguard::ScopeGuard::into_inner(path), atime, mtime })
+            Ok(Lutimes { path, atime, mtime })
         }
     }
 
@@ -2539,20 +2526,19 @@ pub mod args {
     }
     impl Default for Chmod { fn default() -> Self { Self { path: PathLike::default(), mode: 0x777 } } }
     impl Chmod {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
+            // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
+            // `try modeFromJS` throw below.
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
-            // Zig: `errdefer path.deinit()` — also covers the `try modeFromJS` throw.
-            let path = scopeguard::guard(path, |p| p.deinit());
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
             let mode: Mode = match node::mode_from_js(ctx, mode_arg)? {
                 Some(m) => m,
                 None => { return Err(validators::throw_err_invalid_arg_type(ctx, format_args!("mode"), "number", mode_arg)); }
             };
             arguments.eat();
-            Ok(Chmod { path: scopeguard::ScopeGuard::into_inner(path), mode })
+            Ok(Chmod { path, mode })
         }
     }
 
@@ -2562,7 +2548,6 @@ pub mod args {
     }
     impl Default for FChmod { fn default() -> Self { Self { fd: FD::INVALID, mode: 0x777 } } }
     impl FChmod {
-        pub fn deinit(&self) {}
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FChmod> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -2581,13 +2566,12 @@ pub mod args {
         pub big_int: bool,
     }
     impl StatFS {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<StatFS> {
+            // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
+            // `try get_boolean_strict` throw below.
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
-            // Zig: `errdefer path.deinit()` — covers the `try get_boolean_strict` throw.
-            let path = scopeguard::guard(path, |p| p.deinit());
             let big_int = 'brk: {
                 if let Some(next_val) = arguments.next() {
                     if next_val.is_object() {
@@ -2598,7 +2582,7 @@ pub mod args {
                 }
                 false
             };
-            Ok(StatFS { path: scopeguard::ScopeGuard::into_inner(path), big_int })
+            Ok(StatFS { path, big_int })
         }
     }
 
@@ -2609,13 +2593,11 @@ pub mod args {
     }
     impl Default for Stat { fn default() -> Self { Self { path: PathLike::default(), big_int: false, throw_if_no_entry: true } } }
     impl Stat {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Stat> {
+            // Zig: `errdefer path.deinit()` (node_fs.zig:1756) → `Drop for PathLike`.
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
-            // Zig: `errdefer path.deinit()` (node_fs.zig:1756).
-            let path = scopeguard::guard(path, |p| p.deinit());
             let mut throw_if_no_entry = true;
             let big_int = 'brk: {
                 if let Some(next_val) = arguments.next() {
@@ -2628,7 +2610,7 @@ pub mod args {
                 }
                 false
             };
-            Ok(Stat { path: scopeguard::ScopeGuard::into_inner(path), big_int, throw_if_no_entry })
+            Ok(Stat { path, big_int, throw_if_no_entry })
         }
     }
 
@@ -2637,7 +2619,6 @@ pub mod args {
         pub big_int: bool,
     }
     impl Fstat {
-        pub fn deinit(&self) {}
         pub fn to_thread_safe(&mut self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fstat> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -2663,15 +2644,12 @@ pub mod args {
         pub new_path: PathLike,
     }
     impl Link {
-        pub fn deinit(&self) { self.old_path.deinit(); self.new_path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.old_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.old_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Link> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("oldPath must be a string or TypedArray")))?;
-            let new_path = match PathLike::from_js(ctx, arguments)? {
-                Some(p) => p,
-                None => { old_path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("newPath must be a string or TypedArray"))); }
-            };
+            // `errdefer old_path.deinit()` → `Drop for PathLike` on early return.
+            let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("newPath must be a string or TypedArray")))?;
             Ok(Link { old_path, new_path })
         }
     }
@@ -2691,16 +2669,13 @@ pub mod args {
         pub link_type: (),
     }
     impl Symlink {
-        pub fn deinit(&self) { self.target_path.deinit(); self.new_path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.target_path.deinit_and_unprotect(); self.new_path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.target_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Symlink> {
+            // Zig: `errdefer old_path.deinit()` (node_fs.zig:1883) → `Drop for PathLike`.
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("target must be a string or TypedArray")))?;
-            // Zig: `errdefer old_path.deinit()` (node_fs.zig:1883).
-            let old_path = scopeguard::guard(old_path, |p| p.deinit());
+            // Zig: `errdefer new_path.deinit()` (node_fs.zig:1888) → `Drop for PathLike`.
             let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
-            // Zig: `errdefer new_path.deinit()` (node_fs.zig:1888).
-            let new_path = scopeguard::guard(new_path, |p| p.deinit());
             // The type argument is only available on Windows and
             // ignored on other platforms. It can be set to 'dir',
             // 'file', or 'junction'. If the type argument is not set,
@@ -2727,8 +2702,8 @@ pub mod args {
                 SymlinkLinkType::Unspecified
             };
             Ok(Symlink {
-                target_path: scopeguard::ScopeGuard::into_inner(old_path),
-                new_path: scopeguard::ScopeGuard::into_inner(new_path),
+                target_path: old_path,
+                new_path,
                 #[cfg(windows)] link_type,
                 #[cfg(not(windows))] link_type: { let _ = link_type; () },
             })
@@ -2740,7 +2715,6 @@ pub mod args {
         pub encoding: Encoding,
     }
     impl Readlink {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readlink> {
@@ -2764,7 +2738,6 @@ pub mod args {
         pub encoding: Encoding,
     }
     impl Realpath {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Realpath> {
@@ -2794,7 +2767,6 @@ pub mod args {
         pub path: PathLike,
     }
     impl Unlink {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Unlink> {
@@ -2818,7 +2790,6 @@ pub mod args {
     impl RmDir {
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut recursive = false;
@@ -2830,11 +2801,11 @@ pub mod args {
                 if val.is_object() {
                     if let Some(boolean) = val.get(ctx, "recursive")? {
                         if boolean.is_boolean() { recursive = boolean.to_boolean(); }
-                        else { path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("The \"options.recursive\" property must be of type boolean."))); }
+                        else { return Err(ctx.throw_invalid_arguments(format_args!("The \"options.recursive\" property must be of type boolean."))); }
                     }
                     if let Some(boolean) = val.get(ctx, "force")? {
                         if boolean.is_boolean() { force = boolean.to_boolean(); }
-                        else { path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("The \"options.force\" property must be of type boolean."))); }
+                        else { return Err(ctx.throw_invalid_arguments(format_args!("The \"options.force\" property must be of type boolean."))); }
                     }
                     if let Some(delay) = val.get(ctx, "retryDelay")? {
                         retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, "options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).expect("infallible: validated range");
@@ -2843,7 +2814,6 @@ pub mod args {
                         max_retries = u32::try_from(validators::validate_integer(ctx, retries, "options.maxRetries", Some(0), Some(u32::MAX as i64))?).expect("infallible: validated range");
                     }
                 } else if !val.is_undefined() {
-                    path.deinit();
                     return Err(ctx.throw_invalid_arguments(format_args!("The \"options\" argument must be of type object.")));
                 }
             }
@@ -2870,7 +2840,6 @@ pub mod args {
         fn default() -> Self { Self { path: PathLike::default(), recursive: false, mode: Self::DEFAULT_MODE, always_return_none: false } }
     }
     impl Mkdir {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Mkdir> {
@@ -2901,7 +2870,6 @@ pub mod args {
         fn default() -> Self { Self { prefix: PathLike::Buffer(Buffer { buffer: bun_jsc::ArrayBuffer::EMPTY, owns_buffer: false }), encoding: Encoding::Utf8 } }
     }
     impl MkdirTemp {
-        pub fn deinit(&self) { self.prefix.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.prefix.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.prefix.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<MkdirTemp> {
@@ -2929,7 +2897,6 @@ pub mod args {
         pub recursive: bool,
     }
     impl Readdir {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn tag(&self) -> ret::ReaddirTag {
@@ -2962,7 +2929,6 @@ pub mod args {
 
     pub struct Close { pub fd: FD }
     impl Close {
-        pub fn deinit(&self) {}
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Close> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -2978,7 +2944,6 @@ pub mod args {
     }
     impl Default for Open { fn default() -> Self { Self { path: PathLike::default(), flags: FileSystemFlags::R, mode: DEFAULT_PERMISSION } } }
     impl Open {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Open> {
@@ -3023,7 +2988,6 @@ pub mod args {
         pub mtime: TimeLike,
     }
     impl Futimes {
-        pub fn deinit(&self) {}
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Futimes> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -3074,7 +3038,6 @@ pub mod args {
         fn default() -> Self { Self { fd: FD::INVALID, buffer: StringOrBuffer::default(), offset: 0, length: u64::MAX, position: None, encoding: Encoding::Buffer } }
     }
     impl Write {
-        pub fn deinit(&self) { self.buffer.deinit(); }
         pub fn deinit_and_unprotect(&mut self) { core::mem::take(&mut self.buffer).deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.buffer.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Write> {
@@ -3087,12 +3050,9 @@ pub mod args {
                 return Err(ctx.throw_invalid_argument_type_value(b"buffer", b"string or TypedArray", bv));
             }
             let encoding = if matches!(buffer, StringOrBuffer::Buffer(_)) { Encoding::Buffer } else { Encoding::Utf8 };
-            // `errdefer args.deinit()` — guard so any `?`-propagated JsError below
-            // releases `buffer` (matches node_fs.zig:2491).
-            let mut args = scopeguard::guard(
-                Write { fd, buffer, encoding, ..Default::default() },
-                |a| a.deinit(),
-            );
+            // `errdefer args.deinit()` (node_fs.zig:2491) → `Drop for StringOrBuffer`
+            // on `args.buffer` releases the slice on any `?`-propagated JsError.
+            let mut args = Write { fd, buffer, encoding, ..Default::default() };
             arguments.eat();
             'parse: {
                 let Some(mut current) = arguments.next() else { break 'parse };
@@ -3136,7 +3096,7 @@ pub mod args {
                     }
                 }
             }
-            Ok(scopeguard::ScopeGuard::into_inner(args))
+            Ok(args)
         }
     }
 
@@ -3148,7 +3108,6 @@ pub mod args {
         pub position: Option<ReadPosition>,
     }
     impl Read {
-        pub fn deinit(&self) {}
         pub fn to_thread_safe(&self) { self.buffer.buffer.value.protect(); }
         pub fn deinit_and_unprotect(&mut self) { self.buffer.buffer.value.unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Read> {
@@ -3263,21 +3222,26 @@ pub mod args {
             Self { path: PathOrFileDescriptor::default(), encoding: Encoding::Utf8, offset: 0, max_size: None, limit_size_for_javascript: false, flag: FileSystemFlags::R, signal: None }
         }
     }
-    impl ReadFile {
-        pub fn deinit(&self) {
-            self.path.deinit();
-            if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
+    impl Drop for ReadFile {
+        fn drop(&mut self) {
+            // Zig `deinit()`: release the AbortSignal ref taken in `from_js`.
+            // `path: PathOrFileDescriptor` releases via its inner `PathLike` Drop.
+            if let Some(signal) = self.signal.take() {
+                signal.pending_activity_unref();
+                signal.unref();
+            }
         }
+    }
+    impl ReadFile {
         pub fn deinit_and_unprotect(&mut self) {
             self.path.deinit_and_unprotect();
-            if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
+            // Signal unref handled by `Drop` (idempotent via `.take()`).
         }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
+            // `errdefer path.deinit()` → `Drop` on `path` covers every
+            // `?`-propagated JsError below (matches node_fs.zig).
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or a file descriptor")))?;
-            // `errdefer path.deinit()` — guard so every `?`-propagated JsError below
-            // releases the parsed path (matches node_fs.zig).
-            let path = scopeguard::guard(path, |p| p.deinit());
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -3305,7 +3269,6 @@ pub mod args {
                 }
             }
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
-            let path = scopeguard::ScopeGuard::into_inner(path);
             Ok(ReadFile { path, encoding, flag, limit_size_for_javascript: true, signal: abort_signal, ..Default::default() })
         }
         pub fn aborted(&self) -> bool {
@@ -3325,23 +3288,27 @@ pub mod args {
         pub dirfd: FD,
         pub signal: Option<AbortSignalRef>,
     }
-    impl WriteFile {
-        pub fn deinit(&self) {
-            self.file.deinit();
-            self.data.deinit();
-            if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
+    impl Drop for WriteFile {
+        fn drop(&mut self) {
+            // Zig `deinit()`: release the AbortSignal ref taken in `from_js`.
+            // `file`/`data` release via their own `Drop` (PathLike/StringOrBuffer).
+            if let Some(signal) = self.signal.take() {
+                signal.pending_activity_unref();
+                signal.unref();
+            }
         }
+    }
+    impl WriteFile {
         pub fn to_thread_safe(&mut self) { self.file.to_thread_safe(); self.data.to_thread_safe(); }
         pub fn deinit_and_unprotect(&mut self) {
             self.file.deinit_and_unprotect();
             core::mem::take(&mut self.data).deinit_and_unprotect();
-            if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
+            // Signal unref handled by `Drop` (idempotent via `.take()`).
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<WriteFile> {
+            // `errdefer path.deinit()` → `Drop` on `path` covers every
+            // `?`-propagated JsError below (matches node_fs.zig).
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or a file descriptor")))?;
-            // `errdefer path.deinit()` — guard so every `?`-propagated JsError below
-            // releases the parsed path (matches node_fs.zig).
-            let path = scopeguard::guard(path, |p| p.deinit());
             let data_value = arguments.next_eat().ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::W;
@@ -3390,7 +3357,6 @@ pub mod args {
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
-            let path = scopeguard::ScopeGuard::into_inner(path);
             Ok(WriteFile { file: path, encoding, flag, mode, data, dirfd: FD::cwd(), signal: abort_signal, flush })
         }
         pub fn aborted(&self) -> bool {
@@ -3408,7 +3374,6 @@ pub mod args {
         pub buffer_size: c_int,
     }
     impl OpenDir {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<OpenDir> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray")))?;
             let mut encoding = Encoding::Buffer;
@@ -3423,7 +3388,7 @@ pub mod args {
                     if let Ok(e) = get_encoding(arg, ctx, encoding) { encoding = e; }
                     if let Some(bs) = arg.get(ctx, "bufferSize")? {
                         buffer_size = bs.to_int32();
-                        if buffer_size < 0 { path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("bufferSize must be > 0"))); }
+                        if buffer_size < 0 { return Err(ctx.throw_invalid_arguments(format_args!("bufferSize must be > 0"))); }
                     }
                 }
             }
@@ -3433,7 +3398,6 @@ pub mod args {
 
     pub struct Exists { pub path: Option<PathLike> }
     impl Exists {
-        pub fn deinit(&self) { if let Some(p) = &self.path { p.deinit(); } }
         pub fn to_thread_safe(&mut self) { if let Some(p) = &mut self.path { p.to_thread_safe(); } }
         pub fn deinit_and_unprotect(&mut self) { if let Some(p) = &mut self.path { p.deinit_and_unprotect(); } }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Exists> {
@@ -3446,7 +3410,6 @@ pub mod args {
         pub mode: FileSystemFlags,
     }
     impl Access {
-        pub fn deinit(&self) { self.path.deinit(); }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn deinit_and_unprotect(&mut self) { self.path.deinit_and_unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Access> {
@@ -3462,7 +3425,6 @@ pub mod args {
 
     pub struct FdataSync { pub fd: FD }
     impl FdataSync {
-        pub fn deinit(&self) {}
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FdataSync> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -3477,15 +3439,12 @@ pub mod args {
         pub mode: constants::Copyfile,
     }
     impl CopyFile {
-        pub fn deinit(&self) { self.src.deinit(); self.dest.deinit(); }
         pub fn to_thread_safe(&mut self) { self.src.to_thread_safe(); self.dest.to_thread_safe(); }
         pub fn deinit_and_unprotect(&mut self) { self.src.deinit_and_unprotect(); self.dest.deinit_and_unprotect(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<CopyFile> {
             let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("src must be a string or TypedArray")))?;
-            let dest = match PathLike::from_js(ctx, arguments)? {
-                Some(p) => p,
-                None => { src.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("dest must be a string or TypedArray"))); }
-            };
+            // `errdefer src.deinit()` → `Drop for PathLike` on early return.
+            let dest = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("dest must be a string or TypedArray")))?;
             let mut mode = constants::Copyfile::from_raw(0);
             if let Some(arg) = arguments.next() {
                 arguments.eat();
@@ -3513,15 +3472,14 @@ pub mod args {
         pub flags: CpFlags,
     }
     impl Cp {
-        pub fn deinit(&self) {
-            if self.flags.deinit_paths { self.src.deinit(); self.dest.deinit(); }
-        }
+        // Zig `deinit()` was gated on `flags.deinit_paths`; in Rust the
+        // `PathLike::String` arm's `Drop` is a no-op for borrowed `PathString`
+        // payloads (the only `deinit_paths: false` caller — shell `cp`), so the
+        // flag is vestigial and the explicit hook is gone.
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Cp> {
             let src = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("src must be a string or TypedArray")))?;
-            let dest = match PathLike::from_js(ctx, arguments)? {
-                Some(p) => p,
-                None => { src.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("dest must be a string or TypedArray"))); }
-            };
+            // `errdefer src.deinit()` → `Drop for PathLike` on early return.
+            let dest = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("dest must be a string or TypedArray")))?;
             let mut recursive = false;
             let mut error_on_exist = false;
             let mut force = true;
@@ -3560,7 +3518,6 @@ pub mod args {
 
     pub struct Fsync { pub fd: FD }
     impl Fsync {
-        pub fn deinit(&self) {}
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fsync> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);

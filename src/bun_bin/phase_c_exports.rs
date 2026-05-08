@@ -151,10 +151,8 @@ pub extern "C" fn Bun__VM__scriptExecutionStatus(vm: *const VirtualMachine) -> i
     0
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__useIsolationSourceProviderCache(vm: *mut VirtualMachine) -> bool {
-    false
-}
+// REAL: now provided by bun_jsc (src/jsc/VirtualMachine.rs).
+// Bun__VM__useIsolationSourceProviderCache
 
 // ── Host fns: `(global, callframe) -> JSValue` ──────────────────────────────
 // REAL: src/runtime/webcore/fetch.rs

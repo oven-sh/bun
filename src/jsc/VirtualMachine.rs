@@ -4215,9 +4215,9 @@ impl VirtualMachine {
         self.global().delete_module_registry_entry(&str)
     }
 
-    /// Spec VirtualMachine.zig:2363 `useIsolationSourceProviderCache`.
-    #[inline]
-    pub fn use_isolation_source_provider_cache(&self) -> bool {
+    /// Spec VirtualMachine.zig:2363 `useIsolationSourceProviderCache` (exported `callconv(.c)`).
+    #[unsafe(export_name = "Bun__VM__useIsolationSourceProviderCache")]
+    pub extern "C" fn use_isolation_source_provider_cache(&self) -> bool {
         self.test_isolation_enabled
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false)

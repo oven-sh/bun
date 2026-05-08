@@ -336,7 +336,7 @@ impl Queue {
 
     pub fn on_dependency_error(
         ctx: *mut c_void,
-        dependency: Dependency,
+        dependency: &Dependency,
         root_dependency_id: DependencyID,
         err: bun_core::Error,
     ) {
@@ -387,7 +387,7 @@ impl Queue {
         });
     }
 
-    pub fn on_wake_handler(ctx: *mut c_void, _: &mut PackageManager) {
+    pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
         bun_core::scoped_log!(AsyncModule, "onWake");
         // SAFETY: ctx was registered as *Queue when installing this callback.
         let this: &mut Queue = unsafe { &mut *ctx.cast::<Queue>() };

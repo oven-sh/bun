@@ -19,9 +19,14 @@
 // the host libc) and that bun.spawn.Rusage — what actually gets handed to
 // wait4() — is the same size.
 import { expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { isWindows } from "harness";
 
-test.skipIf(!isPosix)("bun.sys.rusage matches the host libc's struct rusage", () => {
+// Gate on !isWindows rather than harness's `isPosix`: the latter is
+// `darwin || linux || freebsd`, which excludes Android (where Bun reports
+// process.platform === "android"), so the `if (r!.isAndroid)` assertions
+// below would never run. The Zig binding already returns undefined on
+// Windows; this matches its `!Environment.isPosix` guard.
+test.skipIf(isWindows)("bun.sys.rusage matches the host libc's struct rusage", () => {
   // Resolve lazily so a build without the binding fails this test rather
   // than erroring at module load (which the junit reporter counts as 0
   // failures).

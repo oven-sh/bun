@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use bun_collections::StringHashMap;
 use bun_js_parser as js_ast;
-use bun_js_parser::ast::expr::IntoExprData;
 use bun_js_parser::lexer as js_lexer;
 use bun_js_parser::ExprData;
 use bun_js_parser::Ref;
@@ -97,18 +96,14 @@ unsafe fn env_string_store_put_string(
 ) -> Result<(), bun_core::Error> {
     // SAFETY: vtable contract — owner is `*mut UserDefinesArray`.
     let store = unsafe { &mut *owner.cast::<UserDefinesArray>() };
-    // Mirrors Zig: allocate an `E.String` slab entry, point Expr::Data at it,
-    // wrap in DefineData::init({can_be_removed_if_unused: true,
-    // call_can_be_unwrapped_if_unused: .if_unused}). Zig (env_loader.zig:476-481)
-    // does NOT copy the value bytes — `E.String.init(value)` aliases directly
-    // into the env-map storage, which outlives the defines table. We do the
-    // same: `EString::init` erases the borrow lifetime per the Phase-A `Str`
-    // convention (see E.rs), and the sole caller `Loader::copy_for_define`
-    // passes `&v.value` borrowed from `self.map`, which is owned by the
-    // long-lived env loader.
-    // TODO(port): Phase B — thread the env-map lifetime through
-    // `DefineStoreVTable` so this aliasing is checked rather than asserted.
-    let value: ExprData = js_ast::E::EString::init(value).into_data_store();
+    // Zig (env_loader.zig:461) allocates the `E.String` slab via the passed
+    // `allocator` (= `bun.default_allocator`), NOT the thread-local
+    // `Expr.Data.Store` — `configureDefines` resets that store on return, so
+    // the env-define payloads must outlive it. Mirror with `StoreRef::from_box`
+    // (process-lifetime). Value bytes alias the long-lived env-map storage.
+    let value: ExprData = ExprData::EString(js_ast::ast::StoreRef::from_box(Box::new(
+        js_ast::E::EString::init(value),
+    )));
     let data = DefineData::init(Options {
         value,
         can_be_removed_if_unused: true,

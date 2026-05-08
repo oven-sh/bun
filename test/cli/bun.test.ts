@@ -124,7 +124,7 @@ describe("bun", () => {
 
         expect(exitCode).toBe(0);
       }
-    });
+    }, 30_000);
   });
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {

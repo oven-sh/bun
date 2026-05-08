@@ -302,11 +302,7 @@ impl PmPkgCommand {
             Global::exit(1);
         }
 
-        // blocked_on: bun_install::PackageManagerOptionsStub::json_output —
-        // field not yet on the upstream stub. Default to `false` so the rest of
-        // this body remains type-checked.
-        let _ = &pm.options;
-        let parse_json = false;
+        let parse_json = pm.options.json_output;
 
         let path = Self::find_package_json(cwd)?;
 

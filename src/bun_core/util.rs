@@ -1406,9 +1406,9 @@ unsafe extern "C" {
     fn Bun__StackCheck__getMaxStack() -> *mut core::ffi::c_void;
 }
 impl Default for StackCheck {
-    /// Zig `.{}` — `cached_stack_end` is `usize::MAX` until `init`/`update`
-    /// is called, so `is_safe_to_recurse()` always reports true.
-    #[inline] fn default() -> Self { Self { cached_stack_end: usize::MAX } }
+    /// Zig `.{}` — `cached_stack_end` defaults to `0`, so
+    /// `is_safe_to_recurse()` always reports true until `init`/`update`.
+    #[inline] fn default() -> Self { Self { cached_stack_end: 0 } }
 }
 impl StackCheck {
     #[inline] pub fn configure_thread() { unsafe { Bun__StackCheck__initialize() } }

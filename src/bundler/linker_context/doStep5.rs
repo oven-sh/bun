@@ -24,7 +24,7 @@ use bun_js_parser::{
 
 use crate::options::Format;
 use crate::ungate_support::perf;
-use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports};
+use crate::{js_meta, BundleV2, Index, LinkerContext, RefImportData, ResolvedExports};
 
 pub use crate::ThreadPool;
 
@@ -32,19 +32,37 @@ impl LinkerContext<'_> {
     /// Step 5: Create namespace exports for every file. This is always necessary
     /// for CommonJS files, and is also necessary for other files if they are
     /// imported using an import star statement.
-    pub fn do_step5(&mut self, source_index_: Index, _: usize) {
+    ///
+    /// # Safety
+    ///
+    /// Runs concurrently on worker-pool threads (one task per `source_index`).
+    /// The body never materializes `&mut LinkerContext` — it derefs `this` to a
+    /// shared `&LinkerContext` for read-only access (`symbols`, `ts_enums`,
+    /// `top_level_symbols_to_parts`, options) and writes only to its own
+    /// `source_index` row of the `graph.{ast,meta}` SoA columns via raw
+    /// per-row pointers obtained from `split_raw()` (root provenance, no
+    /// `&mut [T]` intermediate). Disjoint rows ⇒ no overlapping `&mut`.
+    pub unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
+        // Shared-ref view for all read-only access. Multiple worker threads may
+        // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
+        // pointers inside `MultiArrayList`, so this borrow does not assert
+        // immutability over the heap cells we write below.
+        let c: &LinkerContext<'_> = unsafe { &*this };
+
         let id = source_index;
-        if id as usize >= self.graph.meta.len() {
+        if id as usize >= c.graph.meta.len() {
             return;
         }
 
-        // SAFETY: `self` points to `BundleV2.linker` (caller is the worker-pool
+        // SAFETY: `this` points to `BundleV2.linker` (caller is the worker-pool
         // dispatch from `scanImportsAndExports`); `@fieldParentPtr` shape.
-        let bundle_v2 = unsafe {
-            &mut *(std::ptr::from_mut::<LinkerContext>(self).cast::<u8>()
+        // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
+        // form `&mut BundleV2` here (concurrent tasks would alias it).
+        let bundle_v2: &BundleV2<'_> = unsafe {
+            &*(this.cast_const().cast::<u8>()
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>())
         };
@@ -58,15 +76,33 @@ impl LinkerContext<'_> {
         // `worker.heap`; valid for the worker's lifetime.
         let arena: &Bump = unsafe { &*worker.arena };
 
-        // PORT NOTE: reshaped for borrowck — Zig held overlapping
-        // `&mut graph.meta` / `&graph.meta` borrows; we go through raw column
-        // pointers (`*mut`/`*const`) so the multiple SoA columns can be live
-        // simultaneously without aliasing &mut.
+        // ── raw SoA column pointers (root provenance) ─────────────────────
+        // `split_raw()` derives `*mut [T]` directly from the buffer base with
+        // no `&mut` intermediate, so per-row writes through these pointers are
+        // sound under Stacked Borrows even with N concurrent tasks. We index
+        // by raw `.add(id)` (never `(*col)[id]`, which would form a transient
+        // `&[T]` over the whole column and race with other rows' writes).
+        let ast = c.graph.ast.split_raw();
+        let meta = c.graph.meta.split_raw();
+        macro_rules! row_mut {
+            ($col:expr, $ty:ty, $i:expr) => {{
+                // SAFETY: `$col: *mut [$ty]` from `split_raw()`; `$i < len`
+                // (guarded above for `meta`, and `ast.len == meta.len`). The
+                // `as *mut $ty` fat→thin cast preserves the raw provenance
+                // from `split_raw()`.
+                unsafe { &mut *(($col as *mut $ty).add($i as usize)) }
+            }};
+        }
+
         let resolved_exports: *mut ResolvedExports =
-            &raw mut self.graph.meta.items_resolved_exports_mut()[id as usize];
-        let imports_to_bind: *const [RefImportData] = self.graph.meta.items_imports_to_bind();
-        let probably_typescript_type: *const [ArrayHashMap<Ref, ()>] =
-            self.graph.meta.items_probably_typescript_type();
+            (meta.resolved_exports as *mut ResolvedExports).wrapping_add(id as usize);
+        // Read-only columns (never written during step 5) — whole-column
+        // shared slices are fine here.
+        // SAFETY: `split_raw()` columns are valid for `meta.len()` elements;
+        // no task mutates `imports_to_bind` / `probably_typescript_type`.
+        let imports_to_bind: &[RefImportData] = unsafe { &*meta.imports_to_bind };
+        let probably_typescript_type: &[ArrayHashMap<Ref, ()>] =
+            unsafe { &*meta.probably_typescript_type };
 
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
@@ -90,8 +126,7 @@ impl LinkerContext<'_> {
                 // Re-exporting multiple symbols with the same name causes an ambiguous
                 // export. These names cannot be used and should not end up in generated code.
                 if export_.potentially_ambiguous_export_star_refs.len() > 0 {
-                    // SAFETY: see above.
-                    let main_data = match unsafe { &(*imports_to_bind)[this_id as usize] }
+                    let main_data = match imports_to_bind[this_id as usize]
                         .get(&export_.data.import_ref)
                     {
                         Some(b) => b.data,
@@ -99,9 +134,8 @@ impl LinkerContext<'_> {
                     };
                     for ambig in export_.potentially_ambiguous_export_star_refs.slice() {
                         let _id = ambig.data.source_index.get();
-                        // SAFETY: see above.
                         let ambig_ref = if let Some(bound) =
-                            unsafe { &(*imports_to_bind)[_id as usize] }.get(&ambig.data.import_ref)
+                            imports_to_bind[_id as usize].get(&ambig.data.import_ref)
                         {
                             bound.data.import_ref
                         } else {
@@ -117,8 +151,7 @@ impl LinkerContext<'_> {
                 // Ignore re-exported imports in TypeScript files that failed to be
                 // resolved. These are probably just type-only imports so the best thing to
                 // do is to silently omit them from the export list.
-                // SAFETY: see above.
-                if unsafe { &(*probably_typescript_type)[this_id as usize] }
+                if probably_typescript_type[this_id as usize]
                     .contains(&export_.data.import_ref)
                 {
                     continue;
@@ -134,7 +167,7 @@ impl LinkerContext<'_> {
         // and only store a count instead of an array
         strings::sort_desc(aliases.as_mut_slice());
         let export_aliases = aliases.into_bump_slice();
-        self.graph.meta.items_sorted_and_filtered_export_aliases_mut()[id as usize] =
+        *row_mut!(meta.sorted_and_filtered_export_aliases, Box<[Box<[u8]>]>, id) =
             // PORT NOTE: SoA column is `Box<[Box<[u8]>]>`; the worker arena slices
             // are `&'bump [u8]`. Re-own into `Box` for now — once `JSMeta` grows
             // an `'arena` lifetime this collapses to a borrowing slice. PERF(port).
@@ -142,7 +175,7 @@ impl LinkerContext<'_> {
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
-        self.create_exports_for_file(
+        c.create_exports_for_file(
             arena,
             id,
             // SAFETY: `resolved_exports` points at one slot of the
@@ -150,25 +183,30 @@ impl LinkerContext<'_> {
             // distinct SoA column (disjoint allocation). The earlier iterator
             // over `*resolved_exports` ended above, so this is the sole live
             // `&mut` into that slot. `create_exports_for_file` writes only via
-            // this param and never re-borrows `meta.resolved_exports` through
-            // `self`.
+            // this param + the three per-row cells below and never re-borrows
+            // those columns through `self`.
             unsafe { &mut *resolved_exports },
-            unsafe { &*imports_to_bind },
+            imports_to_bind,
             export_aliases,
             re_exports_count,
+            // Per-row mutable SoA cells (own `id` only — disjoint across tasks).
+            row_mut!(meta.flags, js_meta::Flags, id),
+            row_mut!(ast.flags, AstFlags, id),
+            row_mut!(ast.parts, js_ast::PartList, id),
         );
 
         // Each part tracks the other parts it depends on within this file
         let mut local_dependencies: HashMap<u32, u32> = HashMap::default();
 
-        // PORT NOTE: reshaped for borrowck — multiple `&mut` into self.graph;
-        // raw-ptr indexing per-iteration.
-        let parts_slice: *mut [Part] = self.graph.ast.items_parts_mut()[id as usize].slice_mut();
+        // PORT NOTE: reshaped for borrowck — multiple `&mut` into graph SoA;
+        // raw per-row pointers via `split_raw()` so concurrent tasks never
+        // hold overlapping `&mut [T]`.
+        let parts_slice: *mut [Part] = row_mut!(ast.parts, js_ast::PartList, id).slice_mut();
         let named_imports: *mut bun_js_parser::ast::bundled_ast::NamedImports =
-            &raw mut self.graph.ast.items_named_imports_mut()[id as usize];
+            (ast.named_imports as *mut bun_js_parser::ast::bundled_ast::NamedImports)
+                .wrapping_add(id as usize);
 
-        // SAFETY: SoA column pointers stay valid for the worker step.
-        let our_imports_to_bind: &RefImportData = unsafe { &(*imports_to_bind)[id as usize] };
+        let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
         // SAFETY: see above.
         'outer: for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
             // Now that all files have been parsed, determine which property
@@ -185,9 +223,9 @@ impl LinkerContext<'_> {
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {
                     let import_ref = import_data.data.import_ref;
-                    if let Some(symbol) = self.graph.symbols.get_const(import_ref) {
+                    if let Some(symbol) = c.graph.symbols.get_const(import_ref) {
                         if symbol.kind == bun_js_parser::ast::symbol::Kind::TsEnum {
-                            if let Some(enum_data) = self.graph.ts_enums.get(&import_ref) {
+                            if let Some(enum_data) = c.graph.ts_enums.get(&import_ref) {
                                 let mut found_non_inlined_enum = false;
 
                                 // SAFETY: `properties` points into
@@ -270,7 +308,7 @@ impl LinkerContext<'_> {
                     debug_assert!(part.symbol_uses.values()[j].count_estimate > 0);
                 }
 
-                let other_parts = self.top_level_symbols_to_parts(id, ref_);
+                let other_parts = c.top_level_symbols_to_parts(id, ref_);
 
                 for &other_part_index in other_parts {
                     let local = local_dependencies.get_or_put(other_part_index).expect("unreachable");
@@ -300,14 +338,22 @@ impl LinkerContext<'_> {
     ///
     /// WARNING: This method is run in parallel over all files. Do not mutate data
     /// for other files within this method or you will create a data race.
+    ///
+    /// PORT NOTE: takes `&self` (read-only) plus the three SoA row cells it
+    /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
+    /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_exports_for_file(
-        &mut self,
+        &self,
         arena: &Bump,
         id: u32,
         resolved_exports: &mut ResolvedExports,
         imports_to_bind: &[RefImportData],
         export_aliases: &[&[u8]],
         re_exports_count: usize,
+        meta_flags: &mut js_meta::Flags,
+        ast_flags: &mut AstFlags,
+        ast_parts: &mut js_ast::PartList,
     ) {
         // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
         // re-entrancy guards around the global Store). `Disabler::scope()`
@@ -325,7 +371,7 @@ impl LinkerContext<'_> {
             .ensure_total_capacity(export_aliases.len())
             .expect("OOM");
 
-        let initial_flags = self.graph.meta.items_flags()[id as usize];
+        let initial_flags = *meta_flags;
         let needs_exports_variable = initial_flags.needs_exports_variable;
         let force_include_exports_for_entry_point = self.options.output_format == Format::Cjs
             && initial_flags.force_include_exports_for_entry_point;
@@ -545,7 +591,7 @@ impl LinkerContext<'_> {
             }
 
             // Make sure the CommonJS closure, if there is one, includes "exports"
-            self.graph.ast.items_flags_mut()[id as usize].insert(AstFlags::USES_EXPORTS_REF);
+            ast_flags.insert(AstFlags::USES_EXPORTS_REF);
         }
 
         // Decorate "module.exports" with the "__esModule" flag to indicate that
@@ -591,8 +637,7 @@ impl LinkerContext<'_> {
 
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
-            self.graph.ast.items_parts_mut()[id as usize].slice_mut()
-                [js_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
+            ast_parts.slice_mut()[js_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
                 stmts: if self.options.output_format != Format::InternalBakeDev {
                     // SAFETY: the `[all_export_stmts_base..stmts_head]` window
                     // of `stmts_slab` is fully initialized above; the worker
@@ -621,7 +666,7 @@ impl LinkerContext<'_> {
 
             // Pull in the "__export" symbol if it was used
             if export_ref.is_valid() {
-                self.graph.meta.items_flags_mut()[id as usize].needs_export_symbol_from_runtime = true;
+                meta_flags.needs_export_symbol_from_runtime = true;
             }
         }
     }

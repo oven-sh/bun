@@ -266,9 +266,19 @@ impl ThreadPool {
         }
     }
 
+    /// Safe accessor for the underlying `bun_threading::ThreadPool`. The
+    /// pointer is set in `init`/`init_with_pool` and never null while `self`
+    /// is observable; encapsulating the deref keeps callers out of `unsafe`.
+    #[inline]
+    pub fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
+        debug_assert!(!self.worker_pool.is_null());
+        // SAFETY: `worker_pool` is initialized before any caller can observe
+        // `self` and lives until `deinit_v2`; all driver methods take `&self`.
+        unsafe { &*self.worker_pool }
+    }
+
     pub fn start(&self) {
-        // SAFETY: worker_pool is valid for the lifetime of self (set in init/init_with_pool).
-        unsafe { (*self.worker_pool).warm(8) };
+        self.worker_pool().warm(8);
         if let Some(io) = self.io_pool {
             // SAFETY: io points to the module-static THREAD_POOL, live while ref_count > 0.
             unsafe { io.as_ref().warm(1) };

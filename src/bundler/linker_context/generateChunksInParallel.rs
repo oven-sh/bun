@@ -83,7 +83,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // PORT NOTE: Zig `defer debug(...)` is moved to end-of-scope explicitly below.
         let ctx = GenerateChunkCtx { chunk: &raw mut chunks[0], c, chunks };
         // TODO(port): worker_pool.eachPtr signature — arena param dropped; Rust impl is infallible.
-        unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
+        // link step); `pool` is the arena-allocated bundler ThreadPool.
+        unsafe { (*c.parse_graph).pool.as_ref() }.worker_pool().each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
         debug!("  DONE {} renamers", chunks.len());
     }
 

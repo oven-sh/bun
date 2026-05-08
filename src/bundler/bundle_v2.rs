@@ -2244,8 +2244,9 @@ impl<'a> BundleV2<'a> {
     /// idle/busy time since the previous call. No-op when env var unset.
     #[inline]
     pub fn dump_pool_stats(&self, label: &str) {
-        // SAFETY: `pool` and its `worker_pool` are live for the bundle lifetime.
-        unsafe { (*self.graph.pool.as_ref().worker_pool).dump_stats(label) };
+        // SAFETY: `pool` is the arena-allocated bundler ThreadPool, live for
+        // the bundle lifetime (`Graph.pool` set in `BundleV2::init`).
+        unsafe { self.graph.pool.as_ref() }.worker_pool().dump_stats(label);
     }
 
     pub fn scan_for_secondary_paths(&mut self) {

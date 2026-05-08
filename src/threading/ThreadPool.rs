@@ -1059,28 +1059,28 @@ impl Thread {
         // SAFETY: thread_pool outlives this worker (join() waits); self_ptr is
         // our stack-local Thread.
         let _registration = unsafe { ThreadRegistration::new(thread_pool, self_ptr) };
+        // SAFETY: `_registration` proves liveness — the pool's `join()` blocks
+        // on every registered thread, so `thread_pool` is valid for all of
+        // `run()`. Hoist a single shared ref so the hot loop (and the
+        // `BUN_THREADPOOL_STATS` instrumentation) need no per-use `unsafe`.
+        let pool: &ThreadPool = unsafe { &*thread_pool };
 
         let stats = stats_enabled();
         let mut is_waking = false;
         loop {
             let wait_start = if stats { now_ns() } else { 0 };
-            // SAFETY: thread_pool is live for the duration of run().
-            is_waking = match unsafe { (*thread_pool).wait(is_waking) } {
+            is_waking = match pool.wait(is_waking) {
                 Ok(w) => w,
                 Err(_) => return,
             };
             if stats {
-                // SAFETY: thread_pool outlives this worker.
-                unsafe {
-                    (*thread_pool).stats.idle_ns.fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
-                }
+                pool.stats.idle_ns.fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
             }
 
             // SAFETY: self_ptr is our own stack-local Thread.
             while let Some(result) = unsafe { (*self_ptr).pop(thread_pool) } {
                 if result.pushed || is_waking {
-                    // SAFETY: thread_pool outlives this worker (join() waits).
-                    unsafe { (*thread_pool).notify(is_waking) };
+                    pool.notify(is_waking);
                 }
                 is_waking = false;
 
@@ -1090,14 +1090,10 @@ impl Thread {
                 // SAFETY: task is a live scheduled Task; callback contract is `unsafe fn(*mut Task)`.
                 unsafe { ((*task).callback)(task) };
                 if stats {
-                    // SAFETY: thread_pool outlives this worker.
-                    unsafe {
-                        (*thread_pool).stats.busy_ns.fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
-                        (*thread_pool).stats.tasks.fetch_add(1, Ordering::Relaxed);
-                    }
+                    pool.stats.busy_ns.fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
+                    pool.stats.tasks.fetch_add(1, Ordering::Relaxed);
                 }
-                // SAFETY: thread_pool outlives this worker (join() waits).
-                unsafe { (*thread_pool).wait_group.finish() };
+                pool.wait_group.finish();
             }
 
             Output::flush();

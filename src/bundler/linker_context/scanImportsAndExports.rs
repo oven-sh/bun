@@ -98,7 +98,7 @@ pub fn scan_imports_and_exports(
     // PORT NOTE: `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
     // PERF(port): was zero-copy slice; profile.
-    let reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
+    let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
     // ── cache SoA column base pointers ────────────────────────────────────
     // `MultiArrayList` never reallocates inside this function (only column
@@ -496,35 +496,38 @@ pub fn scan_imports_and_exports(
         //
         // PORT NOTE: Zig dispatched via `worker_pool.each(arena, this,
         // doStep5, reachable_files)` (parallel fan-out, blocks until done).
-        // `do_step5` mutates `&mut LinkerContext` but only touches distinct
-        // SoA rows per `source_index` (the columns are pre-sized and never
-        // reallocate during this step), matching the Zig invariant. We pass
-        // `*mut LinkerContext` through a `Sync` wrapper and re-derive `&mut`
-        // per task — same aliasing model as `generate_js_renamer` /
-        // `GenerateChunkCtx`.
+        // `do_step5` only touches distinct SoA rows per `source_index` (the
+        // columns are pre-sized and never reallocate during this step),
+        // matching the Zig invariant. We pass `*mut LinkerContext` through a
+        // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
+        // for reads and writes per-row cells via raw `split_raw()` pointers —
+        // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
+        // forms `&mut LinkerContext`).
         {
             #[repr(transparent)]
-            struct Step5Ctx(*mut LinkerContext<'static>);
-            // SAFETY: `LinkerContext` is `Send + Sync`; `do_step5` only writes
-            // `graph.{ast,meta}` SoA cells indexed by its own `source_index`
-            // (disjoint per task) and reads shared immutable state. The
-            // `ThreadPool::Worker` it acquires is per-OS-thread.
-            unsafe impl core::marker::Sync for Step5Ctx {}
+            struct Step5Ctx<'a>(*mut LinkerContext<'a>);
+            // SAFETY: the pointer is only dereferenced to `&LinkerContext` for
+            // reads plus raw `*mut` per-row SoA cells for disjoint-row writes
+            // (see `do_step5` doc); lifetime is bounded by the blocking
+            // `each()` call below. The `ThreadPool::Worker` it acquires is
+            // per-OS-thread.
+            unsafe impl core::marker::Sync for Step5Ctx<'_> {}
 
-            let ctx = Step5Ctx(core::ptr::from_mut::<LinkerContext<'_>>(this).cast());
-            // SAFETY: `worker_pool` is live for the bundle lifetime
-            // (initialized in `ThreadPool::start`).
-            let worker_pool = unsafe { &*(*this.parse_graph).pool.as_ref().worker_pool };
-            // PERF(port): `each` requires `&mut [V]`; `reachable` is a private
-            // snapshot Vec so reborrow it mutably (not actually mutated).
-            let mut reachable_mut: Vec<Index> = reachable.clone();
+            let ctx = Step5Ctx(core::ptr::from_mut::<LinkerContext<'_>>(this));
+            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
+            // the link step); `pool` is the arena-allocated bundler ThreadPool
+            // set in `BundleV2::init`.
+            let worker_pool = unsafe { (*this.parse_graph).pool.as_ref() }.worker_pool();
+            // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
+            // so reborrow it mutably (not actually mutated by the by-value
+            // variant). Step 6 reuses it afterwards.
             worker_pool.each(
                 ctx,
-                |ctx: &Step5Ctx, source_index: Index, i: usize| {
+                |ctx: &Step5Ctx<'_>, source_index: Index, i: usize| {
                     // SAFETY: see `Step5Ctx` Sync justification above.
-                    unsafe { (*ctx.0).do_step5(source_index, i) };
+                    unsafe { LinkerContext::do_step5(ctx.0, source_index, i) };
                 },
-                &mut reachable_mut[..],
+                &mut reachable[..],
             );
         }
 

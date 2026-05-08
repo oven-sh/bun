@@ -85,12 +85,23 @@ pub mod build_options {
     pub const SHA: &str = "0000000000000000000000000000000000000000";
     pub const IS_CANARY: bool = false;
     pub const CANARY_REVISION: &str = "0";
-    pub const BASE_PATH: &[u8] = b"";
+    /// Repo root. Zig's build.zig passes `b.pathFromRoot(".")`; here we derive
+    /// it from this crate's manifest dir (`<repo>/src/bun_core`) so debug
+    /// `runtime_embed_file!` can find on-disk sources without an extra env var.
+    pub const BASE_PATH: &[u8] = match option_env!("BUN_BASE_PATH") {
+        Some(v) => v.as_bytes(),
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../..").as_bytes(),
+    };
     pub const ENABLE_LOGS: bool = cfg!(debug_assertions);
     pub const ENABLE_ASAN: bool = false;
     pub const ENABLE_FUZZILLI: bool = false;
     pub const ENABLE_TINYCC: bool = true;
-    pub const CODEGEN_PATH: &[u8] = b"";
+    /// `<build>/codegen`. `scripts/build/rust.ts` exports `BUN_CODEGEN_DIR` to
+    /// every crate's rustc env; fall back to the default debug profile path.
+    pub const CODEGEN_PATH: &[u8] = match option_env!("BUN_CODEGEN_DIR") {
+        Some(v) => v.as_bytes(),
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../build/debug/codegen").as_bytes(),
+    };
     pub const CODEGEN_EMBED: bool = true;
     pub const VERSION: crate::Version = crate::Version { major: 1, minor: 3, patch: 0 };
     /// Zig: `build_options.fallback_html_version` — hex-string hash of the

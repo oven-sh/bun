@@ -1771,17 +1771,21 @@ pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static 
 macro_rules! runtime_embed_file {
     ($root:expr, $sub_path:literal) => {{
         static __CELL: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
-        let _ = $root; // type-checked but unused at this tier (resolveSourcePath wires later)
         __CELL.get_or_init(|| {
-            let base: &[u8] = match $root {
+            let mut p = match $root {
                 $crate::EmbedKind::Codegen | $crate::EmbedKind::CodegenEager => {
-                    $crate::build_options::CODEGEN_PATH
+                    ::std::path::PathBuf::from(
+                        ::std::str::from_utf8($crate::build_options::CODEGEN_PATH).unwrap_or(""),
+                    )
                 }
                 $crate::EmbedKind::Src | $crate::EmbedKind::SrcEager => {
-                    $crate::build_options::BASE_PATH
+                    let mut b = ::std::path::PathBuf::from(
+                        ::std::str::from_utf8($crate::build_options::BASE_PATH).unwrap_or(""),
+                    );
+                    b.push("src");
+                    b
                 }
             };
-            let mut p = ::std::path::PathBuf::from(::std::str::from_utf8(base).unwrap_or(""));
             p.push($sub_path);
             ::std::fs::read_to_string(&p).unwrap_or_else(|e| {
                 panic!(

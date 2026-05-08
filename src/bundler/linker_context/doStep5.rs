@@ -33,6 +33,11 @@ impl LinkerContext<'_> {
     /// for CommonJS files, and is also necessary for other files if they are
     /// imported using an import star statement.
     ///
+    // CONCURRENCY: `each` callback — runs on worker threads, one task per
+    // `source_index`. Writes: `graph.{ast,meta}[source_index]` SoA cells
+    // (per-row disjoint). Reads `graph.symbols`/`options`/`ts_enums` shared.
+    // Never forms `&mut LinkerContext`; per-row writes via `split_raw()` raw
+    // pointers (root provenance). See `# Safety` for full invariant.
     /// # Safety
     ///
     /// Runs concurrently on worker-pool threads (one task per `source_index`).

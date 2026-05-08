@@ -13,6 +13,14 @@ use crate::{BundleV2, Chunk, CompileResult, Index, PartRange};
 
 use super::generate_code_for_file_in_chunk_js::{generate_code_for_file_in_chunk_js, DeclCollector};
 
+// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
+// `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
+// by per-task `i`), `chunk.files_with_parts_in_chunk[source].counter`
+// (atomic RMW). Reads `c.graph`/`c.parse_graph` SoA columns shared. Never
+// forms `&mut LinkerContext` — `c_ptr` stays raw and the printer takes
+// `&LinkerContext` (see `generate_code_for_file_in_chunk_js`).
+// `PendingPartRange` is `Send` because its only non-auto-`Send` field is
+// `&GenerateChunkCtx` whose pointee is `unsafe impl Send + Sync`.
 pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task is the `task` field embedded in a PendingPartRange (intrusive task node).
     let part_range: &PendingPartRange = unsafe {

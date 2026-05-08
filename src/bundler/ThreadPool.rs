@@ -479,6 +479,13 @@ pub struct WorkerData {
 }
 
 impl Worker {
+    // CONCURRENCY: thread-pool callback — runs on the worker's own OS thread
+    // during pool drain (scheduled via `deinit_soon`). Writes: own `Worker`
+    // fields only (`heap`, `data`, `ast_memory_store` teardown). The `Worker`
+    // is per-OS-thread (`Thread::current()`-keyed), so `&mut *this` is unique.
+    // `Worker` is `Send` because its arena/backref pointers are
+    // owned-heap or per-thread; the `unsafe impl Send for ThreadPool` (the
+    // bundler pool that owns the workers vec) covers the cross-thread move.
     /// SAFETY: `task` must be the `deinit_task` field of a live boxed `Worker`.
     pub unsafe fn deinit_callback(task: *mut ThreadPoolLib::Task) {
         bun_core::scoped_log!(ThreadPool, "Worker.deinit()");

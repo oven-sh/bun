@@ -363,6 +363,16 @@ impl Default for ParseTask {
 // un-gates (lib.rs ` pub mod ThreadPool`).
 // ───────────────────────────────────────────────────────────────────────────
 
+// CONCURRENCY: thread-pool callback — runs on worker (or IO-pool) threads,
+// one task per `ParseTask`. Each `ParseTask` is a heap node owned by the
+// bundle graph; the `&mut ParseTask` recovered here is unique per task (no
+// two callbacks fire for the same `ParseTask` concurrently — the IO→worker
+// hand-off in `run_from_thread_pool_impl` reschedules sequentially). Writes:
+// `ParseTask.{stage, source_index, ...}` (own fields); result is sent via
+// `ctx.loop_.enqueue_task_concurrent` (MPSC queue). Reads `ctx: &BundleV2`
+// shared (`Worker::get`, `ctx.graph.pool`, `ctx.transpiler.options`).
+// `ParseTask` is `Send` because its non-auto-`Send` fields are bundle-
+// lifetime arena slices / backref pointers (`ctx`, `path`, `contents`).
 pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task points to ParseTask.io_task (intrusive field).
     let parse_task = unsafe {
@@ -373,6 +383,7 @@ pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     parse_worker::run_from_thread_pool(parse_task);
 }
 
+// CONCURRENCY: see `io_task_callback` — same task, different intrusive field.
 pub unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task points to ParseTask.task (intrusive field).
     let parse_task = unsafe {
@@ -2533,6 +2544,9 @@ fn run_with_source_code(
 /// `super::*`). Thin shim over `run_from_thread_pool_impl` so the public
 /// symbol stays stable while the body lives in a private fn for borrowck
 /// reshaping.
+// CONCURRENCY: see `task_callback` — `&mut ParseTask` is unique per callback
+// invocation; all shared state is accessed via `&BundleV2` (read-only) or
+// the per-OS-thread `Worker` arena.
 pub fn run_from_thread_pool(this: &mut ParseTask) {
     run_from_thread_pool_impl(this);
 }

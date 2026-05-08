@@ -816,6 +816,13 @@ impl<'a> LinkerContext<'a> {
         Ok(())
     }
 
+    // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
+    // `chunk_index`. Writes: `chunk.intermediate_output`, `chunk.isolated_hash`,
+    // `chunk.output_source_map` (per-chunk, disjoint by `*mut Chunk`). Reads
+    // `ctx.c`/`ctx.chunks` shared. Never forms `&mut LinkerContext` — the
+    // `post_process_*` callees take `GenerateChunkCtx` by value and deref
+    // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
+    // raw-ptr writes (see `postProcessJSChunk.rs`).
     pub fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the duration of this body. ctx.c points into BundleV2.linker;
@@ -842,6 +849,12 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
+    // `chunk_index`. Writes: `chunk.renamer` only (per-chunk, disjoint by
+    // `*mut Chunk`). Reads `ctx.c.graph.{ast,meta,symbols}` SoA columns and
+    // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
+    // LinkerContext` raw and never materializes `&mut LinkerContext` while
+    // peer renamer tasks are live (see its CONCURRENCY note).
     pub fn generate_js_renamer(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
@@ -870,8 +883,10 @@ impl<'a> LinkerContext<'a> {
         };
         // SAFETY: `files` points into `chunk.content.javascript`; `rename_symbols_in_chunk`
         // does not touch `chunk.content` (it writes `chunk.renamer` only). `ctx.c` is the
-        // shared `*mut LinkerContext`; this body is the sole accessor for the renamer pass.
-        chunk.renamer = rename_symbols_in_chunk(unsafe { &mut *ctx.c }, chunk, unsafe { &*files })
+        // shared `*mut LinkerContext` — pass it raw so `rename_symbols_in_chunk` can deref
+        // to `&LinkerContext` (shared) without asserting whole-context exclusivity while
+        // peer renamer tasks run concurrently.
+        chunk.renamer = unsafe { rename_symbols_in_chunk(ctx.c, chunk, &*files) }
             .expect("TODO: handle error");
     }
 
@@ -1147,6 +1162,13 @@ pub struct SourceMapDataTask {
     pub thread_task: ThreadPoolLib::Task,
 }
 
+// SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
+// `OwnedTask: Send` route). `ctx` is a backref into `BundleV2.linker`
+// (`LinkerContext: Send`); `source_index`/`thread_task` are POD. The callback
+// only writes the per-`source_index` SoA cell (see `run_line_offset`
+// CONCURRENCY note), so moving the task to a worker thread is sound.
+unsafe impl Send for SourceMapDataTask {}
+
 impl Default for SourceMapDataTask {
     fn default() -> Self {
         Self {
@@ -1162,6 +1184,13 @@ impl Default for SourceMapDataTask {
 }
 
 impl SourceMapDataTask {
+    // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
+    // `source_index`. Writes: `ctx.graph.files[source_index].line_offset_table`
+    // (per-row disjoint), `ctx.pending_task_count` (atomic),
+    // `ctx.source_maps.line_offset_wait_group` (atomic). Reads
+    // `ctx.parse_graph.input_files[source_index].source` shared. Never forms
+    // `&mut LinkerContext` — `compute_line_offsets` takes `*mut` and writes the
+    // single SoA cell via raw per-row pointer.
     pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
@@ -1193,6 +1222,12 @@ impl SourceMapDataTask {
         worker.unget();
     }
 
+    // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
+    // `source_index`. Writes: `ctx.graph.files[source_index].quoted_source_contents`
+    // (per-row disjoint), `ctx.pending_task_count` (atomic),
+    // `ctx.source_maps.quoted_contents_wait_group` (atomic). Never forms
+    // `&mut LinkerContext` — `compute_quoted_source_contents` takes `*mut` and
+    // writes the single SoA cell via raw per-row pointer.
     pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {

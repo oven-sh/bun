@@ -1189,14 +1189,22 @@ impl IntoExprData for &E::EString {
 // copied. `Array`/`Object` are deep-walked because their item lists hold T2
 // `Expr` and `G::Property`, not T4's.
 //
-// Nodes are interned into the thread-local `data::Store` (same as
-// `Expr::init`), so no `&Bump` is required and `From` fits. Callers that need
-// arena placement should walk the T2 tree themselves with `Expr::allocate`.
+// Boxed payloads are heap-allocated (leaked), NOT placed in the resettable
+// `data::Store`. The only producers of T2 trees are `WorkspacePackageJSONCache`
+// / `bun pm pkg` / `bun update -i`, all of which mirror Zig's
+// `json.root.deepClone(bun.default_allocator)` — i.e. nodes that must outlive
+// every `initializeStore()` reset fired by `do_patch_commit` /
+// `install_with_manager`. Interning into `data::Store` here is a UAF once any
+// later reset poisons the slab.
 // ───────────────────────────────────────────────────────────────────────────
 
 impl From<logger::js_ast::expr::Data> for Data {
     fn from(d: logger::js_ast::expr::Data) -> Self {
         use logger::js_ast::expr::Data as V;
+        #[inline(always)]
+        fn leak<T>(v: T) -> StoreRef<T> {
+            StoreRef::from_bump(Box::leak(Box::new(v)))
+        }
         match d {
             // Shared (re-exported) leaf payloads — identity.
             V::EBoolean(b) => Data::EBoolean(b),
@@ -1208,8 +1216,11 @@ impl From<logger::js_ast::expr::Data> for Data {
             V::EString(s) => {
                 // T2 interchange strings are never ropes; copy data + encoding.
                 debug_assert!(s.next.is_none());
-                E::EString { data: s.data.into(), is_utf16: s.is_utf16, ..Default::default() }
-                    .into_data_store()
+                Data::EString(leak(E::EString {
+                    data: s.data.into(),
+                    is_utf16: s.is_utf16,
+                    ..Default::default()
+                }))
             }
             // Recursive containers — deep rebuild.
             V::EArray(arr) => {
@@ -1218,15 +1229,14 @@ impl From<logger::js_ast::expr::Data> for Data {
                 for it in arr.items.slice() {
                     VecExt::append(&mut items, Expr::from(*it)).expect("OOM");
                 }
-                E::Array {
+                Data::EArray(leak(E::Array {
                     items,
                     comma_after_spread: arr.comma_after_spread,
                     is_single_line: arr.is_single_line,
                     is_parenthesized: arr.is_parenthesized,
                     was_originally_macro: arr.was_originally_macro,
                     close_bracket_loc: arr.close_bracket_loc,
-                }
-                .into_data_store()
+                }))
             }
             V::EObject(obj) => {
                 use logger::js_ast::G::{PropertyFlags as T2Flags, PropertyKind as T2Kind};
@@ -1272,15 +1282,14 @@ impl From<logger::js_ast::expr::Data> for Data {
                         })
                         .expect("OOM");
                 }
-                E::Object {
+                Data::EObject(leak(E::Object {
                     properties,
                     comma_after_spread: obj.comma_after_spread,
                     is_single_line: obj.is_single_line,
                     is_parenthesized: obj.is_parenthesized,
                     was_originally_macro: obj.was_originally_macro,
                     close_brace_loc: obj.close_brace_loc,
-                }
-                .into_data_store()
+                }))
             }
         }
     }

@@ -114,6 +114,7 @@ impl Mv {
                         done: false,
                         task: ShellTask::new(evtloop),
                     });
+                    task.task.interp = interp;
                     // SAFETY: `task` is heap-allocated and outlives the worker
                     // call (held in `MvState::CheckTarget` below).
                     unsafe { ShellTask::schedule(&raw mut *task) };
@@ -248,12 +249,14 @@ impl Mv {
                     };
                     // Now that the AtomicBool has its final address, point
                     // every task at it and schedule.
+                    let interp_ptr: *mut Interpreter = interp;
                     if let MvState::Executing { error_signal, tasks, .. } =
                         &mut Self::state_mut(interp, cmd).state
                     {
                         let sig = std::ptr::from_ref::<AtomicBool>(error_signal);
                         for t in tasks.iter_mut() {
                             t.error_signal = sig;
+                            t.task.interp = interp_ptr;
                             // SAFETY: `t` is a `Box<ShellMvBatchedTask>` held by
                             // `MvState::Executing` for the worker call's lifetime.
                             unsafe { ShellTask::schedule(&raw mut **t) };

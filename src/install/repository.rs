@@ -661,7 +661,7 @@ impl RepositoryExt for Repository {
                 Ok(dir)
             }
             Err(not_found) => {
-                if not_found != err!("FileNotFound") {
+                if not_found != err!("ENOENT") {
                     return Err(not_found);
                 }
 

@@ -1866,24 +1866,32 @@ fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> Resul
             let mut compressed_bytes: [u8; 2048] = [0; 2048];
             let mut len: bun_zlib::uLong = compressed_bytes.len() as bun_zlib::uLong;
             // SAFETY: buffers and lengths are valid
-            let ret: bun_zlib::ReturnCode = unsafe {
-                core::mem::transmute(bun_zlib::compress2(
+            let ret = unsafe {
+                bun_zlib::compress2(
                     compressed_bytes.as_mut_ptr(),
                     &raw mut len,
                     message.as_ptr(),
                     u32::try_from(message.len()).expect("int cast") as bun_zlib::uLong,
                     9,
-                ))
+                )
             };
-            let compressed = match ret {
-                bun_zlib::ReturnCode::Ok => &compressed_bytes[0..usize::try_from(len).expect("int cast")],
+            // Match on the raw zlib return code so this stays ABI-correct
+            // regardless of whether the platform `compress2` binding returns
+            // `c_int` (posix) or the `ReturnCode` enum (win32).
+            let compressed = match ret as i32 {
+                r if r == bun_zlib::ReturnCode::Ok as i32 => {
+                    &compressed_bytes[0..usize::try_from(len).expect("int cast")]
+                }
                 // Insufficient memory.
-                bun_zlib::ReturnCode::MemError => return Err(bun_core::err!("OutOfMemory")),
+                r if r == bun_zlib::ReturnCode::MemError as i32 => {
+                    return Err(bun_core::err!("OutOfMemory"))
+                }
                 // The buffer dest was not large enough to hold the compressed data.
-                bun_zlib::ReturnCode::BufError => return Err(bun_core::err!("NoSpaceLeft")),
+                r if r == bun_zlib::ReturnCode::BufError as i32 => {
+                    return Err(bun_core::err!("NoSpaceLeft"))
+                }
                 // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
                 // This is technically possible but impossible because we pass 9.
-                bun_zlib::ReturnCode::StreamError => return Err(bun_core::err!("Unexpected")),
                 _ => return Err(bun_core::err!("Unexpected")),
             };
 

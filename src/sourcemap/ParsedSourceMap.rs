@@ -130,11 +130,15 @@ impl SourceContentPtr {
 
     #[inline]
     pub fn load_hint(self) -> SourceMapLoadHint {
-        // SAFETY: only ever written via `new()` from a valid SourceMapLoadHint discriminant.
-        unsafe {
-            core::mem::transmute::<u8, SourceMapLoadHint>(
-                ((self.0 >> Self::LOAD_HINT_SHIFT) & Self::LOAD_HINT_MASK) as u8,
-            )
+        // Only ever written via `new()`/`set_load_hint()` from a valid
+        // discriminant; the 2-bit field never holds 0b11.
+        match ((self.0 >> Self::LOAD_HINT_SHIFT) & Self::LOAD_HINT_MASK) as u8 {
+            1 => SourceMapLoadHint::IsInlineMap,
+            2 => SourceMapLoadHint::IsExternalMap,
+            v => {
+                debug_assert_eq!(v, 0);
+                SourceMapLoadHint::None
+            }
         }
     }
 
@@ -146,11 +150,14 @@ impl SourceContentPtr {
 
     #[inline]
     fn kind(self) -> SourceProviderKind {
-        // SAFETY: only ever written via `new()` from a valid SourceProviderKind discriminant.
-        unsafe {
-            core::mem::transmute::<u8, SourceProviderKind>(
-                ((self.0 >> Self::KIND_SHIFT) & Self::KIND_MASK) as u8,
-            )
+        // Only ever written via `new()` from a valid discriminant.
+        match ((self.0 >> Self::KIND_SHIFT) & Self::KIND_MASK) as u8 {
+            0 => SourceProviderKind::Zig,
+            1 => SourceProviderKind::Bake,
+            v => {
+                debug_assert_eq!(v, 2);
+                SourceProviderKind::DevServer
+            }
         }
     }
 

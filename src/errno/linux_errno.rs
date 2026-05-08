@@ -367,8 +367,8 @@ macro_rules! impl_get_errno_libc {
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    // SAFETY: errno value is a valid E discriminant on Linux
-                    unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
+                    // errno value is a valid E discriminant on Linux
+                    E::from_raw(crate::posix::errno() as u16)
                 } else {
                     E::SUCCESS
                 }

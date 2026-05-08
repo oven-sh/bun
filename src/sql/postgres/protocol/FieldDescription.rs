@@ -28,8 +28,10 @@ impl Default for FieldDescription {
 
 impl FieldDescription {
     pub fn type_tag(&self) -> types::Tag {
-        // SAFETY: types::Tag is #[repr(Short)]; Zig does @enumFromInt on a truncated short.
-        unsafe { core::mem::transmute::<Short, types::Tag>(self.type_oid as Short) }
+        // `types::Tag` is a `#[repr(transparent)] struct(Short)` newtype (Zig
+        // models the OID enum as non-exhaustive `enum(short){…,_}`), so wrap
+        // the truncated value directly.
+        types::Tag(self.type_oid as Short)
     }
 
     // PORT NOTE: reshaped out-param constructor (`this.* = .{...}`) into a value-returning fn.

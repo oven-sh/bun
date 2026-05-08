@@ -2839,11 +2839,10 @@ impl<'a> HTTPClient<'a> {
 
             break;
         }
-        // SAFETY: pending_response was set above; transmute is the same widen.
+        // pending_response is already `Option<Response<'static>>` (set just above).
         // NOTE: copy (Response is Copy), do NOT .take() — clone_metadata() below
         // requires pending_response to remain Some.
-        let mut response: picohttp::Response<'static> =
-            unsafe { core::mem::transmute(self.state.pending_response.unwrap()) };
+        let mut response: picohttp::Response<'static> = self.state.pending_response.unwrap();
         let should_continue = match self.handle_response_metadata(&mut response) {
             Ok(s) => s,
             Err(err) => {
@@ -4188,7 +4187,7 @@ impl<'a> HTTPClient<'a> {
                                 // SAFETY: self-borrow — `normalized_url_str` is moved into
                                 // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                                 let new_url: URL<'a> =
-                                    unsafe { core::mem::transmute::<URL<'_>, URL<'a>>(URL::parse(&normalized_url_str)) };
+                                    unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin), true);
                                 self.url = new_url;
                                 // connected_url still borrows from the previous hop's buffer
@@ -4242,7 +4241,7 @@ impl<'a> HTTPClient<'a> {
                                 // SAFETY: self-borrow — `normalized_url_str` is moved into
                                 // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                                 let new_url: URL<'a> =
-                                    unsafe { core::mem::transmute::<URL<'_>, URL<'a>>(URL::parse(&normalized_url_str)) };
+                                    unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(new_url.origin), strings::without_trailing_slash(self.url.origin), true);
                                 self.url = new_url;
                                 debug_assert!(self.prev_redirect.is_empty());
@@ -4262,7 +4261,7 @@ impl<'a> HTTPClient<'a> {
                                 let new_url = new_url_.to_owned_slice();
                                 // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                                 // below, which lives as long as `self` (≥ `'a`).
-                                self.url = unsafe { core::mem::transmute::<URL<'_>, URL<'a>>(URL::parse(&new_url)) };
+                                self.url = unsafe { URL::parse(&new_url).erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(strings::without_trailing_slash(self.url.origin), strings::without_trailing_slash(original_url.origin), true);
                                 debug_assert!(self.prev_redirect.is_empty());
                                 self.prev_redirect =

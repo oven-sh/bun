@@ -541,15 +541,26 @@ static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::n
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
 
 impl CompileC {
-    pub extern "C" fn handle_compilation_error(
-        this_: Option<&mut CompileC>,
-        message: Option<NonNull<c_char>>,
+    /// # Safety
+    /// `this_` is the `ConfigErr::ctx` pointer round-tripped through TinyCC; it
+    /// must be null or point to a live `CompileC`. `message` is a NUL-terminated
+    /// C string when non-null. Signature matches `ConfigErr::handler` exactly so
+    /// it can be passed without an ABI-coercing cast.
+    pub unsafe extern "C" fn handle_compilation_error(
+        this_: *mut CompileC,
+        message: *const c_char,
     ) {
-        let Some(this) = this_ else { return };
+        if this_.is_null() {
+            return;
+        }
+        // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; we hold
+        // the unique borrow for the duration of the callback.
+        let this = unsafe { &mut *this_ };
         // SAFETY: TCC guarantees message is a valid NUL-terminated string when non-null
-        let mut msg: &[u8] = match message {
-            Some(p) => unsafe { core::ffi::CStr::from_ptr(p.as_ptr()) }.to_bytes(),
-            None => b"",
+        let mut msg: &[u8] = if message.is_null() {
+            b""
+        } else {
+            unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes()
         };
         if msg.is_empty() {
             return;
@@ -709,15 +720,7 @@ impl CompileC {
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<CompileC>(self)),
-                // SAFETY: `Option<&mut T>` / `Option<NonNull<c_char>>` are
-                // ABI-identical to `*mut T` / `*const c_char` (NPO); the
-                // handler is only ever invoked by TinyCC via the C ABI.
-                handler: unsafe {
-                    core::mem::transmute::<
-                        extern "C" fn(Option<&mut CompileC>, Option<NonNull<c_char>>),
-                        unsafe extern "C" fn(*mut CompileC, *const c_char),
-                    >(Self::handle_compilation_error)
-                },
+                handler: Self::handle_compilation_error,
             },
         }) {
             Ok(s) => s,
@@ -2066,8 +2069,15 @@ impl Function {
         }
     }
 
-    pub extern "C" fn handle_tcc_error(ctx: Option<&mut Function>, message: *const c_char) {
-        let this = ctx.unwrap();
+    /// # Safety
+    /// `ctx` is the `ConfigErr::ctx` pointer round-tripped through TinyCC and
+    /// must point to a live `Function`. `message` is a NUL-terminated C string.
+    /// Signature matches `ConfigErr::handler` exactly so it can be passed
+    /// without an ABI-coercing cast.
+    pub unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
+        debug_assert!(!ctx.is_null());
+        // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
+        let this = unsafe { &mut *ctx };
         // SAFETY: TCC passes a valid NUL-terminated string
         let mut msg: &[u8] = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
         if !msg.is_empty() {
@@ -2114,13 +2124,7 @@ impl Function {
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),
-                // SAFETY: `Option<&mut T>` is ABI-identical to `*mut T` (NPO).
-                handler: unsafe {
-                    core::mem::transmute::<
-                        extern "C" fn(Option<&mut Function>, *const c_char),
-                        unsafe extern "C" fn(*mut Function, *const c_char),
-                    >(Self::handle_tcc_error)
-                },
+                handler: Self::handle_tcc_error,
             },
         }) {
             Ok(s) => s,
@@ -2237,13 +2241,7 @@ impl Function {
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),
-                // SAFETY: `Option<&mut T>` is ABI-identical to `*mut T` (NPO).
-                handler: unsafe {
-                    core::mem::transmute::<
-                        extern "C" fn(Option<&mut Function>, *const c_char),
-                        unsafe extern "C" fn(*mut Function, *const c_char),
-                    >(Self::handle_tcc_error)
-                },
+                handler: Self::handle_tcc_error,
             },
         }) {
             Ok(s) => s,

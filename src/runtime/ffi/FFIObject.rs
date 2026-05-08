@@ -10,6 +10,24 @@ use bun_str::ZigString;
 // Non-throwing `toInvalidArguments` shim — see ffi_body.rs for rationale.
 use super::ffi_body::GlobalObjectFfiExt as _;
 
+/// Reinterpret a user-supplied raw address (from `bun:ffi` JS land) as a
+/// JSC typed-array bytes deallocator. Centralized so the `usize → fn ptr`
+/// reinterpretation lives in one place.
+///
+/// # Safety
+/// `addr` must be either `0` or the address of a function with signature
+/// `extern "C" fn(*mut c_void, *mut c_void)`. This is user-supplied via
+/// `bun:ffi`; a bad value will crash when JSC invokes it.
+#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator
+#[inline(always)]
+unsafe fn deallocator_from_addr(addr: usize) -> jsc::c::JSTypedArrayBytesDeallocator {
+    // SAFETY: `JSTypedArrayBytesDeallocator` is
+    // `Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>`, which under
+    // the null-pointer optimisation is layout-compatible with a single
+    // pointer-sized word — exactly `usize` here. `0` round-trips to `None`.
+    unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(addr) }
+}
+
 /// Port of Zig `JSValue.createBufferWithCtx(global, slice, ctx, callback)` —
 /// unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
 /// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
@@ -574,7 +592,7 @@ pub fn to_array_buffer(
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
                     // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(callback_ptr) };
+                    callback = unsafe { deallocator_from_addr(callback_ptr) };
 
                     if let Some(ctx_value) = finalization_ctx_or_ptr {
                         if let Some(ctx_ptr) = get_cptr(ctx_value) {
@@ -593,7 +611,7 @@ pub fn to_array_buffer(
             } else if let Some(callback_value) = finalization_ctx_or_ptr {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
                     // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(callback_ptr) };
+                    callback = unsafe { deallocator_from_addr(callback_ptr) };
                 } else if !callback_value.is_empty_or_undefined_or_null() {
                     return Ok(global_this.to_invalid_arguments(format_args!(
                         "Expected callback to be a C pointer (number or BigInt)"
@@ -626,7 +644,7 @@ pub fn to_buffer(
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
                     // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(callback_ptr) };
+                    callback = unsafe { deallocator_from_addr(callback_ptr) };
 
                     if let Some(ctx_value) = finalization_ctx_or_ptr {
                         if let Some(ctx_ptr) = get_cptr(ctx_value) {
@@ -645,7 +663,7 @@ pub fn to_buffer(
             } else if let Some(callback_value) = finalization_ctx_or_ptr {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
                     // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(callback_ptr) };
+                    callback = unsafe { deallocator_from_addr(callback_ptr) };
                 } else if !callback_value.is_empty_or_undefined_or_null() {
                     return Ok(global_this.to_invalid_arguments(format_args!(
                         "Expected callback to be a C pointer (number or BigInt)"

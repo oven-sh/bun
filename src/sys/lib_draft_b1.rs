@@ -732,7 +732,7 @@ enum LinuxKernel {
 
 impl LinuxKernel {
     // TODO(port): Zig used `std.atomic.Value(LinuxKernel)`; Rust atomics don't support
-    // arbitrary enums directly, so we store as u8 and transmute on load.
+    // arbitrary enums directly, so we store as u8 and decode on load.
     fn cached() -> &'static AtomicU8 {
         static CACHED: AtomicU8 = AtomicU8::new(0); // Unknown
         &CACHED
@@ -758,10 +758,12 @@ impl LinuxKernel {
     }
 
     fn get() -> LinuxKernel {
-        let v = Self::cached().load(Ordering::Acquire);
-        if v != LinuxKernel::Unknown as u8 {
-            // SAFETY: only stored values are valid LinuxKernel discriminants.
-            return unsafe { core::mem::transmute(v) };
+        // Only `Linux` / `FreeBSD` are ever stored (see `detect`); `0` /
+        // anything else means "not yet detected" and falls through to detect.
+        match Self::cached().load(Ordering::Acquire) {
+            v if v == LinuxKernel::Linux as u8 => return LinuxKernel::Linux,
+            v if v == LinuxKernel::FreeBSD as u8 => return LinuxKernel::FreeBSD,
+            _ => {}
         }
         let detected = Self::detect();
         Self::cached().store(detected as u8, Ordering::Release);

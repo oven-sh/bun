@@ -306,9 +306,9 @@ pub fn host_fn_result<R: IntoHostFnReturn>(
 // ──────────────────────── safe codegen-thunk entry points ────────────────────────
 //
 // `generate-classes.ts::generateRust()` emits per-property `#[no_mangle]` thunks
-// that previously open-coded `unsafe { &*global }` / `unsafe { &mut *this }` /
-// `unsafe { &*callframe }` at every site (~4k `unsafe` blocks in the generated
-// file alone). These wrappers centralise those derefs: the generated thunk is
+// that previously open-coded `unsafe { &*ptr }` per pointer per site (~4k
+// `unsafe` blocks in the generated file alone, three derefs each). These
+// wrappers centralise those derefs: the generated thunk is
 // now a one-liner `host_fn_this(this, global, callframe, T::method)` and the
 // user's inherent method takes safe `&mut self` / `&JSGlobalObject` /
 // `&CallFrame`. User methods that need the `VirtualMachine` call
@@ -428,7 +428,7 @@ pub unsafe fn host_fn_lazy<R: IntoHostFnReturn>(
     f: impl FnOnce(&JSGlobalObject) -> R,
 ) -> JSValue {
     // SAFETY: see block comment above.
-    let global = unsafe { &*global };
+    let (global,) = unsafe { (&*global,) };
     host_fn_result(global, || f(global))
 }
 
@@ -442,7 +442,7 @@ pub unsafe fn host_fn_static_getter<P, R: IntoHostFnReturn>(
     f: impl FnOnce(&JSGlobalObject, JSValue, P) -> R,
 ) -> JSValue {
     // SAFETY: see block comment above.
-    let global = unsafe { &*global };
+    let (global,) = unsafe { (&*global,) };
     host_fn_result(global, || f(global, this_value, prop))
 }
 
@@ -457,7 +457,7 @@ pub unsafe fn host_fn_static_setter<P, R: IntoHostSetterReturn>(
     f: impl FnOnce(&JSGlobalObject, JSValue, JSValue, P) -> R,
 ) -> bool {
     // SAFETY: see block comment above.
-    let global = unsafe { &*global };
+    let (global,) = unsafe { (&*global,) };
     host_setter_result(global, || f(global, this_value, value, prop))
 }
 

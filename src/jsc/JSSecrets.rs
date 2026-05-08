@@ -134,12 +134,10 @@ impl Drop for SecretsJob {
 // Helper function for C++ to call with opaque pointer
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Secrets__scheduleJob(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     options: *mut SecretsJobOptions,
     promise: JSValue,
 ) {
-    // SAFETY: global is a valid &JSGlobalObject for the duration of this call (C++ caller contract).
-    let global = unsafe { &*global };
     let job = SecretsJob::create(global, options, promise);
     // SAFETY: job is non-null, freshly allocated, uniquely owned.
     unsafe { (*job).schedule() };

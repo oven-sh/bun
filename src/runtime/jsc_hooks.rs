@@ -4088,7 +4088,7 @@ unsafe fn transpile_file(
             }
             // Generic transpile error → format `log` into `*ret`.
             bun_jsc::module_loader::process_fetch_log(
-                global,
+                global_ref,
                 // SAFETY: per fn contract — pointers valid for the call.
                 unsafe { *specifier_ptr },
                 unsafe { *referrer },
@@ -4253,7 +4253,7 @@ unsafe fn transpile_virtual_module(
             }
             // Generic transpile error → format `log` into `*ret`.
             bun_jsc::module_loader::process_fetch_log(
-                global,
+                global_ref,
                 // SAFETY: per fn contract — pointers valid for the call.
                 unsafe { *specifier_ptr },
                 unsafe { *referrer_ptr },

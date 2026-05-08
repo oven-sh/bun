@@ -284,7 +284,7 @@ impl Drop for ExternColumnIdentifier {
     }
 }
 
-pub type InitializeCallback = extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: *mut JSGlobalObject);
+pub type InitializeCallback = extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: &JSGlobalObject);
 
 /// Zig's `Initializer(comptime Ctx, comptime func)` returned a type with a
 /// single `extern "C" fn call`. In Rust the contract is a trait: implement
@@ -296,16 +296,15 @@ pub trait ObjectInitializer {
 extern "C" fn initializer_call<Ctx: ObjectInitializer>(
     this: *mut c_void,
     obj: *mut JSObject,
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
 ) {
     // SAFETY: `this` was produced from `&mut Ctx` in `create_with_initializer`;
-    // `obj` and `global` are live JSC pointers for the duration of the callback.
-    let result = unsafe { Ctx::create(&mut *this.cast::<Ctx>(), &mut *obj, &*global) };
+    // `obj` is a live JSC pointer for the duration of the callback. `global` is
+    // taken by reference at the C ABI (`&T` ≡ non-null `*const T`).
+    let result = unsafe { Ctx::create(&mut *this.cast::<Ctx>(), &mut *obj, global) };
     if let Err(err) = result {
         // Mirrors `host_fn::void_from_js_error` (host_fn.zig) — OOM throws,
         // anything else asserts an exception is already pending.
-        // SAFETY: `global` is valid (see above).
-        let global = unsafe { &*global };
         match err {
             JsError::OutOfMemory => {
                 global.throw_out_of_memory_value();

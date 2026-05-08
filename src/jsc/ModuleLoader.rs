@@ -384,16 +384,13 @@ pub fn resolve(
 /// `ResolveMessage` live in this crate — so the hook slot was dropped and this
 /// forwards to the real impl in [`crate::virtual_machine::process_fetch_log`].
 pub fn process_fetch_log(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     specifier: bun_string::String,
     referrer: bun_string::String,
     log: &mut logger::Log,
     errorable: &mut ErrorableResolvedSource,
     err: bun_core::Error,
 ) {
-    // SAFETY: callers (AsyncModule::fulfill, Bun__transpileFile error path)
-    // pass the live JS-thread global; never null.
-    let global = unsafe { &*global };
     crate::virtual_machine::process_fetch_log(global, specifier, referrer, log, errorable, err)
 }
 
@@ -612,13 +609,10 @@ pub extern "C" fn Bun__transpileVirtualModule(
 /// Spec ModuleLoader.zig:1122-1143.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__runVirtualModule(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     specifier_ptr: *const bun_string::String,
 ) -> JSValue {
     jsc::mark_binding();
-    // SAFETY: C++ passed the live JS-thread global; never null. `bun_vm()` is
-    // the per-thread VM pointer (never null on this path).
-    let global = unsafe { &*global };
     if global.bun_vm().plugin_runner.is_none() {
         return JSValue::ZERO;
     }

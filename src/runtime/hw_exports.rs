@@ -348,15 +348,14 @@ pub extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
 }
 
 /// `BunObject.braces(input, options) -> JSValue`.
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_BunObject_dispatchBraces1(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_BunObject_dispatchBraces1, c)
+pub fn bindgen_bunobject_dispatch_braces(
+    global: &JSGlobalObject,
     arg_input: *const bun_string::String,
     arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
-    // SAFETY: `global` is the live per-thread global; `arg_input`/`arg_options`
-    // are valid C++ stack locals (see GeneratedBindings.zig:203 call site).
-    let global = unsafe { &*global };
+    // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals (see
+    // GeneratedBindings.zig:203 call site).
     // Zig spec passes `arg_input.*` (bitwise copy of the ref-counted handle,
     // **no** refcount bump). `bun_string::String` is `Copy` with no `Drop`, so
     // a plain deref matches that exactly; `braces` only borrows the bytes via
@@ -369,15 +368,13 @@ pub extern "C" fn bindgen_BunObject_dispatchBraces1(
 }
 
 /// `BunObject.gc(force) -> usize` (heap size after collection).
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_BunObject_dispatchGc1(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_BunObject_dispatchGc1, c)
+pub fn bindgen_bunobject_dispatch_gc(
+    global: &JSGlobalObject,
     arg_force: *const bool,
     out: *mut usize,
 ) -> bool {
-    // SAFETY: `global` is the live per-thread global; `arg_force`/`out` are
-    // valid C++ stack locals.
-    let global = unsafe { &*global };
+    // SAFETY: `arg_force`/`out` are valid C++ stack locals.
     let force = unsafe { *arg_force };
     // Spec body (GeneratedBindings.zig:212 → BunObject.zig `gc`):
     // `vm.garbageCollect(force)` — mimalloc cleanup, then sync `runGC(true)`
@@ -389,16 +386,15 @@ pub extern "C" fn bindgen_BunObject_dispatchGc1(
 
 /// `fmt_jsc.js_bindings.fmtString(code, formatter) -> bun.String`
 /// (highlighter.test.ts internal — see `src/jsc/fmt_jsc.zig`).
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Fmt_jsc_dispatchFmtString1(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_Fmt_jsc_dispatchFmtString1, c)
+pub fn bindgen_fmt_jsc_dispatch_fmt_string(
+    global: &JSGlobalObject,
     arg_code: *const bun_string::String,
     arg_formatter: *const bun_jsc::fmt_jsc::js_bindings::Formatter,
     out: *mut bun_string::String,
 ) -> bool {
-    // SAFETY: `global` is the live per-thread global; `arg_code`/`arg_formatter`
-    // /`out` are valid C++ stack locals (see GeneratedBindings.cpp call site).
-    let global = unsafe { &*global };
+    // SAFETY: `arg_code`/`arg_formatter`/`out` are valid C++ stack locals
+    // (see GeneratedBindings.cpp call site).
     let code = unsafe { (*arg_code).to_utf8() };
     let formatter = unsafe { *arg_formatter };
     match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
@@ -434,16 +430,15 @@ pub extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(
 // ─── bindgen dispatch shims: Bindgen_test (src/jsc/bindgen_test.rs) ──────────
 
 /// `bindgen_test.add(a, b) -> i32` — bindgen self-test (overflow throws).
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Bindgen_test_dispatchAdd1(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_Bindgen_test_dispatchAdd1, c)
+pub fn bindgen_bindgen_test_dispatch_add(
+    global: &JSGlobalObject,
     arg_a: *const i32,
     arg_b: *const i32,
     out: *mut i32,
 ) -> bool {
-    // SAFETY: `global` is the live per-thread global; `arg_a`/`arg_b`/`out` are
-    // valid C++ stack locals (see GeneratedBindings.cpp:149).
-    let global = unsafe { &*global };
+    // SAFETY: `arg_a`/`arg_b`/`out` are valid C++ stack locals (see
+    // GeneratedBindings.cpp:149).
     match bun_jsc::bindgen_test::add(global, unsafe { *arg_a }, unsafe { *arg_b }) {
         Ok(v) => {
             unsafe { *out = v };
@@ -527,24 +522,21 @@ pub extern "C" fn bindgen_Node_os_dispatchFreemem1(
     true
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchGetPriority1(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_Node_os_dispatchGetPriority1, c)
+pub fn bindgen_node_os_dispatch_get_priority(
+    global: &JSGlobalObject,
     arg_pid: *const i32,
     out: *mut i32,
 ) -> bool {
-    // SAFETY: `global`/`arg_pid`/`out` are valid C++ stack locals.
-    let global = unsafe { &*global };
+    // SAFETY: `arg_pid`/`out` are valid C++ stack locals.
     bindgen_out(global, out, node_os::get_priority(global, unsafe { *arg_pid }))
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchHomedir1(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_Node_os_dispatchHomedir1, c)
+pub fn bindgen_node_os_dispatch_homedir(
+    global: &JSGlobalObject,
     out: *mut bun_string::String,
 ) -> bool {
-    // SAFETY: `global`/`out` are valid C++ stack locals.
-    let global = unsafe { &*global };
     bindgen_out(global, out, node_os::homedir(global))
 }
 
@@ -583,46 +575,37 @@ pub extern "C" fn bindgen_Node_os_dispatchTotalmem1(
     true
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchUptime1(
-    global: *mut JSGlobalObject,
-    out: *mut f64,
-) -> bool {
-    // SAFETY: `global`/`out` are valid C++ stack locals.
-    let global = unsafe { &*global };
+// HOST_EXPORT(bindgen_Node_os_dispatchUptime1, c)
+pub fn bindgen_node_os_dispatch_uptime(global: &JSGlobalObject, out: *mut f64) -> bool {
     bindgen_out(global, out, node_os::uptime(global))
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchUserInfo1(
-    global: *mut JSGlobalObject,
-    arg_options: *const node_os::gen_::UserInfoOptions,
+// HOST_EXPORT(bindgen_Node_os_dispatchUserInfo1, c)
+pub fn bindgen_node_os_dispatch_user_info(
+    global: &JSGlobalObject,
+    arg_options: *const crate::node::os::gen_::UserInfoOptions,
 ) -> JSValue {
-    // SAFETY: `global`/`arg_options` are valid C++ stack locals; `UserInfoOptions`
-    // is `#[repr(C)]` matching the bindgen `extern struct`.
-    let global = unsafe { &*global };
+    // SAFETY: `arg_options` is a valid C++ stack local; `UserInfoOptions` is
+    // `#[repr(C)]` matching the bindgen `extern struct`.
     let options = unsafe { core::ptr::read(arg_options) };
     bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, options))
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchVersion1(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_Node_os_dispatchVersion1, c)
+pub fn bindgen_node_os_dispatch_version(
+    global: &JSGlobalObject,
     out: *mut bun_string::String,
 ) -> bool {
-    // SAFETY: `global`/`out` are valid C++ stack locals.
-    let global = unsafe { &*global };
     bindgen_out(global, out, node_os::version())
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchSetPriority1(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_Node_os_dispatchSetPriority1, c)
+pub fn bindgen_node_os_dispatch_set_priority1(
+    global: &JSGlobalObject,
     arg_pid: *const i32,
     arg_priority: *const i32,
 ) -> bool {
-    // SAFETY: `global`/`arg_pid`/`arg_priority` are valid C++ stack locals.
-    let global = unsafe { &*global };
+    // SAFETY: `arg_pid`/`arg_priority` are valid C++ stack locals.
     bindgen_out(
         global,
         std::ptr::from_mut::<()>(&mut ()),
@@ -630,13 +613,12 @@ pub extern "C" fn bindgen_Node_os_dispatchSetPriority1(
     )
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchSetPriority2(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(bindgen_Node_os_dispatchSetPriority2, c)
+pub fn bindgen_node_os_dispatch_set_priority2(
+    global: &JSGlobalObject,
     arg_priority: *const i32,
 ) -> bool {
-    // SAFETY: `global`/`arg_priority` are valid C++ stack locals.
-    let global = unsafe { &*global };
+    // SAFETY: `arg_priority` is a valid C++ stack local.
     bindgen_out(
         global,
         std::ptr::from_mut::<()>(&mut ()),
@@ -657,18 +639,14 @@ unsafe extern "C" {
     fn bindgen_DevServer_jsGetDeinitCountForTesting(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
 }
 
-#[unsafe(export_name = "js2native_bindgen_fmt_jsc_fmtString")]
-pub extern "C" fn js2native_bindgen_fmt_jsc_fmt_string(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is live (passed from JS2Native bridge).
-    let global = unsafe { &*global };
+// HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, c)
+pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue {
     let name = bun_string::ZigString::init_utf8(b"fmtString");
     bun_jsc::host_fn::new_runtime_function(global, Some(&name), 3, bindgen_Fmt_jsc_jsFmtString, false, None)
 }
 
-#[unsafe(export_name = "js2native_bindgen_DevServer_getDeinitCountForTesting")]
-pub extern "C" fn js2native_bindgen_dev_server_get_deinit_count(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is live (passed from JS2Native bridge).
-    let global = unsafe { &*global };
+// HOST_EXPORT(js2native_bindgen_DevServer_getDeinitCountForTesting, c)
+pub fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) -> JSValue {
     let name = bun_string::ZigString::init_utf8(b"getDeinitCountForTesting");
     bun_jsc::host_fn::new_runtime_function(
         global,

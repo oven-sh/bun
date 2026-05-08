@@ -35,12 +35,12 @@ impl ApiLoader {
 // invokes this with the coerced args directly — there is no CallFrame here.
 #[unsafe(no_mangle)]
 pub extern "C" fn NodeModuleModule__findPath(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     request_bun_str: BunString,
     paths_maybe: *mut JSArray,
 ) -> JSValue {
-    // SAFETY: C++ caller guarantees non-null global; paths_maybe is a nullable JSArray*.
-    let global = unsafe { &*global };
+    // SAFETY: paths_maybe is a nullable JSArray*; C++ caller guarantees non-null
+    // global (`&T` ≡ non-null `*const T` at the C ABI).
     let paths_maybe: Option<&JSArray> = unsafe { paths_maybe.as_ref() };
     jsc::host_fn::to_js_host_call(global, || find_path(global, request_bun_str, paths_maybe))
 }
@@ -238,14 +238,13 @@ pub fn find_longest_registered_extension<'a>(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     str: *const BunString,
     loader: ApiLoader,
     value: JSValue,
 ) {
     // PERF(port): was stack-fallback (8192 bytes) — profile in Phase B
-    // SAFETY: C++ caller guarantees non-null global and str for the call's duration
-    let global = unsafe { &*global };
+    // SAFETY: C++ caller guarantees non-null str for the call's duration.
     let str_slice = unsafe { &*str }.to_utf8();
     if on_require_extension_modify(global, str_slice.slice(), loader, value).is_err() {
         bun_core::out_of_memory();
@@ -254,12 +253,11 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     str: *const BunString,
 ) {
     // PERF(port): was stack-fallback (8192 bytes) — profile in Phase B
-    // SAFETY: C++ caller guarantees non-null global and str for the call's duration
-    let global = unsafe { &*global };
+    // SAFETY: C++ caller guarantees non-null str for the call's duration.
     let str_slice = unsafe { &*str }.to_utf8();
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {
         bun_core::out_of_memory();

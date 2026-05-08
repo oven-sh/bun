@@ -329,20 +329,18 @@ pub mod reader {
         JSValue::js_number(value)
     }
     #[bun_jsc::host_call]
-    pub extern fn u64_without_type_checks(global: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
+    pub extern fn u64_without_type_checks(global: &JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u64).read_unaligned() };
-        // SAFETY: global is non-null, JS thread.
-        JSValue::from_uint64_no_truncate(unsafe { &*global }, value)
+        JSValue::from_uint64_no_truncate(global, value)
     }
     #[bun_jsc::host_call]
-    pub extern fn i64_without_type_checks(global: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
+    pub extern fn i64_without_type_checks(global: &JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i64).read_unaligned() };
-        // SAFETY: global is non-null, JS thread.
-        JSValue::from_int64_no_truncate(unsafe { &*global }, value)
+        JSValue::from_int64_no_truncate(global, value)
     }
 }
 

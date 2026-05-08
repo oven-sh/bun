@@ -1432,14 +1432,12 @@ pub mod js_bundler {
     // TODO(port): move to runtime_sys
     #[unsafe(no_mangle)]
     pub extern "C" fn JSBundlerPlugin__onLoadAsync(
-        this: *mut Load,
+        this: &mut Load,
         _unused: *mut c_void,
         source_code_value: JSValue,
         loader_as_int: JSValue,
     ) {
         jsc::mark_binding();
-        // SAFETY: called from C++ with valid Load pointer
-        let this = unsafe { &mut *this };
         if source_code_value.is_empty_or_undefined_or_null()
             || loader_as_int.is_empty_or_undefined_or_null()
         {

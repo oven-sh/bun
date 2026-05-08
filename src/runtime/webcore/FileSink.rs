@@ -1441,22 +1441,24 @@ impl FileSink {
 // `#[bun_jsc::host_fn]` once the proc-macro lands.
 #[unsafe(export_name = "Bun__FileSink__onResolveStream")]
 unsafe extern "C" fn on_resolve_stream_shim(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
+    g: *mut JSGlobalObject,
+    cf: *mut CallFrame,
 ) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are valid for the call.
-    match on_resolve_stream(unsafe { &*global }, unsafe { &*callframe }) {
+    // SAFETY: JSC guarantees both pointers are valid for the call. Kept as
+    // raw `JsHostFn` shape so the fn-item coerces to `.then()`'s `JsHostFn`
+    // pointer slot without a transmute.
+    match on_resolve_stream(unsafe { &*g }, unsafe { &*cf }) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
     }
 }
 #[unsafe(export_name = "Bun__FileSink__onRejectStream")]
 unsafe extern "C" fn on_reject_stream_shim(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
+    g: *mut JSGlobalObject,
+    cf: *mut CallFrame,
 ) -> JSValue {
     // SAFETY: JSC guarantees both pointers are valid for the call.
-    match on_reject_stream(unsafe { &*global }, unsafe { &*callframe }) {
+    match on_reject_stream(unsafe { &*g }, unsafe { &*cf }) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
     }

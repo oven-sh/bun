@@ -1215,15 +1215,13 @@ pub fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     Ok(JSPromise::resolved_promise_value(global_object, value))
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolve(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(Bun__resolve, c)
+pub fn bun_resolve(
+    global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
     is_esm: bool,
 ) -> JSValue {
-    // SAFETY: caller is C++ passing a live global.
-    let global = unsafe { &*global };
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
@@ -1248,16 +1246,14 @@ pub extern "C" fn Bun__resolve(
     JSPromise::resolved_promise_value(global, value)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveSync(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(Bun__resolveSync, c)
+pub fn bun_resolve_sync(
+    global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
     is_esm: bool,
     is_user_require_resolve: bool,
 ) -> JSValue {
-    // SAFETY: caller is C++ passing a live global.
-    let global = unsafe { &*global };
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
@@ -1281,9 +1277,9 @@ pub extern "C" fn Bun__resolveSync(
     )
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveSyncWithPaths(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(Bun__resolveSyncWithPaths, c)
+pub fn bun_resolve_sync_with_paths(
+    global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
     is_esm: bool,
@@ -1291,8 +1287,7 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
     paths_ptr: *const BunString,
     paths_len: usize,
 ) -> JSValue {
-    // SAFETY: caller is C++ passing a live global; paths_ptr is valid for paths_len.
-    let global = unsafe { &*global };
+    // SAFETY: caller is C++; paths_ptr is valid for paths_len.
     let paths: &[BunString] = if paths_len == 0 {
         &[]
     } else {
@@ -1336,17 +1331,13 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
 
 bun_output::declare_scope!(importMetaResolve, visible);
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveSyncWithStrings(
-    global: *mut JSGlobalObject,
-    specifier: *mut BunString,
-    source: *mut BunString,
+// HOST_EXPORT(Bun__resolveSyncWithStrings, c)
+pub fn bun_resolve_sync_with_strings(
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
     is_esm: bool,
 ) -> JSValue {
-    // SAFETY: caller is C++ passing live pointers.
-    let global = unsafe { &*global };
-    let specifier = unsafe { &*specifier };
-    let source = unsafe { &*source };
     bun_output::scoped_log!(importMetaResolve, "source: {}, specifier: {}", source, specifier);
     jsc::to_js_host_call(
         global,
@@ -1354,17 +1345,14 @@ pub extern "C" fn Bun__resolveSyncWithStrings(
     )
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveSyncWithSource(
-    global: *mut JSGlobalObject,
+// HOST_EXPORT(Bun__resolveSyncWithSource, c)
+pub fn bun_resolve_sync_with_source(
+    global: &JSGlobalObject,
     specifier: JSValue,
-    source: *mut BunString,
+    source: &BunString,
     is_esm: bool,
     is_user_require_resolve: bool,
 ) -> JSValue {
-    // SAFETY: caller is C++ passing live pointers.
-    let global = unsafe { &*global };
-    let source = unsafe { &*source };
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };

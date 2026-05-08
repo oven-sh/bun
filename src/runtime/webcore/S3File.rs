@@ -880,18 +880,16 @@ pub mod exports {
     /// *JSGlobalObject, EncodedJSValue) -> bool`).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub fn JSS3File__hasInstance(this: JSValue, global: *mut JSGlobalObject, value: JSValue) -> bool {
-        // SAFETY: JSC passes the live global to `customHasInstance`.
-        super::has_instance(this, unsafe { &*global }, value)
+    pub fn JSS3File__hasInstance(this: JSValue, global: &JSGlobalObject, value: JSValue) -> bool {
+        super::has_instance(this, global, value)
     }
 
     /// `@export(&construct, .{ .name = "JSS3File__construct" })` — bare ctor,
     /// not routed through `toJSHostFn` (returns `?*Blob`, not `JSValue`).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub fn JSS3File__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut Blob {
-        // SAFETY: JSC passes live global/callframe to constructors.
-        super::construct(unsafe { &*global }, unsafe { &*callframe })
+    pub fn JSS3File__construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
+        super::construct(global, callframe)
     }
 
     /// `@export(&getBucket, .{ .name = "JSS3File__bucket" })` — getter

@@ -1450,8 +1450,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         let opcode = Opcode::from_raw(op);
-        // SAFETY: ptr/len from C++; caller guarantees valid slice
-        let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+        // SAFETY: ptr/len from C++; caller guarantees valid slice. Empty Blob
+        // sends (null, 0), which `from_raw_parts` rejects, so use `&[]`.
+        let slice: &[u8] = if len == 0 { &[] } else { unsafe { core::slice::from_raw_parts(ptr, len) } };
         let bytes = Copy::Bytes(slice);
         // fast path: small frame, no backpressure, attempt to send without allocating
         let frame_size = WebsocketHeader::frame_size_including_mask(len);

@@ -94,10 +94,12 @@ fn to_have_returned_times_fn(
     // Zig: `switch (not) { inline else => |is_not| ... }` — runtime bool → comptime dispatch.
     // PERF(port): Zig computed `getSignature` at comptime; runtime here (error path, cold).
     let signature = Expect::get_signature(mode.tag_name(), "<green>expected<r>", not);
+    // `throw` runs pretty_fmt over the *rendered* string, so `<`/`>` in these
+    // operands must be backslash-escaped to survive the tag pass.
     let (str_, spc): (&'static str, &'static str) = match mode {
         Mode::ToHaveReturned => match not {
-            false => (">= ", "   "),
-            true => ("< ", "  "),
+            false => ("\\>= ", "   "),
+            true => ("\\< ", "  "),
         },
         Mode::ToHaveReturnedTimes => match not {
             false => ("== ", "   "),

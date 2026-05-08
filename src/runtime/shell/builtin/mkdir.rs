@@ -84,24 +84,22 @@ impl Mkdir {
     }
 
     fn fail_parse(interp: &mut Interpreter, cmd: NodeId, e: ParseError) -> Yield {
-        let buf: Vec<u8> = match e {
-            ParseError::IllegalOption(s) => Builtin::fmt_error_arena(
+        let buf: Vec<u8> = match &e {
+            ParseError::IllegalOption(_) => Builtin::fmt_error_arena(
                 interp,
                 cmd,
                 Some(Kind::Mkdir),
-                // SAFETY: ParseError payload borrows argv or is 'static.
-                format_args!("illegal option -- {}\n", bstr::BStr::new(unsafe { &*s })),
+                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
             )
             .to_vec(),
             ParseError::ShowUsage => Kind::Mkdir.usage_string().to_vec(),
-            ParseError::Unsupported(s) => Builtin::fmt_error_arena(
+            ParseError::Unsupported(_) => Builtin::fmt_error_arena(
                 interp,
                 cmd,
                 Some(Kind::Mkdir),
                 format_args!(
                     "unsupported option, please open a GitHub issue -- {}\n",
-                    // SAFETY: see above.
-                    bstr::BStr::new(unsafe { &*s })
+                    bstr::BStr::new(e.opt())
                 ),
             )
             .to_vec(),
@@ -151,9 +149,7 @@ impl Mkdir {
                     let evtloop = Builtin::event_loop(interp, cmd);
                     let interp_ptr: *mut Interpreter = interp;
                     for i in args_start..argc {
-                        let p = Builtin::of(interp, cmd).args_slice()[i];
-                        // SAFETY: argv entries are NUL-terminated.
-                        let path = unsafe { bun_core::ffi::cstr(p) }.to_bytes().to_vec();
+                        let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
                         let task =
                             ShellMkdirTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
                         // SAFETY: freshly heap-allocated.
@@ -199,18 +195,14 @@ impl Mkdir {
         }
 
         let output_task = OutputTask::<Mkdir>::new(cmd, OutputSrc::Arrlist(output));
-        if let Some(e) = err {
-            let errstr =
-                Builtin::task_error_to_string(interp, cmd, Kind::Mkdir, &e).to_vec();
+        let errstr: Option<Vec<u8>> = err.map(|e| {
+            let s = Builtin::task_error_to_string(interp, cmd, Kind::Mkdir, &e).to_vec();
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
-            // SAFETY: output_task is freshly allocated.
-            unsafe { OutputTask::<Mkdir>::start(output_task, interp, Some(&errstr)) }.run(interp);
-            return;
-        }
-        // SAFETY: output_task is freshly allocated.
-        unsafe { OutputTask::<Mkdir>::start(output_task, interp, None) }.run(interp);
+            s
+        });
+        OutputTask::<Mkdir>::start(output_task, interp, errstr.as_deref()).run(interp);
     }
 
     #[inline]
@@ -354,8 +346,7 @@ impl ShellMkdirTask {
             if this.filepath.last() != Some(&0) {
                 this.filepath.push(0);
             }
-            // SAFETY: NUL byte just guaranteed at the end.
-            unsafe { bun_str::ZStr::from_raw(this.filepath.as_ptr(), this.filepath.len() - 1) }
+            bun_str::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
         } else {
             resolve_path::join_z::<platform::Auto>(&[&this.cwd_path, &this.filepath])
         };

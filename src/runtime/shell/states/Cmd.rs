@@ -57,6 +57,20 @@ impl Default for Exec {
     fn default() -> Self { Exec::None }
 }
 
+impl Cmd {
+    /// Borrow the AST node this `Cmd` was built from.
+    ///
+    /// `node` is a `*const ast::Cmd` into the parsed-script arena, which is
+    /// owned by the `Interpreter` and outlives every `Cmd` slot (the arena is
+    /// dropped only in `Interpreter::deinit`). Localises the per-callsite
+    /// `unsafe { &*self.node }` deref.
+    #[inline]
+    pub fn ast_node(&self) -> &ast::Cmd {
+        // SAFETY: see doc comment.
+        unsafe { &*self.node }
+    }
+}
+
 /// Spec: Cmd.zig `Exec.subproc` anonymous struct.
 pub struct SubprocExec {
     pub child: *mut ShellSubprocess,
@@ -361,9 +375,7 @@ impl Cmd {
                     // the exit status of the last command substitution
                     // performed").
                     {
-                        // SAFETY: `node` points into the AST arena which
-                        // outlives every state node.
-                        let n = unsafe { &*interp.as_cmd(this).node };
+                        let n = interp.as_cmd(this).ast_node();
                         if new_idx == 1
                             && n.name_and_args.len() == 1
                             && matches!(
@@ -454,15 +466,18 @@ impl Cmd {
         // `spawn_async`. Re-enter the arena via `interp.as_cmd{,_mut}(this)`
         // for each short-lived access instead of caching raw `*mut Cmd`.
         let event_loop = interp.event_loop;
-        let shell_ptr: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
 
         let mut arena = bun_alloc::Arena::new();
         let mut spawn_args =
             SpawnArgs::default::<false>(&mut arena, interp as *mut Interpreter, event_loop);
-        // SAFETY: `Base.shell` is the documented arena-backref to the
-        // heap-allocated `ShellExecEnv` owned by the interpreter; outlives this
-        // command. No safe accessor exists yet (see review note re: `shell_env`
-        // residual unsafe).
+        // Cache the raw `*mut ShellExecEnv` and deref it directly so the
+        // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
+        // `*interp` — `Base::shell()` would tie the slice's lifetime to
+        // `&interp`, blocking every `interp.as_cmd_mut(...)` below for the
+        // life of `spawn_args`. The env is a separate heap allocation that
+        // outlives this Cmd, so the slice remains valid across reborrows.
+        let shell_ptr: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
+        // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
         // Resolve argv[0] via PATH (`bun_which::which`). Spec lines 487-498.
@@ -493,11 +508,8 @@ impl Cmd {
         interp.as_cmd_mut(this).args[0] = resolved;
 
         // Fill env from export_env + cmd_local_env. Spec lines 502-506.
-        // SAFETY: `Base.shell` arena-backref; `ShellExecEnv` is heap-allocated
-        // separately from `interp.nodes`, so this `&mut` does not alias any
-        // `interp.as_cmd*` borrow (none is live here regardless).
         {
-            let env = unsafe { &mut *shell_ptr };
+            let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();
             spawn_args.fill_env::<false>(&mut iter);
             let mut iter = env.cmd_local_env.iterator();
@@ -614,9 +626,7 @@ impl Cmd {
 
         if did_exit_immediately {
             // Spec lines 535-544. `watch()` failed → process already gone.
-            // SAFETY: `process` was set by `spawn_async` (`to_process` →
-            // `heap::alloc`); valid until `Cmd::deinit` reclaims the box.
-            let process = unsafe { &mut *subproc.process };
+            let process = subproc.proc();
             if process.has_exited() {
                 let status = process.status.clone();
                 process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
@@ -653,9 +663,7 @@ impl Cmd {
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
 
-        // SAFETY: `node` points into the AST arena which outlives every state
-        // node (see Cmd::next).
-        let node: &ast::Cmd = unsafe { &*interp.as_cmd(this).node };
+        let node: &ast::Cmd = interp.as_cmd(this).ast_node();
         let flags = node.redirect;
 
         let Some(redirect) = &node.redirect_file else {
@@ -787,13 +795,9 @@ impl Cmd {
                     v.push(0);
                     v
                 };
-                // SAFETY: `path_buf` ends in NUL by construction.
-                let path = unsafe {
-                    bun_core::ZStr::from_raw(path_buf.as_ptr(), path_buf.len() - 1)
-                };
+                let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                // SAFETY: `Base.shell` arena-backref; outlives the Cmd.
-                let cwd_fd = unsafe { &*interp.as_cmd(this).base.shell }.cwd_fd;
+                let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
                 let redirfd = match crate::shell::interpreter::shell_openat(
                     cwd_fd,
                     path,
@@ -854,16 +858,15 @@ impl Cmd {
             Exec::Builtin(b) => drop(b),
             Exec::Subproc(sub) if !sub.child.is_null() => {
                 // SAFETY: `child` was set by `initSubproc` from a
-                // `heap::alloc(ShellSubprocess)` and stays valid until
-                // this drop. Single-threaded.
-                let child = unsafe { &mut *sub.child };
+                // `heap::alloc(ShellSubprocess)` and stays valid until this
+                // drop. Single-threaded. Reclaiming the box runs
+                // `ShellSubprocess::drop` → `finalize_sync` (closes stdio).
+                let mut child = unsafe { bun_core::heap::take(sub.child) };
                 if !child.has_exited() {
                     let _ = child.try_kill(9);
                 }
                 child.unref::<true>();
-                // SAFETY: reclaim the box; `ShellSubprocess::drop` runs
-                // `finalize_sync` (closes stdin/stdout/stderr).
-                drop(unsafe { bun_core::heap::take(sub.child) });
+                drop(child);
                 // `sub.buffered_closed` drops here, freeing any captured
                 // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
@@ -952,22 +955,21 @@ impl Cmd {
         if let Some(e) = err {
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
         }
-        // SAFETY: `node` points into the AST arena which outlives this Cmd.
-        let redirect = unsafe { &*self.node }.redirect;
+        let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else { return };
+        // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
         // SAFETY: `child` is the live subprocess owned by this Cmd.
         let child = unsafe { &mut *sub.child };
         // Spec: tee into the JS-side captured buffer if `io.stdout == .fd`
         // with a `captured` slot and the redirect didn't send stdout
         // elsewhere.
         if let IoOutKind::Fd(fd) = &self.io.stdout {
-            if let Some(captured) = fd.captured {
+            // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
+            // owning `ShellExecEnv` and no other borrow of it is live here.
+            if let Some(captured) = unsafe { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stdout) {
                     if let Readable::Pipe(pipe) = &child.stdout {
-                        let the_slice = pipe.slice();
-                        // SAFETY: `captured` points into a live `ShellExecEnv`
-                        // bufio (see `OutFd::captured` doc). Single-threaded.
-                        bun_core::handle_oom(unsafe { (*captured).append_slice(the_slice) });
+                        bun_core::handle_oom(captured.append_slice(pipe.slice()));
                     }
                 }
             }
@@ -977,8 +979,7 @@ impl Cmd {
             &mut child.stdout,
             matches!(self.io.stdout, IoOutKind::Pipe),
             redirect.redirects_elsewhere(ast::IoKind::Stdout),
-            // SAFETY: `base.shell` is live for the duration of the command.
-            unsafe { &mut *self.base.shell }.buffered_stdout(),
+            self.base.shell_mut().buffered_stdout(),
         );
         child.close_io(StdioKind::Stdout);
     }
@@ -990,18 +991,18 @@ impl Cmd {
         if let Some(e) = err {
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
         }
-        // SAFETY: see `buffered_output_close_stdout`.
-        let redirect = unsafe { &*self.node }.redirect;
+        let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else { return };
+        // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
         // SAFETY: `child` is the live subprocess owned by this Cmd.
         let child = unsafe { &mut *sub.child };
         if let IoOutKind::Fd(fd) = &self.io.stderr {
-            if let Some(captured) = fd.captured {
+            // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
+            // owning `ShellExecEnv` and no other borrow of it is live here.
+            if let Some(captured) = unsafe { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stderr) {
                     if let Readable::Pipe(pipe) = &child.stderr {
-                        let the_slice = pipe.slice();
-                        // SAFETY: see `buffered_output_close_stdout`.
-                        bun_core::handle_oom(unsafe { (*captured).append_slice(the_slice) });
+                        bun_core::handle_oom(captured.append_slice(pipe.slice()));
                     }
                 }
             }
@@ -1011,8 +1012,7 @@ impl Cmd {
             &mut child.stderr,
             matches!(self.io.stderr, IoOutKind::Pipe),
             redirect.redirects_elsewhere(ast::IoKind::Stderr),
-            // SAFETY: `base.shell` is live for the duration of the command.
-            unsafe { &mut *self.base.shell }.buffered_stderr(),
+            self.base.shell_mut().buffered_stderr(),
         );
         child.close_io(StdioKind::Stderr);
     }

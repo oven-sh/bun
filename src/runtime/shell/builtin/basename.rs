@@ -22,15 +22,14 @@ enum State {
 impl Basename {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
         let buf = {
-            let args = Builtin::of(interp, cmd).args_slice();
-            if args.is_empty() {
+            let bltn = Builtin::of(interp, cmd);
+            let argc = bltn.args_slice().len();
+            if argc == 0 {
                 return Self::fail(interp, cmd, Kind::Basename.usage_string());
             }
             let mut buf = Vec::new();
-            for arg in args {
-                // SAFETY: argv entries are NUL-terminated.
-                let path = unsafe { bun_core::ffi::cstr(*arg) }.to_bytes();
-                buf.extend_from_slice(bun_paths::resolve_path::basename(path));
+            for i in 0..argc {
+                buf.extend_from_slice(bun_paths::resolve_path::basename(bltn.arg_bytes(i)));
                 buf.push(b'\n');
             }
             buf

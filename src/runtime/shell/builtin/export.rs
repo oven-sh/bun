@@ -27,9 +27,7 @@ impl Export {
             return Self::print_all(interp, cmd);
         }
         for i in 0..argc {
-            let arg = Builtin::of(interp, cmd).args_slice()[i];
-            // SAFETY: argv entries are NUL-terminated.
-            let s = unsafe { bun_core::ffi::cstr(arg) }.to_bytes();
+            let s = Builtin::of(interp, cmd).arg_bytes(i);
             if s.is_empty() {
                 continue;
             }

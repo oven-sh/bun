@@ -20,13 +20,11 @@ enum State {
 
 impl Exit {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
-        let args = Builtin::of(interp, cmd).args_slice();
-        let code: crate::shell::ExitCode = match args.len() {
+        let bltn = Builtin::of(interp, cmd);
+        let code: crate::shell::ExitCode = match bltn.args_slice().len() {
             0 => 0,
             1 => {
-                // SAFETY: argv entries are NUL-terminated (built by Cmd from
-                // expanded atoms, which append a sentinel).
-                let s = unsafe { bun_core::ffi::cstr(args[0]) }.to_bytes();
+                let s = bltn.arg_bytes(0);
                 match parse_exit_code(s) {
                     Some(c) => c,
                     None => {

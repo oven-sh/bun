@@ -431,8 +431,7 @@ pub mod ast {
             match self {
                 PipelineItem::Cmd(cmd) => cost += cmd.memory_cost(),
                 PipelineItem::Assigns(assigns) => {
-                    // SAFETY: arena slice is live for 'arena
-                    for assign in unsafe { &**assigns }.iter() {
+                    for assign in assigns.iter() {
                         cost += assign.memory_cost();
                     }
                 }
@@ -4254,8 +4253,9 @@ pub struct SmolListInlined<T, const INLINED_MAX: usize> {
 impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
     fn default() -> Self {
         Self {
-            // SAFETY: array of MaybeUninit is always valid uninitialized
-            items: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
+            // `MaybeUninit::uninit()` is `const fn`; an inline-const array
+            // repeat avoids the `assume_init`-on-array-of-MU trick.
+            items: [const { core::mem::MaybeUninit::uninit() }; INLINED_MAX],
             len: 0,
         }
     }
@@ -4297,18 +4297,10 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         if self.len as usize - 1 == idx {
             return self.pop();
         }
-        // SAFETY: idx < len, elements initialized
-        let removed = unsafe { self.items[idx].assume_init_read() };
-        // SAFETY: src/dst ranges lie within `items[..len]` (initialized); ptr::copy permits overlap.
-        unsafe {
-            core::ptr::copy(
-                self.items.as_ptr().add(idx + 1),
-                self.items.as_mut_ptr().add(idx),
-                self.len as usize - idx - 1,
-            );
-        }
-        self.len -= 1;
-        removed
+        // Rotate the target to the tail of the live slice, then pop it. Safe
+        // equivalent of the previous `assume_init_read` + `ptr::copy` shift.
+        self.slice_mut()[idx..].rotate_left(1);
+        self.pop()
         // TODO(port): Zig fn returns T but body falls off end without returning the removed item
         // (likely a Zig bug). Here we return it.
     }
@@ -4317,11 +4309,11 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         if self.len as usize - 1 == idx {
             return self.pop();
         }
-        // SAFETY: idx < self.len; slot is initialized.
-        let old_item = unsafe { self.items[idx].assume_init_read() };
-        let last = self.pop();
-        self.items[idx].write(last);
-        old_item
+        // Swap target with last (both initialized), then pop the now-last
+        // target — safe equivalent of `assume_init_read` + write-back.
+        let last = self.len as usize - 1;
+        self.slice_mut().swap(idx, last);
+        self.pop()
         // TODO(port): same Zig oddity — pop() decremented len already; restore by writing back.
     }
 
@@ -4433,11 +4425,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     pub fn pop(&mut self) -> T {
         match self {
             SmolList::Heap(h) => h.pop().unwrap(),
-            SmolList::Inlined(i) => {
-                let val = unsafe { i.items[i.len as usize - 1].assume_init_read() };
-                i.len -= 1;
-                val
-            }
+            SmolList::Inlined(i) => i.pop(),
         }
     }
 
@@ -4459,29 +4447,23 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                     return;
                 }
                 let new_len = inlined.len as usize - starting_idx;
-                // SAFETY: overlapping copy within initialized region
-                unsafe {
-                    core::ptr::copy(
-                        inlined.items.as_ptr().add(starting_idx),
-                        inlined.items.as_mut_ptr(),
-                        new_len,
-                    );
-                }
+                // Rotate the suffix to the front; the old prefix lands at
+                // `[new_len..]` and is abandoned by the len adjust (same
+                // leak-on-Drop caveat as the original `ptr::copy` version —
+                // see `clear_retaining_capacity` TODO; all current `T` are
+                // arena-backed and `!Drop`).
+                inlined.slice_mut().rotate_left(starting_idx);
                 inlined.len = u32::try_from(new_len).expect("int cast");
                 // TODO(port): Zig version copies into [0..starting_idx] which is a bug if
                 // new_len > starting_idx; mirroring intended semantics (shift-down) here.
             }
             SmolList::Heap(heap) => {
-                let new_len = heap.len() - starting_idx;
-                // SAFETY: overlapping copy within heap buffer; first `heap.len()` elements are init.
-                unsafe {
-                    core::ptr::copy(
-                        heap.as_mut_ptr().add(starting_idx),
-                        heap.as_mut_ptr(),
-                        new_len,
-                    );
-                    heap.set_len(new_len);
-                }
+                // `Vec::drain` shifts the tail down and drops the prefix.
+                // The previous `ptr::copy + set_len` overwrote the prefix
+                // without dropping it; for the arena-backed `!Drop` `T` used
+                // here that's identical, and for `Drop` `T` this is the
+                // non-leaking behaviour the spec intended.
+                heap.drain(0..starting_idx);
             }
         }
     }
@@ -4524,30 +4506,15 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
 
     #[inline]
     pub fn get(&mut self, idx: usize) -> &mut T {
-        match self {
-            SmolList::Inlined(i) => {
-                if cfg!(debug_assertions) && idx >= i.len as usize {
-                    panic!("Index out of bounds");
-                }
-                // SAFETY: idx < len, initialized
-                unsafe { i.items[idx].assume_init_mut() }
-            }
-            SmolList::Heap(h) => &mut h.slice_mut()[idx],
-        }
+        // Route through the safe live-slice view; bounds-check is now
+        // unconditional (was debug-only over `assume_init_mut`, i.e. UB on
+        // OOB in release — slice indexing makes it a defined panic instead).
+        &mut self.slice_mutable()[idx]
     }
 
     #[inline]
     pub fn get_const(&self, idx: usize) -> &T {
-        match self {
-            SmolList::Inlined(i) => {
-                if cfg!(debug_assertions) && idx >= i.len as usize {
-                    panic!("Index out of bounds");
-                }
-                // SAFETY: idx < i.len (debug-asserted above); slot is initialized.
-                unsafe { i.items[idx].assume_init_ref() }
-            }
-            SmolList::Heap(h) => &h.slice()[idx],
-        }
+        &self.slice()[idx]
     }
 
     pub fn append(&mut self, new: T) {

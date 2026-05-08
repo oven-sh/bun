@@ -25,7 +25,8 @@ enum State {
 impl Echo {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
         let output = {
-            let args = Builtin::of(interp, cmd).args_slice();
+            let bltn = Builtin::of(interp, cmd);
+            let argc = bltn.args_slice().len();
 
             // Parse flags: echo accepts -n, -e, -E in any combination.
             // Flag parsing stops at the first arg that doesn't start with '-'
@@ -33,9 +34,8 @@ impl Echo {
             let mut no_newline = false;
             let mut escape_sequences = false;
             let mut args_start = 0usize;
-            for arg in args {
-                // SAFETY: argv entries are NUL-terminated.
-                let flag = unsafe { bun_core::ffi::cstr(*arg) }.to_bytes();
+            for i in 0..argc {
+                let flag = bltn.arg_bytes(i);
                 if flag.len() < 2 || flag[0] != b'-' {
                     break;
                 }
@@ -53,18 +53,16 @@ impl Echo {
                 args_start += 1;
             }
 
-            let rest = &args[args_start..];
-            let args_len = rest.len();
+            let args_len = argc - args_start;
             let mut out = Vec::new();
             let mut has_leading_newline = false;
             let mut stop_output = false;
 
-            for (i, arg) in rest.iter().enumerate() {
+            for i in 0..args_len {
                 if stop_output {
                     break;
                 }
-                // SAFETY: argv entries are NUL-terminated.
-                let thearg = unsafe { bun_core::ffi::cstr(*arg) }.to_bytes();
+                let thearg = bltn.arg_bytes(args_start + i);
                 let is_last = i == args_len - 1;
 
                 if escape_sequences {

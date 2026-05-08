@@ -41,12 +41,14 @@ impl RefCountedStr {
     // PORT NOTE: takes `*mut Self` because reaching refcount==0 deallocates the
     // `Box<Self>` that backs `this`; a `&self` borrow would dangle across that drop.
     pub unsafe fn deref(this: *mut RefCountedStr) {
-        // SAFETY: caller guarantees `this` was produced by `init` and is still live.
-        let rc = unsafe { &(*this).refcount };
-        rc.set(rc.get() - 1);
-        if rc.get() == 0 {
-            // SAFETY: refcount reached 0; `this` is uniquely owned and Box-allocated by `init`.
-            unsafe { Self::deinit(this) };
+        // SAFETY: caller guarantees `this` was produced by `init` and is still
+        // live; on hitting 0, `this` is uniquely owned and Box-allocated.
+        unsafe {
+            let rc = &(*this).refcount;
+            rc.set(rc.get() - 1);
+            if rc.get() == 0 {
+                Self::deinit(this);
+            }
         }
     }
 

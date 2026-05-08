@@ -88,6 +88,26 @@ pub struct OutFd {
     pub captured: Option<*mut Vec<u8>>,
 }
 
+impl OutFd {
+    /// Mutably borrow the JS-side captured stdout/stderr buffer if configured.
+    ///
+    /// `captured` is a non-owning backref into `ShellExecEnv::_buffered_*`
+    /// (see field doc); the owning `ShellExecEnv` outlives every `Cmd`/builtin
+    /// that holds an `OutFd`. Localises the per-callsite raw deref so callers
+    /// can `if let Some(buf) = fd.captured_mut() { buf.extend_from_slice(...) }`.
+    ///
+    /// # Safety
+    /// Caller must ensure no other `&`/`&mut` to the target `Vec<u8>` is live
+    /// (including via the parent `ShellExecEnv`) for the returned borrow's
+    /// lifetime. The `(&self) -> &mut T` shape cannot encode this, hence
+    /// `unsafe fn`.
+    #[inline]
+    pub unsafe fn captured_mut(&self) -> Option<&mut Vec<u8>> {
+        // SAFETY: caller contract — single-threaded shell, env outlives `self`.
+        self.captured.map(|p| unsafe { &mut *p })
+    }
+}
+
 impl fmt::Display for OutKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

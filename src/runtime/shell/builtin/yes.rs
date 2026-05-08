@@ -43,9 +43,7 @@ impl Yes {
                 if i > 0 {
                     one.push(b' ');
                 }
-                let p = Builtin::of(interp, cmd).args_slice()[i];
-                // SAFETY: argv entries are NUL-terminated.
-                one.extend_from_slice(unsafe { bun_core::ffi::cstr(p) }.to_bytes());
+                one.extend_from_slice(Builtin::of(interp, cmd).arg_bytes(i));
             }
             one.push(b'\n');
         }
@@ -226,32 +224,28 @@ impl YesTask {
     /// enqueued task fires (it lives inside `Box<Yes>` in the interpreter
     /// arena).
     pub unsafe fn enqueue(this: *mut Self) {
-        // SAFETY: caller contract.
-        let evtloop = unsafe { (*this).evtloop };
-        match evtloop {
-            EventLoopHandle::Js { owner } => {
-                // SAFETY: `owner` is the live erased `*mut jsc::EventLoop`.
-                unsafe { bun_event_loop::any_event_loop::js::tick(owner) };
-                // SAFETY: caller contract; `concurrent_task` was initialised
-                // as `Js` via `EventLoopTask::from_event_loop`.
-                let ct: *mut ConcurrentTask = match unsafe { &mut (*this).concurrent_task } {
-                    EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
-                    EventLoopTask::Mini(_) => unreachable!(),
-                };
-                // SAFETY: `owner` is the live erased `*mut jsc::EventLoop`.
-                unsafe { bun_event_loop::any_event_loop::js::enqueue_task_concurrent(owner, ct) };
-            }
-            EventLoopHandle::Mini(mini) => {
-                // SAFETY: `mini` is a live backref; `loop_` is the live uws loop.
-                unsafe { (*(*mini).loop_).tick() };
-                // SAFETY: caller contract; `concurrent_task` was initialised
-                // as `Mini` via `EventLoopTask::from_event_loop`.
-                let at = match unsafe { &mut (*this).concurrent_task } {
-                    EventLoopTask::Mini(at) => at.from(this, Self::run_from_main_thread_mini),
-                    EventLoopTask::Js(_) => unreachable!(),
-                };
-                // SAFETY: `mini` is a live backref.
-                unsafe { (*mini).enqueue_task_concurrent(at) };
+        // SAFETY: caller contract — `this` is live and stable; `evtloop` /
+        // `concurrent_task` were initialised together by `Yes::start` so the
+        // Js/Mini discriminants agree. `owner`/`mini` are live event-loop
+        // backrefs (single-threaded shell).
+        unsafe {
+            match (*this).evtloop {
+                EventLoopHandle::Js { owner } => {
+                    bun_event_loop::any_event_loop::js::tick(owner);
+                    let ct: *mut ConcurrentTask = match &mut (*this).concurrent_task {
+                        EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
+                        EventLoopTask::Mini(_) => unreachable!(),
+                    };
+                    bun_event_loop::any_event_loop::js::enqueue_task_concurrent(owner, ct);
+                }
+                EventLoopHandle::Mini(mini) => {
+                    (*(*mini).loop_).tick();
+                    let at = match &mut (*this).concurrent_task {
+                        EventLoopTask::Mini(at) => at.from(this, Self::run_from_main_thread_mini),
+                        EventLoopTask::Js(_) => unreachable!(),
+                    };
+                    (*mini).enqueue_task_concurrent(at);
+                }
             }
         }
     }
@@ -263,8 +257,7 @@ impl YesTask {
     /// `interp` outlives the builtin.
     pub unsafe fn run_from_main_thread(this: *mut Self) {
         // SAFETY: caller contract — `interp` set in `Yes::start`, outlives the builtin.
-        let interp = unsafe { &mut *(*this).interp };
-        let cmd = unsafe { (*this).cmd };
+        let (interp, cmd) = unsafe { (&mut *(*this).interp, (*this).cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
 

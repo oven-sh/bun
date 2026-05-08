@@ -126,9 +126,7 @@ impl Ls {
                     if let Some(start) = paths_start {
                         let print_directory = task_count > 1;
                         for i in start..argc {
-                            let p = Builtin::of(interp, cmd).args_slice()[i];
-                            // SAFETY: argv entries are NUL-terminated.
-                            let path = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
+                            let path = Builtin::of(interp, cmd).arg_bytes(i);
                             let task = ShellLsTask::create(
                                 cmd, opts, task_count_ptr, cwd,
                                 ZBox::from_bytes(path), evtloop, interp_ptr,
@@ -214,19 +212,16 @@ impl Ls {
         let output = core::mem::take(&mut task.output);
         let output_task = OutputTask::<Ls>::new(cmd, OutputSrc::Arrlist(output));
 
-        if let Some(e) = task.err.take() {
-            let errstr = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
+        let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
+            let s = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if exec.err.is_none() {
                     exec.err = Some(e);
                 }
             }
-            // SAFETY: freshly allocated.
-            unsafe { OutputTask::<Ls>::start(output_task, interp, Some(&errstr)) }.run(interp);
-            return;
-        }
-        // SAFETY: freshly allocated.
-        unsafe { OutputTask::<Ls>::start(output_task, interp, None) }.run(interp);
+            s
+        });
+        OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()).run(interp);
     }
 
     /// Spec: ls.zig `parseOpts` / `parseFlags`. Returns the index of the
@@ -241,9 +236,7 @@ impl Ls {
         }
         let mut idx = 0usize;
         while idx < argc {
-            let p = Builtin::of(interp, cmd).args_slice()[idx];
-            // SAFETY: argv entries are NUL-terminated.
-            let flag = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
+            let flag = Builtin::of(interp, cmd).arg_bytes(idx);
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
                 ParseFlag::Done => return Ok(Some(idx)),
                 ParseFlag::ContinueParsing => {}
@@ -436,12 +429,12 @@ impl ShellLsTask {
             self.interp,
         );
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
-        // outlives every in-flight task (see `next`).
-        unsafe { (*self.task_count).fetch_add(1, Ordering::Relaxed) };
-        // SAFETY: freshly heap-allocated. Spec ls.zig `enqueue` calls
-        // `subtask.schedule()` = raw `WorkPool.schedule` (no keep-alive ref);
-        // this runs on a worker thread with no JS-VM thread-local.
+        // outlives every in-flight task (see `next`). `subtask` is freshly
+        // heap-allocated; spec ls.zig `enqueue` calls `subtask.schedule()` =
+        // raw `WorkPool.schedule` (no keep-alive ref) — runs on a worker
+        // thread with no JS-VM thread-local.
         unsafe {
+            (*self.task_count).fetch_add(1, Ordering::Relaxed);
             (*subtask).print_directory = true;
             ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
         }

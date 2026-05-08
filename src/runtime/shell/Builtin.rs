@@ -265,16 +265,16 @@ impl BuiltinIO {
                 // `target` is that field identity, fixed at construction and
                 // preserved across `dup_ref` so `2>&1` lands in stdout's
                 // bytelist (matching Zig's shallow-copied ArrayList aliasing).
-                // SAFETY: caller contract — shell env outlives the Cmd node;
-                // single-threaded.
-                let captured = unsafe {
-                    match *target {
+                // SAFETY: caller contract — shell env outlives the Cmd node
+                // (single-threaded); `captured` points into a live
+                // `ShellExecEnv` Bufio.
+                bun_core::handle_oom(unsafe {
+                    let captured = match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
                         IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
-                    }
-                };
-                // SAFETY: `captured` points into a live `ShellExecEnv` Bufio.
-                bun_core::handle_oom(unsafe { (*captured).append_slice(buf) });
+                    };
+                    (*captured).append_slice(buf)
+                });
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
@@ -376,6 +376,45 @@ impl Builtin {
     #[inline]
     pub fn args_slice(&self) -> &[*const c_char] {
         &self.args
+    }
+
+    /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
+    ///
+    /// Every entry in `self.args` borrows into the owning `Cmd`'s
+    /// `args: Vec<Vec<u8>>`, NUL-terminated by `Cmd::transition_to_exec` and
+    /// outliving this `Builtin` (the `Cmd` slot is freed only after
+    /// `Builtin::done`). Localises the per-callsite
+    /// `unsafe { CStr::from_ptr(...) }` that previously appeared at every
+    /// builtin's flag/operand parser.
+    ///
+    /// The returned slice's lifetime is intentionally **decoupled from
+    /// `&self`**: the raw `*const c_char` is copied out of `self.args` first,
+    /// so the borrow of `self` ends before `CStr::from_ptr`. This lets callers
+    /// hold the result across an `interp.as_cmd_mut(...)` reborrow (cat/ls/mv
+    /// flag loops). Soundness rests on the architectural invariant above —
+    /// argv storage is a separate heap allocation that is not freed or
+    /// reallocated while the `Builtin` is live — not on `'a`.
+    #[inline]
+    pub fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
+        let p: *const c_char = self.args[idx];
+        // SAFETY: see doc comment — `p` is a valid NUL-terminated pointer
+        // into the Cmd's argv storage, live for the Builtin's lifetime.
+        unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes()
+    }
+
+    /// Borrow `argv[1..][idx]` as `&ZStr` (NUL-terminated view).
+    ///
+    /// Same invariant and lifetime decoupling as [`arg_bytes`]; for callers
+    /// that need to pass the argument to a `&ZStr`-taking syscall wrapper
+    /// without re-copying.
+    #[inline]
+    pub fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
+        let p: *const c_char = self.args[idx];
+        // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
+        let b = unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes();
+        // SAFETY: `b` is `CStr::to_bytes()` over a NUL-terminated buffer, so
+        // the byte at `b.as_ptr().add(b.len())` is the in-allocation NUL.
+        unsafe { bun_core::ZStr::from_raw(b.as_ptr(), b.len()) }
     }
 
     /// Construct a `Builtin` for `kind`, install it into the owning Cmd's
@@ -748,10 +787,12 @@ impl Builtin {
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
-        let shell = interp.as_cmd(cmd).base.shell;
-        // SAFETY: shell env outlives the Cmd node.
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
-            bun_core::handle_oom(unsafe { (*(*shell).buffered_stderr()).append_slice(&buf) });
+            // SAFETY: single trampoline frame; no other borrow of the env's
+            // (or its parent's) stderr buffer is live.
+            let stderr =
+                unsafe { interp.as_cmd_mut(cmd).base.shell_mut().buffered_stderr_mut() };
+            bun_core::handle_oom(stderr.append_slice(&buf));
         }
         let parent = interp.as_cmd(cmd).base.parent;
         interp.child_done(parent, cmd, 1)
@@ -898,8 +939,7 @@ impl Builtin {
     /// Shell exec env of the owning Cmd.
     #[inline]
     pub fn shell<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a crate::shell::interpreter::ShellExecEnv {
-        // SAFETY: see Base::shell.
-        unsafe { &*interp.as_cmd(cmd).base.shell }
+        interp.as_cmd(cmd).base.shell()
     }
 
     /// The owning `Cmd` state node. Spec: Builtin.zig `parentCmd` (Zig used

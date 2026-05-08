@@ -306,8 +306,10 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
                     _ => return Some(InputChar { char: ch, escaped: false }),
                 }
             }
-            // We checked `self.state == .Single` above so this is impossible
-            ShellCharIterState::Single => unsafe { core::hint::unreachable_unchecked() },
+            // We checked `self.state == .Single` above so this is impossible.
+            // PORT NOTE: was `unreachable_unchecked()`; the lexer is on a
+            // cold path so trade the elided check for a defined panic.
+            ShellCharIterState::Single => unreachable!(),
         }
 
         Some(InputChar { char: ch, escaped: true })

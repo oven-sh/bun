@@ -148,9 +148,7 @@ impl Expansion {
                     ast::Atom::Simple(s) => s,
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
-                // SAFETY: `shell_ptr` is a live env owned by the parent state
-                // node; the Expansion never outlives it.
-                let shell = unsafe { &*shell_ptr };
+                let shell = me.base.shell();
                 let is_cmd_subst = Self::expand_simple_no_io(
                     shell,
                     simple,
@@ -179,9 +177,9 @@ impl Expansion {
                 };
                 // SAFETY: `shell_ptr` is a live env owned by the parent state
                 // node and outlives this expansion.
-                let duped = match unsafe {
-                    (*shell_ptr).dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst)
-                } {
+                let duped = match unsafe { &mut *shell_ptr }
+                    .dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst)
+                {
                     Ok(d) => d,
                     Err(e) => {
                         drop(io);
@@ -196,8 +194,7 @@ impl Expansion {
 
             // All sub-atoms expanded — post-process leading tilde then finish.
             if leading_tilde {
-                // SAFETY: see above.
-                let home = unsafe { &*shell_ptr }.get_homedir();
+                let home = me.base.shell().get_homedir();
                 match me.current_out.first() {
                     None | Some(b'/') | Some(b'\\') => {
                         me.current_out.splice(0..0, home.slice().iter().copied());
@@ -287,8 +284,7 @@ impl Expansion {
             let me = interp.as_expansion_mut(this);
             me.state = ExpansionState::Glob;
             pattern = me.current_out.clone();
-            // SAFETY: `Base.shell` arena-backref; env outlives this state.
-            cwd = unsafe { &*me.base.shell }.cwd().to_vec();
+            cwd = me.base.shell().cwd().to_vec();
         }
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
             &pattern, &cwd, false, false, false, false, false, None,
@@ -433,12 +429,16 @@ impl Expansion {
         // Child is a Script (command substitution). Its captured stdout lives
         // in the duped `ShellExecEnv` it owns; read it before deinit.
         debug_assert!(matches!(interp.node(child).kind(), StateKind::Script));
-        // SAFETY: `base.shell` is the env duped in `next()` and owned by the
-        // child Script; freed by `deinit_node` below.
+        // SAFETY: single trampoline frame; the child script's env (and its
+        // parent buffer in the `Borrowed` case) has no other live borrow.
         let stdout = unsafe {
-            let env = interp.as_script_mut(child).base.shell;
-            (*(*env).buffered_stdout()).clone()
-        };
+            interp
+                .as_script_mut(child)
+                .base
+                .shell_mut()
+                .buffered_stdout_mut()
+        }
+        .clone();
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command). Spec: childDone:517.

@@ -161,10 +161,9 @@ pub struct PooledSocket<const SSL: bool> {
     pub owner: *mut HTTPContext<SSL>,
     /// If this socket carries an established CONNECT tunnel (HTTPS through
     /// an HTTP proxy), the tunnel is preserved here. The pool owns one
-    /// strong ref while the socket is parked. None for direct connections.
-    // PORT NOTE: ProxyTunnel.RefPtr is intrusive; raw NonNull + manual
-    // ref/deref to match HTTPClient.proxy_tunnel.
-    pub proxy_tunnel: Option<NonNull<ProxyTunnel>>,
+    /// strong ref while the socket is parked (the `RefPtr` *is* that ref).
+    /// None for direct connections.
+    pub proxy_tunnel: Option<crate::proxy_tunnel::RefPtr>,
     /// Target (origin) hostname the tunnel connects to. `hostname_buf`
     /// above holds the PROXY hostname; this is the upstream we CONNECTed
     /// to. Heap-allocated only when proxy_tunnel is set; empty otherwise.
@@ -205,8 +204,8 @@ impl<const SSL: bool> PooledSocket<SSL> {
         self.ssl_config = None;
         self.target_hostname = Box::default();
         if let Some(rp) = self.proxy_tunnel.take() {
-            // SAFETY: pool owns one strong ref while parked.
-            unsafe { ProxyTunnel::deref(rp.as_ptr()) };
+            // The pool's strong ref *is* this `RefPtr`; release it.
+            rp.deref();
         }
         if let Some(s) = self.h2_session.take() {
             // SAFETY: pool owns one strong ref while parked.
@@ -217,9 +216,9 @@ impl<const SSL: bool> PooledSocket<SSL> {
 
 struct ExistingSocket<const SSL: bool> {
     socket: HTTPSocket<SSL>,
-    /// Non-null if the socket carries an established CONNECT tunnel.
+    /// Present if the socket carries an established CONNECT tunnel.
     /// Ownership (one strong ref) is transferred to the caller.
-    tunnel: Option<NonNull<ProxyTunnel>>,
+    tunnel: Option<crate::proxy_tunnel::RefPtr>,
     /// Non-null if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<NonNull<h2::ClientSession>>,
 }
@@ -542,7 +541,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<&ssl_config::SharedPtr>,
-        tunnel: Option<NonNull<ProxyTunnel>>,
+        tunnel: Option<crate::proxy_tunnel::RefPtr>,
         target_hostname: &[u8],
         target_port: u16,
         proxy_auth_hash: u64,
@@ -625,11 +624,15 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         bun_core::scoped_log!(HTTPContext, "close socket");
         if let Some(t) = tunnel {
-            // SAFETY: tunnel pointer is a live intrusive-refcounted ProxyTunnel
-            // whose strong ref was transferred to us by the caller.
+            // `detach_and_deref` consumes the strong ref the caller transferred;
+            // `leak()` first so the `RefPtr`'s debug-tracking entry is retired
+            // without a second decrement.
+            let raw = t.leak();
+            // SAFETY: `raw` is a live intrusive-refcounted ProxyTunnel; we hold
+            // the strong ref `detach_and_deref` is about to release.
             unsafe {
-                (*t.as_ptr()).shutdown();
-                (*t.as_ptr()).detach_and_deref();
+                (*raw).shutdown();
+                (*raw).detach_and_deref();
             }
         }
         if let Some(s) = h2_session {
@@ -712,11 +715,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 // leaves did_have_handshaking_error=false so the outer
                 // guard passes. Block a strict caller from reusing it.
                 if reject_unauthorized
-                    // SAFETY: proxy_tunnel.is_some() guaranteed by want_tunnel match above.
-                    && !unsafe {
-                        (*socket.proxy_tunnel.unwrap().as_ptr())
-                            .established_with_reject_unauthorized
-                    }
+                    // proxy_tunnel.is_some() guaranteed by want_tunnel match above.
+                    && !socket
+                        .proxy_tunnel
+                        .as_ref()
+                        .unwrap()
+                        .established_with_reject_unauthorized
                 {
                     continue;
                 }
@@ -741,9 +745,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 // Release the pool's strong ref (caller has its own via tls_props)
                 socket.ssl_config = None;
-                // Transfer tunnel ownership to the caller.
-                // PORT NOTE: `rp.leak()` → `Option::take()` (move strong ref out).
-                let tunnel: Option<NonNull<ProxyTunnel>> = socket.proxy_tunnel.take();
+                // Transfer tunnel ownership (the parked strong ref) to the caller.
+                let tunnel: Option<crate::proxy_tunnel::RefPtr> = socket.proxy_tunnel.take();
                 socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
                 let ok = self.pending_sockets.put(socket_ptr);
@@ -891,9 +894,15 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // onOpen only promotes .pending -> .opened, and
                     // firstCall only acts on .opened/.pending, so both
                     // become no-ops for the CONNECT/handshake phases.
-                    // SAFETY: tunnel strong ref transferred from pool; adopt
-                    // stores it in client.proxy_tunnel.
-                    unsafe { (*tunnel.as_ptr()).adopt::<SSL>(client, sock) };
+                    //
+                    // `adopt` re-wraps the raw pointer into `client.proxy_tunnel`
+                    // (a fresh `RefPtr::from_raw`, no bump), taking over the
+                    // strong ref this `tunnel` holds — so `leak()` it first to
+                    // surrender the claim without decrementing.
+                    let raw = tunnel.leak();
+                    // SAFETY: `raw` is a live ProxyTunnel; we hold the strong ref
+                    // `adopt` is about to move into `client.proxy_tunnel`.
+                    unsafe { (*raw).adopt::<SSL>(client, sock) };
                     client.on_open::<SSL>(sock)?;
                     client.on_writable::<true, SSL>(sock);
                 } else {

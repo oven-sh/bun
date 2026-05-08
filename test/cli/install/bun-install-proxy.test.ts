@@ -37,7 +37,7 @@ if (isDockerEnabled()) {
       // wait for squid to start
       await waitForSquid();
     }
-  });
+  }, 90_000);
 
   it("bun install with proxy with big packages", async () => {
     const files = {

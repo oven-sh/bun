@@ -415,30 +415,31 @@ pub type Scheduler = StatWatcherScheduler;
 mod js {
     use super::{JSGlobalObject, JSValue};
 
+    // `safe fn` to match the `safe fn …CachedValue` declarations
+    // `generate-classes.ts` emits in `generated_classes.rs` (avoids
+    // `clashing_extern_declarations`).
     unsafe extern "C" {
-        fn StatWatcherPrototype__listenerSetCachedValue(
+        safe fn StatWatcherPrototype__listenerSetCachedValue(
             this_value: JSValue,
             global: *mut JSGlobalObject,
             value: JSValue,
         );
-        fn StatWatcherPrototype__listenerGetCachedValue(this_value: JSValue) -> JSValue;
-        fn StatWatcherPrototype__prevStatSetCachedValue(
+        safe fn StatWatcherPrototype__listenerGetCachedValue(this_value: JSValue) -> JSValue;
+        safe fn StatWatcherPrototype__prevStatSetCachedValue(
             this_value: JSValue,
             global: *mut JSGlobalObject,
             value: JSValue,
         );
-        fn StatWatcherPrototype__prevStatGetCachedValue(this_value: JSValue) -> JSValue;
+        safe fn StatWatcherPrototype__prevStatGetCachedValue(this_value: JSValue) -> JSValue;
     }
 
     #[inline]
     pub fn listener_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        // SAFETY: codegen guarantees the symbol; `global` is live.
-        unsafe { StatWatcherPrototype__listenerSetCachedValue(this_value, global.as_mut_ptr(), value) }
+        StatWatcherPrototype__listenerSetCachedValue(this_value, global.as_mut_ptr(), value)
     }
     #[inline]
     pub fn listener_get_cached(this_value: JSValue) -> Option<JSValue> {
-        // SAFETY: codegen guarantees the symbol; returns ZERO when unset.
-        let v = unsafe { StatWatcherPrototype__listenerGetCachedValue(this_value) };
+        let v = StatWatcherPrototype__listenerGetCachedValue(this_value);
         if v.is_empty() { None } else { Some(v) }
     }
 
@@ -447,15 +448,11 @@ mod js {
             use super::super::*;
             #[inline]
             pub fn set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-                // SAFETY: codegen guarantees the symbol; `global` is live.
-                unsafe {
-                    StatWatcherPrototype__prevStatSetCachedValue(this_value, global.as_mut_ptr(), value)
-                }
+                StatWatcherPrototype__prevStatSetCachedValue(this_value, global.as_mut_ptr(), value)
             }
             #[inline]
             pub fn get(this_value: JSValue) -> Option<JSValue> {
-                // SAFETY: codegen guarantees the symbol; returns ZERO when unset.
-                let v = unsafe { StatWatcherPrototype__prevStatGetCachedValue(this_value) };
+                let v = StatWatcherPrototype__prevStatGetCachedValue(this_value);
                 if v.is_empty() { None } else { Some(v) }
             }
         }

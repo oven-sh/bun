@@ -76,6 +76,9 @@ const _: () = {
     // `*mut Archive` is opaque to C++ (linked by symbol name only); the
     // pointee's transitive `Store` field has no `#[repr(C)]`, but the FFI
     // boundary never dereferences it — silence the layout lint.
+    // Signatures match `generated_classes.rs` / the `#[bun_jsc::JsClass]`
+    // macro byte-for-byte (`safe fn`, `*mut JSGlobalObject`) so the linker
+    // sees one consistent declaration — otherwise `clashing_extern_declarations`.
     #[allow(improper_ctypes)]
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
@@ -84,9 +87,9 @@ const _: () = {
         #[link_name = "Archive__fromJSDirect"]
         safe fn __from_js_direct(value: JSValue) -> *mut Archive;
         #[link_name = "Archive__create"]
-        fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
+        safe fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
         #[link_name = "Archive__getConstructor"]
-        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
     #[allow(improper_ctypes)]
     #[cfg(not(all(windows, target_arch = "x86_64")))]
@@ -96,9 +99,9 @@ const _: () = {
         #[link_name = "Archive__fromJSDirect"]
         safe fn __from_js_direct(value: JSValue) -> *mut Archive;
         #[link_name = "Archive__create"]
-        fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
+        safe fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
         #[link_name = "Archive__getConstructor"]
-        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
 
     impl bun_jsc::JsClass for Archive {
@@ -112,14 +115,14 @@ const _: () = {
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             let ptr = bun_core::heap::into_raw(Box::new(self));
-            // SAFETY: `global` is live; ownership of `ptr` transfers to the
-            // C++ wrapper (freed via `ArchiveClass__finalize` → `finalize()`).
-            // `as_ptr()` routes through `JSGlobalObject`'s `UnsafeCell`
-            // interior so the `*mut` retains write provenance for C++.
-            unsafe { __create(global.as_ptr(), ptr) }
+            // Ownership of `ptr` transfers to the C++ wrapper (freed via
+            // `ArchiveClass__finalize` → `finalize()`). `as_ptr()` routes
+            // through `JSGlobalObject`'s `UnsafeCell` interior so the `*mut`
+            // retains write provenance for C++.
+            __create(global.as_ptr(), ptr)
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            __get_constructor(global)
+            __get_constructor(global.as_ptr())
         }
     }
 };

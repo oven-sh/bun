@@ -148,6 +148,24 @@ pub type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter>;
 /// `posix_event_loop.zig`).
 pub type Poll = WriterImpl;
 
+/// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Arc strong
+/// ref across `on_poll` so child `onIOWriterChunk` callbacks (via `bump()`)
+/// can drop the last external ref without freeing `self` while PipeWriter is
+/// still on the stack. Spec uses an async-deinit hop for the same guarantee.
+#[cfg(not(windows))]
+pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
+    use bun_io::pipe_writer::PosixPipeWriter;
+    let parent = writer.parent as *const IOWriter;
+    debug_assert!(!parent.is_null());
+    // SAFETY: `parent` is `Arc::as_ptr` stashed in `IOWriter::init` (the sole
+    // constructor); the `ArcInner` is live because `writer` is a field of it.
+    let _keepalive = unsafe {
+        std::sync::Arc::increment_strong_count(parent);
+        std::sync::Arc::from_raw(parent)
+    };
+    writer.on_poll(size_hint, hup);
+}
+
 impl IOWriter {
     /// Spec: IOWriter.zig `runFromMainThread` — explicitly a no-op
     /// (`// this is unused`). Kept only because `task_tag::ShellIOWriter`

@@ -677,7 +677,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::SHELL_BUFFERED_WRITER => {
             // `bun.shell.Interpreter.IOWriter.Poll`
             let h = owner_as!(ShellBufferedWriterPoll);
-            h.on_poll(size_or_offset as isize, hup);
+            crate::shell::io_writer::on_poll(h, size_or_offset as isize, hup);
         }
         poll_tag::DNS_RESOLVER => {
             let resolver = owner_as!(DNSResolver);

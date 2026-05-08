@@ -29,35 +29,31 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 /// Intrusive thread-safe ref-counted memfd allocator.
 ///
 /// `ref_count` must stay at this field offset for `bun_ptr::IntrusiveArc<Self>`.
+//
+// Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
+// → intrusive *atomic* refcount. Blob stores (and thus this allocator, smuggled
+// through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
+// flavor would data-race on ref/deref.
+#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
     pub fd: Fd,
     pub size: usize,
 }
 
-// Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-// → intrusive *atomic* refcount. Blob stores (and thus this allocator, smuggled
-// through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
-// flavor would data-race on ref/deref.
-impl bun_ptr::ThreadSafeRefCounted for LinuxMemFdAllocator {
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::ThreadSafeRefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-
-    unsafe fn destructor(this: *mut Self) {
-        // Zig `deinit`: close fd, then `bun.destroy(self)`.
-        // SAFETY: refcount hit 0; `this` came from `heap::alloc` in
-        // `IntrusiveArc::new`. Closing fd before reclaiming the Box.
+impl LinuxMemFdAllocator {
+    /// Zig `deinit`: close fd, then `bun.destroy(self)`.
+    ///
+    /// # Safety
+    /// Refcount hit 0; `this` came from `heap::alloc` in `IntrusiveArc::new`.
+    unsafe fn deinit(this: *mut Self) {
+        // SAFETY: sole owner — close fd before reclaiming the Box.
         unsafe { (*this).fd.close() };
         // SAFETY: sole owner; reconstruct the Box so the allocation is freed.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
-
-// `RefPtr<T>` requires `T: AnyRefCounted`; the blanket only covers the
-// single-threaded flavor (overlapping-impl rules), so opt in explicitly.
-bun_ptr::impl_thread_safe_any_ref_counted!(LinuxMemFdAllocator);
 
 pub type Ref = bun_ptr::IntrusiveArc<LinuxMemFdAllocator>;
 

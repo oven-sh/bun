@@ -1650,6 +1650,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
+ "bun_core_macros",
  "const_format",
  "enum-map",
  "enumset",

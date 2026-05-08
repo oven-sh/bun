@@ -40,6 +40,8 @@ const NS_PER_MS: u64 = 1_000_000;
 // `impl crate::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
 // `bun_jsc::{JSGlobalObject, CallFrame, JSValue}`, so the types are identical;
 // switching to the derive is a mechanical follow-up, not a layering blocker.
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLConnection {
     // intrusive refcount (bun.ptr.RefCount mixin); destroy callback = `deinit`
     ref_count: Cell<u32>,
@@ -129,18 +131,6 @@ impl Drop for DerefOnDrop {
         // SAFETY: constructor contract — `self.0` is a live `heap::alloc`
         // pointer with at least one outstanding ref owned by this guard.
         unsafe { JSMySQLConnection::deref(self.0) }
-    }
-}
-
-// pub const ref = RefCount.ref; pub const deref = RefCount.deref;
-// → intrusive Cell<u32> refcount; destroy callback = `deinit`.
-bun_ptr::impl_cell_ref_counted! {
-    impl JSMySQLConnection {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: count hit 0; `this` came from `heap::alloc` in
-        // `create_instance`, so we are the unique owner here. `deinit` takes
-        // ownership back via `heap::take` (mirrors Zig `bun.destroy(this)`).
-        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
 }
 

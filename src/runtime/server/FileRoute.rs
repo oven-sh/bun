@@ -22,6 +22,8 @@ use crate::webcore::BlobExt as _;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = FileRoute::deinit)]
 pub struct FileRoute {
     // PORT NOTE (§Pointers Rc/Arc default): owned via intrusive refcount; the
     // raw `*mut FileRoute` is round-tripped through `FileResponseStream`'s
@@ -645,16 +647,6 @@ fn on_stream_complete(ctx: *mut c_void, resp: AnyResponse) {
 
 fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
     FileRoute::on_response_complete(ctx.cast::<FileRoute>(), resp);
-}
-
-// Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-bun_ptr::impl_cell_ref_counted! {
-    impl FileRoute {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: `this` was produced by `heap::alloc` (write provenance
-        // preserved through FFI userdata round-trips); uniquely held at zero.
-        unsafe fn destroy(this: *mut Self) { FileRoute::deinit(this) }
-    }
 }
 
 // ported from: src/runtime/server/FileRoute.zig

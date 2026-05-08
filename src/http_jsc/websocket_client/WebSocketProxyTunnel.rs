@@ -96,6 +96,7 @@ impl UpgradeClientUnion {
 
 type WebSocketClient = crate::websocket_client::WebSocket<false>;
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct WebSocketProxyTunnel {
     ref_count: Cell<u32>,
     /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
@@ -160,16 +161,6 @@ impl Drop for TunnelRefGuard {
         // SAFETY: `ref_scope` took a ref on a live Box-allocated tunnel, so
         // `self.0` is still live here and `deref` has valid write provenance.
         unsafe { WebSocketProxyTunnel::deref(self.0) };
-    }
-}
-
-// Intrusive refcount (bun.ptr.RefCount).
-bun_ptr::impl_cell_ref_counted! {
-    impl WebSocketProxyTunnel {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: ref_count hit zero; `this` was allocated via `heap::alloc`
-        // in `init`. Drop impl handles field cleanup.
-        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 

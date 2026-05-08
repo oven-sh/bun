@@ -23,6 +23,7 @@ use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h3_client, hidden);
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
     /// Ref holders: the `ClientContext.sessions` registry while listed (1), the
     /// `quic.Socket` ext slot while connected (1, transferred from the registry
@@ -44,16 +45,6 @@ pub struct ClientSession {
     /// FIFO; `lsquic_conn_make_stream` was already called once per entry.
     // BACKREF/INTRUSIVE: Stream is heap-allocated by Stream::new and destroyed in detach().
     pub pending: Vec<*mut Stream>,
-}
-
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-bun_ptr::impl_cell_ref_counted! {
-    impl ClientSession {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: ref_count hitting 0 means no other alias remains; `this`
-        // carries the original `heap::alloc` provenance from `new`.
-        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
-    }
 }
 
 impl ClientSession {

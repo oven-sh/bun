@@ -19,6 +19,7 @@ bun_core::declare_scope!(Postgres, visible);
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
 // Ported as an embedded `Cell<u32>` driven by `bun_ptr::IntrusiveRc<PostgresSQLStatement>`;
 // `ref`/`deref` are provided by `IntrusiveRc`, not as inherent methods.
+#[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLStatement {
     pub cached_structure: PostgresCachedStructure,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
@@ -81,16 +82,6 @@ pub enum Status {
 impl Status {
     pub fn is_running(self) -> bool {
         self == Status::Parsing
-    }
-}
-
-// pub const ref = RefCount.ref; pub const deref = RefCount.deref;
-bun_ptr::impl_cell_ref_counted! {
-    impl PostgresSQLStatement {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: produced by `heap::alloc`; ref_count is 0; `Drop` handles
-        // field teardown.
-        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 

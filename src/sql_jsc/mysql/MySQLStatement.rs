@@ -21,6 +21,7 @@ bun_core::declare_scope!(MySQLStatement, hidden);
 // Shared ownership is expressed as `bun_ptr::IntrusiveRc<MySQLStatement>`; the
 // `ref_count` field below is the embedded counter that `IntrusiveRc` manipulates.
 // `ref()`/`deref()` are methods on `IntrusiveRc`, not on this struct.
+#[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
     pub cached_structure: CachedStructure,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
@@ -93,17 +94,6 @@ pub enum Status {
     Parsing,
     Prepared,
     Failed,
-}
-
-// Intrusive refcount (Zig: `RefCount.ref`/`RefCount.deref`).
-bun_ptr::impl_cell_ref_counted! {
-    impl MySQLStatement {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: count hit 0; `this` came from `heap::alloc`. Field cleanup
-        // runs via `Drop for MySQLStatement`; the Box drop frees the
-        // allocation (mirrors `bun.destroy`).
-        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
-    }
 }
 
 impl MySQLStatement {

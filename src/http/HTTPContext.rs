@@ -24,6 +24,7 @@ const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 // PORT NOTE: renamed NewHTTPContext→HTTPContext — `New` is a Zig type-factory
 // naming convention, not part of the type's identity; LIFETIMES.tsv already
 // aliases `*NewHTTPContext(true)` as `HttpsContext`.
+#[derive(bun_ptr::CellRefCounted)]
 pub struct HTTPContext<const SSL: bool> {
     /// Heap-allocated custom-SSL contexts only. The cache entry in
     /// custom_ssl_context_map holds 1; each in-flight HTTPClient that set
@@ -57,16 +58,9 @@ pub struct HTTPContext<const SSL: bool> {
 
 // Intrusive refcount: Zig `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
 // `*T` crosses FFI (group.ext) and is recovered from socket ext, so per
-// PORTING.md this stays intrusive rather than `Rc<T>`.
-bun_ptr::impl_cell_ref_counted! {
-    impl[const SSL: bool] HTTPContext<SSL> {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: refcount hit zero; this struct was Box-allocated for
-        // custom-SSL entries (statics never reach 0). `this` originated from
-        // `heap::alloc` so it carries unique ownership provenance.
-        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
-    }
-}
+// PORTING.md this stays intrusive rather than `Rc<T>`. Derived via
+// `#[derive(CellRefCounted)]` above; default `destroy` (`heap::take`) applies
+// (this struct is Box-allocated for custom-SSL entries; statics never hit 0).
 pub type HTTPContextRc<const SSL: bool> = bun_ptr::IntrusiveRc<HTTPContext<SSL>>;
 
 pub type PooledSocketHiveAllocator<const SSL: bool> = HiveArray<PooledSocket<SSL>, POOL_SIZE>;

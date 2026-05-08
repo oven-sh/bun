@@ -107,7 +107,13 @@ pub trait ThreadSafeRefCounted: Sized {
     ///
     /// # Safety
     /// `this` must point to a live `Self` with `raw_count == 0`.
-    unsafe fn destructor(this: *mut Self);
+    #[inline]
+    unsafe fn destructor(this: *mut Self) {
+        // Default: the allocation came from `heap::alloc` / `Box::into_raw`;
+        // reclaim and drop. Override for pooled / arena-backed types.
+        // SAFETY: caller contract — sole owner of a Box-allocated `Self`.
+        drop(unsafe { Box::from_raw(this) });
+    }
 }
 
 /// Unifying trait so `RefPtr<T>` works with either ref-count flavor.
@@ -532,8 +538,8 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     }
 
     /// Type-erased accessor for the embedded debug tracker. Exposed (rather
-    /// than the private `debug` field) so [`impl_thread_safe_any_ref_counted!`]
-    /// can hand-impl [`AnyRefCounted::rc_debug_data`] from outside this crate.
+    /// than the private `debug` field) so `#[derive(ThreadSafeRefCounted)]`
+    /// can emit [`AnyRefCounted::rc_debug_data`] from outside this crate.
     #[cfg(debug_assertions)]
     #[doc(hidden)]
     #[inline]
@@ -558,7 +564,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 /// [`ref_count`] and [`destroy`]; the trait provides `ref_()`/`deref()` with
 /// the canonical inc/dec/destroy-at-zero logic.
 ///
-/// Use [`impl_cell_ref_counted!`] to derive this trait together with the
+/// Use `#[derive(CellRefCounted)]` to derive this trait together with the
 /// [`AnyRefCounted`] bridge (so [`RefPtr`] / [`ScopedRef`] accept the type)
 /// and inherent `ref_()`/`deref()` forwarders (so existing call sites that
 /// invoke them as inherent methods keep compiling without importing the
@@ -575,13 +581,21 @@ pub unsafe trait CellRefCounted: Sized {
     /// Locate the embedded `Cell<u32>` refcount field.
     fn ref_count(&self) -> &Cell<u32>;
 
-    /// Called exactly once when the refcount reaches zero. Typically
-    /// `drop(heap::take(this))`.
+    /// Called exactly once when the refcount reaches zero.
+    ///
+    /// The default reclaims the allocation as a `Box<Self>` (i.e.
+    /// `drop(heap::take(this))`); override only when the allocation came from
+    /// somewhere other than `heap::alloc` / `Box::into_raw`, or when extra
+    /// teardown must run before field `Drop` impls.
     ///
     /// # Safety
     /// `this` points to a live `Self` whose refcount just hit zero; no other
     /// alias remains. Callee takes ownership and frees the allocation.
-    unsafe fn destroy(this: *mut Self);
+    #[inline]
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: caller contract — sole owner of a Box-allocated `Self`.
+        drop(unsafe { Box::from_raw(this) });
+    }
 
     /// Increment the intrusive refcount.
     #[inline]
@@ -647,164 +661,13 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
     NOOP.with(|n| n.get() as *mut dyn DebugDataOps)
 }
 
-/// Derive [`CellRefCounted`] + [`AnyRefCounted`] + inherent `ref_()`/`deref()`
-/// forwarders for a type with an intrusive `Cell<u32>` refcount.
-///
-/// ```ignore
-/// bun_ptr::impl_cell_ref_counted! {
-///     impl ProxyTunnel {
-///         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-///         unsafe fn destroy(this: *mut Self) { drop(heap::take(this)) }
-///     }
-/// }
-/// // generic types use square-bracket generics (angle brackets aren't a
-/// // token-tree delimiter so `macro_rules!` can't match them lazily):
-/// bun_ptr::impl_cell_ref_counted! {
-///     impl[const SSL: bool] HTTPContext<SSL> {
-///         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-///         unsafe fn destroy(this: *mut Self) { drop(heap::take(this)) }
-///     }
-/// }
-/// ```
-///
-/// The inherent forwarders mean existing call sites (`x.ref_()`,
-/// `T::deref(p)`) keep compiling without importing the trait.
-#[macro_export]
-macro_rules! impl_cell_ref_counted {
-    // Non-generic entry — forwards to the generic arm with an empty param list.
-    // Uses a `for $T:ty` spelling so the first token after `impl` is never `[`
-    // (which would commit the `:ty` parser to a slice type and hard-error).
-    (
-        impl $T:ident {
-            fn ref_count(&$self_:ident) -> &Cell<u32> $rc_body:block
-            unsafe fn destroy($this:ident: *mut Self) $destroy_body:block
-        }
-    ) => {
-        $crate::impl_cell_ref_counted! {
-            impl[] $T {
-                fn ref_count(&$self_) -> &Cell<u32> $rc_body
-                unsafe fn destroy($this: *mut Self) $destroy_body
-            }
-        }
-    };
-    (
-        impl [$($gen:tt)*] $T:ty {
-            fn ref_count(&$self_:ident) -> &Cell<u32> $rc_body:block
-            unsafe fn destroy($this:ident: *mut Self) $destroy_body:block
-        }
-    ) => {
-        unsafe impl<$($gen)*> $crate::CellRefCounted for $T {
-            #[inline]
-            fn ref_count(&$self_) -> &::core::cell::Cell<u32> $rc_body
-            #[inline]
-            unsafe fn destroy($this: *mut Self) {
-                // SAFETY: forwarded — see trait contract.
-                #[allow(unused_unsafe)]
-                unsafe { $destroy_body }
-            }
-        }
-        impl<$($gen)*> $crate::AnyRefCounted for $T {
-            type DestructorCtx = ();
-            #[inline]
-            unsafe fn rc_ref(this: *mut Self) {
-                // SAFETY: caller contract — `this` is live.
-                let rc = unsafe { <Self as $crate::CellRefCounted>::ref_count(&*this) };
-                rc.set(rc.get() + 1);
-            }
-            #[inline]
-            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
-                // SAFETY: caller contract — `this` is live.
-                unsafe { <Self as $crate::CellRefCounted>::deref(this) }
-            }
-            #[inline]
-            unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-                // SAFETY: caller contract — `this` is live.
-                unsafe { <Self as $crate::CellRefCounted>::ref_count(&*this) }.get() == 1
-            }
-            #[inline]
-            unsafe fn rc_assert_no_refs(this: *const Self) {
-                debug_assert_eq!(
-                    // SAFETY: caller contract — `this` is live.
-                    unsafe { <Self as $crate::CellRefCounted>::ref_count(&*this) }.get(),
-                    0,
-                );
-            }
-            #[cfg(debug_assertions)]
-            #[inline]
-            unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn $crate::ref_count::DebugDataOps {
-                $crate::ref_count::noop_debug_data()
-            }
-        }
-        // Inherent forwarders so callers don't need the trait in scope.
-        impl<$($gen)*> $T {
-            #[inline]
-            pub fn ref_(&self) {
-                <Self as $crate::CellRefCounted>::ref_(self)
-            }
-            /// # Safety
-            /// `this` must point to a live `Self` and the caller must own one
-            /// ref. After this call `this` may be dangling.
-            #[inline]
-            pub unsafe fn deref(this: *mut Self) {
-                // SAFETY: forwarded caller contract.
-                unsafe { <Self as $crate::CellRefCounted>::deref(this) }
-            }
-        }
-    };
-}
-
 // A blanket `impl<T: ThreadSafeRefCounted> AnyRefCounted for T` would overlap
 // with the `RefCounted` blanket above (Rust forbids overlapping blanket impls).
-// Instead, thread-safe hosts opt in explicitly via this macro — equivalent to
-// the blanket impl, expanded per-type.
+// Instead, thread-safe hosts opt in via `#[derive(ThreadSafeRefCounted)]`,
+// which emits the per-type `AnyRefCounted` impl alongside the trait impl.
 //
 // Zig: `RefPtr` reflected on `@FieldType(T, "ref_count")` to accept either
-// mixin; this macro is the manual half of that dispatch.
-/// Implements [`AnyRefCounted`] for a type that already implements
-/// [`ThreadSafeRefCounted`], delegating to its embedded [`ThreadSafeRefCount`].
-#[macro_export]
-macro_rules! impl_thread_safe_any_ref_counted {
-    ($T:ty) => {
-        impl $crate::AnyRefCounted for $T {
-            type DestructorCtx = ();
-
-            #[inline]
-            unsafe fn rc_ref(this: *mut Self) {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe { $crate::ThreadSafeRefCount::<Self>::ref_(this) }
-            }
-            #[inline]
-            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe { $crate::ThreadSafeRefCount::<Self>::deref(this) }
-            }
-            #[inline]
-            unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
-                        .has_one_ref()
-                }
-            }
-            #[inline]
-            unsafe fn rc_assert_no_refs(this: *const Self) {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
-                        .assert_no_refs()
-                }
-            }
-            #[cfg(debug_assertions)]
-            #[inline]
-            unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn $crate::ref_count::DebugDataOps {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this)).debug_data_ptr()
-                }
-            }
-        }
-    };
-}
+// mixin; the derive is the manual half of that dispatch.
 
 // ──────────────────────────────────────────────────────────────────────────
 // RefPtr

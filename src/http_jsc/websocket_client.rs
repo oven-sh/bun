@@ -55,6 +55,8 @@ const MIN_COMPRESS_SIZE: usize = 860;
 /// DEFLATE overhead
 const COMPRESSION_OVERHEAD: usize = 4;
 
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → intrusive refcount
     pub ref_count: Cell<u32>,
@@ -115,19 +117,6 @@ pub struct WebSocket<const SSL: bool> {
     /// semantics match `RefPtr`: assigning here implies a held ref, released
     /// in `clear_data` via `WebSocketProxyTunnel::deref`.
     pub proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
-}
-
-// IntrusiveRc wiring: ref/deref forward to ref_count; final deref calls deinit()
-// TODO(port): bun.ptr.RefCount → bun_ptr::IntrusiveRc<WebSocket<SSL>>; the
-// destructor callback is `deinit` (drops self + bun.destroy).
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-bun_ptr::impl_cell_ref_counted! {
-    impl[const SSL: bool] WebSocket<SSL> {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: refcount hit zero; caller held the last owner of the
-        // `heap::alloc` allocation and `this` carries write provenance.
-        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
-    }
 }
 
 /// `bun_aio::KeepAlive::{ref,unref}` take an erased `EventLoopCtx` (manual

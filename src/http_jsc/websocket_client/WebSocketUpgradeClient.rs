@@ -94,6 +94,8 @@ enum State {
 /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread
 /// refcount; `ref_count` field below, `ref()`/`deref()` inherent methods, `deinit`
 /// runs when count hits 0.
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct HTTPClient<const SSL: bool> {
     ref_count: Cell<u32>,
     tcp: Socket<SSL>,
@@ -165,15 +167,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
     pub const ON_END: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_end;
     pub const ON_HANDSHAKE: unsafe fn(*mut Self, Socket<SSL>, i32, uws::us_bun_verify_error_t) =
         Self::handle_handshake;
-}
-
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-bun_ptr::impl_cell_ref_counted! {
-    impl[const SSL: bool] HTTPClient<SSL> {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: refcount hit zero; no other live references remain.
-        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
-    }
 }
 
 impl<const SSL: bool> HTTPClient<SSL> {

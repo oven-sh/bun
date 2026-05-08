@@ -597,7 +597,7 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::ArrayHashMap;
 use bun_core::{FeatureFlags, Global, Output, err};
-use bun_string::{immutable as strings, String as BunString, Tag as BunStringTag};
+use bun_string::{immutable as strings, OwnedString, String as BunString, Tag as BunStringTag};
 use bun_string::string_builder::StringBuilder;
 use bun_uws as uws;
 // TODO(port): spec http.zig:829 uses `std.hash.Wyhash` (NOT Wyhash11 — see
@@ -4193,8 +4193,7 @@ impl<'a> HTTPClient<'a> {
                                 }
 
                                 let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                                let normalized_url = bun_url::href_from_string(&input);
-                                // normalized_url drops at scope exit (was `defer .deref()`)
+                                let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
                                 if normalized_url.tag() == BunStringTag::Dead {
                                     // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
                                     return Err(err!(RedirectURLInvalid));
@@ -4249,7 +4248,7 @@ impl<'a> HTTPClient<'a> {
                                 }
 
                                 let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                                let normalized_url = bun_url::href_from_string(&input);
+                                let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
                                 if normalized_url.tag() == BunStringTag::Dead {
                                     return Err(err!(RedirectURLInvalid));
                                 }
@@ -4269,8 +4268,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let base = BunString::borrow_utf8(original_url.href);
                                 let rel = BunString::borrow_utf8(location);
-                                let new_url_ = bun_url::join(&base, &rel);
-                                // new_url_ drops at scope exit (was `defer .deref()`)
+                                let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
 
                                 if new_url_.is_empty() {
                                     return Err(err!(InvalidRedirectURL));

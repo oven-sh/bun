@@ -1942,7 +1942,7 @@ fn run_on_entry_point(
         // type-erased trampoline matching DependenciesScanner.on_fetch's exact signature.
         on_fetch: analyzer_on_fetch_trampoline,
     };
-    crate::cli::build_command::BuildCommand::exec(crate::cli::cli_body::command::get(), Some(&mut fetcher))
+    crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&mut fetcher))
 }
 
 // `Commands` was a Zig anonymous tuple of three single-element string arrays, used only to

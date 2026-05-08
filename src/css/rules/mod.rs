@@ -1024,11 +1024,13 @@ pub fn merge_style_rules<R>(
 
             // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
             if sty.is_compatible(*context.targets) && last_style_rule.is_compatible(*context.targets) {
-                while sty.selectors.v.len() > 0 {
-                    last_style_rule
-                        .selectors
-                        .v
-                        .append(sty.selectors.v.ordered_remove(0));
+                let moved = core::mem::take(&mut sty.selectors.v);
+                last_style_rule
+                    .selectors
+                    .v
+                    .ensure_total_capacity(last_style_rule.selectors.v.len() + moved.len());
+                for sel in moved {
+                    last_style_rule.selectors.v.append_assume_capacity(sel);
                 }
                 if sty.vendor_prefix.contains(VendorPrefix::NONE)
                     && context.targets.should_compile_selectors()

@@ -23,8 +23,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 
     pub const fn init() -> Self {
         Self {
-            // SAFETY: an array of MaybeUninit needs no initialization.
-            buffer: unsafe { MaybeUninit::uninit().assume_init() },
+            buffer: [const { MaybeUninit::uninit() }; CAPACITY],
             used: IntegerBitSet::init_empty(),
         }
     }
@@ -50,8 +49,9 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     pub fn index_of(&self, value: *const T) -> Option<u32> {
         asan::assert_unpoisoned(value.cast::<u8>());
         let start = self.buffer.as_ptr().cast::<T>();
-        // SAFETY: one-past-the-end pointer of `buffer`.
-        let end = unsafe { start.add(CAPACITY) };
+        // One-past-the-end pointer of `buffer`; `wrapping_add` is sound for
+        // the in-allocation offset and matches `add` exactly here.
+        let end = start.wrapping_add(CAPACITY);
         if !((value as usize) >= (start as usize) && (value as usize) < (end as usize)) {
             return None;
         }
@@ -66,8 +66,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     pub fn r#in(&self, value: *const T) -> bool {
         asan::assert_unpoisoned(value.cast::<u8>());
         let start = self.buffer.as_ptr().cast::<T>();
-        // SAFETY: one-past-the-end pointer of `buffer`.
-        let end = unsafe { start.add(CAPACITY) };
+        let end = start.wrapping_add(CAPACITY);
         (value as usize) >= (start as usize) && (value as usize) < (end as usize)
     }
 

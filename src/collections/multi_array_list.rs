@@ -732,10 +732,11 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         let mut k = 0;
         while k < Reflected::<T>::COUNT {
             result.ptrs[fields[k]] = p;
-            // SAFETY: `p` walks within the single allocation of
+            // `p` walks within the single allocation of
             // `capacity_in_bytes(self.capacity)` bytes (or is null when
-            // capacity == 0, in which case bytes[k] * 0 == 0 and add(0) is OK).
-            p = unsafe { p.add(bytes[k] * self.capacity) };
+            // capacity == 0, in which case the offset is 0). Always
+            // in-bounds, so `wrapping_add` is exact.
+            p = p.wrapping_add(bytes[k] * self.capacity);
             k += 1;
         }
         result
@@ -747,8 +748,8 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         if self.capacity == 0 {
             return ptr::null_mut();
         }
-        // SAFETY: column offset within the single allocation.
-        unsafe { self.bytes.add(Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * self.capacity) }
+        // Column offset within the single allocation; always in-bounds.
+        self.bytes.wrapping_add(Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * self.capacity)
     }
 
     /// Get the shared slice of values for field `NAME`.
@@ -1002,8 +1003,8 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
                     ptr::copy_nonoverlapping(self_slice.ptr(fields[k]), dst, new_len * size);
                 }
             }
-            // SAFETY: within the fresh allocation.
-            dst = unsafe { dst.add(size * new_len) };
+            // Within the fresh allocation; always in-bounds.
+            dst = dst.wrapping_add(size * new_len);
         }
         // SAFETY: free old backing store before overwriting self.
         unsafe { self.free_allocated_bytes() };
@@ -1067,8 +1068,8 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
                     ptr::copy_nonoverlapping(self_slice.ptr(fields[k]), dst, self.len * size);
                 }
             }
-            // SAFETY: within the fresh allocation.
-            dst = unsafe { dst.add(size * new_capacity) };
+            // Within the fresh allocation; always in-bounds.
+            dst = dst.wrapping_add(size * new_capacity);
         }
         // SAFETY: free old backing store before taking new one.
         unsafe { self.free_allocated_bytes() };

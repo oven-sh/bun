@@ -171,8 +171,7 @@ impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     /// `init` for `.Static`.
     pub fn init() -> Self {
         Self {
-            // SAFETY: array of MaybeUninit needs no init.
-            buf: StaticBuffer(unsafe { MaybeUninit::uninit().assume_init() }),
+            buf: StaticBuffer([const { MaybeUninit::uninit() }; N]),
             head: 0,
             count: 0,
             _marker: PhantomData,

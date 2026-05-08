@@ -69,8 +69,7 @@ type Length = usize;
 impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_CAPACITY> {
     fn default() -> Self {
         Self {
-            // SAFETY: an array of `MaybeUninit<T>` is itself trivially inhabited when uninitialized.
-            buffer: unsafe { MaybeUninit::<[MaybeUninit<T>; BUFFER_CAPACITY]>::uninit().assume_init() },
+            buffer: [const { MaybeUninit::uninit() }; BUFFER_CAPACITY],
             len: 0,
         }
     }

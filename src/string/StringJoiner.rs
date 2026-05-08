@@ -305,8 +305,7 @@ impl<'a> Iterator for NodeSlices<'a> {
         // `StringJoiner`; nodes are not freed while the borrow is held.
         let node = unsafe { &*self.cur };
         self.cur = node.next;
-        // SAFETY: node slice valid for the borrow of the joiner (`'a`).
-        Some(unsafe { &*node.slice })
+        Some(node.slice())
     }
 }
 

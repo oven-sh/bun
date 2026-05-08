@@ -106,18 +106,16 @@ impl StringBuilder {
         debug_assert!(self.len + 1 <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
-        // SAFETY: ptr was allocated with cap bytes; len+slice.len()+1 <= cap asserted.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        let dst = unsafe { slice::from_raw_parts_mut(base, self.cap - self.len) };
+        let dst = self.writable();
         dst[..slice.len()].copy_from_slice(slice);
         dst[slice.len()] = 0;
-        // SAFETY: dst[slice.len()] == 0 written above.
-        let result = unsafe { ZStr::from_raw(base, slice.len()) };
+        let base = dst.as_mut_ptr();
         self.len += slice.len() + 1;
 
         debug_assert!(self.len <= self.cap);
 
-        result
+        // SAFETY: base[..slice.len()] just written, base[slice.len()] == 0.
+        unsafe { ZStr::from_raw(base, slice.len()) }
     }
 
     pub fn append_str(&mut self, str: &BunString) -> &[u8] {
@@ -129,17 +127,16 @@ impl StringBuilder {
         debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
-        // SAFETY: ptr allocated with cap bytes; bounds asserted above.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        let dst = unsafe { slice::from_raw_parts_mut(base, self.cap - self.len) };
+        let dst = self.writable();
         dst[..slice.len()].copy_from_slice(slice);
-        // SAFETY: base..base+slice.len() was just written.
-        let result = unsafe { slice::from_raw_parts(base, slice.len()) };
+        let base = dst.as_ptr();
         self.len += slice.len();
 
         debug_assert!(self.len <= self.cap);
 
-        result
+        // SAFETY: base[..slice.len()] was just written; lives in `self.ptr`'s
+        // allocation for the lifetime of `&mut self`.
+        unsafe { slice::from_raw_parts(base, slice.len()) }
     }
 
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {
@@ -173,11 +170,8 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let start = self.len;
-        // SAFETY: ptr allocated with cap bytes; bounds asserted above.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        let dst = unsafe { slice::from_raw_parts_mut(base, self.cap - self.len) };
+        let dst = self.writable();
         dst[..slice.len()].copy_from_slice(slice);
-        let _result = &dst[..slice.len()];
         self.len += slice.len();
 
         debug_assert!(self.len <= self.cap);
@@ -190,12 +184,9 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let start = self.len;
-        // SAFETY: ptr allocated with cap bytes; bounds asserted above.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        let dst = unsafe { slice::from_raw_parts_mut(base, self.cap - self.len) };
+        let dst = self.writable();
         dst[..slice.len()].copy_from_slice(slice);
         dst[slice.len()] = 0;
-        let _result = &dst[..slice.len()];
         self.len += slice.len();
         self.len += 1;
 
@@ -208,28 +199,24 @@ impl StringBuilder {
         debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
-        // SAFETY: ptr allocated with cap bytes.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        let buf = unsafe { slice::from_raw_parts_mut(base, self.cap - self.len) };
+        let buf = self.writable();
+        let base = buf.as_ptr();
         let written = buf_print(buf, args).expect("unreachable");
-        // SAFETY: base..base+written was just written by buf_print.
-        let out = unsafe { slice::from_raw_parts(base, written) };
         self.len += written;
 
         debug_assert!(self.len <= self.cap);
 
-        out
+        // SAFETY: base[..written] was just written by buf_print; lives in
+        // `self.ptr`'s allocation for the lifetime of `&mut self`.
+        unsafe { slice::from_raw_parts(base, written) }
     }
 
     pub fn fmt_append_count(&mut self, args: fmt::Arguments<'_>) -> StringPointer {
         debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
-        // SAFETY: ptr allocated with cap bytes.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        let buf = unsafe { slice::from_raw_parts_mut(base, self.cap - self.len) };
-        let written = buf_print(buf, args).expect("unreachable");
         let off = self.len;
+        let written = buf_print(self.writable(), args).expect("unreachable");
         self.len += written;
 
         debug_assert!(self.len <= self.cap);
@@ -241,11 +228,8 @@ impl StringBuilder {
         debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
-        // SAFETY: ptr allocated with cap bytes.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        let buf = unsafe { slice::from_raw_parts_mut(base, self.cap - self.len) };
-        let written = buf_print_z(buf, args).expect("unreachable");
         let off = self.len;
+        let written = buf_print_z(self.writable(), args).expect("unreachable");
         self.len += written;
         self.len += 1;
 

@@ -172,8 +172,8 @@ impl SmolStr {
                 baby_list.append_slice_assume_capacity(inlined.slice());
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
                 baby_list.push(char);
-                // PORT NOTE: overwrite raw bits without running Drop — old value was inlined (no heap).
-                unsafe { ptr::write(self, SmolStr::from_baby_list(baby_list)) };
+                // Old value is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
+                *self = SmolStr::from_baby_list(baby_list);
                 return Ok(());
             }
             let old_len = inlined.len() as usize;
@@ -192,7 +192,7 @@ impl SmolStr {
         // error return below (which drops `baby_list`) does not double-free via SmolStr::drop.
         self.0 = Inlined::EMPTY.0;
         baby_list.push(char);
-        unsafe { ptr::write(self, SmolStr::from_baby_list(baby_list)) };
+        *self = SmolStr::from_baby_list(baby_list);
         Ok(())
     }
 
@@ -205,14 +205,14 @@ impl SmolStr {
                 baby_list.append_slice_assume_capacity(inlined.slice());
                 baby_list.append_slice_assume_capacity(values);
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-                // SAFETY: old *self is inlined (no heap ownership); ptr::write skips its Drop.
-                unsafe { ptr::write(self, SmolStr::from_baby_list(baby_list)) };
+                // Old `*self` is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
+                *self = SmolStr::from_baby_list(baby_list);
                 return Ok(());
             }
             inlined.all_chars()[old_len..old_len + values.len()].copy_from_slice(values);
             inlined.set_len(u8::try_from(old_len + values.len()).expect("int cast"));
-            // SAFETY: old *self is inlined (no heap ownership); ptr::write skips its Drop.
-            unsafe { ptr::write(self, SmolStr::from_inlined(inlined)) };
+            // Old `*self` is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
+            *self = SmolStr::from_inlined(inlined);
             return Ok(());
         }
 
@@ -226,8 +226,8 @@ impl SmolStr {
         self.0 = Inlined::EMPTY.0;
         baby_list.extend_from_slice(values);
 
-        // SAFETY: old *self is now inlined-empty (no heap ownership); ptr::write skips its Drop.
-        unsafe { ptr::write(self, SmolStr::from_baby_list(baby_list)) };
+        // Old `*self` is inlined-empty (no heap) so `Drop` is a no-op.
+        *self = SmolStr::from_baby_list(baby_list);
         Ok(())
     }
 }

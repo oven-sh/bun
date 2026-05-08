@@ -316,8 +316,10 @@ pub mod unicode {
             let bytes = self.bytes;
             let pos = cursor.i as usize + cursor.width as usize;
             if pos >= bytes.len() { return false; }
-            // SAFETY: `pos < bytes.len()` was checked immediately above.
-            let first = unsafe { *bytes.get_unchecked(pos) };
+            // `pos < bytes.len()` checked immediately above; LLVM elides both
+            // the slice and index bounds checks.
+            let tail = &bytes[pos..];
+            let first = tail[0];
             cursor.i = pos as u32;
             // ASCII fast path — the overwhelmingly common case for JS source
             // (identifiers, escape-free strings). Matches Zig's per-byte ptr
@@ -328,13 +330,10 @@ pub mod unicode {
                 return true;
             }
             let len = wtf8_byte_sequence_length(first);
-            // SAFETY: `pos < bytes.len()` and `take ∈ 1..=4` clamped to the
-            // remaining length, so `pos..pos+take` is in-bounds.
-            let take = (len as usize).min(bytes.len() - pos);
+            // `take ∈ 1..=4` clamped to the remaining length.
+            let take = (len as usize).min(tail.len());
             let mut buf = [0u8; 4];
-            unsafe {
-                core::ptr::copy_nonoverlapping(bytes.as_ptr().add(pos), buf.as_mut_ptr(), take);
-            }
+            buf[..take].copy_from_slice(&tail[..take]);
             let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
             if cp == -1 {
                 cursor.c = super::UNICODE_REPLACEMENT as CodePoint;
@@ -460,9 +459,7 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 pub fn contains_char_t<T: Copy + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
     // TODO(port): Zig dispatched on T at comptime; in Rust we branch on size_of.
     if core::mem::size_of::<T>() == 1 {
-        // SAFETY: T is u8-sized; reinterpret as &[u8].
-        let bytes = unsafe { core::slice::from_raw_parts(self_.as_ptr().cast::<u8>(), self_.len()) };
-        contains_char(bytes, char)
+        contains_char(reinterpret_to_u8(self_), char)
     } else {
         self_.iter().any(|c| (*c).into() == char as u32)
     }
@@ -1403,9 +1400,8 @@ pub fn eql_comptime_t<T: Copy + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
         let s16 = unsafe { core::slice::from_raw_parts(self_.as_ptr().cast::<u16>(), self_.len()) };
         return eql_comptime_utf16(s16, alt);
     }
-    // SAFETY: T is u8-sized in remaining branch.
-    let s8 = unsafe { core::slice::from_raw_parts(self_.as_ptr().cast::<u8>(), self_.len()) };
-    eql_comptime(s8, alt)
+    // T is u8-sized in remaining branch.
+    eql_comptime(reinterpret_to_u8(self_), alt)
 }
 
 pub fn eql_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
@@ -1469,8 +1465,9 @@ fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
             return false;
         }
     }
-    // SAFETY: when !check_len, callers guarantee a.len() >= b.len() (mirrors Zig contract).
-    unsafe { a.get_unchecked(0..b.len()) == b }
+    // When !check_len, callers guarantee a.len() >= b.len() (mirrors Zig
+    // contract); the slice bound is provable to LLVM after the check_len arm.
+    &a[..b.len()] == b
 }
 
 fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(
@@ -1484,10 +1481,8 @@ fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(
             CHECK_LEN,
         );
     }
-    // SAFETY: T is u8-sized.
-    let a8 = unsafe { core::slice::from_raw_parts(a.as_ptr().cast::<u8>(), a.len()) };
-    let b8 = unsafe { core::slice::from_raw_parts(b.as_ptr().cast::<u8>(), b.len()) };
-    eql_comptime_check_len_u8(a8, b8, CHECK_LEN)
+    // T is u8-sized.
+    eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN)
 }
 
 /// Check if two strings are equal with one of the strings being a comptime-known value
@@ -1557,9 +1552,7 @@ pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
         return false;
     }
     if core::mem::size_of::<T>() == 1 {
-        // SAFETY: T is u8-sized.
-        let a8 = unsafe { core::slice::from_raw_parts(a.as_ptr().cast::<u8>(), a.len()) };
-        return eql_case_insensitive_ascii_ignore_length(a8, b);
+        return eql_case_insensitive_ascii_ignore_length(reinterpret_to_u8(a), b);
     }
 
     debug_assert_eq!(a.len(), b.len());
@@ -2951,10 +2944,8 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 pub fn index_of_scalar<T: Copy + Eq>(input: &[T], scalar: T) -> Option<usize> {
     // TODO(port): Zig specialized T==u8 → index_of_char_usize (highway).
     if core::mem::size_of::<T>() == 1 {
-        // SAFETY: T is u8-sized.
-        let bytes = unsafe { core::slice::from_raw_parts(input.as_ptr().cast::<u8>(), input.len()) };
-        let scalar_u8 = unsafe { *(&raw const scalar).cast::<u8>() };
-        return index_of_char_usize(bytes, scalar_u8);
+        let scalar_u8 = reinterpret_to_u8(core::slice::from_ref(&scalar))[0];
+        return index_of_char_usize(reinterpret_to_u8(input), scalar_u8);
     }
     input.iter().position(|c| *c == scalar)
 }

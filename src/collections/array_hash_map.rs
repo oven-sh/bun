@@ -731,11 +731,9 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         if index >= self.keys.len() {
             return None;
         }
-        // SAFETY: `keys` and `values` are distinct allocations; one `&mut` into
-        // each is sound even though both derive from `&mut self`.
-        let key_ptr = unsafe { &mut *self.keys.as_mut_ptr().add(index) };
-        let value_ptr = unsafe { &mut *self.values.as_mut_ptr().add(index) };
-        Some((key_ptr, value_ptr))
+        // `keys` and `values` are distinct struct fields; borrowck permits one
+        // `&mut` into each simultaneously. Bound proven above.
+        Some((&mut self.keys[index], &mut self.values[index]))
     }
 
     /// Zig `swapRemoveAt` — remove the entry at `index` by swapping in the last

@@ -834,6 +834,12 @@ mod holder {
     /// (Zig: `allocator.dupeZ` into a leaked singleton field). `OnceLock` per
     /// PORTING.md §Forbidden — never `Box::leak`/`transmute` to mint `&'static`.
     pub static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+
+    /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
+    /// (Zig: `manager.allocator.dupeZ` per entry, never freed). The HTTP thread
+    /// reads these asynchronously after `init()` returns, so they must outlive
+    /// the local that builds them.
+    pub static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
 // PORTING.md §Global mutable state: single-thread (main) scratch buffers →
@@ -2187,10 +2193,19 @@ pub fn init(
         Ordering::Relaxed, // .monotonic
     );
 
-    // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`); pass the
-    // `ZBox` C-string pointers. The `ZBox`es are kept alive by `ca` for the
-    // duration of `init` (the HTTP thread copies them into BoringSSL).
-    let ca_ptrs: Vec<*const c_void> = ca.iter().map(|z| z.as_ptr().cast::<c_void>()).collect();
+    // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
+    // thread reads these asynchronously after `init` returns, so park the
+    // owning `ZBox`es in `holder::CA` for process lifetime (Zig: `dupeZ`,
+    // never freed) and project the pointers from there.
+    let ca_ptrs: Vec<*const c_void> = if ca.is_empty() {
+        Vec::new()
+    } else {
+        let _ = holder::CA.set(ca);
+        holder::CA
+            .get()
+            .map(|v| v.iter().map(|z| z.as_ptr().cast::<c_void>()).collect())
+            .unwrap_or_default()
+    };
     // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
     // string (Zig: `allocator.dupeZ` into a leaked singleton field). Park it in
     // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden

@@ -2232,9 +2232,16 @@ impl<'a> PackageInstaller<'a> {
         };
 
         if self.manager().options.do_.contains(Options::Do::RUN_SCRIPTS) {
-            self.manager_mut().total_scripts += scripts_list.total as usize;
-            if let Some(scripts_node) = self.manager_mut().scripts_node_mut() {
-                self.manager_mut().set_node_name::<true>(
+            // Bind once: two sequential `manager_mut()` derives would each
+            // create a fresh Unique from the raw root under SB, popping the
+            // first while `scripts_node` (derived through it) is still live.
+            // `scripts_node_mut()` takes `&self` and returns a backref to a
+            // caller stack-local (disjoint from `*m`), so a single `m` covers
+            // both the `total_scripts` write and `set_node_name`.
+            let m = self.manager_mut();
+            m.total_scripts += scripts_list.total as usize;
+            if let Some(scripts_node) = m.scripts_node_mut() {
+                m.set_node_name::<true>(
                     scripts_node,
                     &scripts_list.package_name,
                     ProgressStrings::SCRIPT_EMOJI.as_bytes(),

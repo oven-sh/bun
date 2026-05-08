@@ -151,10 +151,12 @@ impl<'a> Installer<'a> {
     }
     #[inline]
     pub fn lockfile(&self) -> &'a Lockfile {
-        // SAFETY: BACKREF — never null; pointee outlives `'a`. The single
-        // mutated field (`trusted_dependencies`) is written only under
-        // `trusted_dependencies_mutex` via a raw narrowed place, never through
-        // a `&mut Lockfile`, so this `&Lockfile` is never aliased by a `&mut`.
+        // SAFETY: BACKREF — never null; pointee outlives `'a`. Never aliased by
+        // a *whole-struct* `&mut Lockfile`; the single mutated field
+        // (`trusted_dependencies`) is written under
+        // `trusted_dependencies_mutex` via a raw narrowed `addr_of_mut!` place
+        // (Task::run), not a `&mut Lockfile`. Callers must not project into
+        // `trusted_dependencies` from this `&Lockfile` across a tick.
         unsafe { &*self.lockfile }
     }
 

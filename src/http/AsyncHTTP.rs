@@ -758,7 +758,12 @@ impl<'a> AsyncHTTP<'a> {
             return Err(err);
         }
         debug_assert!(result.metadata.is_some());
-        Ok(result.metadata.unwrap().response)
+        // The returned `Response` borrows `metadata.owned_buf` (status text +
+        // header slices). Zig's `sendSync` returns `result.metadata.?.response`
+        // and never `deinit`s the metadata; mirror that by suppressing Drop so
+        // the borrowed buffer outlives the call. `send_sync` is one-shot CLI.
+        let metadata = core::mem::ManuallyDrop::new(result.metadata.unwrap());
+        Ok(metadata.response)
     }
 
     // ──────────────────────────────────────────────────────────────────────

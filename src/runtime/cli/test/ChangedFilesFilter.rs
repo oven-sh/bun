@@ -153,13 +153,11 @@ pub fn filter<'a>(
     scan_transpiler.options.tree_shaking = false;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
-    // TODO(port): Zig assigns `resolver.opts = options` by value;
-    // `bun_bundler::resolver_bundle_options_subset` is private. `Transpiler::init`
-    // already projected resolver.opts; sync only the fields we changed above.
+    // Zig assigns `resolver.opts = options` by value; `Transpiler::init`
+    // already projected resolver.opts, so sync only the fields we changed above.
     scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
+    scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
-    // TODO(port): blocked_on bun_bundler::resolver_bundle_options_subset (private) —
-    // packages enum mapping (PackagesOption -> resolver::Packages) needs the projector.
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Zig: `jsc.AnyEventLoop.init(allocator)` — Mini loop that

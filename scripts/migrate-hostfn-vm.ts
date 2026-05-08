@@ -10,8 +10,8 @@
 // Idempotent: a method that already has a `&VirtualMachine` (or `_vm:` /
 // `vm:`) parameter is skipped.
 
-import { readFileSync, writeFileSync } from "node:fs";
 import { Glob } from "bun";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const GEN = "build/debug/codegen/generated_classes.rs";
 const src = readFileSync(GEN, "utf8");

@@ -2,8 +2,8 @@
 // Fix-up for migrate-hostfn-vm.ts: move the `use bun_jsc::virtual_machine::VirtualMachine;`
 // line out of the `//!` inner-doc-comment block (and dedupe / drop when redundant).
 
-import { readFileSync, writeFileSync } from "node:fs";
 import { Glob } from "bun";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const TARGET = "use bun_jsc::virtual_machine::VirtualMachine;";
 

@@ -4,16 +4,16 @@
 
 Of the last 150 merged PRs to Bun, **108 are memory-safety-adjacent** — missed cleanup on an error path, use-after-free, uninitialized reads, out-of-bounds access, reentrancy. **75 of those would not compile** in a language with destructors, move semantics, and a borrow checker. One in three PRs we ship is "forgot to free something on an error path."
 
-| Bug class | Count (of 150) | Rust prevents? |
-|---|---|---|
-| Missing cleanup on error/early-return path | 50 | yes — `Drop` |
-| Use-after-free / stale pointer | 19 | yes — ownership/borrowck (6/8 of the aliasing kind) |
-| Uninitialized / wrong-union-tag / type confusion | 6 | yes — no uninit, exhaustive `match` |
-| Bounds / integer overflow | 18 | downgraded — panic instead of UB |
-| Race / reentrancy | 15 | partial — borrowck catches mutate-while-iterate; not JS-side-effect |
-| GC-rooting (JSC-specific) | 2 | no — needs API discipline |
-| Logic / spec / platform | 21 | no |
-| Infra / docs / refactor | 19 | n/a |
+| Bug class                                        | Count (of 150) | Rust prevents?                                                      |
+| ------------------------------------------------ | -------------- | ------------------------------------------------------------------- |
+| Missing cleanup on error/early-return path       | 50             | yes — `Drop`                                                        |
+| Use-after-free / stale pointer                   | 19             | yes — ownership/borrowck (6/8 of the aliasing kind)                 |
+| Uninitialized / wrong-union-tag / type confusion | 6              | yes — no uninit, exhaustive `match`                                 |
+| Bounds / integer overflow                        | 18             | downgraded — panic instead of UB                                    |
+| Race / reentrancy                                | 15             | partial — borrowck catches mutate-while-iterate; not JS-side-effect |
+| GC-rooting (JSC-specific)                        | 2              | no — needs API discipline                                           |
+| Logic / spec / platform                          | 21             | no                                                                  |
+| Infra / docs / refactor                          | 19             | n/a                                                                 |
 
 Of the 108, ~88 are in Zig. The ~14 in C++ are mostly ref-cycles and GC-concurrency races — the residual class that survives any language. So the Zig→Rust delta is real: the Zig bugs are exactly the destructor/ownership-fixable kind, and the C++ side is already near the floor.
 
@@ -28,7 +28,7 @@ A strangler-fig migration of ~705K LOC of Zig to Rust, with both linked into the
 The same philosophy that made Bun fast stays:
 
 - **Own the whole stack.** No `std::fs`, no `std::net` — `bun_sys` wraps raw syscalls with the same `FD`/errno/EINTR/Windows-path semantics Zig has today. No tokio, no async-std, no `Future` — just C callbacks on the uSockets loop and a verbatim port of Bun's `ThreadPool`. Very few external dependencies.
-- **Zero perf regression.** Every flip is gated. Zig already pays an FFI `call` at every JSC boundary; parity means *don't add hops Zig doesn't have*, not "inline across languages."
+- **Zero perf regression.** Every flip is gated. Zig already pays an FFI `call` at every JSC boundary; parity means _don't add hops Zig doesn't have_, not "inline across languages."
 - **Understand every layer.** Every type that crosses an FFI boundary has its `#[repr]` and layout asserted against the C/Zig definition at compile time.
 
 ## Why Rust and not C++
@@ -59,30 +59,31 @@ Zig already speaks to JavaScriptCore through a C-ABI seam: `src/codegen/generate
 
 Riptide is **non-moving, generational, mostly-concurrent mark-sweep**, conservative on the native stack and precise on the heap.
 
-| Property | Consequence | Source |
-|---|---|---|
-| **Non-moving** | A `JSCell*` (and any `EncodedJSValue` boxing one) is address-stable for the cell's lifetime. No `Pin`, no relocation handles. | `MarkedBlock.h`; `ConservativeRoots.cpp:99-140` |
-| **Conservative stack scan** | Any `JSValue` in a Rust local is rooted automatically. `ensure_still_alive(v)` = `core::hint::black_box(v)` keeps it on the stack past last use. | `JSValue.zig:2244-2248`; `ConservativeRoots.cpp` (`genericAddPointer`) |
-| **Precise heap** | A `JSValue` field in a mimalloc-allocated native struct is **invisible** to the tracer. It is only safe if a §5 mechanism guarantees the cell is alive at every read. | `Heap.cpp:2970` (marking constraints) |
-| **Generational (Eden/Full)** | Heap-to-heap edges go through `WriteBarrier::set`, which records the owner in the remembered set. Storing into a JSCell field without the barrier means an Eden GC frees a young value while an old cell still points at it. | `WriteBarrier.h`; `generate-classes.ts:1025-1042` |
-| **Concurrent marking** | `visitChildren`/`visitAdditionalChildren` run on GC threads **while the mutator runs**. They may only read `WriteBarrier<>` fields — no `RefCounted::ref/deref`, no `WeakPtr` creation, no allocation. | `Heap.cpp` (`DOMGCOutputConstraint` registered `Concurrent, Parallel`) |
-| **`isReachableFromOpaqueRoots` runs on GC threads** | `hasPendingActivity` is called from `WeakBlock::visit()` during the `Ws` constraint with `ConstraintParallelism::Parallel`. Side-effect-free; single atomic load. | `WeakBlock.cpp:129`; `Heap.cpp:3104-3111` |
-| **`JSC::Strong` is a root, not a traced edge** | A `Strong` from native to a JS object that references the wrapper back is an uncollectable cycle. `Strong` is for **bounded-lifetime** holds with an explicit release point only. | `Heap.cpp:3053-3056` (`Sh` constraint visits HandleSet) |
+| Property                                            | Consequence                                                                                                                                                                                                                  | Source                                                                 |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Non-moving**                                      | A `JSCell*` (and any `EncodedJSValue` boxing one) is address-stable for the cell's lifetime. No `Pin`, no relocation handles.                                                                                                | `MarkedBlock.h`; `ConservativeRoots.cpp:99-140`                        |
+| **Conservative stack scan**                         | Any `JSValue` in a Rust local is rooted automatically. `ensure_still_alive(v)` = `core::hint::black_box(v)` keeps it on the stack past last use.                                                                             | `JSValue.zig:2244-2248`; `ConservativeRoots.cpp` (`genericAddPointer`) |
+| **Precise heap**                                    | A `JSValue` field in a mimalloc-allocated native struct is **invisible** to the tracer. It is only safe if a §5 mechanism guarantees the cell is alive at every read.                                                        | `Heap.cpp:2970` (marking constraints)                                  |
+| **Generational (Eden/Full)**                        | Heap-to-heap edges go through `WriteBarrier::set`, which records the owner in the remembered set. Storing into a JSCell field without the barrier means an Eden GC frees a young value while an old cell still points at it. | `WriteBarrier.h`; `generate-classes.ts:1025-1042`                      |
+| **Concurrent marking**                              | `visitChildren`/`visitAdditionalChildren` run on GC threads **while the mutator runs**. They may only read `WriteBarrier<>` fields — no `RefCounted::ref/deref`, no `WeakPtr` creation, no allocation.                       | `Heap.cpp` (`DOMGCOutputConstraint` registered `Concurrent, Parallel`) |
+| **`isReachableFromOpaqueRoots` runs on GC threads** | `hasPendingActivity` is called from `WeakBlock::visit()` during the `Ws` constraint with `ConstraintParallelism::Parallel`. Side-effect-free; single atomic load.                                                            | `WeakBlock.cpp:129`; `Heap.cpp:3104-3111`                              |
+| **`JSC::Strong` is a root, not a traced edge**      | A `Strong` from native to a JS object that references the wrapper back is an uncollectable cycle. `Strong` is for **bounded-lifetime** holds with an explicit release point only.                                            | `Heap.cpp:3053-3056` (`Sh` constraint visits HandleSet)                |
 
 ### 2.1 Marking constraint roots (`Heap::addCoreConstraints`, `Heap.cpp:2970`)
 
-| Tag | What it scans | Rust relevance |
-|---|---|---|
-| `Cs` | Conservative stack/registers | `JSValue` locals are auto-rooted; `black_box` is the only API needed |
-| `Msr` | `m_protectedValues` (gcProtect), `MarkedArgumentBuffer` mark-list, smallStrings, exceptions | `protect()` is legacy; `MarkedArgumentBuffer` is the only safe heap-array-of-JSValue |
-| `Sh` | Strong handles (`HandleSet`) | `bun_jsc::Strong` allocates one slot here per `upgrade()` |
-| `Ws` | Weak sets → `WeakHandleOwner::isReachableFromOpaqueRoots` | `hasPendingActivity` callback site |
-| `O` | `visitOutputConstraints` fixpoint | **No generated class enrolls here** (`generate-classes.ts:1618-1643`); Rust must preserve this |
-| `Domo` | Bun's `DOMGCOutputConstraint` over `m_outputConstraintSpaces` | Membership decided by runtime fn-pointer compare `T::visitOutputConstraints != JSCell::visitOutputConstraints` (`BunClientData.h:193-196`) |
+| Tag    | What it scans                                                                               | Rust relevance                                                                                                                             |
+| ------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Cs`   | Conservative stack/registers                                                                | `JSValue` locals are auto-rooted; `black_box` is the only API needed                                                                       |
+| `Msr`  | `m_protectedValues` (gcProtect), `MarkedArgumentBuffer` mark-list, smallStrings, exceptions | `protect()` is legacy; `MarkedArgumentBuffer` is the only safe heap-array-of-JSValue                                                       |
+| `Sh`   | Strong handles (`HandleSet`)                                                                | `bun_jsc::Strong` allocates one slot here per `upgrade()`                                                                                  |
+| `Ws`   | Weak sets → `WeakHandleOwner::isReachableFromOpaqueRoots`                                   | `hasPendingActivity` callback site                                                                                                         |
+| `O`    | `visitOutputConstraints` fixpoint                                                           | **No generated class enrolls here** (`generate-classes.ts:1618-1643`); Rust must preserve this                                             |
+| `Domo` | Bun's `DOMGCOutputConstraint` over `m_outputConstraintSpaces`                               | Membership decided by runtime fn-pointer compare `T::visitOutputConstraints != JSCell::visitOutputConstraints` (`BunClientData.h:193-196`) |
 
 ### 2.2 `reportExtraMemory` pairing
 
 Two paths exist (`generate-classes.ts:699-759, 1653-1657`; `bindings.cpp:4852`):
+
 - **Unpaired legacy:** `JSC__VM__reportExtraMemory` → `heap.deprecatedReportExtraMemory(size)`. For transient buffers.
 - **Paired (when `.classes.ts` has `estimatedSize: true`):** constructor calls `reportExtraMemoryAllocated` (a GC safepoint) AND generated `visitChildren` calls `reportExtraMemoryVisited`. Forgetting the visit-side half causes the GC death-spiral.
 
@@ -124,34 +125,34 @@ Every exported host function and every imported JSC extern uses `extern jsc_conv
 
 ### 3.2 Symbols Rust **exports** per class
 
-| `.classes.ts` field | Symbol | Rust signature (`extern jsc_conv!()`) | Source |
-|---|---|---|---|
-| `construct: true` | `FooClass__construct` | `fn(*mut JSGlobalObject, *mut CallFrame) -> *mut c_void` (null on exception) | `generate-classes.ts:410-421` |
-| `constructNeedsThis` | + trailing `EncodedJSValue` | | `:413` |
-| `finalize: true` | `FooClass__finalize` | `fn(*mut c_void)` | `:440` |
-| `proto.bar.fn` | `FooPrototype__bar` | `fn(*mut c_void, *mut JSGlobalObject, *mut CallFrame) -> i64` | `:920-965` |
-| `proto.bar.getter` | `FooPrototype__getBar` | `fn(*mut c_void, *mut JSGlobalObject) -> i64` | `:920-965` |
-| `proto.bar.setter` | `FooPrototype__setBar` | `fn(*mut c_void, *mut JSGlobalObject, i64) -> bool` | `:920-965` |
-| `klass.bar.fn` (static) | `FooClass__bar` | `fn(*mut JSGlobalObject, *mut CallFrame) -> i64` (raw `JSC_DECLARE_HOST_FUNCTION`, no `void* ptr`) | `:996-1020` |
-| `klass.bar.getter` | `FooClass__getBar` | `fn(*mut JSGlobalObject, i64, PropertyName) -> i64` (3-arg `JSC_DECLARE_CUSTOM_GETTER`) | `PlatformCallingConventions.h:145` |
-| `klass.bar.setter` | `FooClass__setBar` | `fn(*mut JSGlobalObject, i64, i64, PropertyName) -> bool` (4-arg) | `:146` |
-| `hasPendingActivity: true` | `Foo__hasPendingActivity` | `fn(*const c_void) -> bool` (GC-thread, side-effect-free) | `:1684, 2180-2186` |
-| `estimatedSize: true` | `Foo__estimatedSize` | `fn(*const c_void) -> usize` | `:1381` |
-| (always) | `Foo__ZigStructSize` | `static: usize = size_of::<Foo>()` (note: `static`, not `const` — needs a symbol) | `:2152-2154, 1735-1755` |
+| `.classes.ts` field        | Symbol                      | Rust signature (`extern jsc_conv!()`)                                                              | Source                             |
+| -------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `construct: true`          | `FooClass__construct`       | `fn(*mut JSGlobalObject, *mut CallFrame) -> *mut c_void` (null on exception)                       | `generate-classes.ts:410-421`      |
+| `constructNeedsThis`       | + trailing `EncodedJSValue` |                                                                                                    | `:413`                             |
+| `finalize: true`           | `FooClass__finalize`        | `fn(*mut c_void)`                                                                                  | `:440`                             |
+| `proto.bar.fn`             | `FooPrototype__bar`         | `fn(*mut c_void, *mut JSGlobalObject, *mut CallFrame) -> i64`                                      | `:920-965`                         |
+| `proto.bar.getter`         | `FooPrototype__getBar`      | `fn(*mut c_void, *mut JSGlobalObject) -> i64`                                                      | `:920-965`                         |
+| `proto.bar.setter`         | `FooPrototype__setBar`      | `fn(*mut c_void, *mut JSGlobalObject, i64) -> bool`                                                | `:920-965`                         |
+| `klass.bar.fn` (static)    | `FooClass__bar`             | `fn(*mut JSGlobalObject, *mut CallFrame) -> i64` (raw `JSC_DECLARE_HOST_FUNCTION`, no `void* ptr`) | `:996-1020`                        |
+| `klass.bar.getter`         | `FooClass__getBar`          | `fn(*mut JSGlobalObject, i64, PropertyName) -> i64` (3-arg `JSC_DECLARE_CUSTOM_GETTER`)            | `PlatformCallingConventions.h:145` |
+| `klass.bar.setter`         | `FooClass__setBar`          | `fn(*mut JSGlobalObject, i64, i64, PropertyName) -> bool` (4-arg)                                  | `:146`                             |
+| `hasPendingActivity: true` | `Foo__hasPendingActivity`   | `fn(*const c_void) -> bool` (GC-thread, side-effect-free)                                          | `:1684, 2180-2186`                 |
+| `estimatedSize: true`      | `Foo__estimatedSize`        | `fn(*const c_void) -> usize`                                                                       | `:1381`                            |
+| (always)                   | `Foo__ZigStructSize`        | `static: usize = size_of::<Foo>()` (note: `static`, not `const` — needs a symbol)                  | `:2152-2154, 1735-1755`            |
 
 **Thunk body distinction (from refuted-claim correction):** proto methods route through `toJSHostCall` (opens `ExceptionValidationScope`, `@call(.auto)` user fn); class-static fns route through `toJSHostFn` (`host_fn.zig:16-22`, no `*this` receiver, no validation scope). The Rust emitter must generate distinct thunk bodies per kind.
 
 ### 3.3 Symbols Rust **imports** (already generated in C++)
 
-| Purpose | Symbol | Source |
-|---|---|---|
-| Wrap native ptr in JSCell | `Foo__create(global, ptr) -> JSValue` | `generate-classes.ts:1905` |
-| Unwrap | `Foo__fromJS(JSValue) -> Option<NonNull<Foo>>` | `:1820-1860` |
-| Unwrap (no proto-walk) | `Foo__fromJSDirect(JSValue) -> Option<NonNull<Foo>>` | `:1820-1860` |
-| Set traced field (fires write barrier) | `FooPrototype__xSetCachedValue(this_js, global, value)` | `:1025-1042` |
-| Get traced field | `FooPrototype__xGetCachedValue(this_js) -> JSValue` | `:1025-1042` |
-| Detach m_ctx | `Foo__dangerouslySetPtr(JSValue, Option<NonNull<Foo>>) -> bool` | `:1820-1860` |
-| Constructor object | `Foo__getConstructor(global) -> JSValue` | `:772` |
+| Purpose                                | Symbol                                                          | Source                     |
+| -------------------------------------- | --------------------------------------------------------------- | -------------------------- |
+| Wrap native ptr in JSCell              | `Foo__create(global, ptr) -> JSValue`                           | `generate-classes.ts:1905` |
+| Unwrap                                 | `Foo__fromJS(JSValue) -> Option<NonNull<Foo>>`                  | `:1820-1860`               |
+| Unwrap (no proto-walk)                 | `Foo__fromJSDirect(JSValue) -> Option<NonNull<Foo>>`            | `:1820-1860`               |
+| Set traced field (fires write barrier) | `FooPrototype__xSetCachedValue(this_js, global, value)`         | `:1025-1042`               |
+| Get traced field                       | `FooPrototype__xGetCachedValue(this_js) -> JSValue`             | `:1025-1042`               |
+| Detach m_ctx                           | `Foo__dangerouslySetPtr(JSValue, Option<NonNull<Foo>>) -> bool` | `:1820-1860`               |
+| Constructor object                     | `Foo__getConstructor(global) -> JSValue`                        | `:772`                     |
 
 `Option<NonNull<T>>` is ABI-identical to Zig `?*T` / C `void*` via the guaranteed null-pointer niche.
 
@@ -177,17 +178,17 @@ fn host_call(g: *mut JSGlobalObject, f: impl FnOnce() -> JsResult<JSValue>) -> i
 }
 ```
 
-### 3.5 `cppbind.ts` — the *other* generator
+### 3.5 `cppbind.ts` — the _other_ generator
 
 `src/codegen/cppbind.ts` parses `[[ZIG_EXPORT(tag)]]` attributes on C++ functions (~119 of them) and emits per-tag wrappers (`cppbind.ts:400, 646-726`):
 
-| Tag | Rust thunk shape |
-|---|---|
-| `nothrow` | bare `pub fn x(...) -> CRet { unsafe { raw::JSC__X(...) } }` |
-| `zero_is_throw` | `Result<JSValue, JsError>`, `if v.0 == 0 { Err } else { Ok(v) }` |
-| `false_is_throw` | `Result<(), JsError>`, keyed on `!v` |
-| `null_is_throw` | `Result<NonNull<T>, JsError>`, keyed on `v.is_null()` |
-| `check_slow` | `let r = raw::X(...); if raw::Bun__RETURN_IF_EXCEPTION(g) { Err } else { Ok(r) }` — **two** extern calls (`bindings.cpp:6214`) |
+| Tag              | Rust thunk shape                                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `nothrow`        | bare `pub fn x(...) -> CRet { unsafe { raw::JSC__X(...) } }`                                                                   |
+| `zero_is_throw`  | `Result<JSValue, JsError>`, `if v.0 == 0 { Err } else { Ok(v) }`                                                               |
+| `false_is_throw` | `Result<(), JsError>`, keyed on `!v`                                                                                           |
+| `null_is_throw`  | `Result<NonNull<T>, JsError>`, keyed on `v.is_null()`                                                                          |
+| `check_slow`     | `let r = raw::X(...); if raw::Bun__RETURN_IF_EXCEPTION(g) { Err } else { Ok(r) }` — **two** extern calls (`bindings.cpp:6214`) |
 
 Extend `cppbind.ts` to emit `bun_jsc::sys` Rust alongside `cpp.zig` from the same parse — single source of truth.
 
@@ -301,14 +302,14 @@ const _: () = assert!(size_of::<BunString>() == 24 && align_of::<BunString>() ==
 
 Six mechanisms exist in production. Each protects against a specific failure; none is interchangeable.
 
-| # | Primitive | Protects against | Hazard | Rust type | Consumers |
-|---|---|---|---|---|---|
-| 1 | `hasPendingActivity` + `AtomicU32` | Own wrapper freed while native I/O pending | None (no root cycle) — preferred for refcount-style liveness | `unsafe trait HasPendingActivity { unsafe fn has_pending_activity(this: *const Self) -> bool; }` (raw ptr — GC thread may alias mutator's `&mut`) | `PostgresSQLConnection` |
-| 2 | `JSRef {weak, strong, finalized}` | Own wrapper freed while active | Leak if never `downgrade()` | `enum JSRef { Weak(JSValue), Strong(OptionalStrong), Finalized }` — `.weak` is **bare** `JSValue`, NOT `JSC::Weak`; sound only because `finalize()` flips to `.finalized` | `Socket`, `Request`, `Response`, `ServerWebSocket`, `UDPSocket`, `Valkey`, `JSMySQLConnection`, `PostgresSQLQuery`, `Cron` |
-| 3 | `Strong` / `OptionalStrong` (heap `JSC::HandleSlot`) | A *different* JS object freed while held | Uncollectable cycle if held indefinitely | `#[repr(transparent)] struct Strong(NonNull<DecodedJSValue>)`; `get()` is **zero-FFI** direct deref (`Strong.zig:123-127`) | `NodeHTTPResponse.promise`, `RequestContext` stream refs |
-| 4 | `JSValue.protect`/`unprotect` (`gcProtect` table) | JS object held by a non-wrapper native | Same cycle hazard; manual pairing | `#[deprecated] unsafe fn protect/unprotect` — no RAII wrapper (would encourage use) | `RequestContext.response_jsvalue`, `Handlers` callbacks |
-| 5 | `Async.KeepAlive` / `jsc.Ref` | Process exits while I/O pending | Not GC-related | `#[repr(u8)] enum KeepAlive { Active=0, Inactive, Done }`; `struct ActiveTaskRef(Cell<bool>)` — both 1 byte, idempotent | Every async native (`poll_ref`) |
-| 6 | `MarkedArgumentBuffer` | Heap `[JSValue]` freed during allocation | — | `with_marked_args(|buf| ...)` scope-bound; lifetime `'a` prevents escape | `udp.sendMany`, YAML/Markdown parsers |
+| #   | Primitive                                            | Protects against                           | Hazard                                                       | Rust type                                                                                                                                                                 | Consumers                                                                                                                  |
+| --- | ---------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ------------------------------------- |
+| 1   | `hasPendingActivity` + `AtomicU32`                   | Own wrapper freed while native I/O pending | None (no root cycle) — preferred for refcount-style liveness | `unsafe trait HasPendingActivity { unsafe fn has_pending_activity(this: *const Self) -> bool; }` (raw ptr — GC thread may alias mutator's `&mut`)                         | `PostgresSQLConnection`                                                                                                    |
+| 2   | `JSRef {weak, strong, finalized}`                    | Own wrapper freed while active             | Leak if never `downgrade()`                                  | `enum JSRef { Weak(JSValue), Strong(OptionalStrong), Finalized }` — `.weak` is **bare** `JSValue`, NOT `JSC::Weak`; sound only because `finalize()` flips to `.finalized` | `Socket`, `Request`, `Response`, `ServerWebSocket`, `UDPSocket`, `Valkey`, `JSMySQLConnection`, `PostgresSQLQuery`, `Cron` |
+| 3   | `Strong` / `OptionalStrong` (heap `JSC::HandleSlot`) | A _different_ JS object freed while held   | Uncollectable cycle if held indefinitely                     | `#[repr(transparent)] struct Strong(NonNull<DecodedJSValue>)`; `get()` is **zero-FFI** direct deref (`Strong.zig:123-127`)                                                | `NodeHTTPResponse.promise`, `RequestContext` stream refs                                                                   |
+| 4   | `JSValue.protect`/`unprotect` (`gcProtect` table)    | JS object held by a non-wrapper native     | Same cycle hazard; manual pairing                            | `#[deprecated] unsafe fn protect/unprotect` — no RAII wrapper (would encourage use)                                                                                       | `RequestContext.response_jsvalue`, `Handlers` callbacks                                                                    |
+| 5   | `Async.KeepAlive` / `jsc.Ref`                        | Process exits while I/O pending            | Not GC-related                                               | `#[repr(u8)] enum KeepAlive { Active=0, Inactive, Done }`; `struct ActiveTaskRef(Cell<bool>)` — both 1 byte, idempotent                                                   | Every async native (`poll_ref`)                                                                                            |
+| 6   | `MarkedArgumentBuffer`                               | Heap `[JSValue]` freed during allocation   | —                                                            | `with_marked_args(                                                                                                                                                        | buf                                                                                                                        | ...)`scope-bound; lifetime`'a` prevents escape | `udp.sendMany`, YAML/Markdown parsers |
 
 **Design rule:** prefer `.classes.ts` `values:` (→ `WriteBarrier<>` on the JSCell, traced, no cycle) over `Strong` in the native struct. `Strong`/`protect()` only with a documented bounded lifetime and explicit release site. The `#[derive(NativeClass)]` macro **rejects** any struct field of type `JSValue` with a compile error directing to `cache: true` in `.classes.ts`; opt-out via `#[guarded_by(has_pending_activity)]`.
 
@@ -321,31 +322,33 @@ Six mechanisms exist in production. Each protects against a specific failure; no
 Two **disjoint** categories with disjoint lifetime primitives:
 
 ### Category A — GC-wrapped (`.classes.ts` entry, `m_ctx` behind a JSCell)
+
 Lifetime = GC finalizer calls `FooClass__finalize`. `JSRef`/`Strong`/`hasPendingActivity`/cached-values apply **here only**. Lives in `bun_runtime`.
 
 ### Category B — Pure native infrastructure
+
 HTTP client state machine, `HTTPThread`, `AsyncHTTP`, `PackageManager`, `ThreadPool`, `BundleV2`, `LinkerContext`, `RequestContext`, lockfile. Lifetime = `Rc`/`Arc` / explicit ownership / pool / arena. **No `JSValue` fields, no `JSRef`, no GC.**
 
 **Verified by grep:** `src/http.zig`, `src/http/AsyncHTTP.zig`, `src/http/HTTPThread.zig` have zero `JSRef`/`jsc.Strong`/`JSValue`/`hasPendingActivity` (`AsyncHTTP.zig:1-35`). `LinkerContext.zig` has zero GC-related `jsc.*`. `ThreadPool.zig` has zero (the only `jsc` ref is `wtf.releaseFastMallocFreeMemoryForThisThread` — bmalloc, not GC).
 
 **However**, these directories DO have non-GC `jsc.*` namespace coupling that must be **relocated** before the layer boundary is real:
 
-| Type currently under `jsc.*` | Moves to | Why it's not actually JSC |
-|---|---|---|
-| `jsc.ZigString.Slice` | `bun_str` | String view |
-| `jsc.AnyEventLoop` / `MiniEventLoop` / `EventLoopHandle` / `WorkPoolTask` / `AnyTask` | `bun_async` | Loop/task primitives; `MiniEventLoop` already runs JS-free (`MiniEventLoop.zig:1-19`) |
-| `jsc.CommonAbortReason` | `bun_core` | Plain enum |
-| `jsc.API.ServerConfig.SSLConfig` | `bun_tls` | Config struct |
-| `jsc.URL` | `bun_url` | Wraps WTF::URL |
-| `jsc.ModuleLoader.HardcodedModule.Alias` | `bun_resolve_builtins` | Pure static `phf::Map` (zero `jsc.*` refs in `HardcodedModule.zig`) |
-| `jsc.RegularExpression` | `bun_regex` | Wraps Yarr (or use `regex` crate) |
-| `jsc.API.BuildArtifact.OutputKind` | `bun_bundler` | Plain enum |
-| `jsc.Node.uid_t/gid_t` | `bun_sys` | typedefs |
-| `jsc.wtf.releaseFastMallocFreeMemoryForThisThread` | `bun_async` (hook) | bmalloc shim |
+| Type currently under `jsc.*`                                                          | Moves to               | Why it's not actually JSC                                                             |
+| ------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------- |
+| `jsc.ZigString.Slice`                                                                 | `bun_str`              | String view                                                                           |
+| `jsc.AnyEventLoop` / `MiniEventLoop` / `EventLoopHandle` / `WorkPoolTask` / `AnyTask` | `bun_async`            | Loop/task primitives; `MiniEventLoop` already runs JS-free (`MiniEventLoop.zig:1-19`) |
+| `jsc.CommonAbortReason`                                                               | `bun_core`             | Plain enum                                                                            |
+| `jsc.API.ServerConfig.SSLConfig`                                                      | `bun_tls`              | Config struct                                                                         |
+| `jsc.URL`                                                                             | `bun_url`              | Wraps WTF::URL                                                                        |
+| `jsc.ModuleLoader.HardcodedModule.Alias`                                              | `bun_resolve_builtins` | Pure static `phf::Map` (zero `jsc.*` refs in `HardcodedModule.zig`)                   |
+| `jsc.RegularExpression`                                                               | `bun_regex`            | Wraps Yarr (or use `regex` crate)                                                     |
+| `jsc.API.BuildArtifact.OutputKind`                                                    | `bun_bundler`          | Plain enum                                                                            |
+| `jsc.Node.uid_t/gid_t`                                                                | `bun_sys`              | typedefs                                                                              |
+| `jsc.wtf.releaseFastMallocFreeMemoryForThisThread`                                    | `bun_async` (hook)     | bmalloc shim                                                                          |
 
 After relocation, `*_core` crates are genuinely `bun_jsc`-free; `*_jsc` glue crates own every `toJS`/`fromJS`/host-function (`npm.zig:685-806`, `install_binding.zig`, `bundle_v2.zig:1928-2450` `JSBundleCompletionTask`, `Method.zig:151`, `H2Client.zig:44-46`, etc.).
 
-**`RequestContext` is Category B** despite holding `JSValue` fields: it is NOT a `.classes.ts` wrapper (grep confirms 0 hits), pooled in `HiveArray(RequestContext, 2048)`, lifetime = manual `ref_count: u8` → pool-return (`RequestContext.zig:39, 59, 303-316`). It *borrows* JS handles, releasing them in `finalizeWithoutDeinit` driven by refcount, not GC sweep.
+**`RequestContext` is Category B** despite holding `JSValue` fields: it is NOT a `.classes.ts` wrapper (grep confirms 0 hits), pooled in `HiveArray(RequestContext, 2048)`, lifetime = manual `ref_count: u8` → pool-return (`RequestContext.zig:39, 59, 303-316`). It _borrows_ JS handles, releasing them in `finalizeWithoutDeinit` driven by refcount, not GC sweep.
 
 **Bridge objects** (Category A holding Category B): `FetchTasklet` owns `*http.AsyncHTTP` (raw ptr, `allocator.create`) and surfaces results via `jsc.JSPromise.Strong`. AsyncHTTP never sees the promise; it calls back via `result_callback` with a plain `HTTPClientResult` (`FetchTasklet.zig:6,26,60,1085,1401`). This is the **only** place `bun_http` types and `jsc::Strong` coexist; dependency arrow is `bun_runtime → {bun_http, bun_jsc}`, never `bun_http → bun_jsc`.
 
@@ -355,15 +358,15 @@ After relocation, `*_core` crates are genuinely `bun_jsc`-free; `*_jsc` glue cra
 
 ### Why not `std::fs`/`std::net`
 
-| `bun.sys` invariant | `std::io` would break it |
-|---|---|
-| Linux: raw `syscall` instruction via `std.os.linux`; errno decoded from return register `(-4096, 0)` (`sys.zig:53-58`; `linux_errno.zig:227-249`) | `std::io::Error::last_os_error()` reads TLS errno **unconditionally**; success path should be TLS-free |
-| `Maybe<T> = Result<T, SysError>`; `SysError { errno: u16, syscall: Tag, fd, path: RawSlice, dest: RawSlice }` — zero-alloc on hot path (`sys/Error.zig:11-28`) | `io::Error` is the wrong shape; no syscall tag, no fd, no path |
-| `FD` = `packed struct(c_int)` on POSIX, `packed struct(u64)` on Windows with bit-63 = `kind: {system, uv}` (`fd.zig:1-35`) | `RawFd`/`HANDLE` lose the tag; Windows dual-backend dispatch (`sys.zig:2129-2151`) needs it |
-| Per-OS `MAX_COUNT` clamp (Linux `0x7ffff000`, macOS `i32::MAX`, Windows `u32::MAX`) (`sys.zig:1800-1808`) | `std::io` doesn't clamp → EINVAL on large buffers |
-| EINTR retry loop (linux/freebsd); macOS `$NOCANCEL` symbols (`sys.zig:1696-2127`) | Different retry semantics |
-| Sentinel `[:0]const u8` paths → zero-copy to kernel (`sys.zig:1741-1781`) | `&Path` forces conversion; Windows forces UTF-16 alloc |
-| Windows `normalizePathWindows` → `\??\` NT path into caller `[32768]u16` buffer from thread-local 4-buffer pool (`sys.zig:980-1069`) | No equivalent |
+| `bun.sys` invariant                                                                                                                                            | `std::io` would break it                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Linux: raw `syscall` instruction via `std.os.linux`; errno decoded from return register `(-4096, 0)` (`sys.zig:53-58`; `linux_errno.zig:227-249`)              | `std::io::Error::last_os_error()` reads TLS errno **unconditionally**; success path should be TLS-free |
+| `Maybe<T> = Result<T, SysError>`; `SysError { errno: u16, syscall: Tag, fd, path: RawSlice, dest: RawSlice }` — zero-alloc on hot path (`sys/Error.zig:11-28`) | `io::Error` is the wrong shape; no syscall tag, no fd, no path                                         |
+| `FD` = `packed struct(c_int)` on POSIX, `packed struct(u64)` on Windows with bit-63 = `kind: {system, uv}` (`fd.zig:1-35`)                                     | `RawFd`/`HANDLE` lose the tag; Windows dual-backend dispatch (`sys.zig:2129-2151`) needs it            |
+| Per-OS `MAX_COUNT` clamp (Linux `0x7ffff000`, macOS `i32::MAX`, Windows `u32::MAX`) (`sys.zig:1800-1808`)                                                      | `std::io` doesn't clamp → EINVAL on large buffers                                                      |
+| EINTR retry loop (linux/freebsd); macOS `$NOCANCEL` symbols (`sys.zig:1696-2127`)                                                                              | Different retry semantics                                                                              |
+| Sentinel `[:0]const u8` paths → zero-copy to kernel (`sys.zig:1741-1781`)                                                                                      | `&Path` forces conversion; Windows forces UTF-16 alloc                                                 |
+| Windows `normalizePathWindows` → `\??\` NT path into caller `[32768]u16` buffer from thread-local 4-buffer pool (`sys.zig:980-1069`)                           | No equivalent                                                                                          |
 
 ### Design
 
@@ -393,18 +396,18 @@ Backends: `bun_sys::linux` (raw syscalls via `linux-raw-sys` or `core::arch::asm
 
 ## 8. Allocators & Containers
 
-| Allocator | Used for | Rust mapping | Source |
-|---|---|---|---|
-| `mimalloc` (global) | Everything not below | `#[global_allocator] static A: bun_alloc::Mi` calling `extern "C" mi_malloc_aligned/mi_free` — **NOT** the `mimalloc` crate (would link a 2nd copy). Same heap as Zig's `bun.default_allocator` so cross-language ownership is `mi_free`-safe | `bun.zig:14`; `allocators/basic.zig:10-71`; `mimalloc.ts` |
-| `MimallocArena` (`mi_heap_t`) | Bundler per-worker heaps; bundle-thread heap | `bun_alloc::Arena(NonNull<mi_heap_t>)`; `Drop` = `mi_heap_destroy` (bulk-free, NOT `mi_heap_delete`). `ArenaRef<'a>` non-owning view = Zig `Borrowed`. Nightly `allocator_api` for `Vec::new_in` | `MimallocArena.zig:42-162` |
-| `NewStore` | AST nodes (`Expr.Data`, `Stmt.Data`) | See §8.1 | `NewStore.zig` |
-| `ASTMemoryAllocator` (`StackFallback(8192)`) | Parser scratch | `bumpalo::Bump` exposed through Zig-`Allocator`-vtable shim (built **on Zig side** — `std.mem.Allocator.VTable` is non-extern, `.auto` callconv) | `Allocator.zig:19-123`; §8.2 |
-| `HiveArray<T,N>.Fallback` | RequestContext(2048), FilePoll(128), H2FrameParser(256), DNS PendingCache(32×15), PackageManager Task(64)/NetworkTask(128), HTTPContext PooledSocket(64), TranspilerJob(64), etc. | **Inline per-crate**, no shared crate. `struct Slab<T, const N: usize> { buf: Box<[MaybeUninit<T>; N]>, used: [u64; (N+63)/64] }`. `get()` = `trailing_zeros` (TZCNT). Boxed so addresses are stable (handed to C callbacks) | `hive_array.zig:4-142` |
-| `BabyList<T>` `{ptr, len:u32, cap:u32}` (16B) | AST `ExprNodeList`, `Part.List`, `ImportRecord.List`; bundler/css heavy | **Crate-local** `ThinVec<T>` only on the 6 hot AST fields (`E.Array.items`, `E.Call.args`, `E.New.args`, `E.Object.properties`, `E.JSXElement.children`, `G.Decl.List`); `Vec<T>` (24B) everywhere else. Never crosses FFI by value (grep `bindings/*.{h,cpp}` = 0 `BabyList`) | `baby_list.zig:19-23` |
-| `MultiArrayList<T>` (SoA) | `Graph.{input_files, ast}`, lockfile `Package.List`, router, Watcher | Per-use-site `#[derive(StructOfArrays)]` or hand-written; no shared generic | `multi_array_list.zig` |
-| `bun.ptr.RefCount` (intrusive u32) | 57 sites across 48 files | **`Rc<T>` / `Arc<T>`** internally. C-stored pointers: `Arc::into_raw`/`from_raw`; repeated callbacks: `Arc::increment_strong_count`/`decrement_strong_count`. Transitional `extern "C" xxx_ref/xxx_deref` for handoff edges only — **zero hot-path callers** | `ref_count.zig:69-266` |
-| `bun.ptr.WeakPtr` | Only `RequestContext.request_weakref` → `Request` | **NOT ported** — tech debt. Replace with `Rc<RequestInner>` + `Cell<bool> detached` | `weak_ptr.zig`; `Request.zig:43` |
-| `TaggedPointerUnion` (`packed struct(u64) { _ptr:u49, data:u15 }`) | `Task` (~95 variants), `AnyRequestContext` (6), `ActiveSocket` (4) | `#[repr(transparent)] struct(u64)` + macro-generated `match` jump-table; tags = `1024 - i`. Rust `enum` for internal-only cases | `tagged_pointer.zig:1-71` |
+| Allocator                                                          | Used for                                                                                                                                                                          | Rust mapping                                                                                                                                                                                                                                                                   | Source                                                    |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `mimalloc` (global)                                                | Everything not below                                                                                                                                                              | `#[global_allocator] static A: bun_alloc::Mi` calling `extern "C" mi_malloc_aligned/mi_free` — **NOT** the `mimalloc` crate (would link a 2nd copy). Same heap as Zig's `bun.default_allocator` so cross-language ownership is `mi_free`-safe                                  | `bun.zig:14`; `allocators/basic.zig:10-71`; `mimalloc.ts` |
+| `MimallocArena` (`mi_heap_t`)                                      | Bundler per-worker heaps; bundle-thread heap                                                                                                                                      | `bun_alloc::Arena(NonNull<mi_heap_t>)`; `Drop` = `mi_heap_destroy` (bulk-free, NOT `mi_heap_delete`). `ArenaRef<'a>` non-owning view = Zig `Borrowed`. Nightly `allocator_api` for `Vec::new_in`                                                                               | `MimallocArena.zig:42-162`                                |
+| `NewStore`                                                         | AST nodes (`Expr.Data`, `Stmt.Data`)                                                                                                                                              | See §8.1                                                                                                                                                                                                                                                                       | `NewStore.zig`                                            |
+| `ASTMemoryAllocator` (`StackFallback(8192)`)                       | Parser scratch                                                                                                                                                                    | `bumpalo::Bump` exposed through Zig-`Allocator`-vtable shim (built **on Zig side** — `std.mem.Allocator.VTable` is non-extern, `.auto` callconv)                                                                                                                               | `Allocator.zig:19-123`; §8.2                              |
+| `HiveArray<T,N>.Fallback`                                          | RequestContext(2048), FilePoll(128), H2FrameParser(256), DNS PendingCache(32×15), PackageManager Task(64)/NetworkTask(128), HTTPContext PooledSocket(64), TranspilerJob(64), etc. | **Inline per-crate**, no shared crate. `struct Slab<T, const N: usize> { buf: Box<[MaybeUninit<T>; N]>, used: [u64; (N+63)/64] }`. `get()` = `trailing_zeros` (TZCNT). Boxed so addresses are stable (handed to C callbacks)                                                   | `hive_array.zig:4-142`                                    |
+| `BabyList<T>` `{ptr, len:u32, cap:u32}` (16B)                      | AST `ExprNodeList`, `Part.List`, `ImportRecord.List`; bundler/css heavy                                                                                                           | **Crate-local** `ThinVec<T>` only on the 6 hot AST fields (`E.Array.items`, `E.Call.args`, `E.New.args`, `E.Object.properties`, `E.JSXElement.children`, `G.Decl.List`); `Vec<T>` (24B) everywhere else. Never crosses FFI by value (grep `bindings/*.{h,cpp}` = 0 `BabyList`) | `baby_list.zig:19-23`                                     |
+| `MultiArrayList<T>` (SoA)                                          | `Graph.{input_files, ast}`, lockfile `Package.List`, router, Watcher                                                                                                              | Per-use-site `#[derive(StructOfArrays)]` or hand-written; no shared generic                                                                                                                                                                                                    | `multi_array_list.zig`                                    |
+| `bun.ptr.RefCount` (intrusive u32)                                 | 57 sites across 48 files                                                                                                                                                          | **`Rc<T>` / `Arc<T>`** internally. C-stored pointers: `Arc::into_raw`/`from_raw`; repeated callbacks: `Arc::increment_strong_count`/`decrement_strong_count`. Transitional `extern "C" xxx_ref/xxx_deref` for handoff edges only — **zero hot-path callers**                   | `ref_count.zig:69-266`                                    |
+| `bun.ptr.WeakPtr`                                                  | Only `RequestContext.request_weakref` → `Request`                                                                                                                                 | **NOT ported** — tech debt. Replace with `Rc<RequestInner>` + `Cell<bool> detached`                                                                                                                                                                                            | `weak_ptr.zig`; `Request.zig:43`                          |
+| `TaggedPointerUnion` (`packed struct(u64) { _ptr:u49, data:u15 }`) | `Task` (~95 variants), `AnyRequestContext` (6), `ActiveSocket` (4)                                                                                                                | `#[repr(transparent)] struct(u64)` + macro-generated `match` jump-table; tags = `1024 - i`. Rust `enum` for internal-only cases                                                                                                                                                | `tagged_pointer.zig:1-71`                                 |
 
 ### 8.1 `NewStore` / `BlockStore` — the AST node allocator
 
@@ -474,6 +477,7 @@ const ADDR_MASK: u64 = (1<<49)-1;
 ### 9.3 `KeepAlive` vs `ActiveTaskRef` (`jsc.Ref`)
 
 **Distinct, non-refcounted, idempotent 1-byte toggles** gating two different counters:
+
 - `KeepAlive` → `loop.{num_polls, active}` (uSockets blocking decision). Also `{ref,unref}Concurrently` (atomic on `vm.event_loop`) and `unrefOnNextTick` (atomic RMW on `vm.pending_unref_counter`).
 - `ActiveTaskRef` → `vm.active_tasks` (process-exit decision).
 
@@ -507,14 +511,14 @@ kprotty's lock-free pool (`ThreadPool.zig:3-11`). `Sync = packed struct(u32) { i
 
 **One dedicated OS thread** (`HTTPThread`, `bun.once`-spawned, detached) owning a `jsc.MiniEventLoop` (uSockets, no JSC VM) running `processEvents() noreturn`. Process-static singleton `http_thread` holds two embedded `NewHTTPContext(false)/NewHTTPContext(true)` plus cross-thread queues. (`HTTPThread.zig:16-650`; `http.zig:6`)
 
-| Layer | Design | Source |
-|---|---|---|
-| Cross-thread queue | Intrusive MPSC `UnboundedQueue(AsyncHTTP, .next)`; `schedule(batch)` pushes + `loop.wakeup()`. Shutdown/write side-channels: `Mutex` + swap-and-drain | `HTTPThread.zig:702-718` |
-| Per-socket dispatch | uSockets ext slot holds `TaggedPointerUnion(.{DeadSocket, HTTPClient, PooledSocket, H2.ClientSession})` — one u64. Callbacks dispatch on tag, no vtable | `HTTPContext.zig:60-121` |
-| SSL monomorphization | `NewHTTPContext(comptime ssl: bool)` → two distinct types; entire send/receive path monomorphized. Rust: `HttpContext<S: SslMode>` sealed trait | `HTTPContext.zig:1-105`; `http.zig:1587` |
-| Keep-alive pool | `HiveArray(PooledSocket, 64)` per context; `PooledSocket` (auto-layout, NOT extern) inline `[128]u8 hostname_buf` | `HTTPContext.zig:3-358, 615-712` |
-| Custom-TLS cache | `AutoArrayHashMap(*SSLConfig, SslContextCacheEntry)`, max 60, 30-min TTL; intrusive `RefCount` so in-flight clients survive eviction | `HTTPThread.zig:6-358`; `HTTPContext.zig:74-82` |
-| Body buffer reuse | `StackFallback(32K)` for small; lazy singleton `[512K]u8 HeapRequestBodyBuffer` taken/returned via `Option::take` | `HTTPThread.zig:46-162` |
+| Layer                | Design                                                                                                                                                  | Source                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Cross-thread queue   | Intrusive MPSC `UnboundedQueue(AsyncHTTP, .next)`; `schedule(batch)` pushes + `loop.wakeup()`. Shutdown/write side-channels: `Mutex` + swap-and-drain   | `HTTPThread.zig:702-718`                        |
+| Per-socket dispatch  | uSockets ext slot holds `TaggedPointerUnion(.{DeadSocket, HTTPClient, PooledSocket, H2.ClientSession})` — one u64. Callbacks dispatch on tag, no vtable | `HTTPContext.zig:60-121`                        |
+| SSL monomorphization | `NewHTTPContext(comptime ssl: bool)` → two distinct types; entire send/receive path monomorphized. Rust: `HttpContext<S: SslMode>` sealed trait         | `HTTPContext.zig:1-105`; `http.zig:1587`        |
+| Keep-alive pool      | `HiveArray(PooledSocket, 64)` per context; `PooledSocket` (auto-layout, NOT extern) inline `[128]u8 hostname_buf`                                       | `HTTPContext.zig:3-358, 615-712`                |
+| Custom-TLS cache     | `AutoArrayHashMap(*SSLConfig, SslContextCacheEntry)`, max 60, 30-min TTL; intrusive `RefCount` so in-flight clients survive eviction                    | `HTTPThread.zig:6-358`; `HTTPContext.zig:74-82` |
+| Body buffer reuse    | `StackFallback(32K)` for small; lazy singleton `[512K]u8 HeapRequestBodyBuffer` taken/returned via `Option::take`                                       | `HTTPThread.zig:46-162`                         |
 
 ### 10.2 h1 state machine
 
@@ -590,17 +594,17 @@ Six non-plugin JSC coupling points (`bundle_v2.zig:50, 1525, 2259, 2939, 3564, 5
 
 Each step proves one new primitive on the smallest real consumer.
 
-| Step | Target | New primitives proven | Why |
-|---|---|---|---|
-| 1 | `Cron` | `JSRef` lifecycle | Smallest `JSRef` consumer, no I/O |
-| 2 | `UDPSocket` | `KeepAlive`, uSockets FFI, `MarkedArgumentBuffer` | Smallest socket native |
-| 3 | `NewSocket(ssl)` → `TCPSocket`/`TLSSocket` | `<const SSL: bool>` backing two `.classes.ts`; shared `Handlers` (9 `JSValue` callbacks `protect()`ed, `active_connections` count, `@fieldParentPtr` for server mode); intrusive `RefCount`; lazy-wrapper-on-first-callback; BoringSSL `ex_data`; `Rc::into_raw` for ext slot | The template every async native copies (`socket.zig:49-1774`; `Handlers.zig:3-213`) |
-| 4 | `JSMySQLConnection` + protocol | `EventLoopTimer`, `AutoFlusher`, protocol/binding split | Already cleanly layered |
-| 5 | `PostgresSQLConnection` | `hasPendingActivity` atomic | After Zig refactor to MySQL's split |
-| 6 | `Request`/`Response`/`Body` | `Body.Value` state machine, `RefPtr<C++>` (FetchHeaders, AbortSignal), `BodyMixin` macro; **eliminate `request_weakref`** | Shared by serve and fetch |
-| 7 | `ServerWebSocket` | (DOMJIT path when re-enabled) | |
-| 8 | `NodeHTTPResponse` | `Strong` promise hold, dual `jsc.Ref`, socket-ext lookup, `uws.AnyResponse` runtime tag (cold path — node:http compat) | (`NodeHTTPResponse.zig:5-56`) |
-| 9 | `RequestContext` + `Server` | `<const SSL,DEBUG,H3>` 6-way generic (`NewServer`: 4 instantiations × `has_h3=ssl_enabled` → 6); inline 2048-slot slab; `TaggedPointerUnion(u64)` `AnyRequestContext` (tags `1024-i`); `protect()` + `Strong` mix; `allocator` field caches `mi_heap_t*` to avoid `pthread_getspecific` | Hardest. `AnyRequestContext` is opaque u64 — Rust `Request`/`Response` interop with Zig `RequestContext` until this lands. **Port together with `Request`** or land bidirectional C-ABI accessors first (`Bun__AnyRequestContext__*`, `Bun__Request__*`) |
+| Step | Target                                     | New primitives proven                                                                                                                                                                                                                                                                   | Why                                                                                                                                                                                                                                                      |
+| ---- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | `Cron`                                     | `JSRef` lifecycle                                                                                                                                                                                                                                                                       | Smallest `JSRef` consumer, no I/O                                                                                                                                                                                                                        |
+| 2    | `UDPSocket`                                | `KeepAlive`, uSockets FFI, `MarkedArgumentBuffer`                                                                                                                                                                                                                                       | Smallest socket native                                                                                                                                                                                                                                   |
+| 3    | `NewSocket(ssl)` → `TCPSocket`/`TLSSocket` | `<const SSL: bool>` backing two `.classes.ts`; shared `Handlers` (9 `JSValue` callbacks `protect()`ed, `active_connections` count, `@fieldParentPtr` for server mode); intrusive `RefCount`; lazy-wrapper-on-first-callback; BoringSSL `ex_data`; `Rc::into_raw` for ext slot           | The template every async native copies (`socket.zig:49-1774`; `Handlers.zig:3-213`)                                                                                                                                                                      |
+| 4    | `JSMySQLConnection` + protocol             | `EventLoopTimer`, `AutoFlusher`, protocol/binding split                                                                                                                                                                                                                                 | Already cleanly layered                                                                                                                                                                                                                                  |
+| 5    | `PostgresSQLConnection`                    | `hasPendingActivity` atomic                                                                                                                                                                                                                                                             | After Zig refactor to MySQL's split                                                                                                                                                                                                                      |
+| 6    | `Request`/`Response`/`Body`                | `Body.Value` state machine, `RefPtr<C++>` (FetchHeaders, AbortSignal), `BodyMixin` macro; **eliminate `request_weakref`**                                                                                                                                                               | Shared by serve and fetch                                                                                                                                                                                                                                |
+| 7    | `ServerWebSocket`                          | (DOMJIT path when re-enabled)                                                                                                                                                                                                                                                           |                                                                                                                                                                                                                                                          |
+| 8    | `NodeHTTPResponse`                         | `Strong` promise hold, dual `jsc.Ref`, socket-ext lookup, `uws.AnyResponse` runtime tag (cold path — node:http compat)                                                                                                                                                                  | (`NodeHTTPResponse.zig:5-56`)                                                                                                                                                                                                                            |
+| 9    | `RequestContext` + `Server`                | `<const SSL,DEBUG,H3>` 6-way generic (`NewServer`: 4 instantiations × `has_h3=ssl_enabled` → 6); inline 2048-slot slab; `TaggedPointerUnion(u64)` `AnyRequestContext` (tags `1024-i`); `protect()` + `Strong` mix; `allocator` field caches `mi_heap_t*` to avoid `pthread_getspecific` | Hardest. `AnyRequestContext` is opaque u64 — Rust `Request`/`Response` interop with Zig `RequestContext` until this lands. **Port together with `Request`** or land bidirectional C-ABI accessors first (`Bun__AnyRequestContext__*`, `Bun__Request__*`) |
 
 (`RequestContext.zig:21-2636`; `AnyRequestContext.zig:6-35`; `server.zig:513-2631`; `Request.zig:13-43`)
 
@@ -670,11 +674,11 @@ crates/
 
 **`unsafe` placement:**
 
-| Crate | `unsafe` policy |
-|---|---|
-| `bun_ast`, `bun_semver`, `bun_resolve_builtins`, `bun_core` | `#![forbid(unsafe_code)]` |
-| `bun_sys`, `bun_str` (`wtf_ffi`/`simd`), `bun_alloc`, `bun_async::uws`, `bun_http` (pico/lshpack/quic FFI), `bun_install_core` (libarchive/libdeflate FFI), `bun_jsc::sys`/`raw`, `bun_runtime::generated`, `bun_panic` | allowed (FFI); `#![deny(unsafe_op_in_unsafe_fn)]` |
-| Everything else | `#![deny(unsafe_code)]` at crate root; per-module `#[allow(unsafe_code)]` only with `// UNSAFE-MODULE:` header |
+| Crate                                                                                                                                                                                                                   | `unsafe` policy                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `bun_ast`, `bun_semver`, `bun_resolve_builtins`, `bun_core`                                                                                                                                                             | `#![forbid(unsafe_code)]`                                                                                      |
+| `bun_sys`, `bun_str` (`wtf_ffi`/`simd`), `bun_alloc`, `bun_async::uws`, `bun_http` (pico/lshpack/quic FFI), `bun_install_core` (libarchive/libdeflate FFI), `bun_jsc::sys`/`raw`, `bun_runtime::generated`, `bun_panic` | allowed (FFI); `#![deny(unsafe_op_in_unsafe_fn)]`                                                              |
+| Everything else                                                                                                                                                                                                         | `#![deny(unsafe_code)]` at crate root; per-module `#[allow(unsafe_code)]` only with `// UNSAFE-MODULE:` header |
 
 **`!Send + !Sync` via `PhantomData<*const ()>`:** `JSValue`, `JSGlobalObject`, `CallFrame`, `Strong`, `JSRef`, `MarkedArgumentBuffer`, `VM`. (`VirtualMachine.zig:327-328`)
 
@@ -714,29 +718,29 @@ When `cfg.lto`: `rustflags.push("-Clinker-plugin-lto", "-Cembed-bitcode=yes", "-
 
 ### 16.1 Language features (Rust 2024 edition)
 
-| Feature | Status | Use |
-|---|---|---|
-| `unsafe extern { safe fn ... }` | stable 1.82 | `bun_jsc::sys` marks pure getters `safe fn` → hundreds fewer `unsafe {}` |
-| Strict provenance (`ptr.map_addr`) | stable 1.84 | `ZigString` bit-masking, `TaggedPointer` — miri-clean |
-| `core::hint::assert_unchecked` | stable 1.81 | Replaces Zig `@setRuntimeSafety(false)` in lexer/parser hot loops |
-| `#[diagnostic::on_unimplemented]` / `do_not_recommend` | stable 1.78 / 1.85 | Custom errors on `NoRawJSValue`/`JsThreadOnly` marker traits |
-| `core::hint::unreachable_unchecked` | stable 1.27 | = `__builtin_unreachable` |
-| `#[cold]` on error fns | stable | Branch weight (no `likely`/`unlikely` — still nightly #151619) |
-| PGO (`cargo pgo`) | tooling | For pure branch-weight cases `#[cold]` doesn't cover |
-| `extern "sysv64"` | stable | win-x64 only |
-| Polonius / `allocator_api` | nightly-indefinite | `StoreRef<T>` and `bumpalo::collections` workarounds stand |
+| Feature                                                | Status             | Use                                                                      |
+| ------------------------------------------------------ | ------------------ | ------------------------------------------------------------------------ |
+| `unsafe extern { safe fn ... }`                        | stable 1.82        | `bun_jsc::sys` marks pure getters `safe fn` → hundreds fewer `unsafe {}` |
+| Strict provenance (`ptr.map_addr`)                     | stable 1.84        | `ZigString` bit-masking, `TaggedPointer` — miri-clean                    |
+| `core::hint::assert_unchecked`                         | stable 1.81        | Replaces Zig `@setRuntimeSafety(false)` in lexer/parser hot loops        |
+| `#[diagnostic::on_unimplemented]` / `do_not_recommend` | stable 1.78 / 1.85 | Custom errors on `NoRawJSValue`/`JsThreadOnly` marker traits             |
+| `core::hint::unreachable_unchecked`                    | stable 1.27        | = `__builtin_unreachable`                                                |
+| `#[cold]` on error fns                                 | stable             | Branch weight (no `likely`/`unlikely` — still nightly #151619)           |
+| PGO (`cargo pgo`)                                      | tooling            | For pure branch-weight cases `#[cold]` doesn't cover                     |
+| `extern "sysv64"`                                      | stable             | win-x64 only                                                             |
+| Polonius / `allocator_api`                             | nightly-indefinite | `StoreRef<T>` and `bumpalo::collections` workarounds stand               |
 
 ### 16.2 `#[repr]` policy
 
-| Category | `#[repr]` |
-|---|---|
-| Newtype over primitive crossing FFI / hot-loop signature | `#[repr(transparent)]` (`JSValue`, `Fd`, `Ref`, `Loc`, `TaggedPointer`, `IndexType`, `BabyString`) |
-| Mirror of C/Zig `extern struct` | `#[repr(C)]` + `const _: () = assert!(size_of/align_of/offset_of)` against `zig-layouts.json` |
-| Mirror of C `union` | `#[repr(C)] union` |
-| Mirror of Zig `enum(uN)` (exhaustive, controlled) | `#[repr(uN)] enum` |
-| Mirror of Zig **non-exhaustive** enum or C++-written u8 | `#[repr(transparent)] struct T(uN)` + associated consts (avoids invalid-discriminant UB — `E`, `BunString.tag`) |
-| Mirror of Zig `union(Tag)` (no C ABI) | `repr(Rust)` enum; only **size** parity matters |
-| Internal Rust types | `repr(Rust)` (default) |
+| Category                                                 | `#[repr]`                                                                                                       |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Newtype over primitive crossing FFI / hot-loop signature | `#[repr(transparent)]` (`JSValue`, `Fd`, `Ref`, `Loc`, `TaggedPointer`, `IndexType`, `BabyString`)              |
+| Mirror of C/Zig `extern struct`                          | `#[repr(C)]` + `const _: () = assert!(size_of/align_of/offset_of)` against `zig-layouts.json`                   |
+| Mirror of C `union`                                      | `#[repr(C)] union`                                                                                              |
+| Mirror of Zig `enum(uN)` (exhaustive, controlled)        | `#[repr(uN)] enum`                                                                                              |
+| Mirror of Zig **non-exhaustive** enum or C++-written u8  | `#[repr(transparent)] struct T(uN)` + associated consts (avoids invalid-discriminant UB — `E`, `BunString.tag`) |
+| Mirror of Zig `union(Tag)` (no C ABI)                    | `repr(Rust)` enum; only **size** parity matters                                                                 |
+| Internal Rust types                                      | `repr(Rust)` (default)                                                                                          |
 
 ### 16.3 Clippy (`[workspace.lints]`)
 
@@ -768,21 +772,21 @@ type_complexity = "allow"
 
 ### 16.4 Custom lints (dylint / build-time grep)
 
-| Lint | Rule | Catches |
-|---|---|---|
-| `jsc_conv_on_export` | Every `#[no_mangle] extern fn` in `bun_runtime`/`bun_jsc` uses `extern jsc_conv!()` | win-x64 JIT stack corruption |
-| `no_jsvalue_field` | `JSValue` may not be a struct field outside `bun_jsc` internals; opt-out `#[guarded_by(has_pending_activity)]` | GC-invisible-heap class |
-| `no_borrow_across_js_call` | `&[u8]`/`&str`/`WTFSlice` borrowed from a `JSValue` may not live across any call taking `&GlobalObject` | Getter side-effects detach buffer |
-| `marked_args_for_jsvalue_slice` | `&[JSValue]`/`Vec<JSValue>` passed to anything that allocates → through `MarkedArgumentBuffer` | Unrooted heap array |
-| `strong_bounded_by` | Every `Strong`/`OptionalStrong` field has `/// bounded-by: <event>` doc | `Strong` leak |
-| `extra_memory_paired` | If a type calls `report_extra_memory_allocated`, its `.classes.ts` has `estimatedSize: true` | GC death-spiral |
-| `no_unwrap_jsresult` | `.unwrap()`/`.expect()` forbidden on `JsResult<T>` | Swallowed exceptions |
-| `repr_on_boundary` | Any type in an `extern` fn signature has `#[repr(C)]` or `#[repr(transparent)]` | Layout drift |
-| `arc_from_raw_paired` | `Arc::into_raw` has traceable `from_raw` in same module (or `// owned by:` comment) | Leak |
-| `keepalive_disable_on_drop` | Types holding `KeepAlive` `disable()` it in `Drop` | Dangling event-loop ref |
-| `no_std_fs_net` | `std::fs::*`, `std::net::*`, `std::process::*` forbidden — use `bun_sys` | Consistent errno/FD |
-| `no_async_runtime` | `tokio`, `async-std`, `smol`, `futures::executor`, `rayon`, `crossbeam`, `hyper`, `reqwest` forbidden in Cargo.toml (`cargo-deny`) | Own-async invariant |
-| `disallowed_types` | `Box<dyn *>` banned in `bun_runtime`, `bun_http`, `bun_ast` hot paths | Monomorphize |
+| Lint                            | Rule                                                                                                                               | Catches                           |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `jsc_conv_on_export`            | Every `#[no_mangle] extern fn` in `bun_runtime`/`bun_jsc` uses `extern jsc_conv!()`                                                | win-x64 JIT stack corruption      |
+| `no_jsvalue_field`              | `JSValue` may not be a struct field outside `bun_jsc` internals; opt-out `#[guarded_by(has_pending_activity)]`                     | GC-invisible-heap class           |
+| `no_borrow_across_js_call`      | `&[u8]`/`&str`/`WTFSlice` borrowed from a `JSValue` may not live across any call taking `&GlobalObject`                            | Getter side-effects detach buffer |
+| `marked_args_for_jsvalue_slice` | `&[JSValue]`/`Vec<JSValue>` passed to anything that allocates → through `MarkedArgumentBuffer`                                     | Unrooted heap array               |
+| `strong_bounded_by`             | Every `Strong`/`OptionalStrong` field has `/// bounded-by: <event>` doc                                                            | `Strong` leak                     |
+| `extra_memory_paired`           | If a type calls `report_extra_memory_allocated`, its `.classes.ts` has `estimatedSize: true`                                       | GC death-spiral                   |
+| `no_unwrap_jsresult`            | `.unwrap()`/`.expect()` forbidden on `JsResult<T>`                                                                                 | Swallowed exceptions              |
+| `repr_on_boundary`              | Any type in an `extern` fn signature has `#[repr(C)]` or `#[repr(transparent)]`                                                    | Layout drift                      |
+| `arc_from_raw_paired`           | `Arc::into_raw` has traceable `from_raw` in same module (or `// owned by:` comment)                                                | Leak                              |
+| `keepalive_disable_on_drop`     | Types holding `KeepAlive` `disable()` it in `Drop`                                                                                 | Dangling event-loop ref           |
+| `no_std_fs_net`                 | `std::fs::*`, `std::net::*`, `std::process::*` forbidden — use `bun_sys`                                                           | Consistent errno/FD               |
+| `no_async_runtime`              | `tokio`, `async-std`, `smol`, `futures::executor`, `rayon`, `crossbeam`, `hyper`, `reqwest` forbidden in Cargo.toml (`cargo-deny`) | Own-async invariant               |
+| `disallowed_types`              | `Box<dyn *>` banned in `bun_runtime`, `bun_http`, `bun_ast` hot paths                                                              | Monomorphize                      |
 
 ### 16.5 Const-generics policy
 
@@ -790,16 +794,16 @@ Where Zig uses `comptime bool`, Rust uses `const generics`; where Zig uses `comp
 
 ### 16.6 Drop/Clone for FFI handles
 
-| Type | Clone | Drop |
-|---|---|---|
-| `WTFString` | `Bun__WTFStringImpl__ref` | `Bun__WTFStringImpl__deref` |
-| `Strong` | **NOT impl** (no clone FFI exists) | `Bun__StrongRef__delete` |
-| `OptionalStrong` | manual `set()` reuses slot | `Bun__StrongRef__delete` if `Some` |
-| `BunString` | `__ref` if `tag==WTF` | `__deref` if `tag==WTF` |
-| `Fd` | `Copy` | **No Drop** — explicit `close()` |
-| `JSRef` | **NOT impl** | **No Drop** (or debug-assert `Finalized|Weak(UNDEFINED)`) — finalize is GC-driven |
-| `KeepAlive` | `Copy` | No Drop (idempotent) |
-| `Arena` | NOT impl | `mi_heap_destroy` |
+| Type             | Clone                              | Drop                                    |
+| ---------------- | ---------------------------------- | --------------------------------------- | ----------------------------------------- |
+| `WTFString`      | `Bun__WTFStringImpl__ref`          | `Bun__WTFStringImpl__deref`             |
+| `Strong`         | **NOT impl** (no clone FFI exists) | `Bun__StrongRef__delete`                |
+| `OptionalStrong` | manual `set()` reuses slot         | `Bun__StrongRef__delete` if `Some`      |
+| `BunString`      | `__ref` if `tag==WTF`              | `__deref` if `tag==WTF`                 |
+| `Fd`             | `Copy`                             | **No Drop** — explicit `close()`        |
+| `JSRef`          | **NOT impl**                       | **No Drop** (or debug-assert `Finalized | Weak(UNDEFINED)`) — finalize is GC-driven |
+| `KeepAlive`      | `Copy`                             | No Drop (idempotent)                    |
+| `Arena`          | NOT impl                           | `mi_heap_destroy`                       |
 
 ---
 
@@ -807,19 +811,19 @@ Where Zig uses `comptime bool`, Rust uses `const generics`; where Zig uses `comp
 
 ### 17.1 Per-subsystem invariants
 
-| Subsystem | Invariant | Measure |
-|---|---|---|
-| JSC host call | Thunk = tail-dispatch, no landing pad; `(ret==0)⟺hasException` debug-asserted | `cargo asm` on a generated getter; `BUN_JSC_validateExceptionChecks=1` test suite |
-| `JSValue`/`Strong`/`JSRef` | sizes 8/8/16; `Strong::get()` zero FFI; `JSRef` upgrade/downgrade = 1 FFI each | static_assert; `cargo asm`; 10k connect/close `Bun__StrongRef__*` count == Zig |
-| `CallFrame` | `arguments()`/`this()`/`callee()` zero `call` instructions | `cargo asm` diff vs Zig objdump |
-| Strings | `is_8bit()`/`len()` ≤3 insns, zero FFI; `to_utf8` ASCII path 0 alloc; `BunString` Drop = `cmp;jne;jmp` | `cargo asm`; heaptrack on `Bun.inspect` loop |
-| `bun_sys` | Linux `read` contains `syscall`, no PLT; success path zero TLS reads; `SysError` 0 alloc | `cargo asm`; heaptrack on `openSync("/nope")` loop |
-| `Task` dispatch | `size_of==8`; jump table not vtable | `perf record` on 1M-timer; no `callq *0x8(%rax)` |
-| ThreadPool | `schedule()` 0 alloc; 4-op fast path; Task=2×usize | mimalloc stats diff; `objdump` fence count |
-| HTTP thread | 1 OS thread; `processEvents` 0 alloc when queues empty; keep-alive pool 0 alloc ≤64; h2 coalesce → 1 TCP conn | `getrusage` ctx-switches; integration test |
-| install | `scheduleTasks()` 0 alloc; lockfile load O(sections) memcpy; extract pwrite-dominant + fallocate | `hyperfine 'bun install'`; `strace -c` syscall mix |
-| Bundler | `mi_free` count O(1) (heap-destroy only); per-node `append()` 0 FFI; `pending_items` non-atomic | `mi_stats_print`; `perf record` no `bun_runtime::` in CLI build |
-| Serve | RequestContext 0 alloc ≤2048 concurrent; no `__tls_get_addr` in response path; `AnyRequestContext` 8B in register | `oha -z 30s` p50/p99; `perf record` |
+| Subsystem                  | Invariant                                                                                                         | Measure                                                                           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| JSC host call              | Thunk = tail-dispatch, no landing pad; `(ret==0)⟺hasException` debug-asserted                                     | `cargo asm` on a generated getter; `BUN_JSC_validateExceptionChecks=1` test suite |
+| `JSValue`/`Strong`/`JSRef` | sizes 8/8/16; `Strong::get()` zero FFI; `JSRef` upgrade/downgrade = 1 FFI each                                    | static_assert; `cargo asm`; 10k connect/close `Bun__StrongRef__*` count == Zig    |
+| `CallFrame`                | `arguments()`/`this()`/`callee()` zero `call` instructions                                                        | `cargo asm` diff vs Zig objdump                                                   |
+| Strings                    | `is_8bit()`/`len()` ≤3 insns, zero FFI; `to_utf8` ASCII path 0 alloc; `BunString` Drop = `cmp;jne;jmp`            | `cargo asm`; heaptrack on `Bun.inspect` loop                                      |
+| `bun_sys`                  | Linux `read` contains `syscall`, no PLT; success path zero TLS reads; `SysError` 0 alloc                          | `cargo asm`; heaptrack on `openSync("/nope")` loop                                |
+| `Task` dispatch            | `size_of==8`; jump table not vtable                                                                               | `perf record` on 1M-timer; no `callq *0x8(%rax)`                                  |
+| ThreadPool                 | `schedule()` 0 alloc; 4-op fast path; Task=2×usize                                                                | mimalloc stats diff; `objdump` fence count                                        |
+| HTTP thread                | 1 OS thread; `processEvents` 0 alloc when queues empty; keep-alive pool 0 alloc ≤64; h2 coalesce → 1 TCP conn     | `getrusage` ctx-switches; integration test                                        |
+| install                    | `scheduleTasks()` 0 alloc; lockfile load O(sections) memcpy; extract pwrite-dominant + fallocate                  | `hyperfine 'bun install'`; `strace -c` syscall mix                                |
+| Bundler                    | `mi_free` count O(1) (heap-destroy only); per-node `append()` 0 FFI; `pending_items` non-atomic                   | `mi_stats_print`; `perf record` no `bun_runtime::` in CLI build                   |
+| Serve                      | RequestContext 0 alloc ≤2048 concurrent; no `__tls_get_addr` in response path; `AnyRequestContext` 8B in register | `oha -z 30s` p50/p99; `perf record`                                               |
 
 ### 17.2 PR gates
 
@@ -844,12 +848,12 @@ Nightly: full suite in three modes (all-Zig, all-Rust-where-ported, shadow-diff)
 
 20 agents × 150 OTPS × 10× token→usable ratio over 705K LOC ≈ **~100h wall-clock**.
 
-| Hours | Track | What lands |
-|---|---|---|
-| 0–24 | **P0 critical path** (5 agents, 1 human reviewing) | `crates/` workspace + `bun-rs.ts` (lolhtml precedent); `bun_alloc`, `bun_panic`, `bun_sys`, `bun_str`, `bun_jsc` (incl. `sys`, `raw`, `abi`, `callframe`); layout-assert harness; `bun_threadpool`, `bun_async` |
-| 12–36 | **P1** (3 agents) | `generate-classes.ts` Rust emitter (`ZigGeneratedClasses.rs` 9th output); `cppbind.ts` Rust emitter; `Glob` end-to-end through all 10 gates; shadow-mode (`BUN_RS_<Class>=0|1`) |
-| 24–100 | **Fleet fan-out** (15+ agents, parallel tracks) | Wave-A `.classes.ts` ∥ TOML/YAML/JSONC/MD parsers ∥ Ladder steps 1–5 (Cron→UDPSocket→Socket→MySQL→Postgres) ∥ relocate `jsc.*` namespace types (§6 table) ∥ `bun_http` + `bun_http_jsc` ∥ `bun_install_core` + `bun_install_jsc` ∥ CSS reverse-port ∥ `bun_ast` (lexer→parser→printer with `BlockStore`) ∥ `bun_bundler_core` + `bun_bundler_jsc` |
-| 80–100 | **Human-paired** | Ladder 6–9 (Request/Response → ServerWebSocket → NodeHTTPResponse → RequestContext+Server); macro-bench pass (`oha` serve, `bun install` 2000-dep, `bun build` three.js) |
+| Hours  | Track                                              | What lands                                                                                                                                                                                                                                                                                                                                        |
+| ------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| 0–24   | **P0 critical path** (5 agents, 1 human reviewing) | `crates/` workspace + `bun-rs.ts` (lolhtml precedent); `bun_alloc`, `bun_panic`, `bun_sys`, `bun_str`, `bun_jsc` (incl. `sys`, `raw`, `abi`, `callframe`); layout-assert harness; `bun_threadpool`, `bun_async`                                                                                                                                   |
+| 12–36  | **P1** (3 agents)                                  | `generate-classes.ts` Rust emitter (`ZigGeneratedClasses.rs` 9th output); `cppbind.ts` Rust emitter; `Glob` end-to-end through all 10 gates; shadow-mode (`BUN*RS*<Class>=0                                                                                                                                                                       | 1`) |
+| 24–100 | **Fleet fan-out** (15+ agents, parallel tracks)    | Wave-A `.classes.ts` ∥ TOML/YAML/JSONC/MD parsers ∥ Ladder steps 1–5 (Cron→UDPSocket→Socket→MySQL→Postgres) ∥ relocate `jsc.*` namespace types (§6 table) ∥ `bun_http` + `bun_http_jsc` ∥ `bun_install_core` + `bun_install_jsc` ∥ CSS reverse-port ∥ `bun_ast` (lexer→parser→printer with `BlockStore`) ∥ `bun_bundler_core` + `bun_bundler_jsc` |
+| 80–100 | **Human-paired**                                   | Ladder 6–9 (Request/Response → ServerWebSocket → NodeHTTPResponse → RequestContext+Server); macro-bench pass (`oha` serve, `bun install` 2000-dep, `bun build` three.js)                                                                                                                                                                          |
 
 ### Kill criteria (by hour 40)
 
@@ -859,13 +863,13 @@ Nightly: full suite in three modes (all-Zig, all-Rust-where-ported, shadow-diff)
 
 ### Deferred
 
-| Item | Why |
-|---|---|
-| **Per-API enumeration** (every `.classes.ts` proto method, every `node_*` binding shape) | → follow-up doc |
-| `shell/` (22K, 180 comptimes) | Comptime-generated builtin dispatch; low churn |
-| `bake/` (12K) | Product surface still moving |
-| Hand-written DOMJIT (`JSBuffer.cpp`, `FFIObject.zig`) | Stays C++/Zig until last |
-| `deps/` shims (uws, picohttp) | Keep as FFI |
+| Item                                                                                     | Why                                            |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| **Per-API enumeration** (every `.classes.ts` proto method, every `node_*` binding shape) | → follow-up doc                                |
+| `shell/` (22K, 180 comptimes)                                                            | Comptime-generated builtin dispatch; low churn |
+| `bake/` (12K)                                                                            | Product surface still moving                   |
+| Hand-written DOMJIT (`JSBuffer.cpp`, `FFIObject.zig`)                                    | Stays C++/Zig until last                       |
+| `deps/` shims (uws, picohttp)                                                            | Keep as FFI                                    |
 
 ---
 
@@ -873,13 +877,13 @@ Nightly: full suite in three modes (all-Zig, all-Rust-where-ported, shadow-diff)
 
 Analysis of the last 50 merged bugfix PRs (categorized by class):
 
-| Class | Count | C++ (RAII+move+`unique_ptr`) solves | Rust solves |
-|---|---|---|---|
-| Missing cleanup on error path | 14 | 14 | 14 |
-| UAF / stale pointer | 8 | ~3 (ownership) | ~6 (+aliasing via borrowck) |
-| Uninit / wrong-tag / type confusion | 4 | ~1 | 4 |
-| Bounds / overflow | 10 | ~0 | 10 (panic instead of UB) |
-| Logic / platform | 14 | 0 | 0 |
+| Class                               | Count | C++ (RAII+move+`unique_ptr`) solves | Rust solves                 |
+| ----------------------------------- | ----- | ----------------------------------- | --------------------------- |
+| Missing cleanup on error path       | 14    | 14                                  | 14                          |
+| UAF / stale pointer                 | 8     | ~3 (ownership)                      | ~6 (+aliasing via borrowck) |
+| Uninit / wrong-tag / type confusion | 4     | ~1                                  | 4                           |
+| Bounds / overflow                   | 10    | ~0                                  | 10 (panic instead of UB)    |
+| Logic / platform                    | 14    | 0                                   | 0                           |
 
 **C++ ≈ 36%. Rust ≈ 52–60%.** Destructors alone buy ~65% of the Rust win. The remaining ~35% is borrowck (aliasing UAFs), no-uninit, exhaustive `match`, checked indexing.
 
@@ -901,20 +905,20 @@ These cross the FFI **by value** today (`headers-handwritten.h:19-236`; `URL.zig
 
 ## Appendix B — Constants
 
-| Const | Value | Source |
-|---|---|---|
-| `MI_MAX_ALIGN_SIZE` | 16 | `mimalloc.zig:217` |
-| `S_HASH_FLAG_8BIT_BUFFER` | `1<<2` | `wtf.zig:21` |
-| `S_REFCOUNT_INCREMENT` / `STATIC` | `0x2` / `0x1` | `wtf.zig:25-28` |
-| `ZigString` PTR_MASK | `(1<<53)-1` | `ZigString.zig:629-632` |
-| `TaggedPointer` ADDR_MASK | `(1<<49)-1` | `tagged_pointer.zig:1-7` |
-| Task tags | `1024 - i` | `tagged_pointer.zig:64-71` |
-| `MAX_KEEPALIVE_HOSTNAME` | 128 | `HTTPContext.zig:129` |
-| `LOCAL_INITIAL_WINDOW_SIZE` (h2) | `1<<24` | `H2Client.zig:13` |
-| `request_body_send_stack_buffer_size` | 32 KiB | `HTTPThread.zig:136` |
-| `ssl_context_cache_max_size` / TTL | 60 / 30 min | `HTTPThread.zig:6-14` |
-| `ConcurrentTask` size | 16 | `ConcurrentTask.zig` (compile-asserted) |
-| `Node.Buffer` capacity | 256 | `ThreadPool.zig:850-860` |
-| `CallFrame` offsets | callee=3, argc=4, this=5, first_arg=6 | `CallFrame.zig:80-84` |
-| `ExprData` / `Expr` / `Stmt` size | 24 / 32 / ≤24 | `Expr.zig:2191`; `Stmt.zig:296` |
-| `LLVM_VERSION` | 21.1.8 | `tools.ts:267` |
+| Const                                 | Value                                 | Source                                  |
+| ------------------------------------- | ------------------------------------- | --------------------------------------- |
+| `MI_MAX_ALIGN_SIZE`                   | 16                                    | `mimalloc.zig:217`                      |
+| `S_HASH_FLAG_8BIT_BUFFER`             | `1<<2`                                | `wtf.zig:21`                            |
+| `S_REFCOUNT_INCREMENT` / `STATIC`     | `0x2` / `0x1`                         | `wtf.zig:25-28`                         |
+| `ZigString` PTR_MASK                  | `(1<<53)-1`                           | `ZigString.zig:629-632`                 |
+| `TaggedPointer` ADDR_MASK             | `(1<<49)-1`                           | `tagged_pointer.zig:1-7`                |
+| Task tags                             | `1024 - i`                            | `tagged_pointer.zig:64-71`              |
+| `MAX_KEEPALIVE_HOSTNAME`              | 128                                   | `HTTPContext.zig:129`                   |
+| `LOCAL_INITIAL_WINDOW_SIZE` (h2)      | `1<<24`                               | `H2Client.zig:13`                       |
+| `request_body_send_stack_buffer_size` | 32 KiB                                | `HTTPThread.zig:136`                    |
+| `ssl_context_cache_max_size` / TTL    | 60 / 30 min                           | `HTTPThread.zig:6-14`                   |
+| `ConcurrentTask` size                 | 16                                    | `ConcurrentTask.zig` (compile-asserted) |
+| `Node.Buffer` capacity                | 256                                   | `ThreadPool.zig:850-860`                |
+| `CallFrame` offsets                   | callee=3, argc=4, this=5, first_arg=6 | `CallFrame.zig:80-84`                   |
+| `ExprData` / `Expr` / `Stmt` size     | 24 / 32 / ≤24                         | `Expr.zig:2191`; `Stmt.zig:296`         |
+| `LLVM_VERSION`                        | 21.1.8                                | `tools.ts:267`                          |

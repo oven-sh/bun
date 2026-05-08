@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Emit phase-b2-cycle args: only crates with >0 #[cfg(any())] gates,
 // excluding keystone-owned (those need dedicated agents, not sweeps).
-import { readdirSync, statSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const KEYSTONE = new Set(["runtime", "js_parser", "jsc"]); // dedicated rounds own these

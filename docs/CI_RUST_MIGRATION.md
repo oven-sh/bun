@@ -6,18 +6,18 @@ the BuildKite pipeline on `main`.
 
 ## What changed
 
-| Before | After |
-|---|---|
-| `BuildMode = "zig-only"` | `BuildMode = "rust-only"` |
-| `emitZigOnly()` → `bun-zig.o` | `emitRustOnly()` → `libbun_rust.a` (`bun_rust.lib` on Windows) |
-| `<target>-build-zig` step key | `<target>-build-rust` |
-| `dl("zig")` in link-only | `dl("rust")` |
-| `zigObjectPaths(cfg)` in link-only | `[rustLibPath(cfg)]` |
-| `ci-zig-only` profile | `ci-rust-only` profile |
-| `bun run zig:check` / `zig:check-all` | `bun run rust:check` / `rust:check-all` |
-| `bun run fmt:zig` | `bun run fmt:rust` (`cargo fmt --all`) |
-| `bun run watch` (`zig build check --watch`) | `cargo watch -x check` |
-| Zig error → BuildKite annotation | rustc `error[Exxxx]:` → annotation (`scripts/utils.mjs`) |
+| Before                                      | After                                                          |
+| ------------------------------------------- | -------------------------------------------------------------- |
+| `BuildMode = "zig-only"`                    | `BuildMode = "rust-only"`                                      |
+| `emitZigOnly()` → `bun-zig.o`               | `emitRustOnly()` → `libbun_rust.a` (`bun_rust.lib` on Windows) |
+| `<target>-build-zig` step key               | `<target>-build-rust`                                          |
+| `dl("zig")` in link-only                    | `dl("rust")`                                                   |
+| `zigObjectPaths(cfg)` in link-only          | `[rustLibPath(cfg)]`                                           |
+| `ci-zig-only` profile                       | `ci-rust-only` profile                                         |
+| `bun run zig:check` / `zig:check-all`       | `bun run rust:check` / `rust:check-all`                        |
+| `bun run fmt:zig`                           | `bun run fmt:rust` (`cargo fmt --all`)                         |
+| `bun run watch` (`zig build check --watch`) | `cargo watch -x check`                                         |
+| Zig error → BuildKite annotation            | rustc `error[Exxxx]:` → annotation (`scripts/utils.mjs`)       |
 
 `scripts/build/zig.ts` is **kept** (the `.zig` files remain in-tree as the
 porting spec) but is no longer on the default build path: `rules.ts` no
@@ -27,22 +27,22 @@ longer registers `zig_fetch`/`zig_build`, and `bun.ts` no longer imports
 ## Cross-compilation matrix
 
 Zig bundled a libc + SDK for every target, so one Linux box could
-cross-compile `bun-zig.o` for *every* platform. Cargo does not — it
+cross-compile `bun-zig.o` for _every_ platform. Cargo does not — it
 delegates to a host C toolchain for any `cc`-crate / `bindgen` / archive
 step. The boundary is therefore "does the host have a C cross-toolchain
 for the target", not "does rustc support the triple". See
 `rustCanCrossFromLinux()` in `scripts/build/rust.ts`.
 
-| Target | Triple | Cross from Linux? | Agent |
-|---|---|---|---|
-| linux-x64-gnu | `x86_64-unknown-linux-gnu` | yes | shared `r8g.2xlarge` |
-| linux-aarch64-gnu | `aarch64-unknown-linux-gnu` | yes | shared `r8g.2xlarge` |
-| linux-x64-musl | `x86_64-unknown-linux-musl` | yes | shared `r8g.2xlarge` |
-| linux-aarch64-musl | `aarch64-unknown-linux-musl` | yes | shared `r8g.2xlarge` |
-| linux-aarch64-android | `aarch64-linux-android` | yes (NDK in image) | shared `r8g.2xlarge` |
-| freebsd-x64 | `x86_64-unknown-freebsd` | yes (Tier 2, staticlib only) | shared `r8g.2xlarge` |
-| darwin-x64 / aarch64 | `*-apple-darwin` | **no** — `cc` build scripts need osxcross | `build-darwin` queue |
-| windows-x64 / aarch64 | `*-pc-windows-msvc` | **no** — needs MSVC SDK or `cargo-xwin` | Azure Windows agent |
+| Target                | Triple                       | Cross from Linux?                         | Agent                |
+| --------------------- | ---------------------------- | ----------------------------------------- | -------------------- |
+| linux-x64-gnu         | `x86_64-unknown-linux-gnu`   | yes                                       | shared `r8g.2xlarge` |
+| linux-aarch64-gnu     | `aarch64-unknown-linux-gnu`  | yes                                       | shared `r8g.2xlarge` |
+| linux-x64-musl        | `x86_64-unknown-linux-musl`  | yes                                       | shared `r8g.2xlarge` |
+| linux-aarch64-musl    | `aarch64-unknown-linux-musl` | yes                                       | shared `r8g.2xlarge` |
+| linux-aarch64-android | `aarch64-linux-android`      | yes (NDK in image)                        | shared `r8g.2xlarge` |
+| freebsd-x64           | `x86_64-unknown-freebsd`     | yes (Tier 2, staticlib only)              | shared `r8g.2xlarge` |
+| darwin-x64 / aarch64  | `*-apple-darwin`             | **no** — `cc` build scripts need osxcross | `build-darwin` queue |
+| windows-x64 / aarch64 | `*-pc-windows-msvc`          | **no** — needs MSVC SDK or `cargo-xwin`   | Azure Windows agent  |
 
 Future: once `cargo-xwin` and an osxcross SDK are baked into the Linux
 build image, darwin/windows can move back to the shared cross-compile box
@@ -81,25 +81,30 @@ toolchain on the agent is harmless as long as the pinned one is installed.
 ## Dry-run plan
 
 1. **Local configure smoke test** — for each `BuildMode`:
+
    ```sh
    bun scripts/build.ts --profile=ci-rust-only --os=linux --arch=x64 --abi=gnu --configure-only
    bun scripts/build.ts --profile=ci-cpp-only  --configure-only
    bun scripts/build.ts --profile=ci-link-only --configure-only
    ```
+
    Inspect `build/release/build.ninja` — `rust-only` should contain exactly
    one `rust_build` edge with `libbun_rust.a` as its output and `bun` as a
    phony alias for it.
 
 2. **Pipeline YAML diff** — generate without uploading:
+
    ```sh
    node .buildkite/ci.mjs --dry-run > /tmp/pipeline.yml
    ```
+
    Grep for `build-zig` / `zig-only` (should be **0**), `build-rust`
    (should be one per build platform), and verify each `*-build-bun` step's
    `depends_on` lists `*-build-cpp` + `*-build-rust`.
 
 3. **Annotation parser** — `scripts/utils.mjs` `parseAnnotations()` now
    recognizes `error[E0xxx]:` headers. Sanity check:
+
    ```sh
    echo 'error[E0308]: mismatched types
      --> src/http/lib.rs:553:5' | node -e '

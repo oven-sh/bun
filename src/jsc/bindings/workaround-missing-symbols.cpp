@@ -382,21 +382,21 @@ BUN_WRAP_FWD(void*, dlsym, (void* h, const char* s), (h, s))
 BUN_WRAP_FWD(void*, dlvsym, (void* h, const char* s, const char* v), (h, s, v))
 BUN_WRAP_FWD(int, dladdr, (const void* a, Dl_info* i), (a, i))
 BUN_WRAP_FWD(char*, dlerror, (), ())
-BUN_WRAP_FWD(int, pthread_key_create, (pthread_key_t* k, void (*d)(void*)), (k, d))
+BUN_WRAP_FWD(int, pthread_key_create, (pthread_key_t * k, void (*d)(void*)), (k, d))
 BUN_WRAP_FWD(int, pthread_key_delete, (pthread_key_t k), (k))
 BUN_WRAP_FWD(void*, pthread_getspecific, (pthread_key_t k), (k))
 BUN_WRAP_FWD(int, pthread_setspecific, (pthread_key_t k, const void* v), (k, v))
-BUN_WRAP_FWD(int, pthread_once, (pthread_once_t* o, void (*f)()), (o, f))
-BUN_WRAP_FWD(int, pthread_mutexattr_init, (pthread_mutexattr_t* a), (a))
-BUN_WRAP_FWD(int, pthread_mutexattr_settype, (pthread_mutexattr_t* a, int t), (a, t))
-BUN_WRAP_FWD(int, pthread_mutexattr_destroy, (pthread_mutexattr_t* a), (a))
-BUN_WRAP_FWD(int, pthread_mutex_trylock, (pthread_mutex_t* m), (m))
-BUN_WRAP_FWD(int, pthread_rwlock_rdlock, (pthread_rwlock_t* l), (l))
-BUN_WRAP_FWD(int, pthread_rwlock_wrlock, (pthread_rwlock_t* l), (l))
-BUN_WRAP_FWD(int, pthread_rwlock_unlock, (pthread_rwlock_t* l), (l))
-BUN_WRAP_FWD(int, pthread_rwlock_destroy, (pthread_rwlock_t* l), (l))
-BUN_WRAP_FWD(int, pthread_attr_setstacksize, (pthread_attr_t* a, size_t s), (a, s))
-BUN_WRAP_FWD(int, pthread_attr_setstack, (pthread_attr_t* a, void* s, size_t z), (a, s, z))
+BUN_WRAP_FWD(int, pthread_once, (pthread_once_t * o, void (*f)()), (o, f))
+BUN_WRAP_FWD(int, pthread_mutexattr_init, (pthread_mutexattr_t * a), (a))
+BUN_WRAP_FWD(int, pthread_mutexattr_settype, (pthread_mutexattr_t * a, int t), (a, t))
+BUN_WRAP_FWD(int, pthread_mutexattr_destroy, (pthread_mutexattr_t * a), (a))
+BUN_WRAP_FWD(int, pthread_mutex_trylock, (pthread_mutex_t * m), (m))
+BUN_WRAP_FWD(int, pthread_rwlock_rdlock, (pthread_rwlock_t * l), (l))
+BUN_WRAP_FWD(int, pthread_rwlock_wrlock, (pthread_rwlock_t * l), (l))
+BUN_WRAP_FWD(int, pthread_rwlock_unlock, (pthread_rwlock_t * l), (l))
+BUN_WRAP_FWD(int, pthread_rwlock_destroy, (pthread_rwlock_t * l), (l))
+BUN_WRAP_FWD(int, pthread_attr_setstacksize, (pthread_attr_t * a, size_t s), (a, s))
+BUN_WRAP_FWD(int, pthread_attr_setstack, (pthread_attr_t * a, void* s, size_t z), (a, s, z))
 BUN_WRAP_FWD(int, pthread_getattr_np, (pthread_t t, pthread_attr_t* a), (t, a))
 BUN_WRAP_FWD(int, pthread_kill, (pthread_t t, int s), (t, s))
 
@@ -472,9 +472,11 @@ extern void _init() __attribute__((weak));
 }
 static int bun_libc_csu_init(int argc, char** argv, char** envp)
 {
-    for (auto f = __preinit_array_start; f < __preinit_array_end; ++f) (*f)(argc, argv, envp);
+    for (auto f = __preinit_array_start; f < __preinit_array_end; ++f)
+        (*f)(argc, argv, envp);
     if (&_init) _init();
-    for (auto f = __init_array_start; f < __init_array_end; ++f) (*f)(argc, argv, envp);
+    for (auto f = __init_array_start; f < __init_array_end; ++f)
+        (*f)(argc, argv, envp);
     return 0;
 }
 BUN_SYMVER(__libc_start_main, BUN_GLIBC_BASE);

@@ -19,13 +19,13 @@
 // MonitorInterval calling clearTimeout on the currently-firing timer) is
 // covered separately by setTimeout-clear-in-callback-leak-fixture.js (#30058).
 
-import { describe, test, expect } from "bun:test";
-import net from "node:net";
-import tls from "node:tls";
-import { once } from "node:events";
-import { Transform } from "node:stream";
 import { heapStats } from "bun:jsc";
-import { tls as tlsCerts, isASAN, isDebug } from "harness";
+import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug, tls as tlsCerts } from "harness";
+import { once } from "node:events";
+import net from "node:net";
+import { Transform } from "node:stream";
+import tls from "node:tls";
 
 // 4-byte big-endian length prefix → emits the body. Same shape as mongodb's
 // SizedMessageTransform, just without BSON.

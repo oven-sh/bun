@@ -16,7 +16,6 @@ use bstr::BStr;
 
 use bun_collections::StringArrayHashMap;
 use bun_core::{ZBox, ZStr};
-use bun_sys::DynLib;
 
 use crate::jsc::{JSGlobalObject, JSValue};
 
@@ -243,33 +242,11 @@ pub(crate) fn get_dl_error() -> Result<Box<[u8]>, bun_core::Error> {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FFI — `.classes.ts` payload (the C++ JSCell wrapper stays generated; this is
-// `m_ctx`). `#[bun_jsc::JsClass]` derive is gated; struct shape is real.
+// `m_ctx`). The codegen `FFIPrototype__*` thunks resolve to `crate::ffi::FFI`,
+// so this MUST be the same type that `to_js()` boxes into the wrapper.
 // ═════════════════════════════════════════════════════════════════════════════
 
-// TODO(b2-blocked): #[bun_jsc::JsClass]
-#[repr(C)]
-pub struct FFI {
-    pub dylib: Option<DynLib>,
-    pub functions: StringArrayHashMap<Function>,
-    pub closed: bool,
-    pub shared_state: Option<NonNull<TCC::State>>,
-}
-
-impl Default for FFI {
-    fn default() -> Self {
-        Self {
-            dylib: None,
-            functions: StringArrayHashMap::default(),
-            closed: false,
-            shared_state: None,
-        }
-    }
-}
-
-impl FFI {
-    /// `.classes.ts` finalize hook — runs on mutator thread during lazy sweep.
-    pub fn finalize(_this: *mut FFI) {}
-}
+pub use ffi_body::FFI;
 
 // ─── CompileC ────────────────────────────────────────────────────────────────
 

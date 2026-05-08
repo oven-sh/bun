@@ -1144,6 +1144,15 @@ pub struct CssImportOrder {
     pub kind: CssImportOrderKind,
 }
 
+impl Drop for CssImportOrder {
+    fn drop(&mut self) {
+        // Zig `BabyList` headers — bitwise-shared across multiple order entries
+        // by `findImportedFilesInCSSOrder`; freeing here would double-free.
+        core::mem::forget(core::mem::take(&mut self.conditions));
+        core::mem::forget(core::mem::take(&mut self.condition_import_records));
+    }
+}
+
 #[derive(strum::IntoStaticStr)]
 pub enum CssImportOrderKind {
     /// Represents earlier imports that have been made redundant by later ones (see `isConditionalImportRedundant`)

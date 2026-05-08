@@ -685,7 +685,7 @@ impl<T, const N: usize> SmallList<T, N> {
         }
     }
 
-    fn reserve(&mut self, additional: u32) {
+    pub fn reserve(&mut self, additional: u32) {
         let (_ptr, len_ptr, capp) = self.triple_mut();
         // SAFETY: len_ptr returned by triple_mut points into self (heap.len or self.capacity)
         let len_ = unsafe { *len_ptr };

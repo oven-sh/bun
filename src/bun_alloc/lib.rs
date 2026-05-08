@@ -204,7 +204,7 @@ pub const USE_MIMALLOC: bool = true;
 //
 //   allocation_scope, LinuxMemFdAllocator, MimallocArena (the vtable impl)
 //   import bun_core/sys/runtime/collections and so live in
-//   `bun_runtime::allocators` (CYCLEBREAK §bun_alloc); callers import from
+//   `bun_runtime::allocators`; callers import from
 //   there directly.
 //
  #[path = "NullableAllocator.rs"]       pub mod nullable_allocator;
@@ -407,8 +407,7 @@ pub fn usable_size(ptr: *const u8) -> usize {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE-IN: cycle-break landings (CYCLEBREAK.md §→alloc)
-//   Symbols hoisted DOWN into T0 so higher tiers can re-import without cycles.
+// Symbols hoisted DOWN into T0 so higher tiers can re-import without cycles.
 // ──────────────────────────────────────────────────────────────────────────
 
 // ── out_of_memory ─────────────────────────────────────────────────────────

@@ -1001,7 +1001,7 @@ impl fmt::Display for MoreInstructions<'_> {
     }
 }
 
-/// CYCLEBREAK: the Zig spec's `if (cli.analyze)` branch (which constructs a
+/// The Zig spec's `if (cli.analyze)` branch (which constructs a
 /// `bun.bundle_v2.BundleV2.DependenciesScanner` and calls
 /// `bun.cli.BuildCommand.exec`) was MOVED UP to `bun_runtime::cli::pm_update_package_json`
 /// — both `bun_bundler` and `bun_runtime` are higher-tier than `bun_install` and a
@@ -1019,7 +1019,7 @@ pub fn update_package_json_and_install(
     let cli = CommandLineArguments::parse(subcommand)?;
     debug_assert!(
         !cli.analyze,
-        "`--analyze` must be handled by bun_runtime::cli::pm_update_package_json (CYCLEBREAK)",
+        "`--analyze` must be handled by bun_runtime::cli::pm_update_package_json",
     );
     update_package_json_and_install_and_cli(ctx, subcommand, cli)
 }

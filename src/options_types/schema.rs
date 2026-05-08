@@ -235,13 +235,6 @@ pub mod api {
 
     // ─── BunInstall + supporting types ───────────────────────────────────────
     //
-    // CYCLEBREAK: `schema.zig` reaches into `bun.install.PackageManager.Options
-    // .NodeLinker` and `install.PnpmMatcher`. The Rust crate graph parks the
-    // canonical defs in `bun_install_types`, which this crate may NOT depend
-    // on (would invert the T2→T3 edge). The two fields are re-declared locally
-    // with schema-faithful shapes; `bun_api::BunInstall` (which *does* depend
-    // on `bun_install_types`) is the type that crosses the install/ini
-    // boundary, so no value ever round-trips between the two `NodeLinker`s.
 
     /// schema.zig:2807 — `api.NpmRegistry`.
     /// `Default` ⇔ `std.mem.zeroes(NpmRegistry)` (empty slices).
@@ -285,11 +278,9 @@ pub mod api {
     }
 
     /// `NodeLinker` / `PnpmMatcher` are canonical in `bun_install_types`
-    /// (lower crate); the previous local CYCLEBREAK mirror is no longer
-    /// required now that `bun_options_types → bun_install_types` is a
-    /// declared edge.  Re-export so `BunInstall.node_linker` /
+    /// (lower crate). Re-export so `BunInstall.node_linker` /
     /// `BunInstall.hoist_pattern` and `bun_ini`'s callers all name the
-    /// *same* type.
+    /// same type.
     pub use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
 
     /// schema.zig:2973 — `api.BunInstall`. Full field set, order-faithful.

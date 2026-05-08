@@ -1133,7 +1133,7 @@ impl Drop for DevServer {
 }
 
 // `AllocationScope` lives in `crate::allocators::allocation_scope` (moved out of
-// `bun_alloc` per CYCLEBREAK because it pulls in `bun_core`/`bun_collections`).
+// `bun_alloc` because it pulls in `bun_core`/`bun_collections`).
 pub type AllocationScope = crate::allocators::allocation_scope::AllocationScope;
 /// Zig: `pub const DevAllocator = AllocationScope.Borrowed;`
 pub type DevAllocator<'a> =

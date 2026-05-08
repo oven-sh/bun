@@ -114,7 +114,6 @@ impl<'a> PatchFile<'a> {
                         let path_to_make = paths::resolve_path::join_z::<platform::Auto>(
                             &[abs_patch_dir.as_bytes(), todir],
                         );
-                        // CYCLEBREAK(b0): was bun_runtime::node::fs::NodeFs::mkdir_recursive — moved down to bun_sys (T1).
                         if let sys::Result::Err(e) =
                             sys::mkdir_recursive_at_mode(Fd::cwd(), path_to_make.as_bytes(), 0o755)
                         {
@@ -135,7 +134,6 @@ impl<'a> PatchFile<'a> {
                     let mode = file_creation.mode;
 
                     if !filedir.is_empty() {
-                        // CYCLEBREAK(b0): was bun_runtime::node::fs::NodeFs::mkdir_recursive — moved down to bun_sys (T1).
                         // PORT NOTE: Zig calls `NodeFS.mkdirRecursive` with the bare relative
                         // `filedir` (resolved against process CWD), then immediately `openat`s
                         // the same path against `patch_dir`. That is internally inconsistent
@@ -1737,7 +1735,6 @@ pub fn spawn_opts(
         argv,
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
-            // CYCLEBREAK(b0): bun_jsc::{AnyEventLoop,EventLoopHandle} → bun_event_loop (T3).
             // Zig matched on `loop.*` to build the handle by hand; `as_handle`
             // owns that conversion now so variant internals stay encapsulated.
             loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),

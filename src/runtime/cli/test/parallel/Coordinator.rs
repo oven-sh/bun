@@ -25,7 +25,7 @@ use crate::api::bun::process::Status as SpawnStatus;
 pub struct Coordinator<'a> {
     pub vm: &'a VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
     pub reporter: &'a mut CommandLineReporter,
     pub files: Vec<PathString>,

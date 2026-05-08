@@ -253,7 +253,7 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for ProcessHandle<'a> {
         unsafe { (*this).loop_() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_event_loop::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: state backref valid for the lifetime of the run loop.
@@ -278,7 +278,7 @@ struct State<'a> {
     // thread-local singleton pointer; aliasing &mut would be UB.
     event_loop: *mut MiniEventLoop<'static>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     // buffer for batched output

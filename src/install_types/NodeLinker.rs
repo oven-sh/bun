@@ -30,7 +30,7 @@ impl NodeLinker {
 // ported from: src/install_types/NodeLinker.zig
 
 // ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN (CYCLEBREAK b0): npm::Registry constants
+// npm::Registry constants
 // Ground truth: src/install/npm.zig — Registry.default_url / default_url_hash
 // `ini` (T3) and `options_types` need the default registry URL without
 // pulling in the full `bun_install` package manager.
@@ -59,7 +59,7 @@ pub mod npm {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN (CYCLEBREAK b0): PnpmMatcher
+// PnpmMatcher
 // Ground truth: src/install/PnpmMatcher.zig
 // https://github.com/pnpm/pnpm/blob/3abd3946237aa6ba7831552310ec371ddd3616c2/config/matcher/src/index.ts
 //

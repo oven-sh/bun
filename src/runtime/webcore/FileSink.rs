@@ -567,7 +567,7 @@ impl FileSink {
         // PORT NOTE: reshaped for borrowck — Zig passed `self` + a closure that
         // mutated `self.force_sync`. Split into a local capture and apply after.
         let mut force_sync_out = self.force_sync;
-        // CYCLEBREAK(TYPE_ONLY): `OpenForWritingInput` is impl'd for
+        // `OpenForWritingInput` is impl'd for
         // `bun_io::PathOrFileDescriptor`, not `webcore::PathOrFileDescriptor`;
         // bridge by-value here. `PathString::init` borrows `slice.slice()` for
         // the duration of `open_for_writing` (the call only needs it for
@@ -679,7 +679,7 @@ impl FileSink {
         self.event_loop_handle
     }
 
-    /// CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the
+    /// `bun_io::EventLoopHandle` is opaque; it the
     /// io-layer `FilePollVTable` round-trips back to the runtime. We pass the
     /// address of the stored `bun_jsc::EventLoopHandle` so the (runtime-registered)
     /// vtable can recover it.

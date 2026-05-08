@@ -89,7 +89,7 @@ fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
 
 // ──────────────────────────────────────────────────────────────────────────
 // MultiPartUploadOptions
-// CYCLEBREAK(b0): MOVE_DOWN from bun_runtime::webcore::s3::multipart_options.
+// Moved from bun_runtime::webcore::s3::multipart_options.
 // Pure config (no JSC deps), so it lives here at the signing tier; runtime
 // re-exports it. Source of truth: src/runtime/webcore/s3/multipart_options.zig
 // ──────────────────────────────────────────────────────────────────────────

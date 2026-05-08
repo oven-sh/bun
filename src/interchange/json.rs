@@ -5,9 +5,7 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 use bun_core::{self, StackCheck};
 use bun_logger as logger;
-// CYCLEBREAK: was `bun_js_parser::js_lexer` (GENUINE T4 cycle). The JSON-only
-// lexer subset now lives in this crate (`json_lexer.rs`) so the parser no
-// longer reaches up-tier.
+// JSON-only lexer subset lives in this crate (`json_lexer.rs`).
 use crate::json_lexer as js_lexer;
 use crate::json_lexer::T;
 // MOVE_DOWN(b0): bun_js_parser::js_ast → bun_logger::js_ast (remapped, T2)

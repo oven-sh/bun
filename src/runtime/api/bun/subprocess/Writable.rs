@@ -142,7 +142,7 @@ impl<'a> Writable<'a> {
         // SAFETY: `event_loop.global` is set before any subprocess work.
         let global = unsafe { event_loop.global.unwrap().as_ref() };
 
-        // CYCLEBREAK: `FileSink::create` / `StaticPipeWriter::create` take
+        // `FileSink::create` / `StaticPipeWriter::create` take
         // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
         // the vtable-backed handle once and reuse for all arms (both platforms).
         let evtloop = bun_event_loop::EventLoopHandle::init(

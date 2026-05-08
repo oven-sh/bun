@@ -416,7 +416,7 @@ pub type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 pub type ServerPreparedRequest<'a, const SSL: bool, const DEBUG: bool> =
     PreparedRequestFor<'a, ServerRequestContext<SSL, DEBUG>>;
 
-// ─── BunInfo (CYCLEBREAK move-in from bun_core::Global) ──────────────────────
+// ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
 // Spec: src/bun_core/Global.zig:195-210. `generate()` builds the struct and
 // hands it to `JSON.toAST`, which reflects over fields at comptime. Rust has no
 // `@typeInfo`, so this is the hand-expanded reflection output (cf.

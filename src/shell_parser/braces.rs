@@ -5,13 +5,12 @@ use bun_alloc::ArenaVecExt as _;
 // PORT NOTE: `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
 use smallvec::SmallVec;
-// move-in (CYCLEBREAK MOVE_DOWN/TYPE_ONLY bun_shell → shell_parser): defined below.
 use self::StringEncoding as Encoding;
 use bun_string::{strings, SmolStr};
 use bun_alloc::ArenaVec as BumpVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK move-in from `bun_shell` (src/shell/shell.zig):
+// Moved from `bun_shell` (src/shell/shell.zig):
 //   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter, has_eq_sign
 // These live here so `bun_shell` (higher tier) can depend on `shell_parser`
 // without a back-edge. `bun_shell` re-exports these under its old paths.

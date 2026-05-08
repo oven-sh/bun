@@ -10,9 +10,7 @@ use bun_boringssl_sys as boring;
 use bun_sha_hmac::hmac;
 use bun_string::strings;
 
-// CYCLEBREAK: TYPE_ONLY — EVP::Algorithm moved down to bun_sha_hmac (move-in pass defines it there)
 use bun_sha_hmac::evp::Algorithm;
-// CYCLEBREAK: TYPE_ONLY — node::Encoding moved down to bun_string (move-in pass defines it there)
 use bun_string::NodeEncoding;
 
 /// Default expiration time for tokens (24 hours)

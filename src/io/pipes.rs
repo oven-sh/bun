@@ -2,7 +2,6 @@ use core::ffi::c_void;
 
 use bun_sys::{Fd, FdExt};
 
-// CYCLEBREAK: FilePoll is opaque here (concrete type lives in bun_aio, T3).
 use crate::{FilePoll, FilePollFlag};
 
 pub enum PollOrFd {
@@ -101,8 +100,6 @@ impl PollOrFd {
             *self = PollOrFd::Closed;
 
             // TODO: We should make this call compatible using bun.FD
-            // CYCLEBREAK(MOVE_DOWN): `Closer` moves from bun_aio (T3) into io;
-            // `crate::closer` is added by the move-in pass.
             #[cfg(windows)]
             {
                 crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());

@@ -213,7 +213,7 @@ pub mod options {
     }
     /// Port of `bundler/options.zig` `AllowUnresolved`.
     ///
-    /// CYCLEBREAK MOVE_DOWN: canonical home is here (the parser is the consumer
+    /// Canonical home is here (the parser is the consumer
     /// — `P::should_allow_unresolved_dynamic_specifier`). `bun_bundler::options`
     /// re-exports this so `BundleOptions.allow_unresolved` and
     /// `Parser.Options.allow_unresolved` are the SAME nominal type and

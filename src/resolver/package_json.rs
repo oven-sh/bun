@@ -22,7 +22,7 @@ use bun_alloc::Arena as Bump;
 use bun_wyhash::Wyhash;
 
 // ── bun_install types (MOVE_DOWN: bun_install_types) ──────────────────────
-// CYCLEBREAK: bun_resolver → bun_install would loop through bun_http. The
+// Note: bun_resolver cannot depend on bun_install (would loop). The
 // auto-install path is dormant until `bun_install` writes `r.package_manager`;
 // all install-tier value types are the canonical `bun_install_types` shapes.
 

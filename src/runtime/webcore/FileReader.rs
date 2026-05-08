@@ -293,7 +293,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
         }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void` whose
+        // `bun_io::EventLoopHandle` is opaque; the
         // "concrete repr is bun_jsc::EventLoopHandle" (io/lib.rs). Hand it the
         // address of our stored handle; the FilePoll vtable derefs it back.
         // Raw `addr_of!` — no `&Self` materialized (reader field may be borrowed).
@@ -455,7 +455,7 @@ impl FileReader {
 
             let r = self.reader();
             if let Some(poll) = r.handle.get_poll() {
-                // CYCLEBREAK: `bun_io::FilePoll` is an opaque vtable wrapper; flag
+                // `bun_io::FilePoll` is an opaque vtable wrapper; flag
                 // mutation goes through `set_flag(FilePollFlag)` instead of the
                 // direct `aio::FilePoll.flags.insert(...)` field write in Zig.
                 if file_type == FileType::Socket || r.flags.contains(PosixFlags::SOCKET) {

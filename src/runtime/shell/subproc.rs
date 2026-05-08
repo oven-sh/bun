@@ -2234,7 +2234,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see trait contract.
-        // CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it.
         bun_io::EventLoopHandle(unsafe { &raw const (*this).event_loop }.cast_mut().cast::<c_void>())

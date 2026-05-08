@@ -6,7 +6,7 @@ use super::thread_id::{self, ThreadId, INVALID as INVALID_THREAD_ID};
 // TODO(port): verify `super::thread_id` exports `ThreadId` + `current()` in the Rust port;
 // Zig used `std.Thread.Id` / `std.Thread.getCurrentId()` directly with `invalid` from thread_id.zig.
 #[cfg(debug_assertions)]
-use bun_core::StoredTrace; // MOVE_DOWN: was bun_crash_handler::StoredTrace (CYCLEBREAK → core)
+use bun_core::StoredTrace;
 
 // TODO(port): `bun.Environment.ci_assert` — confirm the exact cfg/feature name in Phase B.
 // Using feature = "ci_assert" as a placeholder; Zig gates the entire struct payload on this.

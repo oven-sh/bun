@@ -29,7 +29,7 @@ impl Default for ResolveMessage {
 /// `ImportKind.label()` — the canonical table lives in
 /// `bun_options_types::import_record::ImportKind::label`, but
 /// `logger::MetadataResolve.import_kind` is the type-only `bun_logger::ImportKind`
-/// (CYCLEBREAK move-down). Replicate the table here verbatim.
+/// Replicate the table here verbatim.
 fn import_kind_label(kind: ImportKind) -> &'static [u8] {
     match kind {
         ImportKind::EntryPointRun => b"entry-point-run",

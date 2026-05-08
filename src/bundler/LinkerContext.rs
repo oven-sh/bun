@@ -1227,7 +1227,7 @@ impl SourceMapDataTask {
         // (`_: std.mem.Allocator`) — it always allocates via
         // `bun.default_allocator` internally. The branch is a no-op, so we
         // pass the worker arena unconditionally; `DevServerHandle` does not
-        // expose an arena accessor (CYCLEBREAK §Dispatch).
+        // expose an arena accessor (§Dispatch).
         let alloc: *const Bump = worker.arena;
 
         // SAFETY: `alloc` is the thread-local worker arena (initialized by

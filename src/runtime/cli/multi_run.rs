@@ -87,7 +87,7 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
     unsafe fn on_reader_error(_this: *mut Self, _err: bun_sys::Error) {}
 
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_event_loop::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: backref; see on_read_chunk. State outlives all handles.
@@ -271,7 +271,7 @@ struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     event_loop: *mut MiniEventLoop<'static>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,

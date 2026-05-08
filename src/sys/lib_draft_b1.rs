@@ -390,7 +390,7 @@ pub use crate::posix_stat::PosixStat;
 /// `Maybe(T)` — tagged union of `Ok(T)` or `Err(Error)`.
 /// Aliased as the crate's `Result<T>`.
 pub type Result<T> = crate::node::Maybe<T, Error>;
-// TODO(b0): `node::Maybe` arrives from move-in (CYCLEBREAK MOVE_DOWN bun_runtime::node → sys).
+// `node::Maybe` — moved from bun_runtime::node.
 // In Phase A we use a type alias; the helpers `errno_sys*` are associated fns on it.
 
 // Convenience: in the Zig, `Maybe(T).errnoSys*()` are static helpers that return
@@ -4700,7 +4700,7 @@ unsafe extern "C" {
 pub use crate::file as File;
 
 // ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN PASS (CYCLEBREAK.md §→sys + /tmp/movein-skipped.txt)
+// MOVE-IN PASS (§→sys)
 //
 // Symbols below were forward-referenced by lower/peer-tier crates after the
 // move-out pass rewrote their imports to point at `bun_sys::*`. Ground truth
@@ -5306,7 +5306,7 @@ impl bun_core::output::ErrName for SystemErrno {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// VTable instances (CYCLEBREAK §Dispatch — cold path). Low-tier crates
+// VTable instances (PORTING.md §Dispatch — cold path). Low-tier crates
 // declare the slot structs; sys provides the concrete syscall-backed impls.
 // PERF(port): was inline switch over concrete File methods.
 // ──────────────────────────────────────────────────────────────────────────

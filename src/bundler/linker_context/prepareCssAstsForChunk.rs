@@ -89,7 +89,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 
 /// `ImportRecord.path` is `bun_paths::fs::Path<'static>`; `CssImportOrderKind::ExternalPath`
 /// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
-/// CYCLEBREAK mirrors of Zig `Fs.Path`. Re-construct field-by-field rather than transmute
+/// mirrors of Zig `Fs.Path`. Re-construct field-by-field rather than transmute
 /// non-`repr(C)` structs. Inverse of `findImportedFilesInCSSOrder::fs_path_from_import_record`.
 #[cfg(feature = "css")]
 #[inline]
@@ -268,14 +268,14 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         )
                                     },
                                 }),
-                                // CYCLEBREAK: `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
+                                // `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
                                 // `c.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s
                                 // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
                                 // pointers — same layout, used read-only by the printer.
                                 Some(unsafe {
                                     &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
                                 }),
-                                // CYCLEBREAK: `to_css` takes `&bun_logger::symbol::Map`; `c.graph.symbols`
+                                // `to_css` takes `&bun_logger::symbol::Map`; `c.graph.symbols`
                                 // is `bun_js_parser::ast::symbol::Map`. Both are
                                 // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
                                 // `repr(transparent)`), so layouts match — bridge by pointer cast.

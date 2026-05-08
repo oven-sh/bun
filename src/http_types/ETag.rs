@@ -88,7 +88,7 @@ pub fn if_none_match(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// MOVE_DOWN: bun_http::Headers → http_types (CYCLEBREAK.md §→http_types)
+// Headers — moved from bun_http.
 // Source: src/http/Headers.zig
 //
 // Core struct + tier-safe methods only. The following stay in `bun_http`
@@ -197,8 +197,7 @@ impl Headers {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// MOVE_DOWN: bun_jsc::wtf → http_types (CYCLEBREAK.md §→http_types,
-//            requested by `resolver`)
+// wtf::writeHTTPDate — moved from bun_jsc.
 // Source: src/jsc/WTF.zig (writeHTTPDate only — the rest of `wtf` is
 // string-builder/date-parse machinery that stays jsc-side).
 // ═══════════════════════════════════════════════════════════════════════

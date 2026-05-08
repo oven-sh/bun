@@ -172,7 +172,7 @@ pub fn get_default_ciphers() -> &'static ZStr {
 // ═══════════════════════════════════════════════════════════════════════════
 // MOVE-IN: ssl_wrapper (MOVE_DOWN bun_runtime::socket::ssl_wrapper → bun_uws)
 // Ground truth: src/runtime/socket/ssl_wrapper.zig
-// Requested by: http_jsc (CYCLEBREAK §move-in → uws)
+// Requested by: http_jsc
 // ═══════════════════════════════════════════════════════════════════════════
 // B-2: module un-gated. `bun_boringssl_sys` is currently empty (bindgen not yet
 // run), so every fn body that calls a BoringSSL symbol is re-gated below; the

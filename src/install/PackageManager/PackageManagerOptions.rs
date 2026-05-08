@@ -426,13 +426,8 @@ impl Options {
             }
 
             if let Some(node_linker) = config.node_linker {
-                // CYCLEBREAK: Api::NodeLinker is a #[repr(u8)] mirror of
-                // bun_install_types::NodeLinker — map by variant.
-                self.node_linker = match node_linker {
-                    Api::NodeLinker::Auto => NodeLinker::Auto,
-                    Api::NodeLinker::Hoisted => NodeLinker::Hoisted,
-                    Api::NodeLinker::Isolated => NodeLinker::Isolated,
-                };
+                // `Api::NodeLinker` is a re-export of `bun_install_types::NodeLinker`.
+                self.node_linker = node_linker;
             }
 
             if let Some(global_store) = config.global_store {

@@ -7,9 +7,8 @@ use crate::mimalloc;
 use crate::{Alignment, AllocatorVTable, StdAllocator};
 
 // Zig: `const log = bun.Output.scoped(.mimalloc, .hidden);` — `Output.scoped`
-// lives in `bun_core` (CYCLEBREAK §bun_alloc: MOVE_DOWN→core), and `bun_core`
-// depends on this crate, so the hidden-scope debug tracing is dropped here
-// rather than re-declared as a no-op stub.
+// lives in `bun_core`, which depends on this crate, so the hidden-scope debug
+// tracing is dropped here rather than re-declared as a no-op stub.
 
 fn mimalloc_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
     let _ = buf.len();

@@ -1,6 +1,6 @@
 //! `bun_logger::js_ast` — value-shaped JS expression AST.
 //!
-//! MOVE_DOWN from `bun_js_parser::ast` (T4→T2, CYCLEBREAK §interchange).
+//! Moved from `bun_js_parser::ast`.
 //!
 //! `bun_interchange::{json,json5,toml,yaml}`, `bun_ini` and `bun_bunfig` parse
 //! config files into a JS expression tree but cannot depend on `bun_js_parser`

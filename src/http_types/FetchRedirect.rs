@@ -20,8 +20,7 @@ pub static MAP: phf::Map<&'static [u8], FetchRedirect> = phf::phf_map! {
 // `bun_http_jsc`; the base type carries no jsc reference.
 
 // ═══════════════════════════════════════════════════════════════════════
-// TYPE_ONLY: bun_jsc::CommonAbortReason → http_types
-// (CYCLEBREAK.md / movein-skipped, requested by `http`)
+// CommonAbortReason — moved from bun_jsc.
 // Source: src/jsc/CommonAbortReason.zig
 //
 // `enum(u8)` discriminant crosses the FFI boundary to

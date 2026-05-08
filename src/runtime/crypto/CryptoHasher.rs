@@ -93,7 +93,7 @@ impl CryptoHasher {
             | evp::Algorithm::Blake2b512
             | evp::Algorithm::Sha512_224 => {
                 if let Some(md) = algorithm.md() {
-                    // CYCLEBREAK cast: `Algorithm::md()` lives in `bun_sha_hmac` and
+                    // `Algorithm::md()` lives in `bun_sha_hmac` and
                     // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
                     // opaque (same underlying C `struct env_md_st`).
                     return Some(CryptoHasher::new(CryptoHasher::Evp(EVP::init(

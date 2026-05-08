@@ -2042,7 +2042,7 @@ pub struct ShellArgs {
 // ────────────────────────────────────────────────────────────────────────────
 
 /// `bun.jsc.EventLoopHandle` — tagged union over `{ js: *JSEventLoop, mini:
-/// *MiniEventLoop }`. The real type was moved (CYCLEBREAK) into
+/// *MiniEventLoop }`. The real type lives in
 /// `bun_event_loop` and re-exported through `bun_jsc`; shell re-exports it
 /// here so `IOReader`/`IOWriter`/builtin tasks keep their existing import path.
 pub use bun_event_loop::EventLoopHandle;

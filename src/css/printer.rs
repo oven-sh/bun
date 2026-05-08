@@ -783,7 +783,7 @@ impl<'a> Printer<'a> {
 const INDENTS_LEVELS: usize = 32;
 static INDENT_SPACES: [u8; INDENTS_LEVELS * 2] = [b' '; INDENTS_LEVELS * 2];
 
-// TODO(port): narrow — bun.ast.Symbol.Map. Moved down to bun_logger per CYCLEBREAK B-0.
+// bun.ast.Symbol.Map — lives in bun_logger.
 type SymbolMap = bun_logger::symbol::Map;
 
 // ported from: src/css/printer.zig

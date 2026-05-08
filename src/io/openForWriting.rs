@@ -17,7 +17,6 @@ pub trait OpenForWritingInput {
     ) -> bun_sys::Result<Fd>;
 }
 
-// CYCLEBREAK(TYPE_ONLY): `PathOrFileDescriptor` moved into io (see crate root).
 impl OpenForWritingInput for crate::PathOrFileDescriptor {
     fn open_for_writing_result(
         &self,

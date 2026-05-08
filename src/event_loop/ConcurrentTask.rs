@@ -37,7 +37,7 @@ pub fn from_callback<T>(
     ConcurrentTask::from_callback(ptr, callback)
 }
 
-// ─── Task (hot-dispatch tag+ptr, see CYCLEBREAK.md §Hot dispatch list) ──────
+// ─── Task (hot-dispatch tag+ptr, see PORTING.md §Dispatch) ──────────────────
 // Low tier (event_loop) stores `(tag, ptr)`; `bun_runtime::dispatch::run_task`
 // owns the `match` over ~96 variants. Tag constants live in
 // `crate::task_tag::*` below.
@@ -188,7 +188,7 @@ pub struct Task {
 /// ```
 ///
 /// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
-/// the hot-dispatch list, see CYCLEBREAK.md §Hot dispatch list) so that
+/// the hot-dispatch list, see PORTING.md §Dispatch) so that
 /// [`Task::init`] can use it without a dep cycle.
 pub trait Taskable {
     /// The tag constant from [`task_tag`] for this type. Both this and the

@@ -1,6 +1,6 @@
 //! `interchange::json_lexer` — JSON-only subset of `js_lexer`.
 //!
-//! CYCLEBREAK §interchange: `bun_interchange::json` previously imported
+//! `bun_interchange::json` previously imported
 //! `bun_js_parser::js_lexer::Lexer` (T4), creating a GENUINE same-tier cycle
 //! (`bun_js_parser` → `bun_interchange` → `bun_js_parser`). Per the cycle-break
 //! plan, the ~10 lexer entry-points JSON actually exercises are inlined here

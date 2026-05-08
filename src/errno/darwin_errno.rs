@@ -1,4 +1,4 @@
-// CYCLEBREAK: bun_sys::posix MOVE_DOWN → errno (this crate). Move-in pass lands `crate::posix`.
+// posix types live in `crate::posix` (moved from bun_sys).
 pub use crate::posix::mode_t as Mode;
 pub use crate::posix::E;
 pub use crate::posix::S;
@@ -340,7 +340,6 @@ macro_rules! impl_get_errno_libc {
                 // `(-1i64 as $t as i64)` yields -1 for signed $t and the
                 // zero-extended all-ones value for unsigned $t.
                 if self as i64 == (-1i64 as $t as i64) {
-                    // CYCLEBREAK: bun_sys::c::errno MOVE_DOWN → crate::posix (move-in pass)
                     // SAFETY: errno is always a valid E discriminant on Darwin
                     unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
                 } else {

@@ -993,7 +993,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `Transpiler::init`; non-null and valid for `'a`.
         transpiler.resolver.env_loader =
             NonNull::new(unsafe { transpiler.env.cast::<bun_dotenv::Loader<'_>>() });
-        // CYCLEBREAK: `Resolver.opts` is the resolver-crate FORWARD_DECL subset
+        // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options` (Zig assigned
         // the struct by value: `resolver.opts = transpiler.options`).
         transpiler.sync_resolver_opts();

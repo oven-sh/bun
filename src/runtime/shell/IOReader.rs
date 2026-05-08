@@ -174,7 +174,7 @@ impl IOReader {
             + s.readers.capacity() * core::mem::size_of::<ChildPtr>()
     }
 
-    /// CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that
+    /// `bun_io::EventLoopHandle` is opaque; it
     /// the io-layer `FilePollVTable` round-trips back to the runtime. We pass
     /// the address of the stored `bun_event_loop::EventLoopHandle` so the
     /// (runtime-registered) vtable can recover it.

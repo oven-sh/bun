@@ -461,7 +461,6 @@ impl OutputFile {
                 }
 
                 let mut path_buf = PathBuffer::uninit();
-                // CYCLEBREAK MOVE_DOWN: NodeFS::write_file_with_path_buffer → bun_sys.
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
                     bun_sys::WriteFileArgs {

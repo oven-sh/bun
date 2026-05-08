@@ -2804,7 +2804,7 @@ fn transpile_source_code_inner(
                     L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
                     L::Js | L::Jsx | L::Ts | L::Tsx => {
                         // PORT NOTE: `bun_watcher::PackageJSON` is an opaque
-                        // forward-decl (CYCLEBREAK) of
+                        // forward-decl of
                         // `bun_resolver::package_json::PackageJSON`; cast
                         // through to read `module_type`.
                         // SAFETY: `package_json` (when set) is a VM-lifetime
@@ -3225,7 +3225,7 @@ fn get_hardcoded_module(
 ) -> Option<ResolvedSource> {
     // TODO(b2-cycle): `bun_analytics::Features::builtin_modules.insert(hardcoded)`
     // — the `EnumSet<HardcodedModule>` static lives in T5 (`bun_resolve_builtins`)
-    // per CYCLEBREAK.md and is not yet wired into `bun_analytics`.
+    // and is not yet wired into `bun_analytics`.
 
     match hardcoded {
         HardcodedModule::BunMain => {
@@ -4341,7 +4341,6 @@ unsafe fn resolve_embedded_node_file_hook(
     // Spec ModuleLoader.zig:53-67 — `NodeFS.writeFileWithPathBuffer(.{ .data
     // = .encoded_slice(file.contents), .dirfd = tmpdir, .file = .{ .fd =
     // tmpfile.fd }, .encoding = .buffer })`.
-    // CYCLEBREAK MOVE_DOWN: NodeFS::writeFileWithPathBuffer → bun_sys.
     let mut scratch = bun_paths::path_buffer_pool::get();
     if bun_sys::write_file_with_path_buffer(
         &mut scratch,

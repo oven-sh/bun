@@ -169,7 +169,7 @@ pub struct CronRegisterJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
-    /// Typed enum for the io-layer FilePoll vtable (CYCLEBREAK:
+    /// Typed enum for the io-layer FilePoll vtable (
     /// `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
 }
@@ -201,7 +201,7 @@ impl BufferedReaderParent for CronRegisterJob {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: `this` is non-null/live per trait contract; field is `Copy`
@@ -901,7 +901,7 @@ pub struct CronRemoveJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
-    /// Typed enum for the io-layer FilePoll vtable (CYCLEBREAK:
+    /// Typed enum for the io-layer FilePoll vtable (
     /// `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
 }
@@ -931,7 +931,7 @@ impl BufferedReaderParent for CronRemoveJob {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: `this` is non-null/live per trait contract; field is `Copy`

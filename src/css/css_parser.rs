@@ -22,7 +22,7 @@ use bun_string::strings;
 
 pub use bun_logger::symbol::List as SymbolList;
 pub use bun_options_types::{ImportKind, ImportRecord};
-/// `bun.ast.Index` — bundler source-file index. CYCLEBREAK: hoisted into
+/// `bun.ast.Index` — bundler source-file index. Hoisted into
 /// `bun_options_types` to keep css below the parser tier.
 pub use bun_options_types::BundleEnums::Index as SrcIndex;
 
@@ -116,14 +116,14 @@ mod gated_shims {
     pub type CSSInteger = i32;
     pub type CSSString = &'static [u8];
 
-    // ── ast crate-tier shims (CYCLEBREAK) ────────────────────────────────
+    // ── ast crate-tier shims ─────────────────────────────────────────────
     /// `bun.ast.Ref` / `bun.ast.MangledProps` were re-exported via
     /// `bun_js_parser`; css sits below that tier. The real types were
     /// MOVE_DOWN'd into `bun_logger` (see logger/lib.rs:216).
     pub mod ast {
         pub use bun_logger::{Ref, RefTag};
         pub type MangledProps = bun_collections::ArrayHashMap<Ref, *const [u8]>;
-        /// `bun.fs.Path` — `ImportRecord.path` field type. CYCLEBREAK: the
+        /// `bun.fs.Path` — `ImportRecord.path` field type. The
         /// real `bun.fs.Path` was MOVE_DOWN'd into `bun_paths::fs`.
         pub mod fs {
             pub use bun_paths::fs::Path;

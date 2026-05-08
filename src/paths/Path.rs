@@ -14,8 +14,6 @@ use crate::{
     resolve_path as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE, SEP, SEP_POSIX,
     SEP_WINDOWS,
 };
-// MOVE_DOWN(CYCLEBREAK): ZStr/WStr/Fd live in bun_core; `strings` subset too
-// (paths is T1, cannot depend on bun_string/bun_sys per same-tier ordering).
 use bun_core::{strings, Fd, WStr, ZStr};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -200,7 +198,7 @@ pub trait PathUnit: Copy + Eq + 'static {
     fn buffer_as_mut_slice(buf: &mut Self::Buffer) -> &mut [Self];
     fn buffer_as_slice(buf: &Self::Buffer) -> &[Self];
 
-    /// MOVE_DOWN(CYCLEBREAK): `bun.windows.long_path_prefix{,_u8}` lifted into the unit trait so
+    /// `bun.windows.long_path_prefix{,_u8}` lifted into the unit trait so
     /// `crate::windows::long_path_prefix_for::<U>()` can pick the right width without a runtime
     /// switch. Mirrors Zig's comptime branch on `.u8`/`.u16` in `paths/Path.zig`.
     const LONG_PATH_PREFIX: &'static [Self];
@@ -612,7 +610,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn init_top_level_dir() -> Self {
-        // MOVE_DOWN(CYCLEBREAK): bun_resolver::fs → crate::fs (move-in pass adds the module).
         debug_assert!(crate::fs::FileSystem::instance_loaded());
         let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
 
@@ -634,7 +631,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn init_top_level_dir_long_path() -> Self {
-        // MOVE_DOWN(CYCLEBREAK): bun_resolver::fs → crate::fs (move-in pass adds the module).
         debug_assert!(crate::fs::FileSystem::instance_loaded());
         let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();
 
@@ -652,7 +648,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         #[cfg(windows)]
         {
             // TODO(port): pick long_path_prefix vs long_path_prefix_u8 based on U.
-            // MOVE_DOWN(CYCLEBREAK): long_path_prefix_for moved from bun_sys::windows → crate::windows.
             this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 
@@ -738,7 +733,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut this = Self::init();
         #[cfg(windows)]
         {
-            // MOVE_DOWN(CYCLEBREAK): long_path_prefix_for moved from bun_sys::windows → crate::windows.
             this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 

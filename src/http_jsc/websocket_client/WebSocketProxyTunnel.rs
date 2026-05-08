@@ -39,14 +39,12 @@ use core::ptr::NonNull;
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
 use bun_string::strings;
-// CYCLEBREAK: SslWrapper was MOVE_DOWN'd from bun_runtime::socket → bun_uws::ssl_wrapper.
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{us_bun_verify_error_t, NewSocketHandler};
 
 use crate::websocket_client::ErrorCode;
 use super::websocket_upgrade_client::{HttpUpgradeClient, HttpsUpgradeClient, NewHttpUpgradeClient};
 
-// CYCLEBREAK: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config → bun_http::ssl_config.
 use bun_http::ssl_config::SslConfig;
 
 bun_core::declare_scope!(WebSocketProxyTunnel, visible);
@@ -251,7 +249,7 @@ impl WebSocketProxyTunnel {
         // check uses self.reject_unauthorized field.
         let options = ssl_options.for_client_verification();
 
-        // CYCLEBREAK: tier-neutral `init_from_options` takes the lowered
+        // tier-neutral `init_from_options` takes the lowered
         // `BunSocketContextOptions` (= what `SSLConfig.asUSockets()` produces);
         // the `SSLConfig`-taking `init` lives in bun_runtime.
         let wrapper = SslWrapperType::init_from_options(
@@ -296,7 +294,7 @@ impl WebSocketProxyTunnel {
                 if !strings::is_ip_address(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
-                    // CYCLEBREAK: Zig `ssl_ptr.configureHTTPClient(host)` =
+                    // Zig `ssl_ptr.configureHTTPClient(host)` =
                     // SNI + verify-hostname. The boringssl-crate ext-method
                     // hasn't landed yet; route through bun_http's
                     // tier-neutral helper which does SNI + ALPN(h1) (no

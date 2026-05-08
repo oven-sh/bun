@@ -531,10 +531,9 @@ impl<'a> Transpiler<'a> {
 
 use bun_resolver::tsconfig_json::{JsxField, TSConfigJSON};
 
-/// CYCLEBREAK: convert resolver-side `tsconfig_json::options::jsx::Pragma`
-/// into the bundler-side `options_impl::jsx::Pragma`. The two are structurally
-/// the same value type but nominally distinct until the move-down to
-/// `bun_options_types` lands (see resolver/tsconfig_json.rs:13 CYCLEBREAK note).
+/// Convert resolver-side `tsconfig_json::options::jsx::Pragma` into the
+/// bundler-side `options_impl::jsx::Pragma`. Structurally identical;
+/// nominally distinct until both move down to `bun_options_types`.
 fn jsx_pragma_from_resolver(
     src: &bun_resolver::tsconfig_json::options::jsx::Pragma,
 ) -> crate::options_impl::jsx::Pragma {
@@ -560,7 +559,7 @@ fn jsx_pragma_from_resolver(
     }
 }
 
-/// CYCLEBREAK: inline `TSConfigJSON::merge_jsx` (resolver/tsconfig_json.rs:346)
+/// Inline of `TSConfigJSON::merge_jsx` (resolver/tsconfig_json.rs:346)
 /// against the bundler-side `Pragma`. The upstream `merge_jsx` takes/returns
 /// the resolver-side nominal type; round-tripping through
 /// [`jsx_pragma_from_resolver`] would lose `classic_import_source`/`parse`/
@@ -1008,7 +1007,7 @@ fn init_file_system(
     Fs::FileSystem::init(top_level_dir)
 }
 
-/// CYCLEBREAK: project this crate's `options::BundleOptions<'a>` into the
+/// Project this crate's `options::BundleOptions<'a>` into the
 /// resolver-crate FORWARD_DECL subset (`bun_resolver::options::BundleOptions`).
 /// The two are nominally distinct until MOVE_DOWN to `bun_options_types`
 /// unifies them (resolver/lib.rs `mod options` note).
@@ -1094,7 +1093,7 @@ pub(crate) fn resolver_bundle_options_subset(
         },
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
         framework: src.framework.map(|f| {
-            // CYCLEBREAK: bundler-local `bake_types::BuiltInModule` and
+            // Bundler-local `bake_types::BuiltInModule` and
             // `bun_options_types::BuiltInModule` are nominally distinct (the
             // former predates the TYPE_ONLY move-down); convert variant-wise.
             use crate::bake_types::BuiltInModule as B;
@@ -1241,7 +1240,7 @@ impl<'a> Transpiler<'a> {
         let bundle_options =
             options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
 
-        // CYCLEBREAK: `Resolver.opts` is the resolver-crate FORWARD_DECL subset
+        // `Resolver.opts` is the resolver-crate subset
         // (`bun_resolver::options::BundleOptions`), nominally distinct from this
         // crate's `options::BundleOptions<'a>`. Project the fields the resolver
         // reads; the rest stay at `Default` until MOVE_DOWN to
@@ -1655,7 +1654,7 @@ impl<'a> Transpiler<'a> {
 
                 // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
                 // The resolver-side `cache::JavaScript` is a fieldless
-                // CYCLEBREAK shell with no `parse` body (resolver/lib.rs:1664);
+                // shell with no `parse` body (resolver/lib.rs:1664);
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
@@ -2156,7 +2155,7 @@ impl<'a> Transpiler<'a> {
 use bun_js_printer as js_printer;
 // PORT NOTE: `module_info` threads the *printer's* `analyze_transpiled_module::ModuleInfo`
 // (the producer), not `crate::analyze_transpiled_module::ModuleInfo` (the
-// richer consumer-side mirror). The two were CYCLEBREAK siblings; the print
+// richer consumer-side mirror). The print
 // path only ever fills the printer-owned one and hands its serialized bytes to
 // T6, so unify on the printer type here. Spec: transpiler.zig:663.
 use js_printer::analyze_transpiled_module;

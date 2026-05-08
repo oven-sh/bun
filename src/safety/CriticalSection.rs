@@ -29,7 +29,7 @@
 use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_core::StoredTrace; // MOVE_DOWN: was bun_crash_handler::StoredTrace (CYCLEBREAK → core)
+use bun_core::StoredTrace;
 
 // TODO(port): `ThreadId` / `INVALID_THREAD_ID` / `current_thread_id()` come from the sibling
 // `src/safety/thread_id.zig` port + Zig's `std.Thread`. Phase B: confirm the concrete integer

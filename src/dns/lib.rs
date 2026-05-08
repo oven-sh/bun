@@ -467,7 +467,7 @@ pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
 // Order — DNS result ordering (verbatim/ipv4first/ipv6first).
 //
 // Moved down from `bun_runtime::api::dns::Resolver::Order` (src/runtime/
-// dns_jsc/dns.zig) per CYCLEBREAK §→dns: `cli` (repl_command, Arguments)
+// dns_jsc/dns.zig): `cli` (repl_command, Arguments)
 // needs `Order::from_string_or_die` to parse `--dns-result-order` before the
 // runtime exists. The `toJS` method stays in tier-6 (`bun_runtime::dns_jsc`)
 // as an extension; only the pure enum + string parsing live here.

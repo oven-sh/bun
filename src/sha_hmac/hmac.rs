@@ -1,6 +1,5 @@
 use core::ffi::{c_uint, c_void};
 
-// CYCLEBREAK MOVE_DOWN: evp::Algorithm now lives in this crate (sha.rs `pub mod evp`).
 use crate::evp::Algorithm;
 use crate::sha::ffi;
 

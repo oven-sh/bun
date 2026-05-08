@@ -792,7 +792,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // open socket's lifetime.
                     let handle = handle.cast::<boringssl::c::SSL>();
                     // hostname is NUL-terminated (`dupe_z`); pass the C string
-                    // directly. CYCLEBREAK: `configureHTTPClient` ext-method
+                    // directly. `configureHTTPClient` ext-method
                     // hasn't landed on boringssl::SSL; use bun_http's helper.
                     bun_http::configure_http_client_with_alpn(
                         handle,

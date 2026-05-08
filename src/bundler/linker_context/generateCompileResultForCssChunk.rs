@@ -135,14 +135,14 @@ fn generate_compile_result_for_css_chunk_impl(
         .at(imports_in_chunk_index as usize);
     let css: &BundlerStyleSheet = &css_content.asts[imports_in_chunk_index as usize];
     // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
-    // CYCLEBREAK: `to_css_with_writer` takes `&bun_logger::symbol::Map`, but
+    // `to_css_with_writer` takes `&bun_logger::symbol::Map`, but
     // `c.graph.symbols` is `bun_js_parser::ast::symbol::Map`. Both are
     // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
     // so layouts match — bridge by pointer cast.
     let symbols: &bun_logger::symbol::Map = unsafe {
         &*(&raw const c.graph.symbols).cast::<bun_logger::symbol::Map>()
     };
-    // CYCLEBREAK: `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
+    // `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
     // `c.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s are
     // newtype-`u64` and `Box<[u8]>`/`*const [u8]` are both `(ptr, len)` fat ptrs — same
     // layout, used read-only by the printer.

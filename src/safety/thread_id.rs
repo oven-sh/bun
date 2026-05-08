@@ -1,6 +1,6 @@
 //! OS-native numeric thread ID.
 //!
-//! MOVE_DOWN (CYCLEBREAK §safety T0): `bun_threading::ThreadId` → `bun_safety::thread_id`.
+//! Moved from `bun_threading::ThreadId`.
 //! Ground truth is Zig's `std.Thread.Id` / `std.Thread.getCurrentId()` (vendor/zig/lib/std/Thread.zig
 //! lines 357-370 / 690-722), reproduced here so tier-0 `safety` does not depend on tier-2
 //! `bun_threading`. `bun_threading` re-exports these (`pub use bun_safety::thread_id::ThreadId`).

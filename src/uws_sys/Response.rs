@@ -20,7 +20,7 @@ use crate::us_socket_t;
 /// Remote socket address as returned by uWS. `ip` borrows uWS-owned memory
 /// valid for the lifetime of the response/connection that produced it.
 ///
-/// CYCLEBREAK(TYPE_ONLY): canonical definition moved down from `bun_uws`
+/// Canonical definition moved down from `bun_uws`
 /// (Zig: `uws.SocketAddress = struct { ip: []const u8, port: i32, is_ipv6: bool }`).
 /// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
 /// `pub use bun_uws_sys::SocketAddress;`.

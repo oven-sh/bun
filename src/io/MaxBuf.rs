@@ -144,7 +144,7 @@ impl MaxBuf {
             if let Some((owner_nn, vtable)) = unsafe { (*p).owned_by_subprocess } {
                 // SAFETY: `owned_by_subprocess` is cleared by the Subprocess before it is dropped
                 // (see `remove_from_subprocess`), so the pointer is valid while Some.
-                // CYCLEBREAK(vtable): the stderr/stdout slot lookup + on_max_buffer
+                // The stderr/stdout slot lookup + on_max_buffer
                 // call moves to bun_runtime's `MaxBufOwnerVTable` impl.
                 unsafe { (vtable.on_overflow)(owner_nn, this) };
             }

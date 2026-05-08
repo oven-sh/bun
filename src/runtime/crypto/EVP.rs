@@ -15,7 +15,7 @@ pub struct EVP {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// CYCLEBREAK: TYPE_ONLY — the `Algorithm` enum + `md()` were moved DOWN to
+// The `Algorithm` enum + `md()` live in
 // `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
 // can name it without depending upward on bun_runtime. Re-export the canonical
 // enum here; the higher-tier extras (`names`, `MAP`, `tag_cstr`, `map()`) that
@@ -265,7 +265,7 @@ impl EVP {
         };
         if let Some(&algorithm) = MAP.get(lookup_key) {
             if let Some(md) = algorithm.md() {
-                // CYCLEBREAK cast: `Algorithm::md()` was lowered to `bun_sha_hmac`
+                // `Algorithm::md()` lives in `bun_sha_hmac`
                 // and returns that crate's opaque `EVP_MD`; both name the same C
                 // `struct env_md_st`, so a pointer cast is the correct unification.
                 return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));

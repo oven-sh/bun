@@ -4,7 +4,6 @@ use core::ffi::c_int;
 use core::fmt;
 
 use bun_string::String as BunString;
-// TODO(b0): SystemError arrives from move-in (CYCLEBREAK TYPE_ONLY bun_jsc::SystemError → sys).
 use crate::SystemError;
 
 use crate::{coreutils_error_map, libuv_error_map, Fd, SystemErrno, Tag, E};
@@ -265,7 +264,7 @@ impl Error {
         }
     }
 
-    // CYCLEBREAK: `with_path_like` moved to `bun_runtime::node` as an extension method on
+    // `with_path_like` lives in `bun_runtime::node` as an extension method on
     // `bun_sys::Error` — `PathLike` is a tier-6 type and cannot be named from tier-1 `bun_sys`.
 
     /// When the memory of the path/dest buffer is unsafe to use, call this function to clone the error without the path/dest.

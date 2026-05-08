@@ -15,7 +15,7 @@ use bun_core::{dump_stack_trace, StoredTrace, DumpStackTraceOptions as WriteStac
 use bun_threading::{Guarded, GuardedLock, Mutex};
 
 // `std.mem.Allocator` is Zig's fat-pointer (ptr + vtable) dynamic allocator handle. This module
-// was hoisted out of `bun_alloc` (CYCLEBREAK), so the parent-allocator plumbing now resolves
+// was hoisted out of `bun_alloc`, so the parent-allocator plumbing now resolves
 // `StdAllocator` from the `bun_alloc` crate rather than `crate::`.
 use bun_alloc::{Alignment, AllocError, AllocatorVTable, StdAllocator};
 

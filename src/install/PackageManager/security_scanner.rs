@@ -1046,7 +1046,7 @@ impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
         unsafe { (*this).loop_() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that
+        // `bun_io::EventLoopHandle` is opaque; it
         // `io_ev` reads back as `*const bun_event_loop::EventLoopHandle`. Pass
         // the address of the stored handle (NOT `manager.event_loop`, which is
         // an `AnyEventLoop` with a different layout).

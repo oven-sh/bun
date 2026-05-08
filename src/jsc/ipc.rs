@@ -1515,10 +1515,9 @@ impl SendQueue {
         let this: &mut SendQueue = unsafe { &mut *this };
 
         let vm = VirtualMachine::get();
-        // SAFETY: `VirtualMachine::get()` yields the live `*mut VirtualMachine` for
-        // this thread; `event_loop()` returns its VM-owned `*mut EventLoop`. Same
-        // raw-ptr deref pattern as `_socket_closed` / `on_data`.
-        unsafe { (*(*vm).event_loop()).enter() };
+        // RAII: `enter()` now, `exit()` on drop — replaces the
+        // `unsafe { (*(*vm).event_loop()).enter() }` / `.exit()` pair.
+        let _scope = vm.enter_event_loop_scope();
 
         this.windows.windows_write = None;
         if let Some(socket) = this.get_socket() {
@@ -1535,12 +1534,7 @@ impl SendQueue {
         if this.windows.try_close_after_write {
             this.close_socket(CloseReason::Normal, CloseFrom::User);
         }
-
-        // Zig: `defer vm.eventLoop().exit()` — placed last; the body above is
-        // infallible (no `?`/early-return after `enter()`), so a scopeguard is
-        // unnecessary.
-        // SAFETY: see the `enter()` call above.
-        unsafe { (*(*vm).event_loop()).exit() };
+        // Zig: `defer vm.eventLoop().exit()` — handled by `_scope` drop.
     }
     fn get_global_this(&self) -> crate::GlobalRef {
         // PORT NOTE: lifetime detached from `&self` so callers can hold the
@@ -1814,15 +1808,9 @@ fn handle_ipc_message(
                     SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
                 };
 
-                // `event_loop()` takes `&self`; never materialize
-                // `&mut VirtualMachine` from the shared `bun_vm()` borrow
-                // (Stacked-Borrows UB). Keep `vm` as `&VirtualMachine`.
-                let vm = global_this.bun_vm();
-                // SAFETY: `event_loop()` returns the VM-owned `*mut EventLoop`;
-                // it stays live for the duration of the VM. Reborrow per use to
-                // avoid holding `&mut EventLoop` across the call below.
-                unsafe { (*(*vm).event_loop()).enter() };
-                // TODO(port): errdefer — scopeguard for event_loop().exit()
+                // RAII: `enter()` now, `exit()` on drop — covers both the
+                // early-error return and the fall-through.
+                let _scope = global_this.bun_vm().enter_event_loop_scope();
                 // FD.toJS — `uv()` is the user-visible numeric fd on both
                 // platforms (posix == native, windows == uv_file).
                 let fd_js = JSValue::js_number_from_int32(fd.uv());
@@ -1830,10 +1818,9 @@ fn handle_ipc_message(
                 if let Err(e) = res {
                     // ack written already, that's okay.
                     global_this.report_active_exception_as_unhandled(e);
-                    unsafe { (*(*vm).event_loop()).exit() };
                     return;
                 }
-                unsafe { (*(*vm).event_loop()).exit() };
+                drop(_scope);
 
                 // ipc_parse will call the callback which calls handleIPCMessage()
                 // we have sent the ack already so the next message could arrive at any time. maybe even before
@@ -2048,15 +2035,9 @@ pub mod IPCHandlers {
 
         pub fn on_data(send_queue: &mut SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            // `event_loop()` takes `&self`, so deref-and-reborrow at the call
-            // site — never materialize `&mut VirtualMachine` (Stacked-Borrows
-            // UB).
-            let loop_ = global_this.bun_vm().as_mut().event_loop();
-            // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
-            // as the VM); reborrow per use so `&mut EventLoop` isn't held
-            // across `on_data2`.
-            unsafe { (*loop_).enter() };
-            let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
+            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
+            // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
+            let _scope = global_this.bun_vm().enter_event_loop_scope();
             on_data2(send_queue, all_data);
         }
 
@@ -2082,11 +2063,8 @@ pub mod IPCHandlers {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
-            // `event_loop(&self)` without materializing `&mut VirtualMachine`.
-            let loop_ = global_this.bun_vm().as_mut().event_loop();
-            // SAFETY: see `on_data` — VM-owned `*mut EventLoop`, per-use reborrow.
-            unsafe { (*loop_).enter() };
-            let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
+            // RAII: see `on_data`.
+            let _scope = global_this.bun_vm().enter_event_loop_scope();
             log!("IPC call continueSend() from onWritable");
             send_queue.continue_send(&global_this, ContinueSendReason::OnWritable);
         }
@@ -2167,14 +2145,10 @@ pub mod IPCHandlers {
         pub fn on_read(send_queue: &mut SendQueue, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
             let global_this = send_queue.get_global_this();
-            // call `event_loop(&self)` without materializing
-            // `&mut VirtualMachine`.
-            let loop_ = global_this.bun_vm().as_mut().event_loop();
-            // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
-            // as the VM); reborrow at each enter/exit so `&mut EventLoop` isn't
-            // held across the decode loop or send_queue borrows below.
-            unsafe { (*loop_).enter() };
-            let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
+            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
+            // `*mut EventLoop` so `&mut EventLoop` isn't held across the decode
+            // loop or send_queue borrows below.
+            let _scope = global_this.bun_vm().enter_event_loop_scope();
 
             match &mut send_queue.incoming {
                 IncomingBuffer::Json(_) => {

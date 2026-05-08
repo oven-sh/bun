@@ -394,8 +394,12 @@ impl Debugger {
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
-        // SAFETY: `this` is the live per-thread VM; short-lived `&mut`.
-        let Some(dbg) = (unsafe { (*this).debugger.as_deref_mut() }) else {
+        // SAFETY: `this` is the live per-thread VM; same allocation as
+        // `VirtualMachine::get()`. All subsequent accesses route through safe
+        // `&VirtualMachine` accessors which form short-lived `&mut`s under the
+        // single-JS-thread invariant.
+        let this: &VirtualMachine = unsafe { &*this };
+        let Some(dbg) = this.debugger_mut() else {
             return;
         };
         bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
@@ -404,9 +408,8 @@ impl Debugger {
         }
         let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
         // Spec: `defer debugger.must_block_until_connected = false;`
-        let _reset = scopeguard::guard(this, |this| {
-            // SAFETY: `this` is the live per-thread VM; deferred to scope exit.
-            if let Some(d) = unsafe { (*this).debugger.as_deref_mut() } {
+        let _reset = scopeguard::guard((), |()| {
+            if let Some(d) = this.debugger_mut() {
                 d.must_block_until_connected = false;
             }
         });
@@ -453,9 +456,7 @@ impl Debugger {
             use bun_sys::windows::libuv as uv;
             use bun_sys::windows::libuv::UvHandle as _;
             if wait == Wait::Shortly {
-                // SAFETY: `this` is the live per-thread VM; `uv_loop()` returns
-                // the per-thread `uv_loop_t` initialized by `init()`.
-                let uv_loop = unsafe { (*this).uv_loop() };
+                let uv_loop = this.uv_loop();
                 // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
                 unsafe { uv::uv_update_time(uv_loop) };
                 // Spec: `bun.handleOom(allocator.create(Timer))` + zero-init.
@@ -498,28 +499,25 @@ impl Debugger {
         }
 
         // Drop the long-lived `&mut Debugger` before re-entering JS — see
-        // PORT NOTE above.
+        // PORT NOTE above. Each loop iteration re-fetches via `debugger_mut()`
+        // so re-entrant JS may independently borrow the VM.
         loop {
-            // SAFETY: `this` is the live per-thread VM; fresh short-lived borrow.
-            let wait = match unsafe { (*this).debugger.as_deref() } {
+            let wait = match this.debugger.as_deref() {
                 Some(d) => d.wait_for_connection,
                 None => break,
             };
             if wait == Wait::Off {
                 break;
             }
-            // SAFETY: `event_loop()` slot stable for VM lifetime; fresh `&mut`.
-            unsafe { (*(*this).event_loop()).tick() };
+            this.event_loop_mut().tick();
             // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
-            // SAFETY: see above.
-            let wait = match unsafe { (*this).debugger.as_deref() } {
+            let wait = match this.debugger.as_deref() {
                 Some(d) => d.wait_for_connection,
                 None => break,
             };
             match wait {
                 Wait::Forever => {
-                    // SAFETY: see above.
-                    unsafe { (*(*this).event_loop()).auto_tick_active() };
+                    this.event_loop_mut().auto_tick_active();
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -533,24 +531,18 @@ impl Debugger {
                     // Handle .incrementRefConcurrently
                     #[cfg(unix)]
                     {
-                        // SAFETY: `this` is the live per-thread VM.
-                        let pending_unref = unsafe { (*this).pending_unref_counter };
+                        let pending_unref = this.take_pending_unref();
                         if pending_unref > 0 {
-                            // SAFETY: see above.
-                            unsafe { (*this).pending_unref_counter = 0 };
-                            // SAFETY: `uws_loop()` returns the per-VM loop;
-                            // non-null on the JS thread once `init()` ran.
-                            unsafe { (*(*this).uws_loop()).unref_count(pending_unref) };
+                            this.uws_loop_mut().unref_count(pending_unref);
                         }
                     }
 
                     // SAFETY: `bun_core::Timespec` and `bun_uws::Timespec` are
                     // both `#[repr(C)] { sec: i64, nsec: i64 }` — layout-
-                    // identical. `uws_loop()` non-null on JS thread.
+                    // identical.
                     let deadline_uws: &bun_uws::Timespec =
                         unsafe { &*(&raw const deadline).cast() };
-                    // SAFETY: see above.
-                    unsafe { (*(*this).uws_loop()).tick_with_timeout(Some(deadline_uws)) };
+                    this.uws_loop_mut().tick_with_timeout(Some(deadline_uws));
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -563,9 +555,7 @@ impl Debugger {
                     let elapsed =
                         bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                     if elapsed.order(&deadline) != core::cmp::Ordering::Less {
-                        // SAFETY: `this` is the live per-thread VM; debugger
-                        // checked Some above (re-check defensively).
-                        if let Some(d) = unsafe { (*this).debugger.as_deref_mut() } {
+                        if let Some(d) = this.debugger_mut() {
                             d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                         }
                         bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
@@ -595,18 +585,19 @@ impl Debugger {
         // `#[unsafe(no_mangle)]` already prevents the linker from stripping
         // these exported symbols, so the keep-alive references are unnecessary.
 
-        // SAFETY: `this` is the live per-thread VM; caller (high-tier
-        // `ensure_debugger`) populated `debugger` before calling.
-        let dbg = unsafe { (*this).debugger.as_deref_mut() }
+        // SAFETY: `this` is the live per-thread VM; same allocation as
+        // `VirtualMachine::get()`. Safe accessors below form short-lived
+        // `&mut`s under the single-JS-thread invariant.
+        let this_ref: &VirtualMachine = unsafe { &*this };
+        let dbg = this_ref
+            .debugger_mut()
             .expect("Debugger::create: vm.debugger is None");
         // SAFETY: `global_object` is a live opaque JSC handle.
         dbg.script_execution_context_id =
             unsafe { Bun__createJSDebugger(std::ptr::from_ref(global_object).cast_mut()) };
 
-        // SAFETY: `this` is the live per-thread VM; short-lived borrow.
-        if !unsafe { (*this).has_started_debugger } {
-            // SAFETY: see above.
-            unsafe { (*this).has_started_debugger = true };
+        if !this_ref.has_started_debugger {
+            this_ref.as_mut().has_started_debugger = true;
             // PORT NOTE: `std::thread::spawn` requires `Send`; raw `*mut
             // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
             // pointer is only ever dereferenced on the debugger thread under
@@ -630,12 +621,10 @@ impl Debugger {
                 .map_err(|_| bun_core::err!("ThreadSpawnFailed"))?;
             // Spec: `thread.detach()` — Rust `JoinHandle` detaches on drop.
         }
-        // SAFETY: `event_loop()` slot stable for VM lifetime.
-        unsafe { (*(*this).event_loop()).ensure_waker() };
+        this_ref.event_loop_mut().ensure_waker();
 
         // Re-borrow after `ensure_waker` (which may touch `*this`).
-        // SAFETY: `this` is the live per-thread VM.
-        let dbg = unsafe { (*this).debugger.as_deref_mut() }.unwrap();
+        let dbg = this_ref.debugger_mut().unwrap();
         if dbg.wait_for_connection != Wait::Off {
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
             dbg.must_block_until_connected = true;
@@ -677,9 +666,7 @@ impl Debugger {
             .configure_defines()
             .unwrap_or_else(|_| panic!("Failed to configure defines"));
         vm.is_main_thread = false;
-        // SAFETY: `event_loop()` returns the per-thread `EventLoop` slot
-        // initialized by `init()` above.
-        unsafe { (*vm.event_loop()).ensure_waker() };
+        vm.event_loop_mut().ensure_waker();
 
         // Spec: `vm.global.vm().holdAPILock(other_vm, OpaqueWrap(VM, start))`.
         extern "C" fn start_trampoline(ctx: *mut c_void) {
@@ -718,11 +705,11 @@ impl Debugger {
     fn start(other_vm: *mut VirtualMachine) {
         jsc::mark_binding();
 
-        // Raw pointers only — see PORT NOTE above.
-        let this: *mut VirtualMachine = VirtualMachine::get_mut_ptr();
-        // SAFETY: `this` is this thread's VM created in
-        // `start_js_debugger_thread`; `event_loop()` reads a scalar field.
-        let loop_: *mut crate::event_loop::EventLoop = unsafe { (*this).event_loop() };
+        // `this` is this thread's own VM (created in `start_js_debugger_thread`)
+        // — safe to hold as `&'static`. `other_vm` remains a raw pointer (see
+        // PORT NOTE above): the parent thread mutates it concurrently after the
+        // futex wake, so forming `&VirtualMachine` to it would be a data race.
+        let this: &VirtualMachine = VirtualMachine::get();
         // SAFETY: `other_vm` is the parent-thread VM, live for process
         // lifetime. We read its `event_loop` self-pointer once *before* the
         // futex wake (while the parent is still blocked / not yet past the
@@ -730,8 +717,7 @@ impl Debugger {
         // calls below. `wakeup()` takes `&self` and is the documented
         // thread-safe path (event_loop.rs:779).
         let other_loop: *mut crate::event_loop::EventLoop = unsafe { (*other_vm).event_loop() };
-        // SAFETY: `this.global` set by `init()` (non-null).
-        let global: *mut JSGlobalObject = unsafe { (*this).global };
+        let global: *mut JSGlobalObject = this.global;
 
         // PORT NOTE: copy the four scalars we need from the parent VM's
         // debugger before re-entering JS or waking the parent. Spec `.?` would
@@ -757,33 +743,22 @@ impl Debugger {
 
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
-            // SAFETY: `loop_` is this thread's EventLoop; short-lived `&mut`.
-            unsafe { (*loop_).enter() };
+            let _scope = this.enter_event_loop_scope();
             // SAFETY: `global` non-null; `url` lives across the call (C++
             // clones it).
             unsafe { Bun__startJSDebuggerThread(global, ctx_id, &raw mut url, 1, is_connect) };
-            // SAFETY: see above.
-            unsafe { (*loop_).exit() };
         }
 
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
-            // SAFETY: see above.
-            unsafe { (*loop_).enter() };
+            let _scope = this.enter_event_loop_scope();
             // SAFETY: see above.
             unsafe { Bun__startJSDebuggerThread(global, ctx_id, &raw mut url, 0, is_connect) };
-            // SAFETY: see above.
-            unsafe { (*loop_).exit() };
         }
 
-        // SAFETY: `global` non-null.
-        unsafe { &*global }.handle_rejected_promises();
+        this.global().handle_rejected_promises();
 
-        // SAFETY: `this` is this thread's VM; short-lived shared read of `log`.
-        if let Some(log) = unsafe { (*this).log } {
-            // SAFETY: `log` is the `Box::leak`ed per-VM `logger::Log` from
-            // `VirtualMachine::init`; outlives the VM.
-            let log = unsafe { log.as_ref() };
+        if let Some(log) = this.log_ref() {
             if !log.msgs.is_empty() {
                 let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_core::Output::error_writer()));
                 bun_core::pretty_errorln!("\n");
@@ -801,22 +776,20 @@ impl Debugger {
         // Spec re-reads `this.eventLoop()` here (zig:219) rather than reusing
         // the cached `loop` — `vm.event_loop` may have flipped between
         // `regular_event_loop` and `macro_event_loop` inside the re-entrant JS
-        // above. SAFETY: short-lived `&mut` per call.
-        unsafe { (*(*this).event_loop()).tick() };
+        // above. `event_loop_mut()` re-reads the slot on every call.
+        this.event_loop_mut().tick();
         // SAFETY: see above.
         unsafe { (*other_loop).wakeup() };
 
         loop {
-            // SAFETY: `this` is this thread's VM; each call forms a fresh
-            // short-lived `&`/`&mut` so re-entrant JS inside `tick()` may
-            // independently call `VirtualMachine::get()` without aliasing.
-            while unsafe { (*this).is_event_loop_alive() } {
-                unsafe { (*this).tick() };
-                // SAFETY: `event_loop()` slot stable for VM lifetime.
-                unsafe { (*(*this).event_loop()).auto_tick_active() };
+            // Each call forms a fresh short-lived `&`/`&mut` (via the safe
+            // accessors) so re-entrant JS inside `tick()` may independently
+            // call `VirtualMachine::get()` without aliasing.
+            while this.is_event_loop_alive() {
+                this.as_mut().tick();
+                this.event_loop_mut().auto_tick_active();
             }
-            // SAFETY: see above.
-            unsafe { (*(*this).event_loop()).tick_possibly_forever() };
+            this.event_loop_mut().tick_possibly_forever();
         }
     }
 }
@@ -833,9 +806,7 @@ pub fn did_connect() {
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
-        // SAFETY: `event_loop()` returns the raw `*mut EventLoop` slot; live
-        // for VM lifetime. `wakeup()` takes `&self` (thread-safe).
-        unsafe { (*(*this).event_loop()).wakeup() };
+        this.event_loop_mut().wakeup();
     }
 }
 
@@ -1113,6 +1084,19 @@ pub fn test_reporter_agent_disable(_agent: *mut TestReporterHandle) {
 }
 
 impl TestReporterAgent {
+    /// Safe `&mut TestReporterHandle` accessor — `handle` is a live C++
+    /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
+    /// ensure `is_enabled()` (handle != null); the debug-assert mirrors the
+    /// Zig `agent.handle.?` unwrap.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn handle_mut(&self) -> &mut TestReporterHandle {
+        debug_assert!(!self.handle.is_null());
+        // SAFETY: caller contract — `is_enabled()` checked; handle is a live
+        // C++ heap allocation owned by the inspector backend.
+        unsafe { &mut *self.handle }
+    }
+
     /// Caller must ensure that it is enabled first.
     ///
     /// Since we may have to call .deinit on the name string.
@@ -1125,22 +1109,19 @@ impl TestReporterAgent {
         parent_id: i32,
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
-        // SAFETY: caller must ensure is_enabled() (handle != null)
-        unsafe { &mut *self.handle }.report_test_found(call_frame, test_id, name, item_type, parent_id);
+        self.handle_mut().report_test_found(call_frame, test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.
     pub fn report_test_start(&self, test_id: i32) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestStart");
-        // SAFETY: caller must ensure is_enabled() (handle != null)
-        unsafe { &mut *self.handle }.report_test_start(test_id);
+        self.handle_mut().report_test_start(test_id);
     }
 
     /// Caller must ensure that it is enabled first.
     pub fn report_test_end(&self, test_id: i32, bun_test_status: TestStatus, elapsed: f64) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestEnd");
-        // SAFETY: caller must ensure is_enabled() (handle != null)
-        unsafe { &mut *self.handle }.report_test_end(test_id, bun_test_status, elapsed);
+        self.handle_mut().report_test_end(test_id, bun_test_status, elapsed);
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -1214,17 +1195,23 @@ pub fn lifecycle_agent_disable(_agent: *mut LifecycleHandle) {
 }
 
 impl LifecycleAgent {
+    /// Safe optional accessor — wraps the null check + raw deref.
+    #[inline]
+    fn handle_mut(&mut self) -> Option<&mut LifecycleHandle> {
+        // SAFETY: `handle` is null or a live C++ heap allocation owned by the
+        // inspector backend; checked via `NonNull::new`.
+        core::ptr::NonNull::new(self.handle).map(|mut p| unsafe { p.as_mut() })
+    }
+
     pub fn report_reload(&mut self) {
-        if !self.handle.is_null() {
-            // SAFETY: handle checked non-null above
-            unsafe { &mut *self.handle }.report_reload();
+        if let Some(h) = self.handle_mut() {
+            h.report_reload();
         }
     }
 
     pub fn report_error(&mut self, exception: &mut ZigException) {
-        if !self.handle.is_null() {
-            // SAFETY: handle checked non-null above
-            unsafe { &mut *self.handle }.report_error(exception);
+        if let Some(h) = self.handle_mut() {
+            h.report_error(exception);
         }
     }
 

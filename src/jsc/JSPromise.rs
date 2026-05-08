@@ -414,6 +414,19 @@ impl JSPromise {
         }
     }
 
+    /// Safe `status()` for the common `*mut JSPromise`-stored case
+    /// (`vm.pending_internal_promise` etc.). `JSPromise` is a GC-managed JSC
+    /// heap cell; pointers to it are kept alive by the VM's strong-ref slots,
+    /// not by Rust ownership. Centralizes the per-call-site
+    /// `unsafe { (*p).status() }` deref so callers don't open-code it.
+    #[inline]
+    pub fn status_ptr(p: *mut JSPromise) -> Status {
+        // SAFETY: `p` is a non-null GC-managed cell tracked by the VM
+        // (caller obtained it from a strong-ref VM field or a fresh
+        // `JSInternalPromise__resolvedPromise` return value).
+        unsafe { (*p).status() }
+    }
+
     pub fn result(&mut self, vm: &VM) -> JSValue {
         JSC__JSPromise__result(self, vm)
     }

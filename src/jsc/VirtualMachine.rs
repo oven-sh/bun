@@ -484,20 +484,14 @@ impl ExitHandler {
 
     /// PORT NOTE: spec calls `this.exit_handler.dispatchOnExit()` from a
     /// `*VirtualMachine`. Taking `&mut self: ExitHandler` and recovering the
-    /// parent via `container_of` is sound in Zig but in Rust would (a) form
-    /// a `&mut VirtualMachine` aliased with the live `&mut ExitHandler`, and
-    /// (b) escape the provenance of `&mut self` (which only covers the
-    /// `ExitHandler` field). Callers pass the raw VM pointer instead.
-    ///
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`.
-    pub unsafe fn dispatch_on_exit(vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract — per-field raw deref, no `&mut VM` formed.
-        let exit_code = unsafe { (*vm).exit_handler.exit_code };
+    /// parent via `container_of` would escape the provenance of `&mut self`
+    /// (which only covers the `ExitHandler` field). Callers pass the VM
+    /// reference instead; the body re-enters JS so no `&mut` is held.
+    pub fn dispatch_on_exit(vm: &VirtualMachine) {
+        let exit_code = vm.exit_handler.exit_code;
         // SAFETY: extern "C" FFI; vm.global valid for VM lifetime
-        unsafe { Process__dispatchOnExit((*vm).global, exit_code) };
-        // SAFETY: per fn contract — per-field raw deref.
-        if unsafe { (*vm).worker.is_none() } {
+        unsafe { Process__dispatchOnExit(vm.global, exit_code) };
+        if vm.worker.is_none() {
             // SAFETY: extern "C" FFI; main-thread-only termination hooks
             unsafe { Bun__closeAllSQLiteDatabasesForTermination() };
             // SAFETY: extern "C" FFI; main-thread-only termination hooks
@@ -505,18 +499,13 @@ impl ExitHandler {
         }
     }
 
-    /// See [`dispatch_on_exit`] for the `&mut self → *mut VirtualMachine`
+    /// See [`dispatch_on_exit`] for the `&mut self → &VirtualMachine`
     /// signature change.
-    ///
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`.
-    pub unsafe fn dispatch_on_before_exit(vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract — per-field raw deref, no `&mut VM` formed.
-        let exit_code = unsafe { (*vm).exit_handler.exit_code };
-        // SAFETY: per fn contract; vm.global valid for VM lifetime.
-        let global = unsafe { &*(*vm).global };
+    pub fn dispatch_on_before_exit(vm: &VirtualMachine) {
+        let exit_code = vm.exit_handler.exit_code;
+        let global = vm.global();
         let _ = jsc::from_js_host_call_generic(global, || unsafe {
-            Process__dispatchOnBeforeExit((*vm).global, exit_code)
+            Process__dispatchOnBeforeExit(vm.global, exit_code)
         });
     }
 }
@@ -751,6 +740,78 @@ impl VirtualMachine {
         &mut self.transpiler
     }
 
+    /// Safe accessor for the process-lifetime cwd string
+    /// (`vm.transpiler.fs.top_level_dir`). The `FileSystem` singleton is
+    /// allocated once during VM init and never freed.
+    #[inline]
+    pub fn top_level_dir(&self) -> &'static [u8] {
+        // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
+        // process-lifetime `Fs::FileSystem` singleton; never null while a VM
+        // is installed. `top_level_dir` borrows that singleton's storage.
+        unsafe { (*self.transpiler.fs).top_level_dir }
+    }
+
+    /// Safe `&mut Debugger` accessor — the [`JsCell`] escape hatch applied to
+    /// the optional boxed `Debugger`. Same single-JS-thread soundness
+    /// contract as [`Self::as_mut`]; keep the borrow short and do not hold
+    /// across reentrant JS calls.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn debugger_mut(&self) -> Option<&mut crate::debugger::Debugger> {
+        self.as_mut().debugger.as_deref_mut()
+    }
+
+    /// Safe `&mut uws::Loop` accessor for the per-VM uSockets loop. Same
+    /// single-JS-thread soundness contract as [`Self::event_loop_mut`].
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn uws_loop_mut(&self) -> &mut uws::Loop {
+        // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
+        // the JS thread once `init()` ran. Single-JS-thread invariant per
+        // `unsafe impl Sync`.
+        unsafe { &mut *self.uws_loop() }
+    }
+
+    /// Read-then-zero `pending_unref_counter`. Wraps the common
+    /// `let n = vm.pending_unref_counter; if n > 0 { vm.pending_unref_counter = 0; ... }`
+    /// pattern so callers don't open-code two raw-ptr writes.
+    #[inline]
+    pub fn take_pending_unref(&self) -> i32 {
+        let this = self.as_mut();
+        let n = this.pending_unref_counter;
+        if n > 0 {
+            this.pending_unref_counter = 0;
+        }
+        n
+    }
+
+    /// Safe shared accessor for the per-VM `logger::Log`. The log is
+    /// `Box::leak`ed in `init()` and outlives the VM.
+    #[inline]
+    pub fn log_ref(&self) -> Option<&logger::Log> {
+        // SAFETY: `log` is `Box::leak`ed in `init()`; non-null `NonNull` is
+        // valid for the VM lifetime.
+        self.log.map(|p| unsafe { p.as_ref() })
+    }
+
+    /// Safe `&mut logger::Log` accessor. See [`Self::log_ref`].
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn log_mut(&self) -> Option<&mut logger::Log> {
+        // SAFETY: see `log_ref`; single-JS-thread invariant.
+        self.as_mut().log.map(|mut p| unsafe { p.as_mut() })
+    }
+
+    /// Safe `&WebWorker` accessor for the optional owning worker. The
+    /// `WebWorker` is a heap allocation owned by C++ that outlives this VM.
+    #[inline]
+    pub fn worker_ref(&self) -> Option<&crate::web_worker::WebWorker> {
+        // SAFETY: `worker` is a `*const c_void` pointing at a heap `WebWorker`
+        // owned by C++ that outlives this VM (BACKREF — see field decl).
+        self.worker
+            .map(|w| unsafe { &*w.cast::<crate::web_worker::WebWorker>() })
+    }
+
     #[inline]
     pub fn source_mappings(&mut self) -> &mut SavedSourceMap {
         &mut self.source_mappings
@@ -814,10 +875,7 @@ impl VirtualMachine {
             return crate::ScriptExecutionStatus::Stopped;
         }
 
-        if let Some(worker) = self.worker {
-            // SAFETY: `worker` is a `*const c_void` pointing at a heap `WebWorker`
-            // owned by C++ that outlives this VM (BACKREF — see field decl).
-            let worker = unsafe { &*worker.cast::<crate::web_worker::WebWorker>() };
+        if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
                 return crate::ScriptExecutionStatus::Stopped;
             }
@@ -1248,9 +1306,7 @@ impl VirtualMachine {
     }
 
     pub fn on_before_exit(&mut self) {
-        let vm = std::ptr::from_mut::<VirtualMachine>(self);
-        // SAFETY: `vm` is the live per-thread VM (we just took its address).
-        unsafe { ExitHandler::dispatch_on_before_exit(vm) };
+        ExitHandler::dispatch_on_before_exit(self);
         let mut dispatch = false;
         loop {
             while self.is_event_loop_alive() {
@@ -1260,8 +1316,7 @@ impl VirtualMachine {
             }
 
             if dispatch {
-                // SAFETY: `vm` is the live per-thread VM.
-                unsafe { ExitHandler::dispatch_on_before_exit(vm) };
+                ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
 
                 if self.is_event_loop_alive() {
@@ -1300,9 +1355,7 @@ impl VirtualMachine {
             }
         }
 
-        let vm = std::ptr::from_mut::<VirtualMachine>(self);
-        // SAFETY: `vm` is the live per-thread VM (we just took its address).
-        unsafe { ExitHandler::dispatch_on_exit(vm) };
+        ExitHandler::dispatch_on_exit(self);
         self.is_shutting_down = true;
 
         // Make sure we run new cleanup hooks introduced by running cleanup
@@ -1606,6 +1659,16 @@ pub struct RuntimeHooks {
 /// so this is the single fully-populated instance; `aio::get_vm_ctx(.Js)` and
 /// the websocket-client adapters resolve to it. PORT NOTE: in Zig the
 /// `KeepAlive::ref(anytype)` accepted `*VirtualMachine` directly.
+/// Recover `&mut VirtualMachine` from the erased vtable `owner`. Private to
+/// this module — every caller is an `unsafe fn` slot in
+/// [`VM_EVENT_LOOP_CTX_VTABLE`] whose contract guarantees `owner` was erased
+/// from a live `*mut VirtualMachine` in [`VirtualMachine::event_loop_ctx`].
+#[inline(always)]
+fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
+    // SAFETY: vtable contract — `owner` is a live `*mut VirtualMachine`.
+    unsafe { &mut *owner.cast::<VirtualMachine>() }
+}
+
 pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::EventLoopCtxVTable {
     platform_event_loop: {
         // PORT NOTE: the vtable slot is typed `*mut bun_uws::Loop` (the uws
@@ -1613,17 +1676,16 @@ pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::Even
         // (= `uv_loop_t` on Windows). `uws_loop()` already returns the right
         // pointer on both platforms.
         unsafe fn f(owner: *mut ()) -> *mut bun_uws::Loop {
-            // SAFETY: `owner` is `*mut VirtualMachine` (erased in `event_loop_ctx`).
-            unsafe { (*owner.cast::<VirtualMachine>()).uws_loop() }
+            vm_from_owner(owner).uws_loop()
         }
         f
     },
     file_polls: {
         unsafe fn f(owner: *mut ()) -> *mut bun_aio::Store {
-            // SAFETY: `owner` is `*mut VirtualMachine`; `rare_data()` lazily
-            // boxes the per-VM `RareData` and `file_polls_` lazily boxes the
-            // hive store (spec RareData.zig:441 `vm.rareData().filePolls(vm)`).
-            let rare = unsafe { (*owner.cast::<VirtualMachine>()).rare_data() };
+            // `rare_data()` lazily boxes the per-VM `RareData` and
+            // `file_polls_` lazily boxes the hive store (spec RareData.zig:441
+            // `vm.rareData().filePolls(vm)`).
+            let rare = vm_from_owner(owner).rare_data();
             &raw mut **rare
                 .file_polls_
                 .get_or_insert_with(|| Box::new(bun_aio::Store::init()))
@@ -1632,9 +1694,8 @@ pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::Even
     },
     alloc_file_poll: {
         unsafe fn f(owner: *mut ()) -> *mut bun_aio::FilePoll {
-            // SAFETY: `owner` is `*mut VirtualMachine`. Spec
-            // posix_event_loop.zig:716 `vm.filePolls().get()`.
-            let rare = unsafe { (*owner.cast::<VirtualMachine>()).rare_data() };
+            // Spec posix_event_loop.zig:716 `vm.filePolls().get()`.
+            let rare = vm_from_owner(owner).rare_data();
             rare.file_polls_
                 .get_or_insert_with(|| Box::new(bun_aio::Store::init()))
                 .get()
@@ -1644,43 +1705,36 @@ pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::Even
     is_js: { unsafe fn f(_: *mut ()) -> bool { true } f },
     increment_pending_unref_counter: {
         unsafe fn f(owner: *mut ()) {
-            // SAFETY: `owner` is `*mut VirtualMachine`.
-            unsafe { (*owner.cast::<VirtualMachine>()).pending_unref_counter += 1 };
+            vm_from_owner(owner).pending_unref_counter += 1;
         }
         f
     },
     ref_concurrently: {
         unsafe fn f(owner: *mut ()) {
-            // SAFETY: `owner` is `*mut VirtualMachine`; `event_loop()` is the
-            // self-pointer into the sibling `regular_event_loop` field. Spec
-            // posix_event_loop.zig:100 `vm.event_loop.refConcurrently()`.
-            unsafe { (*(*owner.cast::<VirtualMachine>()).event_loop()).ref_concurrently() };
+            // `event_loop()` is the self-pointer into the sibling
+            // `regular_event_loop` field. Spec posix_event_loop.zig:100
+            // `vm.event_loop.refConcurrently()`.
+            vm_from_owner(owner).event_loop_mut().ref_concurrently();
         }
         f
     },
     unref_concurrently: {
         unsafe fn f(owner: *mut ()) {
-            // SAFETY: see `ref_concurrently`.
-            unsafe { (*(*owner.cast::<VirtualMachine>()).event_loop()).unref_concurrently() };
+            vm_from_owner(owner).event_loop_mut().unref_concurrently();
         }
         f
     },
     after_event_loop_callback: {
         unsafe fn f(owner: *mut ()) -> Option<bun_aio::OpaqueCallback> {
-            // SAFETY: `owner` is `*mut VirtualMachine`; field read only.
-            unsafe { (*owner.cast::<VirtualMachine>()).after_event_loop_callback }
+            vm_from_owner(owner).after_event_loop_callback
         }
         f
     },
     set_after_event_loop_callback: {
         unsafe fn f(owner: *mut (), cb: Option<bun_aio::OpaqueCallback>, ctx: *mut c_void) {
-            // SAFETY: `owner` is `*mut VirtualMachine`; both fields are plain
-            // data (no Drop) so per-field raw write is sound.
-            let vm = owner.cast::<VirtualMachine>();
-            unsafe {
-                (*vm).after_event_loop_callback = cb;
-                (*vm).after_event_loop_callback_ctx = (!ctx.is_null()).then_some(ctx);
-            }
+            let vm = vm_from_owner(owner);
+            vm.after_event_loop_callback = cb;
+            vm.after_event_loop_callback_ctx = (!ctx.is_null()).then_some(ctx);
         }
         f
     },
@@ -2092,10 +2146,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
 
         let hooks = runtime_hooks();
-        if let Some(hooks) = hooks {
-            // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.ensure_debugger)(self, true) };
-        }
+        let _ = self.ensure_debugger(true);
 
         if !self.main_is_html_entrypoint {
             if let Some(hooks) = hooks {
@@ -2205,19 +2256,19 @@ impl VirtualMachine {
             loop {
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-                if unsafe { (*p).status() } != crate::js_promise::Status::Pending {
+                if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
                     break;
                 }
                 self.event_loop_mut().tick();
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: see above.
-                if unsafe { (*p).status() } == crate::js_promise::Status::Pending {
+                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
                     self.auto_tick();
                 }
             }
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
-            if unsafe { (*promise).status() } == crate::js_promise::Status::Rejected {
+            if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
@@ -2887,6 +2938,8 @@ impl VirtualMachine {
             return v;
         }
         // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
+        // SAFETY: `transpiler.env` is a process-lifetime allocation; `&mut`
+        // needed for the cached-result write inside.
         unsafe { (*self.transpiler.env).get_tls_reject_unauthorized() }
     }
 
@@ -2913,7 +2966,7 @@ impl VirtualMachine {
             };
         }
         // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
-        if let Some(verbose_fetch) = unsafe { (*self.transpiler.env).get(b"BUN_CONFIG_VERBOSE_FETCH") } {
+        if let Some(verbose_fetch) = self.env_loader().get(b"BUN_CONFIG_VERBOSE_FETCH") {
             if verbose_fetch == b"true" || verbose_fetch == b"1" {
                 self.default_verbose_fetch = Some(1);
                 return L::Headers;
@@ -3039,6 +3092,15 @@ impl VirtualMachine {
         let drain = |this: &mut Self| {
             let _ = this.event_loop_mut().drain_microtasks();
         };
+        // Safe wrapper over the `Bun__handleUnhandledRejection` FFI call
+        // (returns whether a JS handler claimed it). Captures `global` /
+        // `reason` / `promise` so the six branches below don't each need their
+        // own `unsafe` block.
+        let handle_unhandled = || -> bool {
+            // SAFETY: extern "C" FFI; `global` valid for VM lifetime;
+            // `reason`/`promise` are live JSC heap cells.
+            unsafe { Bun__handleUnhandledRejection(global, reason, promise) > 0 }
+        };
         let emit_warning = |this: &mut Self| {
             let r = jsc::from_js_host_call_generic(global_object, || unsafe {
                 Bun__promises__emitUnhandledRejectionWarning(global, reason, promise)
@@ -3055,25 +3117,24 @@ impl VirtualMachine {
 
         match self.unhandled_rejections_mode() {
             Mode::Bun => {
-                // SAFETY: extern "C" FFI; `global` valid for VM lifetime.
-                if unsafe { Bun__handleUnhandledRejection(global, reason, promise) } > 0 {
+                if handle_unhandled() {
                     return;
                 }
                 // continue to default handler
             }
             Mode::None => {
-                let _ = unsafe { Bun__handleUnhandledRejection(global, reason, promise) };
+                let _ = handle_unhandled();
                 drain(self);
                 return; // ignore the unhandled rejection
             }
             Mode::Warn => {
-                let _ = unsafe { Bun__handleUnhandledRejection(global, reason, promise) };
+                let _ = handle_unhandled();
                 emit_warning(self);
                 drain(self);
                 return;
             }
             Mode::WarnWithErrorCode => {
-                let handled = unsafe { Bun__handleUnhandledRejection(global, reason, promise) } > 0;
+                let handled = handle_unhandled();
                 if !handled {
                     emit_warning(self);
                     self.exit_handler.exit_code = 1;
@@ -3091,7 +3152,7 @@ impl VirtualMachine {
                     reason,
                 );
                 let _ = self.uncaught_exception(global_object, wrapped, true);
-                let handled = unsafe { Bun__handleUnhandledRejection(global, reason, promise) } > 0;
+                let handled = handle_unhandled();
                 if !handled {
                     emit_warning(self);
                 }
@@ -3099,7 +3160,7 @@ impl VirtualMachine {
                 return;
             }
             Mode::Throw => {
-                if unsafe { Bun__handleUnhandledRejection(global, reason, promise) } > 0 {
+                if handle_unhandled() {
                     drain(self);
                     return;
                 }
@@ -3135,7 +3196,7 @@ impl VirtualMachine {
             }
         };
         // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
-        match unsafe { (*promise).status() } {
+        match crate::JSPromise::status_ptr(promise) {
             crate::js_promise::Status::Pending => {
                 self.add_main_to_watcher_if_needed();
                 return;
@@ -3209,7 +3270,7 @@ impl VirtualMachine {
     pub fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if let Some(p) = self.pending_internal_promise {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-            match unsafe { (*p).status() } {
+            match crate::JSPromise::status_ptr(p) {
                 crate::js_promise::Status::Pending => {
                     self.hot_reload_deferred = true;
                     return;
@@ -3813,8 +3874,7 @@ impl VirtualMachine {
         let mut query_string: &[u8] = b"";
         let normalized_specifier =
             normalize_specifier_for_resolution(specifier, &mut query_string);
-        // SAFETY: `transpiler.fs` is set during init and live for VM lifetime.
-        let top_level_dir = unsafe { (*self.transpiler.fs).top_level_dir };
+        let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
@@ -4196,6 +4256,8 @@ impl VirtualMachine {
         allow_side_effects: bool,
     ) {
         // SAFETY: `self.global` is valid for VM lifetime.
+        // SAFETY: `global` is set during init; lifetime detached so `&mut self`
+        // can be reborrowed for `print_errorlike_object` below.
         let mut formatter = crate::console_object::Formatter::new(unsafe { &*self.global });
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
@@ -4241,10 +4303,7 @@ impl VirtualMachine {
 
         self.event_loop_mut().ensure_waker();
 
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook contract.
-            unsafe { (hooks.ensure_debugger)(self, true) };
-        }
+        let _ = self.ensure_debugger(true);
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
@@ -4281,9 +4340,7 @@ impl VirtualMachine {
         self.event_loop_mut().perform_gc();
         self.event_loop_mut()
             .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
-        if let Some(worker) = self.worker {
-            // SAFETY: `worker` is a heap `WebWorker` owned by C++ (BACKREF).
-            let worker = unsafe { &*worker.cast::<crate::web_worker::WebWorker>() };
+        if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
                 return Err(bun_core::err!("WorkerTerminated"));
             }
@@ -4304,19 +4361,19 @@ impl VirtualMachine {
             loop {
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-                if unsafe { (*p).status() } != crate::js_promise::Status::Pending {
+                if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
                     break;
                 }
                 self.event_loop_mut().tick();
                 let Some(p) = self.pending_internal_promise else { break };
                 // SAFETY: see above.
-                if unsafe { (*p).status() } == crate::js_promise::Status::Pending {
+                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
                     self.auto_tick();
                 }
             }
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
-            if unsafe { (*promise).status() } == crate::js_promise::Status::Rejected {
+            if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
@@ -4578,8 +4635,7 @@ impl VirtualMachine {
                         Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
-                    // SAFETY: `transpiler.fs` set during init; live for VM lifetime.
-                    let top_level_dir = unsafe { (*self.transpiler.fs).top_level_dir };
+                    let top_level_dir = self.top_level_dir();
                     let _ =
                         zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
                 }
@@ -4721,8 +4777,7 @@ impl VirtualMachine {
         // SAFETY: per-thread VM.
         let vm = VirtualMachine::get().as_mut();
         let origin = if vm.is_from_devserver { Some(&vm.origin) } else { None };
-        // SAFETY: `transpiler.fs` set during `init` and live for VM lifetime.
-        let dir = unsafe { (*vm.transpiler.fs).top_level_dir };
+        let dir = vm.top_level_dir();
 
         for frame in stack {
             let file_slice = frame.source_url.to_utf8();
@@ -4911,8 +4966,7 @@ impl VirtualMachine {
                     let _ = (self.enable_source_code_preview, self.source_code_slice);
                 }
                 if let Some(list) = self.exception_list.take() {
-                    // SAFETY: `transpiler.fs` set during init; live for VM lifetime.
-                    let top_level_dir = unsafe { (*this.transpiler.fs).top_level_dir };
+                    let top_level_dir = this.top_level_dir();
                     // Zig `catch unreachable` — OOM-only.
                     bun_core::handle_oom(
                         exception.add_to_error_list(list, top_level_dir, Some(&this.origin)),
@@ -5201,6 +5255,8 @@ impl VirtualMachine {
     ) -> Result<(), bun_core::Error> {
         // SAFETY: `global` valid for VM lifetime.
         let mut default_formatter =
+            // SAFETY: `global` set during init; lifetime detached so
+            // `&mut self` can be reborrowed below.
             crate::console_object::Formatter::new(unsafe { &*self.global });
         let f = formatter.unwrap_or(&mut default_formatter);
         self.print_error_instance_body(
@@ -5437,7 +5493,8 @@ impl VirtualMachine {
         // `&mut self` recursion (`print_error_instance_js`) and is passed to
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
         // borrow. Raw-deref the field so the borrow is on the pointee instead.
-        // SAFETY: `self.global` valid for VM lifetime.
+        // SAFETY: `self.global` valid for VM lifetime; lifetime detached so
+        // `&mut self` can be reborrowed for `print_error_instance_js` below.
         let global_ref = unsafe { &*self.global };
         // PORT NOTE: Zig keeps a borrowed `[]const u8` whose backing
         // `bun.String` is `defer .deref()`-ed; hold the owning `bun_string::String`
@@ -6120,19 +6177,20 @@ impl VirtualMachine {
                 ),
                 has_disconnect_called: false,
             });
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
+            // SAFETY: `instance` was just boxed by `IPCInstance::new`; sole
+            // owner here. Bind `&mut` once for the setup writes below.
+            let inst = unsafe { &mut *instance };
+            inst.data.owner = instance as *mut dyn crate::ipc::SendQueueOwner;
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
-            // SAFETY: `group` is the live per-VM SocketGroup; `instance.data`
-            // is the freshly-initialized SendQueue stored inline in `*instance`.
+            // SAFETY: `group` is the live per-VM SocketGroup.
             let socket = unsafe {
                 crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
                     &mut *group,
                     uws::SocketKind::SpawnIpc,
                     fd,
-                    core::ptr::addr_of_mut!((*instance).data),
+                    core::ptr::addr_of_mut!(inst.data),
                     true,
                 )
             };
@@ -6144,8 +6202,7 @@ impl VirtualMachine {
             };
             socket.set_timeout(0);
 
-            // SAFETY: `instance` is the live boxed IPCInstance.
-            unsafe { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
+            inst.data.socket = crate::ipc::SocketUnion::Open(socket);
 
             instance
         };
@@ -6163,13 +6220,14 @@ impl VirtualMachine {
                 ),
                 has_disconnect_called: false,
             });
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
+            // SAFETY: `instance` was just boxed by `IPCInstance::new`; sole
+            // owner here. Bind `&mut` once for the setup writes below.
+            let inst = unsafe { &mut *instance };
+            inst.data.owner = instance as *mut dyn crate::ipc::SendQueueOwner;
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
-            // SAFETY: `instance` is the live boxed IPCInstance.
-            if let Err(_) = unsafe { (*instance).data.windows_configure_client(fd) } {
+            if let Err(_) = inst.data.windows_configure_client(fd) {
                 IPCInstance::deinit(instance);
                 self.ipc = None;
                 bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
@@ -6180,7 +6238,7 @@ impl VirtualMachine {
         };
 
         // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { (*instance).data.write_version_packet(self.global()) };
+        unsafe { &mut *instance }.data.write_version_packet(self.global());
 
         Some(instance)
     }

@@ -342,6 +342,33 @@ impl LinkerGraph {
         runtime_function(self.ast.items_named_exports(), name)
     }
 
+    /// Shared-ref view of a symbol that is known to exist (the `Ref` was
+    /// produced by the symbol table itself). Centralizes the `unsafe` deref of
+    /// `symbol::Map::get`'s raw pointer; callers previously open-coded
+    /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
+    #[inline]
+    pub fn symbol(&self, ref_: Ref) -> &Symbol {
+        // SAFETY: `Map::get` returns a pointer into the live, never-reallocated
+        // `symbols_for_source` SoA buffers; valid for the `&self` borrow, and
+        // the `Ref` came from this table so the lookup is infallible.
+        unsafe { &*self.symbols.get(ref_).expect("infallible: ref in symbol table") }
+    }
+
+    /// Mutable view of a symbol that is known to exist. Takes `&self` (not
+    /// `&mut self`): the linker mutates per-symbol fields (`link`,
+    /// `namespace_alias`, `import_item_status`, ...) through shared
+    /// `&LinkerContext`/`&LinkerGraph` paths while iterating disjoint graph
+    /// columns, mirroring the prior open-coded `unsafe { &mut *get(r) }`.
+    /// Callers must ensure no other live borrow aliases the same symbol slot.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
+        // SAFETY: see `symbol`. The mutated slot is disjoint from any other
+        // borrow held at the call site (graph columns / parse-graph sources /
+        // log live in separate allocations).
+        unsafe { &mut *self.symbols.get(ref_).expect("infallible: ref in symbol table") }
+    }
+
     pub fn generate_new_symbol(
         &mut self,
         source_index: u32,

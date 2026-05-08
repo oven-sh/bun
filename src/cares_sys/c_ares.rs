@@ -1014,8 +1014,12 @@ unsafe extern "C" {
     pub fn ares_dup(dest: *mut Channel, src: *mut Channel) -> c_int;
     pub fn ares_destroy(channel: *mut Channel);
     // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
-    // (UnsafeCell + PhantomData<*mut u8>), so c-ares' internal mutation and any
-    // stored-callback re-entry is gated by the borrow checker, not the FFI call.
+    // (UnsafeCell + PhantomData<*mut u8>). Note: `ares_cancel`/`ares_process_fd`
+    // synchronously invoke stored completion callbacks which may re-enter the
+    // resolver and re-derive a `&mut Channel` from a raw pointer; this is sound
+    // because `Channel` is a ZST (`UnsafeCell<[u8;0]>`), so `&mut Channel`
+    // claims zero bytes and overlapping `&mut` do not conflict under Stacked
+    // Borrows — the borrow checker does NOT gate the raw-pointer callbacks.
     pub safe fn ares_cancel(channel: &mut Channel);
     pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
     pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);

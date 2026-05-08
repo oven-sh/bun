@@ -642,6 +642,9 @@ impl RareData {
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
+        // PORT NOTE: Zig spec is `ENGINE_new().?` (panic on null). We cache the
+        // raw result; `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here
+        // degrades to "no engine" rather than crashing.
         *self.boring_ssl_engine.get_or_insert_with(|| boring::ENGINE_new())
     }
 

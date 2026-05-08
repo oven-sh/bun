@@ -23,10 +23,12 @@ impl Default for Options {
 unsafe extern "C" {
     // Allocation: scalar arg, no preconditions; returns null on OOM.
     pub safe fn libdeflate_alloc_compressor(compression_level: c_int) -> *mut Compressor;
-    // `Option<&Options>` is FFI-compatible with `*const Options` (null-pointer optimization).
-    pub safe fn libdeflate_alloc_compressor_ex(
+    // NOT safe: `Options` carries caller-supplied `malloc_func`/`free_func`
+    // callbacks that libdeflate will invoke and write through. A bogus callback
+    // (constructible in 100% safe code) would cause UB inside the C library.
+    pub fn libdeflate_alloc_compressor_ex(
         compression_level: c_int,
-        options: Option<&Options>,
+        options: *const Options,
     ) -> *mut Compressor;
     pub fn libdeflate_deflate_compress(
         compressor: *mut Compressor,
@@ -35,10 +37,11 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    // Bound queries: opaque handle by reference + scalar — no caller-supplied
-    // raw buffers, so safe to call given a valid `&mut Compressor`.
+    // Bound queries: opaque handle + scalar. The C API documents `compressor`
+    // may be NULL (returns a library-wide upper bound), so expose it as
+    // `Option<&mut Compressor>` (NPO-ABI-compatible with `*mut Compressor`).
     pub safe fn libdeflate_deflate_compress_bound(
-        compressor: &mut Compressor,
+        compressor: Option<&mut Compressor>,
         in_nbytes: usize,
     ) -> usize;
     pub fn libdeflate_zlib_compress(
@@ -48,7 +51,7 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub safe fn libdeflate_zlib_compress_bound(compressor: &mut Compressor, in_nbytes: usize) -> usize;
+    pub safe fn libdeflate_zlib_compress_bound(compressor: Option<&mut Compressor>, in_nbytes: usize) -> usize;
     pub fn libdeflate_gzip_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
@@ -56,7 +59,7 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub safe fn libdeflate_gzip_compress_bound(compressor: &mut Compressor, in_nbytes: usize) -> usize;
+    pub safe fn libdeflate_gzip_compress_bound(compressor: Option<&mut Compressor>, in_nbytes: usize) -> usize;
     pub fn libdeflate_free_compressor(compressor: *mut Compressor);
 }
 
@@ -89,8 +92,17 @@ impl Compressor {
         libdeflate_alloc_compressor(compression_level)
     }
 
-    pub fn alloc_ex(compression_level: c_int, options: Option<&Options>) -> *mut Compressor {
-        libdeflate_alloc_compressor_ex(compression_level, options)
+    /// # Safety
+    /// `options.malloc_func`/`free_func` (if set) must be sound allocator
+    /// callbacks — libdeflate writes through their return values.
+    pub unsafe fn alloc_ex(compression_level: c_int, options: Option<&Options>) -> *mut Compressor {
+        // SAFETY: caller upholds the callback contract; `Option<&T>` → `*const T` is NPO-compatible.
+        unsafe {
+            libdeflate_alloc_compressor_ex(
+                compression_level,
+                options.map_or(core::ptr::null(), |o| o),
+            )
+        }
     }
 
     /// Frees the compressor. `this` must not be used afterward.
@@ -121,9 +133,9 @@ impl Compressor {
 
     pub fn max_bytes_needed(&mut self, input: &[u8], encoding: Encoding) -> usize {
         match encoding {
-            Encoding::Deflate => libdeflate_deflate_compress_bound(self, input.len()),
-            Encoding::Zlib => libdeflate_zlib_compress_bound(self, input.len()),
-            Encoding::Gzip => libdeflate_gzip_compress_bound(self, input.len()),
+            Encoding::Deflate => libdeflate_deflate_compress_bound(Some(self), input.len()),
+            Encoding::Zlib => libdeflate_zlib_compress_bound(Some(self), input.len()),
+            Encoding::Gzip => libdeflate_gzip_compress_bound(Some(self), input.len()),
         }
     }
 
@@ -281,7 +293,8 @@ pub enum Encoding {
 
 unsafe extern "C" {
     pub safe fn libdeflate_alloc_decompressor() -> *mut Decompressor;
-    pub safe fn libdeflate_alloc_decompressor_ex(options: Option<&Options>) -> *mut Decompressor;
+    // NOT safe: `Options` carries allocator callbacks (see `libdeflate_alloc_compressor_ex`).
+    pub fn libdeflate_alloc_decompressor_ex(options: *const Options) -> *mut Decompressor;
 }
 
 pub const LIBDEFLATE_SUCCESS: c_uint = 0;

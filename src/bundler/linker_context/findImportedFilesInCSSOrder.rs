@@ -109,9 +109,8 @@ pub fn find_imported_files_in_css_order<'a>(
 
     struct Visitor<'a> {
         arena: &'a Arena,
-        // PORT NOTE: `BundledAst.css` SoA column is type-erased to `*mut c_void`
-        // (js_parser cannot depend on bun_css); cast back at the deref site.
-        css_asts: &'a [Option<*mut core::ffi::c_void>],
+        // `BundledAst.css` SoA column — `Option<*mut BundlerStyleSheet>`.
+        css_asts: &'a [Option<*mut BundlerStyleSheet>],
         all_import_records: &'a [Vec<ImportRecord>],
 
         // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
@@ -166,11 +165,11 @@ pub fn find_imported_files_in_css_order<'a>(
 
             self.visited.push(source_index);
 
-            // SAFETY: pointer comes from `Box<BundlerStyleSheet>` in `BundledAst.css`
-            // (type-erased to `*mut c_void`); valid for the link step.
+            // SAFETY: pointer comes from arena-allocated `BundlerStyleSheet` in
+            // `BundledAst.css`; valid for the link step.
             let Some(repr): Option<&BundlerStyleSheet> = self.css_asts
                 [source_index.get() as usize]
-                .map(|p| unsafe { &*p.cast::<BundlerStyleSheet>() })
+                .map(|p| unsafe { &*p })
             else {
                 return; // Sanity check
             };
@@ -321,8 +320,7 @@ pub fn find_imported_files_in_css_order<'a>(
     }
 
     // PORT NOTE: reshaped for borrowck — read MultiArrayList columns before constructing visitor.
-    // `items_css()` is type-erased (`*mut c_void`); cast back to `BundlerStyleSheet` at use sites.
-    let css_asts_slice: &[Option<*mut core::ffi::c_void>] = this.graph.ast.items_css();
+    let css_asts_slice: &[Option<*mut BundlerStyleSheet>] = this.graph.ast.items_css();
     let all_import_records_slice: &[Vec<ImportRecord>] = this.graph.ast.items_import_records();
     let arena = this.graph.arena();
 
@@ -356,7 +354,7 @@ pub fn find_imported_files_in_css_order<'a>(
     let mut wip_order =
         handle_oom(Vec::<CssImportOrder>::init_capacity(order.len() as usize));
 
-    let css_asts: &[Option<*mut core::ffi::c_void>] = unsafe {
+    let css_asts: &[Option<*mut BundlerStyleSheet>] = unsafe {
         core::slice::from_raw_parts(css_asts_slice.as_ptr(), css_asts_slice.len())
     };
 

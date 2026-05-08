@@ -63,11 +63,11 @@ pub fn generate_code_for_lazy_export(
     // across `&mut *this.log` below (split borrow).
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
     #[cfg(feature = "css")]
-    let all_css_asts: &[Option<*mut core::ffi::c_void>] = this.graph.ast.items_css();
+    let all_css_asts: &[Option<*mut BundlerStyleSheet>] = this.graph.ast.items_css();
     #[cfg(feature = "css")]
-    // SAFETY: `css` SoA column is type-erased `*mut BundlerStyleSheet` (BundledAst.rs).
+    // SAFETY: `css` SoA column stores arena-owned `*mut BundlerStyleSheet`.
     let maybe_css_ast: Option<&BundlerStyleSheet> =
-        all_css_asts[source_index as usize].map(|p| unsafe { &*p.cast::<BundlerStyleSheet>() });
+        all_css_asts[source_index as usize].map(|p| unsafe { &*p });
 
     // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
     if unsafe { (&*parts).len() } < 1 {
@@ -134,8 +134,8 @@ pub fn generate_code_for_lazy_export(
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
                 parts: &'a mut Vec<E::TemplatePart>,
                 all_import_records: &'a [Vec<ImportRecord>],
-                // Type-erased `*mut BundlerStyleSheet` SoA column (BundledAst.rs).
-                all_css_asts: &'a [Option<*mut core::ffi::c_void>],
+                // `*mut BundlerStyleSheet` SoA column (BundledAst.rs).
+                all_css_asts: &'a [Option<*mut BundlerStyleSheet>],
                 all_sources: &'a [Source],
                 all_symbols: &'a [SymbolList],
                 source_index: IndexInt,
@@ -237,10 +237,10 @@ pub fn generate_code_for_lazy_export(
                                     let import_record =
                                         import_records.at(*import_record_idx as usize);
                                     if import_record.source_index.is_valid() {
-                                        // SAFETY: type-erased `*mut BundlerStyleSheet` (BundledAst.rs SoA column).
+                                        // SAFETY: arena-owned `*mut BundlerStyleSheet` (BundledAst.rs SoA column).
                                         let Some(other_file) =
                                             self.all_css_asts[import_record.source_index.get() as usize]
-                                                .map(|p| unsafe { &*p.cast::<BundlerStyleSheet>() })
+                                                .map(|p| unsafe { &*p })
                                         else {
                                             bun_core::handle_oom(self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],

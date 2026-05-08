@@ -132,9 +132,8 @@ pub fn scan_imports_and_exports(
     let wrapper_refs: *mut [Ref] = col_ptr!(ast, wrapper_ref, Ref);
     let parts_list: *mut [PartList] = col_ptr!(ast, parts, PartList);
     // Zig: `[]?*bun.css.BundlerStyleSheet` — element is a *mutable* nullable
-    // pointer. Mirror the actual storage type (`BundledAst.css: Option<*mut c_void>`)
-    // so downstream casts to `*mut BundlerStyleSheet` don't go through `&T`.
-    type CssCol = Option<*mut core::ffi::c_void>;
+    // pointer (matches `BundledAst.css: Option<*mut BundlerStyleSheet>`).
+    use bun_js_parser::ast::bundled_ast::CssCol;
     let css_asts: *mut [CssCol] = col_ptr!(ast, css, CssCol);
 
     let input_files: *mut [Source] = col_ptr!(input, source, Source);
@@ -1385,7 +1384,7 @@ mod __css_validation {
 
     // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
     // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
-    type CssCol = Option<*mut core::ffi::c_void>;
+    use bun_js_parser::ast::bundled_ast::CssCol;
 
     /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
     /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
@@ -1410,12 +1409,12 @@ mod __css_validation {
         input_files: *mut [Source],
     ) {
         // SAFETY: column ptrs valid per `col_ptr!` invariants; `css_asts[id]`
-        // checked Some by caller. The `*mut c_void` in the column was produced
-        // from a `Box<BundlerStyleSheet>` raw pointer (see `BundledAst.css`).
-        // We only *read* the AST here, and `other_css_ast` below may alias the
+        // checked Some by caller. The pointer in the column was produced from
+        // an arena-allocated `BundlerStyleSheet` (see `BundledAst.css`). We
+        // only *read* the AST here, and `other_css_ast` below may alias the
         // same allocation when a file composes from itself, so bind as shared.
         let css_ast: &BundlerStyleSheet =
-            unsafe { &*(col_ref!(css_asts)[id].unwrap() as *const BundlerStyleSheet) };
+            unsafe { &*col_ref!(css_asts)[id].unwrap() };
         let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].slice();
 
         // Validate cross-file "composes: ... from" named imports
@@ -1429,12 +1428,12 @@ mod __css_validation {
                 if !record.source_index.is_valid() {
                     continue;
                 }
-                // SAFETY: column ptr valid per `col_ptr!` invariants; element is a
-                // `Box<BundlerStyleSheet>` raw ptr (see `BundledAst.css`). Read-only;
+                // SAFETY: column ptr valid per `col_ptr!` invariants; element is an
+                // arena `*mut BundlerStyleSheet` (see `BundledAst.css`). Read-only;
                 // may alias `css_ast` if a file composes from itself (both `&`).
                 let Some(other_css_ast) =
                     col_ref!(css_asts)[record.source_index.get() as usize].map(|p| unsafe {
-                        &*p.cast::<BundlerStyleSheet>()
+                        &*p
                     })
                 else {
                     continue;
@@ -1621,13 +1620,13 @@ mod __css_validation {
                                     continue;
                                 }
                                 // SAFETY: see `col_ptr!` invariants on `all_css_asts`;
-                                // `*mut c_void` is a leaked `Box<BundlerStyleSheet>`.
+                                // element is an arena `*mut BundlerStyleSheet`.
                                 // Read-only deref — recursion may revisit the same
                                 // allocation as `ast`, so bind shared.
                                 let Some(other_ast) = col_ref!(self.all_css_asts)
                                     [record.source_index.get() as usize]
                                     .map(|p| unsafe {
-                                        &*p.cast::<BundlerStyleSheet>()
+                                        &*p
                                     })
                                 else {
                                     continue;

@@ -9,9 +9,14 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
 
-// TODO(b2-blocked): bun_css::BundlerStyleSheet — bun_css crate not a dep of js_parser (would back-edge T4→T4).
-// Use opaque ptr; downstream bundler casts.
-type BundlerStyleSheet = core::ffi::c_void;
+// `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
+// dep is acyclic. Typing the `css` field concretely removes the `*mut c_void`
+// erasure that forced every bundler/linker call site to `.cast()` back.
+pub use bun_css::BundlerStyleSheet;
+
+/// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
+/// call sites can name the column without re-spelling the pointer shape.
+pub type CssCol = Option<*mut BundlerStyleSheet>;
 
 use bun_logger as logger;
 use bun_options_types::import_record;

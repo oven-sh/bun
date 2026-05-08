@@ -360,9 +360,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     // references.
                     let ast: &mut BundlerStyleSheet = 'ast: {
                         // SAFETY: asts[idx] is Some for source_index entries (invariant of imports_in_chunk_in_order).
-                        // The column element type is `Option<*mut c_void>`; cast to the real stylesheet type.
                         let original_stylesheet: &BundlerStyleSheet = unsafe {
-                            &*asts[source_index.get() as usize].expect("css ast present").cast::<BundlerStyleSheet>()
+                            &*asts[source_index.get() as usize].expect("css ast present")
                         };
                         // SAFETY: Zig `original_stylesheet.*` — bitwise shallow copy of the
                         // stylesheet header. All interior allocations are arena-owned and never

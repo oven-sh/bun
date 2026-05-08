@@ -276,6 +276,14 @@ export const sigactionLayout: () =>
       sizeof: number;
     } = $newZigFunction("sys.zig", "TestingAPIs.sigactionLayout", 0);
 
+export const termiosLayout: () =>
+  | undefined
+  | {
+      installed: { cc_lnext: number; echo: boolean };
+      readback: { cc_lnext: number; echo: boolean };
+      sizeof: number;
+    } = $newZigFunction("sys.zig", "TestingAPIs.termiosLayout", 0);
+
 export const stringsInternals = {
   /**
    * Calls `bun.strings.toUTF16AllocForReal(allocator, bytes, false, true)` and

@@ -157,15 +157,12 @@ where
         let fallbacks = self.color.get_fallbacks(arena, targets);
         // PERF(port): was arena bulk-free (fallbacks.deinit) — profile in Phase B
         let mut out: SmallList<Self, 2> = SmallList::init_capacity(fallbacks.len());
-        out.set_len(fallbacks.len());
-
-        debug_assert_eq!(fallbacks.slice().len(), out.slice_mut().len());
-        for (color, o) in fallbacks.slice().iter().zip(out.slice_mut().iter_mut()) {
-            *o = Self {
+        for color in fallbacks.slice() {
+            out.append_assume_capacity(Self {
                 color: color.clone(),
                 width: self.width.deep_clone(arena),
                 style: self.style.deep_clone(arena),
-            };
+            });
         }
 
         out

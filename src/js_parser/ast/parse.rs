@@ -1463,8 +1463,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
-                                // SAFETY: arena-owned for 'a → *const [u8]
-                                let bytes = str_.slice8();
+                                let bytes = str_.string(p.arena).expect("OOM");
                                 let value: *const [u8] = std::ptr::from_ref::<[u8]>(bytes);
                                 stmt = Stmt::alloc(S::Directive { value }, stmt.loc);
                             }

@@ -2652,7 +2652,35 @@ export function parseAnnotations(content) {
       annotations.push(annotation);
     }
 
-    // Zig compiler error
+    // rustc / cargo error
+    // e.g. error[E0308]: mismatched types
+    //        --> src/http/lib.rs:553:5
+    // The header line carries the level + (optional) code; the location
+    // arrives on the following `-->` line. Read until the blank line that
+    // separates rustc diagnostics so the annotation body contains the
+    // rendered span + help/note lines.
+    const rustHeader = line.match(/^(error|warning)(\[[A-Z0-9]+\])?: (.+)$/);
+    if (rustHeader && !/\b(generated|emitted)\b/.test(line) /* "warning: 3 warnings emitted" */) {
+      const [, level, code, title] = rustHeader;
+      const { match: locMatch } = readUntil(/-->\s+(.+?):(\d+):(\d+)/, 3);
+      // Swallow the diagnostic body up to the blank-line separator (rustc
+      // always emits one between diagnostics in the human format; cap at 30
+      // for `--message-format=short` which doesn't).
+      readUntil(/^$/, 30);
+      const annotation = parseAnnotation({
+        source: "rustc",
+        level,
+        filename: locMatch?.[1],
+        line: locMatch?.[2],
+        column: locMatch?.[3],
+        title: code ? `${code} ${title}` : title,
+        content: bufferedLines,
+      });
+      annotations.push(annotation);
+      continue;
+    }
+
+    // Zig compiler error (kept for the .zig spec files that remain checked in)
     // e.g. /path/to/build.zig:8:19: error: ...
     const zigMessage = line.match(/^(.+\.zig):(\d+):(\d+): (error|warning): (.+)$/);
     if (zigMessage) {

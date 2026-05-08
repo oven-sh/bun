@@ -89,7 +89,7 @@ bunx tsc --noEmit -p scripts/build/tsconfig.json   # typecheck
 grep "yourtarget\|yourrule" build/debug/build.ninja  # inspect generated output
 ninja -C build/debug -t query <target>      # why does <target> rebuild?
 ninja -C build/debug -t deps <target>       # what headers does foo.o depend on?
-ninja -C build/debug <target>               # build a specific target (e.g. tinycc, bun-zig.o)
+ninja -C build/debug <target>               # build a specific target (e.g. tinycc, bun-rust)
 ```
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.
@@ -109,7 +109,7 @@ The generated `build.ninja` is the ground truth. If an edge isn't doing what you
 
 Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `bun bd test --asan=off foo.ts` sends `--asan=off` to bun-debug. Use `--` when a runtime flag collides with a build flag: `bun bd -- --target=browser script.ts`.
 
-**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-zig.o`. List all: `ninja -C build/debug -t targets`.
+**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-rust`. List all: `ninja -C build/debug -t targets`.
 
 ## Common tasks
 
@@ -155,7 +155,7 @@ For `mode: "full"` (the normal case):
 
 1. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects lib paths, include dirs, outputs.
 2. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
-3. **Zig** — `emitZig(n, cfg, {...})` emits zig download + `zig build obj` → `bun-zig.o`.
+3. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_bin` → `libbun_rust.a`.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
@@ -163,7 +163,7 @@ For `mode: "full"` (the normal case):
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
 9. **Smoke test** — `<exe> --revision` catches load-time failures.
 
-Split CI modes: `zig-only` (zstd+codegen+zig), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link).
+Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link).
 
 ### Phase 3 — Execute
 
@@ -186,8 +186,9 @@ Split CI modes: `zig-only` (zstd+codegen+zig), `cpp-only` (deps+codegen+compile 
 | `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                   |
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                 |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                           |
-| `zig.ts`                       | Zig download + `zig build`, `emitZig()`                                            |
-| `bun.ts`                       | `emitBun()` — assembles deps+codegen+zig+compile+link                              |
+| `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix            |
+| `zig.ts`                       | (legacy spec reference — not on the default build path)                            |
+| `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                             |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                |
 | `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                          |
 | `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                       |

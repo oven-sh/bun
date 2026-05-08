@@ -22,6 +22,7 @@ const A = typeof args === "string" ? JSON.parse(args) : args || {};
 const MAX_ROUNDS = A.max_rounds || 10;
 const MAX_FIX = A.max_fix || 30; // parallel fix-agents per round
 const TEST_GLOB = A.test_glob || "test/js/bun/**/*.test.{js,ts}";
+const FILE_CAP = A.file_cap || 50; // hard cap on files surveyed per round
 const DIAG = "/tmp/mega-diag";
 
 const BUILD_S = {
@@ -125,7 +126,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const survey = await agent(
     `Survey ALL tests in /root/bun-5. Round ${round}.
 
-\`mkdir -p ${DIAG}\`. List: \`ls ${TEST_GLOB} | sort > ${GDIAG}/all.txt\` (~340 files).
+\`mkdir -p ${DIAG} ${GDIAG}\`. **Cap at ${FILE_CAP} files**: \`ls ${TEST_GLOB} | sort | shuf --random-source=/dev/zero | head -${FILE_CAP} > ${GDIAG}/all.txt\` (deterministic shuf for cache stability).
 
 **Baseline (cache, only first time):** \`cat ${GDIAG}/all.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); test -f ${DIAG}/\$slug.baseline || USE_SYSTEM_BUN=1 timeout 15 bun test {} > ${DIAG}/\$slug.baseline 2>&1'\`
 

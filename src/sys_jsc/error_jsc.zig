@@ -108,7 +108,7 @@ pub const TestingAPIs = struct {
         );
         const fd = posix_openpt(bun.O.RDWR | bun.O.NOCTTY);
         if (fd < 0) return .js_undefined;
-        defer _ = std.c.close(fd);
+        defer bun.FD.fromNative(fd).close();
 
         var t = bun.sys.tcgetattr(fd) catch return .js_undefined;
         // Pick a cc index near the top of bionic's 19-slot array so a size

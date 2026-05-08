@@ -47,6 +47,14 @@ pub unsafe fn rename_symbols_in_chunk(
 ) -> Result<ChunkRenamer, bun_core::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
+    // Derive the `symbols` pointer from the raw `*mut LinkerContext` *before*
+    // shadowing `c` with a shared ref, so it carries the caller's mutable
+    // provenance (needed by `slice_mut()` inside `make_symbols_view`). Under
+    // SB a `&raw const` through `&LinkerContext` would be SharedRO and the
+    // later `*mut` cast would launder it.
+    // SAFETY: `c` is live for the call (fn safety doc).
+    let symbols: *mut symbol::Map = unsafe { &raw mut (*c).graph.symbols };
+
     // Shared-ref view for all read-only access (`c.options`,
     // `c.graph.stable_source_indices`, `c.graph.{ast,meta}.split_raw()`).
     // Multiple worker threads may hold `&LinkerContext` simultaneously; the
@@ -86,8 +94,8 @@ pub unsafe fn rename_symbols_in_chunk(
     // owned by the link step). No growth is performed on the view. Raw `*mut`
     // (not `&mut`) so concurrent renamer tasks do not assert exclusive access
     // over the shared `symbol::Map` — `compute_reserved_names_for_scope` and
-    // the renamer constructors only read it.
-    let symbols: *mut symbol::Map = &raw const c.graph.symbols as *mut symbol::Map;
+    // the renamer constructors only read it. (`symbols` itself is derived
+    // above from the raw `*mut LinkerContext` to keep mutable provenance.)
     let make_symbols_view = |symbols: *mut symbol::Map| -> symbol::Map {
         // SAFETY: `symbols` is the live `c.graph.symbols`; we read its inner
         // slice header to build a non-owning shallow `Vec` view.

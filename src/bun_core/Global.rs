@@ -20,20 +20,30 @@ use crate::ZStr;
 // `FileSystem::init` writes it once via `set_top_level_dir`.
 // ──────────────────────────────────────────────────────────────────────────
 
-static TOP_LEVEL_DIR: parking_lot::RwLock<&'static [u8]> =
-    parking_lot::RwLock::new(b".");
+// Stored as a raw (ptr,len) pair so the read path is two Relaxed atomic loads
+// (matches the pre-refactor single-AtomicPtr cost). Writes happen only during
+// init (`FileSystem::init` FORCE re-init then the explicit setter), serially
+// and before reader threads spawn, so a torn (ptr,len) read is not possible in
+// practice; len is written last / read first as a belt-and-suspenders fence.
+static TOP_LEVEL_DIR_PTR: AtomicPtr<u8> = AtomicPtr::new(b".".as_ptr() as *mut u8);
+static TOP_LEVEL_DIR_LEN: AtomicUsize = AtomicUsize::new(1);
 
 /// Record the top-level directory (interned `'static` slice). Idempotent;
 /// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
 #[inline]
 pub fn set_top_level_dir(dir: &'static [u8]) {
-    *TOP_LEVEL_DIR.write() = dir;
+    TOP_LEVEL_DIR_PTR.store(dir.as_ptr() as *mut u8, Ordering::Release);
+    TOP_LEVEL_DIR_LEN.store(dir.len(), Ordering::Release);
 }
 
 /// Top-level directory recorded at startup (defaults to `"."`).
 #[inline]
 pub fn top_level_dir() -> &'static [u8] {
-    *TOP_LEVEL_DIR.read()
+    let len = TOP_LEVEL_DIR_LEN.load(Ordering::Acquire);
+    let ptr = TOP_LEVEL_DIR_PTR.load(Ordering::Relaxed);
+    // SAFETY: (ptr,len) were stored from a `&'static [u8]`; init-time writes
+    // are serial (see module note), so the pair is coherent.
+    unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
 /// Set by `bun_crash_handler::init()` once it has installed its segfault
@@ -135,9 +145,13 @@ impl Default for DumpStackTraceOptions {
 pub type DumpOptions = DumpStackTraceOptions;
 
 /// Zig: `crash_handler.dumpStackTrace`. T0 fallback prints raw return
-/// addresses (no symbolication). Crash-report paths that need llvm-symbolizer
-/// / pdb-addr2line call `bun_crash_handler::dump_stack_trace` directly — that
-/// crate sits above us so it owns the rich impl without a hook.
+/// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
+/// and `std::backtrace` cannot resolve a stored address list). This is a
+/// deliberate debug-UX downgrade vs the Zig spec for the *stored*-trace path
+/// (ref_count / allocation_scope leak reports); the *current*-stack path below
+/// uses `std::backtrace` and stays symbolicated. Crash-report paths that need
+/// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
+/// directly — that crate sits above us so it owns the rich impl without a hook.
 pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     crate::output::flush();
     let n = trace.index.min(trace.instruction_addresses.len()).min(limits.frame_count);
@@ -153,7 +167,14 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
 /// truncating the rendered frame lines; the rich llvm-symbolizer path lives in
 /// `bun_crash_handler` for crash reports specifically.
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
-    let _ = first_address; // std::backtrace can't seed from an address.
+    // `std::backtrace` cannot seed capture from a return address, so the Zig
+    // behaviour of skipping frames above `first_address` (e.g. ref_count
+    // passing `return_address()` so the dump starts at the user's ref/deref
+    // site) is not reproduced here — the dump helper + a couple of internal
+    // frames appear as leading noise. Debug-only; the parameter is kept so the
+    // signature matches `bun_crash_handler::dump_current_stack_trace` (which
+    // *does* honour it via `StoredTrace::capture`).
+    let _ = first_address;
     crate::output::flush();
     let bt = std::backtrace::Backtrace::force_capture();
     let s = format!("{bt}");
@@ -533,15 +554,18 @@ pub fn add_exit_callback(function: ExitFn) {
     Bun__atexit(function);
 }
 
-/// `bun.jsc.Node.FSEvents.closeAndWait()` slot. Spec `Global.zig:220` calls
-/// it BEFORE `runExitCallbacks()`, so it gets a dedicated slot rather than
-/// interleaving with `Bun__atexit` registrations. `fs_events::watch` writes
-/// this the first time an FSEvents loop is created; storage lives here so the
-/// dependency is forward (runtime → core).
-static FS_EVENTS_CLOSE: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+/// Callbacks `Bun__onExit` runs BEFORE `run_exit_callbacks()`. Spec
+/// `Global.zig:220` hard-codes `bun.jsc.Node.FSEvents.closeAndWait()` ahead of
+/// `runExitCallbacks()`; that crate sits above us, so it pushes its callback
+/// here at first-loop creation (data moved down — same `Vec<ExitFn>` shape as
+/// `ON_EXIT_CALLBACKS`, no fn-ptr type-erase).
+static PRE_EXIT_CALLBACKS: parking_lot::Mutex<Vec<ExitFn>> = parking_lot::Mutex::new(Vec::new());
 
-pub fn set_fs_events_close(f: ExitFn) {
-    FS_EVENTS_CLOSE.store(f as *mut (), Ordering::Relaxed);
+pub fn add_pre_exit_callback(function: ExitFn) {
+    let mut cbs = PRE_EXIT_CALLBACKS.lock();
+    if !cbs.iter().any(|f| *f as usize == function as usize) {
+        cbs.push(function);
+    }
 }
 
 pub fn run_exit_callbacks() {
@@ -738,12 +762,12 @@ pub static Bun__userAgent: SyncCStr =
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {
     // `bun.jsc.Node.FSEvents.closeAndWait()` (spec `Global.zig:220`) — runs
-    // BEFORE the generic exit-callback list, matching Zig ordering. The slot
-    // is filled by `bun_runtime::node::fs_events::watch` on first loop create.
-    let f = FS_EVENTS_CLOSE.load(Ordering::Relaxed);
-    if !f.is_null() {
-        // SAFETY: stored via `set_fs_events_close` from an `ExitFn`.
-        unsafe { core::mem::transmute::<*mut (), ExitFn>(f)() };
+    // BEFORE the generic exit-callback list, matching Zig ordering. fs_events
+    // pushes into `PRE_EXIT_CALLBACKS` on first loop create.
+    let pre: Vec<ExitFn> = core::mem::take(&mut *PRE_EXIT_CALLBACKS.lock());
+    for callback in &pre {
+        // SAFETY: callbacks are `unsafe extern "C" fn()`; called once at exit.
+        unsafe { callback() };
     }
     run_exit_callbacks();
     Output::flush();

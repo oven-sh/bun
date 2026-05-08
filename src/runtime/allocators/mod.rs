@@ -18,5 +18,7 @@ pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
 pub fn register_safety_vtables() {
     bun_safety::register_alloc_vtable(allocation_scope::std_vtable());
     bun_safety::register_alloc_vtable(linux_mem_fd_allocator::std_vtable());
-    bun_safety::register_alloc_vtable(mimalloc_arena::std_vtable());
+    for vt in mimalloc_arena::std_vtables() {
+        bun_safety::register_alloc_vtable(vt);
+    }
 }

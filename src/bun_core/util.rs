@@ -3217,8 +3217,11 @@ pub mod perf {
     fn is_enabled_init() -> bool {
         #[cfg(target_os = "linux")]
         let on = crate::env_var::feature_flag::BUN_TRACE.get().unwrap_or(false) && Linux::is_supported();
-        // macOS: os_signpost requires `bun_sys::darwin::OSLog` (above T0); the
-        // `bun_perf` crate owns that path. T0 reports disabled on macOS.
+        // macOS: os_signpost requires `bun_sys::darwin::OSLog` (above T0).
+        // **`bun_perf` is the canonical entry point** (it drives both the
+        // ftrace and signpost backends via `PerfEvent`); `bun_core::perf` is
+        // the T0 subset for low-tier callers that cannot reach `bun_perf` and
+        // only need Linux ftrace. T0 therefore reports disabled on macOS.
         #[cfg(not(target_os = "linux"))]
         let on = false;
         IS_ENABLED.store(if on { ENABLED } else { DISABLED }, Ordering::Relaxed);

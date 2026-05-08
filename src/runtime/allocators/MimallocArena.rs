@@ -408,7 +408,11 @@ pub fn is_instance(alloc: ZigAllocator) -> bool {
 }
 
 /// For `bun_safety::register_alloc_vtable` (see `super::register_safety_vtables`).
-#[inline] pub(super) fn std_vtable() -> &'static AllocatorVTable { &HEAP_ALLOCATOR_VTABLE }
+/// Both vtables are exposed so `has_ptr` recognises the global-mimalloc form
+/// (`is_instance` above checks both).
+#[inline] pub(super) fn std_vtables() -> [&'static AllocatorVTable; 2] {
+    [&HEAP_ALLOCATOR_VTABLE, &GLOBAL_MIMALLOC_VTABLE]
+}
 
 /// VTable for owned heaps created with `mi_heap_new`.
 static HEAP_ALLOCATOR_VTABLE: AllocatorVTable = AllocatorVTable {

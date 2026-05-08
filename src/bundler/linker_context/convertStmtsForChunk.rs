@@ -344,8 +344,7 @@ pub fn convert_stmts_for_chunk(
                     if should_strip_exports {
                         // Turn this statement into "import {foo} from 'path'"
                         // TODO: is this allocation necessary?
-                        // SAFETY: arena-owned slice; valid for the duration of this AST.
-                        let src_items: &[js_ast::ClauseItem] = unsafe { &*s.items };
+                        let src_items: &[js_ast::ClauseItem] = s.items.slice();
                         let items = bump
                             .alloc_slice_fill_default::<js_ast::ClauseItem>(src_items.len());
                         for (src, dest) in src_items.iter().zip(items.iter_mut()) {

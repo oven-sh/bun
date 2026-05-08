@@ -542,15 +542,15 @@ impl SideEffects {
                 decls.push(G::Decl { binding, value: None });
             }
             ast::binding::Data::BArray(array) => {
-                // SAFETY: arena-owned; pointer is non-null while the AST is live.
-                let items = unsafe { &*(*array).items };
+                // SAFETY: `array` is an arena-owned `*mut B::Array` valid while the AST is live.
+                let items = unsafe { &*array }.items.slice();
                 for item in items {
                     Self::find_identifiers(item.binding, decls);
                 }
             }
             ast::binding::Data::BObject(obj) => {
-                // SAFETY: arena-owned; pointer is non-null while the AST is live.
-                let properties = unsafe { &*(*obj).properties };
+                // SAFETY: `obj` is an arena-owned `*mut B::Object` valid while the AST is live.
+                let properties = unsafe { &*obj }.properties.slice();
                 for item in properties {
                     Self::find_identifiers(item.value, decls);
                 }

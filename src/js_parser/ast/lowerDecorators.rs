@@ -1155,8 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         {
             let mut has_any_private = false;
             let mut has_any_decorated = false;
-            // SAFETY: same arena slice as above.
-            let cprops: &[Property] = unsafe { &*class.properties };
+            let cprops: &[Property] = class.properties.slice();
             for cprop in cprops.iter() {
                 if cprop.kind == PropertyKind::ClassStaticBlock {
                     continue;
@@ -1953,8 +1952,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EFunction(f) => &mut **f,
                     _ => unreachable!(),
                 };
-                // SAFETY: arena-owned.
-                let body_slice: &[Stmt] = unsafe { &*func.func.body.stmts };
+                let body_slice: &[Stmt] = func.func.body.stmts.slice();
                 let mut body_stmts = BumpVec::<Stmt>::with_capacity_in(
                     body_slice.len() + constructor_inject_stmts.len(),
                     bump,

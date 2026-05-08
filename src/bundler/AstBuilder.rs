@@ -435,16 +435,14 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             B::BArray(array) => {
                 // SAFETY: arena-owned `*mut B::Array` (Phase-A raw ARENA ptr).
                 let array = unsafe { &*array };
-                // SAFETY: arena-owned slice.
-                for prop in unsafe { &*array.items } {
+                for prop in array.items.slice() {
                     self.record_exported_binding(prop.binding);
                 }
             }
             B::BObject(obj) => {
                 // SAFETY: arena-owned `*mut B::Object` (Phase-A raw ARENA ptr).
                 let obj = unsafe { &*obj };
-                // SAFETY: arena-owned slice.
-                for prop in unsafe { &*obj.properties } {
+                for prop in obj.properties.slice() {
                     self.record_exported_binding(prop.value);
                 }
             }

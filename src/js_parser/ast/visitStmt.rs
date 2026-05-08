@@ -173,8 +173,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.record_declared_symbol(default_name.ref_.expect("infallible: ref bound"));
         }
 
-        // SAFETY: arena-owned slice; valid for 'a.
-        let items = unsafe { &*data.items };
+        let items = data.items.slice();
         if !items.is_empty() {
             for item in items.iter() {
                 p.record_declared_symbol(item.name.ref_.expect("infallible: ref bound"));
@@ -1463,8 +1462,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if p.options.features.minify_syntax {
             // // trim empty statements
-            // SAFETY: arena-owned slice valid for 'a.
-            let block_stmts: &[Stmt] = unsafe { &*data.stmts };
+            let block_stmts: &[Stmt] = data.stmts.slice();
             if block_stmts.is_empty() {
                 stmts.push(Stmt { data: Stmt::empty().data, loc: stmt.loc });
                 return Ok(());
@@ -1765,14 +1763,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     );
 
                     let length = if let StmtData::SBlock(b) = data.body.data {
-                        unsafe { &*b.stmts }.len()
+                        b.stmts.len()
                     } else {
                         1
                     };
                     let mut statements: BumpVec<'a, Stmt> = BumpVec::with_capacity_in(1 + length, p.arena);
                     statements.push(first);
                     if let StmtData::SBlock(b) = data.body.data {
-                        statements.extend_from_slice(unsafe { &*b.stmts });
+                        statements.extend_from_slice(b.stmts.slice());
                     } else {
                         statements.push(data.body);
                     }
@@ -2094,8 +2092,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // ahead of time before visiting any statements inside the namespace
         // because we may end up visiting the uses before the declarations.
         // We need to convert the uses into property accesses on the namespace.
-        // SAFETY: arena-owned slice valid for 'a.
-        let child_stmts: &[Stmt] = unsafe { &*data.stmts };
+        let child_stmts: &[Stmt] = data.stmts.slice();
         for child_stmt in child_stmts.iter() {
             if let StmtData::SLocal(local) = child_stmt.data {
                 if local.is_export {

@@ -1145,9 +1145,8 @@ impl DeclaredSymbol {
         f: impl Fn(&mut C, Ref),
     ) {
         let entries = decls.entries.slice();
-        // SAFETY: column 1 is `bool`, column 0 is `Ref` per the `MultiArrayElement` impl above.
-        let is_top_level: &[bool] = unsafe { entries.items::<"is_top_level", bool>() };
-        let refs: &[Ref] = unsafe { entries.items::<"ref_", Ref>() };
+        let is_top_level: &[bool] = entries.items::<"is_top_level", bool>();
+        let refs: &[Ref] = entries.items::<"ref_", Ref>();
 
         // TODO: SIMD
         debug_assert_eq!(is_top_level.len(), refs.len());

@@ -86,7 +86,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {
-                let part_stmts: &[Stmt] = unsafe { &*part.stmts };
+                let part_stmts: &[Stmt] = part.stmts.slice();
                 if let Err(err) =
                     convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
                 {
@@ -277,7 +277,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         && unsafe { (*parts)[namespace_export_part_index as usize].is_live }
     {
         let ns_part_stmts: &[Stmt] =
-            unsafe { &*(*parts)[namespace_export_part_index as usize].stmts };
+            unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,
@@ -339,7 +339,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         }
 
         let mut single_stmts_list: [Stmt; 1] = [Stmt::empty()];
-        let mut part_stmts: &[Stmt] = unsafe { &*part.stmts };
+        let mut part_stmts: &[Stmt] = part.stmts.slice();
 
         // If this could be a JSON or TOML file that exports a top-level object literal, go
         // over the non-default top-level properties that ended up being imported

@@ -355,8 +355,7 @@ impl<'a> LinkerContext<'a> {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
         // performance hit to include the part only to discover it's unnecessary later.
-        // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer; valid for the link step.
-        let stmts: &[Stmt] = unsafe { &*part.stmts };
+        let stmts: &[Stmt] = part.stmts.slice();
         if stmts.len() == 1 {
             if let Some(s_import) = stmts[0].data.s_import() {
                 let record = self.graph.ast.items_import_records()[source_index as usize].at(s_import.import_record_index as usize);
@@ -2385,9 +2384,7 @@ impl<'a> LinkerContext<'a> {
         #[cfg(debug_assertions)]
         {
             let parse_graph = self.parse_graph();
-            // SAFETY: `part.stmts` is `*mut [Stmt]` (arena slice); reborrow for the
-            // debug print only.
-            let stmts: &[Stmt] = unsafe { &*part.stmts };
+            let stmts: &[Stmt] = part.stmts.slice();
             debug_tree_shake!(
                 "markPartLiveForTreeShaking({}): {}:{} = {}, {}",
                 source_index,

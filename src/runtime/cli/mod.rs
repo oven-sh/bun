@@ -876,8 +876,12 @@ pub mod command {
                     return run_command::RunCommand::exec_eval(ctx);
                 }
 
-                // TODO(b2-blocked): `.lockb` extension → `bun ./bun.lockb`
-                // (Lockfile::Printer); see cli_body.rs.
+                if tag == Tag::AutoCommand && ctx.args.entry_points.len() == 1 {
+                    let extension = bun_paths::extension(&ctx.args.entry_points[0]);
+                    if extension == b".lockb" {
+                        return bun_lockb(ctx);
+                    }
+                }
 
                 if !ctx.positionals.is_empty() {
                     let cfg = run_command::ExecCfg {
@@ -1258,6 +1262,36 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
 
         CreateCommand::exec(&ctx, example_tag, template)
+    }
+
+    /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).
+    fn bun_lockb(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        use bun_install::lockfile::{Printer, PrinterFormat};
+
+        for arg in bun::argv() {
+            if arg == b"--hash" {
+                let mut path_buf = bun_paths::PathBuffer::uninit();
+                let entry = &ctx.args.entry_points[0];
+                path_buf[..entry.len()].copy_from_slice(entry);
+                path_buf[entry.len()] = 0;
+                // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
+                let lockfile_path =
+                    unsafe { bun_core::ZStr::from_raw(path_buf.as_ptr(), entry.len()) };
+                let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        Output::err(err, "failed to open lockfile", ());
+                        Global::crash();
+                    }
+                };
+                return super::package_manager_command::PackageManagerCommand::print_hash(ctx, file);
+            }
+        }
+
+        // SAFETY: `ctx.log` is set by `create_context_data` to the process-static
+        // `Cli::LOG_` and outlives this call.
+        let log = unsafe { &mut *ctx.log };
+        Printer::print(log, &ctx.args.entry_points[0], PrinterFormat::Yarn)
     }
 
     fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {

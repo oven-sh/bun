@@ -174,8 +174,33 @@ impl TimerObjectInternals {
     /// Spec TimerObjectInternals.zig `run` — invoke the JS callback via the
     /// C++ `Bun__JSTimeout__call` thunk (which handles exceptions internally).
     /// Returns `true` if an exception was thrown.
-    fn run(
-        &mut self,
+    ///
+    /// PORT NOTE (noalias re-entrancy): takes `*mut Self`, NOT `&mut self`.
+    /// The JS callback can re-enter `cancel()`/`do_refresh()` on this same
+    /// object via a fresh `&mut Self` derived from the JS wrapper's `m_ptr`.
+    /// With `&mut self` here, LLVM's `noalias` lets it keep `self.flags` in a
+    /// register across the FFI call, so `set_in_callback(false)`'s RMW
+    /// clobbers the `has_cleared_timer` bit that `cancel()` set — the interval
+    /// re-fires forever. Zig's `*TimerObjectInternals` has no aliasing
+    /// guarantee; mirror that with a raw pointer.
+    ///
+    /// # Safety
+    /// `this` points at a live `TimerObjectInternals` embedded in its parent
+    /// container, pinned for the duration of the call by the caller's `ref_()`.
+    ///
+    /// `#[inline(never)]` is load-bearing: both callers (`fire`,
+    /// `run_immediate_task`) still take `&mut self` (LLVM `noalias`). If this
+    /// body is inlined, `this` becomes a local derived from the caller's
+    /// `noalias` `self` and never escapes into `Bun__JSTimeout__call`, so LLVM
+    /// can prove `*self` is untouched across the FFI call and dead-stores the
+    /// post-call `flags` reload — the same clobber the `*mut Self` was meant
+    /// to prevent. Forcing a call boundary makes `this` escape, so the
+    /// optimizer must assume the callee (and anything it calls) may mutate
+    /// `*this`. The proper fix is to convert `fire`/`run_immediate_task` to
+    /// `*mut Self` as well; until then this attribute is the soundness gate.
+    #[inline(never)]
+    unsafe fn run(
+        this: *mut Self,
         global_this: *mut JSGlobalObject,
         timer: JSValue,
         callback: JSValue,
@@ -196,11 +221,20 @@ impl TimerObjectInternals {
         }
 
         // Bun__JSTimeout__call handles exceptions.
-        self.flags.set_in_callback(true);
+        // SAFETY: `this` live per fn contract. Raw-place RMW so the
+        // `in_callback` write reaches memory before JS runs (re-entrant
+        // `_destroyed` getter reads it via a different pointer).
+        unsafe { (*this).flags.set_in_callback(true) };
+        eprintln!("[run pre] this={:p} flags={:#x}", this, unsafe { core::ptr::read(core::ptr::addr_of!((*this).flags)) }.epoch() );
+        unsafe { eprintln!("[run pre raw] flags_u32={:#010x}", *(core::ptr::addr_of!((*this).flags) as *const u32)) };
         let result = Bun__JSTimeout__call(global, timer, callback, arguments);
+        unsafe { eprintln!("[run post raw] flags_u32={:#010x}", *(core::ptr::addr_of!((*this).flags) as *const u32)) };
         // PORT NOTE: reshaped for borrowck — Zig `defer this.flags.in_callback = false`
         // moved to tail; no early returns between set and clear.
-        self.flags.set_in_callback(false);
+        // SAFETY: `this` live per fn contract. Raw-place RMW: must reload
+        // `flags` from memory — re-entrant `cancel()` may have set
+        // `has_cleared_timer` / cleared `is_keeping_event_loop_alive`.
+        unsafe { (*this).flags.set_in_callback(false) };
 
         // PORT NOTE: Zig `defer { if isInspectorEnabled() didDispatch }` —
         // moved to tail (no early returns above).
@@ -347,7 +381,10 @@ impl TimerObjectInternals {
         let exception_thrown = {
             self.ref_();
             let async_id = self.async_id();
-            let result = self.run(global_this, timer, callback, arguments, async_id, vm);
+            // SAFETY: `self` is the live `internals` per fn precondition;
+            // `ref_()` above pins the parent across re-entrancy. See `run()`
+            // PORT NOTE on why this must go through `*mut Self`.
+            let result = unsafe { Self::run(self, global_this, timer, callback, arguments, async_id, vm) };
             // PORT NOTE: Zig `defer { if state == .FIRED deref(); deref(); }` —
             // moved to tail of this block; `self.run` has no early return so
             // ordering is preserved. After the second `deref()` `self` may be
@@ -476,14 +513,20 @@ impl TimerObjectInternals {
             // block. Every path through the labelled-block + `is_timer_done`
             // tail reaches it (no `return` between here and the deref).
 
-            let _ = self.run(
-                global_this,
-                this_object,
-                callback,
-                arguments,
-                async_id.async_id(),
-                vm,
-            );
+            // SAFETY: `self` is the live `internals` per fn precondition;
+            // `ref_()` above pins the parent across re-entrancy. See `run()`
+            // PORT NOTE on why this must go through `*mut Self`.
+            let _ = unsafe {
+                Self::run(
+                    self,
+                    global_this,
+                    this_object,
+                    callback,
+                    arguments,
+                    async_id.async_id(),
+                    vm,
+                )
+            };
 
             match kind {
                 KindBig::SetTimeout | KindBig::SetInterval => {
@@ -872,6 +915,7 @@ impl TimerObjectInternals {
     /// Spec TimerObjectInternals.zig `getDestroyed` — getter for `_destroyed`
     /// on JS Timeout and Immediate objects.
     pub fn get_destroyed(&self) -> bool {
+        eprintln!("[get_destroyed] self={:p} flags_u32={:#010x}", self as *const _, unsafe { *(core::ptr::addr_of!(self.flags) as *const u32) });
         if self.flags.has_cleared_timer() {
             return true;
         }

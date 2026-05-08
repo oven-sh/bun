@@ -659,16 +659,18 @@ impl Encoding {
                 Ok(jsc::zig_string::ZigString::init(&buf[..encoded]).to_js(global_object))
             }
             Self::Hex => {
-                let mut buf = vec![0u8; size * 4];
-                use std::io::Write;
-                let mut cursor: &mut [u8] = &mut buf[..];
-                // TODO(port): Zig "{x}" on a byte slice prints lowercase hex per byte.
-                for b in input {
-                    write!(cursor, "{:02x}", b).expect("unreachable");
+                // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
+                // The byte-by-byte `write!` formatting machinery is pathologically
+                // slow in debug builds, so encode via LUT directly into the
+                // destination JS string buffer.
+                const CHARSET: &[u8; 16] = b"0123456789abcdef";
+                let (mut encoded, bytes) =
+                    bun_str::String::create_uninitialized_latin1(input.len() * 2);
+                for (i, &b) in input.iter().enumerate() {
+                    bytes[i * 2] = CHARSET[(b >> 4) as usize];
+                    bytes[i * 2 + 1] = CHARSET[(b & 15) as usize];
                 }
-                let written = size * 4 - cursor.len();
-                let out = &buf[..written];
-                Ok(jsc::zig_string::ZigString::init(out).to_js(global_object))
+                encoded.transfer_to_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
@@ -716,15 +718,18 @@ impl Encoding {
                 Ok(jsc::zig_string::ZigString::init(&buf[..encoded]).to_js(global_object))
             }
             Self::Hex => {
-                let mut buf = vec![0u8; MAX_SIZE * 4];
-                use std::io::Write;
-                let mut cursor: &mut [u8] = &mut buf[..];
-                for b in input {
-                    write!(cursor, "{:02x}", b).expect("unreachable");
+                // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
+                // The byte-by-byte `write!` formatting machinery is pathologically
+                // slow in debug builds, so encode via LUT directly into the
+                // destination JS string buffer.
+                const CHARSET: &[u8; 16] = b"0123456789abcdef";
+                let (mut encoded, bytes) =
+                    bun_str::String::create_uninitialized_latin1(input.len() * 2);
+                for (i, &b) in input.iter().enumerate() {
+                    bytes[i * 2] = CHARSET[(b >> 4) as usize];
+                    bytes[i * 2 + 1] = CHARSET[(b & 15) as usize];
                 }
-                let written = MAX_SIZE * 4 - cursor.len();
-                let out = &buf[..written];
-                Ok(jsc::zig_string::ZigString::init(out).to_js(global_object))
+                encoded.transfer_to_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B

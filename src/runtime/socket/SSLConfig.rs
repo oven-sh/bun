@@ -318,8 +318,9 @@ fn strings_equal(a: &CString, b: &CString) -> bool {
 
 /// Port of `bun.freeSensitive` for owned NUL-terminated byte buffers.
 /// Zeros the allocation before freeing (defence-in-depth for keys/passphrases).
-// PORT NOTE: `bun_core::free_sensitive` only handles libc-malloc'd `*const c_char`;
-// our fields are Rust-allocated `CString`, so we zero in-place and let Drop free.
+// PORT NOTE: `bun_core::free_sensitive` takes a raw `*const c_char` and frees via
+// `mi_free`; for Rust-allocated `CString`/`Vec<u8>` we instead zero in-place and
+// let Drop return the allocation to the (mimalloc-backed) global allocator.
 fn free_sensitive_bytes(mut bytes: Vec<u8>) {
     let len = bytes.len();
     // SAFETY: `bytes` is exclusively owned; `as_mut_ptr()` is valid for

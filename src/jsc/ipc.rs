@@ -10,6 +10,7 @@ use crate as jsc;
 use crate::json_line_buffer::JSONLineBuffer;
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
+use crate::js_value::Protected;
 use bun_string::{strings, String as BunString};
 use bun_sys::FdExt;
 #[cfg(windows)]
@@ -669,19 +670,12 @@ pub type Socket = bun_uws::SocketHandler<false>;
 
 pub struct Handle {
     pub fd: Fd,
-    pub js: JSValue,
+    pub js: Protected,
 }
 
 impl Handle {
     pub fn init(fd: Fd, js: JSValue) -> Self {
-        js.protect();
-        Self { fd, js }
-    }
-}
-
-impl Drop for Handle {
-    fn drop(&mut self) {
-        self.js.unprotect();
+        Self { fd, js: js.protected() }
     }
 }
 
@@ -689,17 +683,16 @@ pub enum CallbackList {
     AckNack,
     None,
     /// js callable
-    Callback(JSValue),
+    Callback(Protected),
     /// js array
-    CallbackArray(JSValue),
+    CallbackArray(Protected),
 }
 
 impl CallbackList {
     /// protects the callback
     pub fn init(callback: JSValue) -> Self {
         if callback.is_callable() {
-            callback.protect();
-            return CallbackList::Callback(callback);
+            return CallbackList::Callback(callback.protected());
         }
         CallbackList::None
     }
@@ -709,22 +702,20 @@ impl CallbackList {
         match self {
             CallbackList::AckNack => unreachable!(),
             CallbackList::None => {
-                callback.protect();
-                *self = CallbackList::Callback(callback);
+                *self = CallbackList::Callback(callback.protected());
             }
             CallbackList::Callback(prev) => {
-                let prev = *prev;
+                let prev = prev.value();
                 let arr = JSValue::create_empty_array(global, 2)?;
-                arr.protect();
-                arr.put_index(global, 0, prev)?; // add the old callback to the array
-                arr.put_index(global, 1, callback)?; // add the new callback to the array
-                // `prev` is unprotected exactly once by `Drop` when the old
-                // variant is overwritten below — do NOT unprotect manually
-                // (would underflow JSC's protect count).
+                let arr = arr.protected();
+                arr.value().put_index(global, 0, prev)?; // add the old callback to the array
+                arr.value().put_index(global, 1, callback)?; // add the new callback to the array
+                // Overwriting the old `Callback(prev_guard)` drops it →
+                // single `unprotect()` on `prev` (now rooted via `arr`).
                 *self = CallbackList::CallbackArray(arr);
             }
             CallbackList::CallbackArray(arr) => {
-                arr.push(global, callback)?;
+                arr.value().push(global, callback)?;
             }
         }
         Ok(())
@@ -735,34 +726,20 @@ impl CallbackList {
             CallbackList::AckNack => {}
             CallbackList::None => {}
             CallbackList::Callback(cb) => {
-                JSValue::call_next_tick_1(*cb, global, JSValue::NULL)?;
-                // Assignment runs `Drop` on the old `Callback(cb)` variant,
-                // which performs the single `unprotect()`.
+                JSValue::call_next_tick_1(cb.value(), global, JSValue::NULL)?;
+                // Assignment drops the old `Callback(cb)` guard → unprotect.
                 *self = CallbackList::None;
             }
             CallbackList::CallbackArray(arr) => {
-                let mut iter = arr.array_iterator(global)?;
+                let mut iter = arr.value().array_iterator(global)?;
                 while let Some(item) = iter.next()? {
                     JSValue::call_next_tick_1(item, global, JSValue::NULL)?;
                 }
-                // Assignment runs `Drop` on the old `CallbackArray(arr)`
-                // variant, which performs the single `unprotect()`.
+                // Assignment drops the old `CallbackArray(arr)` guard → unprotect.
                 *self = CallbackList::None;
             }
         }
         Ok(())
-    }
-}
-
-impl Drop for CallbackList {
-    fn drop(&mut self) {
-        match self {
-            CallbackList::AckNack => {}
-            CallbackList::None => {}
-            CallbackList::Callback(cb) => cb.unprotect(),
-            CallbackList::CallbackArray(arr) => arr.unprotect(),
-        }
-        // Zig sets `self.* = .none` here; in Rust, Drop is terminal.
     }
 }
 

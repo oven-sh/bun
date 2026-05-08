@@ -11,8 +11,8 @@ use bun_collections::{ByteVecExt, VecExt, LinearFifo};
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_string::MutableString;
 use bun_jsc::{
-    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional, SystemError,
-    StringJsc as _, bun_string_jsc,
+    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, ProtectedJSValue,
+    StrongOptional, SystemError, StringJsc as _, bun_string_jsc,
 };
 // PORT NOTE: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -1043,15 +1043,17 @@ impl Drop for BufferOutputSink {
 // ──────────────────────── DocumentHandler ────────────────────────────────
 
 pub struct DocumentHandler {
-    // TODO(port): bare JSValue heap fields kept alive via JSC gcProtect — the
-    // Zig calls .protect()/.unprotect() so this is sound in practice, but
-    // PORTING.md flags bare JSValue on heap structs. Evaluate bun_jsc::Strong
-    // in Phase B (would let us drop the manual protect/unprotect calls).
-    pub on_doc_type_callback: Option<JSValue>,
-    pub on_comment_callback: Option<JSValue>,
-    pub on_text_callback: Option<JSValue>,
-    pub on_end_callback: Option<JSValue>,
-    pub this_object: JSValue,
+    // Callbacks are GC-rooted via `ProtectedJSValue` (RAII `JSValue::protect`/
+    // `unprotect` pair). `Option::None` ⇒ no protect was taken; `Some` drops
+    // its guard on field drop, so neither the errdefer-on-init nor a manual
+    // `Drop` impl is needed.
+    pub on_doc_type_callback: Option<ProtectedJSValue>,
+    pub on_comment_callback: Option<ProtectedJSValue>,
+    pub on_text_callback: Option<ProtectedJSValue>,
+    pub on_end_callback: Option<ProtectedJSValue>,
+    /// Protected only on the success path of `init()`; starts as
+    /// `adopt(ZERO)` (drop = unprotect(ZERO) = C++ no-op for non-cells).
+    pub this_object: ProtectedJSValue,
     pub global: GlobalRef, // JSC_BORROW
 }
 
@@ -1061,7 +1063,7 @@ impl DocumentHandler {
             this,
             value,
             |w| w.doctype = core::ptr::null_mut(),
-            |h| h.on_doc_type_callback,
+            |h| h.on_doc_type_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
     pub fn on_comment(this: *mut Self, value: *mut lolhtml::Comment) -> bool {
@@ -1069,7 +1071,7 @@ impl DocumentHandler {
             this,
             value,
             |w| w.comment = core::ptr::null_mut(),
-            |h| h.on_comment_callback,
+            |h| h.on_comment_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
     pub fn on_text(this: *mut Self, value: *mut lolhtml::TextChunk) -> bool {
@@ -1077,7 +1079,7 @@ impl DocumentHandler {
             this,
             value,
             |w| w.text_chunk = core::ptr::null_mut(),
-            |h| h.on_text_callback,
+            |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
     pub fn on_end(this: *mut Self, value: *mut lolhtml::DocEnd) -> bool {
@@ -1085,7 +1087,7 @@ impl DocumentHandler {
             this,
             value,
             |w| w.doc_end = core::ptr::null_mut(),
-            |h| h.on_end_callback,
+            |h| h.on_end_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
 
@@ -1094,73 +1096,48 @@ impl DocumentHandler {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        let handler = DocumentHandler {
+        // Each `Some(val.protected())` below pairs the gcProtect with the
+        // field's own drop, so an early `?` return unprotects exactly the
+        // callbacks taken so far — no scopeguard errdefer needed.
+        let mut handler = DocumentHandler {
             on_doc_type_callback: None,
             on_comment_callback: None,
             on_text_callback: None,
             on_end_callback: None,
-            this_object,
+            this_object: ProtectedJSValue::adopt(JSValue::ZERO),
             global: GlobalRef::from(global),
         };
-
-        // errdefer: unprotect any callbacks we've protected so far on failure.
-        // Guard the OWNED value (not &mut) so the success path returns it by
-        // value via ScopeGuard::into_inner — no zeroed placeholder needed.
-        let mut guard = scopeguard::guard(handler, |mut h| {
-            if let Some(cb) = h.on_doc_type_callback.take() { cb.unprotect(); }
-            if let Some(cb) = h.on_comment_callback.take() { cb.unprotect(); }
-            if let Some(cb) = h.on_text_callback.take() { cb.unprotect(); }
-            if let Some(cb) = h.on_end_callback.take() { cb.unprotect(); }
-            // this_object was never protected on the error path; neutralize so
-            // Drop's unprotect() is a no-op.
-            h.this_object = JSValue::ZERO;
-        });
 
         if let Some(val) = this_object.get(global, "doctype")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
                 return Err(global.throw_invalid_arguments(format_args!("doctype must be a function")));
             }
-            val.protect();
-            guard.on_doc_type_callback = Some(val);
+            handler.on_doc_type_callback = Some(val.protected());
         }
 
         if let Some(val) = this_object.get(global, "comments")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
                 return Err(global.throw_invalid_arguments(format_args!("comments must be a function")));
             }
-            val.protect();
-            guard.on_comment_callback = Some(val);
+            handler.on_comment_callback = Some(val.protected());
         }
 
         if let Some(val) = this_object.get(global, "text")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
                 return Err(global.throw_invalid_arguments(format_args!("text must be a function")));
             }
-            val.protect();
-            guard.on_text_callback = Some(val);
+            handler.on_text_callback = Some(val.protected());
         }
 
         if let Some(val) = this_object.get(global, "end")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
                 return Err(global.throw_invalid_arguments(format_args!("end must be a function")));
             }
-            val.protect();
-            guard.on_end_callback = Some(val);
+            handler.on_end_callback = Some(val.protected());
         }
 
-        let handler = scopeguard::ScopeGuard::into_inner(guard);
-        this_object.protect();
+        handler.this_object = this_object.protected();
         Ok(handler)
-    }
-}
-
-impl Drop for DocumentHandler {
-    fn drop(&mut self) {
-        if let Some(cb) = self.on_doc_type_callback.take() { cb.unprotect(); }
-        if let Some(cb) = self.on_comment_callback.take() { cb.unprotect(); }
-        if let Some(cb) = self.on_text_callback.take() { cb.unprotect(); }
-        if let Some(cb) = self.on_end_callback.take() { cb.unprotect(); }
-        self.this_object.unprotect();
     }
 }
 
@@ -1198,11 +1175,11 @@ pub trait HandlerLike {
 
 impl HandlerLike for DocumentHandler {
     fn global(&self) -> &JSGlobalObject { &self.global }
-    fn this_object(&self) -> JSValue { self.this_object }
+    fn this_object(&self) -> JSValue { self.this_object.value() }
 }
 impl HandlerLike for ElementHandler {
     fn global(&self) -> &JSGlobalObject { &self.global }
-    fn this_object(&self) -> JSValue { self.this_object }
+    fn this_object(&self) -> JSValue { self.this_object.value() }
 }
 impl HandlerLike for EndTagHandler {
     fn global(&self) -> &JSGlobalObject { &self.global }
@@ -1346,34 +1323,23 @@ where
 // ───────────────────────── ElementHandler ────────────────────────────────
 
 pub struct ElementHandler {
-    // TODO(port): bare JSValue heap fields kept alive via JSC gcProtect —
-    // evaluate bun_jsc::Strong in Phase B (see DocumentHandler note).
-    pub on_element_callback: Option<JSValue>,
-    pub on_comment_callback: Option<JSValue>,
-    pub on_text_callback: Option<JSValue>,
-    pub this_object: JSValue,
+    // See `DocumentHandler` — `ProtectedJSValue` fields self-unprotect on drop.
+    pub on_element_callback: Option<ProtectedJSValue>,
+    pub on_comment_callback: Option<ProtectedJSValue>,
+    pub on_text_callback: Option<ProtectedJSValue>,
+    pub this_object: ProtectedJSValue,
     pub global: GlobalRef, // JSC_BORROW
 }
 
 impl ElementHandler {
     pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<ElementHandler> {
-        let handler = ElementHandler {
+        let mut handler = ElementHandler {
             on_element_callback: None,
             on_comment_callback: None,
             on_text_callback: None,
-            this_object,
+            this_object: ProtectedJSValue::adopt(JSValue::ZERO),
             global: GlobalRef::from(global),
         };
-
-        // errdefer: guard the OWNED value so success returns it via into_inner.
-        let mut guard = scopeguard::guard(handler, |mut h| {
-            if let Some(cb) = h.on_comment_callback.take() { cb.unprotect(); }
-            if let Some(cb) = h.on_element_callback.take() { cb.unprotect(); }
-            if let Some(cb) = h.on_text_callback.take() { cb.unprotect(); }
-            // this_object was never protected on the error path; neutralize so
-            // Drop's unprotect() is a no-op.
-            h.this_object = JSValue::ZERO;
-        });
 
         if !this_object.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
@@ -1383,28 +1349,24 @@ impl ElementHandler {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
                 return Err(global.throw_invalid_arguments(format_args!("element must be a function")));
             }
-            val.protect();
-            guard.on_element_callback = Some(val);
+            handler.on_element_callback = Some(val.protected());
         }
 
         if let Some(val) = this_object.get(global, "comments")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
                 return Err(global.throw_invalid_arguments(format_args!("comments must be a function")));
             }
-            val.protect();
-            guard.on_comment_callback = Some(val);
+            handler.on_comment_callback = Some(val.protected());
         }
 
         if let Some(val) = this_object.get(global, "text")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
                 return Err(global.throw_invalid_arguments(format_args!("text must be a function")));
             }
-            val.protect();
-            guard.on_text_callback = Some(val);
+            handler.on_text_callback = Some(val.protected());
         }
 
-        let handler = scopeguard::ScopeGuard::into_inner(guard);
-        this_object.protect();
+        handler.this_object = this_object.protected();
         Ok(handler)
     }
 
@@ -1413,7 +1375,7 @@ impl ElementHandler {
             this,
             value,
             |_| {}, // Element uses HAS_INVALIDATE
-            |h| h.on_element_callback,
+            |h| h.on_element_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
 
@@ -1422,7 +1384,7 @@ impl ElementHandler {
             this,
             value,
             |w| w.comment = core::ptr::null_mut(),
-            |h| h.on_comment_callback,
+            |h| h.on_comment_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
 
@@ -1431,17 +1393,8 @@ impl ElementHandler {
             this,
             value,
             |w| w.text_chunk = core::ptr::null_mut(),
-            |h| h.on_text_callback,
+            |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
         )
-    }
-}
-
-impl Drop for ElementHandler {
-    fn drop(&mut self) {
-        if let Some(cb) = self.on_element_callback.take() { cb.unprotect(); }
-        if let Some(cb) = self.on_comment_callback.take() { cb.unprotect(); }
-        if let Some(cb) = self.on_text_callback.take() { cb.unprotect(); }
-        self.this_object.unprotect();
     }
 }
 

@@ -603,16 +603,10 @@ pub fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     }
 
     // PORT NOTE: protect/unprotect over a copied [JSValue; 5]; the borrow of
-    // `all_arguments` cannot escape into the scopeguard closure, so copy out.
-    let prot: [JSValue; 5] = core::array::from_fn(|i| all_arguments[i]);
-    for arg in prot.iter() {
-        arg.protect();
-    }
-    let _unprotect = scopeguard::guard(prot, |prot| {
-        for arg in prot.iter() {
-            arg.unprotect();
-        }
-    });
+    // `all_arguments` cannot escape into a guard closure, so copy out into an
+    // array of RAII guards.
+    let _prot: [bun_jsc::ProtectedJSValue; 5] =
+        core::array::from_fn(|i| all_arguments[i].protected());
 
     let arguments = &mut all_arguments[..];
     let value = arguments[0];

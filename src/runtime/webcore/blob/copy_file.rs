@@ -1719,7 +1719,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 
     // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `statbuf` for a successful uv_fs_copyfile.
     let size = unsafe { (*req).statbuf.size() };
-    this.on_complete(size);
+    this.on_complete(size as usize);
 }
 
 #[cfg(windows)]
@@ -1750,20 +1750,27 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-extern "C" fn on_mkdirp_complete_concurrent(
-    this: *mut CopyFileWindows,
-    err_: bun_sys::Result<()>,
-) {
+fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     bun_sys::syslog!("mkdirp complete");
-    // SAFETY: this is a valid CopyFileWindows from completion_ctx
-    let this = unsafe { &mut *this };
+    // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
+    // by `mkdirp` above; sole owner on this concurrent path.
+    let this = unsafe { &mut *ctx.cast::<CopyFileWindows>() };
     debug_assert!(this.err.is_none());
     this.err = match err_ {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
+    // PORT NOTE: `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
+    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
+    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
+        // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
+        // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
+        // do not touch `this` afterward.
+        unsafe { (*this).on_mkdirp_complete() };
+        Ok(())
+    }
     this.event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, CopyFileWindows::on_mkdirp_complete),
+        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
     ));
 }
 

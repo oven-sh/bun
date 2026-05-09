@@ -6360,9 +6360,11 @@ pub trait FileOpener: Sized {
 
         #[cfg(windows)]
         {
+            use bun_sys::ReturnCodeExt as _;
             // Monomorphic libuv completion thunk — recovers `*mut Self` from
             // `req.data`, mirrors Zig's `WrappedCallback.callback`.
             extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
+                use bun_sys::ReturnCodeExt as _;
                 // SAFETY: `req.data` was set to `self as *mut Self` below before
                 // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
                 let self_: &mut S = unsafe { &mut *(*req).data.cast::<S>() };
@@ -6404,16 +6406,17 @@ pub trait FileOpener: Sized {
                     req,
                     path.as_ptr(),
                     Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    node::fs::DEFAULT_PERMISSION,
+                    node::fs::DEFAULT_PERMISSION as i32,
                     Some(wrapped_callback::<Self>),
                 )
             };
-            if let Some(errno) = rc.err_enum() {
-                self.set_errno(bun_core::errno_to_zig_err(errno as _));
+            if let Some(errno) = rc.err_enum_e() {
+                self.set_errno(bun_core::errno_to_zig_err(errno as i32));
                 self.set_system_error(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::open)
                         .with_path(path_string.slice())
-                        .to_system_error(),
+                        .to_system_error()
+                        .into(),
                 );
                 self.set_opened_fd(bun_sys::Fd::INVALID);
                 callback(self, bun_sys::Fd::INVALID);

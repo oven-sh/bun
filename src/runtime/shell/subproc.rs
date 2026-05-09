@@ -1880,9 +1880,19 @@ impl PipeReader {
 
         #[cfg(windows)]
         {
-            this.reader.source = match result {
+            // Zig aliases the same `*uv.Pipe` heap pointer in both
+            // `stdio_result.buffer` and `reader.source.pipe`. With
+            // `Box<uv::Pipe>` we cannot alias, so ownership transfers to
+            // `reader.source` (`stdio_result` is never read again on Windows —
+            // `start()` goes through `start_with_current_pipe`).
+            this.reader.source = match core::mem::take(&mut this.stdio_result) {
                 StdioResult::Buffer(buf) => Some(bun_io::Source::Pipe(buf)),
-                StdioResult::BufferFd(fd) => Some(bun_io::Source::File(bun_io::Source::open_file(fd))),
+                StdioResult::BufferFd(fd) => {
+                    // `Fd` is Copy; restore so `stdio_result` keeps reflecting
+                    // the spawn outcome (Zig leaves it in place).
+                    this.stdio_result = StdioResult::BufferFd(fd);
+                    Some(bun_io::Source::File(bun_io::Source::open_file(fd)))
+                }
                 StdioResult::Unavailable => panic!("Shouldn't happen."),
             };
         }
@@ -2140,7 +2150,7 @@ impl PipeReader {
         // may realloc to shrink. Profile in Phase B.
     }
 
-    pub fn update_ref(&self, add: bool) {
+    pub fn update_ref(&mut self, add: bool) {
         self.reader.update_ref(add);
     }
 
@@ -2344,7 +2354,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
 // enum the trait was declared with.
 
 #[inline]
-pub fn assert_stdio_result(result: StdioResult) {
+pub fn assert_stdio_result(result: &StdioResult) {
     if cfg!(debug_assertions) {
         #[cfg(unix)]
         {

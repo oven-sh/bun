@@ -278,28 +278,26 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
     /// returning, so the extra ref never holds the process open.
     #[cfg(windows)]
-    pub fn adopt_pipe(&mut self, _vm: *const VirtualMachine, mut pipe: Box<uv::Pipe>) -> bool {
-        if let Err(e) = pipe
-            .read_start(
-                core::ptr::from_mut(self),
-                WindowsHandlers::<Owner>::on_alloc,
-                WindowsHandlers::<Owner>::on_error,
-                WindowsHandlers::<Owner>::on_read,
-            )
-            .unwrap_result()
-        {
+    pub fn adopt_pipe(&mut self, _vm: *const VirtualMachine, pipe: *mut uv::Pipe) -> bool {
+        // PORT NOTE: Zig's `pipe.readStart(self, onAlloc, onError, onRead)`
+        // bakes the three callbacks at comptime; the Rust binding expresses
+        // that via the `StreamReader` trait impl below and routes through
+        // `read_start_ctx`, which stashes `self` in `handle.data`.
+        // SAFETY: `pipe` is a live, init'ed `Box<Pipe>` allocation owned by the
+        // caller; we only borrow it to start reading.
+        let rc = unsafe { (*pipe).read_start_ctx::<Self>(core::ptr::from_mut(self)) };
+        if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
             Output::debug_warn(format_args!(
                 "Channel.adoptPipe: readStart failed: {}",
-                e.name(),
+                e.name().escape_ascii(),
             ));
-            // TODO(port): Zig returned false leaving caller owning `pipe`;
-            // with Box we'd need to hand it back. Phase B: take `&mut Box` or
-            // return the Box on failure.
-            // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-            unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
+            // Caller still owns `pipe` on failure (Zig spec) and is responsible
+            // for `close_and_destroy`.
             return false;
         }
-        self.backend.pipe = Some(pipe);
+        // SAFETY: `pipe` was Box-allocated by the caller (`bun.new(uv.Pipe)` /
+        // `bun_core::heap::into_raw`); on success the channel takes ownership.
+        self.backend.pipe = Some(unsafe { Box::from_raw(pipe) });
         true
     }
 
@@ -343,9 +341,13 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // so this currently always falls through to submit_windows_write —
         // kept because EBADF/EPIPE here mean the pipe is dead and must not
         // silently drop the frame.
-        let w: usize = match pipe.try_write(frame_bytes) {
-            bun_sys::Result::Ok(n) => n,
-            bun_sys::Result::Err(e) => {
+        // PORT NOTE: Zig `pipe.tryWrite([]const u8) Maybe(usize)` is inlined
+        // here against the low-level `UvStream::try_write(&[uv_buf_t])`.
+        let buf = uv::uv_buf_t::init(frame_bytes);
+        let rc = pipe.try_write(core::slice::from_ref(&buf));
+        let w: usize = match rc.to_error(bun_sys::Tag::try_write) {
+            None => rc.int() as usize,
+            Some(e) => {
                 if e.get_errno() == bun_sys::E::AGAIN {
                     0
                 } else {

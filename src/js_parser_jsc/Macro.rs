@@ -287,8 +287,10 @@ pub fn __bun_macro_context_init(
     // with `default_allocator`, process-lifetime) — but callers that run on a
     // short-lived bytewise-cloned `Transpiler` (e.g.
     // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
-    // `__bun_macro_context_deinit` or the per-iteration `mi_heap_new()` inside
-    // `MacroContext.bump` leaks (~5 KB/iter; require-cache.test.ts OOMs).
+    // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
+    // was actually invoked, its lazily-created `bump` arena) leaks per
+    // iteration. `bump` is `None` on init, so this fn itself never calls
+    // `mi_heap_new()`.
     let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
     let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
     js_ast::Macro::MacroContext {
@@ -303,9 +305,9 @@ pub fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
         return;
     }
     // SAFETY: `data` is exactly the `Box<MacroContext>` allocated in
-    // `__bun_macro_context_init` above; sole owner. Dropping the Box runs
-    // `MimallocArena::drop` (→ `mi_heap_destroy`) on `bump` and frees the
-    // `MacroMap`.
+    // `__bun_macro_context_init` above; sole owner. Dropping the Box frees the
+    // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
+    // (→ `mi_heap_destroy`) on the lazily-created `bump`.
     drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
 }
 

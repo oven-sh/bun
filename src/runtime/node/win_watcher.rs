@@ -56,7 +56,7 @@ pub struct PathWatcherManager {
 impl PathWatcherManager {
     pub fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
-            watchers: ArrayHashMap::default(),
+            watchers: StringArrayHashMap::default(),
             vm,
             deinit_on_last_watcher: false,
         }))
@@ -205,7 +205,8 @@ impl PathWatcher {
             this.emit_in_progress = true;
 
             for &ctx in this.handlers.keys() {
-                on_path_update_fn(Some(ctx), Event::Error(err), false);
+                // Zig: `bun.sys.Error` is a value type — implicitly copied per handler.
+                on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
                 on_update_end_fn(Some(ctx));
             }
 
@@ -378,7 +379,7 @@ impl PathWatcher {
         // slice's `.len`, so the StringArrayHashMap key compares equal to `event_path.as_bytes()`).
         manager
             .watchers
-            .insert(Box::<[u8]>::from(event_path.as_bytes()), this);
+            .insert(event_path.as_bytes(), this);
 
         sys::Result::Ok(this)
     }

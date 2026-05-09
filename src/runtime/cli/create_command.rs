@@ -656,7 +656,7 @@ impl CreateCommand {
                         let size: u64 = 'brk: {
                             #[cfg(windows)]
                             {
-                                break 'brk pkg.get_end_pos()?;
+                                break 'brk pkg.get_end_pos()? as u64;
                             }
                             #[cfg(not(windows))]
                             {
@@ -1782,7 +1782,9 @@ fn file_copier_copy(
 
             match entry.kind {
                 bun_sys::FileKind::Directory => {
-                    if bun_sys::windows::CreateDirectoryExW(src.as_ptr(), dst.as_ptr(), core::ptr::null_mut()) == 0 {
+                    // SAFETY: `src`/`dst` are NUL-terminated wide strings built into
+                    // `src_buf`/`dst_buf` above; raw Win32 FFI.
+                    if unsafe { bun_sys::windows::CreateDirectoryExW(src.as_ptr(), dst.as_ptr(), core::ptr::null_mut()) } == 0 {
                         let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry.path);
                     }
                 }
@@ -1792,10 +1794,13 @@ fn file_copier_copy(
                     let node_ptr: *mut ProgressNode = node_;
                     // SAFETY: `node_` outlives this match arm; single-threaded progress access.
                     scopeguard::defer! { unsafe { (*node_ptr).complete_one() } }
-                    if bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) == bun_sys::windows::FALSE {
+                    // SAFETY: `src`/`dst` are NUL-terminated wide strings built into
+                    // `src_buf`/`dst_buf` above; raw Win32 FFI.
+                    if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) } == bun_sys::windows::FALSE {
                         if let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path) {
                             let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
-                            if bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) != bun_sys::windows::FALSE {
+                            // SAFETY: same NUL-terminated wide strings as above; retry after mkdir.
+                            if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) } != bun_sys::windows::FALSE {
                                 continue;
                             }
                         }

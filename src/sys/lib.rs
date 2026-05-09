@@ -3221,6 +3221,13 @@ impl File {
     pub fn seek_to(&self, offset: u64) -> Maybe<()> {
         set_file_offset(self.handle, offset)
     }
+    /// `std.fs.File.getPos` — current file position via `lseek(0, SEEK_CUR)`.
+    /// On Windows this routes through `SetFilePointerEx(.., FILE_CURRENT)` (whence
+    /// values match: `SEEK_CUR == FILE_CURRENT == 1`).
+    #[inline]
+    pub fn get_pos(&self) -> Maybe<u64> {
+        lseek(self.handle, 0, libc::SEEK_CUR).map(|p| p as u64)
+    }
     pub fn stat(&self) -> Maybe<Stat> { fstat(self.handle) }
     pub fn close(self) -> Maybe<()> { close(self.handle) }
     /// Port of `bun.sys.File.openatOSPath` (File.zig:65) — `openat` accepting

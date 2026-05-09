@@ -585,7 +585,7 @@ impl BlobExt for Blob {
     ) {
         #[cfg(windows)]
         {
-            return read_file::ReadFileUV::start(
+            return read_file::ReadFileUV::start_with_ctx(
                 // SAFETY: `bun_vm()` returns the live VM for this global.
                 global.bun_vm().event_loop(),
                 self.store.as_ref().expect("infallible: store present").clone(),

@@ -174,14 +174,7 @@ impl AnyPromise {
         // SAFETY: `init_in_place` writes into uninit `bytes` via FFI without reading
         // prior contents (matches the Zig `= undefined; .init()` pattern).
         unsafe {
-            (*scope_ptr).init_in_place(
-                global_object,
-                SourceLocation {
-                    fn_name: c"AnyPromise::wrap".as_ptr(),
-                    file: c"src/jsc/AnyPromise.rs".as_ptr(),
-                    line: line!(),
-                },
-            );
+            (*scope_ptr).init_in_place(global_object, crate::src!());
         }
         let _scope_guard = scopeguard::guard(scope_ptr, |s| {
             // SAFETY: `s` was initialized by `init_in_place` above and has not been destroyed.

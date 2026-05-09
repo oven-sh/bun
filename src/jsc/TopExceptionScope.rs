@@ -13,11 +13,60 @@ const ALIGNMENT: usize = 8;
 
 /// Mirrors `std.builtin.SourceLocation`. Rust's `core::panic::Location` lacks `fn_name`,
 /// so callers must construct this via a macro that captures `module_path!()`/`file!()`/`line!()`.
-// TODO(port): provide a `src!()` macro in bun_core that builds this with NUL-terminated strings.
+/// Use [`crate::src!()`] for a `'static` NUL-terminated literal at the call site.
 pub struct SourceLocation {
     pub fn_name: *const c_char,
     pub file: *const c_char,
     pub line: u32,
+}
+
+/// Expand to a [`SourceLocation`] with `'static` NUL-terminated `file`/`fn_name`
+/// strings derived from `file!()` and `module_path!()` at the macro call site.
+/// Mirrors Zig's `@src()`. Use this when calling [`TopExceptionScope::init_in_place`]
+/// directly; the storage-taking [`TopExceptionScope::init`] entry point already
+/// recovers `file`/`line` via `#[track_caller]`.
+#[macro_export]
+macro_rules! src {
+    () => {
+        $crate::top_exception_scope::SourceLocation {
+            // Rust has no `function!()`; the module path is the closest stable
+            // analogue and is what JSC's `ExceptionEventLocation` prints before
+            // the `@ file:line` suffix.
+            fn_name: ::core::concat!(::core::module_path!(), "\0").as_ptr().cast(),
+            file: ::core::concat!(::core::file!(), "\0").as_ptr().cast(),
+            line: ::core::line!(),
+        }
+    };
+}
+
+/// Intern a `'static` Rust source path (from `core::panic::Location::file()`)
+/// as a `'static` NUL-terminated C string. JSC's `ExceptionEventLocation`
+/// stores the raw `const char*` and dereferences it later when printing the
+/// "Unchecked JS exception" diagnostic, so the pointer must outlive the scope;
+/// `Location::file()` is already `'static` but lacks the trailing NUL. This
+/// allocates one `CString` per *unique file path* (bounded by the number of
+/// `#[track_caller]` source files) and leaks it — debug-only, so the cost is
+/// negligible and the diagnostic becomes useful (`src/jsc/JSValue.rs:1873`
+/// instead of `<rust>:1873`).
+#[cfg(any(debug_assertions, bun_asan))]
+fn intern_location_file(file: &'static str) -> *const c_char {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<&'static str, &'static core::ffi::CStr>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = match cache.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    if let Some(cstr) = map.get(file) {
+        return cstr.as_ptr();
+    }
+    let owned = alloc::ffi::CString::new(file)
+        .unwrap_or_else(|_| alloc::ffi::CString::new("<rust>").unwrap());
+    let leaked: &'static core::ffi::CStr = alloc::boxed::Box::leak(owned.into_boxed_c_str());
+    map.insert(file, leaked);
+    leaked.as_ptr()
 }
 
 /// Binding for JSC::TopExceptionScope. This should be used rarely, only at translation boundaries between
@@ -97,9 +146,13 @@ impl TopExceptionScope {
         this.init_in_place(
             global,
             SourceLocation {
-                // TODO(port): `Location::file()` is not NUL-terminated; use placeholders
-                // until a `src!()` macro lands.
+                // Rust's `core::panic::Location` has no `fn_name`; the file:line
+                // pair is the load-bearing part of JSC's diagnostic, so leave a
+                // generic marker here and intern the real path below.
                 fn_name: c"<rust>".as_ptr(),
+                #[cfg(any(debug_assertions, bun_asan))]
+                file: intern_location_file(loc.file()),
+                #[cfg(not(any(debug_assertions, bun_asan)))]
                 file: c"<rust>".as_ptr(),
                 line: loc.line(),
             },

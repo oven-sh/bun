@@ -601,15 +601,14 @@ impl Request {
 
 // TODO(port): move to runtime_sys
 // Request is opaque on the C++ side; see note on the JsClass extern block above.
-#[allow(improper_ctypes)]
-unsafe extern "C" {
+// C++ side defines `extern "C" SYSV_ABI` (JSBunRequest.cpp).
+bun_jsc::jsc_abi_extern! {
+    #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
     fn Bun__JSRequest__createForBake(
         global_object: *const JSGlobalObject,
         request_ptr: *mut Request,
     ) -> JSValue;
-    // callconv(jsc.conv) — see // TODO(b2-blocked): #[bun_jsc::host_fn] note; raw extern keeps C ABI here and
-    // fromJSHostCall handles the calling-convention shim.
 }
 
 impl Request {

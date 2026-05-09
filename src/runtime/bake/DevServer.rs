@@ -2219,8 +2219,8 @@ impl DevServer {
 }
 
 // TODO(port): move to <area>_sys
-unsafe extern "C" {
-    // TODO(port): callconv(jsc.conv) — needs #[bun_jsc::host_call] ABI
+// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
+bun_jsc::jsc_abi_extern! {
     safe fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: &JSGlobalObject) -> JSValue;
     safe fn Bake__getBundleNewRouteJSFunction(global: &JSGlobalObject) -> JSValue;
     safe fn Bake__getNewRouteParamsJSFunction(global: &JSGlobalObject) -> JSValue;
@@ -6366,13 +6366,16 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bake__bundleNewRouteJSFunctionImpl(
-    global: &JSGlobalObject,
-    request_ptr: *mut c_void,
-    url: BunString,
-) -> JSValue {
-    jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
+// C++ side declares `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bake__bundleNewRouteJSFunctionImpl(
+        global: &JSGlobalObject,
+        request_ptr: *mut c_void,
+        url: BunString,
+    ) -> JSValue {
+        jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
+    }
 }
 
 fn bundle_new_route_js_function_impl(
@@ -6449,10 +6452,11 @@ fn bundle_new_route_js_function_impl(
     Ok(array)
 }
 
-// TODO(port): move to <area>_sys; callconv(jsc.conv)
+// TODO(port): move to <area>_sys
 // `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`; remaining args
 // are by-value `JSValue`s — validity is encoded in the signature.
-unsafe extern "C" {
+// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
+bun_jsc::jsc_abi_extern! {
     safe fn Bake__createDevServerFrameworkRequestArgsObject(
         global: &JSGlobalObject,
         router_type_main: JSValue,

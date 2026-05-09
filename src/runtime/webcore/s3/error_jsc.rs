@@ -99,9 +99,8 @@ impl JSS3Error {
 }
 
 // TODO(port): move to <area>_sys
-// TODO(port): callconv(jsc.conv) — "sysv64" on Windows-x64, "C" elsewhere; Rust cannot
-// take a macro in ABI position, so Phase B must cfg-gate or wrap via bun_jsc helper.
-unsafe extern "C" {
+// C++ side defines `SYSV_ABI JSC::EncodedJSValue` (S3Error.cpp).
+bun_jsc::jsc_abi_extern! {
     // C++ copies the three `BunString` fields out and does not write through
     // `this`, so `&JSS3Error` (readonly) is sound.
     safe fn S3Error__toErrorInstance(this: &JSS3Error, global: &JSGlobalObject) -> JSValue;

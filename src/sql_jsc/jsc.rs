@@ -829,8 +829,10 @@ pub mod codegen {
 #[repr(C)]
 pub struct JSFunction { _opaque: [u8; 0], _m: PhantomData<(*mut u8, core::marker::PhantomPinned)> }
 
-/// `jsc.JSHostFn` — the C-ABI host-function pointer JSC dispatches to.
-pub type JSHostFn = unsafe extern "C" fn(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue;
+/// `jsc.JSHostFn` — the JSC-ABI host-function pointer JSC dispatches to
+/// (`extern "sysv64"` on win-x64, `extern "C"` elsewhere). Re-exported from
+/// `bun_jsc` so the cfg-split lives in one place.
+pub use bun_jsc::host_fn::JsHostFn as JSHostFn;
 pub type JSHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 
 pub trait IntoJSHostFn<Marker>: Sized {
@@ -843,6 +845,18 @@ pub trait IntoJSHostFn<Marker>: Sized {
 impl IntoJSHostFn<HostFnRaw> for JSHostFn {
     #[inline] fn into_js_host_fn(self) -> JSHostFn { self }
 }
+// `jsc_host_abi!` can't express a generic `where` clause, so cfg-split the
+// thunk body manually (sysv64 on win-x64, C elsewhere — matches `JSHostFn`).
+// The where-clause is bracketed to avoid `tt`-muncher ambiguity against `{`.
+macro_rules! sql_jsc_host_thunk {
+    ($name:ident<$F:ident>($($args:tt)*) -> $ret:ty where [$($bound:tt)+] $body:block) => {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        unsafe extern "sysv64" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        unsafe extern "C" fn $name<$F>($($args)*) -> $ret where $($bound)+ $body
+    };
+}
+
 impl<F> IntoJSHostFn<HostFnResult> for F
 where
     F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static,
@@ -850,18 +864,19 @@ where
     fn into_js_host_fn(self) -> JSHostFn {
         debug_assert_eq!(core::mem::size_of::<F>(), 0, "IntoJSHostFn: expected fn item (ZST)");
         let _ = self;
-        unsafe extern "C" fn thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
-        where
-            F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static,
-        {
-            let f: F = bun_core::ffi::conjure_zst::<F>();
-            // SAFETY: JSC passes live non-null `*JSGlobalObject` / `*CallFrame`.
-            let global = unsafe { &*g };
-            let frame = unsafe { &*c };
-            match f(global, frame) {
-                Ok(v) => v,
-                Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
-                Err(_) => JSValue::ZERO,
+        sql_jsc_host_thunk! {
+            thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
+            where [F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static]
+            {
+                let f: F = bun_core::ffi::conjure_zst::<F>();
+                // SAFETY: JSC passes live non-null `*JSGlobalObject` / `*CallFrame`.
+                let global = unsafe { &*g };
+                let frame = unsafe { &*c };
+                match f(global, frame) {
+                    Ok(v) => v,
+                    Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
+                    Err(_) => JSValue::ZERO,
+                }
             }
         }
         thunk::<F>
@@ -874,13 +889,14 @@ where
     fn into_js_host_fn(self) -> JSHostFn {
         debug_assert_eq!(core::mem::size_of::<F>(), 0, "IntoJSHostFn: expected fn item (ZST)");
         let _ = self;
-        unsafe extern "C" fn thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
-        where
-            F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static,
-        {
-            let f: F = bun_core::ffi::conjure_zst::<F>();
-            // SAFETY: JSC passes live non-null pointers.
-            f(unsafe { &*g }, unsafe { &*c })
+        sql_jsc_host_thunk! {
+            thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
+            where [F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static]
+            {
+                let f: F = bun_core::ffi::conjure_zst::<F>();
+                // SAFETY: JSC passes live non-null pointers.
+                f(unsafe { &*g }, unsafe { &*c })
+            }
         }
         thunk::<F>
     }

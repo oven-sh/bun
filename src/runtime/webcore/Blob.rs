@@ -4899,20 +4899,22 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 // JSDOMFile constructor
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): callconv(jsc.conv) — emitted by // TODO(b2-blocked): #[bun_jsc::host_fn] macro.
-#[unsafe(no_mangle)]
-pub extern "C" fn JSDOMFile__construct(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> Option<NonNull<Blob>> {
-    match jsdom_file_construct_(global_this, callframe) {
-        Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct_ returns Blob::new (heap::alloc)")),
-        Err(jsc::JsError::Thrown) => None,
-        Err(jsc::JsError::OutOfMemory) => {
-            let _ = global_this.throw_out_of_memory();
-            None
+// C++ side declares `extern "C" SYSV_ABI void* JSDOMFile__construct(...)` (JSDOMFile.cpp).
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn JSDOMFile__construct(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> Option<NonNull<Blob>> {
+        match jsdom_file_construct_(global_this, callframe) {
+            Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct_ returns Blob::new (heap::alloc)")),
+            Err(jsc::JsError::Thrown) => None,
+            Err(jsc::JsError::OutOfMemory) => {
+                let _ = global_this.throw_out_of_memory();
+                None
+            }
+            Err(jsc::JsError::Terminated) => None,
         }
-        Err(jsc::JsError::Terminated) => None,
     }
 }
 
@@ -6278,16 +6280,18 @@ impl Default for Inline {
 // JSDOMFile__hasInstance / FileOpener / FileCloser
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): callconv(jsc.conv) — emitted via // TODO(b2-blocked): #[bun_jsc::host_call].
-#[unsafe(no_mangle)]
-pub extern "C" fn JSDOMFile__hasInstance(
-    _: JSValue,
-    _: &JSGlobalObject,
-    value: JSValue,
-) -> bool {
-    jsc::mark_binding();
-    let Some(blob) = value.as_class_ref::<Blob>() else { return false };
-    blob.is_jsdom_file
+// C++ side declares `extern "C" SYSV_ABI bool JSDOMFile__hasInstance(...)` (JSDOMFile.cpp).
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn JSDOMFile__hasInstance(
+        _a: JSValue,
+        _b: &JSGlobalObject,
+        value: JSValue,
+    ) -> bool {
+        jsc::mark_binding();
+        let Some(blob) = value.as_class_ref::<Blob>() else { return false };
+        blob.is_jsdom_file
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

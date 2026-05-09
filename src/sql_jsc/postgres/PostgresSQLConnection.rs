@@ -1013,17 +1013,19 @@ impl PostgresSQLConnection {
 
 // comptime { @export(&jsc.toJSHostFn(call), .{ .name = "PostgresSQLConnection__createInstance" }) }
 // TODO(port): the #[crate::jsc::host_fn] attribute on `call` should emit the correct
-// `#[unsafe(no_mangle)] extern "C"` shim named `PostgresSQLConnection__createInstance`.
-#[unsafe(no_mangle)]
-pub extern "C" fn PostgresSQLConnection__createInstance(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC always passes valid non-null global/callframe pointers.
-    let (g, f) = unsafe { (&*global, &*callframe) };
-    match call(g, f) {
-        Ok(v) => v,
-        Err(_) => JSValue::ZERO,
+// `#[unsafe(no_mangle)]` shim named `PostgresSQLConnection__createInstance`.
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn PostgresSQLConnection__createInstance(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC always passes valid non-null global/callframe pointers.
+        let (g, f) = unsafe { (&*global, &*callframe) };
+        match call(g, f) {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
+        }
     }
 }
 

@@ -1,26 +1,33 @@
 use crate::jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue};
 
 // ──────────────────────────────────────────────────────────────────────────
-// C-ABI thunks (Zig: `jsc.toJSHostFn(fn)`). `JSFunction::create` needs a real
-// `unsafe extern "C" fn` pointer; the safe Rust-signature impls are wrapped
-// here. `JsResult::Err` → `JSValue::ZERO` (exception already pending).
+// JSC-ABI thunks (Zig: `jsc.toJSHostFn(fn)`). `JSFunction::create` needs a real
+// `JSHostFn` pointer (sysv64 on win-x64, C elsewhere); the safe Rust-signature
+// impls are wrapped here. `JsResult::Err` → `JSValue::ZERO` (exception already
+// pending).
 // ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" fn js_init(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are live for the host call.
-    PostgresSQLContext::init(unsafe { &*g }, unsafe { &*f })
-}
-unsafe extern "C" fn js_create_query(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are live for the host call.
-    match PostgresSQLQuery::call(unsafe { &*g }, unsafe { &*f }) {
-        Ok(v) => v,
-        Err(_) => JSValue::ZERO,
+bun_jsc::jsc_host_abi! {
+    unsafe fn js_init(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are live for the host call.
+        PostgresSQLContext::init(unsafe { &*g }, unsafe { &*f })
     }
 }
-unsafe extern "C" fn js_create_connection(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are live for the host call.
-    match postgres_sql_connection::call(unsafe { &*g }, unsafe { &*f }) {
-        Ok(v) => v,
-        Err(_) => JSValue::ZERO,
+bun_jsc::jsc_host_abi! {
+    unsafe fn js_create_query(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are live for the host call.
+        match PostgresSQLQuery::call(unsafe { &*g }, unsafe { &*f }) {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
+        }
+    }
+}
+bun_jsc::jsc_host_abi! {
+    unsafe fn js_create_connection(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are live for the host call.
+        match postgres_sql_connection::call(unsafe { &*g }, unsafe { &*f }) {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
+        }
     }
 }
 

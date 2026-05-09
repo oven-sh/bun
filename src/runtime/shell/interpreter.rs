@@ -2923,9 +2923,9 @@ pub fn unreachable_state(context: &str, state: &str) -> ! {
 // Port of `Interpreter.createShellInterpreter` (interpreter.zig:773).
 
 // C++ side (`ShellBindings.cpp`) takes `void* ptr` — `Interpreter` is opaque
-// across the boundary, layout is irrelevant.
-#[allow(improper_ctypes)]
-unsafe extern "C" {
+// across the boundary, layout is irrelevant. Defined `extern "C" SYSV_ABI`.
+bun_jsc::jsc_abi_extern! {
+    #[allow(improper_ctypes)]
     fn Bun__createShellInterpreter(
         global: *const crate::jsc::JSGlobalObject,
         ptr: *mut Interpreter,

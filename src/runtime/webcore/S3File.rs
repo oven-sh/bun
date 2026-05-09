@@ -936,8 +936,8 @@ pub mod exports {
 }
 
 // TODO(port): move to <area>_sys
-unsafe extern "C" {
-    // TODO(port): callconv(jsc.conv) — actual ABI is sysv64 on Windows-x64, C elsewhere
+// C++ side defines `SYSV_ABI EncodedJSValue` (JSS3File.cpp).
+bun_jsc::jsc_abi_extern! {
     safe fn BUN__createJSS3File(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue;
     fn BUN__createJSS3FileUnsafely(
         global: *const JSGlobalObject,

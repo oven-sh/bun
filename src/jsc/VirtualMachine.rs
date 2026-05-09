@@ -2838,9 +2838,13 @@ pub fn create_if_different(s: &bun_string::String, other: &[u8]) -> bun_string::
 }
 
 // Additional FFI used by the formerly-gated impl.
+// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
+crate::jsc_abi_extern! {
+    #[allow(improper_ctypes)]
+    fn Bake__getAsyncLocalStorage(global: *mut JSGlobalObject) -> JSValue;
+}
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn Bake__getAsyncLocalStorage(global: *mut JSGlobalObject) -> JSValue;
     fn Bun__promises__isErrorLike(global: *mut JSGlobalObject, reason: JSValue) -> bool;
     fn Bun__promises__emitUnhandledRejectionWarning(
         global: *mut JSGlobalObject,

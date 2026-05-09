@@ -167,6 +167,11 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    /** Write per-file results as JSON to this path (for test-fix workflows). */
+    ["results-json"]: {
+      type: "string",
+      default: undefined,
+    },
   },
 });
 
@@ -909,6 +914,23 @@ async function runTests() {
         console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
       }
     }
+  }
+
+  // Dump per-file results as JSON for post-processing (test-fix workflows
+  // shard from this). Opt-in via --results-json so CI output is unchanged.
+  if (cliOptions["results-json"]) {
+    const all = [...okResults, ...flakyResults, ...failedResults].map(r => ({
+      testPath: r.testPath,
+      ok: r.ok,
+      status: r.status,
+      error: r.error,
+      exitCode: r.exitCode,
+      signalCode: r.signalCode,
+      duration: r.duration,
+      stdoutPreview: r.stdoutPreview?.slice?.(-4000),
+    }));
+    writeFileSync(cliOptions["results-json"], JSON.stringify(all, null, 2));
+    !isQuiet && console.log(`Wrote ${all.length} results to ${cliOptions["results-json"]}`);
   }
 
   // Exclude flaky tests from the final results

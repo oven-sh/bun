@@ -9,11 +9,10 @@ pub fn fix_dead_code_elimination() {
     bun_core::keep_symbols!(BakeResponseClass__constructForSSR, BakeResponseClass__constructRender);
 }
 
-// TODO(port): callconv(jsc.conv) — Rust cannot express the JSC ABI in `extern` position;
-// Phase B should route this through a bun_jsc shim or verify "C" matches on all targets.
 // `Response` embeds `Body` (no #[repr(C)]) but is only ever passed by opaque pointer across FFI.
-#[allow(improper_ctypes)]
-unsafe extern "C" {
+// C++ side declares `extern JSC_CALLCONV` (= SYSV_ABI on win-x64).
+bun_jsc::jsc_abi_extern! {
+    #[allow(improper_ctypes)]
     fn BakeResponse__createForSSR(
         global_object: *mut JSGlobalObject,
         this: *mut Response,
@@ -48,24 +47,26 @@ pub unsafe fn to_js_for_ssr(this: *mut Response, global_object: &JSGlobalObject,
     unsafe { BakeResponse__createForSSR(global_object.as_mut_ptr(), this, kind as u8) }
 }
 
-// TODO(port): callconv(jsc.conv) — exported with JSC ABI in Zig; verify extern "C" is correct on Windows-x64.
-#[unsafe(no_mangle)]
-pub extern "C" fn BakeResponseClass__constructForSSR(
-    global_object: &JSGlobalObject,
-    call_frame: &CallFrame,
-    bake_ssr_has_jsx: *mut c_int,
-    js_this: JSValue,
-) -> *mut c_void {
-    // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
-    let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
-    match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
-        Ok(response) => response.cast::<c_void>(),
-        Err(JsError::Thrown) => core::ptr::null_mut(),
-        Err(JsError::OutOfMemory) => {
-            let _ = global_object.throw_out_of_memory();
-            core::ptr::null_mut()
+// C++ side declares `extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES` (SYSV_ABI on win-x64).
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn BakeResponseClass__constructForSSR(
+        global_object: &JSGlobalObject,
+        call_frame: &CallFrame,
+        bake_ssr_has_jsx: *mut c_int,
+        js_this: JSValue,
+    ) -> *mut c_void {
+        // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
+        let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
+        match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
+            Ok(response) => response.cast::<c_void>(),
+            Err(JsError::Thrown) => core::ptr::null_mut(),
+            Err(JsError::OutOfMemory) => {
+                let _ = global_object.throw_out_of_memory();
+                core::ptr::null_mut()
+            }
+            Err(JsError::Terminated) => core::ptr::null_mut(),
         }
-        Err(JsError::Terminated) => core::ptr::null_mut(),
     }
 }
 
@@ -97,14 +98,17 @@ pub fn constructor(
     Response::constructor(global_this, callframe, js_this)
 }
 
-// TODO(port): callconv(jsc.conv) — this is the raw JSHostFn shim that #[bun_jsc::host_fn]
-// would emit for `construct_redirect`; Phase B may replace this hand-written export with the macro.
-#[unsafe(no_mangle)]
-pub extern "C" fn BakeResponseClass__constructRedirect(
-    global_object: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JSValue {
-    bun_jsc::to_js_host_call(global_object, || construct_redirect(global_object, call_frame))
+// Raw JSHostFn shim that #[bun_jsc::host_fn] would emit for `construct_redirect`;
+// Phase B may replace this hand-written export with the macro.
+// C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn BakeResponseClass__constructRedirect(
+        global_object: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JSValue {
+        bun_jsc::to_js_host_call(global_object, || construct_redirect(global_object, call_frame))
+    }
 }
 
 pub fn construct_redirect(
@@ -132,14 +136,16 @@ pub fn construct_redirect(
     Ok(unsafe { &mut *ptr }.to_js(global_this))
 }
 
-// TODO(port): callconv(jsc.conv) — see note on BakeResponseClass__constructRedirect.
-#[unsafe(no_mangle)]
-pub extern "C" fn BakeResponseClass__constructRender(
-    global_object: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JSValue {
-    // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-    bun_jsc::to_js_host_call(global_object, || construct_render(global_object, call_frame))
+// C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn BakeResponseClass__constructRender(
+        global_object: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JSValue {
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        bun_jsc::to_js_host_call(global_object, || construct_render(global_object, call_frame))
+    }
 }
 
 /// This function is only available on JSBakeResponse

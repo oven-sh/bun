@@ -13,7 +13,7 @@ use crate::Str;
 #[inline(always)]
 fn bs(p: Str) -> &'static BStr {
     // SAFETY: arena/source slice outlives the error value; only used transiently for Display.
-    BStr::new(unsafe { &*p })
+    BStr::new(unsafe { crate::arena_str(p) })
 }
 
 /// A printer error.
@@ -74,9 +74,10 @@ impl<T: fmt::Display> Err<T> {
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<(), bun_core::Error> {
+        use bun_core::OrWriteFailed as _;
         use std::io::Write as _;
         let mut text: Vec<u8> = Vec::new();
-        write!(&mut text, "{}", self.kind).map_err(|_| bun_core::err!("WriteFailed"))?;
+        write!(&mut text, "{}", self.kind).or_write_failed()?;
 
         log.add_msg(logger::Msg {
             kind: logger::Kind::Err,

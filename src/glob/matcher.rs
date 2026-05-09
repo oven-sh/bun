@@ -266,19 +266,8 @@ fn glob_match_impl(
                                 let mut first = true;
                                 let mut is_match = false;
 
-                                // length of the unicode char in the path
-                                let len = strings::wtf8_byte_sequence_length(
-                                    path[state.path_index as usize],
-                                );
-                                // source unicode char to match against the target
-                                // SAFETY: matches Zig `path[idx..].ptr[0..4]` — decode reads only `len` bytes
-                                let c: u32 = strings::decode_wtf8_rune_t::<u32>(
-                                    unsafe {
-                                        &*path.as_ptr().add(state.path_index as usize).cast::<[u8; 4]>()
-                                    },
-                                    len,
-                                    0xFFFD,
-                                );
+                                // source unicode char to match against the target + its byte length in `path`
+                                let (c, len) = decode_wtf8_rune_at(path, state.path_index as usize);
 
                                 while (state.glob_index as usize) < glob.len()
                                     && (first || glob[state.glob_index as usize] != b']')
@@ -543,13 +532,7 @@ fn skip_branch(state: &mut State, glob: &[u8]) {
     }
 }
 
-#[inline(always)]
-fn is_separator(c: u8) -> bool {
-    if cfg!(windows) {
-        return c == b'/' || c == b'\\';
-    }
-    c == b'/'
-}
+use bun_paths::is_sep_native as is_separator;
 
 #[inline(always)]
 fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
@@ -570,6 +553,23 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
     }
 
     true
+}
+
+/// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
+///
+/// Mirrors the open-coded triple in matcher.zig (`wtf8ByteSequenceLength` + `decodeWTF8RuneT`
+/// over `bytes[idx..].ptr[0..4]`). Centralized so the `[u8; 4]` reinterpret has a single
+/// audit point.
+#[inline(always)]
+fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
+    let len = strings::wtf8_byte_sequence_length(bytes[idx]);
+    // SAFETY: matches Zig `bytes[idx..].ptr[0..4]` — decode reads only `len` bytes
+    let cp = strings::decode_wtf8_rune_t::<u32>(
+        unsafe { &*bytes.as_ptr().add(idx).cast::<[u8; 4]>() },
+        len,
+        0xFFFD,
+    );
+    (cp, len)
 }
 
 /// Unescapes the character if needed
@@ -600,35 +600,18 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
                 b'n' => b'\n' as u32,
                 b'r' => b'\r' as u32,
                 b't' => b'\t' as u32,
-                cc => 'brk: {
-                    let len = strings::wtf8_byte_sequence_length(cc);
+                _ => 'brk: {
+                    let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
                     *clen = len;
-                    if len == 1 {
-                        break 'brk cc as u32;
-                    }
-
-                    // SAFETY: matches Zig `glob[idx..].ptr[0..4]` — decode reads only `len` bytes
-                    break 'brk strings::decode_wtf8_rune_t::<u32>(
-                        unsafe {
-                            &*glob.as_ptr().add(*glob_index as usize).cast::<[u8; 4]>()
-                        },
-                        len,
-                        0xFFFD,
-                    );
+                    break 'brk cp;
                 }
             };
         }
         // multi-byte sequences
         _ => {
-            let len = strings::wtf8_byte_sequence_length(*c as u8); // @truncate
+            let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
             *clen = len;
-
-            // SAFETY: matches Zig `glob[idx..].ptr[0..4]` — decode reads only `len` bytes
-            *c = strings::decode_wtf8_rune_t::<u32>(
-                unsafe { &*glob.as_ptr().add(*glob_index as usize).cast::<[u8; 4]>() },
-                len,
-                0xFFFD,
-            );
+            *c = cp;
         }
     }
 

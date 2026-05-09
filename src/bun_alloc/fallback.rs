@@ -12,10 +12,6 @@ pub struct CAllocator;
 
 pub static C_ALLOCATOR: CAllocator = CAllocator;
 
-// `max_align_t` alignment — the `libc` crate doesn't expose this on Windows
-// MSVC; both x86_64 and aarch64 ABIs guarantee 16 here.
-const MALLOC_ALIGN: usize = 2 * core::mem::size_of::<usize>();
-
 impl CAllocator {
     #[inline]
     pub fn raw_alloc(&self, len: usize, alignment: Alignment, _ret_addr: usize) -> Option<*mut u8> {
@@ -24,7 +20,7 @@ impl CAllocator {
         let align = alignment.to_byte_units();
         // SAFETY: libc malloc/aligned_alloc are sound for any nonzero size.
         let ptr = unsafe {
-            if align <= MALLOC_ALIGN {
+            if align <= crate::MAX_ALIGN_T {
                 libc::malloc(len)
             } else {
                 #[cfg(windows)]
@@ -71,7 +67,7 @@ impl CAllocator {
         // and MUST be released with `_aligned_free`; passing them to `free()`
         // is heap corruption. POSIX `aligned_alloc` is freed with plain `free`.
         #[cfg(windows)]
-        if alignment.to_byte_units() > MALLOC_ALIGN {
+        if alignment.to_byte_units() > crate::MAX_ALIGN_T {
             // SAFETY: `buf` was allocated by `_aligned_malloc` in `raw_alloc`.
             unsafe { libc::aligned_free(buf.as_mut_ptr().cast()) };
             return;

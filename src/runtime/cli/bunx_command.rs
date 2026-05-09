@@ -196,12 +196,7 @@ pub enum GetBinNameError {
     NeedToInstall,
 }
 
-impl From<GetBinNameError> for bun_core::Error {
-    fn from(e: GetBinNameError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-        // TODO(port): use generated `Into<bun_core::Error>` derive once available
-    }
-}
+bun_core::named_error_set!(GetBinNameError);
 
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.

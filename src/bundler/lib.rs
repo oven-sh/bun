@@ -155,18 +155,11 @@ pub mod linker_context {
     pub use crate::linker_context_mod::{LinkerContext, GenerateChunkCtx, PendingPartRange, ChunkMeta};
     pub use output_file_list_builder::OutputFileList as OutputFileListBuilder;
     pub use static_route_visitor::StaticRouteVisitor;
-    /// `Output.scoped(.LinkerCtx, .visible)` — shared scope so every
-    /// `linker_context/*` submodule logs under one `[linkerctx]` tag.
-    bun_core::declare_scope!(LinkerCtx, visible);
-    /// Free fn so `linker_context::debug(format_args!(..))` works from sibling
-    /// modules without re-declaring the scope (mirrors Zig's `const debug =
-    /// Output.scoped(.LinkerCtx, .visible)`).
-    #[inline]
-    pub fn debug(args: core::fmt::Arguments<'_>) {
-        if cfg!(debug_assertions) && LinkerCtx.is_visible() {
-            LinkerCtx.log(args);
-        }
-    }
+    /// `Output.scoped(.LinkerCtx, .visible)` — re-export the canonical scope
+    /// static + `debug!` macro from `linker_context_mod` so every
+    /// `linker_context/*` submodule logs under one `[linkerctx]` tag without
+    /// redeclaring the scope.
+    pub(crate) use crate::linker_context_mod::{LinkerCtx, debug};
 }
 
 // ---------------------------------------------------------------------------

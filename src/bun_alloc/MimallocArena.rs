@@ -507,24 +507,11 @@ unsafe impl Allocator for &MimallocArena {
     }
 
     #[inline]
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         // Zig: `vtable_free` → `mi_free` (debug builds assert
         // `mi_is_in_heap_region` + sized free; release just `mi_free`).
-        #[cfg(debug_assertions)]
         // SAFETY: caller contract — `ptr` came from this allocator.
-        unsafe {
-            debug_assert!(mimalloc::mi_is_in_heap_region(ptr.as_ptr().cast()));
-            if mimalloc::must_use_aligned_alloc(_layout.align()) {
-                mimalloc::mi_free_size_aligned(ptr.as_ptr().cast(), _layout.size(), _layout.align());
-            } else {
-                mimalloc::mi_free_size(ptr.as_ptr().cast(), _layout.size());
-            }
-        }
-        #[cfg(not(debug_assertions))]
-        // SAFETY: caller contract — `ptr` came from this allocator.
-        unsafe {
-            mimalloc::mi_free(ptr.as_ptr().cast());
-        }
+        unsafe { crate::basic::mi_free_checked(ptr.as_ptr().cast(), layout.size(), layout.align()) }
     }
 
     #[inline]
@@ -612,17 +599,6 @@ unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, a: crate::Alignment, _ra: u
     }
 }
 
-unsafe fn vtable_resize(
-    _ctx: *mut c_void,
-    buf: &mut [u8],
-    _a: crate::Alignment,
-    new_len: usize,
-    _ra: usize,
-) -> bool {
-    // SAFETY: `buf` was allocated by mimalloc (caller contract).
-    unsafe { !mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len).is_null() }
-}
-
 unsafe fn vtable_remap(
     ctx: *mut c_void,
     buf: &mut [u8],
@@ -638,34 +614,17 @@ unsafe fn vtable_remap(
     }
 }
 
-unsafe fn vtable_free(_ctx: *mut c_void, buf: &mut [u8], _a: crate::Alignment, _ra: usize) {
-    // Zig: `vtable_free` — `mi_free_size` internally just asserts the size, so
-    // it's faster in release if we don't pass it through, but the assertion is
-    // worth having in debug.
-    // SAFETY: `buf` was allocated by mimalloc with the recorded len/alignment
-    // (Allocator vtable invariant); `mi_is_in_heap_region` accepts any pointer.
-    #[cfg(debug_assertions)]
-    unsafe {
-        debug_assert!(mimalloc::mi_is_in_heap_region(buf.as_ptr().cast()));
-        if mimalloc::must_use_aligned_alloc(_a.to_byte_units()) {
-            mimalloc::mi_free_size_aligned(buf.as_mut_ptr().cast(), buf.len(), _a.to_byte_units());
-        } else {
-            mimalloc::mi_free_size(buf.as_mut_ptr().cast(), buf.len());
-        }
-    }
-    #[cfg(not(debug_assertions))]
-    unsafe {
-        mimalloc::mi_free(buf.as_mut_ptr().cast());
-    }
-}
-
 /// Zig: `heap_allocator_vtable` — per-heap (`mi_heap_*`) thunks; ctx is the
 /// `mi_heap_t*` stashed by `std_allocator()`.
 pub static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: vtable_alloc,
-    resize: vtable_resize,
+    // `mi_expand` is heap-agnostic, so the per-heap vtable shares the same
+    // resize thunk as the global/default allocators.
+    resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
     remap: vtable_remap,
-    free: vtable_free,
+    // `mi_free` is heap-agnostic too (Zig's `vtable_free` ignored ctx); share
+    // the canonical thunk so all four mimalloc vtables route through one fn.
+    free: crate::basic::mimalloc_free,
 };
 
 // ── Global-mimalloc vtable (Zig: `global_mimalloc_vtable`) ───────────────
@@ -688,36 +647,12 @@ unsafe fn global_vtable_alloc(
     }
 }
 
-unsafe fn global_vtable_resize(
-    _ctx: *mut c_void,
-    buf: &mut [u8],
-    _a: crate::Alignment,
-    new_len: usize,
-    _ra: usize,
-) -> bool {
-    // SAFETY: `buf` was allocated by mimalloc (caller contract).
-    unsafe { !mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len).is_null() }
-}
-
-unsafe fn global_vtable_remap(
-    _ctx: *mut c_void,
-    buf: &mut [u8],
-    a: crate::Alignment,
-    new_len: usize,
-    _ra: usize,
-) -> *mut u8 {
-    // SAFETY: `buf` was allocated by mimalloc (caller contract).
-    unsafe {
-        mimalloc::mi_realloc_aligned(buf.as_mut_ptr().cast(), new_len, a.to_byte_units()).cast()
-    }
-}
-
 /// Zig: `global_mimalloc_vtable`.
 pub static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: global_vtable_alloc,
-    resize: global_vtable_resize,
-    remap: global_vtable_remap,
-    free: vtable_free,
+    resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
+    remap: crate::basic::MimallocAllocator::remap_with_default_allocator,
+    free: crate::basic::mimalloc_free,
 };
 
 /// Both vtable addresses this module hands out, for

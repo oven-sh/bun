@@ -599,6 +599,85 @@ pub fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
     Wyhash::hash(seed, bytes)
 }
 
+/// `std.hash.Wyhash.hash(seed, input)` as a `const fn`.
+///
+/// This is a parallel one-shot port of [`Wyhash::hash`] for compile-time
+/// evaluation (e.g. `generated_symbol_name!` in `js_parser`, which must match
+/// Zig's `comptime std.hash.Wyhash.hash(0, name)` byte-for-byte). The runtime
+/// [`Wyhash::hash`] is intentionally NOT `const fn` — its perf-tuned hot loop
+/// uses `slice.try_into()` (trait call) and the streaming API uses
+/// `copy_from_slice`, neither of which is const-compatible. Keep the two in
+/// lock-step; `tests::hash_const_matches_runtime` guards drift.
+pub const fn hash_const(seed: u64, input: &[u8]) -> u64 {
+    // ── std.hash.Wyhash (final4 variant) — const-fn re-port. ──
+    const SECRET: [u64; 4] = Wyhash::SECRET;
+
+    #[inline]
+    const fn mix(a: u64, b: u64) -> u64 {
+        let x = (a as u128).wrapping_mul(b as u128);
+        (x as u64) ^ ((x >> 64) as u64)
+    }
+    #[inline]
+    const fn read4(d: &[u8], o: usize) -> u64 {
+        u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as u64
+    }
+    #[inline]
+    const fn read8(d: &[u8], o: usize) -> u64 {
+        u64::from_le_bytes([
+            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+        ])
+    }
+
+    let s0 = seed ^ mix(seed ^ SECRET[0], SECRET[1]);
+    let mut state = [s0, s0, s0];
+    let len = input.len();
+    let a: u64;
+    let b: u64;
+
+    if len <= 16 {
+        // small_key
+        if len >= 4 {
+            let end = len - 4;
+            let quarter = (len >> 3) << 2;
+            a = (read4(input, 0) << 32) | read4(input, quarter);
+            b = (read4(input, end) << 32) | read4(input, end - quarter);
+        } else if len > 0 {
+            a = ((input[0] as u64) << 16)
+                | ((input[len >> 1] as u64) << 8)
+                | (input[len - 1] as u64);
+            b = 0;
+        } else {
+            a = 0;
+            b = 0;
+        }
+    } else {
+        let mut i: usize = 0;
+        if len >= 48 {
+            while i + 48 < len {
+                // round
+                state[0] = mix(read8(input, i) ^ SECRET[1], read8(input, i + 8) ^ state[0]);
+                state[1] = mix(read8(input, i + 16) ^ SECRET[2], read8(input, i + 24) ^ state[1]);
+                state[2] = mix(read8(input, i + 32) ^ SECRET[3], read8(input, i + 40) ^ state[2]);
+                i += 48;
+            }
+            // final0
+            state[0] ^= state[1] ^ state[2];
+        }
+        // final1
+        let mut j = i;
+        while j + 16 < len {
+            state[0] = mix(read8(input, j) ^ SECRET[1], read8(input, j + 8) ^ state[0]);
+            j += 16;
+        }
+        a = read8(input, len - 16);
+        b = read8(input, len - 8);
+    }
+
+    // final2 (mum_ inlined)
+    let x = ((a ^ SECRET[1]) as u128).wrapping_mul((b ^ state[0]) as u128);
+    mix((x as u64) ^ SECRET[0] ^ (len as u64), ((x >> 64) as u64) ^ SECRET[1])
+}
+
 /// `std.hash.int` — integer-to-integer hashing (same width in, same width out).
 /// Zig's version is `anytype`-generic; we cover the dedicated widths (16/32/64)
 /// via a sealed trait. All current callers pass `u32`.
@@ -706,6 +785,25 @@ mod tests {
     #[test]
     fn test_smhasher() {
         assert_eq!(smhasher(Wyhash::hash), 0xBD5E840C);
+    }
+
+    #[test]
+    fn hash_const_matches_runtime() {
+        // `hash_const` is a parallel const-fn re-port of `Wyhash::hash`; it
+        // produces compile-time symbol suffixes that must match Zig's
+        // `comptime std.hash.Wyhash.hash(0, name)` byte-for-byte. Guard drift.
+        for s in [
+            &b""[..],
+            b"a",
+            b"abc",
+            b"__require",
+            b"0123456789abcdef0",
+            b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ] {
+            assert_eq!(hash_const(0, s), Wyhash::hash(0, s), "input: {s:?}");
+        }
+        // Also exercise the seeded init path + SMHasher's full range.
+        assert_eq!(smhasher(hash_const), 0xBD5E840C);
     }
 
     #[test]

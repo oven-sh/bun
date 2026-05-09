@@ -757,7 +757,7 @@ impl JunitReporter {
                 Output::err(bun_core::err!("JUnitReportFailed"), "Failed to write JUnit report to {}\n{}", (bstr::BStr::new(path), err));
             }
             bun_sys::Result::Ok(fd) => {
-                let fd = scopeguard::guard(fd, |fd| { let _ = fd.close(); });
+                let _close_fd = bun_sys::CloseOnDrop::file(&fd);
                 match File::write_all(&fd, &self.contents) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(err) => {
@@ -1342,7 +1342,7 @@ impl CommandLineReporter {
             }
             bun_sys::Result::Ok(f) => f,
         };
-        let file = scopeguard::guard(file, |f| { let _ = f.close(); }); // close error is non-actionable (Zig parity: discarded)
+        let _close_file = bun_sys::CloseOnDrop::file(&file); // close error is non-actionable (Zig parity: discarded)
         // TODO(port): file.writer().adaptToNewApi(buf) — Zig's buffered writer adapter
         // not present on `bun_sys::File`; buffer in a Vec (impl `bun_io::Write`) and
         // write through in one shot below.

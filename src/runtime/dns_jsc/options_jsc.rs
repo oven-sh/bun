@@ -8,21 +8,15 @@ use bun_dns::{
     Backend, Family, GetAddrInfo, GetAddrInfoResult as GaiResult, Options, Protocol, ResultAny,
     SocketType, BACKEND_LABEL, FAMILY_MAP, PROTOCOL_MAP, SOCKET_TYPE_MAP,
 };
-// PORT NOTE: Zig's `Options.FromJSError` / `Backend.FromJSError` are error sets
-// that union `JSError` with the `Invalid*` variants. The Rust enums live in
+// PORT NOTE: Zig's `Options.FromJSError` is the error-set union of all the
+// per-field `Invalid*` variants plus `JSError`. The Rust enum lives in
 // `bun_dns` (which has no `bun_jsc` dep), so the `JsError → JSError` mapping is
-// done locally via the `js()` / `jsb()` helpers below.
-use bun_dns::BackendFromJsError as BackendFromJSError;
+// done locally via the `js()` helper below.
 use bun_dns::OptionsFromJsError as FromJSError;
 
 #[inline]
 fn js<T>(r: JsResult<T>) -> Result<T, FromJSError> {
     r.map_err(|_: JsError| FromJSError::JSError)
-}
-
-#[inline]
-fn jsb<T>(r: JsResult<T>) -> Result<T, BackendFromJSError> {
-    r.map_err(|_: JsError| BackendFromJSError::JSError)
 }
 
 pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Options, FromJSError> {
@@ -49,10 +43,7 @@ pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Option
         }
 
         if let Some(backend) = js(value.get(global, "backend"))? {
-            options.backend = backend_from_js(backend, global).map_err(|e| match e {
-                BackendFromJSError::InvalidBackend => FromJSError::InvalidBackend,
-                BackendFromJSError::JSError => FromJSError::JSError,
-            })?;
+            options.backend = backend_from_js(backend, global)?;
         }
 
         if let Some(flags) = js(value.get(global, "flags"))? {
@@ -175,25 +166,25 @@ pub fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Proto
     Err(FromJSError::InvalidProtocol)
 }
 
-pub fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, BackendFromJSError> {
+pub fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Backend::default());
     }
 
     if value.is_string() {
-        return match jsb(BACKEND_LABEL.from_js(global, value))? {
+        return match js(BACKEND_LABEL.from_js(global, value))? {
             Some(b) => Ok(b),
             None => {
                 // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
-                if unsafe { (*jsb(value.to_js_string(global))?).length() } == 0 {
+                if unsafe { (*js(value.to_js_string(global))?).length() } == 0 {
                     return Ok(Backend::default());
                 }
-                Err(BackendFromJSError::InvalidBackend)
+                Err(FromJSError::InvalidBackend)
             }
         };
     }
 
-    Err(BackendFromJSError::InvalidBackend)
+    Err(FromJSError::InvalidBackend)
 }
 
 pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {

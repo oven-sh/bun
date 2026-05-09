@@ -263,11 +263,10 @@ impl ParseTask {
                 file: resolve_result.file_fd,
             },
             side_effects: resolve_result.primary_side_effects_data,
-            // `_resolver::Result.jsx` is the resolver-side TYPE_ONLY
-            // mirror; `From<_> for options::jsx::Pragma` bridges field-by-field
-            // (options.rs:jsx::From). Preserves jsxImportSource/runtime/etc.
-            // from tsconfig.json (.zig:122).
-            jsx: resolve_result.jsx.clone().into(),
+            // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
+            // nominal type (`bun_options_types::jsx::Pragma`). Preserves
+            // jsxImportSource/runtime/etc. from tsconfig.json (.zig:122).
+            jsx: resolve_result.jsx.clone(),
             source_index,
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
@@ -888,9 +887,12 @@ fn get_ast(
                     let mut buf = bun_alloc::ArenaString::new_in(bump);
                     write!(
                         &mut buf,
-                        "{}A{:08}",
-                        bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
-                        source.index.0
+                        "{}",
+                        crate::chunk::UniqueKey {
+                            prefix: unique_key_prefix,
+                            kind: crate::chunk::QueryKind::Asset,
+                            index: source.index.0,
+                        },
                     )
                     .expect("unreachable");
                     let embedded_path = buf.into_bump_str().as_bytes();
@@ -980,9 +982,12 @@ fn get_ast(
             let mut buf = bun_alloc::ArenaString::new_in(bump);
             write!(
                 &mut buf,
-                "{}A{:08}",
-                bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
-                source.index.0
+                "{}",
+                crate::chunk::UniqueKey {
+                    prefix: unique_key_prefix,
+                    kind: crate::chunk::QueryKind::Asset,
+                    index: source.index.0,
+                },
             )
             .expect("unreachable");
             let unique_key = buf.into_bump_str().as_bytes();
@@ -1209,9 +1214,12 @@ fn get_ast(
                 let mut buf = bun_alloc::ArenaString::new_in(bump);
                 write!(
                     &mut buf,
-                    "{}A{:08}",
-                    bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
-                    source.index.0
+                    "{}",
+                    crate::chunk::UniqueKey {
+                        prefix: unique_key_prefix,
+                        kind: crate::chunk::QueryKind::Asset,
+                        index: source.index.0,
+                    },
                 )
                 .expect("unreachable");
                 buf.into_bump_str().as_bytes()
@@ -2234,10 +2242,11 @@ fn run_with_source_code(
 
     let output_format = topts.output_format;
 
-    // `crate::options::jsx::Pragma` → `bun_js_parser::options::JSX::Pragma`
-    // via `From` (options.rs jsx mod). Preserves jsxImportSource/runtime/etc.
-    // (.zig:1207).
-    let mut opts = ParserOptions::init(task.jsx.clone().into(), loader);
+    // D042: `crate::options::jsx::Pragma` IS `bun_js_parser::options::JSX::Pragma`
+    // (both re-export `bun_options_types::jsx::Pragma`). `to_parser_jsx_pragma`
+    // applies the `_None → Automatic` runtime fold the old `From` bridge did so
+    // parser-side `== Automatic` checks keep their semantics (.zig:1207).
+    let mut opts = ParserOptions::init(crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()), loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
     // `AllowUnresolved` is the same nominal type on

@@ -242,8 +242,7 @@ impl SupportsCondition {
                 let mut p = css::VendorPrefix::empty();
                 p |= flag;
                 let _ = p;
-                css::serializer::serialize_name(name, dest)
-                    .map_err(|_| dest.add_fmt_error())?;
+                dest.serialize_name(name)?;
                 dest.delim(b':', false)?;
                 dest.write_str(value)?;
             }

@@ -109,13 +109,7 @@ pub struct BrotliReaderArrayList<'a> {
     pub full_flush_op: c::BrotliEncoderOperation,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ReaderState {
-    Uninitialized,
-    Inflating,
-    End,
-    Error,
-}
+pub use bun_core::compress::State as ReaderState;
 
 impl<'a> BrotliReaderArrayList<'a> {
     // Zig: `pub const new = bun.TrivialNew(BrotliReaderArrayList);`

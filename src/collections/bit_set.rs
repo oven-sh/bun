@@ -517,7 +517,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
         if NUM_MASKS == 0 {
             return false; // doesn't compile in this case
         }
-        (self.masks[Self::mask_index(index)] & Self::mask_bit(index)) != 0
+        (self.masks[word_mask_index(index)] & word_mask_bit(index)) != 0
     }
 
     /// Returns the total number of set bits in this bit set.
@@ -536,8 +536,8 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
         if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
-        let bit = Self::mask_bit(index);
-        let mask_index = Self::mask_index(index);
+        let bit = word_mask_bit(index);
+        let mask_index = word_mask_index(index);
         let new_bit = bit & bool_mask_usize(value);
         self.masks[mask_index] = (self.masks[mask_index] & !bit) | new_bit;
     }
@@ -548,7 +548,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
         if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
-        self.masks[Self::mask_index(index)] |= Self::mask_bit(index);
+        self.masks[word_mask_index(index)] |= word_mask_bit(index);
     }
 
     /// Changes the value of all bits in the specified range to
@@ -568,7 +568,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
         if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
-        self.masks[Self::mask_index(index)] &= !Self::mask_bit(index);
+        self.masks[word_mask_index(index)] &= !word_mask_bit(index);
     }
 
     /// Flips a specific bit in the bit set
@@ -577,7 +577,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
         if NUM_MASKS == 0 {
             return; // doesn't compile in this case
         }
-        self.masks[Self::mask_index(index)] ^= Self::mask_bit(index);
+        self.masks[word_mask_index(index)] ^= word_mask_bit(index);
     }
 
     /// Flips all bits in this bit set which are present
@@ -758,15 +758,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
     #[inline]
     pub fn iter_set(&self) -> BitSetIterator<'_, true, true> {
         self.iterator::<true, true>()
-    }
-
-    #[inline(always)]
-    fn mask_bit(index: usize) -> usize {
-        word_mask_bit(index)
-    }
-    #[inline(always)]
-    fn mask_index(index: usize) -> usize {
-        word_mask_index(index)
     }
 }
 
@@ -1017,14 +1008,14 @@ impl DynamicBitSetUnmanaged {
     /// is present in the set, false otherwise.
     pub fn is_set(&self, index: usize) -> bool {
         debug_assert!(index < self.bit_length);
-        (self.masks_slice()[Self::mask_index(index)] & Self::mask_bit(index)) != 0
+        (self.masks_slice()[word_mask_index(index)] & word_mask_bit(index)) != 0
     }
 
     pub fn is_set_allow_out_of_bound(&self, index: usize, out_of_bounds: bool) -> bool {
         if index >= self.bit_length {
             return out_of_bounds;
         }
-        (self.masks_slice()[Self::mask_index(index)] & Self::mask_bit(index)) != 0
+        (self.masks_slice()[word_mask_index(index)] & word_mask_bit(index)) != 0
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -1061,8 +1052,8 @@ impl DynamicBitSetUnmanaged {
     /// set to match the passed boolean.
     pub fn set_value(&mut self, index: usize, value: bool) {
         debug_assert!(index < self.bit_length);
-        let bit = Self::mask_bit(index);
-        let mask_index = Self::mask_index(index);
+        let bit = word_mask_bit(index);
+        let mask_index = word_mask_index(index);
         let new_bit = bit & bool_mask_usize(value);
         let mask = &mut self.masks_slice_mut()[mask_index];
         *mask = (*mask & !bit) | new_bit;
@@ -1071,7 +1062,7 @@ impl DynamicBitSetUnmanaged {
     /// Adds a specific bit to the bit set
     pub fn set(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
-        self.masks_slice_mut()[Self::mask_index(index)] |= Self::mask_bit(index);
+        self.masks_slice_mut()[word_mask_index(index)] |= word_mask_bit(index);
     }
 
     /// Changes the value of all bits in the specified range to
@@ -1085,13 +1076,13 @@ impl DynamicBitSetUnmanaged {
     /// Removes a specific bit from the bit set
     pub fn unset(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
-        self.masks_slice_mut()[Self::mask_index(index)] &= !Self::mask_bit(index);
+        self.masks_slice_mut()[word_mask_index(index)] &= !word_mask_bit(index);
     }
 
     /// Flips a specific bit in the bit set
     pub fn toggle(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
-        self.masks_slice_mut()[Self::mask_index(index)] ^= Self::mask_bit(index);
+        self.masks_slice_mut()[word_mask_index(index)] ^= word_mask_bit(index);
     }
 
     /// Flips all bits in this bit set which are present
@@ -1276,16 +1267,8 @@ impl DynamicBitSetUnmanaged {
     }
 
     #[inline(always)]
-    fn mask_bit(index: usize) -> usize {
-        word_mask_bit(index)
-    }
-    #[inline(always)]
-    fn mask_index(index: usize) -> usize {
-        word_mask_index(index)
-    }
-    #[inline(always)]
     pub const fn num_masks(bit_length: usize) -> usize {
-        (bit_length + (DYN_MASK_BITS as usize - 1)) / DYN_MASK_BITS as usize
+        num_masks_for(bit_length)
     }
 }
 

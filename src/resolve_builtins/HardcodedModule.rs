@@ -1,18 +1,9 @@
+use bun_core::zstr;
 use bun_options_types::import_record;
 use bun_options_types::BundleEnums::Target;
 use bun_string::ZStr;
 
 // Zig: `const string = []const u8;` — in Rust we use `&'static [u8]` directly for keys.
-
-/// Local `zstr!("lit")` → `&'static ZStr`. Mirrors `bun_core::zstr!`; defined
-/// here so the `$crate`-relative `ZStr` path resolves without a `bun_core` dep.
-macro_rules! zstr {
-    ($s:literal) => {{
-        const __B: &[u8] = ::core::concat!($s, "\0").as_bytes();
-        // SAFETY: literal is NUL-terminated by concat!; len excludes the NUL.
-        unsafe { ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
-    }};
-}
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
 pub enum HardcodedModule {

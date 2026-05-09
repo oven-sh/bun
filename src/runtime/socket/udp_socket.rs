@@ -66,13 +66,13 @@ impl JSValueAsyncCtxExt for JSValue {
     }
 }
 
+use bun_string::immutable::inet_pton;
+
 #[allow(dead_code)]
 unsafe extern "C" {
     fn ntohs(nshort: u16) -> u16;
     fn htonl(hlong: u32) -> u32;
     fn htons(hshort: u16) -> u16;
-    fn inet_ntop(af: c_int, src: *const c_void, dst: *mut u8, size: c_int) -> *const c_char;
-    fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
 }
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
@@ -140,7 +140,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         let peer = buf.get_peer(i);
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
-        let mut hostname: *const c_char = core::ptr::null();
+        let mut hostname: Option<&[u8]> = None;
         let mut port: u16 = 0;
         let mut scope_id: Option<u32> = None;
 
@@ -149,30 +149,16 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
             f if f == inet::AF_INET => {
                 // SAFETY: family == AF_INET so peer is sockaddr_in.
                 let peer4 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
-                // SAFETY: libc addr-format fn; src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
-                hostname = unsafe {
-                    inet_ntop(
-                        f,
-                        (&raw const peer4.addr).cast::<c_void>(),
-                        addr_buf.as_mut_ptr(),
-                        addr_buf.len() as c_int,
-                    )
-                };
+                // SAFETY: src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
+                hostname = unsafe { bun_cares_sys::ntop(f, (&raw const peer4.addr).cast(), &mut addr_buf) };
                 // SAFETY: libc byte-order fn; pure on u16.
                 port = unsafe { ntohs(peer4.port) };
             }
             f if f == inet::AF_INET6 => {
                 // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
                 let peer6 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
-                // SAFETY: libc addr-format fn; src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
-                hostname = unsafe {
-                    inet_ntop(
-                        f,
-                        (&raw const peer6.addr).cast::<c_void>(),
-                        addr_buf.as_mut_ptr(),
-                        addr_buf.len() as c_int,
-                    )
-                };
+                // SAFETY: src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
+                hostname = unsafe { bun_cares_sys::ntop(f, (&raw const peer6.addr).cast(), &mut addr_buf) };
                 // SAFETY: libc byte-order fn; pure on u16.
                 port = unsafe { ntohs(peer6.port) };
                 if peer6.scope_id != 0 {
@@ -185,7 +171,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
             }
         }
 
-        if hostname.is_null() || port == 0 {
+        if hostname.is_none() || port == 0 {
             i += 1;
             continue;
         }
@@ -193,8 +179,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         let truncated = buf.get_truncated(i);
         let slice = buf.get_payload(i);
 
-        // SAFETY: inet_ntop returned non-null NUL-terminated string into addr_buf.
-        let span = unsafe { bun_core::ffi::cstr(hostname) }.to_bytes();
+        let span = hostname.unwrap();
         let mut hostname_string = if let Some(id) = scope_id {
             'blk: {
                 #[cfg(not(windows))]

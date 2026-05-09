@@ -1577,12 +1577,6 @@ impl PackageJSON {
     }
 } // end  impl PackageJSON
 
-#[inline]
-fn bytes_of<T>(v: &T) -> &[u8] {
-    // SAFETY: reading the raw bytes of a Sized value
-    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
-}
-
 pub struct ExportsMap {
     pub root: Entry,
     pub exports_range: logger::Range,

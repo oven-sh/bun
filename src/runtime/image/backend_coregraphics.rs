@@ -42,11 +42,7 @@ impl From<codecs::Error> for BackendError {
     }
 }
 
-impl From<BackendError> for bun_core::Error {
-    fn from(e: BackendError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(BackendError);
 
 impl BackendError {
     /// Reshape Zig's `(codecs.Error || error{BackendUnavailable})!T` into the

@@ -38,11 +38,7 @@ pub enum WhoamiError {
     #[error("probably invalid auth")]
     ProbablyInvalidAuth,
 }
-impl From<AllocError> for WhoamiError {
-    fn from(_: AllocError) -> Self {
-        WhoamiError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(WhoamiError);
 
 pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let registry = &manager.options.scope;
@@ -1256,7 +1252,7 @@ pub mod package_manifest {
             let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
                 return Ok(None);
             };
-            let cache_file = scopeguard::guard(cache_file, |f| { let _ = f.close(); });
+            let _close_cache_file = CloseOnDrop::file(&cache_file);
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {

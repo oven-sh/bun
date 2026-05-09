@@ -147,7 +147,7 @@ impl Animation {
             AnimationName::None => None,
             AnimationName::Ident(ident) => Some(ident.v()),
             // SAFETY: arena-owned slice lives for the parse session.
-            AnimationName::String(s) => Some(unsafe { &**s }),
+            AnimationName::String(s) => Some(unsafe { crate::arena_str(*s) }),
         };
 
         if let Some(name_str) = name_str {
@@ -265,7 +265,7 @@ impl AnimationName {
             AnimationName::String(s) => {
                 hasher.update(&2u32.to_ne_bytes());
                 // SAFETY: arena-owned slice.
-                hasher.update(unsafe { &**s });
+                hasher.update(unsafe { crate::arena_str(*s) });
             }
         }
     }
@@ -308,7 +308,7 @@ impl AnimationName {
             AnimationName::None => return dest.write_str("none"),
             AnimationName::Ident(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { &*s.v };
+                let name: &[u8] = unsafe { crate::arena_str(s.v) };
                 if css_module_animation_enabled {
                     // PORT NOTE: reshaped for borrowck — capture arena/source_index
                     // before borrowing dest.css_module mutably.
@@ -322,7 +322,7 @@ impl AnimationName {
             }
             AnimationName::String(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { &**s };
+                let name: &[u8] = unsafe { crate::arena_str(*s) };
                 if css_module_animation_enabled {
                     // PORT NOTE: reshaped for borrowck
                     let arena = dest.arena;
@@ -341,10 +341,7 @@ impl AnimationName {
                     || strings::eql_case_insensitive_ascii(name, b"revert", true)
                     || strings::eql_case_insensitive_ascii(name, b"revert-layer", true)
                 {
-                    if css::serializer::serialize_string(name, dest).is_err() {
-                        return Err(dest.add_fmt_error());
-                    }
-                    return Ok(());
+                    return dest.serialize_string(name);
                 }
 
                 return dest.write_ident(name, css_module_animation_enabled);

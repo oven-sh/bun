@@ -114,8 +114,7 @@ impl LayerName {
             } else {
                 dest.write_char(b'.')?;
             }
-            css::serializer::serialize_identifier(name, dest)
-                .map_err(|_| dest.add_fmt_error())?;
+            dest.serialize_identifier(name)?;
         }
         Ok(())
     }

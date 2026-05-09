@@ -173,7 +173,7 @@ impl<'a> Printer<'a> {
         if let Some(local_names) = self.local_names {
             if let Some(local_name) = local_names.get(&final_ref) {
                 // SAFETY: LocalsResultsMap values are arena-owned slices valid for `'a`.
-                return unsafe { &**local_name };
+                return unsafe { crate::arena_str(*local_name) };
             }
         }
 
@@ -190,7 +190,7 @@ impl<'a> Printer<'a> {
         }
         if ident.is_ident() {
             // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
-            return unsafe { &*ident.as_ident().unwrap().v };
+            return unsafe { crate::arena_str(ident.as_ident().unwrap().v) };
         }
         self.lookup_symbol(ident.as_ref().unwrap())
     }
@@ -420,6 +420,30 @@ impl<'a> css::WriteAll for Printer<'a> {
 
 impl<'a> Printer<'a> {
 
+    /// Serialize a CSS identifier through this printer.
+    ///
+    /// Thin wrapper over `css::serializer::serialize_identifier` — since
+    /// `Printer: WriteAll<Error = PrintErr>` and `write_str`/`write_char`
+    /// already record `add_fmt_error()` on failure, no `.map_err` is needed.
+    #[inline]
+    pub fn serialize_identifier(&mut self, v: &[u8]) -> PrintResult<()> {
+        css::serializer::serialize_identifier(v, self)
+    }
+
+    /// Serialize a quoted CSS string through this printer. See
+    /// [`Printer::serialize_identifier`] for the error-mapping rationale.
+    #[inline]
+    pub fn serialize_string(&mut self, v: &[u8]) -> PrintResult<()> {
+        css::serializer::serialize_string(v, self)
+    }
+
+    /// Serialize a CSS name (identifier-tail escaping) through this printer.
+    /// See [`Printer::serialize_identifier`] for the error-mapping rationale.
+    #[inline]
+    pub fn serialize_name(&mut self, v: &[u8]) -> PrintResult<()> {
+        css::serializer::serialize_name(v, self)
+    }
+
     pub fn write_comment(&mut self, comment: &[u8]) -> PrintResult<()> {
         if self.dest.write_all(comment).is_err() {
             return Err(self.add_fmt_error());
@@ -498,8 +522,7 @@ impl<'a> Printer<'a> {
     ) -> PrintResult<()> {
         if !handle_css_module {
             if let Some(identifier) = ident.as_ident() {
-                return css::serializer::serialize_identifier(identifier.v(), self)
-                    .map_err(|_| self.add_fmt_error());
+                return self.serialize_identifier(identifier.v());
             } else {
                 let ref_ = ident.as_ref().unwrap();
                 let Some(symbol) = self.symbols.get_const(ref_) else {
@@ -507,8 +530,7 @@ impl<'a> Printer<'a> {
                 };
                 // PORT NOTE: copy out the &'static [u8] before re-borrowing &mut self.
                 let name = symbol.original_name;
-                return css::serializer::serialize_identifier(name, self)
-                    .map_err(|_| self.add_fmt_error());
+                return self.serialize_identifier(name);
             }
         }
 
@@ -516,7 +538,7 @@ impl<'a> Printer<'a> {
         // independent of the `&self` borrow, so no clone is needed before re-borrowing
         // `&mut self` for the writer.
         let str_: &'a [u8] = self.lookup_ident_or_ref(ident);
-        css::serializer::serialize_identifier(str_, self).map_err(|_| self.add_fmt_error())
+        self.serialize_identifier(str_)
     }
 
     /// Writes a CSS identifier to the underlying destination, escaping it
@@ -573,7 +595,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        css::serializer::serialize_identifier(ident, self).map_err(|_| self.add_fmt_error())
+        self.serialize_identifier(ident)
     }
 
     pub fn write_dashed_ident(
@@ -586,7 +608,7 @@ impl<'a> Printer<'a> {
         // NOTE: cannot use `ident.v()` here — `add_dashed` requires `&'a [u8]`
         // (arena lifetime), but the safe accessor ties the borrow to `&ident`.
         // SAFETY: DashedIdent.v is an arena-owned slice valid for `'a`.
-        let ident_v: &'a [u8] = unsafe { &*ident.v };
+        let ident_v: &'a [u8] = unsafe { crate::arena_str(ident.v) };
 
         let dashed_idents = match &self.css_module {
             Some(m) => m.config.dashed_idents,
@@ -630,7 +652,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        css::serializer::serialize_name(&ident_v[2..], self).map_err(|_| self.add_fmt_error())
+        self.serialize_name(&ident_v[2..])
     }
 
     pub fn write_byte(&mut self, char_: u8) -> Result<(), bun_alloc::AllocError> {

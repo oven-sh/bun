@@ -452,11 +452,7 @@ pub enum Error {
     OutOfMemory,
 }
 
-impl From<bun_alloc::AllocError> for Error {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        Error::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(Error);
 
 // TODO(port): narrow error set — `From<Error> for bun_core::Error` provided by
 // the `IntoStaticStr` derive convention (see PORTING.md §Type map).

@@ -27,7 +27,7 @@ use bun_boringssl_sys as boringssl_sys;
 use bun_event_loop::AnyTask::AnyTask;
 use crate::node::{StringOrBuffer, BlobOrStringOrBuffer};
 use crate::webcore::blob::BlobExt;
-use crate::socket::SSLConfig;
+use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers};
 
@@ -2803,12 +2803,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             socket: SocketHandler::<true>::DETACHED,
             owned_ssl_ctx: owned_ctx_taken,
             connection: this.connection.as_ref().map(|c| c.clone()),
-            protos: cfg.and_then(|c| {
-                c.protos.as_ref().map(|p| Box::<[u8]>::from(p.as_bytes()))
-            }),
-            server_name: cfg.and_then(|c| {
-                c.server_name.as_ref().map(|sn| Box::<[u8]>::from(sn.as_bytes()))
-            }),
+            protos: cfg.and_then(|c| c.protos_bytes().map(Box::<[u8]>::from)),
+            server_name: cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             flags: Flags::default(),
             this_value: JsRef::empty(),
             poll_ref: KeepAlive::init(),
@@ -2826,7 +2822,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // alias the `&mut TLSSocket` those calls materialise from ext.
         // Reborrow short-lived `unsafe { &mut *tls_ptr }` per use instead.
 
-        let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name.as_deref());
+        let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name_cstr());
         // SAFETY: per-thread VM singleton; no aliasing `&mut` held.
         let group = VirtualMachine::get().as_mut()
             .rare_data()
@@ -3636,16 +3632,8 @@ pub fn js_upgrade_duplex_to_tls(
         socket: SocketHandler::<true>::DETACHED,
         owned_ssl_ctx: None,
         connection: None,
-        protos: socket_config.and_then(|cfg| {
-            cfg.protos
-                .as_ref()
-                .map(|p| Box::<[u8]>::from(p.as_bytes()))
-        }),
-        server_name: socket_config.and_then(|cfg| {
-            cfg.server_name
-                .as_ref()
-                .map(|sn| Box::<[u8]>::from(sn.as_bytes()))
-        }),
+        protos: socket_config.and_then(|cfg| cfg.protos_bytes().map(Box::<[u8]>::from)),
+        server_name: socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         flags: Flags::default(),
         this_value: JsRef::empty(),
         poll_ref: KeepAlive::init(),

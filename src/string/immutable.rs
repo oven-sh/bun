@@ -1162,29 +1162,7 @@ pub trait Appender {
     fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
 }
 
-pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
-    let mut in_slice = in_;
-    // PORT NOTE: reshaped for borrowck — track output offset instead of reslicing &mut.
-    let mut out_off: usize = 0;
-
-    'begin: loop {
-        for (i, &c) in in_slice.iter().enumerate() {
-            if let b'A'..=b'Z' = c {
-                out[out_off..out_off + i].copy_from_slice(&in_slice[0..i]);
-                out[out_off + i] = c.to_ascii_lowercase();
-                let end = i + 1;
-                in_slice = &in_slice[end..];
-                out_off += end;
-                continue 'begin;
-            }
-        }
-
-        out[out_off..out_off + in_slice.len()].copy_from_slice(in_slice);
-        break;
-    }
-
-    &out[0..in_.len()]
-}
+pub use bun_core::strings::copy_lowercase;
 
 pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8] {
     let mut in_slice = in_;
@@ -1518,29 +1496,7 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
 // wrappers above.
 #[inline]
 pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    if check_len {
-        if a.len() != b.len() {
-            return false;
-        }
-        if a.is_empty() {
-            return true;
-        }
-    }
-
-    debug_assert!(!b.is_empty());
-    debug_assert!(!a.is_empty());
-
-    // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
-    #[cfg(not(windows))]
-    unsafe { libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 }
-    // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
-    #[cfg(windows)]
-    unsafe {
-        unsafe extern "C" {
-            fn _strnicmp(a: *const core::ffi::c_char, b: *const core::ffi::c_char, n: usize) -> core::ffi::c_int;
-        }
-        _strnicmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
-    }
+    bun_core::strings::eql_case_insensitive_ascii(a, b, check_len)
 }
 
 pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
@@ -2712,7 +2668,7 @@ pub const UNICODE_REPLACEMENT_STR: [u8; 3] = [0xEF, 0xBF, 0xBD];
 
 // inet_pton via direct libc extern (libc crate doesn't expose it on all targets).
 unsafe extern "C" {
-    fn inet_pton(af: c_int, src: *const u8, dst: *mut u8) -> c_int;
+    pub fn inet_pton(af: c_int, src: *const core::ffi::c_char, dst: *mut core::ffi::c_void) -> c_int;
 }
 // dep-graph: bun_string < bun_sys, so cannot import the canonical
 // `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
@@ -2729,8 +2685,8 @@ pub fn is_ip_address(input: &[u8]) -> bool {
     let mut dst = [0u8; 28];
     // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
     unsafe {
-        inet_pton(AF_INET, buf.as_ptr(), dst.as_mut_ptr()) > 0
-            || inet_pton(AF_INET6, buf.as_ptr(), dst.as_mut_ptr()) > 0
+        inet_pton(AF_INET, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
+            || inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
     }
 }
 
@@ -2740,7 +2696,7 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     buf[..input.len()].copy_from_slice(input);
     let mut dst = [0u8; 28];
     // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe { inet_pton(AF_INET6, buf.as_ptr(), dst.as_mut_ptr()) > 0 }
+    unsafe { inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
 }
 
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {

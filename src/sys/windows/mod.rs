@@ -455,21 +455,49 @@ pub const SCS_POSIX_BINARY: DWORD = 4;
 pub use bun_windows_sys::externs::SetCurrentDirectoryW;
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
 
-// TODO(port): move to windows_sys
-unsafe extern "system" {
-    pub fn RtlNtStatusToDosError(status: NTSTATUS) -> Win32Error;
-}
+pub use bun_windows_sys::externs::RtlNtStatusToDosError;
 
 pub use bun_windows_sys::externs::SaferiIsExecutableFileType;
 
-// This was originally copied from Zig's standard library
-/// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
-///
-/// Non-exhaustive (Zig had `_,`): represented as a transparent u16 newtype with associated consts.
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct Win32Error(pub u16);
+/// Codes from <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d>.
+/// Canonical newtype lives in `bun_windows_sys` (tier-0); re-exported here so
+/// `bun_sys::windows::Win32Error` and `bun_errno::Win32Error` are one nominal
+/// type. The full MS-ERREF const table below is parked behind `#[cfg(any())]`
+/// — only the subset on `bun_windows_sys::Win32Error` is referenced.
+pub use bun_windows_sys::Win32Error;
 
+/// `to_system_errno()` / `to_e()` — extension trait from `bun_errno` (the
+/// `SystemErrno` mapping table is a higher-tier concern than the tier-0
+/// newtype).
+pub use bun_errno::Win32ErrorExt;
+
+/// `Win32Error::unwrap()` from windows.zig — extension trait because
+/// `Win32Error` is a foreign type and `bun_core::Error` is unavailable in
+/// `bun_errno` (orphan rule + layering).
+pub trait Win32ErrorUnwrap: Copy {
+    fn unwrap(self) -> Result<(), bun_core::Error>;
+}
+impl Win32ErrorUnwrap for Win32Error {
+    fn unwrap(self) -> Result<(), bun_core::Error> {
+        if self == Win32Error::SUCCESS {
+            return Ok(());
+        }
+        if let Some(err) = self.to_system_errno() {
+            return Err(err.to_error().into());
+        }
+        Ok(())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// DEAD: full 1188-variant MS-ERREF const table from Zig std. Kept gated for
+// reference; move individual consts up into `bun_windows_sys::Win32Error`
+// if a new caller needs one. (Inherent impl on a foreign type is illegal,
+// so this block cannot be un-gated as-is.)
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _win32error_full_table {
+use super::Win32Error;
 #[allow(dead_code)]
 impl Win32Error {
     /// The operation completed successfully.
@@ -3267,37 +3295,8 @@ impl Win32Error {
 
     /// A reserved policy element was found in the QoS provider-specific buffer.
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
-    pub fn get() -> Win32Error {
-        // Zig truncates the DWORD to u16 (`@truncate`); never panic on >0xFFFF.
-        Win32Error(kernel32::GetLastError() as u16)
-    }
-
-    pub fn int(self) -> u16 {
-        self.0
-    }
-
-    pub fn unwrap(self) -> Result<(), bun_core::Error> {
-        if self == Self::SUCCESS {
-            return Ok(());
-        }
-        if let Some(err) = self.to_system_errno() {
-            return Err(err.to_error().into());
-        }
-        Ok(())
-    }
-
-    pub fn to_system_errno(self) -> Option<SystemErrno> {
-        // `bun_errno::Win32Error` and this newtype share the same `(pub u16)` repr;
-        // route through the errno-crate type since `SystemErrnoInit` is only
-        // implemented there.
-        SystemErrno::init_win32_error(bun_errno::Win32Error(self.0))
-    }
-
-    pub fn from_nt_status(status: NTSTATUS) -> Win32Error {
-        // SAFETY: RtlNtStatusToDosError is total over NTSTATUS
-        unsafe { RtlNtStatusToDosError(status) }
-    }
 }
+} // mod _win32error_full_table
 
 pub use bun_libuv_sys as libuv;
 
@@ -3484,43 +3483,32 @@ pub fn get_last_error_tag() -> impl core::fmt::Display {
 /// `bun.windows.Error` — Zig alias for `Win32Error`.
 pub type Error = Win32Error;
 
+/// `bun.windows.translateNTStatusToErrno` — thin wrapper over the canonical
+/// table in `bun_errno::windows::translate_ntstatus_to_errno`. This crate only
+/// adds the debug-build `Output::debug_warn` diagnostics (which `bun_errno`
+/// cannot emit without an upward dep).
 pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
-    use bun_windows_sys::ntstatus::*;
-    match err {
-        SUCCESS => E::SUCCESS,
-        ACCESS_DENIED => E::PERM,
-        INVALID_HANDLE => E::BADF,
-        INVALID_PARAMETER => E::INVAL,
-        OBJECT_NAME_COLLISION => E::EXIST,
-        FILE_IS_A_DIRECTORY => E::ISDIR,
-        OBJECT_PATH_NOT_FOUND => E::NOENT,
-        OBJECT_NAME_NOT_FOUND => E::NOENT,
-        NOT_A_DIRECTORY => E::NOTDIR,
-        RETRY => E::AGAIN,
-        DIRECTORY_NOT_EMPTY => E::NOTEMPTY,
-        FILE_TOO_LARGE => E::_2BIG, // Zig: .@"2BIG"
-        NOT_SAME_DEVICE => E::XDEV,
-        DELETE_PENDING => E::BUSY,
-        SHARING_VIOLATION => {
-            #[cfg(debug_assertions)]
-            bun_core::Output::debug_warn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE");
-            E::BUSY
-        }
-        OBJECT_NAME_INVALID => {
-            #[cfg(debug_assertions)]
-            bun_core::Output::debug_warn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.");
-            E::INVAL
-        }
-        t => {
-            #[cfg(debug_assertions)]
-            bun_core::Output::debug_warn(format_args!(
+    // Both `NTSTATUS` newtypes are `#[repr(transparent)] (pub u32)`; round-trip
+    // via the raw value so the lower-tier crate owns the only mapping table.
+    let e = bun_errno::windows::translate_ntstatus_to_errno(bun_errno::windows::NTSTATUS(err.0));
+    #[cfg(debug_assertions)]
+    {
+        use bun_windows_sys::ntstatus::{OBJECT_NAME_INVALID, SHARING_VIOLATION};
+        match err {
+            SHARING_VIOLATION => bun_core::Output::debug_warn(
+                "Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE",
+            ),
+            OBJECT_NAME_INVALID => bun_core::Output::debug_warn(
+                "Received OBJECT_NAME_INVALID, indicates a file path conversion issue.",
+            ),
+            t if e == E::UNKNOWN => bun_core::Output::debug_warn(format_args!(
                 "Called translateNTStatusToErrno with {:?} which does not have a mapping to errno.",
                 t
-            ));
-            let _ = t;
-            E::UNKNOWN
+            )),
+            _ => {}
         }
     }
+    e
 }
 
 pub use bun_windows_sys::externs::GetHostNameW;
@@ -3878,8 +3866,7 @@ pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(
 }
 
 pub fn WSAGetLastError() -> Option<E> {
-    // SAFETY: ws2_32 is loaded
-    SystemErrno::init(u32::try_from(unsafe { win32::ws2_32::WSAGetLastError() }).expect("int cast"))
+    SystemErrno::init(u32::try_from(win32::ws2_32::WSAGetLastError()).expect("int cast"))
         .map(SystemErrno::to_e)
 }
 
@@ -4246,11 +4233,7 @@ pub mod rescle {
         ) -> c_int;
     }
 
-    impl From<RescleError> for bun_core::Error {
-        fn from(e: RescleError) -> Self {
-            bun_core::Error::from_name(<&'static str>::from(&e))
-        }
-    }
+    bun_core::named_error_set!(RescleError);
 
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
     pub enum RescleError {
@@ -4884,7 +4867,7 @@ pub fn move_opened_file_at_loose(
             bun_sys::Result::Ok(fd) => fd,
         };
         // RAII close
-        let _close = scopeguard::guard(fd, |f| f.close());
+        let _close = bun_sys::CloseOnDrop::new(fd);
 
         let basename = &new_path[last_slash + 1..];
         return move_opened_file_at(src_fd, fd, basename, replace_if_exists);
@@ -4933,7 +4916,7 @@ pub fn rename_at_w(
             bun_sys::Result::Ok(fd) => break 'brk fd,
         }
     };
-    let _close = scopeguard::guard(src_fd, |f| f.close());
+    let _close = bun_sys::CloseOnDrop::new(src_fd);
 
     move_opened_file_at(src_fd, new_dir_fd, new_path_w, replace_if_exists)
 }

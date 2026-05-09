@@ -18,17 +18,9 @@ pub enum ChannelError {
     OutOfMemory,
 }
 
-impl From<bun_alloc::AllocError> for ChannelError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        ChannelError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ChannelError);
 
-impl From<ChannelError> for bun_core::Error {
-    fn from(e: ChannelError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ChannelError);
 
 // PORT NOTE: reshaped for borrowck / thread-safety. In Zig all methods take
 // `*Self` and the mutex guards `buffer`/`is_closed`. In Rust we need `&self`

@@ -477,9 +477,7 @@ impl ParsedComponent {
             ParsedComponent::TransformFunction(v) => v.to_css(dest),
             ParsedComponent::TransformList(v) => v.to_css(dest),
             ParsedComponent::CustomIdent(v) => CustomIdentFns::to_css(v, dest),
-            ParsedComponent::Literal(v) => {
-                css::serializer::serialize_identifier(v.v(), dest).map_err(|_| dest.add_fmt_error())
-            }
+            ParsedComponent::Literal(v) => dest.serialize_identifier(v.v()),
             ParsedComponent::Repeated(r) => {
                 let mut first = true;
                 for component in r.components.iter() {

@@ -66,7 +66,7 @@ use bun_http_jsc as _;
 use bun_url::URL as ZigURL;
 use bun_url::PercentEncoding;
 use bun_resolver::data_url::DataURL;
-use crate::socket::ssl_config::SSLConfig;
+use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs};
 use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
 use crate::webcore::{body, response, readable_stream, blob};
 use crate::webcore::blob::BlobExt as _;
@@ -106,13 +106,13 @@ impl FetchBunStringExt for BunString {
     }
 }
 
-/// Convert the runtime-tier `socket::ssl_config::SSLConfig` into the
-/// `bun_http::ssl_config::SharedPtr` shape FetchTasklet/AsyncHTTP expect.
-/// `bun_http` (T5) cannot name the runtime SSLConfig (cycle), so we deep-copy
-/// into the lower-tier struct and intern it in the http-tier registry.
+/// Intern an `SSLConfig` into the (single, canonical) `bun_http` registry.
+/// DEDUP(D202): the runtime-tier struct and registry were folded into
+/// `bun_http::ssl_config`, so this is now a thin alias — kept to avoid
+/// churning the call site below.
 #[inline]
 fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr {
-    http::ssl_config::global_registry::intern(config.into_http())
+    http::ssl_config::global_registry::intern(config)
 }
 
 /// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier

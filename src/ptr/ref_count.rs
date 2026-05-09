@@ -1199,12 +1199,7 @@ pub fn maybe_assert_no_refs<T: AnyRefCounted>(ptr: &T) {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline(always)]
-fn return_address() -> usize {
-    // TODO(port): @returnAddress() — no stable Rust equivalent. Options:
-    // (a) `extern "C" { fn __builtin_return_address(level: u32) -> *mut c_void; }`
-    //     via a tiny C shim, or (b) inline asm per-arch. Debug-only.
-    0
-}
+fn return_address() -> usize { bun_core::return_address() }
 
 #[cfg(debug_assertions)]
 #[inline(always)]

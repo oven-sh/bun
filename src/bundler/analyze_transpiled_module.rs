@@ -131,11 +131,7 @@ pub enum ModuleInfoError {
     #[error("BadModuleInfo")]
     BadModuleInfo,
 }
-impl From<ModuleInfoError> for bun_core::Error {
-    fn from(_e: ModuleInfoError) -> Self {
-        err!("BadModuleInfo")
-    }
-}
+bun_core::named_error_set!(ModuleInfoError);
 
 /// All slice fields are **self-referential** views into `owner`
 /// (`Owner::AllocatedSlice`) or into the parent `ModuleInfo`'s `Vec` storage

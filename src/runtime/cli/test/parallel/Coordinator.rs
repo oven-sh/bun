@@ -111,10 +111,9 @@ impl<'a> Coordinator<'a> {
             {
                 // Bound the wait so we wake to scale up even if no I/O arrives.
                 const MS_PER_S: i64 = 1000;
-                const NS_PER_MS: i64 = 1_000_000;
                 let ts = bun_core::Timespec {
                     sec: self.scale_up_after_ms / MS_PER_S,
-                    nsec: (self.scale_up_after_ms % MS_PER_S) * NS_PER_MS,
+                    nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
                 // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
                 unsafe {

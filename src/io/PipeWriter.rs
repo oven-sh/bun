@@ -1648,20 +1648,14 @@ impl StreamBuffer {
 
     pub fn write_type_as_bytes<T>(&mut self, data: &T) -> Result<(), OOM> {
         // SAFETY: caller passes POD T (matches Zig std.mem.asBytes contract).
-        let bytes = unsafe {
-            core::slice::from_raw_parts(std::ptr::from_ref::<T>(data).cast::<u8>(), mem::size_of::<T>())
-        };
-        self.write(bytes)
+        self.write(unsafe { bun_core::bytes_of(data) })
     }
 
     pub fn write_type_as_bytes_assume_capacity<T>(&mut self, data: T) {
         // TODO(port): Zig round-trips through bun.Vec<u8> here; Rust just writes bytes.
         // SAFETY: caller passes POD T.
-        let bytes = unsafe {
-            core::slice::from_raw_parts((&raw const data).cast::<u8>(), mem::size_of::<T>())
-        };
         // PERF(port): was assume_capacity
-        self.list.extend_from_slice(bytes);
+        self.list.extend_from_slice(unsafe { bun_core::bytes_of(&data) });
     }
 
     /// Zig: `writeOrFallback(buffer: anytype, comptime writeFn: anytype)` —

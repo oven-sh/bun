@@ -549,7 +549,7 @@ fn is_selector_unused(
                 // `SelectorParser::new_local_identifier`).
                 let actual_ident: &[u8] = match (*ident).as_ident() {
                     // SAFETY: arena-owned slice (Phase-A `'static` placeholder).
-                    Some(i) => unsafe { &*i.v },
+                    Some(i) => unsafe { crate::arena_str(i.v) },
                     None => {
                         let _ = symbols;
                         continue; // blocked_on: as_original_string ref arm
@@ -843,19 +843,16 @@ pub mod serialize {
                     // Serialize as both an identifier and a string and choose the shorter one.
                     // SAFETY: per the `CssString` invariant, the pointee borrows the parser
                     // arena which outlives the `Printer` it is being written to.
-                    let value_bytes = unsafe { &**value };
+                    let value_bytes = unsafe { crate::arena_str(*value) };
+                    // `Vec<u8>: WriteAll<Error = Infallible>` — cannot fail.
                     let mut id: Vec<u8> = Vec::new();
-                    if css::serializer::serialize_identifier(value_bytes, &mut id).is_err() {
-                        return Err(dest.add_fmt_error());
-                    }
+                    let _ = css::serializer::serialize_identifier(value_bytes, &mut id);
 
                     // PORT NOTE: Zig routed through `css.to_css.string(CSSString, ...)`, which
                     // dispatches to `CSSStringFns.toCss` → `serialize_string`. Inline that here
                     // since `CssString` (`*const [u8]`) does not implement `generic::ToCss`.
                     let mut s: Vec<u8> = Vec::new();
-                    if css::serializer::serialize_string(value_bytes, &mut s).is_err() {
-                        return Err(dest.add_fmt_error());
-                    }
+                    let _ = css::serializer::serialize_string(value_bytes, &mut s);
 
                     let id_items = &id[..];
                     if !id_items.is_empty() && id_items.len() < s.len() {
@@ -1010,9 +1007,7 @@ pub mod serialize {
                     } else {
                         dest.delim(b',', false)?;
                     }
-                    if css::serializer::serialize_identifier(lang, dest).is_err() {
-                        return Err(dest.add_fmt_error());
-                    }
+                    dest.serialize_identifier(lang)?;
                 }
                 return dest.write_str(b")");
             }
@@ -1054,8 +1049,7 @@ pub mod serialize {
                     $d.write_char(b'.')?;
                     // blocked_on: `Printer::write_ident` (gated on css_modules
                     // Pattern::write closure-arity reshape). Non-modules path:
-                    css::serializer::serialize_identifier(class, $d)
-                        .map_err(|_| PrintErr::CSSPrintError)?;
+                    $d.serialize_identifier(class)?;
                 } else {
                     $d.write_str($s)?;
                 }

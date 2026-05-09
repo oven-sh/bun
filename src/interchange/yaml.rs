@@ -75,11 +75,7 @@ pub enum YamlParseError {
     StackOverflow,
 }
 
-impl From<AllocError> for YamlParseError {
-    fn from(_: AllocError) -> Self {
-        YamlParseError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(YamlParseError);
 
 impl From<YamlParseError> for bun_core::Error {
     // PORT NOTE: Zig `YAML.ParseError` is an `error{...}` set, so callers
@@ -758,11 +754,7 @@ pub enum ParseError {
     StackOverflow,
 }
 
-impl From<AllocError> for ParseError {
-    fn from(_: AllocError) -> Self {
-        ParseError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ParseError);
 
 bun_core::named_error_set!(ParseError);
 

@@ -9,6 +9,7 @@ path = "lib.rs"
 [dependencies]
 strum.workspace = true
 hashbrown.workspace = true
+smallvec = { workspace = true, features = ["const_generics", "union"] }
 paste = "1"
 bun_alloc.workspace = true
 bun_core.workspace = true

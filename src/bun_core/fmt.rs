@@ -5,293 +5,19 @@ use core::fmt::{self, Display, Formatter, Write as _};
 use core::ptr::NonNull;
 
 use crate::output as Output;
-// `strings`/`js_printer`/`js_lexer` are defined locally below (move-in subset);
-// lib.rs::strings re-exports them for the rest of the crate.
+// `strings` is the canonical `crate::strings` (lib.rs); `js_printer`/`js_lexer`
+// are defined locally below (move-in subset) and re-exported at the crate root.
+use crate::strings;
 
 /// SHA-512 digest length in bytes. Local constant to avoid bun_sha (T2) dependency.
 const SHA512_DIGEST: usize = 64;
 
 // ════════════════════════════════════════════════════════════════════════════
-// strings / js_lexer / js_printer minimal subsets.
+// js_lexer / js_printer minimal subsets.
 // Only the free functions fmt.rs/output.rs actually call. The full modules
-// (SIMD search, codepoint tables, JSON printer) stay in bun_str / bun_js_parser
-// which add `pub use bun_core::strings::*` and extend with the heavy bits.
+// (codepoint tables, JSON printer) stay in bun_str / bun_js_parser which add
+// `pub use bun_core::strings::*` and extend with the heavy bits.
 // ════════════════════════════════════════════════════════════════════════════
-
-pub mod strings {
-    /// Zig: `bun.strings.contains` / fmt.rs+output.rs call site name.
-    #[inline]
-    pub fn includes(haystack: &[u8], needle: &[u8]) -> bool {
-        if needle.is_empty() { return true; }
-        haystack.windows(needle.len()).any(|w| w == needle)
-        // PERF(port): was SIMD memmem — profile in Phase B
-    }
-    #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool { includes(h, n) }
-
-    #[inline]
-    pub fn index_of_char(s: &[u8], c: u8) -> Option<usize> {
-        s.iter().position(|&b| b == c)
-    }
-    #[inline]
-    pub fn index_of_any(s: &[u8], chars: &[u8]) -> Option<usize> {
-        s.iter().position(|b| chars.contains(b))
-    }
-    #[inline]
-    pub fn first_non_ascii(s: &[u8]) -> Option<usize> {
-        s.iter().position(|&b| b >= 0x80)
-    }
-
-    /// Zig: `eqlCaseInsensitiveASCII(a, b, check_len)`.
-    pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
-        if check_len && a.len() != b.len() { return false; }
-        let n = core::cmp::min(a.len(), b.len());
-        for i in 0..n {
-            if a[i].to_ascii_lowercase() != b[i].to_ascii_lowercase() { return false; }
-        }
-        true
-    }
-
-    /// Zig: `bun.strings.isIPV6Address` — heuristic (contains ':', not parseable as v4).
-    #[inline]
-    pub fn is_ipv6_address(s: &[u8]) -> bool {
-        index_of_char(s, b':').is_some()
-    }
-
-    /// Allocating replace (output.rs uses it once for `{pid}` substitution).
-    pub fn replace_owned(input: &[u8], needle: &[u8], with: &[u8]) -> Vec<u8> {
-        if needle.is_empty() { return input.to_vec(); }
-        let mut out = Vec::with_capacity(input.len());
-        let mut i = 0;
-        while i + needle.len() <= input.len() {
-            if &input[i..i + needle.len()] == needle {
-                out.extend_from_slice(with);
-                i += needle.len();
-            } else {
-                out.push(input[i]);
-                i += 1;
-            }
-        }
-        out.extend_from_slice(&input[i..]);
-        out
-    }
-
-    // ─── secret/uuid sniffers (fmt.rs URL redaction) ──────────────────────
-    pub fn starts_with_uuid(s: &[u8]) -> bool {
-        // 8-4-4-4-12 hex with dashes
-        if s.len() < 36 { return false; }
-        for (i, &b) in s[..36].iter().enumerate() {
-            let ok = match i { 8 | 13 | 18 | 23 => b == b'-', _ => b.is_ascii_hexdigit() };
-            if !ok { return false; }
-        }
-        true
-    }
-    pub fn starts_with_npm_secret(s: &[u8]) -> usize {
-        // Port of bun.strings.startsWithNpmSecret (immutable.zig): case-insensitive
-        // `npm`, then `_` or `s_`/`S_`, then 36..=48 alnum. Returns consumed length or 0.
-        if s.len() < 3 { return 0; }
-        if !(s[0] == b'n' || s[0] == b'N') { return 0; }
-        if !(s[1] == b'p' || s[1] == b'P') { return 0; }
-        if !(s[2] == b'm' || s[2] == b'M') { return 0; }
-        let mut i = 3usize;
-        if i < s.len() && (s[i] == b's' || s[i] == b'S') { i += 1; }
-        if i >= s.len() || s[i] != b'_' { return 0; }
-        i += 1;
-        let prefix_len = i;
-        while i < s.len() && (i - prefix_len) < 48 && s[i].is_ascii_alphanumeric() {
-            i += 1;
-        }
-        if i - prefix_len < 36 { return 0; }
-        i
-    }
-    fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize, usize)> {
-        if text.len() < item.len() || &text[..item.len()] != item {
-            return None;
-        }
-
-        let mut whitespace = false;
-        let mut offset = item.len();
-        while offset < text.len() && text[offset].is_ascii_whitespace() {
-            offset += 1;
-            whitespace = true;
-        }
-        if offset == text.len() {
-            return None;
-        }
-        let cont = super::js_lexer::is_identifier_continue(text[offset] as i32);
-
-        // must be another identifier
-        if !whitespace && cont {
-            return None;
-        }
-
-        // `null` is not returned after this point. Redact to the next
-        // newline if anything is unexpected
-        if cont {
-            let rest = &text[offset..];
-            return Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())));
-        }
-        offset += 1;
-
-        let mut end = offset;
-        while end < text.len() && text[end].is_ascii_whitespace() {
-            end += 1;
-        }
-
-        if end == text.len() {
-            return Some((offset, text.len() - offset));
-        }
-
-        match text[end] {
-            q @ (b'\'' | b'"' | b'`') => {
-                // attempt to find closing
-                let opening = end;
-                end += 1;
-                while end < text.len() {
-                    match text[end] {
-                        b'\\' => {
-                            // skip
-                            end += 1;
-                            end += 1;
-                        }
-                        c if c == q => {
-                            // closing
-                            return Some((opening + 1, (end - 1) - opening));
-                        }
-                        _ => end += 1,
-                    }
-                }
-
-                let rest = &text[offset..];
-                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
-            }
-            _ => {
-                let rest = &text[offset..];
-                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
-            }
-        }
-    }
-
-    /// Returns offset and length of first secret found.
-    pub fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
-        if let Some(r) = starts_with_redacted_item(str, b"_auth") {
-            return Some(r);
-        }
-        if let Some(r) = starts_with_redacted_item(str, b"_authToken") {
-            return Some(r);
-        }
-        if let Some(r) = starts_with_redacted_item(str, b"email") {
-            return Some(r);
-        }
-        if let Some(r) = starts_with_redacted_item(str, b"_password") {
-            return Some(r);
-        }
-        if let Some(r) = starts_with_redacted_item(str, b"token") {
-            return Some(r);
-        }
-
-        if starts_with_uuid(str) {
-            return Some((0, 36));
-        }
-
-        let npm_secret_len = starts_with_npm_secret(str);
-        if npm_secret_len > 0 {
-            return Some((0, npm_secret_len));
-        }
-
-        if let Some(r) = find_url_password(str) {
-            return Some(r);
-        }
-
-        None
-    }
-
-    // ─── encoding ─────────────────────────────────────────────────────────
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum Encoding { Ascii, Latin1, Utf8, Utf16 }
-
-    // ─── scanners fmt.rs needs that aren't defined locally ────────────────
-    // Re-export the simdutf-backed ones from lib.rs::strings. The encode-into
-    // helpers (`copy_utf16_into_utf8`, `copy_latin1_into_utf8`) used to be
-    // duplicated here with a divergent WTF-8-passthrough scalar; the canonical
-    // FFFD-replacing simdutf-backed impls live in `crate::strings` and are
-    // re-exported so `fmt.rs`'s local `strings::` path keeps resolving.
-    pub use crate::strings::{
-        is_all_ascii, trim_right, encode_wtf8_rune,
-        copy_utf16_into_utf8, copy_latin1_into_utf8, EncodeIntoResult,
-    };
-
-    /// Port of `bun.strings.wtf8ByteSequenceLength`.
-    #[inline]
-    pub const fn wtf8_byte_sequence_length(b: u8) -> u8 {
-        if b < 0x80 { 1 }
-        else if b & 0xE0 == 0xC0 { 2 }
-        else if b & 0xF0 == 0xE0 { 3 }
-        else if b & 0xF8 == 0xF0 { 4 }
-        else { 1 } // invalid lead → treat as 1 (replacement)
-    }
-
-    #[inline]
-    pub fn is_uuid(s: &[u8]) -> bool {
-        s.len() == 36 && starts_with_uuid(s)
-    }
-
-    /// Zig: aliases `indexOfNewlineOrNonASCII`, which matches any control byte
-    /// or non-ASCII (`< 0x20 || > 0x7F`). Scalar fallback; highway override
-    /// via bun_string when linked.
-    pub fn index_of_newline_or_non_ascii_or_ansi(s: &[u8]) -> Option<usize> {
-        s.iter().position(|&b| b < 0x20 || b > 0x7F)
-    }
-
-    /// Zig delegates to highway: `b < 0x20 || b > 127 || b == '"'`
-    /// (highway_strings.cpp:438). Do NOT match `'` or `` ` ``.
-    pub fn contains_newline_or_non_ascii_or_quote(s: &[u8]) -> bool {
-        s.iter().any(|&b| b < 0x20 || b > 0x7F || b == b'"')
-    }
-
-    /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
-    /// `(offset, len)` of the password segment, or None.
-    /// Zig only matches http:// and https:// schemes and rejects empty pw.
-    pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        // Zig uses case-sensitive `hasPrefixComptime` and truncates the search
-        // region at the first '\n' before scanning for '@'/':'.
-        let scheme_end = if s.starts_with(b"http://") {
-            7
-        } else if s.starts_with(b"https://") {
-            8
-        } else {
-            return None;
-        };
-        let mut rest = &s[scheme_end..];
-        if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
-            rest = &rest[..nl];
-        }
-        let at = rest.iter().position(|&b| b == b'@')?;
-        let userinfo = &rest[..at];
-        let colon = userinfo.iter().position(|&b| b == b':')?;
-        // Reject empty password (`user:@host`).
-        if colon == at - 1 {
-            return None;
-        }
-        Some((scheme_end + colon + 1, at - colon - 1))
-    }
-
-    // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
-    #[derive(Default, Clone, Copy)]
-    pub struct CodepointIteratorCursor { pub i: usize, pub c: i32, pub width: u8 }
-    pub struct CodepointIterator<'a> { bytes: &'a [u8] }
-    impl<'a> CodepointIterator<'a> {
-        #[inline] pub fn init(bytes: &'a [u8]) -> Self { Self { bytes } }
-        pub fn next(&self, cursor: &mut CodepointIteratorCursor) -> bool {
-            let i = cursor.i + cursor.width as usize;
-            if i >= self.bytes.len() { return false; }
-            let b = self.bytes[i];
-            // TODO(port): full UTF-8 decode — bun_str owns the table-driven impl.
-            let (cp, w) = if b < 0x80 { (b as i32, 1u8) } else { (b as i32, 1u8) };
-            cursor.i = i; cursor.c = cp; cursor.width = w;
-            true
-        }
-    }
-}
 
 pub mod js_lexer {
     /// Zig: js_lexer.isIdentifierStart — ASCII fast path; bun_js_parser extends
@@ -2399,11 +2125,10 @@ pub fn bytes(n: usize) -> SizeFormatter {
 /// Lowercase hex encode into `out` (must be `2 * input.len()`). Port of
 /// `std.fmt.bytesToHex(.., .lower)` as used by Bun's hash printers.
 pub fn bytes_to_hex_lower(input: &[u8], out: &mut [u8]) -> usize {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
     debug_assert!(out.len() >= input.len() * 2);
     for (i, &b) in input.iter().enumerate() {
-        out[i * 2] = HEX[(b >> 4) as usize];
-        out[i * 2 + 1] = HEX[(b & 0x0F) as usize];
+        out[i * 2] = LOWER_HEX_TABLE[(b >> 4) as usize];
+        out[i * 2 + 1] = LOWER_HEX_TABLE[(b & 0x0F) as usize];
     }
     input.len() * 2
 }
@@ -2443,6 +2168,14 @@ impl<'a, const LOWER: bool> Display for HexBytes<'a, LOWER> {
         }
         Ok(())
     }
+}
+
+/// Ergonomic constructor for the lowercase `HexBytes` Display adapter — port of
+/// Zig `std.fmt.bytesToHex(.., .lower)` at format-arg call sites (`{x}` on
+/// `[]const u8`). Avoids turbofish at every caller.
+#[inline]
+pub fn hex_lower(bytes: &[u8]) -> HexBytes<'_, true> {
+    HexBytes(bytes)
 }
 
 const LOWER_HEX_TABLE: [u8; 16] =
@@ -2547,7 +2280,7 @@ impl Default for FormatDurationData {
 }
 
 const NS_PER_US: u64 = 1_000;
-const NS_PER_MS: u64 = 1_000_000;
+use crate::time::NS_PER_MS;
 const NS_PER_S: u64 = 1_000_000_000;
 const NS_PER_MIN: u64 = 60 * NS_PER_S;
 const NS_PER_HOUR: u64 = 60 * NS_PER_MIN;

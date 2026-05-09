@@ -666,7 +666,7 @@ impl MediaQuery {
             MediaType::Screen => dest.write_str("screen")?,
             MediaType::Custom(desc) => {
                 // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                dest.write_str(unsafe { &**desc })?;
+                dest.write_str(unsafe { crate::arena_str(*desc) })?;
             }
         }
 

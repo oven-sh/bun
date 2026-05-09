@@ -1713,7 +1713,7 @@ impl<'a> Printer<'a> {
                     // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
                     // not `&mut &mut Writer` — pass the raw vtable pointer.
                     let ew: *mut bun_core::io::Writer = Output::error_writer();
-                    log.print(ew).map_err(|_| err!("WriteFailed"))?;
+                    log.print(ew)?;
                 }
                 Global::crash();
             }

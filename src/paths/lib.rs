@@ -20,7 +20,7 @@ pub mod w_path_buffer_pool {
 }
 
 // std.fs.path equivalents (PORTING.md §Crate map: never std::path).
-pub const SEP: u8 = if cfg!(windows) { b'\\' } else { b'/' };
+pub use bun_alloc::SEP;
 pub use bun_alloc::SEP_STR;
 pub const SEP_POSIX: u8 = b'/';
 pub const SEP_WINDOWS: u8 = b'\\';
@@ -283,6 +283,8 @@ pub use resolve_path::{
     is_drive_letter_t,
     is_sep_any,
     is_sep_any_t,
+    is_sep_native,
+    is_sep_native_t,
     join_abs_string_buf_z,
     join_string_buf_wz,
     path_to_posix_buf,

@@ -183,15 +183,8 @@ impl fmt::Display for Error {
     }
 }
 impl core::error::Error for Error {}
-impl From<bun_alloc::AllocError> for Error {
-    fn from(_: bun_alloc::AllocError) -> Self { Error::OutOfMemory }
-}
-impl From<Error> for bun_core::Error {
-    fn from(e: Error) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-        // TODO(port): exact interning API
-    }
-}
+bun_core::oom_from_alloc!(Error);
+bun_core::named_error_set!(Error);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum StringLiteralRawFormat {

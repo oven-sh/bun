@@ -411,7 +411,7 @@ mod platform {
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DIRECTORY_INFORMATION,
-        IO_STATUS_BLOCK, UNICODE_STRING, BOOLEAN, FALSE, TRUE,
+        IO_STATUS_BLOCK, UNICODE_STRING, BOOLEAN, FALSE, TRUE, Win32ErrorExt as _,
     };
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly

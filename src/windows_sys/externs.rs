@@ -495,6 +495,26 @@ pub mod kernel32 {
             hConsoleOutput: HANDLE,
             lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
         ) -> BOOL;
+        /// `FillConsoleOutputAttribute` (`wincon.h`).
+        pub fn FillConsoleOutputAttribute(
+            hConsoleOutput: HANDLE,
+            wAttribute: WORD,
+            nLength: DWORD,
+            dwWriteCoord: COORD,
+            lpNumberOfAttrsWritten: *mut DWORD,
+        ) -> BOOL;
+        /// `FillConsoleOutputCharacterW` (`wincon.h`).
+        pub fn FillConsoleOutputCharacterW(
+            hConsoleOutput: HANDLE,
+            cCharacter: WCHAR,
+            nLength: DWORD,
+            dwWriteCoord: COORD,
+            lpNumberOfCharsWritten: *mut DWORD,
+        ) -> BOOL;
+        /// `SetConsoleCursorPosition` (`wincon.h`).
+        pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;
+        /// `ExitThread` (`processthreadsapi.h`).
+        pub fn ExitThread(dwExitCode: DWORD) -> !;
         /// `CreateNamedPipeW` (`winbase.h`).
         pub fn CreateNamedPipeW(
             lpName: LPCWSTR,
@@ -512,6 +532,10 @@ pub mod kernel32 {
     pub use super::{
         GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SetCurrentDirectoryW,
         SetFilePointerEx, CreateFileW, SYSTEM_INFO,
+    };
+    pub use super::{
+        GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
+        SetConsoleOutputCP,
     };
 }
 pub use kernel32::{GetLastError, GetCurrentProcess, GetExitCodeProcess};
@@ -804,13 +828,29 @@ pub mod ws2_32 {
     #[link(name = "ws2_32")]
     unsafe extern "system" {
         /// Raw `WSAGetLastError`. The Zig wrapper (`?SystemErrno`) lives in `errno`
-        /// because `SystemErrno` is a higher-tier type.
-        pub fn WSAGetLastError() -> c_int;
+        /// because `SystemErrno` is a higher-tier type. No preconditions; reads
+        /// thread-local Winsock error slot.
+        pub safe fn WSAGetLastError() -> c_int;
         pub fn WSASetLastError(err: c_int);
         pub fn closesocket(s: usize) -> c_int;
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
+        /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
+        /// or `SOCKET_ERROR` (-1) on failure (`WSAGetLastError` for the code).
+        pub fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: c_int) -> c_int;
     }
+
+    /// `WSAPOLLFD` (`winsock2.h`). `fd` is a `SOCKET` (= `UINT_PTR`).
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct WSAPOLLFD {
+        pub fd: usize,
+        pub events: i16,
+        pub revents: i16,
+    }
+    pub const SOCKET_ERROR: c_int = -1;
+    /// `POLLWRNORM` (`winsock2.h`) — `std.posix.POLL.WRNORM` on Windows.
+    pub const POLLWRNORM: i16 = 0x0010;
 }
 pub use ws2_32::WSAGetLastError;
 
@@ -896,12 +936,15 @@ impl Win32Error {
     pub const CONNECTION_ABORTED: Win32Error = Win32Error(1236);
     pub const PRIVILEGE_NOT_HELD: Win32Error = Win32Error(1314);
     pub const DISK_CORRUPT: Win32Error = Win32Error(1393);
+    /// `WAIT_TIMEOUT` / `ERROR_TIMEOUT` (1460) — `SleepConditionVariableSRW`,
+    /// `GetQueuedCompletionStatus`, etc.
+    pub const TIMEOUT: Win32Error = Win32Error(1460);
     pub const SYMLINK_NOT_SUPPORTED: Win32Error = Win32Error(1464);
     pub const CANT_ACCESS_FILE: Win32Error = Win32Error(1920);
     pub const CANT_RESOLVE_FILENAME: Win32Error = Win32Error(1921);
     pub const NOT_CONNECTED: Win32Error = Win32Error(2250);
-    pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(3492);
     pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
+    pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
 
     // — WSA pseudo-variants (Zig: `pub const WSAE*: Win32Error = @enumFromInt(N)`) —
     pub const WSA_INVALID_HANDLE: Win32Error = Win32Error(6);
@@ -990,6 +1033,12 @@ impl Win32Error {
     #[inline]
     pub fn from_ntstatus(status: NTSTATUS) -> Win32Error {
         Win32Error(unsafe { RtlNtStatusToDosError(status) } as u16)
+    }
+    /// Snake-cased alias for [`from_ntstatus`] (matches `bun_sys::windows`
+    /// callers — `from_nt_status`).
+    #[inline]
+    pub fn from_nt_status(status: NTSTATUS) -> Win32Error {
+        Self::from_ntstatus(status)
     }
 
     // NOTE: `toSystemErrno()` is intentionally NOT defined here — it returns

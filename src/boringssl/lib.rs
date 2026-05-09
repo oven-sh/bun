@@ -213,10 +213,7 @@ pub extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
     unsafe { bun_alloc::mimalloc::mi_usable_size(ptr) }
 }
 
-#[cfg(windows)]
-pub const INET6_ADDRSTRLEN: usize = 65;
-#[cfg(not(windows))]
-pub const INET6_ADDRSTRLEN: usize = 46;
+pub use bun_sys::posix::INET6_ADDRSTRLEN;
 
 // Canonical cross-platform AF_* surface — handles the Windows ws2def.h split.
 use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
@@ -245,24 +242,10 @@ pub fn canonicalize_ip<'a>(
                 return None;
             }
         }
-        // ip_addr will contain the null-terminated string of the cannonicalized IP
-        if c_ares::ares_inet_ntop(
-            af,
-            ip_std_text.as_ptr().cast(),
-            out_ip.as_mut_ptr().cast(),
-            out_ip.len() as c_ares::c_ares::ares_socklen_t,
-        )
-        .is_null()
-        {
-            return None;
-        }
     }
-    // use the null-terminated size to return the string
-    // SAFETY: ares_inet_ntop wrote a NUL-terminated string into out_ip on success.
-    let size = unsafe { CStr::from_ptr(out_ip.as_ptr().cast::<c_char>()) }
-        .to_bytes()
-        .len();
-    Some(&out_ip[..size])
+    // out_ip will contain the null-terminated canonicalized IP
+    // SAFETY: ip_std_text holds the in_addr/in6_addr written by ares_inet_pton above.
+    unsafe { c_ares::ntop(af, ip_std_text.as_ptr().cast(), &mut out_ip[..]) }
 }
 
 /// converts ASN1_OCTET_STRING to canonicalized IP string
@@ -272,26 +255,8 @@ pub fn ip2_string<'a>(
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
     let af: c_int = if ip.length == 4 { AF_INET } else { AF_INET6 };
-    // SAFETY: ip.data points to ip.length bytes; out_ip is INET6_ADDRSTRLEN+1 bytes.
-    unsafe {
-        if c_ares::ares_inet_ntop(
-            af,
-            ip.data.cast(),
-            out_ip.as_mut_ptr().cast(),
-            out_ip.len() as c_ares::c_ares::ares_socklen_t,
-        )
-        .is_null()
-        {
-            return None;
-        }
-    }
-
-    // use the null-terminated size to return the string
-    // SAFETY: ares_inet_ntop wrote a NUL-terminated string into out_ip on success.
-    let size = unsafe { CStr::from_ptr(out_ip.as_ptr().cast::<c_char>()) }
-        .to_bytes()
-        .len();
-    Some(&out_ip[..size])
+    // SAFETY: ip.data points to ip.length bytes (4 or 16); out_ip is INET6_ADDRSTRLEN+1 bytes.
+    unsafe { c_ares::ntop(af, ip.data.cast(), &mut out_ip[..]) }
 }
 
 /// Matches a DNS name pattern (possibly with a leading `*.` wildcard) against
@@ -353,61 +318,34 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                     return false;
                 }
 
-                if host_is_ip {
-                    // we safely ensure buffer size with max len + 1
-                    let mut canonical_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
-                    let mut cert_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
-                    // we try to canonicalize the IP before comparing
-                    let host_ip: &[u8] =
-                        canonicalize_ip(hostname, &mut canonical_ip_buf).unwrap_or(hostname);
-
-                    let names_ = boring::X509V3_EXT_d2i(ext);
-                    if !names_.is_null() {
-                        let names = names_.cast::<boring::struct_stack_st_GENERAL_NAME>();
-                        let _guard = scopeguard::guard(names, |n| {
-                            // SAFETY: `n` was returned by X509V3_EXT_d2i above and is non-null.
-                            unsafe { boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free) }
-                        });
-                        for i in 0..boring::sk_GENERAL_NAME_num(names) {
-                            let r#gen = boring::sk_GENERAL_NAME_value(names, i);
-                            if let Some(name) = r#gen.as_ref() {
-                                // TODO(port): name_type discriminants — verify GEN_* are c_int consts in bun_boringssl_sys
-                                match name.name_type {
-                                    boring::GEN_DNS | boring::GEN_URI => {
-                                        has_identifier_san = true;
-                                    }
-                                    boring::GEN_IPADD => {
-                                        has_identifier_san = true;
-                                        if let Some(cert_ip) =
-                                            ip2_string(&*name.d.ip, &mut cert_ip_buf)
-                                        {
-                                            if host_ip == cert_ip {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
+                // we safely ensure buffer size with max len + 1
+                let mut canonical_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
+                let mut cert_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
+                // we try to canonicalize the IP before comparing (only when host is an IP literal)
+                let host_ip: Option<&[u8]> = if host_is_ip {
+                    Some(canonicalize_ip(hostname, &mut canonical_ip_buf).unwrap_or(hostname))
                 } else {
-                    let names_ = boring::X509V3_EXT_d2i(ext);
-                    if !names_.is_null() {
-                        let names = names_.cast::<boring::struct_stack_st_GENERAL_NAME>();
-                        let _guard = scopeguard::guard(names, |n| {
-                            // SAFETY: `n` was returned by X509V3_EXT_d2i above and is non-null.
-                            unsafe { boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free) }
-                        });
-                        for i in 0..boring::sk_GENERAL_NAME_num(names) {
-                            let r#gen = boring::sk_GENERAL_NAME_value(names, i);
-                            if let Some(name) = r#gen.as_ref() {
-                                match name.name_type {
-                                    boring::GEN_IPADD | boring::GEN_URI => {
-                                        has_identifier_san = true;
-                                    }
-                                    boring::GEN_DNS => {
-                                        has_identifier_san = true;
+                    None
+                };
+
+                let names_ = boring::X509V3_EXT_d2i(ext);
+                if !names_.is_null() {
+                    let names = names_.cast::<boring::struct_stack_st_GENERAL_NAME>();
+                    let _guard = scopeguard::guard(names, |n| {
+                        // SAFETY: `n` was returned by X509V3_EXT_d2i above and is non-null.
+                        unsafe { boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free) }
+                    });
+                    for i in 0..boring::sk_GENERAL_NAME_num(names) {
+                        let r#gen = boring::sk_GENERAL_NAME_value(names, i);
+                        if let Some(name) = r#gen.as_ref() {
+                            // TODO(port): name_type discriminants — verify GEN_* are c_int consts in bun_boringssl_sys
+                            match name.name_type {
+                                boring::GEN_URI => {
+                                    has_identifier_san = true;
+                                }
+                                boring::GEN_DNS => {
+                                    has_identifier_san = true;
+                                    if !host_is_ip {
                                         let dns_name = &*name.d.dNSName;
                                         let dns_name_slice = core::slice::from_raw_parts(
                                             dns_name.data,
@@ -417,8 +355,20 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                                             return true;
                                         }
                                     }
-                                    _ => {}
                                 }
+                                boring::GEN_IPADD => {
+                                    has_identifier_san = true;
+                                    if let Some(hip) = host_ip {
+                                        if let Some(cert_ip) =
+                                            ip2_string(&*name.d.ip, &mut cert_ip_buf)
+                                        {
+                                            if hip == cert_ip {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }

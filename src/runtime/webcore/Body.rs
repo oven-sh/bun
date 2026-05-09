@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, CommonAbortReason, DOMFormData, JSGlobalObject, JSPromise, JSValue,
+    self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData, JSGlobalObject, JSPromise, JSValue,
     JsResult, Strong, SystemError, URLSearchParams, VirtualMachine,
 };
 use crate::webcore::{

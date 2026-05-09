@@ -255,12 +255,7 @@ pub mod overrides {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
-    // SAFETY: caller passes a valid (msg, len) byte slice.
-    let s = unsafe { core::slice::from_raw_parts(msg, len) };
-    Output::panic(format_args!("{}", bstr::BStr::new(s)));
-}
+// Bun__panic: provided by bun_bin/phase_c_exports.rs (shared C++ callback).
 
 // PORT NOTE: `comptime { _ = @import(...) }` force-reference block dropped — Rust links what's `pub`.
 

@@ -296,11 +296,11 @@ pub fn write<W: Write + ?Sized>(
             continue;
         }
 
-        if let Some(source_index) = output_file.source_index.get() {
-            if source_index.0 == server_source_index {
+        if let Some(source_index) = output_file.source_index.unwrap() {
+            if source_index.get() == server_source_index {
                 continue;
             }
-            let bits: &AutoBitSet = &file_entry_bits[source_index.0 as usize];
+            let bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
 
             if bits.has_intersection(&entry_point_bits) {
                 already_visited_output_file.set(i);
@@ -311,7 +311,7 @@ pub fn write<W: Write + ?Sized>(
 
                 let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
                     root_dir,
-                    sources[source_index.0 as usize].path.text,
+                    sources[source_index.get() as usize].path.text,
                 );
                 let path_for_key = strings::remove_leading_dot_slash(path_for_key);
 

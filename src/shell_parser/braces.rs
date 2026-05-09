@@ -599,11 +599,7 @@ pub enum ParserError {
     UnexpectedToken,
 }
 
-impl From<AllocError> for ParserError {
-    fn from(_: AllocError) -> Self {
-        ParserError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ParserError);
 
 impl From<ParserError> for bun_core::Error {
     fn from(e: ParserError) -> Self {

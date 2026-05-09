@@ -1,7 +1,7 @@
 use core::fmt::Write as _;
 use std::io::Write as _;
 
-use bun_core::{Global, Output};
+use bun_core::{Global, OrWriteFailed as _, Output};
 use bun_dotenv as dot_env;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::fs as Fs;
@@ -286,17 +286,17 @@ impl Editor {
 
         match self {
             Editor::Sublime | Editor::Atom | Editor::Vscode | Editor::Webstorm | Editor::Intellij => {
-                cursor.write_all(file).map_err(|_| bun_core::err!("WriteFailed"))?;
+                cursor.write_all(file).or_write_failed()?;
                 if let Some(line_) = line {
                     if !line_.is_empty() {
                         write!(cursor, ":{}", bstr::BStr::new(line_))
-                            .map_err(|_| bun_core::err!("WriteFailed"))?;
+                            .or_write_failed()?;
 
                         if !self.is_jet_brains() {
                             if let Some(col) = column {
                                 if !col.is_empty() {
                                     write!(cursor, ":{}", bstr::BStr::new(col))
-                                        .map_err(|_| bun_core::err!("WriteFailed"))?;
+                                        .or_write_failed()?;
                                 }
                             }
                         }
@@ -309,7 +309,7 @@ impl Editor {
                 }
             }
             Editor::Textmate => {
-                cursor.write_all(file).map_err(|_| bun_core::err!("WriteFailed"))?;
+                cursor.write_all(file).or_write_failed()?;
                 let file_path_len = usize::try_from(cursor.position()).expect("int cast");
 
                 // PORT NOTE: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
@@ -321,12 +321,12 @@ impl Editor {
                         push_arg!(b"--line");
 
                         write!(cursor, "{}", bstr::BStr::new(line_))
-                            .map_err(|_| bun_core::err!("WriteFailed"))?;
+                            .or_write_failed()?;
 
                         if let Some(col) = column {
                             if !col.is_empty() {
                                 write!(cursor, ":{}", bstr::BStr::new(col))
-                                    .map_err(|_| bun_core::err!("WriteFailed"))?;
+                                    .or_write_failed()?;
                             }
                         }
 
@@ -347,7 +347,7 @@ impl Editor {
             }
             _ => {
                 if !file.is_empty() {
-                    cursor.write_all(file).map_err(|_| bun_core::err!("WriteFailed"))?;
+                    cursor.write_all(file).or_write_failed()?;
                     let pos = usize::try_from(cursor.position()).expect("int cast");
                     let file_path = &spawned.file_path_buf[0..pos];
                     push_arg!(file_path);

@@ -148,11 +148,7 @@ pub enum MigratePnpmLockfileError {
     PnpmLockfileUnresolvableDependency,
 }
 
-impl From<AllocError> for MigratePnpmLockfileError {
-    fn from(_: AllocError) -> Self {
-        Self::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(MigratePnpmLockfileError);
 
 impl From<bun_core::Error> for MigratePnpmLockfileError {
     fn from(e: bun_core::Error) -> Self {
@@ -197,16 +193,7 @@ impl From<crate::lockfile_real::catalog_map::FromPnpmLockfileError> for MigrateP
     }
 }
 
-impl From<MigratePnpmLockfileError> for bun_core::Error {
-    fn from(e: MigratePnpmLockfileError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
-
-#[inline]
-fn expr_tag_name(data: &ExprData) -> &'static str {
-    data.tag().into()
-}
+bun_core::named_error_set!(MigratePnpmLockfileError);
 
 #[inline]
 fn as_string(expr: &Expr) -> Option<&'static [u8]> {
@@ -274,7 +261,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             logger::Loc::EMPTY,
             format_args!(
                 "pnpm-lock.yaml root must be an object, got {}",
-                expr_tag_name(&root.data)
+                root.data.tag_name()
             ),
         )?;
         return Err(MigratePnpmLockfileError::PnpmLockfileNotObject);
@@ -320,7 +307,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             logger::Loc::EMPTY,
             format_args!(
                 "pnpm-lock.yaml 'lockfileVersion' must be a number or string, got {}",
-                expr_tag_name(&lockfile_version_expr.data)
+                lockfile_version_expr.data.tag_name()
             ),
         )?;
         return Err(MigratePnpmLockfileError::PnpmLockfileVersionInvalid);
@@ -1186,17 +1173,9 @@ pub enum ParseAppendDependenciesError {
     PnpmLockfileMissingCatalogEntry,
 }
 
-impl From<AllocError> for ParseAppendDependenciesError {
-    fn from(_: AllocError) -> Self {
-        Self::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ParseAppendDependenciesError);
 
-impl From<ParseAppendDependenciesError> for bun_core::Error {
-    fn from(e: ParseAppendDependenciesError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(ParseAppendDependenciesError);
 
 impl From<ParseAppendDependenciesError> for MigratePnpmLockfileError {
     fn from(e: ParseAppendDependenciesError) -> Self {

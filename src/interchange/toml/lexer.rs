@@ -96,26 +96,9 @@ pub enum Error {
     ParserError,
 }
 
-impl From<bun_alloc::AllocError> for Error {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        Error::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(Error);
 
-impl From<Error> for bun_core::Error {
-    fn from(e: Error) -> Self {
-        match e {
-            Error::UTF8Fail => bun_core::err!("UTF8Fail"),
-            Error::OutOfMemory => bun_core::err!("OutOfMemory"),
-            Error::SyntaxError => bun_core::err!("SyntaxError"),
-            Error::UnexpectedSyntax => bun_core::err!("UnexpectedSyntax"),
-            Error::JSONStringsMustUseDoubleQuotes => {
-                bun_core::err!("JSONStringsMustUseDoubleQuotes")
-            }
-            Error::ParserError => bun_core::err!("ParserError"),
-        }
-    }
-}
+bun_core::named_error_set!(Error);
 
 impl<'a> Lexer<'a> {
     #[inline]

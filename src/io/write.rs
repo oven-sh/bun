@@ -181,6 +181,22 @@ impl<W: Write + ?Sized> Write for Box<W> {
     }
 }
 
+/// Fixed-capacity stack sink. Zig: `std.BoundedArray(u8, N).writer()`.
+/// Merged from `bun_crash_handler`'s local stub (D101) — `BoundedArray` lives
+/// in `bun_collections` (already a dep), so the impl belongs here per orphan
+/// rules now that the canonical `Write` is in this crate.
+impl<const N: usize> Write for bun_collections::BoundedArray<u8, N> {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        self.append_slice(buf)
+            .map_err(|_| bun_core::err!("NoSpaceLeft"))
+    }
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.len()
+    }
+}
+
 /// In-memory growable sink. Zig: `std.Io.Writer.Allocating`.
 impl Write for Vec<u8> {
     #[inline]

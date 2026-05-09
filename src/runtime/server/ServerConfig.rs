@@ -18,6 +18,7 @@ use bun_core::fmt as bun_fmt;
 
 // `pub const SSLConfig = @import("../socket/SSLConfig.zig");`
 pub use crate::socket::ssl_config::SSLConfig;
+use crate::socket::ssl_config::SSLConfigFromJs;
 
 pub struct ServerConfig {
     pub address: Address,
@@ -1330,13 +1331,7 @@ impl ServerConfig {
                             args.ssl_config = Some(ssl_config);
                         } else {
                             // Zig: `ssl_config.server_name[0] == 0` (empty C string)
-                            if ssl_config
-                                .server_name
-                                .as_deref()
-                                .map(|s| s.to_bytes())
-                                .unwrap_or(b"")
-                                .is_empty()
-                            {
+                            if ssl_config.server_name_bytes().unwrap_or(b"").is_empty() {
                                 drop(ssl_config);
                                 return Err(global.throw_invalid_arguments(format_args!(
                                     "SNI tls object must have a serverName",

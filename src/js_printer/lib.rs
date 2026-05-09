@@ -6571,8 +6571,9 @@ impl BufferWriter {
     }
 
     pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
+        use bun_core::OrWriteFailed as _;
         use std::io::Write as _;
-        write!(&mut self.buffer.list, "{}", args).map_err(|_| bun_core::err!("WriteFailed"))
+        write!(&mut self.buffer.list, "{}", args).or_write_failed()
     }
 
     pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {

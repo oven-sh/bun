@@ -4,7 +4,6 @@ use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
-use bun_core::fmt as bun_fmt;
 use bun_paths::{resolve_path, PathBuffer};
 use bun_sourcemap::SourceMapPieces;
 use bun_string::strings;
@@ -532,12 +531,7 @@ pub fn compute_chunks(
         return Ok(Box::default());
     }
 
-    // TODO(port): std.fmt.count — compute formatted byte length without allocating
-    let unique_key_item_len = bun_fmt::count(format_args!(
-        "{}C{:08}",
-        bun_fmt::hex_int_lower::<16>(unique_key),
-        chunks.len()
-    ));
+    let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
     let mut unique_key_builder =
         bun_string::StringBuilder::init_capacity(unique_key_item_len * chunks.len())?;
     // PORT NOTE: in Zig `unique_key_buf` aliases the builder's backing buffer and
@@ -547,8 +541,7 @@ pub fn compute_chunks(
     // of the single allocation into `this.unique_key_buf` afterwards.
     // SAFETY: `chunks` is non-empty (early return above) so `cap > 0` and `ptr` is set.
     let unique_key_base: *const u8 = unique_key_builder.ptr.unwrap().as_ptr();
-    let prefix_len =
-        bun_fmt::count(format_args!("{}", bun_fmt::hex_int_lower::<16>(unique_key)));
+    let prefix_len = chunk::UNIQUE_KEY_PREFIX_LEN;
 
     // SAFETY: `this` points to LinkerContext which is the `linker` field of BundleV2.
     // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
@@ -567,11 +560,15 @@ pub fn compute_chunks(
         let start = unique_key_builder.len;
         let written = unique_key_builder
             .fmt(format_args!(
-                "{}C{:08}",
-                bun_fmt::hex_int_lower::<16>(unique_key),
-                chunk_id
+                "{}",
+                chunk::UniqueKey {
+                    prefix: unique_key,
+                    kind: chunk::QueryKind::Chunk,
+                    index: chunk_id as u32,
+                },
             ))
             .len();
+        debug_assert_eq!(written, chunk::UNIQUE_KEY_LEN);
         // SAFETY: `unique_key_base` points into the builder's fixed-capacity heap
         // allocation; ownership of that allocation is transferred to
         // `this.unique_key_buf` after this loop, which outlives every `Chunk` for

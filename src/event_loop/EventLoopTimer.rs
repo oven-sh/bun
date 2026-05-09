@@ -14,7 +14,7 @@ use Timespec as timespec;
 // `impl HeapNode for EventLoopTimer` anywhere but here).
 pub use bun_io::heap::IntrusiveField;
 
-const NS_PER_MS: i64 = 1_000_000;
+const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 
 // ─── Hot-dispatch (link-time) ───────────────────────────────────────────────
 // `EventLoopTimer` is per-tick hot. Low tier (this crate) keeps `Tag` + the

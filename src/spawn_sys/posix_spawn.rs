@@ -126,30 +126,11 @@ mod posix_compat {
 pub mod bun_spawn {
     use super::*;
 
-    #[repr(u8)]
-    #[derive(Copy, Clone, PartialEq, Eq, Default)]
-    pub enum FileActionType {
-        #[default]
-        None = 0,
-        Close = 1,
-        Dup2 = 2,
-        Open = 3,
-    }
-
-    // ABI: this struct crosses FFI to posix_spawn_bun via *const Action (see
-    // ActionsList below) and must match spawn.zig's `extern struct` / bun-spawn.cpp's
-    // C struct exactly. `path` is `?[*:0]const u8` on the Zig/C side — an 8-byte thin
-    // nullable pointer — so it MUST be `*const c_char` here, not `Option<CString>`
-    // (which is a 16-byte fat pointer and would shift `fds`/`flags`/`mode`). The
-    // owning `CString` backing each non-null `path` lives in `Actions.paths`.
-    #[repr(C)]
-    pub struct Action {
-        pub kind: FileActionType,
-        pub path: *const c_char,
-        pub fds: [fd_t; 2],
-        pub flags: c_int,
-        pub mode: c_int,
-    }
+    // The #[repr(C)] FFI mirrors (`FileActionType`, `Action`) live in
+    // `bun_core::spawn_ffi` — the single source of truth for bun-spawn.cpp's
+    // request layout. The owning `CString` backing each non-null `Action.path`
+    // lives in `Actions.paths` below.
+    pub use bun_core::spawn_ffi::{Action, FileActionType};
 
     // `Fd::native()` returns `*mut c_void` on Windows, which can't fill the
     // `c_int` action slot. posix_spawn never runs on Windows (libuv handles
@@ -157,27 +138,6 @@ pub mod bun_spawn {
     #[cfg(unix)] #[inline(always)] fn fd_int(fd: Fd) -> fd_t { fd.native() }
     #[cfg(windows)] #[inline(always)] fn fd_int(_fd: Fd) -> fd_t {
         unreachable!("posix_spawn file actions are unix-only")
-    }
-
-    impl Default for Action {
-        fn default() -> Self {
-            Self {
-                kind: FileActionType::None,
-                path: ptr::null(),
-                fds: [0; 2],
-                flags: 0,
-                mode: 0,
-            }
-        }
-    }
-
-    impl Action {
-        pub fn init() -> Result<Action, Error> {
-            // TODO(port): narrow error set
-            Ok(Action::default())
-        }
-        // deinit: body only freed `path` when kind == .open; ownership now lives on
-        // `Actions.paths`, which drops automatically.
     }
 
     #[derive(Default)]
@@ -556,89 +516,28 @@ pub mod posix_spawn {
     // draft, but Windows goes through `process.rs::spawn_process_windows`
     // (libuv), never these. Leave undeclared on Windows for now.
 
-    /// Used for Linux spawns and macOS PTY spawns via posix_spawn_bun.
-    #[repr(C)]
-    pub(super) struct BunSpawnRequest {
-        chdir_buf: *const c_char,
-        detached: bool,
-        new_process_group: bool,
-        actions: ActionsList,
-        pty_slave_fd: i32,
-        linux_pdeathsig: i32,
-    }
+    // The #[repr(C)] request mirrors + extern decl live in `bun_core::spawn_ffi`
+    // (single source of truth for bun-spawn.cpp's `bun_spawn_request_t`). The
+    // `sys::Result`-wrapping spawn helper stays here because `bun_core` cannot
+    // depend on `bun_sys`.
+    #[cfg(unix)]
+    pub(super) use bun_core::spawn_ffi::{ActionsList, BunSpawnRequest, posix_spawn_bun};
 
-    impl Default for BunSpawnRequest {
-        fn default() -> Self {
-            Self {
-                chdir_buf: ptr::null(),
-                detached: false,
-                new_process_group: false,
-                actions: ActionsList::default(),
-                pty_slave_fd: -1,
-                linux_pdeathsig: 0,
-            }
-        }
-    }
+    #[cfg(unix)]
+    pub(super) fn spawn_bun(
+        path: &CStr,
+        req_: BunSpawnRequest,
+        argv: *const *const c_char,
+        envp: *const *const c_char,
+    ) -> sys::Result<pid_t> {
+        let mut req = req_;
+        let mut pid: c_int = 0;
 
-    #[repr(C)]
-    pub(super) struct ActionsList {
-        ptr: *const bun_spawn::Action,
-        len: usize,
-    }
+        // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
+        let rc = unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
+        let _ = &mut req; // keep req alive across the call (matches Zig taking &req of a local copy)
 
-    impl Default for ActionsList {
-        fn default() -> Self {
-            Self { ptr: ptr::null(), len: 0 }
-        }
-    }
-
-    // TODO(port): move to runtime_sys
-    unsafe extern "C" {
-        fn posix_spawn_bun(
-            pid: *mut c_int,
-            path: *const c_char,
-            request: *const BunSpawnRequest,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
-        ) -> isize;
-    }
-
-    impl BunSpawnRequest {
-        pub fn spawn(
-            path: &CStr,
-            req_: BunSpawnRequest,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
-        ) -> sys::Result<pid_t> {
-            let mut req = req_;
-            let mut pid: c_int = 0;
-
-            // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
-            let rc = unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
-            let _ = &mut req; // keep req alive across the call (matches Zig taking &req of a local copy)
-
-            if cfg!(debug_assertions) {
-                // SAFETY: argv has at least one element (the NULL terminator)
-                let arg0 = unsafe {
-                    let p = *argv;
-                    if p.is_null() {
-                        &b""[..]
-                    } else {
-                        bun_core::ffi::cstr(p).to_bytes()
-                    }
-                };
-                sys::syslog!(
-                    "posix_spawn_bun({}) = {} ({})",
-                    bstr::BStr::new(arg0),
-                    rc,
-                    pid
-                );
-            }
-
-            if rc == 0 {
-                return sys::Result::Ok(pid_t::try_from(pid).expect("int cast"));
-            }
-
+        if cfg!(debug_assertions) {
             // SAFETY: argv has at least one element (the NULL terminator)
             let arg0 = unsafe {
                 let p = *argv;
@@ -648,14 +547,34 @@ pub mod posix_spawn {
                     bun_core::ffi::cstr(p).to_bytes()
                 }
             };
-            sys::Result::Err(sys::Error {
-                // @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))
-                errno: rc as sys::ErrorInt,
-                syscall: SYSCALL_POSIX_SPAWN,
-                path: arg0.into(),
-                ..Default::default()
-            })
+            sys::syslog!(
+                "posix_spawn_bun({}) = {} ({})",
+                bstr::BStr::new(arg0),
+                rc,
+                pid
+            );
         }
+
+        if rc == 0 {
+            return sys::Result::Ok(pid_t::try_from(pid).expect("int cast"));
+        }
+
+        // SAFETY: argv has at least one element (the NULL terminator)
+        let arg0 = unsafe {
+            let p = *argv;
+            if p.is_null() {
+                &b""[..]
+            } else {
+                bun_core::ffi::cstr(p).to_bytes()
+            }
+        };
+        sys::Result::Err(sys::Error {
+            // @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))
+            errno: rc as sys::ErrorInt,
+            syscall: SYSCALL_POSIX_SPAWN,
+            path: arg0.into(),
+            ..Default::default()
+        })
     }
 
     #[cfg(unix)]
@@ -686,7 +605,7 @@ pub mod posix_spawn {
         // unreachable but rustc can't prove it from the runtime `use_bun_spawn` bool).
         #[cfg(unix)]
         if use_bun_spawn {
-            return BunSpawnRequest::spawn(
+            return spawn_bun(
                 path,
                 BunSpawnRequest {
                     actions: match actions {

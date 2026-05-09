@@ -74,17 +74,9 @@ pub enum HostedGitInfoError {
     InvalidURL,
 }
 
-impl From<AllocError> for HostedGitInfoError {
-    fn from(_: AllocError) -> Self {
-        HostedGitInfoError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(HostedGitInfoError);
 
-impl From<HostedGitInfoError> for bun_core::Error {
-    fn from(e: HostedGitInfoError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(HostedGitInfoError);
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseUrlError {
@@ -94,17 +86,9 @@ pub enum ParseUrlError {
     OutOfMemory,
 }
 
-impl From<AllocError> for ParseUrlError {
-    fn from(_: AllocError) -> Self {
-        ParseUrlError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ParseUrlError);
 
-impl From<ParseUrlError> for bun_core::Error {
-    fn from(e: ParseUrlError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseUrlError);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Representation

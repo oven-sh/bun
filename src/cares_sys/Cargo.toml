@@ -21,3 +21,6 @@ bitflags.workspace = true
 bun_alloc.workspace = true
 
 thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_libuv_sys.workspace = true

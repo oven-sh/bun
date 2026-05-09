@@ -56,11 +56,7 @@ impl std::error::Error for Error {}
 /// (`bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError`) resolve.
 pub type AnyMySQLError = Error;
 
-impl From<Error> for bun_core::Error {
-    fn from(e: Error) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(Error);
 
 // Reverse of the above: `bun_core::Error` is just an interned name; recover the
 // matching variant by name (or `UnknownError` as a catch-all). Needed because

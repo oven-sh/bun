@@ -145,7 +145,7 @@ mod windows_impl {
     use bun_sys::windows;
     use bun_sys::windows::kernel32;
 
-    const NS_PER_MS: u64 = 1_000_000;
+    use bun_core::time::NS_PER_MS;
 
     pub struct WindowsImpl {
         condition: core::cell::UnsafeCell<windows::CONDITION_VARIABLE>,

@@ -2293,14 +2293,10 @@ impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
 
 #[inline]
 pub fn is_separator(c: Codepoint) -> bool {
-    #[cfg(windows)]
-    {
-        return c == u32::from(b'/') || c == u32::from(b'\\');
-    }
-    #[cfg(not(windows))]
-    {
-        c == u32::from(b'/')
-    }
+    // Thin u32 shim over `bun_paths::is_sep_native` (PathChar covers u8/u16
+    // only). Separators are ASCII, so the truncating cast is exact when in
+    // range; out-of-range codepoints are never separators.
+    c <= 0xFF && bun_paths::is_sep_native(c as u8)
 }
 
 #[inline]
@@ -2406,10 +2402,7 @@ fn work_item_logical_path(path: &[u8]) -> &[u8] {
 // with one), and collapses a single duplicate sep at the seam if both sides
 // have one. Matches vendor/zig/lib/std/fs/path.zig joinSepMaybeZ.
 fn std_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
-    #[inline]
-    fn is_sep(c: u8) -> bool {
-        if cfg!(windows) { c == b'/' || c == b'\\' } else { c == b'/' }
-    }
+    use bun_paths::is_sep_native as is_sep;
     let mut out: Vec<u8> = Vec::new();
     let mut prev_last: Option<u8> = None;
     for p in parts {

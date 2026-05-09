@@ -24,13 +24,6 @@ impl Default for StatHash {
     }
 }
 
-#[inline]
-fn as_bytes<T>(v: &T) -> &[u8] {
-    // SAFETY: reinterpreting a value as its raw byte representation; T is POD
-    // (mirrors Zig std.mem.asBytes).
-    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
-}
-
 // Zig `std.posix.Stat.mtime()` — Rust `libc::stat` has no method, project the
 // platform-specific fields here (mirrors `bun_sys::PosixStat::stat_mtime`).
 #[inline]
@@ -46,10 +39,12 @@ fn stat_mtime(s: &Stat) -> Timespec {
 impl StatHash {
     pub fn hash(&mut self, stat: &Stat, path: &[u8]) {
         let mut stat_hasher = XxHash64::new(42);
-        stat_hasher.update(as_bytes(&stat.st_size));
-        stat_hasher.update(as_bytes(&stat.st_mode));
-        stat_hasher.update(as_bytes(&stat_mtime(stat)));
-        stat_hasher.update(as_bytes(&stat.st_ino));
+        let mtime = stat_mtime(stat);
+        // SAFETY: all fed values are padding-free POD integers / Timespec.
+        stat_hasher.update(unsafe { bun_core::bytes_of(&stat.st_size) });
+        stat_hasher.update(unsafe { bun_core::bytes_of(&stat.st_mode) });
+        stat_hasher.update(unsafe { bun_core::bytes_of(&mtime) });
+        stat_hasher.update(unsafe { bun_core::bytes_of(&stat.st_ino) });
         stat_hasher.update(path);
 
         let prev = self.value;

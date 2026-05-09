@@ -3083,7 +3083,7 @@ macro_rules! hostent_newtype {
 
 /// Transparent newtype over `hostent_with_ttls` for A/AAAA records.
 macro_rules! hostent_ttls_newtype {
-    ($name:ident, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident, $wrapper:ident) => {
+    ($name:ident, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident, $parse:ident) => {
         #[repr(transparent)]
         pub struct $name(pub c_ares::hostent_with_ttls);
         impl CAresRecordType for $name {
@@ -3092,7 +3092,7 @@ macro_rules! hostent_ttls_newtype {
             const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
             const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-                c_ares::hostent_with_ttls::$wrapper::<ResolveInfoRequest<$name>>;
+                c_ares::hostent_with_ttls::callback_wrapper::<ResolveInfoRequest<$name>>;
             fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
                 super::cares_jsc::hostent_with_ttls_to_js_response(&mut self.0, global, type_name.as_bytes())
             }
@@ -3103,6 +3103,8 @@ macro_rules! hostent_ttls_newtype {
             }
         }
         impl c_ares::HostentWithTtlsHandler for ResolveInfoRequest<$name> {
+            const PARSE: fn(*mut u8, c_int) -> Result<Box<c_ares::hostent_with_ttls>, c_ares::Error> =
+                c_ares::hostent_with_ttls::$parse;
             fn on_hostent_with_ttls(
                 &mut self,
                 status: Option<c_ares::Error>,
@@ -3120,8 +3122,8 @@ macro_rules! hostent_ttls_newtype {
 hostent_newtype!(NsHostent, "ns", "queryNs", PendingNsCacheCares, ns_t_ns, callback_wrapper_ns);
 hostent_newtype!(PtrHostent, "ptr", "queryPtr", PendingPtrCacheCares, ns_t_ptr, callback_wrapper_ptr);
 hostent_newtype!(CnameHostent, "cname", "queryCname", PendingCnameCacheCares, ns_t_cname, callback_wrapper_cname);
-hostent_ttls_newtype!(AHostentWithTtls, "a", "queryA", PendingACacheCares, ns_t_a, callback_wrapper_a);
-hostent_ttls_newtype!(AaaaHostentWithTtls, "aaaa", "queryAaaa", PendingAaaaCacheCares, ns_t_aaaa, callback_wrapper_aaaa);
+hostent_ttls_newtype!(AHostentWithTtls, "a", "queryA", PendingACacheCares, ns_t_a, parse_a);
+hostent_ttls_newtype!(AaaaHostentWithTtls, "aaaa", "queryAaaa", PendingAaaaCacheCares, ns_t_aaaa, parse_aaaa);
 
 pub type PendingCache = HiveArray<get_addr_info_request::PendingCacheKey, 32>;
 type SrvPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_srv_reply>, 32>;
@@ -4692,26 +4694,21 @@ impl Resolver {
             let mut buf = [0u8; INET6_ADDRSTRLEN + 2 + 6 + 1];
             let family = current.family;
 
-            // SAFETY: FFI; `src` is a `*const c_void` type-erasure of the in_addr/
-            // in6_addr union arm (read-only — `ares_inet_ntop` never writes `src`);
-            // `dst` is `buf[1..].as_mut_ptr()` which already yields `*mut u8` with
-            // write provenance over the stack buffer. No `*const → *mut` cast here.
+            // SAFETY: `src` is a `*const c_void` type-erasure of the in_addr/in6_addr
+            // union arm (read-only); `dst` is the stack buffer slice starting at [1].
             let addr_ptr: *const c_void = current.addr_ptr();
-            let ip = unsafe {
-                c_ares::ares_inet_ntop(family, addr_ptr, buf[1..].as_mut_ptr(), (buf.len() - 1) as _)
-            };
-            if ip.is_null() {
+            let Some(ip) = (unsafe { bun_cares_sys::ntop(family, addr_ptr, &mut buf[1..]) }) else {
                 return Err(global_this.throw_value(global_this.create_error_instance(
                     format_args!("ares_inet_ntop error: no more space to convert a network format address"),
                 )));
-            }
+            };
 
             let mut port = current.tcp_port;
             if port == 0 { port = current.udp_port; }
             if port == 0 { port = IANA_DNS_PORT; }
 
             // size = strlen(buf+1) + 1
-            let size = unsafe { bun_core::ffi::cstr(buf[1..].as_ptr().cast::<c_char>()) }.to_bytes().len() + 1;
+            let size = ip.len() + 1;
             // PORT NOTE: `bun_str::ZigString` lacks `with_encoding`/`to_js` (those live
             // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
             // ASCII (IP address + optional port), so `with_encoding()` would be a no-op

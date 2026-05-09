@@ -520,11 +520,15 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
 #[cfg(unix)]
 #[inline]
 pub fn c_environ() -> *const *const core::ffi::c_char {
+    // `AtomicPtr<T>` is `#[repr(C)]` over `*mut T`, so this has the same
+    // layout as libc's `char **environ`; a Relaxed word load is sound under
+    // concurrent `setenv` and compiles to the same single load as a plain
+    // `static` read.
     unsafe extern "C" {
-        static environ: *const *const core::ffi::c_char;
+        static environ: core::sync::atomic::AtomicPtr<*const core::ffi::c_char>;
     }
     // SAFETY: `environ` is the libc-managed process env block.
-    unsafe { environ }
+    unsafe { environ.load(core::sync::atomic::Ordering::Relaxed) }
 }
 
 /// `bun.getenvZAnyCase` — case-insensitive env lookup (used on POSIX for
@@ -698,8 +702,7 @@ pub type OSPathSlice<'a> = &'a [OSPathChar];
 #[cfg(windows)] pub type OSPathSliceZ = WStr;
 #[cfg(not(windows))] pub type OSPathSliceZ = ZStr;
 
-#[cfg(windows)] pub const SEP: u8 = b'\\';
-#[cfg(not(windows))] pub const SEP: u8 = b'/';
+pub use bun_alloc::SEP;
 
 /// Zig: `[MAX_PATH_BYTES]u8` stack buffer (`var buf: bun.PathBuffer = undefined`).
 ///
@@ -769,6 +772,8 @@ impl core::ops::DerefMut for WPathBuffer {
 /// Zig: `bun.Dirname.dirname(u8, path)` → `std.fs.path.dirnamePosix` /
 /// `dirnameWindows`. Faithful port (handles trailing-sep stripping and root).
 pub fn dirname(path: &[u8]) -> Option<&[u8]> {
+    // Intentionally local copy of `bun_paths::is_sep_native` — bun_core does
+    // not depend on bun_paths and the one-liner isn't worth a crate edge.
     #[inline]
     fn is_sep(b: u8) -> bool { b == b'/' || (cfg!(windows) && b == b'\\') }
 
@@ -1315,8 +1320,7 @@ pub type Mode = u32; // std.posix.mode_t
 /// uniformly; the libc-boundary cast to native `mode_t` happens in `bun_sys`.
 ///
 /// Canonical home for the per-OS `bun_errno::posix::S` re-exports (errno
-/// depends on bun_core, not vice-versa). Darwin/Windows keep local `mode_t`-
-/// typed constant copies for integer-type inference at existing call sites.
+/// depends on bun_core, not vice-versa).
 #[allow(non_snake_case)]
 pub mod S {
     use super::Mode;
@@ -1539,6 +1543,16 @@ impl ThreadLock {
     /// Zig `initLockedIfNonComptime` — Zig comptime evaluation has no thread;
     /// in Rust there is no comptime execution, so this is just `init_locked`.
     #[inline] pub fn init_locked_if_non_comptime() -> Self { Self::init_locked() }
+    /// RAII spelling of `lock()` + `defer unlock()`. Returns a guard that
+    /// `unlock()`s on `Drop`. The guard stores a raw pointer (not a borrow)
+    /// so the caller's surrounding `&mut self` on the owning struct stays
+    /// usable for the rest of the scope — `ThreadLock` is a debug-only
+    /// ownership assertion, not a real mutex.
+    #[inline]
+    pub fn guard(&self) -> ThreadLockGuard {
+        self.lock();
+        ThreadLockGuard(core::ptr::from_ref::<Self>(self))
+    }
     /// Zig `lockOrAssert` — acquire if unlocked, else assert this thread holds it.
     #[inline]
     pub fn lock_or_assert(&self) {
@@ -1585,9 +1599,40 @@ impl ThreadLock {
     #[inline]
     pub fn assert_locked(&self) {
         #[cfg(debug_assertions)]
-        debug_assert_eq!(self.owning_thread.load(core::sync::atomic::Ordering::Acquire), thread_id());
+        {
+            // Spec uses `bun.assertf` (always-on under ci_assert). Body is
+            // already cfg-gated, so plain `assert!` — `debug_assert!` would be
+            // redundant gating.
+            let held = self.owning_thread.load(core::sync::atomic::Ordering::Acquire);
+            assert!(held != INVALID_THREAD_ID, "`ThreadLock` is not locked");
+            let current = thread_id();
+            assert!(
+                held == current,
+                "`ThreadLock` is locked by thread {held}, not thread {current}",
+            );
+        }
     }
 }
+
+/// RAII guard returned by [`ThreadLock::guard`]. Calls `unlock()` on drop.
+///
+/// Stores a raw `*const ThreadLock` (not a borrow) so holding the guard does
+/// not freeze the borrow of the struct that owns the lock — every call site is
+/// `self.field.guard()` inside a `&mut self` method that needs the rest of
+/// `self` mutably for the scope.
+#[must_use = "dropping immediately unlocks the ThreadLock"]
+pub struct ThreadLockGuard(*const ThreadLock);
+
+impl Drop for ThreadLockGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `self.0` was `&ThreadLock` at `ThreadLock::guard()` and the
+        // lock is a field of a struct the caller holds for the entire guard
+        // scope; the pointee outlives the guard. `unlock` takes `&self`.
+        unsafe { (*self.0).unlock() }
+    }
+}
+
 #[cfg(debug_assertions)]
 #[inline]
 fn thread_id() -> u64 {
@@ -1759,13 +1804,31 @@ impl<T, A> Once<T, fn(A) -> T> {
     #[inline] pub fn done(&self) -> bool { self.cell.get().is_some() }
 }
 
-// ── Pollable / is_readable ────────────────────────────────────────────────
-// Port of `bun.PollFlag` + `bun.isReadable` (bun.zig:637). Named `Pollable` to
-// match the Phase-A draft callers (io/PipeReader.rs).
+// ── Pollable / is_readable / is_writable ──────────────────────────────────
+// Port of `bun.PollFlag` + `bun.isReadable` / `bun.isWritable` (bun.zig:637).
+// Named `Pollable` to match the Phase-A draft callers (io/PipeReader.rs).
+// D050 dedup: this is the single canonical copy; `bun::`/`bun_sys::` re-export.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pollable { Ready, NotReady, Hup }
 /// Zig `bun.PollFlag` — original name kept as an alias.
 pub type PollFlag = Pollable;
+
+impl Pollable {
+    /// Zig `@tagName(rc)` — lowercase tag name for the `[sys]` debug log.
+    #[inline]
+    pub const fn tag_name(self) -> &'static str {
+        match self {
+            Pollable::Ready => "ready",
+            Pollable::NotReady => "not_ready",
+            Pollable::Hup => "hup",
+        }
+    }
+}
+
+// Zig `global_scope_log = sys.syslog` (bun.zig:636) → `Output.scoped(.SYS, .visible)`.
+// bun_core sits below bun_sys, so we re-declare the scope locally instead of
+// pulling `bun_sys::syslog!` (tier inversion). Same `[sys]` tag at runtime.
+crate::declare_scope!(SYS, visible);
 
 /// Non-blocking poll for readability. POSIX-only (Zig panics on Windows).
 #[cfg(not(windows))]
@@ -1777,46 +1840,81 @@ pub fn is_readable(fd: Fd) -> Pollable {
         revents: 0,
     }];
     // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let rc = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
-    let result = rc > 0;
-    if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
+    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let result = n > 0;
+    let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
     } else if result {
         Pollable::Ready
     } else {
         Pollable::NotReady
-    }
+    };
+    crate::scoped_log!(
+        SYS,
+        "poll({}, .readable): {} ({}{})",
+        fd, result, rc.tag_name(),
+        if polls[0].revents & libc::POLLERR != 0 { " ERR " } else { "" },
+    );
+    rc
 }
 #[cfg(windows)]
 pub fn is_readable(_fd: Fd) -> Pollable {
-    // Zig: @panic("TODO on Windows")
-    unreachable!("is_readable: TODO on Windows");
+    // Zig bun.zig:639 — `@panic("TODO on Windows")`; no callers reach this on Windows.
+    panic!("TODO on Windows");
 }
 
-/// Non-blocking poll for writability. POSIX-only (Zig panics on Windows).
+/// Non-blocking `poll(fd, POLLOUT)` (or `WSAPoll` on Windows); reports writability.
 #[cfg(not(windows))]
 pub fn is_writable(fd: Fd) -> Pollable {
     debug_assert!(fd.is_valid());
-    // bun.zig:657 — POLLOUT only; HUP/ERR detected via revents.
+    // bun.zig:692 — POLLOUT | POLLERR | POLLHUP.
     let mut polls = [libc::pollfd {
         fd: fd.native(),
-        events: libc::POLLOUT,
+        events: libc::POLLOUT | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
     // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let rc = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
-    let result = rc > 0;
-    if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
+    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let result = n > 0;
+    let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
+        Pollable::Hup
+    } else if result {
+        Pollable::Ready
+    } else {
+        Pollable::NotReady
+    };
+    crate::scoped_log!(
+        SYS,
+        "poll({}, .writable): {} ({}{})",
+        fd, result, rc.tag_name(),
+        if polls[0].revents & libc::POLLERR != 0 { " ERR " } else { "" },
+    );
+    rc
+}
+#[cfg(windows)]
+pub fn is_writable(fd: Fd) -> Pollable {
+    // Zig bun.zig:668-685 — WSAPoll(POLLWRNORM). bun_core can't depend on
+    // bun_sys (tier inversion), so go to bun_windows_sys::ws2_32 directly.
+    use bun_windows_sys::ws2_32;
+    let mut polls = [ws2_32::WSAPOLLFD {
+        // HANDLE → SOCKET pointer reinterpretation; matches Zig `fd.asSocketFd()`.
+        fd: fd.native() as usize,
+        events: ws2_32::POLLWRNORM,
+        revents: 0,
+    }];
+    // SAFETY: polls is a valid 1-element WSAPOLLFD array; len=1 matches the buffer.
+    let rc = unsafe { ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
+    let result = rc != ws2_32::SOCKET_ERROR && rc != 0;
+    crate::scoped_log!(SYS, "poll({}) writable: {} ({})", fd, result, polls[0].revents);
+    // PORT NOTE: faithful port of bun.zig:679 — yes, the `WRNORM`-set branch
+    // returns `.hup` (not `.ready`). Kept verbatim to match upstream behaviour.
+    if result && (polls[0].revents & ws2_32::POLLWRNORM) != 0 {
         Pollable::Hup
     } else if result {
         Pollable::Ready
     } else {
         Pollable::NotReady
     }
-}
-#[cfg(windows)]
-pub fn is_writable(_fd: Fd) -> Pollable {
-    unreachable!("is_writable: TODO on Windows");
 }
 
 // ── csprng ────────────────────────────────────────────────────────────────
@@ -1954,7 +2052,7 @@ pub fn errno_to_zig_err(errno: i32) -> crate::Error {
 // constants the install/http crates reference. Using libc clock_gettime keeps
 // this consistent with the Zig stdlib (which does the same on POSIX).
 pub mod time {
-    pub const NS_PER_MS: i128 = 1_000_000;
+    pub use crate::time::NS_PER_MS;
     pub const NS_PER_S: i128 = 1_000_000_000;
     pub const NS_PER_US: u64 = 1_000;
     pub const US_PER_MS: u64 = 1_000;
@@ -1983,7 +2081,7 @@ pub mod time {
         }
     }
     /// `std.time.milliTimestamp()`
-    #[inline] pub fn milli_timestamp() -> i64 { (nano_timestamp() / NS_PER_MS) as i64 }
+    #[inline] pub fn milli_timestamp() -> i64 { (nano_timestamp() / NS_PER_MS as i128) as i64 }
     /// `std.time.timestamp()` — wall-clock seconds since the Unix epoch.
     #[inline] pub fn timestamp() -> i64 { (nano_timestamp() / NS_PER_S) as i64 }
 
@@ -2165,6 +2263,21 @@ impl<H: core::hash::Hasher> Hasher for H {
     #[inline] fn update(&mut self, bytes: &[u8]) { self.write(bytes) }
 }
 
+/// Port of Zig `std.mem.asBytes(&v)`: reinterpret a value's storage as a
+/// borrowed byte slice.
+///
+/// # Safety
+/// Caller must guarantee `T` is plain-old-data with no uninitialized padding
+/// bytes (or that the returned bytes are never *read* through a path that
+/// observes padding). Serializing/hashing the result for a type with padding
+/// is UB.
+#[inline]
+pub unsafe fn bytes_of<T>(v: &T) -> &[u8] {
+    // SAFETY: `&T` is valid for `size_of::<T>()` readable bytes; caller upholds
+    // the no-uninit-padding contract above.
+    unsafe { core::slice::from_raw_parts(core::ptr::from_ref(v).cast::<u8>(), core::mem::size_of::<T>()) }
+}
+
 /// Port of `bun.writeAnyToHasher`. Zig fed `std.mem.asBytes(&thing)`; Rust
 /// can't take a generic by-value-as-bytes safely without `bytemuck`, so this
 /// accepts anything that is itself viewable as bytes (covers the actual call
@@ -2242,8 +2355,19 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
 pub struct GenericIndexOptional<I, M = ()>(I, core::marker::PhantomData<M>);
 impl<I: Copy, M> Clone for GenericIndexOptional<I, M> { #[inline] fn clone(&self) -> Self { *self } }
 impl<I: Copy, M> Copy for GenericIndexOptional<I, M> {}
+impl<I: PartialEq, M> PartialEq for GenericIndexOptional<I, M> {
+    #[inline] fn eq(&self, o: &Self) -> bool { self.0 == o.0 }
+}
+impl<I: Eq, M> Eq for GenericIndexOptional<I, M> {}
+impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.0.fmt(f) }
+}
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
+    #[inline] pub fn some(i: GenericIndex<I, M>) -> Self { i.to_optional() }
+    /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
+    /// `bun_bundler::output_file::IndexOptional`.
+    #[inline] pub fn get(self) -> Option<GenericIndex<I, M>> { self.unwrap() }
     #[inline] pub fn init(maybe: Option<I>) -> Self {
         match maybe { Some(i) => GenericIndex::<I, M>::init(i).to_optional(), None => Self::NONE }
     }
@@ -2420,15 +2544,11 @@ pub fn fast_random() -> u64 {
 // `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
 // the xxhash64 entry point that ETag/bundler need.
 pub mod hash {
-    unsafe extern "C" {
-        // Provided by vendor/zstd's bundled xxhash (XXH64). Linked at Phase C.
-        fn XXH64(input: *const core::ffi::c_void, len: usize, seed: u64) -> u64;
-    }
+    pub use bun_hash::XxHash64;
     /// `std.hash.XxHash64.hash(seed, bytes)`.
     #[inline]
     pub fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
-        // SAFETY: FFI reads exactly `bytes.len()` bytes.
-        unsafe { XXH64(bytes.as_ptr().cast(), bytes.len(), seed) }
+        bun_hash::XxHash64::hash(seed, bytes)
     }
     /// Wyhash one-shot (Zig `bun.hash`).
     #[inline]
@@ -2537,41 +2657,11 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
 }
 
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
-/// case used by http SSLConfig. Zeros the allocation before freeing
-/// (defence-in-depth for keys/passphrases). `p` must have been allocated by
-/// [`dupe_z`] (i.e. mimalloc, NUL-terminated).
-pub fn free_sensitive(p: *const core::ffi::c_char) {
-    if p.is_null() { return; }
-    // SAFETY: p is a NUL-terminated mimalloc'd buffer per `dupe_z` contract.
-    unsafe {
-        let len = libc::strlen(p);
-        secure_zero(p as *mut u8, len);
-        // `mi_free` is size-agnostic (mimalloc tracks the allocation size in
-        // page metadata), so an interior NUL truncating `strlen` only shortens
-        // the zero pass — the free is still exact.
-        bun_alloc::basic::free_without_size(p as *mut core::ffi::c_void);
-    }
-}
-
-/// Port of `std.crypto.secureZero` — `@memset(@volatileCast(s), 0)`. Zeros
-/// `len` bytes at `p` in a way the optimizer cannot elide. Uses bulk
-/// `write_bytes` (lowers to `memset`) instead of a per-byte volatile loop so
-/// debug builds don't pay O(len) iteration overhead — the SSLConfig leak test
-/// secure-zeros ~300 MiB of cert material across 1200 iterations and the
-/// per-byte loop alone took ~3 s in debug. `black_box` on the pointer after
-/// the memset forces the compiler to assume the zeroed region is observed,
-/// preventing dead-store elimination in release builds.
-///
-/// # Safety
-/// `p` must be valid for writes of `len` bytes.
-#[inline]
-pub unsafe fn secure_zero(p: *mut u8, len: usize) {
-    // SAFETY: caller contract.
-    unsafe { core::ptr::write_bytes(p, 0, len) };
-    // Treat `p` as escaped so the preceding stores cannot be eliminated.
-    core::hint::black_box(p);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-}
+/// case used by http SSLConfig — re-exported from `bun_alloc` so the
+/// secure-zero core stays single-sourced. Pairs with [`dupe_z`].
+pub use bun_alloc::free_sensitive_cstr as free_sensitive;
+/// Port of `std.crypto.secureZero` — re-exported from `bun_alloc`.
+pub use bun_alloc::secure_zero;
 
 // ── argv ──────────────────────────────────────────────────────────────────
 // `bun.argv` — process argv as a slice of NUL-terminated byte strings.
@@ -3109,11 +3199,9 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     #[cfg(windows)]
     {
         // Signal the watcher-manager parent via magic exit code.
+        use crate::windows_sys::kernel32::{GetCurrentProcess, GetLastError};
         unsafe extern "system" {
             fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
-            // No preconditions; pseudo-handle / thread-local error slot.
-            safe fn GetCurrentProcess() -> *mut core::ffi::c_void;
-            safe fn GetLastError() -> u32;
         }
         // = 3224497970, bun.windows.watcher_reload_exit (windows.zig). Parent
         // watcher-manager compares the child's exit code against exactly this.
@@ -3193,7 +3281,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 pub struct SpawnStatus { pub code: i32 }
 impl SpawnStatus { #[inline] pub fn is_ok(&self) -> bool { self.code == 0 } }
 
-// ── posix_spawn_bun FFI (tier-0 minimal mirror) ───────────────────────────
+// ── posix_spawn_bun FFI (canonical #[repr(C)] mirror) ─────────────────────
 // RULE: libc `posix_spawn`/`posix_spawnp` must NEVER be called directly on
 // Linux/FreeBSD. Bun ships its own vfork-based spawner in
 // `src/jsc/bindings/bun-spawn.cpp` (`posix_spawn_bun`) which is async-signal-
@@ -3201,38 +3289,74 @@ impl SpawnStatus { #[inline] pub fn is_ok(&self) -> bool { self.code == 0 } }
 // errno back through a pipe. glibc's posix_spawn forks (not vfork) on some
 // configurations and musl's has had signal-mask bugs; ours is the audited
 // path. macOS keeps libc `posix_spawnp` for the non-PTY case because Apple's
-// implementation is a true kernel fast-path (no fork at all).
+// implementation is a true kernel fast-path (no fork at all), but the macOS
+// PTY path also routes through `posix_spawn_bun` (setsid + TIOCSCTTY before
+// exec), hence `cfg(unix)` here.
 //
-// `bun_core` is tier-0 and cannot depend on `bun_spawn`/`spawn_sys`, so the
-// request struct is re-declared here with the exact C layout. KEEP IN SYNC
-// with `bun-spawn.cpp::bun_spawn_request_t` and
-// `spawn_sys::posix_spawn::BunSpawnRequest`.
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-mod bun_spawn_ffi {
+// This is the single source of truth for the request layout; `spawn_sys`
+// re-exports these types rather than re-declaring them. The #[repr(C)] data
+// mirrors are target-agnostic so the module is ungated; only the extern decl
+// is `cfg(unix)` (Windows spawns go through libuv and never link this symbol).
+pub mod spawn_ffi {
     use core::ffi::{c_char, c_int};
 
-    // Matches `bun_spawn_request_file_action_t`. Unused here (we pass an empty
-    // action list — stdio inherits by default) but the pointer type must agree.
+    /// Matches `bun_spawn_request_file_action_t::kind`.
+    #[repr(u8)]
+    #[derive(Copy, Clone, PartialEq, Eq, Default)]
+    pub enum FileActionType {
+        #[default]
+        None = 0,
+        Close = 1,
+        Dup2 = 2,
+        Open = 3,
+    }
+
+    /// Matches `bun_spawn_request_file_action_t`.
+    ///
+    /// ABI: this struct crosses FFI to `posix_spawn_bun` via `*const Action`
+    /// (see [`ActionsList`]) and must match spawn.zig's `extern struct` /
+    /// bun-spawn.cpp's C struct exactly. `path` is `?[*:0]const u8` on the
+    /// Zig/C side — an 8-byte thin nullable pointer — so it MUST be
+    /// `*const c_char` here, not `Option<CString>` (which is a 16-byte fat
+    /// pointer and would shift `fds`/`flags`/`mode`).
     #[repr(C)]
-    pub(super) struct Action {
-        pub kind: u8,
+    pub struct Action {
+        pub kind: FileActionType,
         pub path: *const c_char,
         pub fds: [c_int; 2],
         pub flags: c_int,
         pub mode: c_int,
     }
 
-    // Matches `bun_spawn_file_action_list_t`.
+    impl Default for Action {
+        fn default() -> Self {
+            Self {
+                kind: FileActionType::None,
+                path: core::ptr::null(),
+                fds: [0; 2],
+                flags: 0,
+                mode: 0,
+            }
+        }
+    }
+
+    /// Matches `bun_spawn_file_action_list_t`.
     #[repr(C)]
-    pub(super) struct ActionsList {
+    pub struct ActionsList {
         pub ptr: *const Action,
         pub len: usize,
     }
 
-    // Matches `bun_spawn_request_t`.
+    impl Default for ActionsList {
+        fn default() -> Self {
+            Self { ptr: core::ptr::null(), len: 0 }
+        }
+    }
+
+    /// Matches `bun_spawn_request_t`.
     #[repr(C)]
-    pub(super) struct Request {
-        pub chdir: *const c_char,
+    pub struct BunSpawnRequest {
+        pub chdir_buf: *const c_char,
         pub detached: bool,
         pub new_process_group: bool,
         pub actions: ActionsList,
@@ -3240,11 +3364,25 @@ mod bun_spawn_ffi {
         pub linux_pdeathsig: c_int,
     }
 
+    impl Default for BunSpawnRequest {
+        fn default() -> Self {
+            Self {
+                chdir_buf: core::ptr::null(),
+                detached: false,
+                new_process_group: false,
+                actions: ActionsList::default(),
+                pty_slave_fd: -1,
+                linux_pdeathsig: 0,
+            }
+        }
+    }
+
+    #[cfg(unix)]
     unsafe extern "C" {
-        pub(super) fn posix_spawn_bun(
+        pub fn posix_spawn_bun(
             pid: *mut c_int,
             path: *const c_char,
-            request: *const Request,
+            request: *const BunSpawnRequest,
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> isize;
@@ -3280,17 +3418,10 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
                 }
             };
 
-            let req = bun_spawn_ffi::Request {
-                chdir: core::ptr::null(),
-                detached: false,
-                new_process_group: false,
-                actions: bun_spawn_ffi::ActionsList { ptr: core::ptr::null(), len: 0 },
-                pty_slave_fd: -1,
-                linux_pdeathsig: 0,
-            };
+            let req = spawn_ffi::BunSpawnRequest::default();
             let mut pid: core::ffi::c_int = 0;
             // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
-            let rc = bun_spawn_ffi::posix_spawn_bun(
+            let rc = spawn_ffi::posix_spawn_bun(
                 &raw mut pid,
                 exe,
                 &raw const req,
@@ -3385,7 +3516,7 @@ pub type timespec = Timespec;
 impl Timespec {
     pub const EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
     const NS_PER_S: i64 = 1_000_000_000;
-    const NS_PER_MS: i64 = 1_000_000;
+    const NS_PER_MS: i64 = crate::time::NS_PER_MS as i64;
 
     #[inline]
     pub const fn new(sec: i64, nsec: i64) -> Self { Self { sec, nsec } }
@@ -3676,7 +3807,7 @@ pub mod perf {
             static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
             INIT_ONCE.call_once(|| {
                 // SAFETY: FFI; Bun__linux_trace_init has no preconditions.
-                let r = unsafe { Bun__linux_trace_init() };
+                let r = unsafe { sys::Bun__linux_trace_init() };
                 IS_INITIALIZED.store(r != 0, Ordering::Relaxed);
             });
             IS_INITIALIZED.load(Ordering::Relaxed)
@@ -3700,7 +3831,7 @@ pub mod perf {
             buf[..n].copy_from_slice(&self.name.as_bytes()[..n]);
             // SAFETY: FFI; pointer is NUL-terminated within `buf`.
             let _ = unsafe {
-                Bun__linux_trace_emit(
+                sys::Bun__linux_trace_emit(
                     buf.as_ptr() as *const core::ffi::c_char,
                     i64::try_from(duration).unwrap_or(i64::MAX),
                 )
@@ -3708,13 +3839,21 @@ pub mod perf {
         }
     }
 
+    /// Single source of truth for the Linux ftrace FFI decls (defined in
+    /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
+    /// (the canonical signpost/ftrace entry point) imports these instead of
+    /// re-declaring them — see src/perf/perf.zig:127-129 for the spec.
     #[cfg(target_os = "linux")]
-    unsafe extern "C" {
-        fn Bun__linux_trace_init() -> core::ffi::c_int;
-        fn Bun__linux_trace_emit(
-            event_name: *const core::ffi::c_char,
-            duration_ns: i64,
-        ) -> core::ffi::c_int;
+    pub mod sys {
+        unsafe extern "C" {
+            pub fn Bun__linux_trace_init() -> core::ffi::c_int;
+            #[allow(dead_code)]
+            pub fn Bun__linux_trace_close();
+            pub fn Bun__linux_trace_emit(
+                event_name: *const core::ffi::c_char,
+                duration_ns: i64,
+            ) -> core::ffi::c_int;
+        }
     }
 }
 

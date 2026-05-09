@@ -1631,6 +1631,7 @@ impl TmpfileWindows {
             )
         } == bun_sys::windows::FALSE
         {
+            use bun_sys::windows::Win32ErrorUnwrap as _;
             bun_sys::windows::Win32Error::get().unwrap()?;
         }
         Ok(())

@@ -9,6 +9,7 @@ use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
 };
 use crate::{PrintErr, Printer, VendorPrefix};
+use crate::generics::DeepClone as _;
 use bun_string::strings;
 use bun_alloc::Arena;
 

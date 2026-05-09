@@ -900,9 +900,7 @@ impl<'a> Loader<'a> {
                 }
             }
         };
-        let file = scopeguard::guard(file, |f| {
-            let _ = f.close();
-        });
+        let _close = bun_sys::CloseOnDrop::file(&file);
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}
@@ -955,9 +953,7 @@ impl<'a> Loader<'a> {
                 return Ok(());
             }
         };
-        let file = scopeguard::guard(file, |f| {
-            let _ = f.close();
-        });
+        let _close = bun_sys::CloseOnDrop::file(&file);
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}

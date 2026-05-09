@@ -147,7 +147,7 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         }
     };
     // `defer manifest_file.close()` — closed at fn return.
-    let manifest_file = scopeguard::guard(manifest_file, |f| { let _ = bun_sys::close(f.handle); });
+    let _close_manifest = bun_sys::CloseOnDrop::file(&manifest_file);
 
     // PORT NOTE: Zig built a borrowing `bun.URL` struct literal (host/hostname/
     // href/origin/protocol all slicing `registry`). The Rust `Scope.url` field
@@ -166,7 +166,7 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         &scope,
         // PORT NOTE: Zig wrapped std.fs.File via `bun.sys.File.from(...)`; we already
         // opened a bun_sys::File above, so pass directly.
-        &*manifest_file,
+        &manifest_file,
     ) {
         Ok(m) => m,
         Err(err) => {

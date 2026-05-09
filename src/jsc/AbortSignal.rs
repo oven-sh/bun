@@ -4,7 +4,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
+use crate::{CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,

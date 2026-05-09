@@ -25,6 +25,9 @@ pub mod Context;
 #[path = "CompileTarget.rs"]
 pub mod CompileTarget;
 
+pub mod jsx;
+pub use jsx as JSX;
+
 // ─── B-2 Track A: crate-root re-exports for dependents ───────────────────
 // Dependents (bundler/css/js_parser/http_types/watcher) import these by bare
 // name from the crate root rather than reaching into the defining module.

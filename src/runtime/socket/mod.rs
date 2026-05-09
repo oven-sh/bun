@@ -67,7 +67,7 @@ pub mod uws_jsc;
 
 #[path = "SSLConfig.rs"]
 pub mod ssl_config;
-pub use ssl_config::SSLConfig;
+pub use ssl_config::{SSLConfig, SSLConfigFromJs};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
 // These were previously stub-defined inline here for the B-2 struct/state

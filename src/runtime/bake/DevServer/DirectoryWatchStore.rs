@@ -55,11 +55,7 @@ enum InsertError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-impl From<AllocError> for InsertError {
-    fn from(_: AllocError) -> Self {
-        InsertError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(InsertError);
 impl From<InsertError> for bun_core::Error {
     fn from(e: InsertError) -> Self {
         // Private enum, fully consumed in track_resolution_failure; provided

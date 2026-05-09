@@ -12,15 +12,6 @@ use crate::schema::analytics;
 #[allow(unused_imports)]
 use bun_string::slice_to_nul;
 
-/// Reinterpret a `[c_char; N]` field (e.g. from `libc::utsname`) as `&[u8]`.
-#[inline]
-#[allow(dead_code)]
-fn c_chars_as_bytes(s: &[libc::c_char]) -> &[u8] {
-    // SAFETY: `c_char` is `i8` or `u8`; both are byte-sized and any bit pattern
-    // is a valid `u8`. The returned slice has the same length and provenance.
-    unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Enables analytics. This is used by:
@@ -435,15 +426,7 @@ pub mod generate_header {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         fn linux_os_name() -> &'static libc::utsname {
-            LINUX_OS_NAME.get_or_init(|| {
-                // SAFETY: `uname(2)` fills the struct on success; zero-init
-                // beforehand so a (theoretical) failure leaves a valid
-                // all-zero utsname.
-                let mut name: libc::utsname = bun_core::ffi::zeroed();
-                // SAFETY: `name` is a valid, exclusive pointer to a utsname.
-                let _ = unsafe { libc::uname(&raw mut name) };
-                name
-            })
+            LINUX_OS_NAME.get_or_init(bun_core::ffi::uname)
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -565,7 +548,7 @@ pub mod generate_header {
         fn for_linux() -> analytics::Platform {
             // Confusingly, the "release" tends to contain the kernel version much more frequently than the "version" field.
             let release: &'static [u8] =
-                slice_to_nul(c_chars_as_bytes(&linux_os_name().release));
+                bun_core::ffi::c_field_bytes(&linux_os_name().release);
 
             #[cfg(target_os = "android")]
             {
@@ -607,16 +590,10 @@ pub mod generate_header {
 
         #[cfg(target_os = "freebsd")]
         fn for_freebsd() -> analytics::Platform {
-            let name = FREEBSD_OS_NAME.get_or_init(|| {
-                // SAFETY: see linux_os_name().
-                let mut name: libc::utsname = bun_core::ffi::zeroed();
-                // SAFETY: `name` is a valid, exclusive pointer to a utsname.
-                let _ = unsafe { libc::uname(&mut name) };
-                name
-            });
+            let name = FREEBSD_OS_NAME.get_or_init(bun_core::ffi::uname);
             analytics::Platform {
                 os: analytics::OperatingSystem::freebsd,
-                version: slice_to_nul(c_chars_as_bytes(&name.release)),
+                version: bun_core::ffi::c_field_bytes(&name.release),
                 arch: PLATFORM_ARCH,
             }
         }

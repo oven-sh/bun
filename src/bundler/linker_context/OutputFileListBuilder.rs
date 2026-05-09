@@ -44,11 +44,7 @@ pub enum OutputFileListError {
     #[error("NoSourceMapsOrBytecode")]
     NoSourceMapsOrBytecode,
 }
-impl From<OutputFileListError> for bun_core::Error {
-    fn from(e: OutputFileListError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(OutputFileListError);
 
 impl OutputFileList {
     pub fn init(

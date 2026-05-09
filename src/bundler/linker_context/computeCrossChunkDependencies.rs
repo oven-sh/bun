@@ -7,17 +7,13 @@ use bun_logger as Logger;
 use bun_options_types::ImportRecord;
 use crate::bun_renamer as renamer;
 
-use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, LinkerCtx};
+use crate::linker_context_mod::{debug, ChunkMeta, ChunkMetaMap};
 use crate::LinkerContext;
 use crate::js_meta;
 use crate::{
     chunk, Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index,
     IndexInt, JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind,
 };
-
-macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
-}
 
 pub fn compute_cross_chunk_dependencies(
     c: &mut LinkerContext,

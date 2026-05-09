@@ -13,11 +13,12 @@
 
 #![allow(non_camel_case_types, non_snake_case)]
 
-use core::mem::size_of;
-
-pub type cpu_type_t = i32;
-pub type cpu_subtype_t = i32;
-pub type vm_prot_t = i32;
+// Canonical `<mach-o/loader.h>` POD layouts live in `bun_sys::macho` (lower-tier
+// crate, also consumed by `crash_handler`). Re-export so `exe_format::macho`
+// keeps its existing `macho::segment_command_64` etc. paths.
+pub use bun_sys::macho::{
+    cpu_subtype_t, cpu_type_t, load_command, mach_header_64, segment_command_64, vm_prot_t,
+};
 
 pub const MH_MAGIC_64: u32 = 0xfeed_facf;
 pub const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
@@ -33,7 +34,7 @@ pub const LC_REQ_DYLD: u32 = 0x8000_0000;
 /// instant UB).
 pub mod LC {
     use super::LC_REQ_DYLD;
-    pub const SEGMENT_64: u32 = 0x19;
+    pub use bun_sys::macho::LC_SEGMENT_64 as SEGMENT_64;
     pub const SYMTAB: u32 = 0x2;
     pub const DYSYMTAB: u32 = 0xb;
     pub const CODE_SIGNATURE: u32 = 0x1d;
@@ -53,48 +54,6 @@ pub mod PROT {
     pub const READ: vm_prot_t = 0x01;
     pub const WRITE: vm_prot_t = 0x02;
     pub const EXEC: vm_prot_t = 0x04;
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct mach_header_64 {
-    pub magic: u32,
-    pub cputype: cpu_type_t,
-    pub cpusubtype: cpu_subtype_t,
-    pub filetype: u32,
-    pub ncmds: u32,
-    pub sizeofcmds: u32,
-    pub flags: u32,
-    pub reserved: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct load_command {
-    pub cmd: u32,
-    pub cmdsize: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct segment_command_64 {
-    pub cmd: u32,
-    pub cmdsize: u32,
-    pub segname: [u8; 16],
-    pub vmaddr: u64,
-    pub vmsize: u64,
-    pub fileoff: u64,
-    pub filesize: u64,
-    pub maxprot: vm_prot_t,
-    pub initprot: vm_prot_t,
-    pub nsects: u32,
-    pub flags: u32,
-}
-impl segment_command_64 {
-    #[inline]
-    pub fn seg_name(&self) -> &[u8] {
-        parse_name(&self.segname)
-    }
 }
 
 #[repr(C)]
@@ -231,96 +190,9 @@ pub struct SuperBlob {
 }
 
 // ── load-command iterator ─────────────────────────────────────────────────
-
-/// Raw `(*const u8, len)` pair so `LoadCommandIterator` does not hold a Rust
-/// borrow of the backing `Vec<u8>` (see module-level SAFETY note).
-#[derive(Clone, Copy)]
-pub struct RawSlice {
-    ptr: *const u8,
-    len: usize,
-}
-impl RawSlice {
-    #[inline]
-    pub fn as_ptr(&self) -> *const u8 {
-        self.ptr
-    }
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.len
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct LoadCommand {
-    pub hdr: load_command,
-    pub data: RawSlice,
-}
-impl LoadCommand {
-    #[inline]
-    pub fn cmd(&self) -> u32 {
-        self.hdr.cmd
-    }
-    #[inline]
-    pub fn cmdsize(&self) -> u32 {
-        self.hdr.cmdsize
-    }
-    /// Port of `LoadCommand.cast(comptime Cmd)`: reinterpret the command bytes
-    /// as `T`. Returns `None` if the command is too small.
-    pub fn cast<T: Copy>(&self) -> Option<T> {
-        if self.data.len < size_of::<T>() {
-            return None;
-        }
-        // SAFETY: `data.ptr` points into a live Mach-O image buffer with at
-        // least `size_of::<T>()` bytes (checked above); `T` is `#[repr(C)]`
-        // POD per all callers in macho.rs. read_unaligned tolerates any
-        // alignment (mirrors Zig `*align(1) const T`).
-        Some(unsafe { core::ptr::read_unaligned(self.data.ptr.cast::<T>()) })
-    }
-}
-
-pub struct LoadCommandIterator {
-    ncmds: u32,
-    index: u32,
-    buf_ptr: *const u8,
-    buf_len: usize,
-}
-impl LoadCommandIterator {
-    /// `buffer` must remain live (no realloc/free) for the lifetime of the
-    /// returned iterator and any `LoadCommand` it yields.
-    #[inline]
-    pub fn new(ncmds: u32, buffer: &[u8]) -> Self {
-        Self {
-            ncmds,
-            index: 0,
-            buf_ptr: buffer.as_ptr(),
-            buf_len: buffer.len(),
-        }
-    }
-
-    pub fn next(&mut self) -> Option<LoadCommand> {
-        if self.index >= self.ncmds {
-            return None;
-        }
-        // SAFETY: buf_ptr was derived from a slice with `buf_len` bytes; a
-        // well-formed Mach-O guarantees `ncmds` load_command headers fit.
-        let hdr: load_command =
-            unsafe { core::ptr::read_unaligned(self.buf_ptr.cast::<load_command>()) };
-        let cmdsize = hdr.cmdsize as usize;
-        let lc = LoadCommand {
-            hdr,
-            data: RawSlice {
-                ptr: self.buf_ptr,
-                len: cmdsize,
-            },
-        };
-        // SAFETY: advancing within the original buffer; Mach-O format guarantees
-        // sum(cmdsize) == sizeofcmds == original buf_len.
-        self.buf_ptr = unsafe { self.buf_ptr.add(cmdsize) };
-        self.buf_len = self.buf_len.saturating_sub(cmdsize);
-        self.index += 1;
-        Some(lc)
-    }
-}
+// Canonical impl lives in `bun_sys::macho` (raw-ptr storage; see module-level
+// SAFETY note above for why a borrowed `&[u8]` does not work for `macho.rs`).
+pub use bun_sys::macho::{LoadCommand, LoadCommandIterator, RawSlice};
 
 #[inline]
 fn parse_name(name: &[u8; 16]) -> &[u8] {

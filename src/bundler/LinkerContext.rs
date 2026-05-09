@@ -122,12 +122,27 @@ pub fn bundle_generate_chunk_action(
     bun_crash_handler::Action::BundleGenerateChunk(())
 }
 
+// `debug` / `debug_tree_shake` are the canonical wrappers for the `LinkerCtx`
+// / `TreeShake` scoped loggers (LinkerContext.zig:2, :2705). Re-exported via
+// `pub(crate) use` so the `linker_context/*` submodules can `use
+// crate::linker_context_mod::debug;` instead of redeclaring the macro. The
+// body brings the scope static into local scope by path so callers do NOT need
+// `LinkerCtx` imported (`scoped_log!` takes `$scope:ident`, hence the alias).
 macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
+    ($($arg:tt)*) => {{
+        use $crate::linker_context_mod::LinkerCtx as __scope;
+        bun_core::scoped_log!(__scope, $($arg)*)
+    }};
 }
+pub(crate) use debug;
 macro_rules! debug_tree_shake {
-    ($($arg:tt)*) => { bun_core::scoped_log!(TreeShake, $($arg)*) };
+    ($($arg:tt)*) => {{
+        use $crate::linker_context_mod::TreeShake as __scope;
+        bun_core::scoped_log!(__scope, $($arg)*)
+    }};
 }
+#[allow(unused_imports)]
+pub(crate) use debug_tree_shake;
 
 // Re-exports from sibling modules in `linker_context/`.
 // `LinkerGraph` SoA accessors are real now (`` on
@@ -1108,20 +1123,14 @@ pub enum LinkError {
     ImportResolutionFailed,
 }
 
-impl From<AllocError> for LinkError {
-    fn from(_: AllocError) -> Self { LinkError::OutOfMemory }
-}
+bun_core::oom_from_alloc!(LinkError);
 impl From<BunError> for LinkError {
     fn from(_: BunError) -> Self {
         // TODO(port): narrow error set — Zig's `try this.load()` is `!void` (anyerror)
         LinkError::BuildFailed
     }
 }
-// TODO(b2-blocked): bun_core::Error::from_name — not yet on the public surface.
-
-impl From<LinkError> for BunError {
-    fn from(e: LinkError) -> Self { BunError::from_name(<&'static str>::from(e)) }
-}
+bun_core::named_error_set!(LinkError);
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,
@@ -3552,17 +3561,11 @@ impl<'a> LinkerContext<'a> {
                 break;
             }
 
-            let kind: crate::chunk::QueryKind = match output[start] {
-                b'A' => crate::chunk::QueryKind::Asset,
-                b'C' => crate::chunk::QueryKind::Chunk,
-                b'S' => crate::chunk::QueryKind::Scb,
-                b'H' => crate::chunk::QueryKind::HtmlImport,
-                _ => {
-                    if cfg!(debug_assertions) {
-                        Output::debug_warn(format_args!("Invalid output piece boundary"));
-                    }
-                    break;
+            let Some(kind) = crate::chunk::QueryKind::from_letter(output[start]) else {
+                if cfg!(debug_assertions) {
+                    Output::debug_warn(format_args!("Invalid output piece boundary"));
                 }
+                break;
             };
 
             let mut index: usize = 0;

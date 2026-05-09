@@ -350,7 +350,7 @@ pub mod attrs {
                     operator.hash(hasher);
                     case_sensitivity.hash(hasher);
                     // SAFETY: arena-owned slice.
-                    hasher.update(unsafe { &**expected_value });
+                    hasher.update(unsafe { crate::arena_str(*expected_value) });
                 }
             }
         }
@@ -1202,7 +1202,7 @@ impl<'a> SelectorParser<'a> {
         let _ = self;
         // SAFETY: `Ident.v` borrows the parser arena which outlives the parse
         // session (Phase-A `'static` placeholder).
-        Some(unsafe { &*prefix.v })
+        Some(unsafe { crate::arena_str(prefix.v) })
     }
 
     pub fn parse_functional_pseudo_element(
@@ -2357,7 +2357,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
                 local_name.hash(hasher);
                 CssHash::hash(operator, hasher);
                 // SAFETY: arena-owned slice.
-                hasher.update(unsafe { &**value });
+                hasher.update(unsafe { crate::arena_str(*value) });
                 CssHash::hash(case_sensitivity, hasher);
                 hasher.update(&[*never_matches as u8]);
             }
@@ -3942,8 +3942,7 @@ impl ViewTransitionPartName {
         // serializer concern, not a grammar concern — the gated impl just
         // toggles the second arg).
         let write_ci = |name: &CustomIdent, dest: &mut Printer| -> Result<(), PrintErr> {
-            css::serializer::serialize_identifier(name.v(), dest)
-                .map_err(|_| PrintErr::CSSPrintError)
+            dest.serialize_identifier(name.v())
         };
         match self {
             Self::All => dest.write_str("*"),

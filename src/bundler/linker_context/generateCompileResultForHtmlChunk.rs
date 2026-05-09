@@ -13,18 +13,11 @@ use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_string::strings;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, LinkerCtx, PendingPartRange};
+use crate::linker_context_mod::{debug, GenerateChunkCtx, LinkerContext, PendingPartRange};
 use crate::options::Loader;
 use crate::thread_pool::Worker;
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
 use crate::{BundleV2, Chunk, CompileResult, IndexInt};
-
-// `debug` = LinkerContext.debug (Output.scoped(.LinkerCtx, .visible)).
-macro_rules! debug {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        bun_core::scoped_log!(LinkerCtx, $fmt $(, $arg)*)
-    };
-}
 
 /// Rrewrite the HTML with the following transforms:
 /// 1. Remove all <script> and <link> tags which were not marked as

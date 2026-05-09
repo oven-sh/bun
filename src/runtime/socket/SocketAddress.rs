@@ -869,16 +869,12 @@ impl sockaddr {
         } else {
             unsafe { (&raw const self.sin6.addr).cast::<c_void>() }
         };
-        // SAFETY: buf is INET6_ADDRSTRLEN bytes; ares_inet_ntop writes NUL-terminated string
-        let result = unsafe { ares::ares_inet_ntop(self.family().int() as c_int, addr_src, buf.as_mut_ptr(), buf.len() as ares::ares_socklen_t) };
-        let Some(ptr) = (unsafe { result.as_ref() }) else {
-            panic!("Invariant violation: SocketAddress created with invalid IPv6 address");
-        };
-        // std.mem.sliceTo(..., 0)
-        let len = buf.iter().position(|&b| b == 0).unwrap();
+        // SAFETY: buf is INET6_ADDRSTRLEN bytes; addr_src points to in_addr/in6_addr per family().
+        let len = unsafe { bun_cares_sys::ntop(self.family().int() as c_int, addr_src, &mut buf[..]) }
+            .expect("Invariant violation: SocketAddress created with invalid IPv6 address")
+            .len();
         // SAFETY: buf[len] == 0 written by ares_inet_ntop above
         let formatted = ZStr::from_buf(&buf[..], len);
-        let _ = ptr;
         if cfg!(debug_assertions) {
             debug_assert!(bun_str::strings::is_all_ascii(formatted.as_bytes()));
         }
@@ -959,7 +955,7 @@ pub mod inet {
     /// `0x0100_007f` on little-endian Windows, matching the header literal).
     pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
-    pub const INET6_ADDRSTRLEN: usize = 65;
+    pub use bun_sys::posix::INET6_ADDRSTRLEN;
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
@@ -1008,7 +1004,7 @@ pub mod inet {
     // PORT NOTE: `bun_sys::c` (translated-c-headers) does not yet expose these
     // socket constants/types; mirror them locally from libc / POSIX values.
     pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
-    pub const INET6_ADDRSTRLEN: usize = 46;
+    pub use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};

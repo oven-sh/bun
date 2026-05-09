@@ -10,6 +10,7 @@ pub mod Encoding;
 pub mod URLPath;
 pub mod Method;
 pub mod ETag;
+pub use ETag::wtf;
 
 // B-2: module un-gated. `mime_type_list_enum::MimeTypeList` is now a
 // hand-generated `&'static str` newtype (PERF(port) stand-in for the Zig

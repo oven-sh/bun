@@ -381,7 +381,7 @@ fn serialize_line_names(names: &[CustomIdent], dest: &mut Printer) -> Result<(),
             dest.write_char(b' ')?;
         }
         // SAFETY: arena-owned slice valid for 'bump.
-        write_ident(unsafe { &*name.v }, dest)?;
+        write_ident(unsafe { crate::arena_str(name.v) }, dest)?;
     }
     dest.write_char(b']')
 }
@@ -508,7 +508,7 @@ impl GridTemplateAreas {
             .try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
             .ok()
         {
-            let s = unsafe { &*s };
+            let s = unsafe { crate::arena_str(s) };
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {

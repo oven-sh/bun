@@ -643,52 +643,6 @@ use crate::internal_state::{HTTPStage, RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
-// PORT NOTE: Zig used `@tagName(this.method)`; Method here doesn't expose a
-// string converter, so map locally. Exhaustive — no `_` arm; silently falling
-// back to GET would send the wrong verb on the wire.
-#[inline]
-fn method_http_name(m: Method) -> &'static [u8] {
-    use Method::*;
-    match m {
-        ACL => b"ACL",
-        BIND => b"BIND",
-        CHECKOUT => b"CHECKOUT",
-        CONNECT => b"CONNECT",
-        COPY => b"COPY",
-        DELETE => b"DELETE",
-        GET => b"GET",
-        HEAD => b"HEAD",
-        LINK => b"LINK",
-        LOCK => b"LOCK",
-        M_SEARCH => b"M-SEARCH",
-        MERGE => b"MERGE",
-        MKACTIVITY => b"MKACTIVITY",
-        MKADDRESSBOOK => b"MKADDRESSBOOK",
-        MKCALENDAR => b"MKCALENDAR",
-        MKCOL => b"MKCOL",
-        MOVE => b"MOVE",
-        NOTIFY => b"NOTIFY",
-        OPTIONS => b"OPTIONS",
-        PATCH => b"PATCH",
-        POST => b"POST",
-        PROPFIND => b"PROPFIND",
-        PROPPATCH => b"PROPPATCH",
-        PURGE => b"PURGE",
-        PUT => b"PUT",
-        QUERY => b"QUERY",
-        REBIND => b"REBIND",
-        REPORT => b"REPORT",
-        SEARCH => b"SEARCH",
-        SOURCE => b"SOURCE",
-        SUBSCRIBE => b"SUBSCRIBE",
-        TRACE => b"TRACE",
-        UNBIND => b"UNBIND",
-        UNLINK => b"UNLINK",
-        UNLOCK => b"UNLOCK",
-        UNSUBSCRIBE => b"UNSUBSCRIBE",
-    }
-}
-
 /// Generic `HttpContext<const SSL>` alias — `crate::HttpContext` /
 /// `crate::HttpsContext` (above) are concrete-SSL aliases; the state machine
 /// needs a const-generic spelling for `get_ssl_ctx<IS_SSL>()`.
@@ -1199,9 +1153,9 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 /// onto a `bun_core::Error` whose name is the upper-snake Zig error-set tag
 /// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
 /// string, so do NOT substitute `X509_verify_cert_error_string` output here.
-// PORT NOTE: duplicated from HTTPContext.rs (private there) so ProxyTunnel can
-// reach it without widening that module's surface; constants are the BoringSSL
-// `X509_V_ERR_*` values from `<openssl/x509.h>`.
+// PORT NOTE: constants are the BoringSSL `X509_V_ERR_*` values from
+// `<openssl/x509.h>` (see boringssl.zig:17302-17370). Inlined as literals so
+// this file doesn't grow a dep on a header-generated const set.
 pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
     let name: &'static str = match error_no {
         0 => "OK", // X509_V_OK
@@ -2118,12 +2072,12 @@ impl<'a> HTTPClient<'a> {
         }
 
         // SAFETY: every borrowed slice points into storage that outlives the
-        // returned `Request` — `method_http_name` is `'static`; `url.pathname`
+        // returned `Request` — `Method::as_str()` is `'static`; `url.pathname`
         // borrows `self.url` (lives for the client); `request_headers_buf` is
         // the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static. Return as
         // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
-            method: method_http_name(self.method),
+            method: self.method.as_str().as_bytes(),
             path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
             headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },

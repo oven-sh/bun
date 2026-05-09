@@ -89,25 +89,16 @@ impl ___tracy_c_zone_context {
 
 pub type Ctx = ___tracy_c_zone_context;
 
-/// Mirror of `std.builtin.SourceLocation` for the fields Tracy needs.
-/// Construct via a macro at the call site (see TODO below).
-// TODO(port): callers pass `@src()` in Zig; in Rust this must be a macro that
-// expands to a per-callsite `static SRCLOC: ___tracy_source_location_data`.
-// `core::panic::Location` lacks `fn_name`, so a wrapper macro is required.
-#[derive(Clone, Copy)]
-pub struct SourceLocation {
-    pub fn_name: &'static core::ffi::CStr,
-    pub file: &'static core::ffi::CStr,
-    pub line: u32,
-}
-
 #[inline]
 pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
-    // TODO(port): Zig signature is `trace(comptime src: SourceLocation)` and
-    // synthesizes a per-monomorphization `static holder.srcloc`. Rust cannot
-    // create a fresh static per generic-value instantiation without a macro,
-    // so this fn takes the already-built static directly. Phase B: provide
-    // `tracy_trace!()` macro that declares the static and calls this.
+    // TODO(port): Zig signature is `trace(comptime src: std.builtin.SourceLocation)`
+    // and synthesizes a per-monomorphization `static holder.srcloc`. Rust cannot
+    // create a fresh static per generic-value instantiation without a macro, so this
+    // fn takes the already-built static directly. Phase B: provide a `tracy_trace!()`
+    // macro that emits a per-callsite
+    // `static SRCLOC: ___tracy_source_location_data { function: concat!(module_path!(),"\0"),
+    // file: concat!(file!(),"\0"), line: line!(), .. }` and calls this — do NOT
+    // reintroduce an intermediate SourceLocation struct.
     if !enable() {
         return Ctx::default();
     }

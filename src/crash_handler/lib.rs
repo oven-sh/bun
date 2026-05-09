@@ -80,35 +80,235 @@ pub mod debug {
     pub const HAVE_ERROR_RETURN_TRACING: bool = false;
     pub const STRIP_DEBUG_INFO: bool = !cfg!(debug_assertions);
 
-    // ── stub types: no debug-info backend yet ─────────────────────────────
-    // TODO(b2-blocked): bun_debug::SelfInfo — these stubs always answer
-    // `MissingDebugInfo`; the real DWARF/PDB reader lands with the bun_debug
-    // crate. Shape mirrors `std.debug.SelfInfo` so callers compile unchanged.
-    pub struct SelfInfo;
+    // ── SelfInfo (vendor/zig/lib/std/debug/SelfInfo.zig) ─────────────────
+    // D104: canonical home for the dladdr-backed `std.debug.SelfInfo` shim.
+    // Previously lived in `bun_jsc::btjs::zig_std_debug`; relocated here so the
+    // crash handler (lower-tier crate) gets real symbol names in debug builds
+    // and `btjs` re-exports from this module.
+    #[allow(unused_imports)]
+    use core::ffi::{c_int, c_void};
+    use std::collections::HashMap;
+    use bun_core::{err, Error};
+
+    pub use bun_core::debug::{SourceLocation, SymbolInfo};
+
+    pub struct SelfInfo {
+        address_map: HashMap<usize, Box<Module>>,
+    }
+
+    /// Port of `SelfInfo.Module`. On Linux Zig uses `Dwarf.ElfModule`; on Darwin a
+    /// MachO symbol table reader. Both ultimately resolve `address → {name, CU,
+    /// source_location}`. The DWARF/MachO parsers are not ported; `dladdr(3)`
+    /// provides the symbol-name half (which is what `btjs` actually consumes for
+    /// its `__`/`_llint_call_javascript` prefix checks). `source_location` is left
+    /// `None`, which `print_line_info` already handles.
+    // PORT NOTE: full `readElfDebugInfo`/`readMachODebugInfo` (~2k LOC of DWARF) not
+    // ported — `dladdr` is the libc-level equivalent for symbol-name resolution.
+    pub struct Module {
+        base_address: usize,
+        name: Box<[u8]>,
+    }
+
     impl SelfInfo {
-        pub fn get_module_for_address(&mut self, _address: usize) -> Result<Module, bun_core::Error> {
-            Err(bun_core::err!("MissingDebugInfo"))
+        /// Port of `SelfInfo.open`.
+        pub fn open() -> Result<SelfInfo, Error> {
+            // `if (builtin.strip_debug_info) return error.MissingDebugInfo;`
+            if !cfg!(debug_assertions) {
+                return Err(err!("MissingDebugInfo"));
+            }
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "dragonfly",
+                target_os = "openbsd",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "illumos",
+                windows,
+            ))]
+            {
+                // SelfInfo.init — non-Windows path is just an empty address_map.
+                return Ok(SelfInfo { address_map: HashMap::new() });
+            }
+            #[allow(unreachable_code)]
+            Err(err!("UnsupportedOperatingSystem"))
         }
-        pub fn get_module_name_for_address(&mut self, _address: usize) -> Option<Box<[u8]>> {
-            None
+
+        /// Port of `SelfInfo.getModuleForAddress`.
+        pub fn get_module_for_address(&mut self, address: usize) -> Result<&mut Module, Error> {
+            #[cfg(target_vendor = "apple")]
+            {
+                return self.lookup_module_dyld(address);
+            }
+            #[cfg(windows)]
+            {
+                let _ = address;
+                return Err(err!("MissingDebugInfo"));
+            }
+            #[cfg(not(any(target_vendor = "apple", windows)))]
+            {
+                return self.lookup_module_dl(address);
+            }
+        }
+
+        /// Port of `SelfInfo.getModuleNameForAddress`. Returns the basename of the
+        /// shared object containing `address`, or `None` if not found.
+        pub fn get_module_name_for_address(&mut self, address: usize) -> Option<Box<[u8]>> {
+            #[cfg(target_vendor = "apple")]
+            {
+                return lookup_module_name_dyld(address);
+            }
+            #[cfg(windows)]
+            {
+                let _ = address;
+                return None;
+            }
+            #[cfg(not(any(target_vendor = "apple", windows)))]
+            {
+                return lookup_module_name_dl(address);
+            }
+        }
+
+        #[cfg(not(any(target_vendor = "apple", windows)))]
+        fn lookup_module_dl(&mut self, address: usize) -> Result<&mut Module, Error> {
+            let m = bun_sys::elf::find_loaded_module(address)
+                .ok_or_else(|| err!("MissingDebugInfo"))?;
+            if !self.address_map.contains_key(&m.base_address) {
+                let obj_di = Box::new(Module { base_address: m.base_address, name: m.name });
+                self.address_map.insert(m.base_address, obj_di);
+            }
+            Ok(self.address_map.get_mut(&m.base_address).unwrap())
+        }
+
+        #[cfg(target_vendor = "apple")]
+        fn lookup_module_dyld(&mut self, address: usize) -> Result<&mut Module, Error> {
+            // PORT NOTE: Zig walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
+            // gives the same `{base_address, fname}` pair on Darwin without the MachO walk.
+            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
+            let mut info: libc::Dl_info = bun_core::ffi::zeroed();
+            let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+            if rc == 0 {
+                return Err(err!("MissingDebugInfo"));
+            }
+            let base_address = info.dli_fbase as usize;
+            if !self.address_map.contains_key(&base_address) {
+                let name = if info.dli_fname.is_null() {
+                    Box::default()
+                } else {
+                    // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
+                    unsafe { bun_core::ffi::cstr(info.dli_fname) }
+                        .to_bytes()
+                        .to_vec()
+                        .into_boxed_slice()
+                };
+                self.address_map.insert(base_address, Box::new(Module { base_address, name }));
+            }
+            Ok(self.address_map.get_mut(&base_address).unwrap())
         }
     }
-    pub struct Module;
+
     impl Module {
-        pub fn get_symbol_at_address(&self, _address: usize) -> Result<SymbolInfo, bun_core::Error> {
-            Err(bun_core::err!("MissingDebugInfo"))
+        /// Port of `Module.getSymbolAtAddress`.
+        #[cfg(windows)]
+        pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
+            // TODO(port-windows): SPEC DIVERGENCE — Zig's `std.debug.SelfInfo`
+            // resolves symbols on Windows via the loaded PE's PDB
+            // (`dbghelp.dll` `SymFromAddr`). That path is not yet ported, so
+            // every Windows backtrace currently prints bare addresses even
+            // when a PDB is shipped. This is NOT equivalent to the Zig spec
+            // for symbol-bearing builds; return the default-initialized
+            // `Symbol` (`name = "???"`) so the caller still prints the
+            // address line, but the dbghelp lookup must be implemented
+            // before Windows crash reports are usable.
+            let _ = (address, self.base_address);
+            Ok(SymbolInfo {
+                name: b"???".to_vec().into_boxed_slice(),
+                compile_unit_name: bun_paths::basename(&self.name).to_vec().into_boxed_slice(),
+                source_location: None,
+            })
+        }
+        /// Port of `Module.getSymbolAtAddress`.
+        #[cfg(not(windows))]
+        pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
+            let _ = self.base_address;
+            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
+            let mut info: libc::Dl_info = bun_core::ffi::zeroed();
+            let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
+            if rc == 0 || info.dli_sname.is_null() {
+                // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
+                // rather than erroring, so the caller still prints the address line.
+                return Ok(SymbolInfo {
+                    name: b"???".to_vec().into_boxed_slice(),
+                    compile_unit_name: bun_paths::basename(&self.name)
+                        .to_vec()
+                        .into_boxed_slice(),
+                    source_location: None,
+                });
+            }
+            // SAFETY: dli_sname is a valid NUL-terminated C string when non-null.
+            let name = unsafe { bun_core::ffi::cstr(info.dli_sname) }
+                .to_bytes()
+                .to_vec()
+                .into_boxed_slice();
+            let compile_unit_name = if info.dli_fname.is_null() {
+                bun_paths::basename(&self.name).to_vec().into_boxed_slice()
+            } else {
+                // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
+                bun_paths::basename(unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes())
+                    .to_vec()
+                    .into_boxed_slice()
+            };
+            Ok(SymbolInfo {
+                name,
+                compile_unit_name,
+                // PORT NOTE: DWARF line-table lookup not ported; dladdr does not provide
+                // file:line. `print_line_info` handles `None` by printing `???:?:?`.
+                source_location: None,
+            })
         }
     }
-    pub struct SymbolInfo {
-        pub source_location: Option<SourceLocation>,
-        pub name: Box<[u8]>,
-        pub compile_unit_name: Box<[u8]>,
+
+    #[cfg(not(any(target_vendor = "apple", windows)))]
+    fn lookup_module_name_dl(address: usize) -> Option<Box<[u8]>> {
+        bun_sys::elf::find_loaded_module(address)
+            .map(|m| bun_paths::basename(&m.name).to_vec().into_boxed_slice())
     }
-    /// Zig: `debug.getSelfDebugInfo()`. No backend yet — always errors.
-    /// Returns `*mut` (PORTING.md §Global mutable state); callers reborrow
-    /// per-access.
-    pub fn get_self_debug_info() -> Result<*mut SelfInfo, bun_core::Error> {
-        Err(bun_core::err!("MissingDebugInfo"))
+
+    #[cfg(target_vendor = "apple")]
+    fn lookup_module_name_dyld(address: usize) -> Option<Box<[u8]>> {
+        // SAFETY: dladdr only reads; out-param is a valid Dl_info.
+        let mut info: libc::Dl_info = bun_core::ffi::zeroed();
+        let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+        if rc == 0 || info.dli_fname.is_null() {
+            return None;
+        }
+        // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
+        let name = unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes();
+        Some(bun_paths::basename(name).to_vec().into_boxed_slice())
+    }
+
+    // ── std.debug.getSelfDebugInfo ───────────────────────────────────────
+    // PORTING.md §Global mutable state: lazy debug-only singleton. RacyCell —
+    // only called from a stopped/crashing process (lldb or the crash handler
+    // after `panicking` has serialized), so no concurrent access; callers
+    // reborrow the returned `*mut` per-access.
+    static SELF_DEBUG_INFO: bun_core::RacyCell<Option<SelfInfo>> =
+        bun_core::RacyCell::new(None);
+
+    /// Port of `std.debug.getSelfDebugInfo`. NOT thread-safe (the Zig original
+    /// has the same `TODO multithreaded awareness` caveat).
+    pub fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
+        // SAFETY: Zig's `var self_debug_info: ?SelfInfo = null` is also a plain
+        // mutable global; this is debug-only and invoked from a stopped process.
+        unsafe {
+            let slot = &mut *SELF_DEBUG_INFO.get();
+            if let Some(info) = slot {
+                return Ok(info as *mut _);
+            }
+            *slot = Some(SelfInfo::open()?);
+            Ok(slot.as_mut().unwrap() as *mut _)
+        }
     }
     /// Zig: `std.io.tty.detectConfig(std.io.getStdErr())`.
     pub fn detect_tty_config_stderr() -> TtyConfig {
@@ -117,12 +317,6 @@ pub mod debug {
         } else {
             TtyConfig::NoColor
         }
-    }
-    #[derive(Clone)]
-    pub struct SourceLocation {
-        pub file_name: Box<[u8]>,
-        pub line: u32,
-        pub column: u32,
     }
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum TtyConfig { NoColor, EscapeCodes }
@@ -138,52 +332,28 @@ pub mod debug {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local byte-writer trait. `bun_io::Write` does not exist yet; the crash
-// handler only needs `write_all` / `write_byte` / `write!` over a few sinks.
-// TODO(b2-blocked): bun_io::Write
+// Byte-writer trait — D101: deduped to canonical `bun_io::Write`.
+// The local stub (TODO(b2-blocked)) predated `bun_io` compiling; it carried a
+// `core::fmt::Write` supertrait so `write!(…)` returned `fmt::Result`. The
+// canonical trait instead provides its own `write_fmt` returning
+// `Result<(), bun_core::Error>`, so `write!` on `impl Write` now yields the
+// crate-native error directly (the `fmt_err` shim below became identity).
+// `BoundedArray<u8,N>` and `FmtAdapter` impls live in `bun_io` (orphan rules).
 // ──────────────────────────────────────────────────────────────────────────
-pub trait Write: core::fmt::Write {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
-    fn write_byte(&mut self, b: u8) -> Result<(), bun_core::Error> { self.write_all(&[b]) }
-    fn write_byte_n(&mut self, b: u8, n: usize) -> Result<(), bun_core::Error> {
-        for _ in 0..n { self.write_all(&[b])?; }
-        Ok(())
-    }
-}
+pub use bun_io::{Write, FmtAdapter};
 
 /// Raw, unbuffered stderr writer for the crash path. Stand-in for
 /// `bun_sys::stderr_writer()` (not yet exposed by T1).
+/// Only impls `bun_io::Write` — `write!` resolves to `bun_io::Write::write_fmt`
+/// (alloc-free stack `Bridge`, async-signal-safe).
 pub struct StderrWriter;
 pub fn stderr_writer() -> StderrWriter { StderrWriter }
-impl core::fmt::Write for StderrWriter {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
-        // (`count` is `c_uint` on the Windows CRT, `usize` on POSIX.)
-        unsafe { libc::write(2, s.as_ptr().cast(), s.len() as _); }
-        Ok(())
-    }
-}
 impl Write for StderrWriter {
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
         // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
+        // (`count` is `c_uint` on the Windows CRT, `usize` on POSIX.)
         unsafe { libc::write(2, bytes.as_ptr().cast(), bytes.len() as _); }
         Ok(())
-    }
-}
-impl<const N: usize> Write for bun_collections::BoundedArray<u8, N> {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        self.append_slice(bytes).map_err(|_| bun_core::err!("NoSpaceLeft"))
-    }
-}
-/// Adapter: route a `core::fmt::Formatter` through the byte-writer trait.
-pub struct FmtAdapter<'a, 'b>(pub &'a mut core::fmt::Formatter<'b>);
-impl core::fmt::Write for FmtAdapter<'_, '_> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result { self.0.write_str(s) }
-}
-impl Write for FmtAdapter<'_, '_> {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        use core::fmt::Write as _;
-        self.0.write_str(&String::from_utf8_lossy(bytes)).map_err(|_| bun_core::err!("WriteZero"))
     }
 }
 
@@ -193,7 +363,9 @@ mod draft {
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt;
-use core::fmt::Write as _;
+// D101: `core::fmt::Write` intentionally NOT in scope here — `bun_io::Write`
+// (via `super::Write`) supplies `write_fmt` for `BoundedArray<u8,N>`; importing
+// both makes `write!` ambiguous (E0034).
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
 
 use bun_core::{Environment, Global, Output, env_var, fmt as bun_fmt};
@@ -203,12 +375,12 @@ use bun_core::strings;
 
 use super::{debug, Write, FmtAdapter, stderr_writer};
 
-/// Map a `core::fmt::Error` (from `write!` on a `fmt::Write`) into the
-/// `bun_core::Error` domain. The crash-path writers never actually fail —
-/// `StderrWriter::write_str` always returns `Ok` — so the value is irrelevant,
-/// but the type must line up for `?`.
+/// D101: now identity. Pre-dedup `Write` had a `core::fmt::Write` supertrait so
+/// `write!` returned `fmt::Result` and needed remapping. With canonical
+/// `bun_io::Write::write_fmt` the error type is already `bun_core::Error`; this
+/// stays as a no-op so the ~22 `.map_err(fmt_err)?` sites don't churn.
 #[inline(always)]
-fn fmt_err(_: core::fmt::Error) -> bun_core::Error { bun_core::err!("WriteZero") }
+fn fmt_err(e: bun_core::Error) -> bun_core::Error { e }
 
 /// Zig: `Output.enable_ansi_colors_stderr` — runtime flag, exposed in Rust as an
 /// `AtomicBool` static. Re-exported here so call sites read like the Zig.
@@ -226,19 +398,12 @@ use super::cpu_features::CPUFeatures;
 
 /// Zig: `bun.fmt.fmtArgv` — print an argv vector as a shell-ish line.
 /// crash_handler.zig:1024 calls this when the addr2line spawn fails.
-fn fmt_argv<W: core::fmt::Write>(w: &mut W, argv: &[Vec<u8>]) -> core::fmt::Result {
+fn fmt_argv<W: super::Write>(w: &mut W, argv: &[Vec<u8>]) -> Result<(), bun_core::Error> {
     for (i, a) in argv.iter().enumerate() {
-        if i > 0 { w.write_char(' ')?; }
-        // Best-effort lossy print — argv came from this process so it's UTF-8
-        // by construction, but the stderr sink is `core::fmt::Write`.
-        match core::str::from_utf8(a) {
-            Ok(s) => w.write_str(s)?,
-            Err(_) => {
-                for &b in a {
-                    w.write_char(b as char)?;
-                }
-            }
-        }
+        if i > 0 { w.write_byte(b' ')?; }
+        // argv came from this process so it's UTF-8 by construction; raw bytes
+        // are fine for the stderr crash-path sink either way.
+        w.write_all(a)?;
     }
     Ok(())
 }
@@ -1454,7 +1619,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             if i != 0 {
                 writer.write_all(b" ")?;
             }
-            bun_fmt::quoted_writer(writer, &arg[0..arg.len().min(arg_chars_left)]).map_err(fmt_err)?;
+            write!(writer, "{}", bun_fmt::QuotedFormatter { text: &arg[0..arg.len().min(arg_chars_left)] }).map_err(fmt_err)?;
             arg_chars_left = arg_chars_left.saturating_sub(arg.len());
             if arg_chars_left == 0 {
                 writer.write_all(b"...")?;
@@ -1683,16 +1848,18 @@ impl StackLine {
 
                 // SAFETY: header points to a valid mach_header_64
                 let header_ref = unsafe { &*header };
-                let mut it = bun_sys::macho::LoadCommandIterator {
-                    ncmds: header_ref.ncmds,
-                    // SAFETY: load commands follow the mach header in memory
-                    buffer: unsafe {
+                // SAFETY: load commands follow the mach header in memory; the
+                // dyld-mapped image stays live for the process lifetime, so the
+                // iterator's no-realloc/no-free contract is trivially upheld.
+                let mut it = bun_sys::macho::LoadCommandIterator::new(
+                    header_ref.ncmds,
+                    unsafe {
                         core::slice::from_raw_parts(
                             header.cast::<u8>().add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
                             header_ref.sizeofcmds as usize,
                         )
                     },
-                };
+                );
 
                 while let Some(cmd) = it.next() {
                     match cmd.cmd() {
@@ -1740,56 +1907,13 @@ impl StackLine {
         {
             // This code is slightly modified from std.debug.DebugInfo.lookupModuleDl
             // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L2024
-            struct Ctx {
-                // Input
-                address: usize,
-                i: usize,
-                // Output
-                result: Option<StackLine>,
-            }
-            let mut ctx = Ctx { address: addr.saturating_sub(1), i: 0, result: None };
-
-            unsafe extern "C" fn callback(info: *mut libc::dl_phdr_info, _size: libc::size_t, context: *mut c_void) -> c_int {
-                // SAFETY: dl_iterate_phdr passes a valid info pointer; context is &mut Ctx
-                let context = unsafe { &mut *context.cast::<Ctx>() };
-                // SAFETY: dl_iterate_phdr passes a valid info pointer.
-                let info = unsafe { &*info };
-                // PORT NOTE: Zig `defer context.i += 1` reshaped — bump on every return.
-                let i = context.i;
-                context.i += 1;
-
-                if context.address < info.dlpi_addr as usize { return 0; }
-                // SAFETY: dlpi_phdr points to dlpi_phnum entries.
-                let phdrs = unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
-                for phdr in phdrs {
-                    // libc only exposes PT_LOAD on Linux; the ELF gABI value (1)
-                    // is identical everywhere.
-                    if phdr.p_type != bun_sys::elf::PT_LOAD { continue; }
-
-                    // Overflowing addition is used to handle the case of VSDOs
-                    // having a p_vaddr = 0xffffffffff700000
-                    let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
-                    let seg_end = seg_start + phdr.p_memsz as usize;
-                    if context.address >= seg_start && context.address < seg_end {
-                        // const name = bun.sliceTo(info.name, 0) orelse "";
-                        let _ = i;
-                        context.result = Some(StackLine {
-                            address: i32::try_from(context.address - info.dlpi_addr as usize).expect("int cast"),
-                            object: None,
-                        });
-                        return 1; // error.Found → stop iteration
-                    }
-                }
-                0
-            }
-
-            // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
-            unsafe {
-                libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>());
-            }
-
             let _ = name_bytes;
-            return ctx.result;
+            let address = addr.saturating_sub(1);
+            let m = bun_sys::elf::find_loaded_module(address)?;
+            return Some(StackLine {
+                address: i32::try_from(address - m.base_address).expect("int cast"),
+                object: None,
+            });
         }
     }
 
@@ -1852,7 +1976,7 @@ enum TraceStringAction {
 impl<'a> fmt::Display for TraceString<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         // encode_trace_string takes a byte writer; bridge fmt::Formatter via adapter
-        let _ = encode_trace_string(self, &mut FmtAdapter(writer));
+        let _ = encode_trace_string(self, &mut FmtAdapter::new(writer));
         Ok(())
     }
 }
@@ -2687,7 +2811,7 @@ fn print_line_info(
                     if sl.column > 0 && tty_config == TtyConfig::NoColor {
                         // The caret already takes one char
                         let space_needed = (sl.column - 1) as usize;
-                        out_stream.write_byte_n(b' ', space_needed)?;
+                        out_stream.splat_byte_all(b' ', space_needed)?;
                         out_stream.write_all(b"^\n")?;
                     }
                 }
@@ -2720,7 +2844,7 @@ fn print_line_from_file_any_os(
         .map_err(bun_core::Error::from)?;
     let f = bun_sys::File::from_fd(fd);
     // TODO(port): errdefer — f closed on all paths via guard
-    let f = scopeguard::guard(f, |f| { let _ = f.close(); });
+    let _close_f = bun_sys::CloseOnDrop::file(&f);
 
     let mut line_buf: [u8; 4096] = [0; 4096];
     let mut fbs_len: usize = 0;

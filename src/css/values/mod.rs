@@ -83,35 +83,13 @@ pub mod ident;
 pub mod url;
 
 /// Numeric protocol traits referenced by `DimensionPercentage<D>` and the
-/// `CalcValue for DimensionPercentage<D>` impls. These mirror the shapes in
-/// `crate::generics::parse_tocss_numeric_gated` (still ``-gated);
-/// once that block un-gates these become `pub use crate::generics::{...}`.
+/// `CalcValue` supertrait set. Pure re-export of `crate::generics`; kept as a
+/// module so `values::protocol::*` stays a one-stop bound set for `values/*.rs`.
 pub mod protocol {
-    use crate::css_parser as css;
-    use crate::values::angle::Angle;
-
-    /// `D::zero()` / `d.is_zero()` — additive identity.
-    pub trait Zero: Sized {
-        fn zero() -> Self;
-        fn is_zero(&self) -> bool;
-    }
-    /// `d.mul_f32(rhs)` — scalar multiplication.
-    pub trait MulF32: Sized {
-        fn mul_f32(self, rhs: f32) -> Self;
-    }
-    /// `d.try_add(&rhs)` — same-unit addition, `None` if incompatible.
-    pub trait TryAdd: Sized {
-        fn try_add(&self, rhs: &Self) -> Option<Self>;
-    }
-    // `Parse`/`ToCss`/`TryFromAngle` and the numeric helpers live in
-    // `crate::generics`; re-export so `values::protocol::*` stays a one-stop
-    // bound set.
     pub use crate::generics::{
-        IsCompatible, Parse, ParseWithOptions, PartialCmp, ToCss, TryFromAngle, TryMap, TryOp,
-        TryOpTo, TrySign,
+        IsCompatible, MulF32, Parse, ParseWithOptions, PartialCmp, ToCss, TryAdd, TryFromAngle,
+        TryMap, TryOp, TryOpTo, TrySign, Zero,
     };
-    #[allow(unused_imports)]
-    use {css as _, Angle as _};
 }
 
 // ported from: src/css/values/values.zig

@@ -2,6 +2,33 @@
 #![warn(unused_must_use)]
 
 #![warn(unreachable_pub)]
+
+// Shared by Linux/Darwin/FreeBSD: libc syscall wrappers signal failure with the
+// same-width all-ones sentinel (`-1` signed / `MAX` unsigned — Zig's
+// `@bitCast(...) == -1`) and stash the real errno in a thread-local. Only the
+// per-OS INVOCATION lists differ: notably Linux keeps a bespoke `usize` impl
+// that decodes raw-syscall `-errno`-in-retval and MUST NOT route through this.
+// Declared before the `mod` lines so textual-order macro visibility reaches them.
+#[cfg(not(windows))]
+macro_rules! impl_get_errno_libc {
+    ($($t:ty),+ $(,)?) => {$(
+        impl $crate::GetErrno for $t {
+            #[inline]
+            fn get_errno(self) -> $crate::E {
+                // Zig bitcasts unsigned → SAME-width signed before `== -1`.
+                // `as i64` would zero-extend u32, never matching -1. Compare
+                // against the type's own all-ones value instead (== -1 for
+                // signed, == MAX for unsigned — both are libc's failure rc).
+                if self == !(0 as $t) {
+                    $crate::E::from_raw($crate::posix::errno() as u16)
+                } else {
+                    $crate::E::SUCCESS
+                }
+            }
+        }
+    )+};
+}
+
 #[cfg(target_os = "macos")] pub mod darwin_errno;
 #[cfg(target_os = "macos")] pub use darwin_errno::{*, posix};
 #[cfg(target_os = "freebsd")] pub mod freebsd_errno;
@@ -24,6 +51,15 @@
 /// Windows ignores `rc` and reads `GetLastError()`/`WSAGetLastError()`).
 pub trait GetErrno: Copy {
     fn get_errno(self) -> E;
+}
+
+// Free-function shim mirroring Zig's `getErrno(rc)` call shape. POSIX-only:
+// Windows defines its own divergent `get_errno<T>(_rc)` (no trait bound, reads
+// GetLastError/WSAGetLastError) in windows_errno.rs.
+#[cfg(not(windows))]
+#[inline]
+pub fn get_errno<T: GetErrno>(rc: T) -> E {
+    rc.get_errno()
 }
 
 impl SystemErrno {

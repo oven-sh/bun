@@ -85,7 +85,7 @@ impl DashedIdentReference {
             // `&'a [u8]` (arena lifetime), but the safe accessor ties the borrow
             // to `&self`. Raw deref yields the unbounded arena borrow.
             // SAFETY: arena-owned slice; see `DashedIdent::v`.
-            let ident_v = unsafe { &*self.ident.v };
+            let ident_v = unsafe { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
             // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
@@ -107,10 +107,7 @@ impl DashedIdentReference {
                 .reference_dashed(bump, ident_v, &self.from, specifier_path, source_index);
             if let Some(name) = name {
                 dest.write_str(b"--")?;
-                if css::serializer::serialize_name(name, dest).is_err() {
-                    return Err(dest.add_fmt_error());
-                }
-                return Ok(());
+                return dest.serialize_name(name);
             }
         }
         dest.write_dashed_ident(&self.ident, false)
@@ -148,7 +145,7 @@ impl DashedIdent {
     pub fn v(&self) -> &[u8] {
         // SAFETY: arena-owned, never null, immutable for the parse session
         // (see type-level TODO(port) on `'bump` threading).
-        unsafe { &*self.v }
+        unsafe { crate::arena_str(self.v) }
     }
 
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
@@ -212,7 +209,7 @@ impl Ident {
     pub fn v(&self) -> &[u8] {
         // SAFETY: arena-owned, never null, immutable for the parse session
         // (see type-level TODO(port) on `'bump` threading).
-        unsafe { &*self.v }
+        unsafe { crate::arena_str(self.v) }
     }
 
     pub fn parse(input: &mut Parser) -> CssResult<Ident> {
@@ -221,10 +218,7 @@ impl Ident {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        match css::serializer::serialize_identifier(self.v(), dest) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(dest.add_fmt_error()),
-        }
+        dest.serialize_identifier(self.v())
     }
 
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
@@ -327,10 +321,10 @@ impl IdentOrRef {
         if self.ref_bit() {
             // SAFETY: in debug builds, ptrbits stores a heap pointer to a *const [u8] written by from_ref
             let ptr = self.ptrbits() as usize as *const *const [u8];
-            unsafe { &**ptr }
+            unsafe { crate::arena_str(*ptr) }
         } else {
             // SAFETY: as_ident reconstructs the arena slice this was packed from
-            unsafe { &*self.as_ident().unwrap().v }
+            unsafe { crate::arena_str(self.as_ident().unwrap().v) }
         }
     }
 
@@ -408,7 +402,7 @@ impl IdentOrRef {
         // TODO(port): lifetime — returns arena/symbol-table borrow; `'static` is a placeholder.
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
-            return Some(unsafe { &*self.as_ident().unwrap().v });
+            return Some(unsafe { crate::arena_str(self.as_ident().unwrap().v) });
         }
         let r = self.as_ref().unwrap();
         let final_ref = map.follow(r);
@@ -417,13 +411,13 @@ impl IdentOrRef {
         local_names
             .unwrap()
             .get(&final_ref)
-            .map(|p| unsafe { &**p })
+            .map(|p| unsafe { crate::arena_str(*p) })
     }
 
     pub fn as_original_string(self, symbols: &bun_logger::symbol::List) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
-            return unsafe { &*self.as_ident().unwrap().v };
+            return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
         }
         let r = self.as_ref().unwrap();
         symbols.at(r.inner_index() as usize).original_name
@@ -487,7 +481,7 @@ impl CustomIdent {
     /// than `&self`. (Phase B will thread the real `'bump` lifetime here.)
     #[inline]
     pub fn v(&self) -> &[u8] {
-        unsafe { &*self.v }
+        unsafe { crate::arena_str(self.v) }
     }
 
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
@@ -527,8 +521,8 @@ impl CustomIdent {
                 false
             };
         // SAFETY: arena-owned slice valid for the printer's `'a` lifetime
-        // (raw-ptr deref yields an unbounded borrow, which coerces to `'a`).
-        let v = unsafe { &*self.v };
+        // (`arena_str` yields an unbounded borrow, which coerces to `'a`).
+        let v = unsafe { crate::arena_str(self.v) };
         dest.write_ident(v, css_module_custom_idents_enabled)
     }
 

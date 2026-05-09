@@ -5043,97 +5043,10 @@ pub mod os {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `PollFlag` / `is_readable` / `is_writable` — MOVE_DOWN from `bun.zig`.
-// Requested by `[io]` move-out as `bun_sys::is_readable` + `bun_sys::Readable`.
+// Dedup D051: canonical impl lives in `bun_core::util`; re-export here for any
+// `bun_sys::{PollFlag,Readable,is_readable,is_writable}` path expectations.
 // ──────────────────────────────────────────────────────────────────────────
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PollFlag { Ready, NotReady, Hup }
-/// Legacy alias requested by `bun_io` move-out (`bun_sys::Readable`).
-pub use PollFlag as Readable;
-
-/// Non-blocking `poll(fd, POLLIN)`; reports readability or hangup.
-pub fn is_readable(fd: Fd) -> PollFlag {
-    #[cfg(windows)]
-    {
-        // Faithful port of `bun.zig:isReadable` — the upstream Zig hard-panics
-        // here (`@panic("TODO on Windows")`); no callers reach this on Windows.
-        let _ = fd;
-        panic!("TODO on Windows");
-    }
-    #[cfg(not(windows))]
-    {
-        debug_assert!(fd.is_valid());
-        let mut polls = [libc::pollfd {
-            fd: fd.native(),
-            events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
-            revents: 0,
-        }];
-        // SAFETY: FFI call; `polls` is valid for the duration of the call.
-        let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
-        let result = n > 0;
-        let rc = if result && polls[0].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
-            PollFlag::Hup
-        } else if result {
-            PollFlag::Ready
-        } else {
-            PollFlag::NotReady
-        };
-        log!(
-            "poll({}, .readable): {} ({:?}{})",
-            fd, result, rc,
-            if polls[0].revents & libc::POLLERR != 0 { " ERR " } else { "" },
-        );
-        rc
-    }
-}
-
-/// Non-blocking `poll(fd, POLLOUT)` (or `WSAPoll` on Windows); reports writability.
-pub fn is_writable(fd: Fd) -> PollFlag {
-    #[cfg(windows)]
-    {
-        use crate::windows::ws2_32;
-        let mut polls = [ws2_32::WSAPOLLFD {
-            fd: fd.as_socket_fd(),
-            events: ws2_32::POLLWRNORM,
-            revents: 0,
-        }];
-        // SAFETY: FFI call; `polls` is valid for the duration of the call.
-        let rc = unsafe { ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
-        let result = rc != ws2_32::SOCKET_ERROR && rc != 0;
-        log!("poll({}) writable: {} ({})", fd, result, polls[0].revents);
-        return if result && polls[0].revents & ws2_32::POLLWRNORM != 0 {
-            PollFlag::Hup
-        } else if result {
-            PollFlag::Ready
-        } else {
-            PollFlag::NotReady
-        };
-    }
-    #[cfg(not(windows))]
-    {
-        debug_assert!(fd.is_valid());
-        let mut polls = [libc::pollfd {
-            fd: fd.native(),
-            events: libc::POLLOUT | libc::POLLERR | libc::POLLHUP,
-            revents: 0,
-        }];
-        // SAFETY: FFI call; `polls` is valid for the duration of the call.
-        let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
-        let result = n > 0;
-        let rc = if result && polls[0].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
-            PollFlag::Hup
-        } else if result {
-            PollFlag::Ready
-        } else {
-            PollFlag::NotReady
-        };
-        log!(
-            "poll({}, .writable): {} ({:?}{})",
-            fd, result, rc,
-            if polls[0].revents & libc::POLLERR != 0 { " ERR " } else { "" },
-        );
-        rc
-    }
-}
+pub use bun_core::{is_readable, is_writable, Pollable as PollFlag, Pollable as Readable};
 
 // ──────────────────────────────────────────────────────────────────────────
 // `mkdir_recursive` — MOVE_DOWN simplified `mkdir -p` (replaces

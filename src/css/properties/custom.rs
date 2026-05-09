@@ -99,9 +99,8 @@ mod ext {
         if let Some(d) = dep {
             dest.write_str("url(")?;
             // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { &*d.placeholder };
-            css_parser::serializer::serialize_string(placeholder, dest)
-                .map_err(|_| dest.add_fmt_error())?;
+            let placeholder = unsafe { crate::arena_str(d.placeholder) };
+            dest.serialize_string(placeholder)?;
             dest.write_char(b')')?;
 
             if let Some(dependencies) = &mut dest.dependencies {
@@ -144,7 +143,7 @@ mod ext {
             dest.write_str(&buf)?;
         } else {
             dest.write_str("url(")?;
-            css_parser::serializer::serialize_string(url, dest).map_err(|_| dest.add_fmt_error())?;
+            dest.serialize_string(url)?;
             dest.write_char(b')')?;
         }
         Ok(())
@@ -180,9 +179,7 @@ mod ext {
             None => false,
         };
         // SAFETY: arena-owned slice valid for the printer's `'a` lifetime.
-        let v: &[u8] = unsafe { &*this.v };
-        // SAFETY: same arena-slice provenance as `Printer::write_dashed_ident`.
-        let v: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(v) };
+        let v: &'static [u8] = unsafe { crate::arena_str(this.v) };
         dest.write_ident(v, css_module_custom_idents_enabled)
     }
 }
@@ -1516,9 +1513,8 @@ impl CustomPropertyName {
             }
             CustomPropertyName::Unknown(unknown) => {
                 // SAFETY: arena-owned slice valid for printer lifetime.
-                let v = unsafe { &*unknown.v };
-                css_parser::serializer::serialize_identifier(v, dest)
-                    .map_err(|_| dest.add_fmt_error())
+                let v = unsafe { crate::arena_str(unknown.v) };
+                dest.serialize_identifier(v)
             }
         }
     }
@@ -1544,7 +1540,7 @@ impl CustomPropertyName {
     #[inline]
     pub fn as_str(&self) -> &[u8] {
         // SAFETY: see doc comment.
-        unsafe { &*self.as_ptr() }
+        unsafe { crate::arena_str(self.as_ptr()) }
     }
 
     // deep_clone / eql — provided by `#[derive(DeepClone, CssEql)]`.

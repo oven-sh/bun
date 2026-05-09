@@ -201,11 +201,7 @@ impl From<JsError> for StringifyError {
     }
 }
 
-impl From<bun_alloc::AllocError> for StringifyError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        StringifyError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(StringifyError);
 
 impl Stringifier {
     pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
@@ -1090,11 +1086,7 @@ impl From<JsError> for ToJsError {
     }
 }
 
-impl From<bun_alloc::AllocError> for ToJsError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        ToJsError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ToJsError);
 
 impl From<bun_js_parser::ToJSError> for ToJsError {
     fn from(e: bun_js_parser::ToJSError) -> Self {

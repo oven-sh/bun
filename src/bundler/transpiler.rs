@@ -599,65 +599,21 @@ impl<'a> Transpiler<'a> {
 
 use bun_resolver::tsconfig_json::{JsxField, TSConfigJSON};
 
-/// Convert resolver-side `tsconfig_json::options::jsx::Pragma` into the
-/// bundler-side `options_impl::jsx::Pragma`. Structurally identical;
-/// nominally distinct until both move down to `bun_options_types`.
+/// D042: resolver-side and bundler-side `jsx::Pragma` are now the SAME
+/// nominal type (`bun_options_types::jsx::Pragma`). Identity clone; kept so
+/// existing call sites compile unchanged.
+#[inline(always)]
 fn jsx_pragma_from_resolver(
     src: &bun_resolver::tsconfig_json::options::jsx::Pragma,
 ) -> crate::options_impl::jsx::Pragma {
-    use bun_resolver::tsconfig_json::options::jsx::Runtime as R;
-    use crate::options_impl::jsx;
-    jsx::Pragma {
-        factory: src.factory.iter().map(|s| s.clone()).collect(),
-        fragment: src.fragment.iter().map(|s| s.clone()).collect(),
-        runtime: match src.runtime {
-            R::Automatic => jsx::Runtime::Automatic,
-            R::Classic => jsx::Runtime::Classic,
-            R::Solid => jsx::Runtime::Solid,
-        },
-        import_source: jsx::ImportSource {
-            development: src.import_source.development.clone(),
-            production: src.import_source.production.clone(),
-        },
-        classic_import_source: src.classic_import_source.clone(),
-        package_name: src.package_name.clone(),
-        development: src.development,
-        parse: src.parse,
-        side_effects: src.side_effects,
-    }
+    src.clone()
 }
 
-/// Inline of `TSConfigJSON::merge_jsx` (resolver/tsconfig_json.rs:346)
-/// against the bundler-side `Pragma`. The upstream `merge_jsx` takes/returns
-/// the resolver-side nominal type; round-tripping through
-/// [`jsx_pragma_from_resolver`] would lose `classic_import_source`/`parse`/
-/// `side_effects`. Spec: options.zig — `TSConfigJSON.mergeJSX` is a 5-field
-/// conditional copy keyed on `jsx_flags`.
+/// D042: types unified — delegate to the resolver's own
+/// `TSConfigJSON::merge_jsx` (5-field conditional copy keyed on `jsx_flags`).
+#[inline]
 fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_impl::jsx::Pragma) {
-    use bun_resolver::tsconfig_json::options::jsx::Runtime as R;
-    use crate::options_impl::jsx;
-    if tsconfig.jsx_flags.contains(JsxField::Factory) {
-        out.factory = tsconfig.jsx.factory.iter().map(|s| s.clone()).collect();
-    }
-    if tsconfig.jsx_flags.contains(JsxField::Fragment) {
-        out.fragment = tsconfig.jsx.fragment.iter().map(|s| s.clone()).collect();
-    }
-    if tsconfig.jsx_flags.contains(JsxField::ImportSource) {
-        out.import_source = jsx::ImportSource {
-            development: tsconfig.jsx.import_source.development.clone(),
-            production: tsconfig.jsx.import_source.production.clone(),
-        };
-    }
-    if tsconfig.jsx_flags.contains(JsxField::Runtime) {
-        out.runtime = match tsconfig.jsx.runtime {
-            R::Automatic => jsx::Runtime::Automatic,
-            R::Classic => jsx::Runtime::Classic,
-            R::Solid => jsx::Runtime::Solid,
-        };
-    }
-    if tsconfig.jsx_flags.contains(JsxField::Development) {
-        out.development = tsconfig.jsx.development;
-    }
+    *out = tsconfig.merge_jsx(core::mem::take(out));
 }
 
 impl<'a> Transpiler<'a> {
@@ -1000,39 +956,21 @@ use bun_options_types::schema::api;
 // `parse_maybe` threads `self.options.define` / `runtime_transpiler_cache`
 // directly.
 //
-// `JSX::Pragma` keeps a thin by-value conversion: `options_impl::jsx::Runtime`
-// carries a 4th `_None` state for `api::JsxRuntime` round-tripping that the
-// parser-side 3-state enum lacks. Collapsing it would change parser match
-// exhaustiveness; deferred until `bun_options_types` grows the JSX surface.
-
+// D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
+// `js_ast::parser::options::JSX::Pragma` (both re-export
+// `bun_options_types::jsx::Pragma`). Only the `_None → Automatic` fold is
+// applied so parser-side `== Automatic` checks in visitExpr/parseJSXElement
+// keep their pre-unification semantics (parser only ever sees a resolved
+// runtime; options.zig:1199 default).
 #[inline]
 pub fn to_parser_jsx_pragma(
-    p: crate::options_impl::jsx::Pragma,
+    mut p: crate::options_impl::jsx::Pragma,
 ) -> js_ast::parser::options::JSX::Pragma {
-    use crate::options_impl::jsx::Runtime as Src;
-    use js_ast::parser::options::JSX;
-    JSX::Pragma {
-        factory: p.factory,
-        fragment: p.fragment,
-        runtime: match p.runtime {
-            // PORT NOTE: bundler-side `Runtime` carries a `_None` zero state to
-            // round-trip `api::JsxRuntime::_none`; the parser-side enum has no
-            // such variant (parser only ever sees a resolved runtime). Map it
-            // to the spec default `Automatic` (options.zig:1199 default).
-            Src::_None | Src::Automatic => JSX::Runtime::Automatic,
-            Src::Classic => JSX::Runtime::Classic,
-            Src::Solid => JSX::Runtime::Solid,
-        },
-        import_source: JSX::ImportSource {
-            development: p.import_source.development,
-            production: p.import_source.production,
-        },
-        classic_import_source: p.classic_import_source,
-        package_name: p.package_name,
-        development: p.development,
-        parse: p.parse,
-        side_effects: p.side_effects,
+    use crate::options_impl::jsx::Runtime;
+    if p.runtime == Runtime::_None {
+        p.runtime = Runtime::Automatic;
     }
+    p
 }
 
 // B-3 UNIFIED: `crate::options_impl::ModuleType` IS `js_ast::parser::options::ModuleType`
@@ -1089,9 +1027,7 @@ fn init_file_system(
 pub(crate) fn resolver_bundle_options_subset(
     src: &options::BundleOptions<'_>,
 ) -> resolver::options::BundleOptions {
-    use crate::options_impl::jsx::Runtime as BR;
     use resolver::options as ropts;
-    use resolver::tsconfig_json::options::jsx as rjsx;
 
     ropts::BundleOptions {
         target: src.target,
@@ -1099,26 +1035,8 @@ pub(crate) fn resolver_bundle_options_subset(
             options::PackagesOption::External => ropts::Packages::External,
             options::PackagesOption::Bundle => ropts::Packages::Bundle,
         },
-        jsx: rjsx::Pragma {
-            factory: src.jsx.factory.iter().cloned().collect(),
-            fragment: src.jsx.fragment.iter().cloned().collect(),
-            runtime: match src.jsx.runtime {
-                // bundler-side `_None` round-trips `api::JsxRuntime::_none`;
-                // resolver-side enum has no such variant — map to spec default.
-                BR::_None | BR::Automatic => rjsx::Runtime::Automatic,
-                BR::Classic => rjsx::Runtime::Classic,
-                BR::Solid => rjsx::Runtime::Solid,
-            },
-            import_source: rjsx::ImportSource {
-                development: src.jsx.import_source.development.clone(),
-                production: src.jsx.import_source.production.clone(),
-            },
-            classic_import_source: src.jsx.classic_import_source.clone(),
-            package_name: src.jsx.package_name.clone(),
-            development: src.jsx.development,
-            parse: src.jsx.parse,
-            side_effects: src.jsx.side_effects,
-        },
+        // D042: same nominal type on both sides.
+        jsx: src.jsx.clone(),
         // Spec `options.ResolveFileExtensions` — clone all four owned slices so
         // the resolver honours user `--extension-order` and the per-target
         // `.node` augmentation `from_api` applied.

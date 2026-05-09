@@ -2691,7 +2691,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
             let text = factory.text.slice();
             self.options.jsx.factory = options::JSX::Pragma::member_list_to_components_if_different(
-                self.arena,
                 core::mem::take(&mut self.options.jsx.factory),
                 text,
             )
@@ -2702,7 +2701,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = fragment.text.slice();
             self.options.jsx.fragment = options::JSX::Pragma::member_list_to_components_if_different(
-                self.arena,
                 core::mem::take(&mut self.options.jsx.fragment),
                 text,
             )
@@ -2714,7 +2712,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let text = import_source.text.slice();
             self.options.jsx.classic_import_source = Box::from(text);
             self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
-            self.options.jsx.set_import_source(self.arena);
+            self.options.jsx.set_import_source();
         }
 
         if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {

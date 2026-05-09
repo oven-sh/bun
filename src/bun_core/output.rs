@@ -1129,7 +1129,7 @@ impl Default for ElapsedFormatter {
 
 impl fmt::Display for ElapsedFormatter {
     fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const NS_PER_MS: u64 = 1_000_000;
+        use crate::time::NS_PER_MS;
         const FAST: u64 = NS_PER_MS * 10;
         const SLOW: u64 = NS_PER_MS * 8_000;
         let ms = self.duration_ns as f64 / NS_PER_MS as f64;
@@ -1197,14 +1197,12 @@ pub fn print_elapsed_stdout_trim(elapsed: f64) {
 }
 
 pub fn print_start_end(start: i128, end: i128) {
-    const NS_PER_MS: i64 = 1_000_000;
-    let elapsed = ((end - start) as i64) / NS_PER_MS;
+    let elapsed = ((end - start) as i64) / crate::time::NS_PER_MS as i64;
     print_elapsed(elapsed as f64);
 }
 
 pub fn print_start_end_stdout(start: i128, end: i128) {
-    const NS_PER_MS: i64 = 1_000_000;
-    let elapsed = ((end - start) as i64) / NS_PER_MS;
+    let elapsed = ((end - start) as i64) / crate::time::NS_PER_MS as i64;
     print_elapsed_stdout(elapsed as f64);
 }
 
@@ -1219,8 +1217,7 @@ pub fn print_timer(timer: &mut impl ReadTimer) {
     {
         return;
     }
-    const NS_PER_MS: u64 = 1_000_000;
-    let elapsed = timer.read() / NS_PER_MS;
+    let elapsed = timer.read() / crate::time::NS_PER_MS;
     print_elapsed(elapsed as f64);
 }
 

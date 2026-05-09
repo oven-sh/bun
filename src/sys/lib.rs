@@ -485,6 +485,7 @@ pub mod dir_iterator {
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             use bun_windows_sys::externs as w;
             use crate::windows::Win32Error;
+            use bun_errno::Win32ErrorExt as _;
             // `offset_of!(FILE_DIRECTORY_INFORMATION, FileName)` — fixed by the
             // Win32 layout (4+4 + 6×8 + 4+4 = 64).
             const NAME_OFFSET: usize = 64;
@@ -547,9 +548,7 @@ pub mod dir_iterator {
                         return Ok(None);
                     }
                     if rc != w::NTSTATUS::SUCCESS {
-                        let errno = Win32Error::from_nt_status(rc)
-                            .to_system_errno().map(super::SystemErrno::to_e)
-                            .unwrap_or(super::E::EUNKNOWN);
+                        let errno = Win32Error::from_nt_status(rc).to_e();
                         return Err(Error::from_code(errno, Tag::NtQueryDirectoryFile));
                     }
                     if io.Information == 0 {
@@ -792,6 +791,8 @@ pub fn is_regular_file(mode: Mode) -> bool {
 #[cfg(not(windows))] pub type SocketT = core::ffi::c_int;
 #[cfg(windows)] pub type SocketT = usize;
 pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
+#[cfg(windows)]
+pub use bun_errno::Win32ErrorExt;
 
 /// Exported for `headers-handwritten.h` `Bun__errnoName`. Returns a
 /// NUL-terminated upper-case errno name (e.g. `"ENOENT"`) or null for an
@@ -2616,9 +2617,7 @@ mod windows_impl {
             )
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
-            let errno = w::Win32Error::from_nt_status(rc)
-                .to_system_errno().map(SystemErrno::to_e)
-                .unwrap_or(E::EUNKNOWN);
+            let errno = w::Win32Error::from_nt_status(rc).to_e();
             return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
         }
         Ok(())
@@ -3218,10 +3217,7 @@ impl File {
             if rt == windows::FILE_TYPE_UNKNOWN {
                 let err = windows::get_last_win32_error();
                 if err != windows::Win32Error::SUCCESS {
-                    return Err(Error::from_code(
-                        err.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::EUNKNOWN),
-                        Tag::fstat,
-                    ));
+                    return Err(Error::from_code(err.to_e(), Tag::fstat));
                 }
             }
             Ok(match rt {
@@ -4454,9 +4450,16 @@ pub mod darwin {}
 // walk dyld load commands and resolve a stable (ASLR-unslid) address for
 // `addr2line`. Only the 64-bit forms are present; Bun does not ship 32-bit
 // Darwin binaries.
-#[cfg(target_os = "macos")]
+//
+// Compiled on every host (not just macOS): the cross-platform exe writer
+// (`bun_exe_format::macho`) re-exports these constants/POD when emitting a
+// Mach-O `--compile` target from a Linux/Windows build machine.
 #[allow(non_camel_case_types, non_snake_case)]
 pub mod macho {
+    pub type cpu_type_t = i32;
+    pub type cpu_subtype_t = i32;
+    pub type vm_prot_t = i32;
+
     /// `LC_SEGMENT_64` — 64-bit segment load command.
     pub const LC_SEGMENT_64: u32 = 0x19;
 
@@ -4466,8 +4469,8 @@ pub mod macho {
     #[derive(Clone, Copy)]
     pub struct mach_header_64 {
         pub magic: u32,
-        pub cputype: i32,
-        pub cpusubtype: i32,
+        pub cputype: cpu_type_t,
+        pub cpusubtype: cpu_subtype_t,
         pub filetype: u32,
         pub ncmds: u32,
         pub sizeofcmds: u32,
@@ -4495,8 +4498,8 @@ pub mod macho {
         pub vmsize: u64,
         pub fileoff: u64,
         pub filesize: u64,
-        pub maxprot: i32,
-        pub initprot: i32,
+        pub maxprot: vm_prot_t,
+        pub initprot: vm_prot_t,
         pub nsects: u32,
         pub flags: u32,
     }
@@ -4504,74 +4507,99 @@ pub mod macho {
         /// Zig: `segName()` — segment name with trailing NULs trimmed.
         #[inline]
         pub fn seg_name(&self) -> &[u8] {
-            let end = self
-                .segname
-                .iter()
-                .position(|&b| b == 0)
-                .unwrap_or(self.segname.len());
-            &self.segname[..end]
+            bun_string::slice_to_nul(&self.segname)
         }
+    }
+
+    /// Raw `(*const u8, len)` pair so [`LoadCommandIterator`] does not hold a
+    /// Rust borrow of its backing buffer. `bun_exe_format::macho` interleaves
+    /// iterator reads with in-place mutation of the same `Vec<u8>` (matching
+    /// the Zig original, which has no borrow checker); a `&'a [u8]` here would
+    /// force a structural rewrite of that consumer.
+    #[derive(Clone, Copy)]
+    pub struct RawSlice {
+        ptr: *const u8,
+        len: usize,
+    }
+    impl RawSlice {
+        #[inline]
+        pub fn as_ptr(&self) -> *const u8 { self.ptr }
+        #[inline]
+        pub fn len(&self) -> usize { self.len }
     }
 
     /// One parsed load command: header + raw bytes (header included).
     #[derive(Clone, Copy)]
-    pub struct LoadCommand<'a> {
-        hdr: load_command,
-        data: &'a [u8],
+    pub struct LoadCommand {
+        pub hdr: load_command,
+        pub data: RawSlice,
     }
-    impl<'a> LoadCommand<'a> {
+    impl LoadCommand {
         #[inline]
         pub fn cmd(&self) -> u32 { self.hdr.cmd }
         #[inline]
         pub fn cmdsize(&self) -> u32 { self.hdr.cmdsize }
         /// Zig: `cast(comptime T: type) ?T` — reinterpret the command bytes
-        /// as `T` if large enough. Returns a `&T` pointing into the image's
-        /// load-command buffer (which is mapped read-only for the image's
-        /// lifetime by dyld).
-        pub fn cast<T>(&self) -> Option<&'a T> {
-            if self.data.len() < core::mem::size_of::<T>() {
+        /// as `T` if large enough. Returns an owned `Copy` value (via
+        /// `read_unaligned`) rather than `&T`: the backing buffer may be a
+        /// heap `Vec<u8>` with arbitrary alignment, so materialising a typed
+        /// reference would be UB.
+        pub fn cast<T: Copy>(&self) -> Option<T> {
+            if self.data.len < core::mem::size_of::<T>() {
                 return None;
             }
-            // SAFETY: `data` is a slice into the dyld-mapped Mach-O image.
-            // dyld maps each image at a page-aligned base; the 64-bit header
-            // is 32 bytes; and on MH_MAGIC_64 every `cmdsize` is required to
-            // be a multiple of 8. Hence each load command begins 8-byte
-            // aligned, satisfying `segment_command_64`'s 8-byte alignment
-            // (its `u64` fields). `T` is `#[repr(C)]` POD.
-            Some(unsafe { &*(self.data.as_ptr().cast::<T>()) })
+            // SAFETY: `data.ptr` points into a live Mach-O image buffer with
+            // at least `size_of::<T>()` bytes (checked above); `T` is
+            // `#[repr(C)]` POD per all callers. `read_unaligned` tolerates any
+            // alignment (mirrors Zig `*align(1) const T`).
+            Some(unsafe { core::ptr::read_unaligned(self.data.ptr.cast::<T>()) })
         }
     }
 
     /// Zig: `std.macho.LoadCommandIterator` — walks the load-command region
     /// that immediately follows a `mach_header_64`.
-    pub struct LoadCommandIterator<'a> {
-        pub ncmds: u32,
-        pub buffer: &'a [u8],
+    ///
+    /// SAFETY contract: callers must not reallocate, shrink, or free the
+    /// backing buffer while a `LoadCommandIterator` derived from it (or any
+    /// `LoadCommand` it yielded) is live.
+    pub struct LoadCommandIterator {
+        ncmds: u32,
+        index: u32,
+        buf_ptr: *const u8,
+        buf_len: usize,
     }
-    impl<'a> LoadCommandIterator<'a> {
-        pub fn next(&mut self) -> Option<LoadCommand<'a>> {
-            if self.ncmds == 0 {
+    impl LoadCommandIterator {
+        /// `buffer` must remain live (no realloc/free) for the lifetime of the
+        /// returned iterator and any `LoadCommand` it yields.
+        #[inline]
+        pub fn new(ncmds: u32, buffer: &[u8]) -> Self {
+            Self { ncmds, index: 0, buf_ptr: buffer.as_ptr(), buf_len: buffer.len() }
+        }
+
+        pub fn next(&mut self) -> Option<LoadCommand> {
+            if self.index >= self.ncmds {
                 return None;
             }
-            // SAFETY: `buffer` begins at a load_command boundary by construction
-            // (caller initializes it to `header + sizeof(mach_header_64)`, and
-            // each `cmdsize` is required by the format to be a multiple of 8).
-            let hdr = unsafe { core::ptr::read_unaligned(self.buffer.as_ptr().cast::<load_command>()) };
+            // SAFETY: `buf_ptr` was derived from a slice of `buf_len` bytes
+            // which the caller promised stays live; a well-formed Mach-O has
+            // `ncmds` load_command headers fitting within `sizeofcmds`.
+            let hdr: load_command =
+                unsafe { core::ptr::read_unaligned(self.buf_ptr.cast::<load_command>()) };
             let cmdsize = hdr.cmdsize as usize;
-            if cmdsize < core::mem::size_of::<load_command>() || cmdsize > self.buffer.len() {
+            if cmdsize < core::mem::size_of::<load_command>() || cmdsize > self.buf_len {
                 // Malformed header — stop iteration rather than UB.
-                self.ncmds = 0;
+                self.index = self.ncmds;
                 return None;
             }
-            let data = &self.buffer[..cmdsize];
-            self.buffer = &self.buffer[cmdsize..];
-            self.ncmds -= 1;
-            Some(LoadCommand { hdr, data })
+            let lc = LoadCommand { hdr, data: RawSlice { ptr: self.buf_ptr, len: cmdsize } };
+            // SAFETY: advancing within the original buffer; bounds checked above.
+            self.buf_ptr = unsafe { self.buf_ptr.add(cmdsize) };
+            self.buf_len -= cmdsize;
+            self.index += 1;
+            Some(lc)
         }
     }
 }
-#[cfg(not(target_os = "macos"))]
-pub mod macho {}
 
 // ── `std.DynLib` — cross-platform dynamic library handle. ──
 pub struct DynLib {
@@ -4953,9 +4981,7 @@ fn open_windows_device_path(
         )
     };
     if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        let errno = windows::Win32Error::get()
-            .to_system_errno().map(SystemErrno::to_e)
-            .unwrap_or(E::EUNKNOWN);
+        let errno = windows::Win32Error::get().to_e();
         return Err(Error::from_code(errno, Tag::open));
     }
     Ok(Fd::from_system(rc))
@@ -5041,10 +5067,7 @@ pub fn open_dir_at_windows_nt_path(
     };
     match windows::Win32Error::from_nt_status(rc) {
         windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
-        code => Err(Error::from_code(
-            code.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::EUNKNOWN),
-            Tag::open,
-        )),
+        code => Err(Error::from_code(code.to_e(), Tag::open)),
     }
 }
 
@@ -5145,10 +5168,7 @@ pub fn open_file_at_windows_nt_path(
                 }
                 Ok(Fd::from_system(result))
             }
-            code => Err(Error::from_code(
-                code.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::EUNKNOWN),
-                Tag::open,
-            )),
+            code => Err(Error::from_code(code.to_e(), Tag::open)),
         };
     }
 }
@@ -5387,9 +5407,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         // SAFETY: FFI; attr/basic_info valid for the call duration.
         let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
         if rc != w::NTSTATUS::SUCCESS {
-            let errno = windows::Win32Error::from_nt_status(rc)
-                .to_system_errno().map(SystemErrno::to_e)
-                .unwrap_or(E::EUNKNOWN);
+            let errno = windows::Win32Error::from_nt_status(rc).to_e();
             return Err(Error::from_code(errno, Tag::access));
         }
         let attrs = basic_info.FileAttributes;
@@ -5704,14 +5722,10 @@ pub fn get_fd_path_w(_fd: Fd, _out: &mut [u16]) -> Maybe<&mut [u16]> {
 /// mutate the environment concurrently.
 pub fn environ() -> &'static [*const c_char] {
     #[cfg(unix)] {
-        // `AtomicPtr<T>` is `#[repr(C)]` over `*mut T`, so this has the same
-        // layout as libc's `char **environ`; we only do a Relaxed word load.
-        unsafe extern "C" { static environ: core::sync::atomic::AtomicPtr<*const c_char>; }
         // SAFETY: `environ` is a process-global NULL-terminated array.
         unsafe {
             let mut n = 0usize;
-            let base: *const *const c_char =
-                environ.load(core::sync::atomic::Ordering::Relaxed);
+            let base: *const *const c_char = bun_core::c_environ();
             if base.is_null() { return &[]; }
             while !(*base.add(n)).is_null() { n += 1; }
             core::slice::from_raw_parts(base, n)
@@ -5725,11 +5739,7 @@ pub fn environ() -> &'static [*const c_char] {
 /// global pointer (already NULL-terminated) rather than a length-bounded
 /// borrowed slice, so it is suitable to pass directly as `envp`.
 pub fn environ_ptr() -> *const *const c_char {
-    #[cfg(unix)] {
-        unsafe extern "C" { static environ: core::sync::atomic::AtomicPtr<*const c_char>; }
-        // SAFETY: `environ` is a process-global; we only read the pointer.
-        unsafe { environ.load(core::sync::atomic::Ordering::Relaxed) }
-    }
+    #[cfg(unix)] { bun_core::c_environ() }
     #[cfg(windows)] { core::ptr::null() }
 }
 
@@ -5869,6 +5879,11 @@ pub mod posix {
         #[cfg(unix)]    pub const INET:   c_int = libc::AF_INET;
         #[cfg(unix)]    pub const INET6:  c_int = libc::AF_INET6;
     }
+
+    // ── INET6_ADDRSTRLEN (Zig: `std.c.INET6_ADDRSTRLEN` / `ws2ipdef.h`) ──
+    // POSIX `netinet/in.h` = 46; Windows `ws2ipdef.h` = 65.
+    #[cfg(windows)]      pub const INET6_ADDRSTRLEN: usize = 65;
+    #[cfg(not(windows))] pub const INET6_ADDRSTRLEN: usize = 46;
 
     // ── sockaddr family (Zig: `std.posix.sockaddr`) ──
     #[cfg(unix)]
@@ -6130,6 +6145,84 @@ pub mod elf {
     pub const PT_PHDR: u32 = 6;
     pub const PT_TLS: u32 = 7;
     pub const PT_GNU_STACK: u32 = 0x6474e551;
+
+    /// Result of [`find_loaded_module`]: the loaded ELF object whose `PT_LOAD`
+    /// segment spans a given address.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    pub struct LoadedModule {
+        /// `dlpi_addr` — link-map base address (subtract from the lookup address
+        /// to get an image-relative offset).
+        pub base_address: usize,
+        /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
+        /// as Android does for the main program).
+        pub name: Box<[u8]>,
+    }
+
+    /// Port of Zig `std.debug.DebugInfo.lookupModuleDl`: walk loaded ELF objects
+    /// via `dl_iterate_phdr`, returning the one whose `PT_LOAD` segment contains
+    /// `address`. Shared by `bun_crash_handler::StackLine::from_address` and
+    /// `bun_jsc::btjs::SelfInfo::lookup_module_dl` / `lookup_module_name_dl`.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {
+        use core::ffi::{c_int, c_void};
+
+        struct Ctx {
+            address: usize,
+            result: Option<LoadedModule>,
+        }
+        let mut ctx = Ctx { address, result: None };
+
+        unsafe extern "C" fn callback(
+            info: *mut libc::dl_phdr_info,
+            _size: libc::size_t,
+            data: *mut c_void,
+        ) -> c_int {
+            // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
+            let context = unsafe { &mut *data.cast::<Ctx>() };
+            // SAFETY: dl_iterate_phdr passes a valid info pointer.
+            let info = unsafe { &*info };
+            // The base address is too high
+            if context.address < info.dlpi_addr as usize {
+                return 0;
+            }
+            // SAFETY: dlpi_phdr points to dlpi_phnum entries.
+            let phdrs = unsafe {
+                core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize)
+            };
+            for phdr in phdrs {
+                if phdr.p_type != PT_LOAD {
+                    continue;
+                }
+                // Overflowing addition is used to handle the case of VSDOs
+                // having a p_vaddr = 0xffffffffff700000
+                let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
+                let seg_end = seg_start + phdr.p_memsz as usize;
+                if context.address >= seg_start && context.address < seg_end {
+                    // Android libc uses NULL instead of an empty string to mark
+                    // the main program.
+                    let name = if info.dlpi_name.is_null() {
+                        Box::default()
+                    } else {
+                        // SAFETY: dlpi_name is a valid NUL-terminated C string.
+                        unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
+                            .to_bytes()
+                            .to_vec()
+                            .into_boxed_slice()
+                    };
+                    context.result = Some(LoadedModule {
+                        base_address: info.dlpi_addr as usize,
+                        name,
+                    });
+                    return 1; // error.Found → stop iteration
+                }
+            }
+            0
+        }
+
+        // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
+        unsafe { libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>()) };
+        ctx.result
+    }
 }
 
 /// FreeBSD platform surface.
@@ -6721,7 +6814,7 @@ impl WindowsSymlinkOptions {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 mod win_symlink_impl {
-    use super::{E, Error, Maybe, Tag, WindowsSymlinkOptions, ZStr, sys_uv, windows};
+    use super::{E, Error, Maybe, Tag, Win32ErrorExt as _, WindowsSymlinkOptions, ZStr, sys_uv, windows};
     use bun_core::WStr;
     use core::sync::atomic::{AtomicU32, Ordering};
 

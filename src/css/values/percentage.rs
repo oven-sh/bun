@@ -440,7 +440,7 @@ where
         let Some(sign) = self.try_sign() else {
             return false;
         };
-        css::signfns::is_sign_positive(sign)
+        sign.is_sign_positive()
     }
 
     #[inline]
@@ -452,7 +452,7 @@ where
         let Some(sign) = self.try_sign() else {
             return false;
         };
-        css::signfns::is_sign_negative(sign)
+        sign.is_sign_negative()
     }
 
     fn unwrap_calc(self) -> Self {
@@ -540,7 +540,7 @@ where
     ) -> Option<R>
     where
         C: Copy,
-        D: protocol::TryOpTo<R>,
+        D: protocol::TryOpTo,
     {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a.try_op_to(b, ctx, &op_fn),

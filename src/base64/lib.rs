@@ -282,7 +282,13 @@ pub mod vlq {
         bytes
     };
 
-    pub fn decode(encoded: &[u8], start: usize) -> VLQResult {
+    // Shared body for `decode` / `decode_assume_valid`. The two .zig originals
+    // (src/sourcemap/VLQ.zig:104/135) differ only by two `bun.assert` lines;
+    // const-generic `ASSERT_VALID` is const-folded so codegen matches the
+    // hand-duplicated bodies.
+    // PERF(port): loop was `inline for` (unrolled) — profile in Phase B.
+    #[inline(always)]
+    fn decode_impl<const ASSERT_VALID: bool>(encoded: &[u8], start: usize) -> VLQResult {
         let mut shift: u8 = 0;
         let mut vlq: u32 = 0;
 
@@ -290,10 +296,15 @@ pub mod vlq {
         let encoded_ = &encoded[start..][0..(encoded.len() - start).min(VLQ_MAX_IN_BYTES + 1)];
 
         // inlining helps for the 1 or 2 byte case, hurts a little for larger
-        // PERF(port): was `inline for` (unrolled) — profile in Phase B
         for i in 0..(VLQ_MAX_IN_BYTES + 1) {
+            if ASSERT_VALID {
+                debug_assert!(encoded_[i] < U7_MAX); // invalid base64 character
+            }
             // `@as(u7, @truncate(...))` → mask to 7 bits
             let index = BASE64_LUT[(encoded_[i] & 0x7f) as usize] as u32;
+            if ASSERT_VALID {
+                debug_assert!(index != U7_MAX as u32); // invalid base64 character
+            }
 
             // decode a byte
             vlq |= (index & 31) << (shift & 31);
@@ -315,39 +326,14 @@ pub mod vlq {
         VLQResult { start: start + encoded_.len(), value: 0 }
     }
 
+    #[inline]
+    pub fn decode(encoded: &[u8], start: usize) -> VLQResult {
+        decode_impl::<false>(encoded, start)
+    }
+
+    #[inline]
     pub fn decode_assume_valid(encoded: &[u8], start: usize) -> VLQResult {
-        let mut shift: u8 = 0;
-        let mut vlq: u32 = 0;
-
-        // hint to the compiler what the maximum value is
-        let encoded_ = &encoded[start..][0..(encoded.len() - start).min(VLQ_MAX_IN_BYTES + 1)];
-
-        // inlining helps for the 1 or 2 byte case, hurts a little for larger
-        // PERF(port): was `inline for` (unrolled) — profile in Phase B
-        for i in 0..(VLQ_MAX_IN_BYTES + 1) {
-            debug_assert!(encoded_[i] < U7_MAX); // invalid base64 character
-            // `@as(u7, @truncate(...))` → mask to 7 bits
-            let index = BASE64_LUT[(encoded_[i] & 0x7f) as usize] as u32;
-            debug_assert!(index != U7_MAX as u32); // invalid base64 character
-
-            // decode a byte
-            vlq |= (index & 31) << (shift & 31);
-            shift += 5;
-
-            // Stop if there's no continuation bit
-            if (index & 32) == 0 {
-                return VLQResult {
-                    start: start + i + 1,
-                    value: if (vlq & 1) == 0 {
-                        (vlq >> 1) as i32
-                    } else {
-                        -((vlq >> 1) as i32)
-                    },
-                };
-            }
-        }
-
-        VLQResult { start: start + encoded_.len(), value: 0 }
+        decode_impl::<true>(encoded, start)
     }
 }
 
@@ -363,11 +349,7 @@ pub mod zig_base64 {
         #[error("NoSpaceLeft")]
         NoSpaceLeft,
     }
-    impl From<Error> for bun_core::Error {
-        fn from(e: Error) -> Self {
-            bun_core::Error::from_name(<&'static str>::from(e))
-        }
-    }
+    bun_core::named_error_set!(Error);
 
     pub type DecoderWithIgnoreProto = fn(ignore: &[u8]) -> Base64DecoderWithIgnore;
 
@@ -497,36 +479,6 @@ pub mod zig_base64 {
                 out_idx += 1;
             }
             out_idx
-        }
-
-        /// Streaming variant of [`Self::encode`] that writes into a `core::fmt::Write` sink
-        /// instead of a pre-sized `&mut [u8]`. Same 6-bit accumulator algorithm; emits the
-        /// pad char (if configured) at the tail.
-        pub fn encode_to_fmt(&self, source: &[u8], w: &mut impl core::fmt::Write) -> core::fmt::Result {
-            // PORT NOTE: Zig used u12/u4; Rust uses u16/u8 with explicit masking.
-            let mut acc: u16 = 0;
-            let mut acc_len: u8 = 0;
-            let mut out_idx: usize = 0;
-            for &v in source {
-                acc = (acc << 8) + (v as u16);
-                acc_len += 8;
-                while acc_len >= 6 {
-                    acc_len -= 6;
-                    w.write_char(self.alphabet_chars[((acc >> acc_len) & 0x3F) as usize] as char)?;
-                    out_idx += 1;
-                }
-            }
-            if acc_len > 0 {
-                w.write_char(self.alphabet_chars[((acc << (6 - acc_len)) & 0x3F) as usize] as char)?;
-                out_idx += 1;
-            }
-            if let Some(pad_char) = self.pad_char {
-                let out_len = self.calc_size(source.len());
-                for _ in out_idx..out_len {
-                    w.write_char(pad_char as char)?;
-                }
-            }
-            Ok(())
         }
     }
 

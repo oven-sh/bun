@@ -11,17 +11,10 @@ use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::bun_fs;
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
-use crate::linker_context::LinkerCtx;
+use crate::linker_context_mod::debug;
 use crate::Graph::{Graph, InputFileColumns as _};
 use crate::{Index, LinkerContext};
 use bun_js_parser::Index as AstIndex;
-
-// `debug` in the Zig is `LinkerContext.debug`, a scoped Output log.
-macro_rules! debug {
-    ($($args:tt)*) => {
-        bun_core::scoped_log!(LinkerCtx, $($args)*)
-    };
-}
 
 // PORT NOTE: Zig `entry.*` / `@memcpy` are bitwise copies of arena-backed
 // `CssImportOrder` values (the inner `Vec`s point into bump arenas and are

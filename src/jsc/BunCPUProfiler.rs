@@ -15,11 +15,7 @@ pub enum ProfilerError {
     #[error("FilenameTooLong")]
     FilenameTooLong,
 }
-impl From<ProfilerError> for bun_core::Error {
-    fn from(e: ProfilerError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ProfilerError);
 
 pub struct CPUProfilerConfig {
     // TODO(port): lifetime — these are borrowed slices in Zig (never freed here);

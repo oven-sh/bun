@@ -1585,7 +1585,7 @@ mod posix_impl {
     mod linux_statx {
         // glibc / Android: libc 0.2.x exposes the full surface directly.
         #[cfg(not(target_env = "musl"))]
-        pub use libc::{
+        pub(super) use libc::{
             statx, AT_STATX_SYNC_AS_STAT, STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME,
             STATX_GID, STATX_INO, STATX_MODE, STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE,
             STATX_UID,

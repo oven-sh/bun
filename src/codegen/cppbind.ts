@@ -473,8 +473,9 @@ const rustSharedTypes: Record<string, string> = {
   // HTTPServerAgent / inspector types only show up in `nothrow` exports;
   // emit as opaque so the raw extern still type-checks.
   "Inspector::InspectorHTTPServerAgent": "core::ffi::c_void",
-  "HotReloadId": "u32",
-  "ServerId": "u32",
+  // C++: `typedef int ServerId; typedef int HotReloadId;` (InspectorHTTPServerAgent.cpp)
+  "HotReloadId": "core::ffi::c_int",
+  "ServerId": "core::ffi::c_int",
   "Route": "core::ffi::c_void",
 };
 

@@ -1,9 +1,34 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import path from "node:path";
 
-// Throwing a value whose Symbol.toPrimitive returns a non-primitive previously
-// caused the Fuzzilli REPRL loop to exit (the catch block's template literal
-// re-threw), tripping a flaky use-after-poison in the error printer. User code
-// should see a normal TypeError and the process should stay alive.
+// Fuzzilli found a flaky use-after-poison that only triggers when the REPRL
+// loop's catch block re-throws: the template literal `uncaught:${_e}` calls
+// ToPrimitive on the thrown value, and if that returns a non-primitive a
+// TypeError escapes the while(true) loop and takes the process down through
+// the uncaught-exception path.
+//
+// This test drives the real src/js/eval/fuzzilli-reprl.ts source with an
+// in-process mock of the REPRL file descriptors (see the fixture) and asserts
+// the loop survives two exec cycles of a payload that throws such a value.
+
+test("fuzzilli REPRL catch block does not let string coercion escape the loop", async () => {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fuzzilli-reprl-catch.fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(stderr).not.toContain("UNCAUGHT:");
+  expect(stdout).toContain("STATUS_WRITES=2");
+  expect(exitCode).toBe(0);
+});
 
 test("template literal with object whose Symbol.toPrimitive returns a non-primitive throws TypeError", () => {
   function F() {}
@@ -17,25 +42,6 @@ test("template literal with object whose Symbol.toPrimitive returns a non-primit
     caught = e;
   }
   expect(caught).toBeInstanceOf(TypeError);
-});
-
-test("catch block that coerces a thrown value with bad Symbol.toPrimitive does not crash", () => {
-  function F() {}
-  F[Symbol.toPrimitive] = () => F;
-
-  // Mirror the REPRL loop's shape: throw the value, catch it, attempt to
-  // stringify it, and guard that stringification.
-  let printed: string | undefined;
-  try {
-    throw F;
-  } catch (_e) {
-    try {
-      printed = `uncaught:${_e as any}`;
-    } catch {
-      printed = "uncaught:<unprintable>";
-    }
-  }
-  expect(printed).toBe("uncaught:<unprintable>");
 });
 
 test("growable SharedArrayBuffer + Cookie.from with bad Symbol.toPrimitive does not crash", () => {

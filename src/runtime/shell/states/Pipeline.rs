@@ -129,12 +129,15 @@ impl Pipeline {
             let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count.saturating_sub(1));
             for _ in 0..cmd_count.saturating_sub(1) {
                 // Spec (Pipeline.zig initializePipes 291-313): on POSIX use a
-                // UNIX stream socketpair (so the writer end has socket
-                // semantics — SO_NOSIGPIPE, shutdown()); on Windows use pipe().
+                // UNIX stream socketpair via `socketpairForShell` — on macOS
+                // that variant intentionally skips SO_NOSIGPIPE so the
+                // subprocess writing to a closed read end is killed by SIGPIPE
+                // (like a real shell) instead of seeing EPIPE and printing
+                // "Broken pipe" to stderr; on Windows use pipe().
                 #[cfg(windows)]
                 let r = bun_sys::pipe();
                 #[cfg(unix)]
-                let r = bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
+                let r = bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
                 match r {
                     Ok(p) => pipes.push(p),
                     Err(e) => {

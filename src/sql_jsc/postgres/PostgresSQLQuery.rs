@@ -47,9 +47,9 @@ pub struct PostgresSQLQuery {
 }
 
 // Zig `deinit`: `if (this.statement) |s| s.deref()` then deref query/cursor_name,
-// then `destroy(this)`. `query`/`cursor_name` are `BunString` (already Drop) and
-// `destroy` is `heap::take` in `deref_`; only the raw `*mut PostgresSQLStatement`
-// needs an explicit deref here.
+// then `destroy(this)`. `BunString` is `Copy` (FFI by-value, NO `Drop`), so the
+// +1 ref taken by `to_bun_string` in `call()` must be released here explicitly.
+// `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
         if let Some(stmt) = self.statement.take() {
@@ -58,6 +58,8 @@ impl Drop for PostgresSQLQuery {
             // into `self.statement`.
             unsafe { PostgresSQLStatement::deref(stmt) };
         }
+        self.query.deref();
+        self.cursor_name.deref();
     }
 }
 

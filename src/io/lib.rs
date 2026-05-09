@@ -82,10 +82,17 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 
 // At crate root so the per-method `$crate::__EventLoopCtx__*` type aliases the
 // macro emits (and the impl-macro reads back) actually resolve from impl
-// crates. `Store`/`FilePoll`/`Loop` here are the *platform* re-exports above.
+// crates. `Store`/`FilePoll` here are the *platform* re-exports above.
+//
+// `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
+// wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
+// re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
+// `uv_loop_t` (Zig `windows_event_loop.zig:1`) whereas the impl bodies
+// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) and the Zig spec
+// (`EventLoopHandle.loop() -> *uws.Loop`) hand back the wrapper.
 bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini] {
-        fn platform_event_loop_ptr() -> *mut Loop;
+        fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
         fn alloc_file_poll() -> *mut FilePoll;
         fn increment_pending_unref_counter();
@@ -103,7 +110,7 @@ impl EventLoopCtx {
     /// SAFETY: caller must not hold another live `&mut` to the same loop
     /// across this borrow (resolver-style accessor; the loop is per-thread).
     #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &mut Loop {
+    pub unsafe fn platform_event_loop(&self) -> &mut bun_uws_sys::Loop {
         unsafe { &mut *self.platform_event_loop_ptr() }
     }
     /// SAFETY: same aliasing hazard as [`platform_event_loop`].

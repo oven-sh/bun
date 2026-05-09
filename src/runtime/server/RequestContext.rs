@@ -378,6 +378,26 @@ use bun_options_types::schema::api as Api;
 
 use bun_js_parser::runtime_full::Fallback;
 
+/// PORT NOTE: `Api.JsException` is split across two crates in the Rust port —
+/// `bun_jsc::schema_api::JsException` (carries `stack`, used by
+/// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
+/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle). In
+/// Zig these are the *same* struct, so `runErrorHandler` populates the list and
+/// `Problems.exceptions` consumes it directly. Bridge the two here so the
+/// fallback page actually carries the captured exceptions instead of an empty
+/// array (react-response.test.ts asserts `exceptions[0].message`).
+fn jsc_exceptions_to_api(list: jsc::ExceptionList) -> Vec<Api::JsException> {
+    list.into_iter()
+        .map(|ex| Api::JsException {
+            name: (!ex.name.is_empty()).then_some(ex.name),
+            message: (!ex.message.is_empty()).then_some(ex.message),
+            runtime_type: Some(ex.runtime_type),
+            // jsc copy widened `code` to u16 (from `u16::from(u8)`); spec is u8.
+            code: Some(ex.code as u8),
+        })
+        .collect()
+}
+
 bun_core::declare_scope!(RequestContext, visible);
 bun_core::declare_scope!(ReadableStream, visible);
 
@@ -2608,16 +2628,13 @@ where
                 if !err.is_empty_or_undefined_or_null() {
                     // SAFETY: BACKREF
                     let server = &*server;
-                    // `run_error_handler` takes `Option<&mut ExceptionList>` where
-                    // `ExceptionList = Vec<()>` upstream; once it carries
-                    // `Api::JsException`, swap the local back in.
                     let mut exception_list: jsc::ExceptionList = Vec::new();
                     // SAFETY: see drain_microtasks() re: const→mut cast.
                     unsafe {
                         (*std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut())
                             .run_error_handler(err, Some(&mut exception_list));
                     }
-                    let exception_list: Vec<Api::JsException> = Vec::new();
+                    let exception_list = jsc_exceptions_to_api(exception_list);
 
                     if let Some(_dev_server) = server.dev_server() {
                         // Render the error fallback HTML page like renderDefaultError does
@@ -3002,8 +3019,6 @@ where
         let vm = unsafe { &mut *server.vm_mut() };
         if DEBUG_MODE {
             // PERF(port): was arena bulk-free — profile in Phase B
-            // Upstream `ExceptionList = Vec<()>`; once it carries
-            // `Api::JsException`, swap the local back in.
             let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
             vm.on_unhandled_rejection_exception_list =
@@ -3011,7 +3026,7 @@ where
             (vm.on_unhandled_rejection)(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
-            let exception_list: Vec<Api::JsException> = Vec::new();
+            let exception_list = jsc_exceptions_to_api(exception_list_upstream);
             // SAFETY: vm.log is set during VM init and live for the VM lifetime.
             let log = unsafe { vm.log.unwrap().as_mut() };
             // PORT NOTE: format eagerly so `format_args!` doesn't hold an

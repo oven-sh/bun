@@ -270,15 +270,30 @@ pub fn __bun_macro_context_init(
     // SAFETY: every caller of `js_ast::Macro::MacroContext::init<T>` passes a
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state
-    // is intentionally leaked — Zig backed it with `default_allocator`
-    // (process-lifetime) and `Transpiler` is bitwise-cloned per worker without
-    // running `Drop` (see `ThreadPool::initialize_transpiler`).
+    // is leaked for the long-lived `vm.transpiler` instance (Zig backed it
+    // with `default_allocator`, process-lifetime) — but callers that run on a
+    // short-lived bytewise-cloned `Transpiler` (e.g.
+    // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
+    // `__bun_macro_context_deinit` or the per-iteration `mi_heap_new()` inside
+    // `MacroContext.bump` leaks (~5 KB/iter; require-cache.test.ts OOMs).
     let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
     let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
     js_ast::Macro::MacroContext {
         javascript_object: js_ast::Macro::MacroJSCtx::ZERO,
         data: data.cast::<core::ffi::c_void>(),
     }
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
+    if data.is_null() {
+        return;
+    }
+    // SAFETY: `data` is exactly the `Box<MacroContext>` allocated in
+    // `__bun_macro_context_init` above; sole owner. Dropping the Box runs
+    // `MimallocArena::drop` (→ `mi_heap_destroy`) on `bump` and frees the
+    // `MacroMap`.
+    drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
 }
 
 #[unsafe(no_mangle)]

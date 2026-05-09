@@ -925,6 +925,18 @@ mod _event_loop_draft {
     use std::sync::Once;
 
     static INIT_ONCE: Once = Once::new();
+    // PORT NOTE: Zig `std.Thread.spawn` + `.detach()` allocates nothing on the
+    // heap. Rust's `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
+    // shared between the `JoinHandle` and the new thread's TLS `current()`.
+    // Dropping the handle leaves the only strong ref inside the spawned
+    // thread's TLS, which LSAN does not scan as a root — so when the main
+    // thread reaches `Global::exit` *before* the HTTP thread has installed
+    // that TLS slot, LSAN reports the Arc as a direct leak and (with CI's
+    // `abort_on_error=1`) the process SIGABRTs (exit 134). Park the handle in
+    // a process-lifetime static so the Arc is always reachable from a global
+    // root, matching the Zig semantics of "detach" without the false positive.
+    static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
+        std::sync::OnceLock::new();
 
     pub(super) fn init(opts: &InitOpts) {
         INIT_ONCE.call_once(|| init_once(opts));
@@ -946,7 +958,8 @@ mod _event_loop_draft {
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || on_start(opts_copy));
         match thread {
-            Ok(t) => drop(t), // detach
+            // detach — see HTTP_THREAD_HANDLE note above re: LSAN reachability
+            Ok(t) => { let _ = HTTP_THREAD_HANDLE.set(t); }
             Err(err) => Output::panic(format_args!("Failed to start HTTP Client thread: {}", err)),
         }
     }

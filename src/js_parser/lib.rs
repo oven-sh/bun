@@ -148,6 +148,7 @@ pub mod Macro {
         /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate
         /// cannot name it (dep-cycle).
         fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
+        fn __bun_macro_context_deinit(data: *mut core::ffi::c_void);
         fn __bun_macro_context_call(
             ctx: &mut MacroContext,
             import_record_path: &[u8],
@@ -202,6 +203,15 @@ pub mod Macro {
             // SAFETY: link-time-resolved Rust-ABI fn; pointer is valid for the
             // duration of the call.
             unsafe { __bun_macro_context_init(transpiler as *mut T as *mut core::ffi::c_void) }
+        }
+        /// Free the boxed higher-tier state behind `data`. Only call when the
+        /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
+        /// off-thread `RuntimeTranspilerStore` worker) — the long-lived
+        /// `vm.transpiler` instance leaks it intentionally (process-lifetime).
+        #[inline]
+        pub fn deinit(self) {
+            // SAFETY: link-time-resolved Rust-ABI fn; null is a no-op.
+            unsafe { __bun_macro_context_deinit(self.data) }
         }
         /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
         /// Returns `'static` so callers can keep the result across `&mut self`

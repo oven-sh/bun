@@ -907,6 +907,45 @@ pub mod command {
     /// `*_command.rs` that is itself still gated, plus `bun_bun_js::Run`,
     /// `StandaloneModuleGraph`, etc.
     pub fn start(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+        // WebView host subprocess entry. Must be before StandaloneModuleGraph,
+        // before JSC init, before anything that touches a JS engine. The child
+        // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
+        // Spec: cli.zig:543.
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(fd_str) = bun_core::env_var::BUN_INTERNAL_WEBVIEW_HOST::get() {
+                // Zig: `std.fmt.parseInt(u31, fd_str, 10)` — parse base-10 directly
+                // from bytes; env var values are `&[u8]`, not assumed UTF-8.
+                let fd: u32 = match (|| {
+                    if fd_str.is_empty() {
+                        return None;
+                    }
+                    let mut acc: u32 = 0;
+                    for &b in fd_str {
+                        let d = u32::from(b.wrapping_sub(b'0'));
+                        if d > 9 {
+                            return None;
+                        }
+                        acc = acc.checked_mul(10)?.checked_add(d)?;
+                    }
+                    Some(acc)
+                })() {
+                    Some(v) if v <= i32::MAX as u32 => v,
+                    _ => Output::panic(format_args!(
+                        "Invalid BUN_INTERNAL_WEBVIEW_HOST fd: {}",
+                        bstr::BStr::new(fd_str),
+                    )),
+                };
+                unsafe extern "C" {
+                    #[link_name = "Bun__WebView__hostMain"]
+                    fn host_main(fd: i32) -> !;
+                }
+                // SAFETY: Bun__WebView__hostMain is a noreturn extern that takes
+                // ownership of the IPC fd; `fd` validated above to fit i32.
+                unsafe { host_main(fd as i32) };
+            }
+        }
+
         // bun build --compile entry point
         if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
             if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {

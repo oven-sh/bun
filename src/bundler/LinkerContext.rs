@@ -398,7 +398,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         bundle: *mut BundleV2,
         entry_points: &[Index],
-        server_component_boundaries: js_ast::ast::server_component_boundary::List,
+        server_component_boundaries: &js_ast::ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<(), BunError> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
@@ -631,7 +631,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         bundle: *mut BundleV2,
         entry_points: &[Index],
-        server_component_boundaries: js_ast::ast::server_component_boundary::List,
+        server_component_boundaries: &js_ast::ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<Box<[Chunk]>, LinkError> {
         // SAFETY: forwarded; see fn-level contract.

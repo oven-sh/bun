@@ -492,6 +492,13 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
                 fs.top_level_dir =
                     unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
             }
+            // Zig has a single `bun.fs.FileSystem.instance.top_level_dir` field that
+            // both this fn writes and `GlobWalker.init` reads. The Rust port split
+            // storage between the resolver's `FileSystem.top_level_dir` (written
+            // above) and `bun_core::TOP_LEVEL_DIR` (read by `bun_paths::fs::
+            // FileSystem::top_level_dir()` → `GlobWalker::init`). Keep them in sync
+            // so a `process.chdir()` before `new Glob(...).scan()` is observed.
+            bun_core::set_top_level_dir(fs.top_level_dir);
             #[cfg(windows)]
             let without_trailing_slash = bun_string::immutable::paths::without_trailing_slash_windows_path;
             #[cfg(not(windows))]

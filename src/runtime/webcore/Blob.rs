@@ -5862,27 +5862,20 @@ impl Any {
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,
     ) -> Result<(), jsc::JsTerminated> {
-        // `AnyPromise` has no `wrap` in bun_jsc — open-code it: run
-        // `to_action_value`, resolve on Ok, reject with the pending exception
-        // on Err. Mirrors Zig's `AnyPromise.wrap` (AnyPromise.zig).
-        match self.to_action_value(global_this, action) {
-            Ok(value) => match promise {
-                jsc::AnyPromise::Normal(p) => {
-                    unsafe { (*p).resolve(global_this, value) }?;
-                }
-                jsc::AnyPromise::Internal(p) => unsafe { (*p).resolve(global_this, value) }?,
-            },
-            Err(e) => {
-                let err = global_this.take_exception(e);
-                match promise {
-                    jsc::AnyPromise::Normal(p) => {
-                        unsafe { (*p).reject(global_this, Ok(err)) }?;
-                    }
-                    jsc::AnyPromise::Internal(p) => unsafe { (*p).reject(global_this, Ok(err)) }?,
-                }
-            }
-        }
-        Ok(())
+        // Zig: `promise.wrap(globalThis, toActionValue, .{ this, globalThis, action })`.
+        //
+        // Must route through `AnyPromise::wrap` (NOT open-coded resolve/reject):
+        // it opens a `top_scope!` and calls `to_action_value` via
+        // `JSC__AnyPromise__wrap` → `to_js_host_call`, so the C++ ThrowScope inside
+        // `JSGenericTypedArrayView::create` (reached unscoped via
+        // `JSUint8Array__fromDefaultAllocator` on the `InternalBlob` →
+        // `from_default_allocator` path) has a parent that observes its
+        // `simulateThrow()`. The previous open-coded form ran `to_action_value`
+        // at scope-depth 0 from the event-loop `ByteStream::on_data` → `fulfill`
+        // path, then constructed the `cpp::JSC__JSPromise__resolve` `top_scope!`
+        // — whose ctor asserted (`verifyExceptionCheckNeedIsSatisfied`) on the
+        // unchecked simulated throw under `BUN_JSC_validateExceptionChecks=1`.
+        promise.wrap(global_this, |g| self.to_action_value(g, action))
     }
 
     pub fn to_json(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {

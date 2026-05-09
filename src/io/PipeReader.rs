@@ -1488,7 +1488,7 @@ impl WindowsBufferedReader {
                             // the cb and fires it on the event loop.
                             if let Some(err) = unsafe {
                                 uv::uv_fs_read(
-                                    (this.vtable.loop_)(this.parent).cast(),
+                                    this.vtable.loop_().cast(),
                                     &mut file.fs,
                                     file.file,
                                     &file.iov,

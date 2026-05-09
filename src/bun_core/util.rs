@@ -1769,7 +1769,18 @@ pub fn csprng(bytes: &mut [u8]) {
 pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
     static CELL: std::sync::OnceLock<Result<ZBox, crate::Error>> = std::sync::OnceLock::new();
     let r = CELL.get_or_init(|| {
-        let path = std::env::current_exe().map_err(crate::Error::from)?;
+        #[allow(unused_mut)]
+        let mut path = std::env::current_exe().map_err(crate::Error::from)?;
+        // PORT NOTE: Zig's `std.fs.selfExePath` resolves symlinks. Rust's
+        // `current_exe()` already does on Linux (`readlink /proc/self/exe`) and
+        // Windows, but on Darwin it returns the raw `_NSGetExecutablePath`
+        // result without `realpath`, so a symlinked argv0 leaks through to
+        // `process.execPath`. Canonicalize here to match Node/Zig semantics
+        // (test/js/node/test/parallel/test-process-execpath.js).
+        #[cfg(target_vendor = "apple")]
+        if let Ok(real) = path.canonicalize() {
+            path = real;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt;

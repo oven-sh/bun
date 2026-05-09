@@ -644,6 +644,29 @@ impl TranspilerJob {
         // (BundleOptions value copy). The Rust resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
+        // PORT NOTE: Zig's `MacroContext.init` is a value-type with no heap
+        // allocation, so re-creating it per-iteration (as `parse_maybe` does
+        // when `macro_context.is_none()`) is free. The Rust port boxes a
+        // higher-tier `MacroContext` (which owns a `MimallocArena` →
+        // `mi_heap_new()`) and leaks it via `__bun_macro_context_init`. That
+        // leak is intentional for the long-lived `vm.transpiler`, but here we
+        // operate on a per-iteration `ManuallyDrop` bytewise copy, so we MUST
+        // free what `parse_maybe` allocates or every dynamic `import()` leaks
+        // one `mi_heap` (require-cache.test.ts "files transpiled and loaded
+        // don't leak file paths > via import()" OOMs at ~0.5 GB after 100k
+        // iterations).
+        let _macro_ctx_guard = scopeguard::guard(
+            ptr::addr_of_mut!(transpiler.macro_context),
+            |slot| {
+                // SAFETY: `slot` points into `transpiler_storage`, which is
+                // declared before this guard and so outlives it; no other
+                // borrow of `macro_context` is live at drop time (the parser's
+                // `&mut MacroContext` is scoped to the `parse` call).
+                if let Some(ctx) = unsafe { (*slot).take() } {
+                    ctx.deinit();
+                }
+            },
+        );
         // Zig: `transpiler.linker.resolver = &transpiler.resolver` — the bytewise copy left
         // `linker.resolver` pointing at `vm.transpiler.resolver` (wrong allocator/log); rewire
         // it at the local copy so `print_with_source_map` resolves through the arena-backed

@@ -3224,7 +3224,15 @@ impl<'a> BundleV2<'a> {
         // matches Zig, which copies `source.*` by value and then reads the
         // still-intact original.
         let stored = &self.graph.input_files.items_source()[source_index.get() as usize];
-        let path_text: &'static [u8] = stored.path.text;
+        // PORT NOTE: Zig had a single `fs.Path`; Rust split it into
+        // `bun_logger::fs::Path` (on `Source`) and `bun_resolver::fs::Path`
+        // (on `ParseTask`). Convert field-by-field — `pretty`/`namespace` MUST
+        // be preserved here (the SCB `separate_ssr_graph=false` caller passes a
+        // source whose path went through `path_with_pretty_initialized`, and
+        // `ParseTask::run` builds the `Source` from `task.path` then swaps it
+        // back into `input_files`, so dropping `pretty` would surface the
+        // absolute path as the dev-server module key).
+        let task_path: Fs::Path<'static> = fs_path_from_logger(&stored.path);
         // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
         // pass (arena lifetime); erase the borrow to `'static` to fit
         // `ContentsOrFd::Contents`. See `interned_slice` contract.
@@ -3243,11 +3251,7 @@ impl<'a> BundleV2<'a> {
         // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
         // `arena()` ends before we take `&mut self` below.
         let task: *mut ParseTask = self.arena().alloc(ParseTask {
-            // PORT NOTE: Zig had a single `fs.Path`; Rust split it into
-            // `bun_logger::fs::Path` (on `Source`) and `bun_resolver::fs::Path`
-            // (on `ParseTask`). Reconstruct from the `text` slice — `pretty`/
-            // `namespace` are unset on a generated source anyway.
-            path: Fs::Path::init(path_text),
+            path: task_path,
             contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
             side_effects: _resolver::SideEffects::HasSideEffects,
             jsx,
@@ -3448,8 +3452,16 @@ impl<'a> BundleV2<'a> {
             // `u32` newtypes (see ast/base.rs:52 / BundleEnums.rs:659), so a ptr cast
             // is layout-identical.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
-            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
-            this.linker.link(
+            // Spec passes `this.graph.server_component_boundaries` by value-copy
+            // (Zig struct copy), leaving the original intact for
+            // `StaticRouteVisitor` (generateChunksInParallel) to read via
+            // `parse_graph`. Borrow — do NOT `take`, which would empty the
+            // graph slot and drop the moved-out `MultiArrayList` heap inside
+            // `load()` (ASAN use-after-poison / wrong `fully_static`).
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
+            // Project `.linker` via `bundle_ptr` (not `this.linker`) so no
+            // second `Box::deref_mut` retag invalidates `ep`/`scbs` (SB).
+            (*bundle_ptr).linker.link(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
@@ -3605,8 +3617,12 @@ impl<'a> BundleV2<'a> {
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
-            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
-            this.linker.link(
+            // Spec: value-copy (original preserved for `StaticRouteVisitor`).
+            // Borrow — do NOT `take` (see `generate_from_cli`).
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
+            // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
+            // retag invalidates `ep`/`scbs` (SB hygiene).
+            (*bundle_ptr).linker.link(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
@@ -4315,9 +4331,13 @@ impl<'a> BundleV2<'a> {
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
-            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
+            // Spec: value-copy (original preserved for `StaticRouteVisitor`).
+            // Borrow — do NOT `take` (see `generate_from_cli`).
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             let mut reachable_files = reachable_files;
-            self.linker.link(
+            // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
+            // retag invalidates `ep`/`scbs` (SB hygiene).
+            (*bundle_ptr).linker.link(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
@@ -4644,8 +4664,11 @@ impl<'a> BundleV2<'a> {
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
-            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
-            self.linker.load(
+            // Spec: value-copy (original preserved). Borrow — do NOT `take`.
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
+            // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
+            // retag invalidates `ep`/`scbs` (SB hygiene).
+            (*bundle_ptr).linker.load(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,

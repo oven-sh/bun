@@ -345,12 +345,18 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // For more details on this section, look at js_parser.toAST
         // This is mimicking how it calls ImportScanner
         //
-        // TODO(b2-ast-E): `ImportScanner::scan` / `ConvertESMExportsForHmr` are
-        // currently monomorphized over the concrete `P<'_, TS, J, SCAN>` parser
-        // (see ImportScanner.rs:30). The Zig accepted `AstBuilder` via `anytype`
-        // duck-typing; Rust needs a `ParserLike` trait first. Until that lands,
-        // bypass the scan and use `self.stmts` directly — matches the
-        // "TODO: missing import scanner" intent above.
+        // PORT NOTE: Zig duck-typed `ImportScanner.scan(AstBuilder, ...)` and
+        // `ConvertESMExportsForHmr.{convertStmt,finalize}` over `AstBuilder`
+        // via `anytype`. The Rust `ImportScanner` is currently monomorphized
+        // over the concrete `P<'_, TS, J, SCAN>` parser only (see
+        // ImportScanner.rs:30), so the equivalent transform is open-coded here
+        // for the stmt shapes `AstBuilder` callers actually emit (`S.Import`,
+        // `S.Local{is_export}`, `S.ExportDefault(expr)`). Without this, the
+        // generated server-component proxy keeps raw `export` keywords inside
+        // the HMR function wrapper and JSC rejects the chunk with
+        // `SyntaxError: Unexpected keyword 'export'`.
+        // TODO(b2-ast-E): replace with a `ParserLike` trait so the real
+        // `ImportScanner`/`ConvertESMExportsForHmr` can accept `AstBuilder`.
         //
         // PORT NOTE: Zig assigned `p.stmts.items` directly — its
         // `ArrayListUnmanaged` storage is owned by `worker.allocator` and
@@ -359,13 +365,172 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // builder goes out of scope (UAF in the printer). Copy the `Copy`
         // `Stmt`s/`*mut Scope`s into the bump arena so the returned
         // `BundledAst` owns them with parser-arena lifetime.
-        let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(self.stmts.as_slice());
         if self.hot_reloading {
             // get a estimate on how many statements there are going to be
-            let _prealloc_count = stmts_in_bump.len() + 2;
-            // PORT NOTE: HMR transform deferred until ImportScanner accepts AstBuilder.
+            let prealloc_count = self.stmts.len() + 2;
+            let mut hmr_stmts: Vec<Stmt> = Vec::with_capacity(prealloc_count);
+            let mut export_props: Vec<G::Property> = Vec::new();
+
+            // Walk the input stmts once, mirroring what `ImportScanner.scan`
+            // (with `hot_module_reloading_transformations=true`) followed by
+            // `ConvertESMExportsForHmr.convertStmt` would do for each shape.
+            let in_stmts = core::mem::take(&mut self.stmts);
+            for stmt in in_stmts.iter() {
+                match stmt.data {
+                    js_ast::StmtData::SImport(st) => {
+                        // ImportScanner: track the record + named_imports for
+                        // each clause item so the linker can bind symbols.
+                        self.import_records_for_current_part.push(st.import_record_index);
+                        for item in st.items.slice() {
+                            let ref_ = item.name.ref_.expect("infallible: ref bound");
+                            self.named_imports.put(
+                                ref_,
+                                js_ast::NamedImport {
+                                    alias: Some(item.alias),
+                                    alias_loc: Some(item.alias_loc),
+                                    namespace_ref: Some(st.namespace_ref),
+                                    import_record_index: st.import_record_index,
+                                    alias_is_star: false,
+                                    is_exported: false,
+                                    local_parts_with_uses: Default::default(),
+                                },
+                            )?;
+                        }
+                        // convertStmt: `deduplicatedImport` is a no-op for
+                        // AstBuilder (each generated file emits at most one
+                        // import per record), so just forward the stmt.
+                        hmr_stmts.push(*stmt);
+                    }
+                    js_ast::StmtData::SLocal(mut st) if st.is_export => {
+                        // convertStmt: strip `export`, then visitBindingToExport
+                        // for each decl. AstBuilder only emits `B.Identifier`
+                        // bindings with `kind != .import` and
+                        // `has_been_assigned_to == false`, so the simple
+                        // `'abc,'` arm of visitRefToExport applies.
+                        st.is_export = false;
+                        for i in 0..st.decls.len_u32() as usize {
+                            let binding = st.decls.slice()[i].binding;
+                            if let B::BIdentifier(id) = binding.data {
+                                let ref_ = id.r#ref;
+                                let original_name =
+                                    self.symbols[ref_.inner_index() as usize].original_name;
+                                // ImportScanner.recordExportedBinding → recordExport
+                                self.record_export(binding.loc, original_name.slice(), ref_)?;
+                                export_props.push(G::Property {
+                                    key: Some(Expr::init(
+                                        E::String::init(original_name.slice()),
+                                        binding.loc,
+                                    )),
+                                    value: Some(Expr::init_identifier(ref_, binding.loc)),
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                        hmr_stmts.push(*stmt);
+                    }
+                    js_ast::StmtData::SExportDefault(st) => {
+                        // ImportScanner: recordExport("default", default_name.ref)
+                        let default_ref =
+                            st.default_name.ref_.expect("infallible: ref bound");
+                        self.record_export(st.default_name.loc, b"default", default_ref)?;
+                        // convertStmt: AstBuilder only emits the `.expr` arm
+                        // (`registerClientReference(...)`), which is not
+                        // `canBeMoved()` — generate a temp const binding and
+                        // reference it from `export_props`.
+                        // SAFETY: `StmtOrExpr` lives in the arena; bitwise read
+                        // matches Zig's value copy (no Drop fields touched).
+                        let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
+                        let temp_id = self.generate_temp_ref(Some(b"default_export"));
+                        parts.mut_(1).declared_symbols.append(DeclaredSymbol {
+                            ref_: temp_id,
+                            is_top_level: true,
+                        })?;
+                        parts
+                            .mut_(1)
+                            .symbol_uses
+                            .put(temp_id, symbol::Use { count_estimate: 1 })?;
+                        // SAFETY: `current_scope` is a live bump-arena allocation.
+                        VecExt::append(
+                            &mut unsafe { &mut *self.current_scope }.generated,
+                            temp_id,
+                        )?;
+                        export_props.push(G::Property {
+                            key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
+                            value: Some(Expr::init_identifier(temp_id, stmt.loc)),
+                            ..Default::default()
+                        });
+                        hmr_stmts.push(Stmt::alloc(
+                            S::Local {
+                                kind: S::Kind::KConst,
+                                decls: G::DeclList::from_slice(&[G::Decl {
+                                    binding: Binding::alloc(
+                                        self.bump,
+                                        js_ast::ast::b::Identifier { r#ref: temp_id },
+                                        stmt.loc,
+                                    ),
+                                    value: Some(value),
+                                }])?,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
+                    }
+                    _ => hmr_stmts.push(*stmt),
+                }
+            }
+
+            // ConvertESMExportsForHmr.finalize:
+            if !export_props.is_empty() {
+                // `hmr.exports = { ... };`
+                hmr_stmts.push(Stmt::alloc(
+                    S::SExpr {
+                        value: Expr::assign(
+                            Expr::init(
+                                E::Dot {
+                                    target: Expr::init_identifier(
+                                        self.hmr_api_ref,
+                                        Loc::EMPTY,
+                                    ),
+                                    name: b"exports".into(),
+                                    name_loc: Loc::EMPTY,
+                                    ..Default::default()
+                                },
+                                Loc::EMPTY,
+                            ),
+                            Expr::init(
+                                E::Object {
+                                    properties: G::PropertyList::move_from_list(export_props),
+                                    ..Default::default()
+                                },
+                                Loc::EMPTY,
+                            ),
+                        ),
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                ));
+                // mark a dependency on module_ref so it is renamed
+                parts
+                    .mut_(1)
+                    .symbol_uses
+                    .put(self.module_ref, symbol::Use { count_estimate: 1 })?;
+                parts.mut_(1).declared_symbols.append(DeclaredSymbol {
+                    ref_: self.module_ref,
+                    is_top_level: true,
+                })?;
+            }
+            // Head-part bookkeeping (only `parts[0]`, which is the empty
+            // namespace-export part): mark dead and depend on `parts[1]`.
+            parts.mut_(0).tag = js_ast::PartTag::DeadDueToInlining;
+            parts.mut_(0).dependencies.push(js_ast::Dependency {
+                part_index: 1,
+                source_index: js_ast::Index { value: self.source_index },
+            });
+
+            let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(hmr_stmts.as_slice());
             parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(stmts_in_bump);
         } else {
+            let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(self.stmts.as_slice());
             parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(stmts_in_bump);
         }
 

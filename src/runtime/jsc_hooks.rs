@@ -2204,7 +2204,28 @@ fn transpile_source_code_inner(
                 // exit — so re-intern into the same `FilenameStore` here
                 // instead of transmuting the lifetime (PORTING.md §Forbidden).
                 // Phase-B collapses both `Path` defs into one type.
-                let parse_path = {
+                //
+                // PORT NOTE: when `disable_transpilying` is true the
+                // `parse_result` is consumed *within this frame* (the
+                // `.print_source` / `.print_source_and_clone` early-return
+                // below reads only `source.contents` then drops it), so the
+                // re-intern is unnecessary and — because `BSSStringList::append`
+                // does not deduplicate — leaks one path-len buffer per
+                // `Bun.inspect(new Error)` (inspect-error-leak.test.js). The
+                // borrowed path bytes outlive `parse_result` in that branch,
+                // so reuse them directly. The Zig spec passes `path` by value
+                // with no intern at all (ModuleLoader.zig:90); the intern is a
+                // Phase-A workaround for the async-module queue path only.
+                let parse_path = if disable_transpilying {
+                    bun_logger::fs::Path {
+                        pretty: path.pretty,
+                        text: path.text,
+                        namespace: path.namespace,
+                        name: bun_logger::fs::PathName::init(path.text),
+                        is_disabled: path.is_disabled,
+                        is_symlink: path.is_symlink,
+                    }
+                } else {
                     let store = Fs::FilenameStore::instance();
                     let text: &'static [u8] =
                         bun_core::handle_oom(store.append_slice(path.text));

@@ -547,10 +547,15 @@ impl<T: JsSinkAbi> JSSink<T> {
         // encoded JSValue bits (never a real Rust pointer); bitcast back.
         let value = JSValue::from_encoded(ptr.as_ptr() as usize);
         value.unprotect();
-        // Zig: `detachPtr(globalThis, value) catch {}` — fromJSHostCallGeneric
-        // wrapper omitted; the extern itself does not throw (the Zig wrapper
-        // only re-surfaces a pending JS exception, which the catch discards).
-        T::detach_ptr_extern(value);
+        // Zig: `detachPtr(globalThis, value) catch {}` — `${abi}__detachPtr`
+        // calls the JS `onClose` callback via the bare `JSC::call(...)`
+        // overload (no NakedPtr/TopExceptionScope of its own), so
+        // `executeCallImpl`'s ThrowScope is the outermost scope and its dtor
+        // `simulateThrow()` leaves `m_needExceptionCheck` set. Wrap in a
+        // TopExceptionScope (matching Zig's `fromJSHostCallGeneric`) so the
+        // verifier is satisfied; discard the result like `catch {}`.
+        // TODO: properly propagate exception upwards.
+        let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
     }
 }
 

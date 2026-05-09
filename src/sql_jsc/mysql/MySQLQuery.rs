@@ -522,8 +522,10 @@ impl MySQLQuery {
             unsafe { MySQLStatement::deref(s) };
         }
         // Zig: `var q = this.#query; defer q.deref(); this.#query = .empty;`
-        // `BunString` derefs on Drop; assigning `empty()` drops the old value.
-        self.query = BunString::empty();
+        // `BunString` is `Copy` (no `Drop`); assigning `empty()` would NOT deref
+        // the old value, so release the +1 from `to_bun_string` explicitly.
+        let q = core::mem::replace(&mut self.query, BunString::empty());
+        q.deref();
     }
 
     #[inline]

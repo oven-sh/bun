@@ -330,10 +330,11 @@ impl FilePoll {
 
     /// Only intended to be used from EventLoop.Pollable
     // PORT NOTE: Zig takes `*Loop = *uv.Loop` here (`vm.event_loop_handle.?`),
-    // but the cycle-broken `EventLoopCtx::platform_event_loop` vtable returns
-    // the uws `WindowsLoop` wrapper. `WindowsLoop::sub_active`/`add_active`
-    // proxy straight through to `(*self.uv_loop).{sub,add}_active`, so accept
-    // the wrapper type to avoid an extra unsafe deref at every call site.
+    // but the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
+    // `*mut bun_uws_sys::Loop` (the uws `WindowsLoop` wrapper) so the
+    // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
+    // type-check. `WindowsLoop::sub_active`/`add_active` proxy straight through
+    // to `(*self.uv_loop).{sub,add}_active`, so accept the wrapper here.
     pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);

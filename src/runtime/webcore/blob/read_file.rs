@@ -1245,15 +1245,22 @@ impl<'a> ReadFileUV<'a> {
             let buf = self.remaining_buffer();
             let mut bufs: [libuv::uv_buf_t; 1] = [libuv::uv_buf_t::init(buf)];
             self.req.assert_cleaned_up();
-            let res = libuv::uv_fs_read(
-                self.loop_,
-                &mut self.req,
-                self.opened_fd.uv(),
-                bufs.as_mut_ptr(),
-                bufs.len() as u32,
-                i64::try_from(self.offset + self.read_off).expect("int cast"),
-                Some(Self::on_read),
-            );
+            // SAFETY: FFI — `loop_` is the live VM uv loop, `self.req` is a
+            // cleaned-up `fs_t` owned by `self`, `bufs` points at a stack uv_buf
+            // wrapping `self.buffer`'s spare capacity (libuv copies the iovec
+            // descriptor before returning), `opened_fd.uv()` is the open fd, and
+            // `on_read` is a valid `uv_fs_cb` that recovers `self` from `req.data`.
+            let res = unsafe {
+                libuv::uv_fs_read(
+                    self.loop_,
+                    &mut self.req,
+                    self.opened_fd.uv(),
+                    bufs.as_mut_ptr(),
+                    bufs.len() as u32,
+                    i64::try_from(self.offset + self.read_off).expect("int cast"),
+                    Some(Self::on_read),
+                )
+            };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(errno) = res.err_enum_e() {
                 self.errno = Some(bun_core::errno_to_zig_err(errno as i32));

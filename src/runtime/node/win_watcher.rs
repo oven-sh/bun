@@ -7,7 +7,7 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc as jsc;
 use bun_paths::PathBuffer;
@@ -43,8 +43,9 @@ static DEFAULT_MANAGER: bun_core::RacyCell<Option<*mut PathWatcherManager>> =
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub struct PathWatcherManager {
-    // Keys are owned NUL-terminated path bytes (Zig: `dupeZ`), values are raw heap PathWatcher ptrs.
-    watchers: ArrayHashMap<Box<[u8]>, *mut PathWatcher>,
+    // Keys are owned path bytes (Zig: `bun.StringArrayHashMapUnmanaged`), values are raw heap
+    // PathWatcher ptrs. `StringArrayHashMap` lets `get`/`insert` take `&[u8]` borrows.
+    watchers: StringArrayHashMap<*mut PathWatcher>,
     // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine`. The manager is heap-allocated and stored in a
     // process-global, so we spell the borrow as `'static`.
     // TODO(port): revisit once VirtualMachine lifetime plumbing lands in bun_jsc.

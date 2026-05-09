@@ -1663,6 +1663,24 @@ config:
         expect(YAML.stringify("+1.5")).toBe('"+1.5"');
         expect(YAML.stringify("+1e5")).toBe('"+1e5"');
 
+        // Signed exponent after the mantissa — "+1e+5" and "-1e-5" both parse back as
+        // numbers, so the scanner must accept a sign immediately after e/E.
+        expect(YAML.stringify("+1e+5")).toBe('"+1e+5"');
+        expect(YAML.stringify("-1e-5")).toBe('"-1e-5"');
+        expect(YAML.stringify("1e+5")).toBe('"1e+5"');
+        expect(YAML.stringify("1e-5")).toBe('"1e-5"');
+        expect(YAML.stringify("3.14e+5")).toBe('"3.14e+5"');
+        expect(YAML.stringify("1.5e-10")).toBe('"1.5e-10"');
+
+        // Signed infinity — the YAML parser accepts "+.inf"/"+.Inf"/"+.INF" (and the
+        // '-' variants) as signed infinity, so strings that look like those must be
+        // quoted too. "+.nan" / "-.nan" are *not* treated as numbers by the parser so
+        // they don't need quoting for numeric reasons (but they do anyway for other
+        // reasons — verified by round-trip below).
+        expect(YAML.stringify("+.inf")).toBe('"+.inf"');
+        expect(YAML.stringify("+.Inf")).toBe('"+.Inf"');
+        expect(YAML.stringify("+.INF")).toBe('"+.INF"');
+
         // Round-trip: every number-like string must come back as the original string.
         const numberLike = [
           "0e6836",
@@ -1682,6 +1700,22 @@ config:
           "123",
           "0123",
           ".5",
+          // signed exponents
+          "+1e+5",
+          "-1e-5",
+          "+1e-5",
+          "-1e+5",
+          "1e+5",
+          "1e-5",
+          "3.14e+5",
+          "1.5e-10",
+          // signed special floats
+          "+.inf",
+          "+.Inf",
+          "+.INF",
+          "-.inf",
+          "-.Inf",
+          "-.INF",
         ];
         for (const value of numberLike) {
           expect(YAML.parse(YAML.stringify({ id: value }))).toEqual({ id: value });

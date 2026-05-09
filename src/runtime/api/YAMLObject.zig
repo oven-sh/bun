@@ -821,9 +821,12 @@ const Stringifier = struct {
         const start = offset.*;
         var i = start;
 
-        var @"+" = false;
-        var @"-" = false;
+        // Have we consumed the leading sign? (at most one, at position `start`)
+        var leading_sign = false;
+        // Have we seen the exponent marker (e/E)?
         var e = false;
+        // Have we consumed the exponent sign after e/E? (at most one)
+        var exp_sign = false;
         var dot = false;
 
         var base: enum { dec, hex, oct } = .dec;
@@ -834,6 +837,12 @@ const Stringifier = struct {
                     offset.* = i;
                     return false;
                 }
+                // Signed `.inf`/`.Inf`/`.INF` — the YAML parser treats "+.inf" and "-.inf"
+                // as signed infinity. Quote any string that starts with a sign followed by
+                // one of those so the round-trip preserves it as a string.
+                if (leading_sign and i == start + 1 and isInfSuffix(str, i)) {
+                    return true;
+                }
                 dot = true;
                 i += 1;
                 if (i < str.length()) {
@@ -842,34 +851,35 @@ const Stringifier = struct {
                 return true;
             },
 
-            '+' => {
-                if (@"+") {
+            '+', '-' => {
+                // Two places a sign is allowed:
+                //  1. At the very start of the string (leading sign).
+                //  2. Immediately after the exponent marker 'e'/'E'.
+                if (i == start and !leading_sign) {
+                    leading_sign = true;
+                } else if (e and !exp_sign and base == .dec) {
+                    exp_sign = true;
+                } else {
                     offset.* = i;
                     return false;
                 }
-                @"+" = true;
                 i += 1;
                 if (i < str.length()) {
                     continue :next str.charAt(i);
                 }
-                return true;
-            },
-
-            '-' => {
-                if (@"-") {
-                    offset.* = i;
-                    return false;
-                }
-                @"-" = true;
-                i += 1;
-                if (i < str.length()) {
-                    continue :next str.charAt(i);
-                }
+                // A lone sign isn't a number, but a sign followed only by an exponent
+                // marker also isn't — `leading_sign && !e && i == start+1` means the
+                // whole input is "+" or "-". Still conservatively return true; the
+                // caller only uses this to decide whether to quote, and quoting "+" /
+                // "-" is safe (they aren't strictly numbers, but quoting is no harm).
                 return true;
             },
 
             '0' => {
-                if (i == start) {
+                if (i == start or (leading_sign and i == start + 1)) {
+                    // Leading zero (or leading-sign + zero): inspect the next char to
+                    // decide whether we're looking at a hex/octal base prefix or a
+                    // regular decimal/float continuation.
                     if (i + 1 < str.length()) {
                         switch (str.charAt(i + 1)) {
                             'x', 'X' => {
@@ -951,6 +961,19 @@ const Stringifier = struct {
                 return false;
             },
         }
+    }
+
+    /// True if the three chars after position `i` (which is a `.`) spell "inf", "Inf",
+    /// or "INF" — the suffix the YAML parser accepts after a signed `.` to mean
+    /// +/- infinity.
+    fn isInfSuffix(str: String, i: usize) bool {
+        if (i + 4 > str.length()) return false;
+        const a = str.charAt(i + 1);
+        const b = str.charAt(i + 2);
+        const c = str.charAt(i + 3);
+        return (a == 'i' and b == 'n' and c == 'f') or
+            (a == 'I' and b == 'n' and c == 'f') or
+            (a == 'I' and b == 'N' and c == 'F');
     }
 };
 

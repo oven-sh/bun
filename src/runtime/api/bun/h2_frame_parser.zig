@@ -1983,9 +1983,16 @@ pub const H2FrameParser = struct {
             this.readBuffer.reset();
             if (stream) |s| {
                 s.remoteWindowSize += windowSizeIncrement.uint31;
-            } else {
+            } else if (frame.streamIdentifier == 0) {
+                // Connection-level WINDOW_UPDATE (RFC 7540 §6.9).
                 this.remoteWindowSize += windowSizeIncrement.uint31;
             }
+            // else: nonzero id with no matching stream — stale stream-level
+            // WINDOW_UPDATE for a close we've already reclaimed. RFC 7540
+            // §5.1 permits these in the brief window before the peer sees
+            // our RST/END_STREAM. Crediting this to `this.remoteWindowSize`
+            // would overshoot the peer's connection window and eventually
+            // trip GOAWAY(FLOW_CONTROL_ERROR) on long-lived pooled sessions.
             log("windowSizeIncrement stream {} value {}", .{ frame.streamIdentifier, windowSizeIncrement });
             return content.end;
         }
@@ -2458,10 +2465,10 @@ pub const H2FrameParser = struct {
                 return data.len;
             }
             // CONTINUATION for an already-closed stream: nothing to attach
-            // headers to; drain the payload and move on. HPACK state is not
-            // advanced (decodeHeaderBlock isn't called), but stale
-            // continuations only follow HEADERS/CONTINUATION that were also
-            // dropped above, so there's no fragment to reassemble.
+            // headers to. discardFramePayload walks the HPACK decoder over
+            // the fragment so the connection-scoped dynamic table stays in
+            // sync, then drains the payload so the parser moves past this
+            // frame.
             return this.discardFramePayload(frame, data);
         };
 

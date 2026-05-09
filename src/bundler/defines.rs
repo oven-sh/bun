@@ -69,33 +69,14 @@ fn defines_path() -> fs::Path {
 pub type Data = DefineData;
 
 // ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK(b0): vtable instances for `bun_dotenv::DefineStoreVTable`
-// (cold-path §Dispatch). dotenv (T2) calls through `DefineStoreRef`; bundler
-// (T5) owns the concrete `E::String` + `DefineData` construction. Mirrors
-// src/dotenv/env_loader.zig:399 `copyForDefine` — `to_string` is a
+// `bun_dotenv::DefineStore` impls. dotenv (T2) calls through the link-interface
+// handle; bundler (T5) owns the concrete `E::String` + `DefineData` construction.
+// Mirrors src/dotenv/env_loader.zig:399 `copyForDefine` — `to_string` is a
 // `StringHashMap<DefineData>` (= UserDefines), `to_json` is a
 // `StringHashMap<Box<[u8]>>` (= RawDefines / framework defaults).
 // ══════════════════════════════════════════════════════════════════════════
 
-/// Backs `to_string: *StringStore` in `Loader.copyForDefine`.
-/// Owner type: `*mut UserDefinesArray` (`StringArrayHashMap<DefineData>`).
-pub static ENV_DEFINE_STRING_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dotenv::DefineStoreVTable {
-    contains: env_string_store_contains,
-    put_string_define: env_string_store_put_string,
-    put_raw: env_string_store_put_raw,
-};
-
-unsafe fn env_string_store_contains(owner: *mut (), key: &[u8]) -> bool {
-    // SAFETY: vtable contract — owner is `*mut UserDefinesArray`.
-    unsafe { &*owner.cast::<UserDefinesArray>() }.contains_key(key)
-}
-unsafe fn env_string_store_put_string(
-    owner: *mut (),
-    key: &[u8],
-    value: &[u8],
-) -> Result<(), bun_core::Error> {
-    // SAFETY: vtable contract — owner is `*mut UserDefinesArray`.
-    let store = unsafe { &mut *owner.cast::<UserDefinesArray>() };
+fn env_string_store_put(store: &mut UserDefinesArray, key: &[u8], value: &[u8]) -> Result<(), bun_core::Error> {
     // Zig (env_loader.zig:461) allocates the `E.String` slab via the passed
     // `allocator` (= `bun.default_allocator`), NOT the thread-local
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
@@ -113,51 +94,33 @@ unsafe fn env_string_store_put_string(
     store.get_or_put_value(key, data)?;
     Ok(())
 }
-unsafe fn env_string_store_put_raw(
-    owner: *mut (),
-    key: &[u8],
-    value: &[u8],
-) -> Result<(), bun_core::Error> {
-    // String-store fallback: treat raw as a string literal too (Zig never
-    // routes `put_raw` to the StringStore — keep it total for safety).
-    unsafe { env_string_store_put_string(owner, key, value) }
+
+bun_dotenv::link_impl_DefineStore! {
+    String for UserDefinesArray => |this| {
+        contains(key)                 => (*this).contains_key(key),
+        put_string_define(key, value) => env_string_store_put(&mut *this, key, value),
+        put_raw(key, value)           => env_string_store_put(&mut *this, key, value),
+    }
 }
 
-/// Backs `to_json: *JSONStore` in `Loader.copyForDefine`.
-/// Owner type: `*mut RawDefines` (`StringArrayHashMap<Box<[u8]>>`).
-pub static ENV_DEFINE_JSON_STORE_VTABLE: bun_dotenv::DefineStoreVTable = bun_dotenv::DefineStoreVTable {
-    contains: env_json_store_contains,
-    put_string_define: env_json_store_put_raw,
-    put_raw: env_json_store_put_raw,
-};
-
-unsafe fn env_json_store_contains(owner: *mut (), key: &[u8]) -> bool {
-    unsafe { &*owner.cast::<RawDefines>() }.contains_key(key)
-}
-unsafe fn env_json_store_put_raw(
-    owner: *mut (),
-    key: &[u8],
-    value: &[u8],
-) -> Result<(), bun_core::Error> {
-    let store = unsafe { &mut *owner.cast::<RawDefines>() };
-    store.get_or_put_value(key, Box::<[u8]>::from(value))?;
-    Ok(())
+bun_dotenv::link_impl_DefineStore! {
+    Json for RawDefines => |this| {
+        contains(key)                 => (*this).contains_key(key),
+        put_string_define(key, value) => { (*this).get_or_put_value(key, Box::<[u8]>::from(value))?; Ok(()) },
+        put_raw(key, value)           => { (*this).get_or_put_value(key, Box::<[u8]>::from(value))?; Ok(()) },
+    }
 }
 
 #[inline]
-pub fn env_define_string_store_ref(store: &mut UserDefinesArray) -> bun_dotenv::DefineStoreRef<'_> {
-    bun_dotenv::DefineStoreRef::new(
-        std::ptr::from_mut::<UserDefinesArray>(store).cast::<()>(),
-        &ENV_DEFINE_STRING_STORE_VTABLE,
-    )
+pub fn env_define_string_store_ref(store: &mut UserDefinesArray) -> bun_dotenv::DefineStore {
+    // SAFETY: `store` outlives the `copy_for_define` call that consumes this handle.
+    unsafe { bun_dotenv::DefineStore::new(bun_dotenv::DefineStoreKind::String, store) }
 }
 
 #[inline]
-pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineStoreRef<'_> {
-    bun_dotenv::DefineStoreRef::new(
-        std::ptr::from_mut::<RawDefines>(store).cast::<()>(),
-        &ENV_DEFINE_JSON_STORE_VTABLE,
-    )
+pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineStore {
+    // SAFETY: `store` outlives the `copy_for_define` call that consumes this handle.
+    unsafe { bun_dotenv::DefineStore::new(bun_dotenv::DefineStoreKind::Json, store) }
 }
 
 // ══════════════════════════════════════════════════════════════════════════

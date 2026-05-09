@@ -68,4 +68,4 @@ bun_hash.workspace = true
 [features]
 default = []
 debug_logs = []
-show_crash_trace = []
+show_crash_trace = ["bun_crash_handler/show_crash_trace"]

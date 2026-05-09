@@ -61,19 +61,17 @@ bun_core::declare_scope!(TreeShake, hidden);
 // the formatter that knows their layout. Mirrors src/crash_handler/crash_handler.zig:135.
 // ══════════════════════════════════════════════════════════════════════════
 #[cfg(feature = "show_crash_trace")]
-pub static BUNDLE_GENERATE_CHUNK_VTABLE: bun_crash_handler::BundleGenerateChunkVTable =
-    bun_crash_handler::BundleGenerateChunkVTable {
-        fmt: |context, chunk, part_range, writer| {
-            // SAFETY: erased pointers were constructed by `bundle_generate_chunk_action`
-            // below from live `&LinkerContext` / `&Chunk` / `&PartRange`.
-            let ctx = unsafe { &*context.cast::<LinkerContext>() };
-            let chunk = unsafe { &*chunk.cast::<Chunk>() };
-            let pr = unsafe { &*part_range.cast::<PartRange>() };
+bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
+    Linker for LinkerContext => |this| {
+        fmt(chunk, part_range, writer) => {
+            let ctx = &*this;
+            let chunk = &*chunk.cast::<Chunk>();
+            let pr = &*part_range.cast::<PartRange>();
             let parse_graph = ctx.parse_graph();
             let sources = parse_graph.input_files.items_source();
             let entry = if pr.source_index.is_valid() {
                 sources
-                    .get(chunk.entry_point.source_index as usize)
+                    .get(chunk.entry_point.source_index() as usize)
                     .map(|s| bstr::BStr::new(&s.path.text))
             } else {
                 None
@@ -91,7 +89,8 @@ pub static BUNDLE_GENERATE_CHUNK_VTABLE: bun_crash_handler::BundleGenerateChunkV
                 entry, source, pr.part_index_begin, pr.part_index_end,
             )
         },
-    };
+    }
+}
 
 /// Helper for call-sites that previously wrote `Action::BundleGenerateChunk(.{...})`.
 #[cfg(feature = "show_crash_trace")]
@@ -102,10 +101,15 @@ pub fn bundle_generate_chunk_action(
     part_range: &PartRange,
 ) -> bun_crash_handler::Action {
     bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
-        context: core::ptr::from_ref::<LinkerContext>(ctx).cast::<()>(),
+        // SAFETY: `ctx`/`chunk`/`part_range` outlive the crash-trace scope this is held for.
+        ctx: unsafe {
+            bun_crash_handler::BundleGenerateChunkCtx::new(
+                bun_crash_handler::BundleGenerateChunkCtxKind::Linker,
+                core::ptr::from_ref(ctx).cast_mut(),
+            )
+        },
         chunk: core::ptr::from_ref::<Chunk>(chunk).cast::<()>(),
         part_range: core::ptr::from_ref::<PartRange>(part_range).cast::<()>(),
-        vtable: &BUNDLE_GENERATE_CHUNK_VTABLE,
     })
 }
 #[cfg(not(feature = "show_crash_trace"))]

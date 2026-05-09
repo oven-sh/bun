@@ -6,6 +6,7 @@ bun_dispatch::link_interface! {
         fn area() -> f64;
         fn scale(k: f64);
         fn name() -> &'static str;
+        fn label(prefix: &str, out: &mut String);
     }
 }
 
@@ -21,6 +22,7 @@ link_impl_Shape! {
         area()    => core::f64::consts::PI * (*this).r * (*this).r,
         scale(k)  => (*this).r *= k,
         name()    => "circle",
+        label(prefix, out) => { out.push_str(prefix); out.push_str("circle"); },
     }
 }
 
@@ -29,6 +31,7 @@ link_impl_Shape! {
         area()    => (*this).s * (*this).s,
         scale(k)  => (*this).s *= k,
         name()    => "square",
+        label(prefix, out) => { out.push_str(prefix); out.push_str("square"); },
     }
 }
 
@@ -51,4 +54,9 @@ fn dispatch_round_trip() {
     hs.scale(2.0);
     assert!((hc.area() - core::f64::consts::PI * 16.0).abs() < 1e-9);
     assert_eq!(hs.area(), 36.0);
+
+    let mut buf = String::new();
+    hc.label("a ", &mut buf);
+    hs.label(" / a ", &mut buf);
+    assert_eq!(buf, "a circle / a square");
 }

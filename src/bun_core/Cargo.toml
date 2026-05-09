@@ -20,5 +20,6 @@ bstr.workspace = true
 const_format.workspace = true
 libc.workspace = true
 bun_alloc.workspace = true
+bun_dispatch.workspace = true
 bun_simdutf_sys.workspace = true
 bun_core_macros.workspace = true

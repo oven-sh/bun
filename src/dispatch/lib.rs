@@ -43,9 +43,13 @@
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
+use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, bracketed, parenthesized, Ident, ReturnType, Token, Type, Visibility};
+use syn::{
+    braced, bracketed, parenthesized, Ident, Lifetime, ReturnType, Token, Type, TypeReference,
+    Visibility,
+};
 
 struct Interface {
     vis: Visibility,
@@ -99,6 +103,27 @@ fn sym(iface: &Ident, variant: &Ident, method: &Ident) -> Ident {
     format_ident!("__bun_dispatch__{}__{}__{}", iface, variant, method)
 }
 
+// Rewrite elided lifetimes (`&T`, `&mut T`, `'_`) to a single named `'__a` so
+// the type can stand in a `pub type X<'__a> = …;` alias. The alias is consumed
+// as `X<'_>` in fn-param position, where `'_` is late-bound, so collapsing
+// multiple elisions onto one lifetime is ABI-identical (lifetimes erase).
+struct NameElided(Lifetime);
+impl Fold for NameElided {
+    fn fold_type_reference(&mut self, mut r: TypeReference) -> TypeReference {
+        if r.lifetime.is_none() {
+            r.lifetime = Some(self.0.clone());
+        }
+        r.elem = Box::new(self.fold_type(*r.elem));
+        r
+    }
+    fn fold_lifetime(&mut self, lt: Lifetime) -> Lifetime {
+        if lt.ident == "_" { self.0.clone() } else { lt }
+    }
+}
+fn aliasable(t: &Type) -> Type {
+    NameElided(Lifetime::new("'__a", proc_macro2::Span::call_site())).fold_type(t.clone())
+}
+
 /// See the crate docs.
 #[proc_macro]
 pub fn link_interface(input: TokenStream) -> TokenStream {
@@ -125,7 +150,8 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         };
         let arg_aliases = m.args.iter().map(|(an, at)| {
             let a = format_ident!("__{}__{}__arg_{}", name, mn, an);
-            quote! { #[doc(hidden)] #[allow(non_camel_case_types)] pub type #a = #at; }
+            let at = aliasable(at);
+            quote! { #[doc(hidden)] #[allow(non_camel_case_types, unused_lifetimes, clippy::extra_unused_lifetimes)] pub type #a<'__a> = #at; }
         });
         quote! {
             #[doc(hidden)] #[allow(non_camel_case_types)] pub type #ret_alias = #ret_ty;
@@ -192,8 +218,13 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         let s:         Vec<_> = methods.iter().map(|m| sym(name, v, &m.name)).collect();
         let ret_alias: Vec<_> = methods.iter()
             .map(|m| format_ident!("__{}__{}__ret", name, m.name)).collect();
+        // `$<method>__<arg>` — distinct per method so two methods sharing an arg
+        // name (e.g. `key`) don't collide as duplicate matcher bindings.
         let an_mv:     Vec<Vec<_>> = methods.iter()
-            .map(|m| m.args.iter().map(|(n, _)| quote! { $#n }).collect()).collect();
+            .map(|m| m.args.iter().map(|(n, _)| {
+                let mv = format_ident!("{}__{}", m.name, n);
+                quote! { $#mv }
+            }).collect()).collect();
         let at_alias:  Vec<Vec<_>> = methods.iter()
             .map(|m| m.args.iter().map(|(an, _)|
                 format_ident!("__{}__{}__arg_{}", name, m.name, an)).collect()).collect();
@@ -212,7 +243,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
                         #[doc(hidden)]
                         #[allow(non_snake_case)]
                         unsafe fn #s(
-                            __owner: *mut () #(, #an_mv: $crate::#at_alias)*
+                            __owner: *mut () #(, #an_mv: $crate::#at_alias<'_>)*
                         ) -> $crate::#ret_alias {
                             let $th: *mut $T = __owner.cast();
                             let _ = $th;

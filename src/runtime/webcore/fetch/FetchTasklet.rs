@@ -1408,6 +1408,15 @@ impl FetchTasklet {
         // detach), so the StoreRef already carries the caller's +1 — bumping it again
         // here leaked one ref per Blob/FormData/URLSearchParams body (issue: fetch-leak
         // fixture #5 RSS growth). `clear_data() → request_body.detach()` releases it.
+        //
+        // NB this affects native Blob.Store refcount (RSS) only — it does NOT touch
+        // JSPromise retention. fixture-5's inner `heapStats().Promise ≤ 35` check
+        // overshoots (=41) for `stream`/`iterator` bodies on the ReadableStream path,
+        // but that overshoot is bit-identical to system bun (Zig spec) — verified via
+        // `bun bd test fetch-leak.test.ts -t 'Sending stream'` vs `USE_SYSTEM_BUN=1`,
+        // both `Received: 41`. The ReadableStream path never touches Blob.Store, so
+        // that retention is a pre-existing Zig-side ResumableSink/js_this lifecycle
+        // issue, not a port divergence; tracked separately.
 
         let mut url = fetch_options.url;
         let mut proxy: Option<ZigURL> = None;

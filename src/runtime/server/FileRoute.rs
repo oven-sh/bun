@@ -3,8 +3,7 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_io::Closer;
-use bun_http::headers::Options as HeadersFromOptions;
-use bun_http::{Headers, HeadersExt, Method};
+use bun_http::{Headers, Method};
 use bun_http_types::ETag::{StringPointer};
 use bun_io::FileType;
 use bun_resolver::fs::StatHash;
@@ -56,17 +55,11 @@ impl<'a> Default for InitOptions<'a> {
     }
 }
 
-// ─── cycle-break vtables: FetchHeaders/Blob → bun_http::headers refs ─────────
-use crate::webcore::headers_ref::{blob_body_ref, fetch_headers_ref};
+use crate::webcore::headers_ref::blob_content_type;
 
 #[inline]
 fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    // UFCS: bare `Headers::from` resolves to prelude `core::convert::From::from`;
-    // the two-arg vtable constructor lives on `HeadersExt`.
-    <Headers as HeadersExt>::from(
-        fetch_headers.map(fetch_headers_ref),
-        HeadersFromOptions { body: Some(blob_body_ref(blob)) },
-    )
+    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
 }
 
 #[inline]

@@ -6,8 +6,8 @@ use core::mem::size_of;
 
 use bun_core::Error;
 use bun_http::headers::api::StringPointer;
-use bun_http::headers::{append_etag, Options as HeadersFromOptions};
-use bun_http::{Headers, HeadersExt, Method};
+use bun_http::headers::append_etag;
+use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 
 use bun_http_types::MimeType::MimeType;
@@ -18,7 +18,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{write_status, AnyServer};
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::BlobExt as _;
-use crate::webcore::headers_ref::{any_blob_ref, fetch_headers_ref};
+use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
@@ -90,11 +90,9 @@ impl StaticRoute {
     // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
     // and double-free when the caller's value drops. Take by value instead.
     pub fn init_from_any_blob(blob: AnyBlob, options: InitFromBytesOptions<'_>) -> *mut StaticRoute {
-        // UFCS: `Headers::from` would resolve to `core::convert::From::from`
-        // (prelude); the two-arg constructor lives on `HeadersExt`.
-        let mut headers = <Headers as HeadersExt>::from(
-            options.headers.map(fetch_headers_ref),
-            HeadersFromOptions { body: Some(any_blob_ref(&blob)) },
+        let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+            options.headers,
+            any_blob_content_type(&blob),
         );
         if headers.get_content_type().is_none() {
             if let Some(mime_type) = options.mime_type {
@@ -216,9 +214,9 @@ impl StaticRoute {
             }
 
             let mut headers: Headers = if let Some(h) = response.get_init_headers() {
-                <Headers as HeadersExt>::from(
-                    Some(fetch_headers_ref(h)),
-                    HeadersFromOptions { body: Some(any_blob_ref(&blob)) },
+                bun_http_jsc::headers_jsc::from_fetch_headers(
+                    Some(h),
+                    any_blob_content_type(&blob),
                 )
             } else {
                 Headers::default()

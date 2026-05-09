@@ -57,8 +57,7 @@ use bun_jsc::{StringJsc as _, SysErrorJsc as _, HTTPHeaderName};
 use bun_sys::FdExt as _;
 use bun_str::{strings, String as BunString, ZigString, ZigStringSlice, Tag as BunStringTag};
 use bun_paths::{self, PathBuffer};
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt, MimeType};
-use bun_http::headers::Options as HeadersOptions;
+use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_types::Method::Method;
 use bun_http_jsc::method_jsc;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -73,7 +72,8 @@ use crate::webcore::{body, response, readable_stream, blob};
 use crate::webcore::blob::BlobExt as _;
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::body::{Value as BodyValue, Action as BodyValueLockedAction, InternalBlob};
-use crate::webcore::headers_ref::{any_blob_ref_opt, fetch_headers_ref};
+use crate::webcore::headers_ref::any_blob_content_type_opt;
+use bun_http_jsc::headers_jsc::from_fetch_headers;
 use crate::node;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
 #[cfg(windows)]
@@ -1040,19 +1040,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             {
                                                 // SAFETY: cast returns a live FetchHeaders*.
                                                 let fetch_hdrs = unsafe { fetch_hdrs.as_ref() };
-                                                proxy_headers = Some(<Headers as HeadersExt>::from(
-                                                    Some(fetch_headers_ref(fetch_hdrs)),
-                                                    HeadersOptions::default(),
-                                                ));
+                                                proxy_headers =
+                                                    Some(from_fetch_headers(Some(fetch_hdrs), None));
                                             } else if let Some(fetch_hdrs) =
                                                 FetchHeaders::create_from_js(ctx, headers_value)?
                                             {
                                                 // SAFETY: create_from_js returns a +1-ref NonNull<FetchHeaders>.
                                                 let fetch_hdrs_ref = unsafe { fetch_hdrs.as_ref() };
-                                                proxy_headers = Some(<Headers as HeadersExt>::from(
-                                                    Some(fetch_headers_ref(fetch_hdrs_ref)),
-                                                    HeadersOptions::default(),
-                                                ));
+                                                proxy_headers =
+                                                    Some(from_fetch_headers(Some(fetch_hdrs_ref), None));
                                                 // PORT NOTE: `defer fetch_hdrs.deref()` — release the +1 ref.
                                                 // SAFETY: paired with the create_from_js +1 ref above.
                                                 unsafe { (*fetch_hdrs.as_ptr()).deref() };
@@ -1329,11 +1325,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            Some(<Headers as HeadersExt>::from(
-                Some(fetch_headers_ref(headers_ref)),
-                HeadersOptions {
-                    body: any_blob_ref_opt(body.get_any_blob().map(|b| &*b)),
-                },
+            Some(from_fetch_headers(
+                Some(headers_ref),
+                any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
             ))
         } else {
             headers
@@ -1554,11 +1548,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
-        headers = Some(<Headers as HeadersExt>::from(
+        headers = Some(from_fetch_headers(
             None,
-            HeadersOptions {
-                body: any_blob_ref_opt(body.get_any_blob().map(|b| &*b)),
-            },
+            any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
         ));
     }
 

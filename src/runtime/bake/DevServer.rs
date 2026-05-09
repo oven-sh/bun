@@ -5000,11 +5000,9 @@ impl DevServer {
             DevResponse::Promise(mut r) => {
                 let global = r.global;
                 let mut any_blob = crate::webcore::blob::Any::from_array_list(buf);
-                let mut headers = <bun_http::Headers as bun_http::headers::HeadersExt>::from(
+                let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
                     None,
-                    bun_http::headers::Options {
-                        body: Some(crate::webcore::headers_ref::any_blob_ref(&any_blob)),
-                    },
+                    crate::webcore::headers_ref::any_blob_content_type(&any_blob),
                 );
                 headers.append(b"Content-Type", &MimeType::HTML.value);
                 if headers.get(b"etag").is_none() && !any_blob.slice().is_empty() {

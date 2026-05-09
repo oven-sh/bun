@@ -603,12 +603,20 @@ impl ZigString {
 }
 
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
+///
+/// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
+/// `r#ref`/`deref`/`ensure_hash` hand a `*const Self` derived from `&self` to
+/// C++ FFI that **writes** those fields. Without `UnsafeCell` the struct is
+/// `Freeze`, the `&self` borrow asserts the whole pointee is read-only, and
+/// the FFI write is a Stacked-Borrows violation (LLVM may also CSE the
+/// pre-/post-FFI `ref_count()` loads). `Cell<u32>` is `repr(transparent)` over
+/// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
 #[repr(C)]
 pub struct WTFStringImplStruct {
-    pub m_ref_count: u32,
+    pub m_ref_count: core::cell::Cell<u32>,
     pub m_length: u32,
     pub m_ptr: WTFStringImplPtr,
-    pub m_hash_and_flags: u32,
+    pub m_hash_and_flags: core::cell::Cell<u32>,
 }
 
 #[repr(C)]
@@ -636,7 +644,7 @@ impl WTFStringImplStruct {
     #[inline] pub fn length(&self) -> u32 { self.m_length }
     #[inline]
     pub fn is_8bit(&self) -> bool {
-        (self.m_hash_and_flags & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
     }
     #[inline]
     pub fn byte_length(&self) -> usize {
@@ -645,21 +653,23 @@ impl WTFStringImplStruct {
     #[inline]
     pub fn memory_cost(&self) -> usize { self.byte_length() }
     #[inline]
-    pub fn ref_count(&self) -> u32 { self.m_ref_count / Self::S_REF_COUNT_INCREMENT }
+    pub fn ref_count(&self) -> u32 { self.m_ref_count.get() / Self::S_REF_COUNT_INCREMENT }
     #[inline]
     pub fn is_static(&self) -> bool {
-        self.m_ref_count & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
+        self.m_ref_count.get() & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
     }
     #[inline]
     pub fn has_at_least_one_ref(&self) -> bool {
         // WTF::StringImpl::hasAtLeastOneRef
-        self.m_ref_count > 0
+        self.m_ref_count.get() > 0
     }
     #[inline]
     pub fn r#ref(&self) {
         let current_count = self.ref_count();
         debug_assert!(self.has_at_least_one_ref()); // do not use current_count, it breaks for static strings
         // SAFETY: `self` is a live WTF::StringImpl; FFI increments the WTF refcount.
+        // `m_ref_count` is `Cell<u32>` so mutation through this `&self`-derived
+        // pointer is sound under Stacked Borrows.
         unsafe { Bun__WTFStringImpl__ref(self) };
         debug_assert!(self.ref_count() > current_count || self.is_static());
         let _ = current_count;
@@ -669,6 +679,9 @@ impl WTFStringImplStruct {
         let current_count = self.ref_count();
         debug_assert!(self.has_at_least_one_ref()); // do not use current_count, it breaks for static strings
         // SAFETY: `self` is a live WTF::StringImpl; FFI decrements (and may free) the WTF impl.
+        // `m_ref_count` is `Cell<u32>` so the C++-side write is sound; the
+        // post-FFI re-read below is gated on `current_count > 1`, i.e. the
+        // impl is guaranteed to still be alive when we touch `self` again.
         unsafe { Bun__WTFStringImpl__deref(self) };
         if cfg!(debug_assertions) {
             if current_count > 1 {
@@ -722,7 +735,9 @@ impl WTFStringImplStruct {
     /// Compute the hash() if necessary
     #[inline]
     pub fn ensure_hash(&self) {
-        // SAFETY: `self` is a valid &WTFStringImplStruct backed by a live WTF::StringImpl.
+        // SAFETY: `self` is a live WTF::StringImpl. C++ `StringImpl::hash()`
+        // writes the computed hash into `m_hashAndFlags`; that field is
+        // `Cell<u32>` so mutation through this `&self`-derived pointer is sound.
         unsafe { Bun__WTFStringImpl__ensureHash(self) };
     }
     #[inline]

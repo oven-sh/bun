@@ -1965,6 +1965,18 @@ pub struct BundleOptions<'a> {
 // bundle_v2.rs / transpiler.rs are unchanged.
 pub use bun_options_types::ForceNodeEnv;
 
+/// Manual deep clone for `MacroRemap` (= `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`).
+/// The inner map's `clone()` is an inherent fallible method (not `impl Clone`),
+/// so the outer `StringArrayHashMap::<V: Clone>::clone()` bound is unmet —
+/// rebuild entrywise instead.
+fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
+    let mut out = MacroRemap::default();
+    for (k, v) in src.iter() {
+        bun_core::handle_oom(out.put(k, bun_core::handle_oom(v.clone())));
+    }
+    out
+}
+
 impl<'a> BundleOptions<'a> {
     pub fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
@@ -1974,6 +1986,140 @@ impl<'a> BundleOptions<'a> {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
             self.jsx.development = !value;
+        }
+    }
+
+    /// Per-worker deep clone — replaces the prior bitwise
+    /// `ptr::copy_nonoverlapping` of the parent `Transpiler` (which aliased
+    /// every `Box`/`Vec` in here between parent and worker; reassigning any of
+    /// them on the worker dropped the parent's allocation). Every owned field
+    /// is `Clone`d; raw-pointer / `Copy` / `&'a` fields copy directly.
+    ///
+    /// PERF(port): Zig's `transpiler.* = from.*` is a shallow struct copy
+    /// (slices alias the parent's arena). The Rust port owns these as `Box`,
+    /// so a per-worker clone allocates. Profile in Phase B; the hot fields
+    /// (`define`, `loaders`, `conditions`) are O(dozens) entries.
+    pub fn for_worker(&self) -> BundleOptions<'a> {
+        BundleOptions {
+            footer: self.footer.clone(),
+            banner: self.banner.clone(),
+            define: Box::new(defines::Define {
+                identifiers: self.define.identifiers.clone(),
+                dots: self.define.dots.clone(),
+                drop_debugger: self.define.drop_debugger,
+            }),
+            drop: self.drop.clone(),
+            bundler_feature_flags: self
+                .bundler_feature_flags
+                .as_deref()
+                .map(|s| Box::new(bun_core::handle_oom(s.clone()))),
+            loaders: bun_core::handle_oom(self.loaders.clone()),
+            resolve_dir: self.resolve_dir.clone(),
+            jsx: self.jsx.clone(),
+            emit_decorator_metadata: self.emit_decorator_metadata,
+            experimental_decorators: self.experimental_decorators,
+            auto_import_jsx: self.auto_import_jsx,
+            allow_runtime: self.allow_runtime,
+            trim_unused_imports: self.trim_unused_imports,
+            mark_builtins_as_external: self.mark_builtins_as_external,
+            server_components: self.server_components,
+            hot_module_reloading: self.hot_module_reloading,
+            react_fast_refresh: self.react_fast_refresh,
+            inject: self.inject.clone(),
+            origin: self.origin.clone(),
+            output_dir_handle: self.output_dir_handle,
+            output_dir: self.output_dir.clone(),
+            root_dir: self.root_dir.clone(),
+            node_modules_bundle_url: self.node_modules_bundle_url.clone(),
+            node_modules_bundle_pretty_path: self.node_modules_bundle_pretty_path.clone(),
+            write: self.write,
+            preserve_symlinks: self.preserve_symlinks,
+            preserve_extensions: self.preserve_extensions,
+            production: self.production,
+            output_format: self.output_format,
+            append_package_version_in_query_string: self.append_package_version_in_query_string,
+            tsconfig_override: self.tsconfig_override.clone(),
+            target: self.target,
+            main_fields: self.main_fields.clone(),
+            log: self.log,
+            external: ExternalModules {
+                node_modules: bun_core::handle_oom(self.external.node_modules.clone()),
+                abs_paths: bun_core::handle_oom(self.external.abs_paths.clone()),
+                patterns: self.external.patterns.clone(),
+            },
+            allow_unresolved: self.allow_unresolved.clone(),
+            entry_points: self.entry_points.clone(),
+            entry_naming: self.entry_naming.clone(),
+            asset_naming: self.asset_naming.clone(),
+            chunk_naming: self.chunk_naming.clone(),
+            public_path: self.public_path.clone(),
+            extension_order: self.extension_order.clone(),
+            main_field_extension_order: self.main_field_extension_order,
+            extra_cjs_extensions: self.extra_cjs_extensions.clone(),
+            out_extensions: self.out_extensions.clone(),
+            import_path_format: self.import_path_format,
+            defines_loaded: self.defines_loaded,
+            // `Env.defaults: MultiArrayList` has no `Clone`; workers never read
+            // it (`configure_defines` early-returns on `defines_loaded`), so
+            // carry the scalars + an empty list.
+            env: Env {
+                behavior: self.env.behavior,
+                prefix: self.env.prefix.clone(),
+                defaults: Default::default(),
+                files: self.env.files.clone(),
+                disable_default_env_files: self.env.disable_default_env_files,
+            },
+            transform_options: self.transform_options.clone(),
+            polyfill_node_globals: self.polyfill_node_globals,
+            transform_only: self.transform_only,
+            load_tsconfig_json: self.load_tsconfig_json,
+            load_package_json: self.load_package_json,
+            rewrite_jest_for_tests: self.rewrite_jest_for_tests,
+            macro_remap: clone_macro_remap(&self.macro_remap),
+            no_macros: self.no_macros,
+            conditions: ESMConditions {
+                default: bun_core::handle_oom(self.conditions.default.clone()),
+                import: bun_core::handle_oom(self.conditions.import.clone()),
+                require: bun_core::handle_oom(self.conditions.require.clone()),
+                style: bun_core::handle_oom(self.conditions.style.clone()),
+            },
+            tree_shaking: self.tree_shaking,
+            code_splitting: self.code_splitting,
+            source_map: self.source_map,
+            packages: self.packages,
+            disable_transpilation: self.disable_transpilation,
+            global_cache: self.global_cache,
+            prefer_offline_install: self.prefer_offline_install,
+            prefer_latest_install: self.prefer_latest_install,
+            install: self.install,
+            inlining: self.inlining,
+            inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
+            minify_whitespace: self.minify_whitespace,
+            minify_syntax: self.minify_syntax,
+            minify_identifiers: self.minify_identifiers,
+            keep_names: self.keep_names,
+            dead_code_elimination: self.dead_code_elimination,
+            repl_mode: self.repl_mode,
+            css_chunking: self.css_chunking,
+            ignore_dce_annotations: self.ignore_dce_annotations,
+            emit_dce_annotations: self.emit_dce_annotations,
+            bytecode: self.bytecode,
+            code_coverage: self.code_coverage,
+            debugger: self.debugger,
+            compile: self.compile,
+            compile_to_standalone_html: self.compile_to_standalone_html,
+            metafile: self.metafile,
+            metafile_json_path: self.metafile_json_path.clone(),
+            metafile_markdown_path: self.metafile_markdown_path.clone(),
+            dev_server: self.dev_server,
+            framework: self.framework,
+            serve_plugins: self.serve_plugins.clone(),
+            bunfig_path: self.bunfig_path.clone(),
+            unwrap_commonjs_packages: self.unwrap_commonjs_packages,
+            supports_multiple_outputs: self.supports_multiple_outputs,
+            force_node_env: self.force_node_env,
+            ignore_module_resolution_errors: self.ignore_module_resolution_errors,
+            optimize_imports: self.optimize_imports,
         }
     }
 

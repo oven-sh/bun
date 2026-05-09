@@ -1640,11 +1640,11 @@ impl<'a> BundleV2<'a> {
         //
         // PORT NOTE: Zig does `client_transpiler.* = this_transpiler.*` (bitwise
         // struct copy into an arena slot — no destructors). The Rust port
-        // mirrors that via `Transpiler::arena_bitwise_dup` (ptr::read into
-        // bumpalo, never dropped) and uses `ptr::write` for every heap-owning
-        // field overwrite below so the *aliased* originals on `self.transpiler`
-        // are never freed by an implicit `Drop`. `Copy`/raw-pointer fields are
-        // assigned normally.
+        // builds a fresh owned `Transpiler` via `Transpiler::for_worker`
+        // (per-field deep clone), mutates the browser-specific options with
+        // ordinary assignment (every field is owned by the clone, so `Drop` on
+        // the overwritten value is correct), then moves it into the bundle
+        // arena and wires the self-referential `linker`/`macro_context`.
 
         // SAFETY: `graph.heap` outlives the bundle pass; erase the `&self`
         // borrow so the returned `&'a mut Transpiler<'a>` doesn't keep `self`
@@ -1652,105 +1652,57 @@ impl<'a> BundleV2<'a> {
         let arena: &'a bun_alloc::Arena =
             unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
 
-        // PORT NOTE: Zig holds `this_transpiler = this.transpiler` (a `*Transpiler`)
-        // and reads from it while also touching `this.client_transpiler`. In Rust
-        // `self.transpiler` is `&'a mut Transpiler`, so materializing a second
-        // `&mut` here would alias `*self`. Snapshot the `Copy` fields up front
-        // and keep the source as a raw pointer.
-        let this_transpiler: *mut Transpiler<'a> = &raw mut *self.transpiler;
-        // SAFETY: `self.transpiler` is a live exclusive reference; no other
-        // borrow of `*self` is outstanding while we read these `Copy` fields.
-        let (this_compile, this_log, this_env) =
-            unsafe { ((*this_transpiler).options.compile, (*this_transpiler).log, (*this_transpiler).env) };
+        let this_transpiler: &Transpiler<'a> = &*self.transpiler;
+        let this_compile = this_transpiler.options.compile;
+        let this_env = this_transpiler.env;
 
-        // SAFETY: see `arena_bitwise_dup` contract — arena-allocated, never
-        // dropped; all heap-field overwrites below go through `ptr::write`.
-        let client_transpiler: &'a mut Transpiler<'a> =
-            unsafe { (*this_transpiler).arena_bitwise_dup(arena) };
+        // SAFETY: `self.transpiler` (and the data its `&'a` fields borrow)
+        // outlives this `BundleV2<'a>`; `for_worker` widens those borrows to
+        // the same `'a`.
+        let mut ct: Transpiler<'a> =
+            unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
-        // ── Copy / pointer fields: plain assignment is fine. ───────────────
-        client_transpiler.options.target = Target::Browser;
+        ct.options.target = Target::Browser;
+        ct.options.main_fields = Target::Browser
+            .default_main_fields()
+            .iter()
+            .map(|s| s.as_bytes().to_vec().into_boxed_slice())
+            .collect();
+        ct.options.conditions =
+            options::ESMConditions::init(Target::Browser.default_conditions(), false, &[])?;
 
-        // ── Heap-owning fields: ptr::write to skip Drop of the bitwise-aliased
-        //    old value (which `self.transpiler` still owns). ──────────────────
-        // SAFETY: each `&mut` target is a valid initialized field of the
-        // arena-allocated clone; the overwritten value aliases
-        // `self.transpiler`'s field and MUST NOT be dropped.
-        unsafe {
-            core::ptr::write(
-                &raw mut client_transpiler.options.main_fields,
-                Target::Browser
-                    .default_main_fields()
-                    .iter()
-                    .map(|s| s.as_bytes().to_vec().into_boxed_slice())
-                    .collect(),
-            );
-            core::ptr::write(
-                &raw mut client_transpiler.options.conditions,
-                options::ESMConditions::init(Target::Browser.default_conditions(), false, &[])?,
-            );
-
-            // We need to make sure it has [hash] in the names so we don't get conflicts.
-            if this_compile {
-                core::ptr::write(
-                    &raw mut client_transpiler.options.asset_naming,
-                    options::PathTemplate::ASSET.data.to_vec().into_boxed_slice(),
-                );
-                core::ptr::write(
-                    &raw mut client_transpiler.options.chunk_naming,
-                    options::PathTemplate::CHUNK.data.to_vec().into_boxed_slice(),
-                );
-                core::ptr::write(
-                    &raw mut client_transpiler.options.entry_naming,
-                    b"./[name]-[hash].[ext]".to_vec().into_boxed_slice(),
-                );
-                // Use "/" so that asset URLs in HTML are absolute (e.g. "/chunk-abc.js"
-                // instead of "./chunk-abc.js"). Relative paths break when the HTML is
-                // served from a nested route like "/foo/".
-                core::ptr::write(
-                    &raw mut client_transpiler.options.public_path,
-                    b"/".to_vec().into_boxed_slice(),
-                );
-            }
-
-            // Zig: `client_transpiler.macro_context = js_ast.Macro.MacroContext.init(client_transpiler);`
-            core::ptr::write(
-                &raw mut client_transpiler.macro_context,
-                Some(js_ast::Macro::MacroContext::init(&mut *client_transpiler)),
-            );
-            // Zig: `client_transpiler.resolver.caches = CacheSet.Set.init(alloc);`
-            core::ptr::write(
-                &raw mut client_transpiler.resolver.caches,
-                _resolver::cache::Set::init(),
-            );
+        // We need to make sure it has [hash] in the names so we don't get conflicts.
+        if this_compile {
+            ct.options.asset_naming =
+                options::PathTemplate::ASSET.data.to_vec().into_boxed_slice();
+            ct.options.chunk_naming =
+                options::PathTemplate::CHUNK.data.to_vec().into_boxed_slice();
+            ct.options.entry_naming = b"./[name]-[hash].[ext]".to_vec().into_boxed_slice();
+            // Use "/" so that asset URLs in HTML are absolute (e.g. "/chunk-abc.js"
+            // instead of "./chunk-abc.js"). Relative paths break when the HTML is
+            // served from a nested route like "/foo/".
+            ct.options.public_path = b"/".to_vec().into_boxed_slice();
         }
 
-        // `set_log` / `set_arena` only write raw-pointer / `&'a Arena`
-        // fields (no Drop); safe to call normally.
-        client_transpiler.set_log(this_log);
-        client_transpiler.set_arena(arena);
-        // Zig: `client_transpiler.linker.resolver = &client_transpiler.resolver;`
-        // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (Linker.resolver
-        // is `*mut Resolver<'static>`; the resolver lives as long as the arena).
-        client_transpiler.linker.resolver =
-            (&raw mut client_transpiler.resolver).cast();
+        // Move into the arena slot, then wire self-refs at the final address.
+        // PERF(port): the arena does not run `Drop`, so the cloned `Box` fields
+        // inside `ct` are released only when the bundle's `MimallocArena` is
+        // destroyed (matches Zig's `alloc.create` + arena bulk-free).
+        let client_transpiler: &'a mut Transpiler<'a> = arena.alloc(ct);
+        // Zig: `setLog` / `setAllocator` / `linker.resolver = &resolver` /
+        // `macro_context = MacroContext.init(transpiler)` /
+        // `resolver.caches = CacheSet.init(alloc)` — all handled by
+        // `for_worker` + `wire_after_move`.
+        client_transpiler.wire_after_move();
 
-        // `configure_defines` early-returns on `options.defines_loaded` (which
-        // was bitwise-copied as `true`), so this is a no-op that touches no
-        // heap-aliased fields. Kept for spec parity.
+        // `configure_defines` early-returns on `options.defines_loaded` (cloned
+        // as `true`); kept for spec parity.
         client_transpiler.configure_defines()?;
 
-        // Zig: `client_transpiler.resolver.opts = client_transpiler.options;`
-        // PORT NOTE: in the Rust port `resolver.opts` is a projected subset
-        // (see `sync_resolver_opts`); ptr::write the projection so the aliased
-        // old `resolver.opts` is not dropped.
-        // SAFETY: see overwrite contract above.
-        unsafe {
-            core::ptr::write(
-                &raw mut client_transpiler.resolver.opts,
-                crate::transpiler::resolver_bundle_options_subset(&client_transpiler.options),
-            );
-        }
+        // Zig: `client_transpiler.resolver.opts = client_transpiler.options;` —
+        // re-project the resolver subset now that `target`/`conditions` etc.
+        // have been overwritten for the browser.
+        client_transpiler.sync_resolver_opts();
         // Zig: `client_transpiler.resolver.env_loader = client_transpiler.env;`
         client_transpiler.resolver.env_loader = NonNull::new(this_env.cast());
 

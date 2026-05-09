@@ -4,10 +4,10 @@
 //!
 //! Un-gated B-2: structural surface (struct fields, schedule, IO pool, worker
 //! map) is real so `ParseTask` / `bundle_v2` / `Graph` can name and drive it.
-//! `Worker::create` / `initialize_transpiler` are live via
-//! `Transpiler::{clone_for_worker, set_log, set_arena}`; the
-//! `linker.resolver` backref stays a PORT NOTE while `crate::Linker` is the
-//! unit stub (wired by `configure_linker`).
+//! `Worker::create` / `initialize_transpiler` build the per-worker
+//! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
+//! bitwise struct copy); the `linker.resolver` backref is wired by
+//! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
@@ -482,15 +482,16 @@ pub struct WorkerData {
     // raw because the arena is the sibling field `Worker.heap`.
     pub log: *mut Logger::Log,
     pub estimated_input_lines_of_code: usize,
-    // PORT NOTE: lifetime erased to `'static` behind `MaybeUninit` — the inner
-    // `&'a Arena` borrows `Worker.heap`, which Rust can't express on a sibling
-    // field. Zig used `transpiler: Transpiler` with a copied `std.mem.Allocator`.
-    pub transpiler: MaybeUninit<Transpiler<'static>>,
-    // PORT NOTE: `MaybeUninit` wrapper so `Drop` never runs on the bitwise-copied
-    // `Transpiler` (see `Transpiler::clone_for_worker` safety contract — it
-    // aliases the `BundleV2`-owned transpiler's heap allocations). Zig's
-    // `Worker.deinit` only frees the arena, never the per-worker transpiler.
-    pub other_transpiler: Option<Box<MaybeUninit<Transpiler<'static>>>>,
+    // PORT NOTE: lifetime erased to `'static` — the inner `&'a Arena` borrows
+    // `Worker.heap`, which Rust can't express on a sibling field. Zig used
+    // `transpiler: Transpiler` with a copied `std.mem.Allocator`.
+    //
+    // Owned (no `MaybeUninit`): `Transpiler::for_worker` deep-clones every
+    // `Drop`-carrying field, so `WorkerData`'s drop (via
+    // `ptr::drop_in_place(data)` in `Worker::deinit`) is sound and frees the
+    // per-worker `options`/`resolver.caches`/etc. without touching the parent.
+    pub transpiler: Transpiler<'static>,
+    pub other_transpiler: Option<Box<Transpiler<'static>>>,
 }
 
 impl Worker {
@@ -528,12 +529,14 @@ impl Worker {
         let worker = unsafe { &mut *this };
         if worker.has_created {
             // SAFETY: `has_created` ⇒ `create()` ran ⇒ these fields are init.
+            // Drop order: `data` (whose `transpiler.arena` borrows `heap`) and
+            // `ast_memory_store` first, then the arenas they reference.
             unsafe {
-                worker.heap.assume_init_drop();
-                worker.temporary_arena.assume_init_drop();
-                worker.stmt_list.assume_init_drop();
                 ptr::drop_in_place(worker.data.assume_init_mut());
                 ManuallyDrop::drop(&mut worker.ast_memory_store);
+                worker.temporary_arena.assume_init_drop();
+                worker.stmt_list.assume_init_drop();
+                worker.heap.assume_init_drop();
             }
         }
         // SAFETY: caller contract — `this` was heap-allocated. Reclaim the
@@ -607,118 +610,72 @@ impl Worker {
 
         // SAFETY: arena points to self.heap which outlives self.data.
         let log: *mut Logger::Log = unsafe { (*arena).alloc(Logger::Log::init()) };
-        self.data.write(WorkerData {
-            log,
-            estimated_input_lines_of_code: 0,
-            // Filled by `initialize_transpiler` immediately below.
-            transpiler: MaybeUninit::uninit(),
-            other_transpiler: None,
-        });
         self.ctx = std::ptr::from_ref::<BundleV2<'_>>(ctx).cast();
         // PERF(port): was `bun.ArenaAllocator.init(this.arena)` — using a
         // fresh Bump (no nested-arena type yet).
         self.temporary_arena.write(bun_alloc::Arena::new());
         self.stmt_list.write(StmtList::init());
+        // SAFETY: `arena` points at `self.heap` (initialized above), which is
+        // heap-pinned and outlives `WorkerData`; lifetime erased to `'static`
+        // to match the slot's erased `Transpiler<'static>`.
+        let arena_ref: &'static ThreadLocalArena = unsafe { &*arena };
+        self.data.write(WorkerData {
+            log,
+            estimated_input_lines_of_code: 0,
+            transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
+            other_transpiler: None,
+        });
         // SAFETY: self.data was just written above.
         let data = unsafe { self.data.assume_init_mut() };
-        Self::initialize_transpiler(data.log, &mut data.transpiler, ctx.transpiler(), arena);
+        // Wire self-referential `linker`/`macro_context` now that `transpiler`
+        // is at its final address inside `WorkerData`.
+        data.transpiler.wire_after_move();
 
         bun_core::scoped_log!(ThreadPool, "Worker.create()");
     }
 
-    /// Clone `from` into `transpiler` and rewire its log/arena/resolver.
+    /// Build a per-worker `Transpiler` from `from` (Zig: `transpiler.* = from.*`).
     ///
     /// PORT NOTE: reshaped for borrowck — associated fn (no `&mut self`) so
-    /// callers can borrow `self.data.transpiler` and `self.data.log` disjointly.
+    /// callers can borrow `self.data.log` disjointly. The returned value is a
+    /// fully-owned `Transpiler` whose `Drop` is sound; `wire_after_move` must
+    /// be called once it is at its final address.
     fn initialize_transpiler(
         log: *mut Logger::Log,
-        transpiler: &mut MaybeUninit<Transpiler<'static>>,
         from: &Transpiler<'_>,
-        arena: *const ThreadLocalArena,
-    ) {
-        // Zig: `transpiler.* = from.*;`
-        // SAFETY: `from` is the `BundleV2`-owned transpiler which outlives every
-        // worker; the slot is `MaybeUninit` so `Drop` never runs on the bitwise
-        // copy (`clone_for_worker` contract). Written in-place so no owned
-        // aliased `Transpiler` ever exists on the stack across an unwind point.
-        unsafe { Transpiler::<'static>::clone_for_worker(from, transpiler) };
-        // SAFETY: written on the line above.
-        let t = unsafe { transpiler.assume_init_mut() };
-        t.set_log(log);
-        // PORT NOTE: reseat `resolver.fs` from the raw `t.fs` so each per-worker
-        // clone holds its own `&mut FileSystem` borrow — the bitwise
-        // `clone_for_worker` above duplicated the parent's live `&mut` (aliased
-        // unique reference, UB under Stacked Borrows). `set_log` already does
-        // this for `resolver.log`; this mirrors it for `fs`.
-        // TODO(port): proper fix is `Resolver.{fs,log}: *mut _` (matching
-        // `Transpiler.{fs,log}` which are already raw for exactly this reason
-        // — see transpiler.rs:54-66). Out of scope here (resolver/lib.rs).
-        // SAFETY: `t.fs` points at the process-lifetime `Fs::FileSystem`
-        // singleton (transpiler.rs `Transpiler::init`); outlives every worker.
-        t.resolver.fs = unsafe { &raw mut *t.fs };
-        // SAFETY: `arena` points at `Worker.heap` (initialized in `create`)
-        // which outlives `WorkerData`; lifetime erased to `'static` to match the
-        // slot's erased `Transpiler<'static>`.
-        t.set_arena(unsafe { &*arena });
-        // PORT NOTE: `transpiler.linker.resolver = &transpiler.resolver` —
-        // `crate::Linker` is still the unit stub `Linker(())` (lib.rs:158); the
-        // self-referential resolver backref is wired by `configure_linker` once
-        // the real `linker::Linker` lands in the `Transpiler` struct.
-        let macro_ctx = js_ast::Macro::MacroContext::init(t);
-        // PORT NOTE: every field write on `t` after `clone_for_worker` MUST go
-        // through `ptr::write` (or be a `Copy` type). The bitwise copy above
-        // duplicated every owned field of the parent `Transpiler` — a plain
-        // `t.field = new` would run `Drop` on the *aliased* old value and
-        // free/destroy the parent's allocation. Zig's `transpiler.* = from.*`
-        // has no destructors, so reassignment there is a pure overwrite; this
-        // mirrors that exactly. Concretely: `resolver.caches.json.bump` is a
-        // `MimallocArena` since dc78fc14c43f, and dropping the bitwise copy
-        // calls `mi_heap_destroy` on the parent's heap (every subsequent
-        // worker then double-destroys the same — ASAN use-after-poison).
-        // SAFETY: `t` is fully initialized (clone_for_worker wrote every byte);
-        // the overwritten old values are aliased borrows of `from` and must
-        // NOT be dropped — `ptr::write` discards them without running `Drop`.
-        unsafe {
-            core::ptr::write(&raw mut t.macro_context, Some(macro_ctx));
-            // PORT NOTE: `Resolver.caches` is `bun_resolver::cache::Set` (the
-            // MOVE_DOWN copy that broke the bundler→resolver cycle), not this
-            // crate's `cache::Set` aliased above as `CacheSet`.
-            core::ptr::write(&raw mut t.resolver.caches, bun_resolver::cache::Set::init());
-        }
+        arena: &'static ThreadLocalArena,
+    ) -> Transpiler<'static> {
+        // SAFETY: `from` is the `BundleV2`-owned transpiler (or its
+        // `client_transpiler`), which outlives every worker; the
+        // `&'a`-carrying fields inside reference process-lifetime data.
+        unsafe { Transpiler::<'static>::for_worker(from, arena, log) }
     }
 
     pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
         // SAFETY: callers only invoke this after `Worker::get` → `create()`.
         let data = unsafe { self.data.assume_init_mut() };
-        // SAFETY: `create()` wrote `data.transpiler` via `initialize_transpiler`.
-        let primary = unsafe { data.transpiler.assume_init_mut() };
-        if target == Target::Browser && primary.options.target != target {
+        if target == Target::Browser && data.transpiler.options.target != target {
             if data.other_transpiler.is_none() {
-                // PORT NOTE: Zig wrote `undefined` into the Option payload then
-                // borrowed it; mirror with an uninit Box.
-                let mut slot: Box<MaybeUninit<Transpiler<'static>>> = Box::new_uninit();
                 // SAFETY: `ctx` is a valid backref; `client_transpiler` must be
                 // Some in this branch per Zig `.?`.
                 let client: &Transpiler<'_> =
                     unsafe { (*self.ctx).client_transpiler.unwrap_unchecked().as_ref() };
-                Self::initialize_transpiler(data.log, &mut slot, client, self.arena);
-                data.other_transpiler = Some(slot);
+                // SAFETY: `self.arena` points at `self.heap` (set in `create()`),
+                // pinned for the worker's lifetime.
+                let arena_ref: &'static ThreadLocalArena = unsafe { &*self.arena };
+                let mut boxed =
+                    Box::new(Self::initialize_transpiler(data.log, client, arena_ref));
+                // Wire self-refs after the value reached its final (heap) address.
+                boxed.wire_after_move();
+                data.other_transpiler = Some(boxed);
             }
-            // SAFETY: `initialize_transpiler` fully wrote the slot above (or on
-            // a prior call); the `MaybeUninit` wrapper exists only to suppress
-            // `Drop` on the bitwise-copied `Transpiler` (see `clone_for_worker`
-            // safety contract).
-            let other = unsafe {
-                data.other_transpiler
-                    .as_deref_mut()
-                    .unwrap_unchecked()
-                    .assume_init_mut()
-            };
+            // SAFETY: just populated above (or on a prior call).
+            let other = unsafe { data.other_transpiler.as_deref_mut().unwrap_unchecked() };
             debug_assert!(other.options.target == target);
             return other;
         }
 
-        primary
+        &mut data.transpiler
     }
 
     pub fn run(&mut self, ctx: &BundleV2<'_>) {

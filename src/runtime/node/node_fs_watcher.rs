@@ -334,6 +334,21 @@ pub enum StringOrBytesToDecode {
     BytesToFree(Box<[u8]>),
 }
 
+// Zig: `StringOrBytesToDecode.deinit()` (node_fs_watcher.zig:199-207). The
+// `String` arm wraps `bun_str::String`, which is `#[derive(Copy)]` and has NO
+// `Drop` of its own (src/string/lib.rs), so without this impl dropping the
+// enum would silently leak the WTF::StringImpl ref taken by
+// `BunString::clone_utf8` in `win_watcher.rs::emit()`. The `BytesToFree` arm's
+// `Box<[u8]>` already frees via its own `Drop`, mirroring the Zig
+// `default_allocator.free(this.bytes_to_free)`.
+impl Drop for StringOrBytesToDecode {
+    fn drop(&mut self) {
+        if let Self::String(s) = self {
+            s.deref();
+        }
+    }
+}
+
 // Zig: `StringOrBytesToDecode{ .bytes_to_free = try default_allocator.dupe(u8, path) }`.
 // `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
 // it into the owned `bytes_to_free` arm so the Windows task can carry it across
@@ -411,6 +426,12 @@ impl FSWatchTaskWindows {
                 // TODO(port): Zig accesses `path.string` unconditionally here
                 unreachable!()
             };
+            // PORT NOTE (spec divergence): Zig's `catch return` here
+            // (node_fs_watcher.zig:237) returns from `run()` itself, skipping
+            // `ctx.unrefTask()` at zig:256 and leaving `pending_activity_count`
+            // permanently elevated on a `transferToJS` failure. Returning from
+            // this helper instead lets `run()` fall through to `unref_task()`,
+            // which is the intended fix — the Zig behavior is a refcount leak.
             let Ok(js) = s.transfer_to_js(&ctx.global_this) else { return };
             ctx.emit_with_filename::<EVENT_TYPE>(js);
         } else {
@@ -436,7 +457,8 @@ impl FSWatchTaskWindows {
     /// `this` must be the unique `heap::alloc` pointer produced by
     /// `append_abort()` / `on_path_update_windows()`.
     pub unsafe fn deinit(this: *mut Self) {
-        // `Event` (and `StringOrBytesToDecode`) free their payloads via Drop,
+        // `Event` (and `StringOrBytesToDecode`, via its explicit `Drop` impl
+        // above which `deref()`s the WTF string) free their payloads via Drop,
         // so dropping the Box is `event.deinit() + bun.destroy(this)`.
         // SAFETY: paired with `heap::alloc` at the enqueue site.
         drop(unsafe { bun_core::heap::take(this) });

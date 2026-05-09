@@ -1136,14 +1136,23 @@ pub trait BaseWindowsPipeWriter {
             false
         };
         match source {
-            Source::SyncFile(mut file) | Source::File(mut file) => {
-                // Use state machine to handle close after operation completes
-                if self.owns_fd() {
-                    file.detach();
-                } else {
-                    // Don't own fd, just stop operations and detach parent
-                    file.stop();
-                    file.fs.data = core::ptr::null_mut();
+            Source::SyncFile(file) | Source::File(file) => {
+                // Hand the Box off to the libuv-driven File state machine. The
+                // heap-allocated File (which embeds the uv_fs_t) MUST outlive
+                // any in-flight uv_fs_write callback and the queued uv_fs_close;
+                // it is reclaimed via heap::take in File::on_close_complete
+                // (source.rs). Dropping the Box here would UAF/double-free.
+                let raw = bun_core::heap::into_raw(file);
+                // SAFETY: raw is heap-allocated by Source::open; freed in
+                // File::on_close_complete after the async chain completes.
+                unsafe {
+                    if self.owns_fd() {
+                        (*raw).detach();
+                    } else {
+                        // Don't own fd, just stop operations and detach parent
+                        (*raw).stop();
+                        (*raw).fs.data = core::ptr::null_mut();
+                    }
                 }
             }
             Source::Pipe(pipe) => {

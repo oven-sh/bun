@@ -1,7 +1,11 @@
 //! Node.js APIs in Bun. Access this namespace with `bun.api.node`
 
-// NOTE: the Zig `comptime { _ = @import(...) }` force-reference block is
-// dropped — Rust links what's `pub`.
+// PORT NOTE: the Zig `comptime { _ = @import(...) }` force-reference block maps
+// to explicit `pub mod` declarations below. Rust only compiles a `.rs` file if
+// it is reachable via a `mod` declaration — `#[no_mangle]` alone does NOT make
+// an orphaned file link. Every Windows-only force-referenced sibling
+// (`uv_signal_handle_windows`, `win_watcher`) must have a `#[cfg(windows)]
+// pub mod` entry here or its C-ABI exports will be missing at link time.
 
 // ─── compiling submodules ─────────────────────────────────────────────────
 #[path = "node/nodejs_error_code.rs"]
@@ -105,6 +109,13 @@ pub mod path_watcher;
 #[cfg(windows)]
 #[path = "node/win_watcher.rs"]
 pub mod win_watcher;
+// Zig: `comptime { if (Environment.isWindows) _ = @import("./node/uv_signal_handle_windows.zig"); }`
+// — force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
+// for C++ (`src/jsc/bindings/BunProcess.cpp`). Must be `mod`-declared or the
+// `#[no_mangle]` exports are never compiled into the binary.
+#[cfg(windows)]
+#[path = "node/uv_signal_handle_windows.rs"]
+pub mod uv_signal_handle_windows;
 #[path = "node/node_fs_watcher.rs"]
 pub mod node_fs_watcher;
 #[path = "node/node_fs_stat_watcher.rs"]
@@ -710,11 +721,34 @@ impl MaybeToJs for bun_sys::Error {
 /// On Windows the Zig checked `@TypeOf(rc) == std.os.windows.NTSTATUS` to
 /// skip the `rc != 0 → null` early-out; that comptime type-compare is
 /// expressed here as the `IS_NTSTATUS` associated const.
-// TODO(port): impls for `isize`, `c_int`, `usize`, and (on Windows)
-// `bun_sys::windows::NTSTATUS` belong in `bun_sys`.
 pub trait SyscallRc: Copy {
     const IS_NTSTATUS: bool = false;
     fn is_zero(self) -> bool;
+}
+
+// Integer rc types: Windows path applies the `rc != 0 → None` short-circuit
+// (Zig spec: `if (rc != 0) return null;` in the non-NTSTATUS arm).
+macro_rules! impl_syscall_rc_int {
+    ($($t:ty),* $(,)?) => {$(
+        impl SyscallRc for $t {
+            #[inline] fn is_zero(self) -> bool { self == 0 }
+        }
+    )*};
+}
+// `c_int` is a type alias for `i32` — covered by the `i32` impl.
+impl_syscall_rc_int!(i32, i64, isize, u32, u64, usize);
+
+// Zig: `if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else { ... }`
+// — NTSTATUS must OPT OUT of the `rc != 0 → None` short-circuit so real NT
+// error codes reach `get_errno`. The trait default is `false`, so this impl
+// MUST override `IS_NTSTATUS = true` explicitly.
+#[cfg(windows)]
+impl SyscallRc for bun_sys::windows::NTSTATUS {
+    const IS_NTSTATUS: bool = true;
+    #[inline]
+    fn is_zero(self) -> bool {
+        self.0 == 0
+    }
 }
 
 /// Abstracts over the `err: anytype` parameter of `translateToErrInt`.

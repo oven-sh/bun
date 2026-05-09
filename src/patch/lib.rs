@@ -1782,6 +1782,10 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
         }
         if SENTINEL {
             cpy[old_folder_.len()] = 0;
+            // Zig: `break :brk cpy[0..len :0]` — sentinel slice's `.len` excludes
+            // the NUL. Truncate so `Vec::len()` matches; the NUL byte stays in
+            // spare capacity for callers that need a C string via `.as_ptr()`.
+            cpy.truncate(old_folder_.len());
         }
         cpy
     };
@@ -1799,6 +1803,8 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
         }
         if SENTINEL {
             cpy[new_folder_.len()] = 0;
+            // Zig: `break :brk cpy[0..len :0]` — `.len` excludes the sentinel.
+            cpy.truncate(new_folder_.len());
         }
         cpy
     };
@@ -1822,6 +1828,7 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
+    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
 ) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
     let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
@@ -1883,13 +1890,24 @@ pub fn git_diff_internal(
     }
     envp_buf.push(core::ptr::null()); // sentinel
 
+    #[cfg(not(windows))]
+    let _ = loop_;
+
     let opts = bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // PORT NOTE: Zig's `std.process.Child` carried no Windows event-loop
-        // handle here; `Options::default()` zero-inits `windows.loop_` to match.
+        // PORT NOTE: Zig used `std.process.Child` (no uv loop). The Rust port
+        // routes through `bun_spawn::sync::spawn`, whose Windows path
+        // unconditionally derefs `windows.loop_` (process.rs spawn_windows_*).
+        // `WindowsOptions::default()` is `zeroed_unchecked()`, so leaving this
+        // defaulted is a null deref on Windows — supply the caller's loop.
+        #[cfg(windows)]
+        windows: bun_spawn::sync::WindowsOptions {
+            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

@@ -1921,7 +1921,11 @@ impl RunCommand {
                 let dir_slice_u8 =
                     bun_string::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
                 let _ = sys::Dir::cwd().delete_tree(&dir_slice_u8);
-                sys::Dir::cwd().make_path(&dir_slice_u8).expect("huh?");
+                // Zig spec (run_command.zig:730): `std.fs.makeDirAbsolute` —
+                // single-level mkdir that panics on *any* error (incl.
+                // PathAlreadyExists). `make_path` would recurse into the
+                // `\??\` NT-object prefix and silently swallow EEXIST.
+                sys::Dir::cwd().make_dir(&dir_slice_u8).expect("huh?");
             }
 
             let image_path = sys::windows::exe_path_w();
@@ -4132,7 +4136,15 @@ impl BunXFastPath {
         let env_buf = unsafe { &mut *bunx_fast_path_buffers::ENVIRONMENT_BUFFER.get() };
         let environment = match env.map.write_windows_env_block(&mut env_buf.0) {
             Ok(env) => Some(env),
-            Err(_) => return,
+            Err(_) => {
+                // Spec (run_command.zig:2148) leaks `handle` here via
+                // `catch return`; the shim's `NtClose(metadata_handle)` only
+                // runs if `try_startup_from_bun_js` is reached. Close it
+                // explicitly so the slow-path fallback doesn't inherit a
+                // dangling open HANDLE for the process lifetime.
+                Fd::from_native(handle).close();
+                return;
+            }
         };
 
         let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
@@ -4160,14 +4172,20 @@ impl BunXFastPath {
         ctx: bun_options_types::Context::Context<'_>,
     ) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-        let direct_launch_buffer =
-            unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
-        // SAFETY: WPathBuffer is `[u16; N]` — reinterpret as `[u8; 2N]`
-        // for the UTF-16→UTF-8 transcoder's output buffer.
+        // `try_launch` (still on the call stack) holds live `&mut [u16]`
+        // reborrows (`path_to_use`/`command_line`) and raw pointers
+        // (`run_ctx.base_path`/`arguments`) into this same UnsafeCell.
+        // Materialising a fresh `&mut WPathBuffer` here would push a Unique
+        // tag over the whole buffer and pop those tags under Stacked Borrows.
+        // Derive the byte slice directly from the raw `*mut WPathBuffer` so no
+        // intermediate `&mut` retag covers the caller's borrows.
+        // WPathBuffer is `#[repr(transparent)] [u16; PATH_MAX_WIDE]` —
+        // reinterpret as `[u8; 2N]` for the UTF-16→UTF-8 transcoder's output.
         let out_buf = unsafe {
+            let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
             ::core::slice::from_raw_parts_mut(
-                direct_launch_buffer.as_mut_ptr().cast::<u8>(),
-                direct_launch_buffer.len() * 2,
+                raw.cast::<u8>(),
+                bun_paths::PATH_MAX_WIDE * 2,
             )
         };
         let utf8 = match strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath) {

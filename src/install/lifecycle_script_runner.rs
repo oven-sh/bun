@@ -561,23 +561,37 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             assert!(core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>());
 
         // PORT NOTE: Zig allocates the libuv pipes (`bun.new(uv.Pipe, zeroes)`),
-        // stashes them in `this.stdout.source.?.pipe`, and then reuses the same
-        // heap pointer for `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`.
-        // The Rust `bun_io::Source::Pipe` owns a `Box<uv::Pipe>`; capture the
-        // stable heap address before moving the Box into `source` so the
-        // `Stdio::Buffer` arm can name it without re-borrowing through the enum.
+        // stashes the raw `*uv.Pipe` in `this.stdout.source.?.pipe`, and reuses
+        // the same heap pointer for `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`.
+        // In Zig both links are non-owning raw pointers, so dropping `spawned`
+        // is a no-op and there is exactly one logical owner.
+        //
+        // In Rust, `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
+        // `spawn_process_windows` reconstructs an owning `Box` from the raw
+        // `Stdio::Buffer` ptr via `heap::take` into `WindowsStdioResult::Buffer`.
+        // We therefore must NOT pre-seat the Box in `source` before spawn —
+        // that would create two `Box`es to one allocation (UAF when `spawned`
+        // drops, then double-free in `reset_polls`). Instead, hand the spawn
+        // layer the *sole* raw owner now, and move ownership back from
+        // `spawned.{stdout,stderr}.take()` into `source` after spawn succeeds.
+        //
+        // Only allocate when the Buffer arm will actually be taken; the
+        // Ignore/Inherit branches never hand the ptr to spawn and would leak.
         #[cfg(windows)]
-        let (stdout_pipe_ptr, stderr_pipe_ptr): (*mut uv::Pipe, *mut uv::Pipe) = {
+        let want_buffer: bool = (*manager).options.log_level != crate::LogLevel::Silent
+            && !(*manager).options.log_level.is_verbose()
+            && !(*this).foreground;
+        #[cfg(windows)]
+        let (stdout_pipe_ptr, stderr_pipe_ptr): (*mut uv::Pipe, *mut uv::Pipe) = if want_buffer {
             // SAFETY: all-zero is a valid uv::Pipe (POD libuv handle; matches
-            // Zig `std.mem.zeroes(uv.Pipe)`).
-            let mut stdout_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
-            // SAFETY: as above.
-            let mut stderr_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
-            let stdout_ptr: *mut uv::Pipe = core::ptr::from_mut(stdout_pipe.as_mut());
-            let stderr_ptr: *mut uv::Pipe = core::ptr::from_mut(stderr_pipe.as_mut());
-            (*this).stdout.source = Some(bun_io::Source::Pipe(stdout_pipe));
-            (*this).stderr.source = Some(bun_io::Source::Pipe(stderr_pipe));
-            (stdout_ptr, stderr_ptr)
+            // Zig `std.mem.zeroes(uv.Pipe)`). `into_raw` yields the raw FFI
+            // pointer the spawn layer expects to take sole ownership of.
+            (
+                bun_core::heap::into_raw(Box::new(core::mem::zeroed::<uv::Pipe>())),
+                bun_core::heap::into_raw(Box::new(core::mem::zeroed::<uv::Pipe>())),
+            )
+        } else {
+            (core::ptr::null_mut(), core::ptr::null_mut())
         };
 
         let spawn_options = SpawnOptions {
@@ -683,12 +697,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
         #[cfg(windows)]
         {
-            if matches!(spawned.stdout, bun_spawn::SpawnedStdio::Buffer(_)) {
+            // Move sole ownership of the libuv pipe out of the spawn result
+            // and into `source` (see PORT NOTE above the allocation). After
+            // `take()`, `spawned.{stdout,stderr}` is `Unavailable` and dropping
+            // `spawned` is a no-op — exactly one Box owner remains.
+            if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
+                (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stdout.set_parent(this.cast::<c_void>());
                 (*this).remaining_fds += 1;
                 (*this).stdout.start_with_current_pipe()?;
             }
-            if matches!(spawned.stderr, bun_spawn::SpawnedStdio::Buffer(_)) {
+            if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
+                (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stderr.set_parent(this.cast::<c_void>());
                 (*this).remaining_fds += 1;
                 (*this).stderr.start_with_current_pipe()?;

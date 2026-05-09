@@ -36,16 +36,41 @@ fn vm_ctx() -> bun_io::EventLoopCtx {
 
 /// Local shim for Zig `bun.sys.Maybe(void).errnoSys(rc, tag)` — `bun_sys::Result`
 /// is a plain `core::result::Result` alias in Rust and has no associated
-/// `errno_sys` constructor. POSIX `getErrno(c_int)` semantics: only `rc == -1`
-/// is failure (any other value — including positive packet counts from
-/// `us_udp_socket_send` and negative EAI codes from `connect` — is "not a
-/// libc errno", so callers handle it themselves).
+/// `errno_sys` constructor.
+///
+/// POSIX `getErrno(c_int)` semantics: only `rc == -1` is failure (any other
+/// value — including positive packet counts from `us_udp_socket_send` and
+/// negative EAI codes from `connect` — is "not a libc errno", so callers
+/// handle it themselves).
+///
+/// Windows semantics (src/runtime/node.zig:227-233): for any non-NTSTATUS
+/// integer `rc`, `if (rc != 0) return null` — i.e. *every* non-zero rc
+/// (including `-1` / `SOCKET_ERROR`) falls through to the caller's own EAI /
+/// WSA handling rather than synthesising an errno. This matters for the
+/// `connect()` path (line ~575): `us_udp_socket_connect()` returns a Winsock
+/// status, not a CRT errno, so reading `_errno()` here would be the wrong
+/// source.
 #[inline]
 fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
-    if rc != -1 {
-        return None;
+    #[cfg(windows)]
+    {
+        if rc != 0 {
+            return None;
+        }
+        // rc == 0 → fall through to `sys.getErrno(rc)` in Zig, which on
+        // Windows reads CRT `_errno()`.
+        // SAFETY: `errno_location()` (`_errno()` on Windows) returns a valid
+        // pointer to thread-local errno.
+        let errno_val = unsafe { *bun_sys::c::errno_location() };
+        return Some(bun_sys::Error::from_code_int(errno_val, tag));
     }
-    Some(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag))
+    #[cfg(not(windows))]
+    {
+        if rc != -1 {
+            return None;
+        }
+        Some(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag))
+    }
 }
 
 /// Local extension: `JSValue::withAsyncContextIfNeeded` (JSValue.zig:2267).
@@ -1586,9 +1611,9 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
 
         if USE_WSA {
             // Zig: `bun.windows.WSAGetLastError()` returns `?SystemErrno`
-            // already mapped to `E` (`SUCCESS` filtered out by `init`). The
-            // Rust port does the same in `bun_sys::windows::WSAGetLastError`.
+            // (`SUCCESS` filtered out by `init`); map to `E` at the call site.
             if let Some(e) = bun_sys::windows::WSAGetLastError() {
+                let e = e.to_e();
                 if e != bun_sys::E::SUCCESS {
                     // SAFETY: WSASetLastError is a thread-local errno write.
                     unsafe { bun_sys::windows::ws2_32::WSASetLastError(0) };

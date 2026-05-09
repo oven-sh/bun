@@ -43,7 +43,10 @@ pub struct WindowsNamedPipeContext {
     pub(super) named_pipe: WindowsNamedPipe,
 
     // task used to deinit the context in the next tick, vm is used to enqueue the task
-    vm: &'static VirtualMachine,
+    // PORT NOTE: raw `*mut` (Zig: `*jsc.VirtualMachine`), NOT `&'static VirtualMachine` —
+    // `enqueue_task` mutates the VM and a `&`-derived pointer has read-only provenance,
+    // so writing through it would be UB even after `cast_mut()`.
+    vm: *mut VirtualMachine,
     global_this: GlobalRef,
     task: AnyTask,
     task_event: EventState,
@@ -78,11 +81,15 @@ pub enum SocketType {
 
 /// Zig: `TLSSocket.Socket.fromNamedPipe(&this.named_pipe)` where
 /// `Socket = uws.NewSocketHandler(ssl)`.
+///
+/// Takes a raw `*mut` (not `&mut`) so callers can derive it via
+/// `ptr::addr_of_mut!((*this).named_pipe)` without ever materialising a
+/// `&mut WindowsNamedPipeContext` — see the aliasing note on the handler fns.
 #[inline]
-fn socket_from_named_pipe<const SSL: bool>(pipe: &mut WindowsNamedPipe) -> uws::NewSocketHandler<SSL> {
+fn socket_from_named_pipe<const SSL: bool>(pipe: *mut WindowsNamedPipe) -> uws::NewSocketHandler<SSL> {
     #[cfg(windows)]
     {
-        uws::NewSocketHandler { socket: uws::InternalSocket::Pipe((pipe as *mut WindowsNamedPipe).cast()) }
+        uws::NewSocketHandler { socket: uws::InternalSocket::Pipe(pipe.cast()) }
     }
     #[cfg(not(windows))]
     {
@@ -91,18 +98,37 @@ fn socket_from_named_pipe<const SSL: bool>(pipe: &mut WindowsNamedPipe) -> uws::
     }
 }
 
+// ALIASING NOTE — why every handler takes `*mut Self` instead of `&mut self`:
+//
+// These callbacks are invoked from `&mut self` methods on `WindowsNamedPipe`
+// (a *field* of this struct) via `(self.handlers.on_X)(self.handlers.ctx, …)`,
+// and the caller keeps using its `&mut WindowsNamedPipe` afterward (e.g.
+// `on_read` calls the handler then `self.incoming.clear()`). If the callback
+// materialised `&mut WindowsNamedPipeContext` it would retag the *parent*
+// allocation Unique under Stacked Borrows, invalidating the caller's
+// `&mut WindowsNamedPipe` — UB on the caller's next `self.` access.
+// Additionally, `on_data`'s `decoded_data` argument borrows
+// `(*this).named_pipe.incoming`, so a `&mut Self` here would invalidate that
+// slice before it is read.
+//
+// Zig has no `noalias` on plain `*T` so the spec is sound there; in Rust we
+// must stay on raw pointers and project fields with `ptr::addr_of_mut!` /
+// by-copy reads, never forming `&mut WindowsNamedPipeContext`.
 impl WindowsNamedPipeContext {
-    fn on_open(&mut self) {
-        self.is_open = true;
-        match self.socket {
+    unsafe fn on_open(this: *mut Self) {
+        // SAFETY: `this` is the live heap ctx registered in `create()`; field
+        // projections via raw ptr, no `&mut Self` formed (see ALIASING NOTE).
+        unsafe { *ptr::addr_of_mut!((*this).is_open) = true };
+        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
+        match unsafe { (*this).socket } {
             SocketType::Tls(tls) => {
-                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(pipe);
                 // SAFETY: `tls` is kept alive by the +1 ref taken in `create()`.
                 // `on_open` takes `*mut Self` (noalias re-entrancy) — no `&mut`.
                 unsafe { TLSSocket::on_open(tls, socket) };
             }
             SocketType::Tcp(tcp) => {
-                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(pipe);
                 // SAFETY: `tcp` is kept alive by the +1 ref taken in `create()`.
                 unsafe { TCPSocket::on_open(tcp, socket) };
             }
@@ -110,15 +136,18 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn on_data(&mut self, decoded_data: &[u8]) {
-        match self.socket {
+    unsafe fn on_data(this: *mut Self, decoded_data: &[u8]) {
+        // SAFETY: see ALIASING NOTE — `decoded_data` borrows
+        // `(*this).named_pipe.incoming`, so we MUST NOT form `&mut *this`.
+        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
+        match unsafe { (*this).socket } {
             SocketType::Tls(tls) => {
-                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(pipe);
                 // SAFETY: see `on_open`.
                 unsafe { TLSSocket::on_data(tls, socket, decoded_data) };
             }
             SocketType::Tcp(tcp) => {
-                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(pipe);
                 // SAFETY: see `on_open`.
                 unsafe { TCPSocket::on_data(tcp, socket, decoded_data) };
             }
@@ -126,15 +155,17 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn on_handshake(&mut self, success: bool, ssl_error: us_bun_verify_error_t) {
-        match self.socket {
+    unsafe fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
+        // SAFETY: see ALIASING NOTE.
+        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
+        match unsafe { (*this).socket } {
             SocketType::Tls(tls) => {
-                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(pipe);
                 // SAFETY: see `on_open`.
                 let _ = unsafe { TLSSocket::on_handshake(tls, socket, success as i32, ssl_error) };
             }
             SocketType::Tcp(tcp) => {
-                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(pipe);
                 // SAFETY: see `on_open`.
                 let _ = unsafe { TCPSocket::on_handshake(tcp, socket, success as i32, ssl_error) };
             }
@@ -142,15 +173,17 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn on_end(&mut self) {
-        match self.socket {
+    unsafe fn on_end(this: *mut Self) {
+        // SAFETY: see ALIASING NOTE.
+        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
+        match unsafe { (*this).socket } {
             SocketType::Tls(tls) => {
-                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(pipe);
                 // SAFETY: see `on_open`.
                 unsafe { TLSSocket::on_end(tls, socket) };
             }
             SocketType::Tcp(tcp) => {
-                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(pipe);
                 // SAFETY: see `on_open`.
                 unsafe { TCPSocket::on_end(tcp, socket) };
             }
@@ -158,15 +191,17 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn on_writable(&mut self) {
-        match self.socket {
+    unsafe fn on_writable(this: *mut Self) {
+        // SAFETY: see ALIASING NOTE.
+        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
+        match unsafe { (*this).socket } {
             SocketType::Tls(tls) => {
-                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(pipe);
                 // SAFETY: see `on_open`.
                 unsafe { TLSSocket::on_writable(tls, socket) };
             }
             SocketType::Tcp(tcp) => {
-                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(pipe);
                 // SAFETY: see `on_open`.
                 unsafe { TCPSocket::on_writable(tcp, socket) };
             }
@@ -174,23 +209,27 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn on_error(&mut self, err: SysError) {
-        if self.is_open {
-            match self.socket {
+    unsafe fn on_error(this: *mut Self, err: SysError) {
+        // SAFETY: see ALIASING NOTE. `is_open`/`socket` read by copy; `global_this`
+        // borrowed shared via `addr_of!` so no parent retag.
+        let is_open = unsafe { *ptr::addr_of!((*this).is_open) };
+        if is_open {
+            let global_this = unsafe { &*ptr::addr_of!((*this).global_this) };
+            match unsafe { (*this).socket } {
                 SocketType::Tls(tls) => {
-                    let js_err = err.to_js(&self.global_this);
+                    let js_err = err.to_js(global_this);
                     // SAFETY: see `on_open`.
                     unsafe { (*tls).handle_error(js_err) };
                 }
                 SocketType::Tcp(tcp) => {
-                    let js_err = err.to_js(&self.global_this);
+                    let js_err = err.to_js(global_this);
                     // SAFETY: see `on_open`.
                     unsafe { (*tcp).handle_error(js_err) };
                 }
                 SocketType::None => {}
             }
         } else {
-            match self.socket {
+            match unsafe { (*this).socket } {
                 SocketType::Tls(tls) => {
                     // SAFETY: see `on_open`.
                     let _ = unsafe { TLSSocket::handle_connect_error(tls, err.errno as i32) };
@@ -204,15 +243,17 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn on_timeout(&mut self) {
-        match self.socket {
+    unsafe fn on_timeout(this: *mut Self) {
+        // SAFETY: see ALIASING NOTE.
+        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
+        match unsafe { (*this).socket } {
             SocketType::Tls(tls) => {
-                let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<true>(pipe);
                 // SAFETY: see `on_open`.
                 unsafe { TLSSocket::on_timeout(tls, socket) };
             }
             SocketType::Tcp(tcp) => {
-                let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
+                let socket = socket_from_named_pipe::<false>(pipe);
                 // SAFETY: see `on_open`.
                 unsafe { TCPSocket::on_timeout(tcp, socket) };
             }
@@ -220,22 +261,24 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn on_close(this: *mut Self) {
-        // SAFETY: called from named_pipe callback; `this` is the live ctx pointer registered in create()
-        let this_ref = unsafe { &mut *this };
-        let socket = core::mem::replace(&mut this_ref.socket, SocketType::None);
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see ALIASING NOTE — caller (`WindowsNamedPipe::on_close`) still
+        // uses its `&mut self` after this returns, so no `&mut *this` here either.
+        let socket_ptr = unsafe { ptr::addr_of_mut!((*this).socket) };
+        let socket = unsafe { core::mem::replace(&mut *socket_ptr, SocketType::None) };
+        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
         match socket {
             SocketType::Tls(tls) => {
                 // SAFETY: `tls` held a +1 ref from `create()`; release it after dispatch.
                 unsafe {
-                    let _ = TLSSocket::on_close(tls, socket_from_named_pipe::<true>(&mut this_ref.named_pipe), 0, None);
+                    let _ = TLSSocket::on_close(tls, socket_from_named_pipe::<true>(pipe), 0, None);
                     (*tls).deref();
                 }
             }
             SocketType::Tcp(tcp) => {
                 // SAFETY: `tcp` held a +1 ref from `create()`; release it after dispatch.
                 unsafe {
-                    let _ = TCPSocket::on_close(tcp, socket_from_named_pipe::<false>(&mut this_ref.named_pipe), 0, None);
+                    let _ = TCPSocket::on_close(tcp, socket_from_named_pipe::<false>(pipe), 0, None);
                     (*tcp).deref();
                 }
             }
@@ -259,19 +302,35 @@ impl WindowsNamedPipeContext {
         }
     }
 
+    /// Synchronous teardown matching Zig `WindowsNamedPipeContext.deinit`:
+    /// derefs the wrapped TLS/TCP socket, deinits `named_pipe`, frees `this`.
+    /// Bypasses the refcount-driven `schedule_deinit` → next-tick path; used
+    /// when the failed `accept` left the client unregistered with libuv so
+    /// immediate free is safe (Listener.zig:991-995).
+    ///
+    /// # Safety
+    /// `this` must be the unique live owner of a `heap::alloc`'d context with
+    /// refcount==1 and no pending `task` enqueued.
+    pub unsafe fn deinit(this: *mut Self) {
+        // SAFETY: caller contract — sole owner; Drop runs socket.deref() then
+        // named_pipe.deinit() (field destructor), then the allocation is freed.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+
     fn deinit_in_next_tick(&mut self) {
         debug_assert!(self.task_event != EventState::Deinit);
         self.task_event = EventState::Deinit;
-        // SAFETY: `vm` is the process-global VirtualMachine; `enqueue_task` mutates
-        // its task queue. We hold `&'static VirtualMachine` (JSC_BORROW) so cast
-        // through a raw pointer to obtain the `&mut` the upstream API requires.
-        let vm = std::ptr::from_ref::<VirtualMachine>(self.vm).cast_mut();
-        unsafe { (*vm).enqueue_task(Task::init(&raw mut self.task)) };
+        // SAFETY: `self.vm` was obtained from `bun_vm_ptr()` (mutable provenance,
+        // never null for a Bun-owned global) and the VM outlives this context;
+        // single JS thread so no concurrent `&mut`.
+        unsafe { (*self.vm).enqueue_task(Task::init(&raw mut self.task)) };
     }
 
     pub fn create(global_this: &JSGlobalObject, socket: SocketType) -> *mut WindowsNamedPipeContext {
         let global_this = GlobalRef::from(global_this);
-        let vm: &'static VirtualMachine = global_this.bun_vm();
+        // Raw `*mut` (Zig: `globalThis.bunVM()` returns `*jsc.VirtualMachine`) — we
+        // store mutable provenance because `deinit_in_next_tick` later writes through it.
+        let vm: *mut VirtualMachine = global_this.bun_vm_ptr();
         // TODO(port): in-place init — `named_pipe`/`task` capture `this` (self-referential), so
         // allocate uninit, derive the stable pointer, build the fields, then ptr::write the whole
         // struct. Avoids `mem::zeroed()` on non-POD AnyTask/WindowsNamedPipe.
@@ -280,11 +339,11 @@ impl WindowsNamedPipeContext {
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
         // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the
-        // erased ctx ptr back to `*mut Self` and dereferences for the duration
-        // of the callback.
+        // erased ctx ptr back to `*mut Self` and forwards it RAW — the handlers
+        // never form `&mut WindowsNamedPipeContext` (see ALIASING NOTE above).
         // SAFETY (per closure): `ctx` was set to `this.cast::<c_void>()` above
         // and the WindowsNamedPipe never invokes a handler after `on_close`
-        // schedules deinit; the deref is exclusive for the callback's scope.
+        // schedules deinit, so the allocation is live for the call.
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the
@@ -292,20 +351,22 @@ impl WindowsNamedPipeContext {
             // schedules deinit, so the allocation is live for the call.
             ref_ctx: |p| unsafe { (*p.cast::<Self>()).ref_() },
             deref_ctx: |p| unsafe { Self::deref(p.cast::<Self>()) },
-            on_open: |p| unsafe { (*p.cast::<Self>()).on_open() },
-            on_data: |p, d| unsafe { (*p.cast::<Self>()).on_data(d) },
-            on_handshake: |p, ok, err| unsafe { (*p.cast::<Self>()).on_handshake(ok, err) },
-            on_end: |p| unsafe { (*p.cast::<Self>()).on_end() },
-            on_writable: |p| unsafe { (*p.cast::<Self>()).on_writable() },
-            on_error: |p, e| unsafe { (*p.cast::<Self>()).on_error(e) },
-            on_timeout: |p| unsafe { (*p.cast::<Self>()).on_timeout() },
-            on_close: |p| Self::on_close(p.cast::<Self>()),
+            on_open: |p| unsafe { Self::on_open(p.cast::<Self>()) },
+            on_data: |p, d| unsafe { Self::on_data(p.cast::<Self>(), d) },
+            on_handshake: |p, ok, err| unsafe { Self::on_handshake(p.cast::<Self>(), ok, err) },
+            on_end: |p| unsafe { Self::on_end(p.cast::<Self>()) },
+            on_writable: |p| unsafe { Self::on_writable(p.cast::<Self>()) },
+            on_error: |p, e| unsafe { Self::on_error(p.cast::<Self>(), e) },
+            on_timeout: |p| unsafe { Self::on_timeout(p.cast::<Self>()) },
+            on_close: |p| unsafe { Self::on_close(p.cast::<Self>()) },
         };
         #[cfg(windows)]
         let named_pipe = {
             // SAFETY: all-zero is a valid uv::Pipe (#[repr(C)] POD)
             let pipe = Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() });
-            WindowsNamedPipe::from(pipe, handlers, vm)
+            // SAFETY: `vm` from `bun_vm_ptr()` is non-null and outlives the pipe;
+            // `WindowsNamedPipe::from` only needs read access (`&'static`).
+            WindowsNamedPipe::from(pipe, handlers, unsafe { &*vm })
         };
         #[cfg(not(windows))]
         let named_pipe: WindowsNamedPipe = {

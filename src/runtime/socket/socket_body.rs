@@ -2585,16 +2585,12 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        // PORT NOTE: Zig `FD.toJSWithoutMakingLibuvOwned` — on POSIX this is
-        // `jsNumber(fd)`; on Windows it's `jsNumber(uv_get_osfhandle?…)` via
-        // `FD.uv()`. `bun_core::Fd` lacks the JS bridge, so inline the
-        // numeric form here (uv() does the right per-platform thing).
-        let fd = this.socket.fd();
-        if fd == bun_core::Fd::INVALID {
-            JSValue::js_number(-1.0)
-        } else {
-            JSValue::js_number(fd.uv() as f64)
-        }
+        // Zig: `return this.socket.fd().toJSWithoutMakingLibUVOwned();`
+        // On Windows the fd is a system-kind SOCKET handle; routing it through
+        // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
+        // kind exactly like fd_jsc.zig (system→u64, uv→i32, posix→i32).
+        use bun_sys_jsc::FdJsc as _;
+        this.socket.fd().to_js_without_making_lib_uv_owned()
     }
 
     #[bun_jsc::host_fn(getter)]

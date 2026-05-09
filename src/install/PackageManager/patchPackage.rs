@@ -303,7 +303,7 @@ pub fn do_patch_commit(
         // There isn't an option to exclude it with `git diff --no-index`, so we
         // will `rename()` it out and back again.
         let has_nested_node_modules: bool = 'has_nested_node_modules: {
-            let new_folder_handle = match sys::open_dir(Dir::cwd(), new_folder) {
+            let new_folder_handle = match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
                 Ok(h) => h,
                 Err(e) => {
                     Output::err(e, "failed to open directory <b>{s}<r>", (bstr::BStr::new(new_folder),));
@@ -346,7 +346,7 @@ pub fn do_patch_commit(
                 }
                 break 'has_bun_patch_tag None;
             };
-            let new_folder_handle = match sys::open_dir(Dir::cwd(), new_folder) {
+            let new_folder_handle = match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
                 Ok(h) => h,
                 Err(e) => {
                     Output::err(e, "failed to open directory <b>{s}<r>", (bstr::BStr::new(new_folder),));
@@ -371,7 +371,7 @@ pub fn do_patch_commit(
         // path of `'brk`. Captures borrow into stack buffers.
         scopeguard::defer! {
             if has_nested_node_modules || bun_patch_tag.is_some() {
-                let new_folder_handle = match sys::open_dir(Dir::cwd(), new_folder) {
+                let new_folder_handle = match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
                     Ok(h) => h,
                     Err(e) => {
                         Output::pretty_error(format_args!(
@@ -993,17 +993,23 @@ fn overwrite_package_in_node_modules_folder(
 
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
     // is generic over the *input* width and converts internally, so accepting
-    // `&[u8]` and producing `Path<OSPathChar>` is intentional.
-    let dest_subpath = bun_paths::Path::<bun_paths::OSPathChar>::from(node_modules_folder_path).unwrap();
+    // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
+    // (Zig spec) is required so `/` is normalized to `\` on Windows — the inputs
+    // here arrive posix-normalized and are later passed to Win32 APIs.
+    let dest_subpath = bun_paths::Path::<
+        bun_paths::OSPathChar,
+        { bun_paths::path_options::Kind::ANY },
+        { bun_paths::path_options::PathSeparators::AUTO },
+    >::from(node_modules_folder_path).unwrap();
     // `defer dest_subpath.deinit();` — Drop
 
-    let src_path: bun_paths::AbsPath<bun_paths::OSPathChar> = 'src_path: {
+    let src_path: bun_paths::AbsPath<bun_paths::OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }> = 'src_path: {
         #[cfg(windows)]
         {
             let mut path_buf = bun_paths::WPathBuffer::uninit();
             let abs_path = sys::get_fd_path_w(cache_dir.fd, &mut path_buf)?;
 
-            let mut sp = bun_paths::AbsPath::<bun_paths::OSPathChar>::from(&*abs_path).unwrap();
+            let mut sp = bun_paths::AbsPath::<bun_paths::OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>::from(&*abs_path).unwrap();
             sp.append(cache_dir_subpath)?;
 
             break 'src_path sp;
@@ -1017,7 +1023,10 @@ fn overwrite_package_in_node_modules_folder(
     };
     // `defer src_path.deinit();` — Drop
 
-    let cached_package_folder = sys::open_dir(cache_dir, cache_dir_subpath)?;
+    let cached_package_folder = cache_dir.open_dir(
+        cache_dir_subpath,
+        sys::OpenDirOptions { iterate: true, ..Default::default() },
+    )?;
     let _close = sys::CloseOnDrop::dir(cached_package_folder);
 
     let ignore_directories: &[&bun_paths::OSPathSlice] = &[

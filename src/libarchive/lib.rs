@@ -1271,6 +1271,82 @@ fn is_symlink_target_safe(
     resolved.starts_with(fake_root)
 }
 
+/// Port of `bun.MakePath.makePath(u16, dir, sub_path)` (bun.zig:2481) — the
+/// Windows arm calls `makeOpenPathAccessMaskW`, which component-iterates the
+/// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
+/// on `FileNotFound` and forward again on success. This stays in WTF-16
+/// throughout (no UTF-8 round-trip — `bun_sys::make_path_w` is the *different*
+/// `bun.makePathW` helper which transcodes via `from_w_path` and would lose
+/// lone surrogates / skip `\??\` long-path prefixing).
+#[cfg(windows)]
+fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> Result<(), bun_core::Error> {
+    use bun_sys::{open_dir_at_windows, WindowsOpenDirOp, WindowsOpenDirOptions, E};
+
+    let is_sep = |c: u16| c == b'/' as u16 || c == b'\\' as u16;
+
+    // `std.fs.path.ComponentIterator(.windows, u16)` — collect the end index
+    // of each component so we can walk `previous()` / `next()` by index.
+    let mut ends: Vec<usize> = Vec::with_capacity(8);
+    {
+        let mut i = 0usize;
+        while i < sub_path.len() && is_sep(sub_path[i]) {
+            i += 1;
+        }
+        while i < sub_path.len() {
+            let start = i;
+            while i < sub_path.len() && !is_sep(sub_path[i]) {
+                i += 1;
+            }
+            if i > start {
+                ends.push(i);
+            }
+            while i < sub_path.len() && is_sep(sub_path[i]) {
+                i += 1;
+            }
+        }
+    }
+    // `it.last() orelse Component{ .name = &.{}, .path = sub_path }`
+    if ends.is_empty() {
+        ends.push(sub_path.len());
+    }
+
+    // Match Zig's access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
+    // FILE_READ_EA | SYNCHRONIZE | FILE_TRAVERSE`) by setting `read_only`,
+    // and `FILE_OPEN_IF` via `OpenOrCreate`.
+    let opts = WindowsOpenDirOptions {
+        op: WindowsOpenDirOp::OpenOrCreate,
+        read_only: true,
+        ..Default::default()
+    };
+
+    let mut idx = ends.len() - 1;
+    loop {
+        let prefix = &sub_path[..ends[idx]];
+        match open_dir_at_windows(dir_fd, prefix, opts) {
+            Ok(fd) => {
+                // `it.next() orelse return result` — final component reached;
+                // `makePath` closes the returned dir. Intermediate handles are
+                // closed before advancing.
+                fd.close();
+                if idx + 1 == ends.len() {
+                    return Ok(());
+                }
+                idx += 1;
+            }
+            Err(e) => match e.get_errno() {
+                E::ENOENT => {
+                    // `it.previous() orelse return error.FileNotFound`
+                    if idx == 0 {
+                        return Err(e.into());
+                    }
+                    idx -= 1;
+                }
+                _ => return Err(e.into()),
+            },
+        }
+    }
+}
+
 pub struct Archiver;
 
 pub mod archiver {
@@ -1701,7 +1777,8 @@ impl Archiver {
 
                             #[cfg(windows)]
                             {
-                                bun_sys::make_path_w(dir, path_slice)?;
+                                // Zig: `try bun.MakePath.makePath(u16, dir, path);`
+                                make_path_u16(dir, path_slice)?;
                                 let _ = mode;
                             }
                             #[cfg(not(windows))]
@@ -1814,13 +1891,17 @@ impl Archiver {
                                 Ok(fd) => fd,
                                 Err(e) => match e.get_errno() {
                                     bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                        // PORT NOTE: Zig `bun.Dirname.dirname(u16, ...)`.
-                                        let dirname =
-                                            bun_paths::resolve_path::dirname_w(path_slice);
-                                        if dirname.is_empty() {
+                                        // Zig: `bun.Dirname.dirname(u16, path_slice) orelse
+                                        //        return bun.errnoToZigErr(e.errno)` —
+                                        // `std.fs.path.dirnameWindows` semantics (strips
+                                        // trailing separators), NOT `bun.path.dirnameW`.
+                                        let Some(dirname) =
+                                            bun_paths::Dirname::dirname(path_slice)
+                                        else {
                                             return Err(e.into());
-                                        }
-                                        let _ = bun_sys::make_path_w(dir, dirname);
+                                        };
+                                        // Zig: `bun.MakePath.makePath(u16, dir, …) catch {};`
+                                        let _ = make_path_u16(dir, dirname);
                                         bun_sys::openat_windows(dir_fd, path_slice, flags, 0)?
                                     }
                                     _ => return Err(e.into()),

@@ -157,10 +157,14 @@ impl FdExt for Fd {
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
                         // SAFETY: synchronous libuv fs call (cb = None); req lives on the
-                        // stack for the duration. fs_t::Drop calls uv_fs_req_cleanup.
+                        // stack for the duration of the call.
                         let rc = unsafe {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
+                        // Zig: `defer req.deinit()`. fs_t has NO Drop impl — must call
+                        // uv_fs_req_cleanup explicitly (benign for close, but keep parity
+                        // so this pattern isn't copy-pasted to open/stat where it leaks).
+                        req.deinit();
                         if let Some(errno) = rc.errno() {
                             Some(sys::Error {
                                 errno,
@@ -194,7 +198,19 @@ impl FdExt for Fd {
         #[cfg(debug_assertions)]
         {
             if let Some(ref err) = result {
-                if err.errno == sys::E::EBADF as _ {
+                // On Windows the libuv arm stores the *raw* uv magnitude (e.g. 4083 for
+                // UV_EBADF) with from_libuv=true — Zig's `rc.errno()` translated to
+                // E::BADF=9 but the Rust port pushed translation to the caller. Compare
+                // through the translator so the UAF warning fires for uv-kind FDs too.
+                #[cfg(windows)]
+                let is_badf = if err.from_libuv {
+                    sys::windows::translate_uv_error_to_e(-c_int::from(err.errno)) == sys::E::EBADF
+                } else {
+                    err.errno == sys::E::EBADF as _
+                };
+                #[cfg(not(windows))]
+                let is_badf = err.errno == sys::E::EBADF as _;
+                if is_badf {
                     Output::debug_warn(&format_args!(
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
                         bstr::BStr::new(fd_fmt),

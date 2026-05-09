@@ -1003,48 +1003,12 @@ impl Default for ReadWriteLoop {
 
 #[cfg(windows)]
 impl ReadWriteLoop {
-    pub fn start(&mut self, this: &mut CopyFileWindows) -> bun_sys::Result<()> {
-        self.read_buf.reserve_exact(64 * 1024);
-
-        self.read(this)
-    }
-
-    pub fn read(&mut self, this: &mut CopyFileWindows) -> bun_sys::Result<()> {
-        self.read_buf.clear();
-        // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
-        let cap = self.read_buf.capacity();
-        self.uv_buf = libuv::uv_buf_t {
-            len: cap as libuv::ULONG,
-            base: self.read_buf.as_mut_ptr(),
-        };
-        let loop_ = this.event_loop.uv_loop();
-
-        // This io_request is used for both reading and writing.
-        // For now, we don't start reading the next chunk until
-        // we've finished writing all the previous chunks.
-        this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
-
-        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is a zeroed/cleaned
-        // `fs_t` owned by `this`, `uv_buf` points into `read_buf`'s capacity, and
-        // `on_read` is a valid `uv_fs_cb`.
-        let rc = unsafe {
-            libuv::uv_fs_read(
-                loop_,
-                &mut this.io_request,
-                self.source_fd.uv(),
-                core::ptr::from_mut(&mut self.uv_buf),
-                1,
-                -1,
-                Some(on_read),
-            )
-        };
-
-        if let Some(err) = rc.to_error(bun_sys::Tag::read) {
-            return bun_sys::Result::Err(err);
-        }
-
-        bun_sys::Result::Ok(())
-    }
+    // PORT NOTE: `start`/`read` were moved onto `impl CopyFileWindows` as
+    // `rw_start`/`rw_read`. The original Zig signatures
+    // `fn read(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows)` are sound in
+    // Zig (raw pointers may alias) but in Rust would materialize two overlapping
+    // `&mut` (`&mut ReadWriteLoop` is a subobject of `&mut CopyFileWindows`), which is
+    // immediate UB under Stacked Borrows and emits two `noalias` parameters to LLVM.
 
     pub fn close(&mut self) {
         if self.must_close_source_fd {
@@ -1117,20 +1081,25 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     // Re-use the fs request.
     // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
     unsafe { (*req).deinit() };
+    // Whole-struct raw pointer so the `io_request` field projection carries provenance
+    // over all of `CopyFileWindows` — required for `on_write`'s `from_field_ptr!` to
+    // soundly `byte_sub` back to the parent (a `&mut field` reborrow would not suffice).
+    let this_ptr: *mut CopyFileWindows = core::ptr::from_mut(this);
     // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` points into
-    // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`.
+    // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`. `this_ptr` was
+    // just derived from the live `&mut *this`.
     let rc2 = unsafe {
         libuv::uv_fs_write(
             event_loop.uv_loop(),
-            &mut this.io_request,
+            core::ptr::addr_of_mut!((*this_ptr).io_request),
             destination_fd.uv(),
-            core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
+            core::ptr::addr_of_mut!((*this_ptr).read_write_loop.uv_buf),
             1,
             -1,
             Some(on_write),
         )
     };
-    this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
+    this.io_request.data = this_ptr.cast::<c_void>();
 
     if let Some(err) = rc2.to_error(bun_sys::Tag::write) {
         this.err = Some(err);
@@ -1176,19 +1145,24 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         // Re-use the fs request.
         // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
         unsafe { (*req).deinit() };
-        this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
         let prev = this.read_write_loop.uv_buf.slice();
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
+        let loop_ = this.event_loop.uv_loop();
+        // Whole-struct raw pointer so the `io_request` field projection carries
+        // provenance over all of `CopyFileWindows` — required for `on_write`'s
+        // `from_field_ptr!` to soundly `byte_sub` back to the parent.
+        let this_ptr: *mut CopyFileWindows = core::ptr::from_mut(this);
+        this.io_request.data = this_ptr.cast::<c_void>();
         // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` is a tail
         // slice of the previous write buffer (still backed by `read_buf`), and
-        // `on_write` is a valid `uv_fs_cb`.
+        // `on_write` is a valid `uv_fs_cb`. `this_ptr` was just derived from `&mut *this`.
         let rc2 = unsafe {
             libuv::uv_fs_write(
-                this.event_loop.uv_loop(),
-                &mut this.io_request,
+                loop_,
+                core::ptr::addr_of_mut!((*this_ptr).io_request),
                 destination_fd.uv(),
-                core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
+                core::ptr::addr_of_mut!((*this_ptr).read_write_loop.uv_buf),
                 1,
                 -1,
                 Some(on_write),
@@ -1206,10 +1180,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
     // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
     unsafe { (*req).deinit() };
-    // TODO(port): overlapping &mut self/self.read_write_loop — restructure ReadWriteLoop::read to take disjoint fields (or move to impl CopyFileWindows) in Phase B.
-    let rwl: *mut ReadWriteLoop = core::ptr::from_mut(&mut this.read_write_loop);
-    // SAFETY: rwl points to this.read_write_loop; read() only touches this.io_request/this.event_loop, so no overlapping &mut alias is live across the call.
-    match unsafe { (*rwl).read(this) } {
+    match this.rw_read() {
         bun_sys::Result::Err(err) => {
             this.err = Some(err);
             this.on_read_write_loop_complete();
@@ -1220,6 +1191,67 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
 #[cfg(windows)]
 impl<'a> CopyFileWindows<'a> {
+    /// Zig: `ReadWriteLoop.start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows)`.
+    /// Hosted on `CopyFileWindows` so the single `&mut self` lets borrowck split
+    /// `self.read_write_loop` and `self.io_request` as disjoint fields — the original
+    /// two-receiver shape is UB in Rust (two overlapping `&mut`).
+    fn rw_start(&mut self) -> bun_sys::Result<()> {
+        // Zig: `read_buf.ensureTotalCapacityPrecise(64 * 1024)` — *total* capacity,
+        // idempotent on the mkdirp-retry path. `Vec::reserve_exact(N)` would request N
+        // *additional* bytes and grow to 128K on the second call.
+        if self.read_write_loop.read_buf.capacity() < 64 * 1024 {
+            self.read_write_loop.read_buf = Vec::with_capacity(64 * 1024);
+        }
+
+        self.rw_read()
+    }
+
+    /// Zig: `ReadWriteLoop.read(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows)`.
+    fn rw_read(&mut self) -> bun_sys::Result<()> {
+        self.read_write_loop.read_buf.clear();
+        // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
+        let cap = self.read_write_loop.read_buf.capacity();
+        self.read_write_loop.uv_buf = libuv::uv_buf_t {
+            len: cap as libuv::ULONG,
+            base: self.read_write_loop.read_buf.as_mut_ptr(),
+        };
+        let loop_ = self.event_loop.uv_loop();
+        let source_fd = self.read_write_loop.source_fd;
+
+        // Whole-struct raw pointer: `addr_of_mut!((*this_ptr).io_request)` carries
+        // provenance over all of `CopyFileWindows`, which `on_read`'s
+        // `from_field_ptr!(CopyFileWindows, io_request, req)` requires to soundly
+        // `byte_sub` back to the parent. A `&mut self.io_request` reborrow would
+        // restrict provenance to the field bytes — see `from_field_ptr!` doc.
+        let this_ptr: *mut CopyFileWindows = core::ptr::from_mut(self);
+
+        // This io_request is used for both reading and writing.
+        // For now, we don't start reading the next chunk until
+        // we've finished writing all the previous chunks.
+        self.io_request.data = this_ptr.cast::<c_void>();
+
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is a zeroed/cleaned
+        // `fs_t` owned by `self`, `uv_buf` points into `read_buf`'s capacity, and
+        // `on_read` is a valid `uv_fs_cb`. `this_ptr` was just derived from `&mut *self`.
+        let rc = unsafe {
+            libuv::uv_fs_read(
+                loop_,
+                core::ptr::addr_of_mut!((*this_ptr).io_request),
+                source_fd.uv(),
+                core::ptr::addr_of_mut!((*this_ptr).read_write_loop.uv_buf),
+                1,
+                -1,
+                Some(on_read),
+            )
+        };
+
+        if let Some(err) = rc.to_error(bun_sys::Tag::read) {
+            return bun_sys::Result::Err(err);
+        }
+
+        bun_sys::Result::Ok(())
+    }
+
     pub fn on_read_write_loop_complete(&mut self) {
         self.event_loop.unref_concurrently();
 
@@ -1346,10 +1378,7 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
-        // TODO(port): overlapping &mut self/self.read_write_loop — restructure ReadWriteLoop::start to take disjoint fields (or move to impl CopyFileWindows) in Phase B.
-        let rwl: *mut ReadWriteLoop = core::ptr::from_mut(&mut self.read_write_loop);
-        // SAFETY: rwl points to self.read_write_loop; start() only touches self.io_request/self.event_loop, so no overlapping &mut alias is live across the call.
-        match unsafe { (*rwl).start(self) } {
+        match self.rw_start() {
             bun_sys::Result::Err(err) => {
                 self.throw(err);
             }
@@ -1376,9 +1405,10 @@ impl<'a> CopyFileWindows<'a> {
         // `new_path`/`old_path` keep `self.{destination,source}_file_store`
         // borrowed across the `uv_fs_copyfile` call below; taking
         // `core::ptr::from_mut(self)` there would require an exclusive reborrow
-        // of all of `*self` and conflict. The pointer is only stored in
-        // `io_request.data` for the libuv callback to recover `self`.
-        let this_ptr: *mut c_void = core::ptr::from_mut(self).cast::<c_void>();
+        // of all of `*self` and conflict. Kept as `*mut CopyFileWindows` so the
+        // `addr_of_mut!((*this_ptr).io_request)` projection passed to libuv carries
+        // whole-struct provenance for `on_copy_file`'s `from_field_ptr!`.
+        let this_ptr: *mut CopyFileWindows = core::ptr::from_mut(self);
         let destination_file_store = &mut self.destination_file_store.data.as_file();
         let source_file_store = &mut self.source_file_store.data.as_file();
 
@@ -1473,15 +1503,16 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
         let loop_ = self.event_loop.uv_loop();
-        self.io_request.data = this_ptr;
+        self.io_request.data = this_ptr.cast::<c_void>();
 
-        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is owned by `self`,
-        // `old_path`/`new_path` are NUL-terminated (from `slice_z`/`ZStr`), and
-        // `on_copy_file` is a valid `uv_fs_cb`.
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is owned by `self`
+        // (projected via `addr_of_mut!` from the whole-struct `this_ptr` so the callback's
+        // `from_field_ptr!` has provenance over the parent), `old_path`/`new_path` are
+        // NUL-terminated (from `slice_z`/`ZStr`), and `on_copy_file` is a valid `uv_fs_cb`.
         let rc = unsafe {
             libuv::uv_fs_copyfile(
                 loop_,
-                &mut self.io_request,
+                core::ptr::addr_of_mut!((*this_ptr).io_request),
                 old_path.as_ptr(),
                 new_path.as_ptr(),
                 0,
@@ -1489,18 +1520,19 @@ impl<'a> CopyFileWindows<'a> {
             )
         };
 
-        if let Some(errno) = rc.errno() {
-            self.throw(bun_sys::Error {
-                // #6336
-                errno: if errno == bun_sys::SystemErrno::EPERM as u16 {
-                    bun_sys::SystemErrno::ENOENT as u16
-                } else {
-                    errno
-                },
-                syscall: bun_sys::Tag::copyfile,
-                path: old_path.as_bytes().into(),
-                ..Default::default()
-            });
+        // PORT NOTE: Zig `rc.errno()` returns the *translated* `bun.sys.E` ordinal; the
+        // Rust `ReturnCode::errno()` returns the raw `|UV_E*|` for layering reasons. Use
+        // `err_enum_e()` (the translating overlay) so the EPERM→ENOENT remap and the
+        // stored `Error.errno` match the spec.
+        if let Some(errno) = rc.err_enum_e() {
+            self.throw(
+                bun_sys::Error::from_code(
+                    // #6336
+                    if errno == bun_sys::E::EPERM { bun_sys::E::ENOENT } else { errno },
+                    bun_sys::Tag::copyfile,
+                )
+                .with_path(old_path.as_bytes()),
+            );
             return;
         }
         self.event_loop.ref_concurrently();
@@ -1562,15 +1594,20 @@ impl<'a> CopyFileWindows<'a> {
                 self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
                 self.io_request = unsafe { core::mem::zeroed::<libuv::fs_t>() };
-                self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
+                // Whole-struct raw pointer so the `io_request` projection passed to libuv
+                // carries provenance over all of `CopyFileWindows` for `on_chmod`'s
+                // `from_field_ptr!`.
+                let this_ptr: *mut CopyFileWindows = core::ptr::from_mut(self);
+                self.io_request.data = this_ptr.cast::<c_void>();
 
                 // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` was just zeroed,
                 // `path_ptr` is NUL-terminated (from `slice_z`) and live for this call,
-                // and `on_chmod` is a valid `uv_fs_cb`.
+                // and `on_chmod` is a valid `uv_fs_cb`. `this_ptr` was just derived from
+                // `&mut *self`.
                 let rc = unsafe {
                     libuv::uv_fs_chmod(
                         loop_,
-                        &mut self.io_request,
+                        core::ptr::addr_of_mut!((*this_ptr).io_request),
                         path_ptr,
                         i32::try_from(mode).expect("int cast"),
                         Some(on_chmod),

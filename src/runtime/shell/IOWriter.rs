@@ -400,6 +400,12 @@ impl IOWriter {
             }
             #[cfg(windows)]
             {
+                // PORT NOTE: re-derive `state()` — on Windows `writer.start()`
+                // calls back into `Parent::loop_` → `evtloop()` → `state()`
+                // BEFORE `Source::open`, which under Stacked Borrows pops the
+                // caller's `s` borrow. Same discipline as the POSIX Ok-arm
+                // below.
+                let s = self.state();
                 // This might happen if the file descriptor points to NUL.
                 // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
                 // `this.writer.start()` will try to open it as a tty with
@@ -413,6 +419,25 @@ impl IOWriter {
                 }
             }
             return Err(e);
+        }
+        #[cfg(windows)]
+        {
+            // PORT NOTE: re-derive `state()` — see EBADF arm above.
+            let s = self.state();
+            // Spec: IOWriter.zig:28 `fd: MovableIfWindowsFd` + PipeWriter.zig
+            // `rawfd.take()` when the opened source is pipe|tty. When
+            // `Source::open` yields a uv pipe/tty, libuv OWNS the underlying
+            // HANDLE and will close it via `uv_close` (the `owns_fd=false`
+            // flag is only honoured for `Source::File`/`SyncFile`). Mark our
+            // copy invalid so Drop's `sys::close(s.fd)` is skipped — Windows
+            // reuses HANDLE values aggressively, so a second close can close
+            // an unrelated kernel object.
+            if matches!(
+                s.writer.source(),
+                Some(bun_io::Source::Pipe(_) | bun_io::Source::Tty(_))
+            ) {
+                s.fd = Fd::INVALID;
+            }
         }
         #[cfg(not(windows))]
         {
@@ -1052,6 +1077,14 @@ impl bun_io::pipe_writer::WindowsWriterParent for IOWriter {
 impl bun_io::pipe_writer::WindowsBufferedWriterParent for IOWriter {
     unsafe fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
         // SAFETY: BACKREF set via set_parent; re-enter via `&self` (UnsafeCell model).
+        // Hold a strong ref across dispatch — `on_write_pollable` calls
+        // `run_yield(bump())` / `broken_pipe_for_writers()`, which fire child
+        // `on_io_writer_chunk` callbacks that may drop the last external Arc
+        // ref. Spec defers free via `asyncDeinit`'s next-tick hop; we keep a
+        // strong ref on the stack instead (mirrors POSIX `on_poll`). Without
+        // this, `self.wrote_everything()`/`self.state()` after `run_yield`
+        // returns — and the caller's `self.is_done` read — UAF.
+        let _keepalive = unsafe { &*this }.keepalive();
         unsafe { (*this).on_write_pollable(amount, status) };
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
@@ -1152,7 +1185,12 @@ impl Drop for IOWriter {
         // Arc drops (possible via re-entrant child deinit), we need the async
         // hop. Revisit once `bun_event_loop::EventLoopTask` is wired to the
         // shell's `EventLoopHandle` shim.
-        let s = self.state.get_mut();
+        //
+        // PORT NOTE: use the UnsafeCell accessor, NOT `state.get_mut()` — on
+        // Windows `writer.close()` re-enters `on_close` → `set_writing` →
+        // `state()`, which would materialize a second `&mut State` while a
+        // real `&mut State` from `get_mut()` is live (Stacked-Borrows UB).
+        let s = unsafe { &mut *self.state.get() };
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]
         {
@@ -1166,6 +1204,12 @@ impl Drop for IOWriter {
         {
             s.writer.close();
         }
+        // PORT NOTE: re-derive — on Windows `close()` re-entered `state()` via
+        // `on_close`, invalidating `s`.
+        let s = unsafe { &mut *self.state.get() };
+        // Spec: IOWriter.zig:717 `if (this.fd.isValid()) this.fd.close()`.
+        // `__start` invalidates `fd` on Windows when libuv took ownership
+        // (pipe/tty source), so this guard correctly skips the double-close.
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
         }

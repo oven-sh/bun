@@ -173,7 +173,18 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
-        // TODO(port): windows: { loop = EventLoopHandle.init(MiniEventLoop.initGlobal(...)) }
+        // Zig: `.windows = if (Environment.isWindows) .{ .loop = EventLoopHandle.init(
+        //   MiniEventLoop.initGlobal(null, null)) }`. `WindowsOptions::default()` zeroes
+        // `loop_` (UB — null `uv_loop` deref in `spawn_process_windows`), so populate it.
+        #[cfg(windows)]
+        windows: spawn_sync::WindowsOptions {
+            loop_: bun_event_loop::EventLoopHandle::init_mini(
+                bun_event_loop::MiniEventLoop::init_global(None, None),
+            ),
+            ..Default::default()
+        },
+        #[cfg(not(windows))]
+        windows: (),
         ..Default::default()
     });
 }
@@ -1440,7 +1451,17 @@ impl CreateCommand {
                 stderr: spawn_sync::SyncStdio::Inherit,
                 stdout: spawn_sync::SyncStdio::Inherit,
                 stdin: spawn_sync::SyncStdio::Inherit,
-                // TODO(port): windows: { loop = EventLoopHandle.init(MiniEventLoop.initGlobal(...)) }
+                // Zig: `.windows = if (Environment.isWindows) .{ .loop = EventLoopHandle.init(
+                //   MiniEventLoop.initGlobal(null, null)) }`. Default would zero `loop_` → UB.
+                #[cfg(windows)]
+                windows: spawn_sync::WindowsOptions {
+                    loop_: bun_event_loop::EventLoopHandle::init_mini(
+                        bun_event_loop::MiniEventLoop::init_global(None, None),
+                    ),
+                    ..Default::default()
+                },
+                #[cfg(not(windows))]
+                windows: (),
                 ..Default::default()
             })?;
             let _ = process?;
@@ -1569,6 +1590,17 @@ impl CreateCommand {
                     stdin: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stderr: spawn_sync::SyncStdio::Inherit,
+                    // Zig used `std.process.Child` (no uv loop). PORTING.md routes this through
+                    // `bun.spawnSync`, which on Windows requires a live `loop_` — supply it.
+                    #[cfg(windows)]
+                    windows: spawn_sync::WindowsOptions {
+                        loop_: bun_event_loop::EventLoopHandle::init_mini(
+                            bun_event_loop::MiniEventLoop::init_global(None, None),
+                        ),
+                        ..Default::default()
+                    },
+                    #[cfg(not(windows))]
+                    windows: (),
                     ..Default::default()
                 })?;
             }
@@ -2755,6 +2787,15 @@ impl GitHandler {
         // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
         // The two uses are sequenced — git runs before `--open` block. Matches Zig.)
         let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+        // Zig used `std.process.Child` (no libuv). The Rust port routes through
+        // `bun.spawnSync`, which on Windows drives `uv_spawn` and needs a uv loop. This fn
+        // runs on the dedicated git thread (see `GitHandler::spawn`), so use the
+        // *thread-local* `MiniEventLoop` singleton — `init_global` is `thread_local!`-backed,
+        // so the main thread's loop is not touched (driving it cross-thread would be libuv UB).
+        #[cfg(windows)]
+        let win_loop = bun_event_loop::EventLoopHandle::init_mini(
+            bun_event_loop::MiniEventLoop::init_global(None, None),
+        );
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
             let git_commands: [&[&[u8]]; 3] = [
@@ -2778,6 +2819,10 @@ impl GitHandler {
                     stdin: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stderr: spawn_sync::SyncStdio::Inherit,
+                    #[cfg(windows)]
+                    windows: spawn_sync::WindowsOptions { loop_: win_loop, ..Default::default() },
+                    #[cfg(not(windows))]
+                    windows: (),
                     ..Default::default()
                 })?;
             }

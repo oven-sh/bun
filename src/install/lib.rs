@@ -827,16 +827,28 @@ impl RunCommand {
             target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
             let dir_slice_len = prefix.len() + len + dir_name.len();
 
+            #[cfg(debug_assertions)]
+            {
+                // Zig: `std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
+                //       std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");`
+                // Debug builds wipe and recreate the bun-node temp dir so the
+                // ALREADY_EXISTS short-circuit below never reuses a stale
+                // hardlink at a previous debug binary.
+                let dir_slice_u8 =
+                    bun_str::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
+                let _ = bun_sys::Dir::cwd().delete_tree(&dir_slice_u8);
+                bun_sys::Dir::cwd().make_dir(&dir_slice_u8).expect("huh?");
+            }
+
             let image_path = win::exe_path_w();
             for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // PORT NOTE: borrowck — Zig held a slice of `target_path_buffer`
-                // across mutations of the same buffer (the dir-NUL/backslash
-                // toggle below). Use the raw base pointer for FFI so no shared
-                // borrow is live across the writes.
-                let file_ptr: *const u16 = target_path_buffer.as_ptr();
-
-                if win::CreateHardLinkW(file_ptr, image_path.as_ptr(), None) == 0 {
+                // PORT NOTE: Zig held a `[]const u16` into `target_path_buffer`
+                // across in-place mutation (the dir-NUL/backslash toggle below).
+                // Under Stacked Borrows a `*const` derived via `Deref::deref`
+                // is invalidated by the intervening `&mut` from `IndexMut`, so
+                // re-derive `as_ptr()` at each FFI call site instead of caching.
+                if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0 {
                     match win::Win32Error::get() {
                         win::Win32Error::ALREADY_EXISTS => {}
                         _ => {
@@ -847,7 +859,7 @@ impl RunCommand {
                             let _ = bun_sys::mkdir_w(dir_w);
                             target_path_buffer[dir_slice_len] = b'\\' as u16;
 
-                            if win::CreateHardLinkW(file_ptr, image_path.as_ptr(), None) == 0 {
+                            if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0 {
                                 return Ok(());
                             }
                         }
@@ -865,7 +877,7 @@ impl RunCommand {
             strings::to_utf8_append_to_list(
                 path,
                 &target_path_buffer[prefix.len()..dir_slice_len],
-            );
+            )?;
             path.push(bun_paths::DELIMITER);
             let _ = optional_bun_path;
             Ok(())

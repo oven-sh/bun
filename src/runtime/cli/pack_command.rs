@@ -2825,6 +2825,9 @@ fn add_archive_entry(
     let pathname_len = PACKAGE_PREFIX.len() + filename.as_bytes().len();
     // SAFETY: print_buf[pathname_len] == 0 written above
     let pathname = ZStr::from_buf(&print_buf[..], pathname_len);
+    #[cfg(windows)]
+    entry.set_pathname_utf8(pathname);
+    #[cfg(not(windows))]
     entry.set_pathname(pathname);
     print_buf.clear();
 

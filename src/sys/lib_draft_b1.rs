@@ -11,6 +11,8 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
+#[cfg(windows)]
+use core::sync::atomic::AtomicU32;
 
 use bun_core::Environment;
 use bun_paths::{PathBuffer, WPathBuffer, MAX_PATH_BYTES};
@@ -527,7 +529,10 @@ pub fn chdir_os_path(
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         if unsafe { c::SetCurrentDirectoryW(strings::to_w_dir_path(&mut *wbuf, destination).as_ptr()) } == windows::FALSE {
             log!("SetCurrentDirectory({}) = {}", bstr::BStr::new(destination), kernel32::GetLastError());
-            return Result::<()>::errno_sys_pd(0, Tag::chdir, path, destination).unwrap_or(Result::Ok(()));
+            return Result::Err(
+                Error::from_code(windows::get_last_errno(), Tag::chdir)
+                    .with_path_dest(path.as_bytes(), destination),
+            );
         }
 
         log!("SetCurrentDirectory({}) = {}", bstr::BStr::new(destination), 0);
@@ -1153,7 +1158,7 @@ pub fn normalize_path_windows<T: WinPathChar>(
     const NT_PREFIX_HEADROOM: usize = 8;
 
     // TODO(port): conditional WPathBuffer pool guard when T != u16.
-    let wbuf_guard = if !T::IS_U16 { Some(bun_paths::w_path_buffer_pool().get()) } else { None };
+    let mut wbuf_guard = if !T::IS_U16 { Some(bun_paths::w_path_buffer_pool().get()) } else { None };
     // convertUTF8toUTF16InBuffer forwards only `output.ptr` to simdutf, which
     // performs no output bounds checking. UTF-16 output length is always <=
     // UTF-8 input byte length, so `path_.len` is a cheap upper bound; when it
@@ -1592,6 +1597,9 @@ pub fn open_file_at_windows_nt_path(
                     const FILE_END: u32 = 2;
                     // SAFETY: FFI call; arguments are valid for the duration of the call.
                     if unsafe { kernel32::SetFilePointerEx(result, 0, core::ptr::null_mut(), FILE_END) } == 0 {
+                        // NtCreateFile succeeded above — close the live HANDLE
+                        // before bailing so we don't leak it on the error path.
+                        Fd::from_native(result).close();
                         return Result::Err(Error { errno: E::UNKNOWN as _, syscall: Tag::SetFilePointerEx, ..Default::default() });
                     }
                 }
@@ -1939,7 +1947,7 @@ pub fn write(fd: Fd, bytes: &[u8]) -> Result<usize> {
     {
         // "WriteFile sets this value to zero before doing any work or error checking."
         let mut bytes_written: u32 = 0;
-        debug_assert!(bytes.len() > 0);
+        assert!(bytes.len() > 0);
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         let rc = unsafe {
             kernel32::WriteFile(
@@ -2475,7 +2483,17 @@ pub fn ftruncate(fd: Fd, size: isize) -> Result<()> {
                 w::FILE_INFORMATION_CLASS::FileEndOfFileInformation,
             )
         };
-        return Result::<()>::errno_sys_fd(rc, Tag::ftruncate, fd).unwrap_or(Result::Ok(()));
+        // `rc` is an NTSTATUS — route through the NTSTATUS→Win32Error→errno
+        // mapping (Zig `errnoSysFd` special-cases `@TypeOf(rc) == NTSTATUS`).
+        return match windows::Win32Error::from_nt_status(rc) {
+            windows::Win32Error::SUCCESS => Result::Ok(()),
+            code => Result::Err(Error {
+                errno: code.to_system_errno().map(|e| e as _).unwrap_or(E::UNKNOWN as _),
+                syscall: Tag::ftruncate,
+                fd,
+                ..Default::default()
+            }),
+        };
     }
 
     #[cfg(not(windows))]
@@ -2755,25 +2773,28 @@ pub struct WindowsSymlinkOptions {
     pub directory: bool,
 }
 
+// PORT NOTE: Zig used container-level `var` decls inside the
+// `WindowsSymlinkOptions` struct. Rust has no associated `static` items in
+// `impl` blocks, so these live at module scope.
+#[cfg(windows)]
+static SYMLINK_FLAGS: AtomicU32 = AtomicU32::new(w::SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE);
+#[cfg(windows)]
+pub static HAS_FAILED_TO_CREATE_SYMLINK: AtomicBool = AtomicBool::new(false);
+
 #[cfg(windows)]
 impl WindowsSymlinkOptions {
-    // TODO(port): Zig used a `var` (mutable static) for symlink_flags. We mirror with AtomicU32.
-    static SYMLINK_FLAGS: AtomicU32 = AtomicU32::new(w::SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE);
-
     pub fn flags(self) -> u32 {
         // PORT NOTE: Zig mutates the module-level `var symlink_flags` here and
         // returns it (state persists across calls). Mirror that exactly.
         if self.directory {
-            Self::SYMLINK_FLAGS.fetch_or(w::SYMBOLIC_LINK_FLAG_DIRECTORY, Ordering::Relaxed);
+            SYMLINK_FLAGS.fetch_or(w::SYMBOLIC_LINK_FLAG_DIRECTORY, Ordering::Relaxed);
         }
-        Self::SYMLINK_FLAGS.load(Ordering::Relaxed)
+        SYMLINK_FLAGS.load(Ordering::Relaxed)
     }
 
     pub fn denied() {
-        Self::SYMLINK_FLAGS.store(0, Ordering::Relaxed);
+        SYMLINK_FLAGS.store(0, Ordering::Relaxed);
     }
-
-    pub static HAS_FAILED_TO_CREATE_SYMLINK: AtomicBool = AtomicBool::new(false);
 }
 
 /// Symlinks on Windows can be relative or absolute, and junctions can
@@ -2781,7 +2802,7 @@ impl WindowsSymlinkOptions {
 /// is saying `target` is already absolute.
 #[cfg(windows)]
 pub fn symlink_or_junction(dest: &ZStr, target: &ZStr, abs_fallback_junction_target: Option<&ZStr>) -> Result<()> {
-    if !WindowsSymlinkOptions::HAS_FAILED_TO_CREATE_SYMLINK.load(Ordering::Relaxed) {
+    if !HAS_FAILED_TO_CREATE_SYMLINK.load(Ordering::Relaxed) {
         let sym16 = bun_paths::w_path_buffer_pool().get();
         let target16 = bun_paths::w_path_buffer_pool().get();
         let sym_path = strings::to_w_path_normalize_auto_extend(&mut *sym16, dest.as_bytes());
@@ -2840,7 +2861,7 @@ pub fn symlink_w(dest: &WStr, target: &WStr, options: WindowsSymlinkOptions) -> 
                     }
                     _ => {}
                 }
-                WindowsSymlinkOptions::HAS_FAILED_TO_CREATE_SYMLINK.store(true, Ordering::Relaxed);
+                HAS_FAILED_TO_CREATE_SYMLINK.store(true, Ordering::Relaxed);
                 return Result::Err(Error { errno: err as _, syscall: Tag::symlink, ..Default::default() });
             }
         }
@@ -3844,9 +3865,19 @@ pub fn exists_at_type(fd: Fd, subpath: impl AsRef<[u8]>) -> Result<ExistsAtType>
         let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         let rc = unsafe { ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
-        if let Some(err) = Result::<bool>::errno_sys(rc, Tag::access) {
-            log!("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", bun_core::fmt::fmt_os_path(path), err);
-            return Result::Err(err.err());
+        // `rc` is an NTSTATUS — route through the NTSTATUS→Win32Error→errno
+        // mapping (Zig `errnoSys` special-cases `@TypeOf(rc) == NTSTATUS`).
+        match windows::Win32Error::from_nt_status(rc) {
+            windows::Win32Error::SUCCESS => {}
+            code => {
+                let err = Error {
+                    errno: code.to_system_errno().map(|e| e as _).unwrap_or(E::UNKNOWN as _),
+                    syscall: Tag::access,
+                    ..Default::default()
+                };
+                log!("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", bun_core::fmt::fmt_os_path(path), err);
+                return Result::Err(err);
+            }
         }
 
         let is_regular_file = basic_info.FileAttributes != c::INVALID_FILE_ATTRIBUTES
@@ -4066,10 +4097,9 @@ pub fn dup_with_flags(fd: Fd, _flags: i32) -> Result<Fd> {
             )
         };
         if out == 0 {
-            if let Some(err) = Result::<Fd>::errno_sys_fd(0, Tag::dup, fd) {
-                log!("dup({}) = {}", fd, err);
-                return err;
-            }
+            let err = Error::from_code(windows::get_last_errno(), Tag::dup).with_fd(fd);
+            log!("dup({}) = {}", fd, err);
+            return Result::Err(err);
         }
         let duplicated_fd = Fd::from_native(target);
         log!("dup({}) = {}", fd, duplicated_fd);
@@ -4759,39 +4789,82 @@ pub mod node {
 
         /// Zig `Maybe(T).errnoSys(rc, syscall)`: `Some(Err)` if `rc` indicates
         /// failure (errno set), else `None` so the caller proceeds with `rc`.
+        ///
+        /// PORT NOTE: the Zig spec is platform-aware (`runtime/node.zig`):
+        /// - POSIX: `rc == -1` is failure (libc convention).
+        /// - Windows (non-NTSTATUS): `rc == 0` is failure (Win32 BOOL/DWORD
+        ///   convention) — `if (rc != 0) return null;` then `getErrno(rc)`
+        ///   reads `GetLastError()`.
+        /// NTSTATUS callers must NOT route through this helper; they map via
+        /// `Win32Error::from_nt_status` at the call site (no Rust `@TypeOf`).
         #[inline]
         fn errno_sys(rc: impl Into<i64>, syscall: Tag) -> Option<Self> {
             let rc: i64 = rc.into();
-            if rc != -1 { return None; }
-            Some(Err(Error {
-                errno: super::get_errno() as _,
-                syscall,
-                ..Error::default()
-            }))
+            #[cfg(windows)]
+            {
+                if rc != 0 { return None; }
+                return match super::get_errno(rc) {
+                    E::SUCCESS => None,
+                    e => Some(Err(Error { errno: e as _, syscall, ..Error::default() })),
+                };
+            }
+            #[cfg(not(windows))]
+            {
+                if rc != -1 { return None; }
+                Some(Err(Error {
+                    errno: super::get_errno() as _,
+                    syscall,
+                    ..Error::default()
+                }))
+            }
         }
 
         /// `errnoSys` variant that records the fd on the error.
         #[inline]
         fn errno_sys_fd(rc: impl Into<i64>, syscall: Tag, fd: Fd) -> Option<Self> {
             let rc: i64 = rc.into();
-            if rc != -1 { return None; }
-            Some(Err(Error {
-                errno: super::get_errno() as _,
-                syscall,
-                fd,
-                ..Error::default()
-            }))
+            #[cfg(windows)]
+            {
+                if rc != 0 { return None; }
+                return match super::get_errno(rc) {
+                    E::SUCCESS => None,
+                    e => Some(Err(Error { errno: e as _, syscall, fd, ..Error::default() })),
+                };
+            }
+            #[cfg(not(windows))]
+            {
+                if rc != -1 { return None; }
+                Some(Err(Error {
+                    errno: super::get_errno() as _,
+                    syscall,
+                    fd,
+                    ..Error::default()
+                }))
+            }
         }
 
         /// `errnoSys` variant that records a path slice on the error.
         #[inline]
         fn errno_sys_p(rc: impl Into<i64>, syscall: Tag, path: &[u8]) -> Option<Self> {
             let rc: i64 = rc.into();
-            if rc != -1 { return None; }
-            Some(Err(
-                Error { errno: super::get_errno() as _, syscall, ..Error::default() }
-                    .with_path(path),
-            ))
+            #[cfg(windows)]
+            {
+                if rc != 0 { return None; }
+                return match super::get_errno(rc) {
+                    E::SUCCESS => None,
+                    e => Some(Err(
+                        Error { errno: e as _, syscall, ..Error::default() }.with_path(path),
+                    )),
+                };
+            }
+            #[cfg(not(windows))]
+            {
+                if rc != -1 { return None; }
+                Some(Err(
+                    Error { errno: super::get_errno() as _, syscall, ..Error::default() }
+                        .with_path(path),
+                ))
+            }
         }
 
         #[inline]

@@ -17,6 +17,8 @@ use bun_core::{Timespec, TimespecMockMode};
 use bun_threading::Mutex;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
+#[cfg(windows)]
+use bun_sys::windows::libuv as uv;
 
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
@@ -422,10 +424,77 @@ impl All {
                 (*timer).state = EventLoopTimerState::ACTIVE;
                 (*timer).in_heap = InHeap::Regular;
             }
-            // TODO(b2-blocked): Windows uv_timer arming needs
-            // `@fieldParentPtr(VirtualMachine, timer)`; gated until
-            // `bun_jsc::VirtualMachine.timer: All`.
+            #[cfg(windows)]
+            self.ensure_uv_timer();
         }
+    }
+
+    /// Spec Timer.zig:125-152 `ensureUVTimer` — lazily `uv_timer_init` the
+    /// per-`All` libuv timer, then (re)start it for the soonest heap deadline.
+    /// On Windows there is no epoll/kqueue fallback; this `uv_timer_t` is the
+    /// ONLY thing that wakes `uv_run` for JS timers.
+    ///
+    /// PORT NOTE (b2-cycle): Zig recovers `*VirtualMachine` via
+    /// `@fieldParentPtr("timer", this)` to read `vm.uvLoop()` and stash `vm`
+    /// in `uv_timer.data`. In Rust `All` is a field of `RuntimeState` (not
+    /// `VirtualMachine`), so we recover the per-thread VM via
+    /// `VirtualMachine::get_mut_ptr()` and the loop via `uv::Loop::get()`
+    /// (which is what `vm.uvLoop()` resolves to on Windows). The vm ptr is
+    /// stashed in `uv_timer.data` so [`Self::on_uv_timer`] can forward it to
+    /// `drain_timers` without a thread-local read in the hot path.
+    #[cfg(windows)]
+    fn ensure_uv_timer(&mut self) {
+        if self.uv_timer.data.is_null() {
+            self.uv_timer.init(uv::Loop::get());
+            self.uv_timer.data = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr()
+                .cast::<core::ffi::c_void>();
+            self.uv_timer.unref();
+        }
+
+        if let Some(timer) = self.timers.peek() {
+            // SAFETY: `Loop::get()` returns this thread's live initialized loop.
+            unsafe { uv::uv_update_time(uv::Loop::get()) };
+            let now = Timespec::now(TimespecMockMode::ForceRealTime);
+            // SAFETY: `peek` returns a live heap node.
+            let next = unsafe { &(*timer).next };
+            let next_ts = Timespec { sec: next.sec, nsec: next.nsec };
+            let wait = if next_ts.greater(&now) {
+                next_ts.duration(&now)
+            } else {
+                Timespec { sec: 0, nsec: 0 }
+            };
+
+            // minimum 1ms
+            // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
+            let wait_ms = core::cmp::max(1, wait.ms_unsigned());
+
+            self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+
+            if self.active_timer_count > 0 {
+                self.uv_timer.ref_();
+            } else {
+                self.uv_timer.unref();
+            }
+        }
+    }
+
+    /// Spec Timer.zig:154-159 `onUVTimer` — libuv timer callback; drain due
+    /// timers then re-arm for the next deadline.
+    #[cfg(windows)]
+    unsafe extern "C" fn on_uv_timer(uv_timer_t: *mut uv::Timer) {
+        // SAFETY: `uv_timer_t` is the address of `All.uv_timer` (libuv passes
+        // back exactly the handle pointer we registered in `ensure_uv_timer`);
+        // recover the containing `All` via container_of.
+        let all: *mut All = unsafe { bun_core::from_field_ptr!(All, uv_timer, uv_timer_t) };
+        // SAFETY: `data` was set to the VM ptr in `ensure_uv_timer` (non-null).
+        let vm: *mut () = unsafe { (*uv_timer_t).data.cast() };
+        // SAFETY: callback fires on the JS thread (libuv invokes on the loop's
+        // thread); `all` is live for the VM lifetime. `drain_timers` may
+        // re-enter `(*runtime_state()).timer` — it forms only short-lived
+        // `&mut All` around heap pop/peek, so the raw-ptr deref here is sound.
+        unsafe { (*all).drain_timers(vm) };
+        // SAFETY: see above; re-arm for the next-soonest deadline (if any).
+        unsafe { (*all).ensure_uv_timer() };
     }
 
     pub fn remove(&mut self, timer: *mut EventLoopTimer) {
@@ -695,14 +764,38 @@ impl All {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.ref_();
-            // TODO(b2-blocked): Windows uv_idle path — needs VirtualMachine ptr.
+            #[cfg(windows)]
+            {
+                // Spec Timer.zig:168-179: lazy-init the idle handle and start
+                // it with a no-op callback so `uv_run` does not block in poll
+                // while immediates are pending (matches Node.js).
+                if self.uv_idle.data.is_null() {
+                    self.uv_idle.init(uv::Loop::get());
+                    // PORT NOTE: Zig stashes `vm` here; only used as a
+                    // non-null "initialized" sentinel — never dereferenced.
+                    self.uv_idle.data = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr()
+                        .cast::<core::ffi::c_void>();
+                }
+                self.uv_idle.start(Some(Self::on_uv_idle_noop));
+            }
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.unref();
+            #[cfg(windows)]
+            if !self.uv_idle.data.is_null() {
+                self.uv_idle.stop();
+            }
         }
         #[cfg(windows)]
         let _ = uws_loop;
+    }
+
+    /// Spec Timer.zig:175-177 — empty `uv_idle` callback. Its presence alone
+    /// keeps `uv_run` from blocking in the poll phase; the body is a no-op.
+    #[cfg(windows)]
+    unsafe extern "C" fn on_uv_idle_noop(_: *mut uv::uv_idle_t) {
+        // prevent libuv from polling forever
     }
 
     pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
@@ -714,14 +807,24 @@ impl All {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.ref_();
+            // Guard on `data != null`: `uv_ref`/`uv_unref` on a handle that
+            // never went through `uv_timer_init` violates the libuv API
+            // contract (and is a silent no-op on `loop->active_handles`). In
+            // practice `ensure_uv_timer` runs before any JS timer can be
+            // ref'd, but the guard mirrors the `uv_idle` data-null check and
+            // makes the invariant explicit.
             #[cfg(windows)]
-            self.uv_timer.ref_();
+            if !self.uv_timer.data.is_null() {
+                self.uv_timer.ref_();
+            }
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.unref();
             #[cfg(windows)]
-            self.uv_timer.unref();
+            if !self.uv_timer.data.is_null() {
+                self.uv_timer.unref();
+            }
         }
         #[cfg(windows)]
         let _ = uws_loop;

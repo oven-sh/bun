@@ -265,7 +265,11 @@ impl FilePoll {
         &mut self,
         vm: EventLoopCtx,
         loop_: &mut WindowsLoop,
-        polls: &mut Store,
+        // Raw `*mut Store`, NOT `&mut Store`: `self` may live inside
+        // `Store.hive`'s inline 128-slot buffer, so a `&mut Store` argument here
+        // would overlap `&mut self` (two aliasing unique references in one call).
+        // Zig `*Store`/`*FilePoll` alias freely; mirror that with a raw pointer.
+        polls: *mut Store,
     ) {
         if self.is_registered() {
             let _ = self.unregister(loop_);
@@ -274,7 +278,15 @@ impl FilePoll {
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::default();
         self.fd = Fd::INVALID;
-        polls.put(self, vm, was_ever_registered);
+        // All `self` field writes are done. Decay `self` to a raw slot pointer
+        // *before* materializing `&mut Store` so the `&mut Store` borrow (which
+        // covers the inline hive buffer) is the only live unique reference into
+        // that allocation when `Store::put` runs. `self` is never touched after
+        // this line — `Store::put` itself accesses `this` only via raw-pointer ops.
+        let this: *mut FilePoll = ptr::from_mut(self);
+        // SAFETY: `polls` was obtained from `vm.file_polls_ptr()`; the Store
+        // outlives all FilePolls it vends. No other `&mut Store` borrow is live.
+        unsafe { (*polls).put(this, vm, was_ever_registered) };
     }
 
     pub fn is_readable(&mut self) -> bool {
@@ -306,10 +318,15 @@ impl FilePoll {
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // SAFETY: vtable contract — `loop_` and `polls` are disjoint
-        // allocations (uws loop vs. HiveArray pool); single live borrow each.
+        // SAFETY: vtable contract — uws loop is a disjoint allocation from `self`.
         let loop_ = unsafe { vm.platform_event_loop() };
-        let polls = unsafe { vm.file_polls() };
+        // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
+        // so materializing `&mut Store` here (via `vm.file_polls()`) would assert
+        // unique access over that buffer and invalidate `&mut self`'s provenance
+        // *before* we reborrow it on the next line. Keep the Store as a raw
+        // pointer until after all `self` mutations are done inside
+        // `deinit_possibly_defer` (Zig: `vm.rareData().filePolls(vm)` aliases freely).
+        let polls: *mut Store = vm.file_polls_ptr();
         self.deinit_possibly_defer(vm, loop_, polls);
     }
 

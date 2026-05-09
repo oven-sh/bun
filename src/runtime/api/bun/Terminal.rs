@@ -1869,7 +1869,11 @@ impl BufferedReaderParent for Terminal {
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // SAFETY: see on_read_chunk; shared-only read of event_loop_handle.
-        unsafe { (*this).event_loop_handle.r#loop().cast() }
+        // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
+        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
+        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper —
+        // matching Terminal.zig `loop()` (`this.event_loop_handle.loop().uv_loop`).
+        unsafe { (*this).loop_().cast() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass the

@@ -325,12 +325,104 @@ impl Drop for InstallDirState {
 // ───────────────────────────── helpers ─────────────────────────────
 
 /// Zig: `node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false)`.
-/// The only NodeFS surface used here is recursive mkdir on a wide path; route to
-/// `bun_sys::make_path_w` so this file does not pull in the runtime-tier NodeFS.
+///
+/// Port of the NodeFS recursive-mkdir algorithm (node_fs.zig:4080) restricted to the
+/// `Ctx == void, return_path = false` instantiation used here. The previous routing to
+/// `bun_sys::make_path_w` was wrong: that helper transcodes to UTF-8, strips the `\\?\`
+/// prefix and forward-iterates components via `mkdirat(Fd::cwd(), comp)`, so the first
+/// component is `"C:"` (drive-relative — wrong dir) or `"UNC"` (creates a literal
+/// `UNC\server\share\...` tree under CWD). NodeFS instead calls `CreateDirectoryW` on
+/// the FULL absolute path and on `ENOENT` walks back to the first existing ancestor,
+/// then forward — never touching the filesystem root.
 #[cfg(windows)]
-#[inline]
 fn mkdir_recursive_os_path(fullpath: &bun_str::WStr) -> sys::Maybe<()> {
-    bun_sys::make_path_w(Fd::cwd(), fullpath.as_slice())
+    use sys::E;
+    let path = fullpath.as_slice();
+    // u16 to mirror Zig's `@truncate(path.len)`.
+    let len = path.len() as u16;
+
+    // First, attempt to create the desired directory.
+    match sys::mkdir_w(fullpath) {
+        Ok(()) => return Ok(()),
+        Err(err) => match err.get_errno() {
+            // `mkpath_np` on macOS also checks EISDIR; on Windows EEXIST suffices.
+            // NodeFS additionally probes `directoryExistsAt`; the package-install
+            // call sites discard the result (`_ =`) so a bare Ok matches behaviour.
+            E::EISDIR | E::EEXIST => return Ok(()),
+            E::ENOENT => {
+                if len == 0 {
+                    return Err(err);
+                }
+                // fall through to walk-back
+            }
+            _ => return Err(err),
+        },
+    }
+
+    let mut working_mem = WPathBuffer::uninit();
+    working_mem[..usize::from(len)].copy_from_slice(path);
+
+    #[inline]
+    fn is_sep(c: u16) -> bool {
+        c == u16::from(b'\\') || c == u16::from(b'/')
+    }
+
+    // Walk back until creating a parent succeeds (or one already exists).
+    let mut i: u16 = len - 1;
+    while i > 0 {
+        if is_sep(path[usize::from(i)]) {
+            working_mem[usize::from(i)] = 0;
+            // SAFETY: NUL written at [i]; [0..i] is readable.
+            let parent =
+                unsafe { bun_str::WStr::from_raw(working_mem.as_ptr(), usize::from(i)) };
+            match sys::mkdir_w(parent) {
+                Ok(()) => {
+                    working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
+                    break;
+                }
+                Err(err) => {
+                    working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
+                    match err.get_errno() {
+                        E::EEXIST => break,
+                        E::ENOENT => {}
+                        _ => return Err(err),
+                    }
+                }
+            }
+        }
+        i -= 1;
+    }
+    i += 1;
+    // Now walk forward creating each remaining component.
+    while i < len {
+        if is_sep(path[usize::from(i)]) {
+            working_mem[usize::from(i)] = 0;
+            // SAFETY: NUL written at [i]; [0..i] is readable.
+            let parent =
+                unsafe { bun_str::WStr::from_raw(working_mem.as_ptr(), usize::from(i)) };
+            match sys::mkdir_w(parent) {
+                Ok(()) => {}
+                Err(err) => match err.get_errno() {
+                    E::EEXIST => {} // race: another thread created it
+                    _ => return Err(err),
+                },
+            }
+            working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
+        }
+        i += 1;
+    }
+
+    // Final component (no trailing sep case — Zig's `first_match + 1 != len` check).
+    working_mem[usize::from(len)] = 0;
+    // SAFETY: NUL written at [len].
+    let leaf = unsafe { bun_str::WStr::from_raw(working_mem.as_ptr(), usize::from(len)) };
+    match sys::mkdir_w(leaf) {
+        Ok(()) => Ok(()),
+        Err(err) => match err.get_errno() {
+            E::EEXIST => Ok(()),
+            _ => Err(err),
+        },
+    }
 }
 
 /// Zig: `bun.openDir(dir, subpath)` — open a directory handle relative to `dir`.
@@ -434,12 +526,31 @@ impl HardLinkWindowsInstallTask {
         // SAFETY: called once per install batch on the main thread before any push().
         // Returns a shared ref so worker threads in run_from_thread_pool() may safely
         // alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take &self.
+        //
+        // PORT NOTE: Zig re-assigns the whole struct each call (`queue = Queue{...}`).
+        // `MaybeUninit::write` would leak the previous `WaitGroup` (Mutex+Condvar) and
+        // any unconsumed `errored_task` Box on every call after the first, so on
+        // subsequent calls we reset fields in place instead. `copy()` always reaches
+        // `queue.wait()` before returning (even on error — see the loop_err handling
+        // there), so no worker can still be inside `complete_one()` when we get here.
+        static INITIALIZED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
         unsafe {
-            (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
-                thread_pool: &PackageManager::get().thread_pool,
-                errored_task: AtomicPtr::new(core::ptr::null_mut()),
-                wait_group: WaitGroup::init(),
-            });
+            if INITIALIZED.swap(true, Ordering::Relaxed) {
+                let q = (*HARDLINK_QUEUE.get()).assume_init_mut();
+                let old = q.errored_task.swap(core::ptr::null_mut(), Ordering::Relaxed);
+                if !old.is_null() {
+                    drop(bun_core::heap::take(old));
+                }
+                q.wait_group = WaitGroup::init();
+                q.thread_pool = &PackageManager::get().thread_pool;
+            } else {
+                (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
+                    thread_pool: &PackageManager::get().thread_pool,
+                    errored_task: AtomicPtr::new(core::ptr::null_mut()),
+                    wait_group: WaitGroup::init(),
+                });
+            }
             (*HARDLINK_QUEUE.get()).assume_init_ref()
         }
     }
@@ -477,12 +588,22 @@ impl HardLinkWindowsInstallTask {
             unsafe { (*self_).err = Some(err) };
             // .Relaxed is okay because this value isn't read until all the tasks complete.
             // Use compare_exchange to keep only the first error.
-            let _ = queue.errored_task.compare_exchange(
-                core::ptr::null_mut(),
-                self_,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            );
+            if queue
+                .errored_task
+                .compare_exchange(
+                    core::ptr::null_mut(),
+                    self_,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+            {
+                // Lost the race — another task already recorded its error. Free this one
+                // (the Zig original leaks here; in Rust the `Box<Self>` + inner `Box<[u16]>`
+                // would otherwise leak per failed file).
+                // SAFETY: self_ was heap-allocated in init() and not stored anywhere.
+                unsafe { drop(bun_core::heap::take(self_)) };
+            }
             return;
         }
         // SAFETY: self_ was heap-allocated in init().
@@ -1509,8 +1630,26 @@ impl<'a> PackageInstall<'a> {
             let mut real_file_count: u32 = 0;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
+            // PORT NOTE: on Windows, tasks already pushed to `queue` are running on
+            // worker threads; an early `?` here would return before `queue.wait()`,
+            // letting the caller re-enter `init_queue()` and reset the WaitGroup
+            // while workers are still inside `complete_one()` (data race on the
+            // counter/condvar). Capture loop errors and always fall through to wait.
+            #[cfg(windows)]
+            let mut loop_err: Option<bun_core::Error> = None;
 
-            while let Some(entry) = walker.next()? {
+            loop {
+                let entry = match walker.next() {
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,
+                    #[cfg(not(windows))]
+                    Err(e) => return Err(e.into()),
+                    #[cfg(windows)]
+                    Err(e) => {
+                        loop_err = Some(e.into());
+                        break;
+                    }
+                };
                 #[cfg(unix)]
                 {
                     match entry.kind {
@@ -1565,7 +1704,8 @@ impl<'a> PackageInstall<'a> {
                     if entry.path.len() > head1.len() - to_copy_into1_offset
                         || entry.path.len() > head2.len() - to_copy_into2_offset
                     {
-                        return Err(bun_core::err!("NameTooLong"));
+                        loop_err = Some(bun_core::err!("NameTooLong"));
+                        break;
                     }
 
                     let dest_len = to_copy_into1_offset + entry.path.len();
@@ -1593,11 +1733,18 @@ impl<'a> PackageInstall<'a> {
             {
                 queue.wait();
 
-                // .Relaxed is okay because no tasks are running (could be made non-atomic)
-                let task = queue.errored_task.load(Ordering::Relaxed);
+                if let Some(err) = loop_err {
+                    return Err(err);
+                }
+
+                // .Relaxed is okay because no tasks are running (could be made non-atomic).
+                // Swap to null so `init_queue()` doesn't double-free it on the next batch.
+                let task = queue.errored_task.swap(core::ptr::null_mut(), Ordering::Relaxed);
                 if !task.is_null() {
-                    // SAFETY: pointer set by run_from_thread_pool, valid until we drop the queue.
-                    if let Some(err) = unsafe { (*task).err } {
+                    // SAFETY: pointer set by run_from_thread_pool from a Box allocated in
+                    // `init()`; we've swapped it out so we are the unique owner.
+                    let task = unsafe { bun_core::heap::take(task) };
+                    if let Some(err) = task.err {
                         return Err(err);
                     }
                 }
@@ -2044,7 +2191,19 @@ impl<'a> PackageInstall<'a> {
             }
         };
         let to_path: &[u8] = {
-            let fd = match sys::openat(self.cache_dir.fd(), symlinked_path, sys::O::RDONLY, 0) {
+            // Zig: `std.fs.Dir.realpath` opens with `.filter = .any` (Windows) /
+            // `O_PATH` (Linux). `symlinked_path` is always a package *directory*;
+            // bare `O::RDONLY` on Windows routes to the file-open NtCreateFile arm
+            // which requests `FILE_WRITE_ATTRIBUTES` (may be denied on RO dirs).
+            // `O::DIRECTORY` routes to `open_dir_at_windows_nt_path`
+            // (`FILE_LIST_DIRECTORY | SYNCHRONIZE`), matching the spec's directory
+            // open, then `get_fd_path` resolves via `GetFinalPathNameByHandleW`.
+            let fd = match sys::openat(
+                self.cache_dir.fd(),
+                symlinked_path,
+                sys::O::RDONLY | sys::O::DIRECTORY,
+                0,
+            ) {
                 Ok(fd) => fd,
                 Err(err) => return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None),
             };

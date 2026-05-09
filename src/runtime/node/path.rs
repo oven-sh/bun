@@ -2988,7 +2988,12 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 let mut u16_buf = bun_paths::WPathBuffer::uninit();
                 // Storage for the `=X:` fast-path key. Declared here (not inside the
                 // `'brk:` block) so the slice it backs stays live across `getenv_w`.
-                let mut fast_key: [u16; 3];
+                // 4 elements (not 3) so the wchar immediately following the 3-char
+                // key is a guaranteed NUL — `getenv_w` forwards `name.as_ptr()` to
+                // `GetEnvironmentVariableW`, which reads an LPCWSTR until NUL. The
+                // Zig spec uses `&[3:0]u16{...}` (sentinel-terminated) for the same
+                // reason.
+                let mut fast_key: [u16; 4];
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
                 // absolute path, get cwd for that drive, or the process cwd if
@@ -3004,8 +3009,9 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                             b'=' as u16,
                             u16::try_from(tmp_buf[0].as_u32()).expect("int cast"),
                             CHAR_COLON as u16,
+                            0,
                         ];
-                        break 'brk &fast_key[..];
+                        break 'brk &fast_key[..3];
                     }
                     buf_size = 1;
                     // Reuse buf2 for the env key because it's used to get the path.
@@ -3592,11 +3598,29 @@ pub fn to_namespaced_path(
 // proc-macro for `wrap4v` is not yet wired, so emit the SYSV-ABI thunks locally.
 // Each wrapper forwards `(global, is_windows, args_ptr, args_len)` and routes the
 // `JsResult<JSValue>` through `host_fn::to_js_host_call` (== Zig `toJSHostCall`).
-// PORT NOTE: `jsc.conv` is `extern "sysv64"` on windows-x64; switch to that ABI
-// when the `#[bun_jsc::host_call(wrap, sysv)]` proc-macro lands.
+//
+// ABI: `jsc.conv` (src/jsc/jsc.zig) is `.x86_64_sysv` on Windows-x64 and `.c`
+// everywhere else. The C++ side (src/jsc/bindings/Path.cpp) declares these as
+// `SYSV_ABI`, so on Windows-x64 the wrapper MUST be `extern "sysv64"` — using
+// `extern "C"` there would be the Win64 ABI (RCX/RDX/R8/R9 + shadow space) and
+// would mis-read every argument.
 macro_rules! export_path_host_fn {
     ($( $export:literal => $target:path ),* $(,)?) => {$(
         const _: () = {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            #[unsafe(export_name = $export)]
+            unsafe extern "sysv64" fn __wrapped(
+                global: &JSGlobalObject,
+                is_windows: bool,
+                args_ptr: *const JSValue,
+                args_len: u16,
+            ) -> JSValue {
+                crate::jsc::host_fn::to_js_host_call(
+                    global,
+                    || $target(global, is_windows, args_ptr, args_len),
+                )
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
             #[unsafe(export_name = $export)]
             unsafe extern "C" fn __wrapped(
                 global: &JSGlobalObject,

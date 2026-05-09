@@ -11,6 +11,11 @@ use bun_core::ZStr;
 use crate::windows::libuv as uv;
 use crate::{Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS, E};
 use crate::Tag;
+// `ReturnCodeExt::err_enum_e` overlays the libuv→POSIX errno translation that
+// Zig's `ReturnCode::errno()` does inline; without it the raw `UV_E*` magnitude
+// (e.g. 4058 for UV_ENOENT) would land in `Error.errno` and break callers that
+// compare against `E::NOENT as _`.
+use crate::ReturnCodeExt;
 
 /// `Maybe(T)` from Zig.
 type Result<T> = crate::Result<T>;
@@ -37,13 +42,19 @@ pub use crate::lseek;
 pub use crate::symlink;
 pub use crate::unlinkat;
 pub use crate::unlinkat_with_flags;
-// `mkdir_os_path` lands in B-2; until then route through the UTF-8 wrapper.
-pub use crate::mkdir as mkdir_os_path;
+// Zig: `pub const mkdirOSPath = bun.sys.mkdirOSPath;` — on Windows that's the
+// WTF-16 `CreateDirectoryW` wrapper (handles unpaired surrogates / `\\?\` long
+// paths). Re-export the real port (`mkdir_w`), NOT the UTF-8 `mkdir`, so callers
+// passing an `OSPathSlice` keep WTF-16 semantics.
+pub use crate::mkdir_w as mkdir_os_path;
 
 // Note: `req = undefined; req.deinit()` has a safety-check in a debug build
 
 pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();` — libuv heap-allocates the WCHAR path copy
+    // (`fs__capture_path`) and only `uv_fs_req_cleanup` frees it. `fs_t` has no
+    // `Drop`, so guard it explicitly on every return path.
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
 
     let flags = uv::O::from_bun_o(c_flags);
 
@@ -57,7 +68,7 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
     let rc = unsafe {
         uv::uv_fs_open(
             uv::Loop::get(),
-            &mut req,
+            &mut *req,
             file_path.as_ptr(),
             flags,
             perm as c_int,
@@ -71,7 +82,7 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
         perm,
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::open).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(Fd::from_uv(req.result.to_fd()))
@@ -79,9 +90,10 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
 }
 
 pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_mkdir(uv::Loop::get(), &mut req, file_path.as_ptr(), flags as c_int, None) };
+    let rc = unsafe { uv::uv_fs_mkdir(uv::Loop::get(), &mut *req, file_path.as_ptr(), flags as c_int, None) };
 
     log!(
         "uv mkdir({}, {}) = {}",
@@ -89,7 +101,7 @@ pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
         flags,
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::mkdir).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -97,10 +109,11 @@ pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
 }
 
 pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
 
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_chmod(uv::Loop::get(), &mut req, file_path.as_ptr(), flags as c_int, None) };
+    let rc = unsafe { uv::uv_fs_chmod(uv::Loop::get(), &mut *req, file_path.as_ptr(), flags as c_int, None) };
 
     log!(
         "uv chmod({}, {}) = {}",
@@ -108,7 +121,7 @@ pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
         flags,
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::chmod).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -117,12 +130,13 @@ pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
 
 pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
     let uv_fd = fd.uv();
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &mut req, uv_fd, flags as c_int, None) };
+    let rc = unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &mut *req, uv_fd, flags as c_int, None) };
 
     log!("uv fchmod({}, {}) = {}", uv_fd, flags, rc.int());
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::fchmod).with_fd(fd))
     } else {
         Result::Ok(())
@@ -130,16 +144,20 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
 }
 
 pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();` — `uv_fs_statfs` heap-allocates the
+    // `uv_statfs_t` result into `req.ptr` (plus the WCHAR path copy); only
+    // `uv_fs_req_cleanup` frees them. Guard so both success and error paths
+    // free.
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_statfs(uv::Loop::get(), &mut req, file_path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_statfs(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv statfs({}) = {}",
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::statfs).with_path(file_path.as_bytes()))
     } else {
         // SAFETY: on success, req.ptr points to a uv_statfs_t (layout-compatible with StatFS).
@@ -148,16 +166,19 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         // public type — no Zig-side `.init(*align(1) StatFS)` wrapper to call.
         // SAFETY: libuv guarantees `req.ptr` points to a valid `uv_statfs_t`
         // on success; we read it by value (Zig used `*align(1)` → unaligned).
+        // The value is copied out *before* the scopeguard runs `uv_fs_req_cleanup`
+        // and frees the backing allocation.
         let p = unsafe { req.ptr_as::<StatFS>() };
         Result::Ok(unsafe { core::ptr::read_unaligned(p) })
     }
 }
 
 pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc =
-        unsafe { uv::uv_fs_chown(uv::Loop::get(), &mut req, file_path.as_ptr(), uid, gid, None) };
+        unsafe { uv::uv_fs_chown(uv::Loop::get(), &mut *req, file_path.as_ptr(), uid, gid, None) };
 
     log!(
         "uv chown({}, {}, {}) = {}",
@@ -166,7 +187,7 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
         gid,
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::chown).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -176,12 +197,13 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
 pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
     let uv_fd = fd.uv();
 
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fchown(uv::Loop::get(), &mut req, uv_fd, uid, gid, None) };
+    let rc = unsafe { uv::uv_fs_fchown(uv::Loop::get(), &mut *req, uv_fd, uid, gid, None) };
 
     log!("uv chown({}, {}, {}) = {}", uv_fd, uid, gid, rc.int());
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::fchown).with_fd(fd))
     } else {
         Result::Ok(())
@@ -189,16 +211,17 @@ pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
 }
 
 pub fn rmdir(file_path: &ZStr) -> Result<()> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_rmdir(uv::Loop::get(), &mut req, file_path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_rmdir(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv rmdir({}) = {}",
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::rmdir).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -206,16 +229,17 @@ pub fn rmdir(file_path: &ZStr) -> Result<()> {
 }
 
 pub fn unlink(file_path: &ZStr) -> Result<()> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_unlink(uv::Loop::get(), &mut req, file_path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_unlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv unlink({}) = {}",
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::unlink).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -223,12 +247,16 @@ pub fn unlink(file_path: &ZStr) -> Result<()> {
 }
 
 pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();` — `uv_fs_readlink` heap-allocates the target
+    // string into `req.ptr` (plus the WCHAR path copy); only `uv_fs_req_cleanup`
+    // frees them. The guard covers all four return paths below; the bytes are
+    // copied into `buf` *before* the guard runs.
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // Edge cases: http://docs.libuv.org/en/v1.x/fs.html#c.uv_fs_realpath
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_readlink(uv::Loop::get(), &mut req, file_path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_readlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         log!(
             "uv readlink({}) = {}, [err]",
             BStr::new(file_path.as_bytes()),
@@ -274,10 +302,11 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
 }
 
 pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc =
-        unsafe { uv::uv_fs_rename(uv::Loop::get(), &mut req, from.as_ptr(), to.as_ptr(), None) };
+        unsafe { uv::uv_fs_rename(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
 
     log!(
         "uv rename({}, {}) = {}",
@@ -285,7 +314,7 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
         BStr::new(to.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         // which one goes in the .path field?
         Result::Err(Error::new(errno, Tag::rename))
     } else {
@@ -294,9 +323,10 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
 }
 
 pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_link(uv::Loop::get(), &mut req, from.as_ptr(), to.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_link(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
 
     log!(
         "uv link({}, {}) = {}",
@@ -304,7 +334,7 @@ pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
         BStr::new(to.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(
             Error::new(errno, Tag::link)
                 .with_path(from.as_bytes())
@@ -316,12 +346,13 @@ pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
 }
 
 pub fn symlink_uv(target: &ZStr, new_path: &ZStr, flags: c_int) -> Result<()> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe {
         uv::uv_fs_symlink(
             uv::Loop::get(),
-            &mut req,
+            &mut *req,
             target.as_ptr(),
             new_path.as_ptr(),
             flags,
@@ -335,7 +366,7 @@ pub fn symlink_uv(target: &ZStr, new_path: &ZStr, flags: c_int) -> Result<()> {
         BStr::new(new_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::symlink))
     } else {
         Result::Ok(())
@@ -347,12 +378,13 @@ pub fn ftruncate(fd: Fd, size: i64) -> Result<()> {
     // accept `i64` directly so this matches the cross-platform `bun_sys::ftruncate`
     // signature and callers don't need a per-platform `as isize` cast.
     let uv_fd = fd.uv();
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut req, uv_fd, size, None) };
+    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut *req, uv_fd, size, None) };
 
     log!("uv ftruncate({}, {}) = {}", uv_fd, size, rc.int());
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::ftruncate).with_fd(fd))
     } else {
         Result::Ok(())
@@ -361,26 +393,29 @@ pub fn ftruncate(fd: Fd, size: i64) -> Result<()> {
 
 pub fn fstat(fd: Fd) -> Result<Stat> {
     let uv_fd = fd.uv();
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fstat(uv::Loop::get(), &mut req, uv_fd, None) };
+    let rc = unsafe { uv::uv_fs_fstat(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fstat({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::fstat).with_fd(fd))
     } else {
+        // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
         Result::Ok(req.statbuf)
     }
 }
 
 pub fn fdatasync(fd: Fd) -> Result<()> {
     let uv_fd = fd.uv();
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fdatasync(uv::Loop::get(), &mut req, uv_fd, None) };
+    let rc = unsafe { uv::uv_fs_fdatasync(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fdatasync({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::fdatasync).with_fd(fd))
     } else {
         Result::Ok(())
@@ -389,12 +424,13 @@ pub fn fdatasync(fd: Fd) -> Result<()> {
 
 pub fn fsync(fd: Fd) -> Result<()> {
     let uv_fd = fd.uv();
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fsync(uv::Loop::get(), &mut req, uv_fd, None) };
+    let rc = unsafe { uv::uv_fs_fsync(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fsync({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::fsync).with_fd(fd))
     } else {
         Result::Ok(())
@@ -402,27 +438,31 @@ pub fn fsync(fd: Fd) -> Result<()> {
 }
 
 pub fn stat(path: &ZStr) -> Result<Stat> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_stat(uv::Loop::get(), &mut req, path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_stat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
 
     log!("uv stat({}) = {}", BStr::new(path.as_bytes()), rc.int());
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::stat).with_path(path.as_bytes()))
     } else {
+        // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
         Result::Ok(req.statbuf)
     }
 }
 
 pub fn lstat(path: &ZStr) -> Result<Stat> {
-    let mut req = uv::fs_t::uninitialized();
+    // Zig: `defer req.deinit();`
+    let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_lstat(uv::Loop::get(), &mut req, path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_lstat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
 
     log!("uv lstat({}) = {}", BStr::new(path.as_bytes()), rc.int());
-    if let Some(errno) = rc.errno() {
+    if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::lstat).with_path(path.as_bytes()))
     } else {
+        // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
         Result::Ok(req.statbuf)
     }
 }
@@ -472,7 +512,10 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
         let chunk_len = remaining_bufs.len().min(MAX_IOVEC_COUNT);
         let chunk_bufs = &remaining_bufs[0..chunk_len];
 
-        let mut req = uv::fs_t::uninitialized();
+        // Zig: `defer req.deinit();` — `uv_fs_read` heap-allocates
+        // `req->fs.info.bufs` when `nbufs > 4`; clean up every iteration
+        // (early-return included).
+        let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
 
         // The int return value of uv_fs_read truncates req.result (ssize_t) and
         // wraps negative when bytes read > INT_MAX, so use req.result directly.
@@ -480,7 +523,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
         let _ = unsafe {
             uv::uv_fs_read(
                 uv::Loop::get(),
-                &mut req,
+                &mut *req,
                 uv_fd,
                 chunk_bufs.as_ptr(),
                 c_uint::try_from(chunk_len).expect("int cast"),
@@ -501,7 +544,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
             );
         }
 
-        if let Some(e) = req.result.err_enum() {
+        if let Some(e) = req.result.err_enum_e() {
             return Result::Err(Error::new(e, Tag::read).with_fd(fd));
         }
 
@@ -542,7 +585,10 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
         let chunk_len = remaining_bufs.len().min(MAX_IOVEC_COUNT);
         let chunk_bufs = &remaining_bufs[0..chunk_len];
 
-        let mut req = uv::fs_t::uninitialized();
+        // Zig: `defer req.deinit();` — `uv_fs_write` heap-allocates
+        // `req->fs.info.bufs` when `nbufs > 4`; clean up every iteration
+        // (early-return included).
+        let mut req = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
 
         // The int return value of uv_fs_write truncates req.result (ssize_t) and
         // wraps negative when bytes written > INT_MAX, so use req.result directly.
@@ -550,7 +596,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
         let _ = unsafe {
             uv::uv_fs_write(
                 uv::Loop::get(),
-                &mut req,
+                &mut *req,
                 uv_fd,
                 chunk_bufs.as_ptr().cast(),
                 c_uint::try_from(chunk_len).expect("int cast"),
@@ -580,7 +626,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
             );
         }
 
-        if let Some(e) = req.result.err_enum() {
+        if let Some(e) = req.result.err_enum_e() {
             return Result::Err(Error::new(e, Tag::write).with_fd(fd));
         }
 

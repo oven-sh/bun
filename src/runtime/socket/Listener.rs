@@ -847,13 +847,17 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        use bun_sys_jsc::FdJsc as _;
         match &this.listener {
             ListenerType::Uws(uws_listener) => {
                 // SAFETY: uws_listener is non-null (Uws variant invariant).
                 let socket = unsafe { &mut **uws_listener }.socket::<false>();
-                let fd = socket.fd();
-                // TODO(port): `Fd::to_js_without_making_libuv_owned` — direct uv() encode for now.
-                JSValue::js_number(fd.uv() as f64)
+                // PORT NOTE: on Windows the listener fd is a system-kind SOCKET
+                // handle. `Fd::uv()` panics on a non-stdio system handle, so
+                // route through `to_js_without_making_lib_uv_owned()` which
+                // dispatches on kind (system→u64, uv→i32) without allocating a
+                // CRT fd. Mirrors Zig `fd().toJSWithoutMakingLibUVOwned()`.
+                socket.fd().to_js_without_making_lib_uv_owned()
             }
             _ => JSValue::js_number(-1.0),
         }
@@ -1020,6 +1024,11 @@ impl Listener {
                 // SAFETY: socket_config.handlers is valid; we forget socket_config below.
                 let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
                 let mut ssl_taken = socket_config.ssl.take();
+                // PORT NOTE: Zig's function-scope `defer socket_config.deinitExcludingHandlers()`
+                // frees `hostname_or_unix` on the named-pipe early-return. The
+                // `Fd` connect arm above never `take()`s it into `connection`,
+                // so drop it explicitly before `forget` suppresses Drop.
+                drop(core::mem::take(&mut socket_config.hostname_or_unix));
                 core::mem::forget(socket_config);
 
                 let mut handlers_box = Box::new(handlers_moved);
@@ -1521,8 +1530,12 @@ impl WindowsNamedPipeListeningContext {
         if result.is_err() {
             // connection dropped
             // SAFETY: `client` was just allocated via `WindowsNamedPipeContext::create`
-            // with refcount==1; releasing the only ref schedules deinit.
-            unsafe { WindowsNamedPipeContext::deref(client) };
+            // with refcount==1 and is not yet registered with libuv (accept failed
+            // before `uv_pipe_init`/`uv_accept` hooked it up). Tear it down
+            // synchronously — Zig calls `client.deinit()` here, bypassing the
+            // refcount/`scheduleDeinit` next-tick path so the wrapped NewSocket's
+            // +1 ref and the uv_pipe handle are released before returning to libuv.
+            unsafe { WindowsNamedPipeContext::deinit(client) };
         }
     }
 

@@ -380,6 +380,12 @@ impl<'a> BinLinkingShim<'a> {
 
         // SAFETY: caller guarantees buf.len() == encoded_length() which is always
         // a multiple of 2; Zig used @alignCast here (callers pass 2-aligned buffers).
+        // @alignCast is a runtime safety check in Zig safe builds — mirror it.
+        debug_assert_eq!(
+            buf.as_ptr() as usize & (core::mem::align_of::<u16>() - 1),
+            0,
+            "encode_into: buf must be 2-aligned"
+        );
         let mut wbuf: &mut [u16] = unsafe {
             bun_core::ffi::slice_mut(buf.as_mut_ptr().cast::<u16>(), buf.len() / 2)
         };
@@ -504,6 +510,13 @@ pub fn loose_decode(input: &[u8]) -> Option<Decoded<'_>> {
 #[inline]
 fn reinterpret_slice_u16(bytes: &[u8]) -> &[u16] {
     debug_assert!(bytes.len() % 2 == 0);
+    // Zig's `bun.reinterpretSlice` uses `@alignCast(bytes.ptr)` which runtime-checks
+    // alignment in safe builds — mirror that contract.
+    debug_assert_eq!(
+        bytes.as_ptr() as usize & (core::mem::align_of::<u16>() - 1),
+        0,
+        "reinterpret_slice_u16: bytes must be 2-aligned"
+    );
     // SAFETY: mirrors `bun.reinterpretSlice(u16, ...)` — caller-guaranteed alignment
     // and even length. TODO(port): replace with bun_core::reinterpret_slice if it exists.
     unsafe { bun_core::ffi::slice(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) }

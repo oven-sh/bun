@@ -34,10 +34,14 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
-    // Spec parity: `bun.sys.stat` on Windows goes through libuv → `_wstat64`-
-    // equivalent. For a cache-key digest we only need (mtime, size) to change
-    // when the file changes, so go straight to `GetFileAttributesExW` — same
-    // resolution as `uv_fs_stat`'s `ftLastWriteTime`, no event-loop dependency.
+    // Spec parity: `bun.sys.stat` on Windows is `uv_fs_stat`, which opens the
+    // path via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and so
+    // FOLLOWS symlinks, returning the target's mtime/size. We must do the same
+    // — `GetFileAttributesExW` (the previous shortcut here) does NOT follow
+    // symlinks per MSDN, so a symlinked cert whose target is rotated in place
+    // would keep the same digest and serve a stale `SSL_CTX` from the cache.
+    // Replicate libuv: `CreateFileW(.., 0, share-all, OPEN_EXISTING,
+    // FILE_FLAG_BACKUP_SEMANTICS, ..)` → `GetFileInformationByHandle`.
     //
     // `bun_string::to_w_path_normalized` lives above this crate, so widen
     // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
@@ -50,12 +54,29 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
         if *w == u16::from(b'/') { *w = u16::from(b'\\'); }
     }
     wbuf[n] = 0;
-    // SAFETY: POD, zero-valid.
-    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: `wbuf` is NUL-terminated at `[n]`; `data` is a valid out-ptr.
-    let ok = unsafe {
-        fs::GetFileAttributesExW(wbuf.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
+    // SAFETY: `wbuf` is NUL-terminated at `[n]`. dwDesiredAccess=0 (attribute
+    // query only — no read access needed), share-all so we never block writers,
+    // FILE_FLAG_BACKUP_SEMANTICS so directories open too (matches libuv).
+    let handle = unsafe {
+        fs::CreateFileW(
+            wbuf.as_ptr(),
+            0,
+            fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE,
+            ptr::null_mut(),
+            fs::OPEN_EXISTING,
+            fs::FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        )
     };
+    if handle == fs::INVALID_HANDLE_VALUE {
+        return None;
+    }
+    // SAFETY: POD, zero-valid.
+    let mut data: fs::BY_HANDLE_FILE_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+    // SAFETY: `handle` is a valid open handle; `data` is a valid out-ptr.
+    let ok = unsafe { fs::GetFileInformationByHandle(handle, &raw mut data) };
+    // SAFETY: `handle` was returned by `CreateFileW` and not yet closed.
+    unsafe { fs::CloseHandle(handle) };
     if ok == 0 {
         return None;
     }

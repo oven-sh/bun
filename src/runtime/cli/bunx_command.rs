@@ -1126,6 +1126,10 @@ impl BunxCommand {
                     // SAFETY: `this_transpiler.env` is the process-lifetime `*mut Loader`
                     // singleton populated during transpiler init; reborrowed `'static` here
                     // for the Windows MiniEventLoop singleton (Zig: `initGlobal(this_transpiler.env, null)`).
+                    // Stacked Borrows: this retag invalidates the outer `env_loader` binding
+                    // (its last NLL use was `create_null_delimited_env_map` above); a fresh
+                    // `env_loader` is re-derived after the spawn-result match below so the
+                    // two `&mut` never overlap.
                     Some(unsafe { &mut *this_transpiler.env }),
                     None,
                 )),
@@ -1195,6 +1199,17 @@ impl BunxCommand {
             }
             _ => {}
         }
+
+        // SAFETY: `this_transpiler.env` is the process-lifetime `*mut Loader` singleton.
+        // Re-derived here (rather than reusing the line-603 binding) because on Windows
+        // the `#[cfg(windows)]` spawn-options block above materializes its own
+        // `&mut *this_transpiler.env` for `MiniEventLoop::init_global`, which under
+        // Stacked Borrows would pop the original `env_loader`'s Unique tag and make any
+        // later use of it UB. Shadowing here keeps each `&mut` borrow's NLL liveness
+        // disjoint from the spawn-time borrow. Zig (`bunx_command.zig`) passes the raw
+        // `*Loader` directly with no aliasing constraint, so this is a Rust-port-only
+        // re-derivation; behavior is identical.
+        let env_loader = unsafe { &mut *this_transpiler.env };
 
         absolute_in_cache_dir = {
             let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];

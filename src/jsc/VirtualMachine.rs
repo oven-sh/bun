@@ -3005,11 +3005,16 @@ impl VirtualMachine {
             // PORT NOTE: Zig `IPC.log()` debug-only; the `IPC` scope static
             // lives in `crate::ipc` and `scoped_log!` requires a bare ident,
             // so the log line is dropped here.
+            // Spec: `std.fmt.parseInt(u31, fd_s, 10)` — accept only
+            // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
+            // Parsing as `u32` then `as i32` would silently wrap values in
+            // `2^31..2^32` to a negative fd instead of taking the warn branch.
             match core::str::from_utf8(&fd_s)
                 .ok()
-                .and_then(|s| s.parse::<u32>().ok())
+                .and_then(|s| s.parse::<i32>().ok())
+                .filter(|&n| n >= 0)
             {
-                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd as i32), mode),
+                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
                 None => bun_core::warn!(
                     "Failed to parse IPC channel number '{}'",
                     bstr::BStr::new(&fd_s[..])
@@ -6225,8 +6230,19 @@ impl VirtualMachine {
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
+            // PROVENANCE: `windows_configure_client` STORES the `*mut SendQueue`
+            // in `uv_handle_t.data` for the pipe's lifetime, so that pointer
+            // must derive from the root raw `instance` (SharedReadWrite tag,
+            // never popped), NOT from a `&mut SendQueue` auto-ref whose Unique
+            // tag would be invalidated by `(*instance).data.write_version_packet`
+            // below — every later libuv read callback would then deref a popped
+            // pointer (UB under Stacked Borrows). Mirror the POSIX branch's
+            // `addr_of_mut!` treatment.
             // SAFETY: `instance` is the live boxed IPCInstance.
-            if let Err(_) = unsafe { (*instance).data.windows_configure_client(fd) } {
+            let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
+            // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
+            // stored inline in `*instance`; no other live `&mut` aliases it.
+            if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) } {
                 IPCInstance::deinit(instance);
                 self.ipc = None;
                 bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));

@@ -190,13 +190,31 @@ pub mod build_options {
     pub const SHA: &str = build_opt!("BUN_GIT_SHA", "0000000000000000000000000000000000000000");
     pub const IS_CANARY: bool = build_opt_bool!("BUN_IS_CANARY", false);
     pub const CANARY_REVISION: &str = build_opt!("BUN_CANARY_REVISION", "0");
-    /// Repo root. Zig's build.zig passes `b.pathFromRoot(".")`; here we derive
-    /// it from this crate's manifest dir (`<repo>/src/bun_core`) so debug
-    /// `runtime_embed_file!` can find on-disk sources without an extra env var.
+    /// Repo root. Zig's build.zig passes `b.pathFromRoot(".")` (already
+    /// normalized, native separators) — there is *no* fallback in the spec.
+    /// `scripts/build/rust.ts` exports `BUN_BASE_PATH` for every build.
+    ///
+    /// The POSIX fallback derives it from this crate's manifest dir
+    /// (`<repo>/src/bun_core`) so a bare `cargo check` still works for
+    /// `runtime_embed_file!` (which goes through `PathBuf`, so the OS resolves
+    /// `..`). On Windows that fallback is *wrong*: `CARGO_MANIFEST_DIR` is
+    /// backslash-separated and concatenating `/../..` yields a mixed-separator,
+    /// unnormalized path that crash_handler's byte-wise `starts_with` (which
+    /// appends `SEP_STR` and compares against debug-info file paths) can never
+    /// match — so require the env var there, matching the Zig contract.
+    #[cfg(not(windows))]
     pub const BASE_PATH: &[u8] = match option_env!("BUN_BASE_PATH") {
         Some(v) => v.as_bytes(),
         None => concat!(env!("CARGO_MANIFEST_DIR"), "/../..").as_bytes(),
     };
+    #[cfg(windows)]
+    pub const BASE_PATH: &[u8] = env!(
+        "BUN_BASE_PATH",
+        "BUN_BASE_PATH must be set (scripts/build/rust.ts exports it); the \
+         CARGO_MANIFEST_DIR `/../..` fallback is mixed-separator + unnormalized \
+         on Windows and breaks crash_handler base-path stripping",
+    )
+    .as_bytes();
     pub const ENABLE_LOGS: bool = cfg!(debug_assertions);
     pub const ENABLE_ASAN: bool = cfg!(bun_asan);
     pub const ENABLE_FUZZILLI: bool = false;
@@ -214,11 +232,21 @@ pub mod build_options {
         target_os = "freebsd",
     ));
     /// `<build>/codegen`. `scripts/build/rust.ts` exports `BUN_CODEGEN_DIR` to
-    /// every crate's rustc env; fall back to the default debug profile path.
+    /// every crate's rustc env. POSIX fallback for bare `cargo check`; on
+    /// Windows the `/../../` fallback is mixed-separator + unnormalized (see
+    /// `BASE_PATH` above), so require the env var there.
+    #[cfg(not(windows))]
     pub const CODEGEN_PATH: &[u8] = match option_env!("BUN_CODEGEN_DIR") {
         Some(v) => v.as_bytes(),
         None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../build/debug/codegen").as_bytes(),
     };
+    #[cfg(windows)]
+    pub const CODEGEN_PATH: &[u8] = env!(
+        "BUN_CODEGEN_DIR",
+        "BUN_CODEGEN_DIR must be set (scripts/build/rust.ts exports it); the \
+         CARGO_MANIFEST_DIR fallback is mixed-separator + unnormalized on Windows",
+    )
+    .as_bytes();
     /// `cfg.version` from package.json, split by `scripts/build/rust.ts`.
     pub const VERSION: crate::Version = {
         // const-parse a "u32" string — `str::parse` isn't const.

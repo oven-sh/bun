@@ -61,16 +61,29 @@ impl Hardlinker {
             // PORT NOTE: Zig spelt `FD.cwd().getFdPathW(buf)`; the Rust `Fd`
             // newtype lives in `bun_core` and has no sys-layer methods, so call
             // the free fn.
-            let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
-                Ok(s) => &*s,
-                Err(_) => {
-                    return Ok(sys::Result::Err(sys::Error::from_code(
-                        sys::E::ACCES,
-                        sys::Tag::link,
-                    )));
-                }
+            // PORT NOTE: `get_fd_path_w` writes the raw `\\?\C:\...` result into
+            // `cwd_buf` and returns a SUB-SLICE (offset 4, or 6 for UNC) after
+            // stripping the long-path prefix. We can't keep that slice borrowed
+            // across the loop (borrowck vs `cwd_buf`), so capture both its start
+            // OFFSET and length, then reslice `cwd_buf[off..off+len]` per-iter.
+            // Slicing from 0 would yield `\\?\C:\…` with the last 4 chars of the
+            // real cwd dropped — wrong path for every project-relative hardlink.
+            let (dest_cwd_off, dest_cwd_len) = {
+                let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
+                    Ok(s) => &*s,
+                    Err(_) => {
+                        return Ok(sys::Result::Err(sys::Error::from_code(
+                            sys::E::ACCES,
+                            sys::Tag::link,
+                        )));
+                    }
+                };
+                // SAFETY: `dest_cwd` is a sub-slice of `cwd_buf` by contract of
+                // `get_fd_path_w` (it returns `&mut out_buffer[off..]`).
+                let off =
+                    unsafe { dest_cwd.as_ptr().offset_from(cwd_buf.as_ptr()) } as usize;
+                (off, dest_cwd.len())
             };
-            let dest_cwd_len = dest_cwd.len();
 
             loop {
                 let entry = match self.walker.next() {
@@ -116,7 +129,10 @@ impl Hardlinker {
                             {
                                 &[dest_slice]
                             } else {
-                                &[&cwd_buf[..dest_cwd_len], dest_slice]
+                                &[
+                                    &cwd_buf[dest_cwd_off..dest_cwd_off + dest_cwd_len],
+                                    dest_slice,
+                                ]
                             };
                             let joined = bun_paths::resolve_path::join_string_buf_w_same::<
                                 bun_paths::platform::Windows,
@@ -134,7 +150,7 @@ impl Hardlinker {
                             match sys::link_w(self.src.slice_z(), destfile_path) {
                                 sys::Result::Ok(()) => {}
                                 sys::Result::Err(link_err1) => match link_err1.get_errno() {
-                                    sys::E::EEXIST => {
+                                    sys::E::UV_EEXIST | sys::E::EEXIST => {
                                         if crate::PackageManager::verbose_install() {
                                             bun_core::pretty_errorln!(
                                                 "Hardlinking {} to a path that already exists: {}",
@@ -170,7 +186,7 @@ impl Hardlinker {
                                             }
                                         }
                                     }
-                                    sys::E::ENOENT => {
+                                    sys::E::UV_ENOENT | sys::E::ENOENT => {
                                         if crate::PackageManager::verbose_install() {
                                             bun_core::pretty_errorln!(
                                                 "Hardlinking {} to a path that doesn't exist: {}",

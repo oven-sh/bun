@@ -19,9 +19,10 @@ pub(crate) mod winsock {
     pub struct sockaddr_in6 { pub sin6_family: c_ushort, pub sin6_port: c_ushort, pub sin6_flowinfo: u32, pub sin6_addr: [u8; 16], pub sin6_scope_id: u32 }
     #[repr(C)] #[derive(Clone, Copy)]
     pub struct timeval { pub tv_sec: c_long, pub tv_usec: c_long }
-    /// `WSABUF` — Windows scatter/gather vector (libc has no `iovec` here).
+    /// c-ares' `ares.h` defines its own POSIX-layout `struct iovec { void *iov_base; size_t iov_len; }`
+    /// on Windows for the `asendv` socket-function callback — it does NOT use `WSABUF`.
     #[repr(C)] #[derive(Clone, Copy)]
-    pub struct iovec { pub iov_len: u32, pub iov_base: *mut u8 }
+    pub struct iovec { pub iov_base: *mut core::ffi::c_void, pub iov_len: usize }
 }
 
 /// The full c-ares FFI module. The temporary inline scaffold that previously

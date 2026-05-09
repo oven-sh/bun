@@ -275,9 +275,21 @@ pub enum Term {
 
 /// Options for [`run`] — port of `std.process.Child.RunOptions` (subset used
 /// by `repository.zig`).
+///
+/// `event_loop` has no Zig analogue: `std.process.Child.run` is a blocking
+/// `CreateProcessW`/`ReadFile` on Windows and needs no uv loop, but this shim
+/// re-routes through [`sync::spawn`] (= `bun.spawnSync`), whose Windows arm
+/// (`spawn_windows_with_pipes`) drives a libuv loop to drain stdout/stderr
+/// pipes. Callers must therefore supply the live `EventLoopHandle`; on POSIX
+/// it is ignored.
 pub struct RunOptions<'a> {
     pub argv: &'a [&'a [u8]],
     pub env_map: &'a bun_sys::EnvMap,
+    /// Event loop used on Windows to pump the stdout/stderr pipe readers.
+    /// REQUIRED on Windows (passed through to `sync::Options.windows.loop_`);
+    /// unused on POSIX. Never leave this defaulted — `WindowsOptions::default()`
+    /// fills `loop_` with `zeroed_unchecked()`, which is UB to dereference.
+    pub event_loop: EventLoopHandle,
 }
 
 /// Result of [`run`] — port of `std.process.Child.RunResult`.
@@ -346,6 +358,11 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
     // ── argv: &[&[u8]] → Vec<Box<[u8]>> (sync::Options owns its argv) ──
     let argv: Vec<Box<[u8]>> = opts.argv.iter().map(|a| Box::<[u8]>::from(*a)).collect();
 
+    // POSIX `sync::spawn` blocks on `wait4` and needs no event loop; only the
+    // Windows arm threads it into `WindowsOptions.loop_`.
+    #[cfg(not(windows))]
+    let _ = opts.event_loop;
+
     let sync_opts = process::sync::Options {
         argv,
         envp: Some(envp.as_ptr()),
@@ -353,6 +370,17 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         stdout: process::sync::SyncStdio::Buffer,
         stderr: process::sync::SyncStdio::Buffer,
         argv0: argv0_ptr,
+        // Windows: `sync::spawn` → `spawn_windows_with_pipes` (because
+        // stdout/stderr are `Buffer`) immediately calls
+        // `options.windows.loop_.platform_event_loop()` and `.tick()`s it.
+        // `..Default::default()` would leave `loop_` as `zeroed_unchecked()`
+        // (an invalid `EventLoopHandle` inhabitant — UB before the deref, and a
+        // null-deref after). Supply the caller's loop explicitly.
+        #[cfg(windows)]
+        windows: process::sync::WindowsOptions {
+            loop_: opts.event_loop,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

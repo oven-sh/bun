@@ -1133,10 +1133,25 @@ impl RealFS {
     pub fn open_tmp_dir(&self) -> Result<bun_sys::Dir, bun_core::Error> {
         #[cfg(windows)]
         {
-            // TODO(b2-windows): bun_sys::open_dir_at_windows_a + OpenDirOptions{iterable, read_only}
-            return bun_sys::open_dir_absolute(Self::tmpdir_path())
-                .map(bun_sys::Dir::from_fd)
-                .map_err(Into::into);
+            // fs.zig:601-608 — `openDirAtWindowsA(invalid_fd, tmpdirPath(),
+            // .{ .iterable = true, .can_rename_or_delete = false, .read_only = true })`.
+            // The generic `open_dir_absolute` path goes through `open_a(.., O::DIRECTORY, 0)`
+            // and on Windows `O::DIRECTORY == 0`, so the directory dispatch in
+            // `openat_windows_impl` is never taken and the handle lacks
+            // FILE_DIRECTORY_FILE/FILE_LIST_DIRECTORY — `openat(tmp_dir.fd(), name, ..)`
+            // in `TmpfileWindows::create` would then fail.
+            return bun_sys::open_dir_at_windows_a(
+                Fd::INVALID,
+                Self::tmpdir_path(),
+                bun_sys::WindowsOpenDirOptions {
+                    iterable: true,
+                    can_rename_or_delete: false,
+                    read_only: true,
+                    ..Default::default()
+                },
+            )
+            .map(bun_sys::Dir::from_fd)
+            .map_err(Into::into);
         }
         #[cfg(not(windows))]
         {
@@ -1589,11 +1604,19 @@ impl TmpfileWindows {
     }
 
     pub(crate) fn create(&mut self, rfs: &mut RealFS, name: &ZStr) -> Result<(), bun_core::Error> {
+        // `open_tmp_dir()` opens a *fresh* directory handle every call (it is not the
+        // cached `FileSystem::tmpdir()`), and `bun_sys::Dir` has no `Drop`, so without an
+        // explicit close the kernel HANDLE leaks on both success and the `?` early-returns
+        // below. Zig has the same leak (fs.zig:709-717); fixed here.
         let tmp_dir = rfs.open_tmp_dir()?;
+        let tmp_dir_fd = tmp_dir.fd();
+        scopeguard::defer! {
+            let _ = bun_sys::close(tmp_dir_fd);
+        }
 
         let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
 
-        self.fd = bun_sys::openat(tmp_dir.fd(), name, flags, 0)?;
+        self.fd = bun_sys::openat(tmp_dir_fd, name, flags, 0)?;
         let mut buf = PathBuffer::uninit();
         let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
         self.existing_path = Box::<[u8]>::from(&*existing_path);
@@ -1648,9 +1671,25 @@ impl TmpfileWindows {
 
 impl RealFS {
     pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
+        // fs.zig:944-955 — on Windows this must go through
+        // `openDirAtWindowsA(invalid_fd, path, .{ .iterable = true, .no_follow = false,
+        // .read_only = true })` so the resulting handle has FILE_LIST_DIRECTORY +
+        // FILE_DIRECTORY_FILE and can be iterated by `readdir`. The generic
+        // `open_a(.., O::DIRECTORY, 0)` path doesn't work here because on Windows
+        // `O::DIRECTORY == 0` (sys/lib.rs), so the `(flags & O::DIRECTORY) != 0`
+        // dispatch in `openat_windows_impl` is never taken and the path is opened
+        // via the *file* NtCreateFile branch.
         #[cfg(windows)]
-        // TODO(b2-windows): bun_sys::open_dir_at_windows_a + OpenDirOptions{iterable, read_only}
-        let dirfd = bun_sys::open_a(unsafe_dir_string, bun_sys::O::DIRECTORY, 0);
+        let dirfd = bun_sys::open_dir_at_windows_a(
+            Fd::INVALID,
+            unsafe_dir_string,
+            bun_sys::WindowsOpenDirOptions {
+                iterable: true,
+                no_follow: false,
+                read_only: true,
+                ..Default::default()
+            },
+        );
         #[cfg(not(windows))]
         let dirfd = bun_sys::open_a(unsafe_dir_string, bun_sys::O::DIRECTORY, 0);
 

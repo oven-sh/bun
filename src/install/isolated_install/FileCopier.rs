@@ -9,9 +9,10 @@ use bun_sys::{self as sys, walker_skippable, walker_skippable::Walker, Dir, Entr
 // `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(...)` are
 // comptime-configured path-builder types. `.unit = .os` means u8 on POSIX,
 // u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
-// the platform-native width.
-type AbsPathAutoOs = bun_paths::AbsPath<OSPathChar>;
-type PathAutoOs = bun_paths::Path<OSPathChar>;
+// the platform-native width. `.sep = .auto` normalizes `/` → `\` on Windows
+// during `from`/`append`, which is load-bearing for the Win32 calls below.
+type AbsPathAutoOs = bun_paths::AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
+type PathAutoOs = bun_paths::Path<OSPathChar, { bun_paths::path_options::Kind::ANY }, { bun_paths::path_options::PathSeparators::AUTO }>;
 
 pub struct FileCopier {
     pub src_path: AbsPathAutoOs,
@@ -130,7 +131,9 @@ impl FileCopier {
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
             }
         };
-        // `defer dest_dir.close()` → handled by Drop on `dest_dir`.
+        // Zig: `defer dest_dir.close();` — `Dir` is a non-owning Copy handle
+        // with no Drop impl, so close explicitly on every exit path.
+        let _close_dest_dir = sys::CloseOnDrop::dir(dest_dir);
 
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 

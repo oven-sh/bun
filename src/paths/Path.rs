@@ -546,18 +546,53 @@ fn dirname_windows<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     Some(&path[..end_index])
 }
 
-/// Minimal width-generic port of `diskDesignatorWindows` covering the
-/// drive-letter case (`C:` → 2). Returns the length of the disk designator.
-// TODO(port): UNC (`\\server\share`) and device (`\\.\`) prefixes per
-// `std.fs.path.windowsParsePath`.
+/// Width-generic port of `bun.Dirname.diskDesignatorWindows` →
+/// `windowsParsePath(..).disk_designator.len`. Handles drive-letter (`C:` → 2)
+/// and UNC NetworkShare (`\\server\share` → index past second token).
 #[allow(dead_code)]
-#[inline]
 fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
+    // Zig: `path_.len >= 2 and path_[1] == ':'` — no alphabetic check on path_[0].
     if path.len() >= 2 && path[1].eq_ascii(b':') {
-        if let Some(c0) = path[0].to_ascii() {
-            if c0.is_ascii_alphabetic() {
-                return 2;
+        return 2;
+    }
+    // Single leading separator (or lone sep) → kind = .None, designator = path[0..0].
+    if !path.is_empty()
+        && (path[0].eq_ascii(b'/') || path[0].eq_ascii(b'\\'))
+        && (path.len() == 1 || (!path[1].eq_ascii(b'/') && !path[1].eq_ascii(b'\\')))
+    {
+        return 0;
+    }
+    if path.len() < 5 {
+        // "//a/b".len
+        return 0;
+    }
+    // UNC NetworkShare: `\\server\share` or `//server/share` (uniform sep).
+    // `inline for ("/\\") |this_sep|` — separator that started the prefix
+    // must match throughout; mixing `/` and `\` falls through to relative.
+    for this_sep in [b'/', b'\\'] {
+        if path[0].eq_ascii(this_sep) && path[1].eq_ascii(this_sep) {
+            if path[2].eq_ascii(this_sep) {
+                return 0;
             }
+            // `std.mem.tokenizeScalar(T, path, this_sep)`: skip sep runs,
+            // yield non-empty tokens; after two `next()`, `it.index` is the
+            // offset just past the second token (at next sep or len).
+            let mut idx = 0usize;
+            let mut tokens = 0u8;
+            while tokens < 2 {
+                while idx < path.len() && path[idx].eq_ascii(this_sep) {
+                    idx += 1;
+                }
+                if idx >= path.len() {
+                    // `orelse return relative_path`
+                    return 0;
+                }
+                while idx < path.len() && !path[idx].eq_ascii(this_sep) {
+                    idx += 1;
+                }
+                tokens += 1;
+            }
+            return idx;
         }
     }
     0
@@ -695,21 +730,51 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         if TypeId::of::<U>() == TypeId::of::<u8>() {
             let buf: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
-            // SAFETY: buf is valid for buf.len() writable bytes.
-            let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
-            if n < 0 {
-                return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
+            // Zig spec (`bun.getFdPath` with `*PathBuffer`): on Windows the
+            // u8 path still resolves via `GetFinalPathNameByHandleW` into a
+            // stack `WPathBuffer`, then transcodes to UTF-8 with
+            // `strings.copyUTF16IntoUTF8`. `fd_path_raw` has no Windows arm
+            // (returns 0), so route through the wide call here.
+            #[cfg(windows)]
+            {
+                let mut wbuf = crate::w_path_buffer_pool::get();
+                let wslice: &mut [u16] = wbuf.as_mut_slice();
+                // SAFETY: wslice is valid for wslice.len() writable u16 units.
+                let n = unsafe { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
+                if n <= 0 {
+                    return Err(bun_core::Error::from_errno(9)); // EBADF
+                }
+                let wide = &wslice[..n as usize];
+                let written = match strings::convert_utf16_to_utf8_in_buffer(buf, wide) {
+                    Ok(s) => s.len(),
+                    Err(r) => r.written as usize,
+                };
+                let raw = &buf[..written];
+                let trimmed = trim_input(TrimInputKind::Abs, raw);
+                this._buf.len = trimmed.len();
+                return Ok(this);
             }
-            let raw = &buf[..n as usize];
-            let trimmed = trim_input(TrimInputKind::Abs, raw);
-            this._buf.len = trimmed.len();
+
+            #[cfg(not(windows))]
+            {
+                // SAFETY: buf is valid for buf.len() writable bytes.
+                let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                // `fd_path_raw` returns 0 on misc failure — do not swallow as
+                // an empty path; Zig `try fd.getFdPath(...)` propagates errors.
+                if n <= 0 {
+                    return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
+                }
+                let raw = &buf[..n as usize];
+                let trimmed = trim_input(TrimInputKind::Abs, raw);
+                this._buf.len = trimmed.len();
+            }
         } else {
             // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
             let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
             // SAFETY: buf is valid for buf.len() writable u16 units.
             let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
-            if n < 0 {
+            if n <= 0 {
                 return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
             }
             let raw = &buf[..n as usize];

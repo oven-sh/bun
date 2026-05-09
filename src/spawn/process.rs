@@ -204,14 +204,27 @@ impl Process {
     #[cfg(windows)]
     pub fn update_status_on_windows(&mut self) {
         // Zig: `onExitUV(&this.poller.uv, 0, 0)` — uses @fieldParentPtr to
-        // recover `self`. In Rust the back-pointer lives in `uv.data`; obtain
-        // the raw `*mut uv_process_t` and forward.
-        if let Poller::Uv(uv_proc) = &mut self.poller {
-            if !uv_proc.is_active() && matches!(self.status, Status::Running) {
-                let handle: *mut uv::uv_process_t = core::ptr::from_mut(uv_proc);
-                Self::on_exit_uv(handle, 0, 0);
+        // recover `*Process`. The Rust port stores a `data` back-pointer for
+        // the libuv-driven callback path; routing through `on_exit_uv` here
+        // would re-derive `&mut Process` from that heap-root tag while the
+        // protected `&mut self` argument is live (Stacked-Borrows UB), and
+        // then write `self.poller = Detached` through the alias. Inline the
+        // `(exit_status = 0, term_signal = 0)` arm of `on_exit_uv` instead so
+        // every access goes through the single `&mut self` borrow.
+        let rusage = match &mut self.poller {
+            Poller::Uv(uv_proc)
+                if !uv_proc.is_active() && matches!(self.status, Status::Running) =>
+            {
+                bun_sys::windows::libuv::log!(
+                    "Process.onExit({}) code: 0, signal: None",
+                    uv_proc.pid
+                );
+                uv_getrusage(uv_proc)
             }
-        }
+            _ => return,
+        };
+        self.close();
+        self.on_exit(Status::Exited(Exited { code: 0, signal: 0 }), &rusage);
     }
 
     #[cfg(unix)]
@@ -613,9 +626,15 @@ impl Process {
         {
             match &mut self.poller {
                 Poller::Uv(handle) => {
-                    if let Some(err) = handle.kill(c_int::from(signal)).to_error(bun_sys::Tag::kill) {
-                        // if the process was already killed don't throw
-                        if err.errno != bun_sys::E::ESRCH as u16 {
+                    let rc = handle.kill(c_int::from(signal));
+                    // if the process was already killed don't throw —
+                    // Zig `ReturnCode.errno()` runs the UV→E translation
+                    // (UV_ESRCH=-4040 → E.SRCH=3). The Rust `Error.errno`
+                    // stores the raw `|rc|` (4040), so compare via
+                    // `err_enum_e()` which goes through
+                    // `translate_uv_error_to_e` like Zig.
+                    if rc.err_enum_e() != Some(bun_sys::E::SRCH) {
+                        if let Some(err) = rc.to_error(bun_sys::Tag::kill) {
                             return Err(err);
                         }
                     }
@@ -1395,7 +1414,14 @@ impl Default for WindowsSpawnResult {
 pub enum WindowsStdioResult {
     /// inherit, ignore, path, pipe
     Unavailable,
-    Buffer(Box<uv::Pipe>),
+    /// Non-owning raw `*uv.Pipe` (Zig: `buffer: *uv.Pipe`). The pipe was
+    /// `uv_pipe_init`'d in `spawn_process_windows` and is linked into the
+    /// libuv loop's handle queue, so it MUST be released via
+    /// `uv::Pipe::close_and_destroy` (or transferred into a reader/writer
+    /// that does so) — never via plain `Box` dealloc, which would leave a
+    /// dangling `uv_handle_t` in the loop. Dropping `WindowsStdioResult`
+    /// is therefore a no-op on this variant, matching Zig.
+    Buffer(*mut uv::Pipe),
     BufferFd(Fd),
 }
 
@@ -1740,7 +1766,19 @@ pub fn spawn_process_windows(
                 }
                 WindowsStdio::Path(path) => {
                     let mut req = uv::fs_t::uninitialized();
-                    let path_z = bun_sys::to_posix_path(path)?;
+                    // Zig: `try std.posix.toPosixPath(path)` is covered by the
+                    // `defer { for (uv_files_to_close.items) … }` registered at
+                    // process.zig:1700. The Rust port replaced that defer with
+                    // explicit calls, so `?` here would leak any fds opened in
+                    // earlier loop iterations — match-and-cleanup instead.
+                    let path_z = match bun_sys::to_posix_path(path) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            failed = true;
+                            cleanup_uv_files(&uv_files_to_close, loop_);
+                            return Err(e);
+                        }
+                    };
                     // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
                     // loop, `path_z` is NUL-terminated and outlives the call
                     // (sync — no callback).
@@ -1819,7 +1857,17 @@ pub fn spawn_process_windows(
             }
             WindowsStdio::Path(path) => {
                 let mut req = uv::fs_t::uninitialized();
-                let path_z = bun_sys::to_posix_path(path)?;
+                // See the 0..3 loop above — Zig's `defer uv_files_to_close`
+                // (process.zig:1700) covers this `try toPosixPath`; explicit
+                // cleanup here keeps the Rust port from leaking earlier fds.
+                let path_z = match bun_sys::to_posix_path(path) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        failed = true;
+                        cleanup_uv_files(&uv_files_to_close, loop_);
+                        return Err(e);
+                    }
+                };
                 // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
                 // `path_z` is NUL-terminated and outlives the call (sync).
                 let rc = unsafe {
@@ -1970,16 +2018,17 @@ pub fn spawn_process_windows(
         } else {
             match stdio_options[i] {
                 WindowsStdio::Buffer(_) => {
-                    // SAFETY: stdio.data.stream is the same `*mut uv::Pipe`
-                    // produced by `heap::alloc` in create_zeroed_pipe and
-                    // stored in `options.{stdin,stdout,stderr}`. `WindowsStdio`
-                    // has no `Drop` (deinit is explicit, Zig spec), so
-                    // reconstructing the Box here is the *sole* ownership
-                    // transfer — the borrowed `options` dropping later is a
-                    // no-op on the raw pointer.
-                    *result_stdio = WindowsStdioResult::Buffer(unsafe {
-                        bun_core::heap::take(stdio.data.stream.cast::<uv::Pipe>())
-                    });
+                    // stdio.data.stream is the same `*mut uv::Pipe` produced
+                    // by `heap::alloc` in create_zeroed_pipe and stored in
+                    // `options.{stdin,stdout,stderr}`. Zig stores the raw
+                    // pointer (non-owning) — `WindowsStdio` has no `Drop`, so
+                    // the borrowed `options` dropping later is a no-op. The
+                    // consumer (`SyncWindowsPipeReader`, JS bindings, shell)
+                    // takes ownership and routes destruction through
+                    // `uv_close` → `heap::take`.
+                    *result_stdio = WindowsStdioResult::Buffer(
+                        unsafe { stdio.data.stream }.cast::<uv::Pipe>(),
+                    );
                 }
                 _ => {
                     *result_stdio = WindowsStdioResult::Unavailable;
@@ -1992,11 +2041,11 @@ pub fn spawn_process_windows(
         match input {
             WindowsStdio::Ipc(_) | WindowsStdio::Buffer(_) => {
                 // PERF(port): was assume_capacity
-                // SAFETY: sole ownership transfer of the heap-allocated
-                // uv::Pipe; `WindowsStdio` has no Drop (explicit `deinit`).
-                result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
-                    bun_core::heap::take(stdio_containers[3 + i].data.stream.cast::<uv::Pipe>())
-                }));
+                // Raw non-owning pointer (Zig spec) — see comment on the
+                // 0..3 loop above.
+                result.extra_pipes.push(WindowsStdioResult::Buffer(
+                    unsafe { stdio_containers[3 + i].data.stream }.cast::<uv::Pipe>(),
+                ));
             }
             _ => {
                 result.extra_pipes.push(WindowsStdioResult::Unavailable);
@@ -2489,16 +2538,18 @@ pub mod sync {
             (OutFd::Stdout, &mut spawned.stdout),
             (OutFd::Stderr, &mut spawned.stderr),
         ] {
-            // Move ownership of the `Box<uv::Pipe>` out of `spawned` by
-            // resetting the slot to `Unavailable`; otherwise `spawned`'s
-            // auto-Drop at scope end would double-free the pipe already freed
-            // via `SyncWindowsPipeReader::on_close`.
+            // Reset the slot to `Unavailable` so later `spawned.close()` /
+            // drop is a no-op for this stdio.
             let taken = core::mem::replace(stdio, WindowsStdioResult::Unavailable);
             if let WindowsStdioResult::Buffer(pipe) = taken {
                 let reader = SyncWindowsPipeReader::new(SyncWindowsPipeReader {
                     context: this_ptr,
                     tag,
-                    pipe,
+                    // SAFETY: `pipe` is the heap allocation from
+                    // `create_zeroed_pipe`; sole ownership transfers here and
+                    // is released via `uv_close` → `heap::take` in
+                    // `SyncWindowsPipeReader::on_close`.
+                    pipe: unsafe { bun_core::heap::take(pipe) },
                     chunks: Vec::new(),
                     pending_alloc: None,
                     err: bun_sys::E::SUCCESS,

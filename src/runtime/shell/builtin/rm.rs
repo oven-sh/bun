@@ -618,9 +618,10 @@ pub struct ShellRmTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub cwd: bun_sys::Fd,
-    /// Windows only: resolved absolute path of `cwd` (heap-owned).
-    #[cfg(windows)]
-    pub cwd_path: Option<ZBox>,
+    // PORT NOTE: rm.zig also keeps a Windows-only `cwd_path` populated from
+    // `Syscall.getFdPath(cwd)` on the root task, but it is never read (set and
+    // freed only). The Rust port drops it: keeping it required a Windows
+    // `get_fd_path` call whose only observable effect was the error path.
     /// PORT NOTE: in Zig the root DirTask is an inline field. Here it lives in
     /// its own `heap::alloc`'d allocation so that `&ShellRmTask` (held as
     /// the `&self` receiver throughout `remove_entry*`) never overlaps the
@@ -709,8 +710,6 @@ impl ShellRmTask {
             cmd,
             opts,
             cwd,
-            #[cfg(windows)]
-            cwd_path: None,
             root_task,
             root_path: root_path_z,
             root_is_absolute: is_absolute,
@@ -897,16 +896,21 @@ impl ShellRmTask {
             // ResolvePath.joinBuf because it doesn't try to normalize.
             // Spec: `std.fs.path.joinZ(alloc, parts)` — concatenate with
             // platform separator, collapsing only adjacent separators.
-            let sep = bun_paths::SEP;
+            // On Windows `std.fs.path.isSep` matches BOTH `/` and `\`, so do
+            // the same here when deciding whether to insert/strip a separator.
+            #[cfg(windows)]
+            let is_sep = |c: u8| c == b'/' || c == b'\\';
+            #[cfg(not(windows))]
+            let is_sep = |c: u8| c == b'/';
             let mut out: Vec<u8> = Vec::new();
             for (i, p) in parts.iter().enumerate() {
                 if i == 0 {
                     out.extend_from_slice(p);
                 } else {
-                    if !matches!(out.last(), Some(&c) if c == sep) {
-                        out.push(sep);
+                    if !matches!(out.last(), Some(&c) if is_sep(c)) {
+                        out.push(bun_paths::SEP);
                     }
-                    let p = if p.first() == Some(&sep) { &p[1..] } else { p };
+                    let p = if matches!(p.first(), Some(&c) if is_sep(c)) { &p[1..] } else { p };
                     out.extend_from_slice(p);
                 }
             }
@@ -1254,29 +1258,15 @@ impl DirTask {
         // SAFETY: caller contract — `this` is a live DirTask; this worker
         // thread has exclusive access to its non-atomic fields (`task_manager`
         // / `parent_task` / `path` / `is_absolute`). `tm_ptr` is live until
-        // `pending_main_callbacks` hits 0. On Windows the root task runs
-        // before any subtasks are spawned, so the `cwd_path` write is unique
-        // and uses raw `*mut` provenance (no `&ShellRmTask` to invalidate).
+        // `pending_main_callbacks` hits 0.
+        //
+        // PORT NOTE: rm.zig:560-577 also resolves `cwd_path` here on Windows
+        // via `Syscall.getFdPath`. That field is dead state (never read), so
+        // the Rust port drops the block entirely rather than calling a
+        // Windows path resolver whose only effect would be to fail the task
+        // on error.
         let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = unsafe {
             let tm_ptr = (*this).task_manager;
-
-            // Root, get cwd path on Windows.
-            #[cfg(windows)]
-            if (*this).parent_task.is_null() {
-                let mut buf = bun_paths::PathBuffer::uninit();
-                let cwd = (*tm_ptr).cwd;
-                match bun_sys::get_fd_path(cwd, &mut buf) {
-                    Ok(p) => {
-                        (*tm_ptr).cwd_path = Some(ZBox::from_bytes(&*p));
-                    }
-                    Err(err) => {
-                        (*tm_ptr).handle_err(err);
-                        Self::post_run(this);
-                        return;
-                    }
-                }
-            }
-
             let abs = Platform::AUTO.is_absolute((*this).path.as_bytes());
             (*this).is_absolute = abs;
             (tm_ptr, abs)

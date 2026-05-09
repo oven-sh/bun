@@ -2710,9 +2710,16 @@ pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 // UTF-8 encoding of U+FFFD
 pub const UNICODE_REPLACEMENT_STR: [u8; 3] = [0xEF, 0xBF, 0xBD];
 
-// inet_pton via direct libc extern (libc crate doesn't expose it on all targets).
+// Spec parity (immutable.zig:1990/2003): route through c-ares' `ares_inet_pton`
+// rather than the system `inet_pton`. c-ares is statically linked into the
+// final binary, so a bare extern is sufficient and respects the
+// `bun_string < bun_sys < cares_sys` crate layering. The system symbol is NOT
+// equivalent on Windows: ws2_32's `inet_pton` fails with WSANOTINITIALISED
+// before `WSAStartup()`, and these helpers are reachable from resolver/CLI
+// paths that run before any socket is created. `ares_inet_pton` has no such
+// dependency.
 unsafe extern "C" {
-    fn inet_pton(af: c_int, src: *const u8, dst: *mut u8) -> c_int;
+    fn ares_inet_pton(af: c_int, src: *const u8, dst: *mut core::ffi::c_void) -> c_int;
 }
 // dep-graph: bun_string < bun_sys, so cannot import the canonical
 // `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
@@ -2729,8 +2736,8 @@ pub fn is_ip_address(input: &[u8]) -> bool {
     let mut dst = [0u8; 28];
     // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
     unsafe {
-        inet_pton(AF_INET, buf.as_ptr(), dst.as_mut_ptr()) > 0
-            || inet_pton(AF_INET6, buf.as_ptr(), dst.as_mut_ptr()) > 0
+        ares_inet_pton(AF_INET, buf.as_ptr(), dst.as_mut_ptr().cast()) > 0
+            || ares_inet_pton(AF_INET6, buf.as_ptr(), dst.as_mut_ptr().cast()) > 0
     }
 }
 
@@ -2740,7 +2747,7 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     buf[..input.len()].copy_from_slice(input);
     let mut dst = [0u8; 28];
     // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe { inet_pton(AF_INET6, buf.as_ptr(), dst.as_mut_ptr()) > 0 }
+    unsafe { ares_inet_pton(AF_INET6, buf.as_ptr(), dst.as_mut_ptr().cast()) > 0 }
 }
 
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {

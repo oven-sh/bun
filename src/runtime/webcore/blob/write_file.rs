@@ -813,7 +813,15 @@ mod windows_impl {
                 .pathlike
                 .path()
                 .slice();
-            crate::node::fs::async_::AsyncMkdirp::new(crate::node::fs::async_::AsyncMkdirp {
+            // LIFETIME: `AsyncMkdirp::new` returns `Box<Self>`. In Zig (write_file.zig:486)
+            // `.new(...)` is `bun.TrivialNew`, which yields a raw `*AsyncMkdirp` with no
+            // destructor — the allocation is intentionally leaked here and freed by
+            // `work_pool_callback` after invoking `completion`. In Rust the temporary
+            // `Box` would drop at end-of-statement, freeing the allocation immediately
+            // after `schedule()` stashes a raw `*mut WorkPoolTask` into the work pool,
+            // so the worker thread would dereference freed memory. `Box::leak` hands
+            // ownership to the work-pool/completion path, matching the Zig lifetime.
+            Box::leak(crate::node::fs::async_::AsyncMkdirp::new(crate::node::fs::async_::AsyncMkdirp {
                 completion: Self::on_mkdirp_complete_concurrent,
                 completion_ctx: ctx,
                 // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
@@ -823,7 +831,7 @@ mod windows_impl {
                     // this shouldn't happen
                     .unwrap_or(path) as *const [u8],
                 ..Default::default()
-            })
+            }))
             .schedule();
         }
 

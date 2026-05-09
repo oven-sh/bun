@@ -27,12 +27,16 @@ pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
 pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
 /// Wrapper that returns `None` on `INVALID_HANDLE_VALUE` (matches
-/// `std.os.windows.GetStdHandle` error-union semantics).
+/// `std.os.windows.GetStdHandle` error-union semantics). NULL is a *valid*
+/// success value (no associated console / detached process) and is passed
+/// through as `Some(null)` exactly like the Zig std wrapper — folding NULL
+/// into the error path would diverge from `output.zig`'s `Fd.fromSystem(null)`
+/// caching behavior.
 #[inline]
 pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
     // SAFETY: kernel32 GetStdHandle has no preconditions.
     let h = unsafe { kernel32::GetStdHandle(std_handle) };
-    if h == INVALID_HANDLE_VALUE || h.is_null() { None } else { Some(h) }
+    if h == INVALID_HANDLE_VALUE { None } else { Some(h) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -58,8 +62,9 @@ pub struct ProcessParameters {
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
-    // CURDIR CurrentDirectory — UNICODE_STRING (16) + HANDLE (8).
-    _current_directory: [u8; 24],
+    // CURDIR CurrentDirectory — UNICODE_STRING DosPath (16) + HANDLE Handle (8).
+    pub CurrentDirectoryPath: UnicodeString,
+    pub CurrentDirectoryHandle: HANDLE,
     pub DllPath: UnicodeString,
     pub ImagePathName: UnicodeString,
     pub CommandLine: UnicodeString,
@@ -76,24 +81,38 @@ pub struct PebView {
     _reserved2: [u8; 1],
     _reserved3: [*mut c_void; 2],
     pub Ldr: *mut c_void,
-    pub ProcessParameters: &'static ProcessParameters,
+    // Raw pointer, not `&'static`: RTL_USER_PROCESS_PARAMETERS is mutated by
+    // the OS/CRT (SetStdHandle, SetCurrentDirectoryW, …) behind Rust's back,
+    // so materializing an immutable reference would be UB under Stacked/Tree
+    // Borrows. Zig's `std.os.windows.peb()` likewise exposes a raw `*PEB`.
+    pub ProcessParameters: *const ProcessParameters,
 }
 
 /// `std.os.windows.peb()` — reads `gs:[0x60]` (x64) / `__readgsqword(0x60)`.
+///
+/// Returns a raw `*const PebView` (not `&'static PebView`): the PEB and its
+/// `ProcessParameters` are written by the OS, CRT, loader, and debuggers for
+/// the life of the process (`SetStdHandle`, `SetCurrentDirectoryW`,
+/// `BeingDebugged`, `Ldr` updates). A `&'static T` would assert to the
+/// optimizer that the pointee is immutable forever, which is false. Callers
+/// must dereference under `unsafe` and treat fields as externally-mutable.
 #[inline]
-pub unsafe fn peb() -> &'static PebView {
+pub unsafe fn peb() -> *const PebView {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         let p: *const PebView;
-        core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, pure, readonly));
-        &*p
+        // `readonly` (asm reads memory) but NOT `pure`: the result address is
+        // stable, yet `pure` would let LLVM CSE/hoist as if the *pointee* were
+        // invariant, which it is not.
+        core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, readonly, preserves_flags));
+        p
     }
     #[cfg(target_arch = "aarch64")]
     unsafe {
         // TEB at x18; PEB at TEB+0x60.
         let teb: *const u8;
-        core::arch::asm!("mov {}, x18", out(reg) teb, options(nostack, pure, readonly));
-        &*(*(teb.add(0x60) as *const *const PebView))
+        core::arch::asm!("mov {}, x18", out(reg) teb, options(nostack, readonly, preserves_flags));
+        *(teb.add(0x60) as *const *const PebView)
     }
 }
 

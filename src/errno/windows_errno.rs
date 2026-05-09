@@ -475,8 +475,8 @@ pub fn get_errno<T>(_rc: T) -> E {
         return sys.to_e();
     }
 
-    if let Some(wsa) = windows::wsa_get_last_error() {
-        return wsa.to_e();
+    if let Some(sys) = windows::wsa_get_last_error() {
+        return sys.to_e();
     }
 
     E::SUCCESS
@@ -878,7 +878,24 @@ pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
 impl SystemErrnoInit for i64 {
-    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_c_int(self as c_int) }
+    #[inline] fn into_system_errno(self) -> Option<SystemErrno> {
+        // Zig `init(code: anytype)` only takes the Win32/WSA/uv-mapping branch
+        // when `@TypeOf(code)` is `u16` or (`c_int` and > 0). For every other
+        // integer type — including i64, since `c_int` is i32 on Windows — it
+        // falls through to `if (code < 0) return init(-code); return
+        // @enumFromInt(code);`, i.e. a *raw SystemErrno discriminant* cast with
+        // NO Win32 remapping. Every i64 caller (`bun_sys::Error::get_errno`)
+        // passes a value that is already a stored SystemErrno/E discriminant,
+        // so routing through `init_c_int` would silently corrupt it via the
+        // Win32Error table (EPERM→EISDIR, EIO→EPERM, EACCES→EINVAL, …).
+        let n = if self < 0 { -self } else { self };
+        // `E` and `SystemErrno` share identical #[repr(u16)] discriminant sets,
+        // so the checked `E::try_from_raw` validates the sparse layout for both.
+        u16::try_from(n)
+            .ok()
+            .and_then(E::try_from_raw)
+            .map(|e| unsafe { core::mem::transmute::<E, SystemErrno>(e) })
+    }
 }
 impl SystemErrnoInit for i32 {
     #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_c_int(self) }
@@ -1617,7 +1634,12 @@ pub mod windows {
         pub const INVALID_HANDLE: Win32Error = Win32Error(6);
         pub const INVALID_NAME: Win32Error = Win32Error(123);
         pub const INVALID_PARAMETER: Win32Error = Win32Error(87);
-        pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
+        // Zig spec (src/sys/windows/windows.zig:1982) has 3492 — that is a typo;
+        // canonical winerror.h ERROR_INVALID_REPARSE_DATA is 4392. Kept at 3492
+        // for strict bug-compat with the .zig spec so `init_win32_error` mapping
+        // behavior matches exactly. TODO(port): fix the .zig sibling, then bump
+        // both to 4392 in the same commit.
+        pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(3492);
         pub const IO_DEVICE: Win32Error = Win32Error(1117);
         pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
         pub const LOCK_VIOLATION: Win32Error = Win32Error(33);
@@ -1679,12 +1701,15 @@ pub mod windows {
         pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
     }
 
-    /// `bun.windows.WSAGetLastError()` wrapped to `Option<Win32Error>` —
-    /// `None` when no error pending (`0`).
+    /// `bun.windows.WSAGetLastError()` — returns `?SystemErrno` (windows.zig:3303),
+    /// i.e. the raw WSA code is run through `SystemErrno.init(c_int)` and yields
+    /// `None` both when no error is pending (`0`) *and* when the code is non-zero
+    /// but unmapped (e.g. WSAENETDOWN). Callers like `getErrno` rely on the
+    /// unmapped case being `None` so they fall through to `.SUCCESS`.
     #[inline]
-    pub fn wsa_get_last_error() -> Option<Win32Error> {
+    pub fn wsa_get_last_error() -> Option<SystemErrno> {
         let e = WSAGetLastError();
-        if e == 0 { None } else { Some(Win32Error(e as u16)) }
+        if e == 0 { None } else { SystemErrno::init_c_int(e) }
     }
 
     impl NTSTATUS {

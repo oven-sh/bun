@@ -1639,9 +1639,18 @@ impl WindowsBufferedReader {
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         if let Some(source) = self.source.take() {
             match source {
-                Source::SyncFile(mut file) | Source::File(mut file) => {
-                    // Detach - file will close itself after operation completes
-                    file.detach();
+                Source::SyncFile(file) | Source::File(file) => {
+                    // Detach - file will close itself after operation completes.
+                    // Hand the Box off to libuv as a raw pointer (mirroring the
+                    // Pipe arm) so Drop never runs here: `detach()` schedules an
+                    // async `uv_fs_close` (or leaves a pending `uv_fs_read`) whose
+                    // callback later reclaims the allocation via
+                    // `File::on_close_complete` → `heap::take`. In Zig the match
+                    // capture is a raw `*Source.File`, so no implicit free occurs.
+                    let raw = bun_core::heap::into_raw(file);
+                    // SAFETY: raw is a live heap-allocated File*; the libuv
+                    // callback (`on_file_read` / `on_close_complete`) frees it.
+                    unsafe { (*raw).detach() };
                 }
                 #[cfg(windows)]
                 Source::Pipe(pipe) => {
@@ -1714,13 +1723,19 @@ impl WindowsBufferedReader {
             return;
         };
         if !source.is_closed() {
-            // closeImpl will take care of freeing the source
-            // PORT NOTE: Zig nulls `source` *before* calling closeImpl, which
-            // makes the call a no-op there — preserved verbatim (see Drop).
-            // Tracked as a latent Zig discrepancy; do not "fix" here without
-            // fixing the .zig first.
-            let _ = source;
+            // closeImpl will take care of freeing the source.
+            // PORT NOTE: Zig nulls `this.source` *before* calling closeImpl,
+            // making the call a no-op and *leaking* the raw `*Pipe`/`*File`
+            // (latent Zig bug). In Rust `Source` owns `Box<Pipe>`/`Box<File>`,
+            // so dropping `source` here would *free* a handle libuv still
+            // references → UAF. Restore it and route through close_impl so each
+            // variant hands ownership to libuv's close callback.
+            self.source = Some(source);
             self.close_impl::<false>();
+        } else {
+            // Already closed: match Zig's raw-pointer drop (no-op leak) rather
+            // than freeing a Box libuv's close cb may still reclaim.
+            mem::forget(source);
         }
     }
 
@@ -1803,10 +1818,16 @@ impl Drop for WindowsBufferedReader {
             return;
         };
         if !source.is_closed() {
-            // closeImpl will take care of freeing the source
-            // TODO(port): Zig sets source=null before closeImpl, making it a no-op —
-            // verify intent in Phase B (likely a latent Zig bug).
+            // closeImpl will take care of freeing the source.
+            // PORT NOTE: see deinit() — Zig leaks the raw pointer here; in Rust
+            // dropping `source` would free a live libuv handle (UAF). Restore it
+            // and let close_impl hand each variant to libuv's close callback.
+            self.source = Some(source);
             self.close_impl::<false>();
+        } else {
+            // Already closed: match Zig's raw-pointer drop (no-op leak) rather
+            // than freeing a Box libuv's close cb may still reclaim.
+            mem::forget(source);
         }
     }
 }

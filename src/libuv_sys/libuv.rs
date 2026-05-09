@@ -204,6 +204,13 @@ impl uv_buf_t {
     }
     #[inline]
     pub fn slice(&self) -> &[u8] {
+        // Zig `this.base[0..this.len]` is well-defined for `(null, 0)`; Rust's
+        // `from_raw_parts` is not (requires non-null, aligned even for len==0).
+        // libuv routinely hands back `{len:0, base:NULL}` (declined alloc_cb,
+        // `uv_buf_init(NULL,0)`), so guard the empty/null case explicitly.
+        if self.len == 0 || self.base.is_null() {
+            return &[];
+        }
         // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
         unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
     }
@@ -218,6 +225,11 @@ impl uv_buf_t {
     /// elsewhere).
     #[inline]
     pub unsafe fn slice_mut(&mut self) -> &mut [u8] {
+        // See `slice()`: guard `(null, 0)` — `from_raw_parts_mut` requires a
+        // non-null pointer even for zero-length slices.
+        if self.len == 0 || self.base.is_null() {
+            return &mut [];
+        }
         unsafe { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
     }
 }
@@ -315,6 +327,22 @@ pub type uv_handle_type = HandleType;
 pub const UV_TTY: HandleType = HandleType::Tty;
 pub const UV_NAMED_PIPE: HandleType = HandleType::NamedPipe;
 pub const UV_UNKNOWN_HANDLE: HandleType = HandleType::Unknown;
+
+/// Safe `uv_guess_handle` wrapper. The FFI symbol returns `c_int` (see
+/// [`uv_guess_handle_raw`]); range-check before producing a [`HandleType`] so an
+/// unexpected discriminant (e.g. `UV_HANDLE_TYPE_MAX` or a future libuv
+/// variant) degrades to `Unknown` instead of triggering enum-transmute UB.
+#[inline]
+pub fn uv_guess_handle(file: uv_file) -> uv_handle_type {
+    let raw = uv_guess_handle_raw(file);
+    if (HandleType::Unknown as c_int..=HandleType::File as c_int).contains(&raw) {
+        // SAFETY: `HandleType` is `#[repr(C)]` with contiguous discriminants
+        // 0..=17 and `raw` was just range-checked into that interval.
+        unsafe { mem::transmute::<c_int, HandleType>(raw) }
+    } else {
+        HandleType::Unknown
+    }
+}
 pub const UV_HANDLE_TYPE_MAX: c_int = 18;
 
 /// `RunMode` — `uv_run` mode argument.
@@ -440,7 +468,7 @@ impl Loop {
             let ptr_ = THREADLOCAL_LOOP_DATA
                 .with(|data| unsafe { (*data.get()).as_mut_ptr() });
             // SAFETY: `ptr_` is `sizeof(Loop)` TLS storage owned by this thread.
-            if let Some(err) = unsafe { uv_loop_init(ptr_) }.errno() {
+            if let Some(err) = unsafe { uv_loop_init(ptr_) }.raw_errno() {
                 panic!("Failed to initialize libuv loop: errno {err}");
             }
             slot.set(ptr_);
@@ -457,7 +485,7 @@ impl Loop {
                 return;
             }
             // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
-            if let Some(err) = unsafe { uv_loop_close(loop_) }.errno() {
+            if let Some(err) = unsafe { uv_loop_close(loop_) }.raw_errno() {
                 // Zig: `if (err == .BUSY)` — only EBUSY means handles are
                 // still open; walk + close them, run once to flush close
                 // callbacks, then close again (must succeed). `uv_loop_close`
@@ -504,7 +532,12 @@ impl Loop {
     #[inline]
     pub fn unref_count(&mut self, count: i32) {
         log!("unrefCount({})", count);
-        self.active_handles = self.active_handles.saturating_sub(count as u32);
+        // Zig: `-|= @as(u32, @intCast(count))` — `@intCast` is safety-checked
+        // (panics on negative). A bare `count as u32` would silently wrap a
+        // negative to ~4 billion and zero out `active_handles`. Mirror the
+        // checked cast: assert in debug, clamp in release so we never wrap.
+        debug_assert!(count >= 0, "unref_count: count must be non-negative");
+        self.active_handles = self.active_handles.saturating_sub(count.max(0) as u32);
     }
     #[inline]
     pub fn stop(&mut self) {
@@ -1215,7 +1248,7 @@ impl Pipe {
         on_connect: unsafe extern "C" fn(*mut uv_stream_t, ReturnCode),
     ) -> ReturnCode {
         let rc = self.bind(named_pipe, UV_PIPE_NO_TRUNCATE);
-        if rc.errno().is_some() {
+        if rc.is_err() {
             return rc;
         }
         self.listen(backlog, context, on_connect)
@@ -2091,6 +2124,111 @@ pub struct uv_thread_options_t {
 // `ReturnCode` / `ReturnCodeI64` — `enum(c_int)` newtypes; libuv return codes
 // are `0` on success, `-errno` on failure.
 // ──────────────────────────────────────────────────────────────────────────
+/// Map a negative `UV_E*` libuv error code to the stable `bun.sys.E` /
+/// `bun_errno::E` discriminant (e.g. `UV_ENOENT (-4058)` → `2`).
+///
+/// This is the leaf-crate copy of Zig `ReturnCode.errno()`'s switch
+/// (libuv.zig:2888-2970). Layering forbids depending on `bun_errno` here, so
+/// the integer discriminants are inlined; they are ABI-stable POSIX values
+/// plus a fixed Bun-assigned tail (`UNKNOWN=134`..`FTYPE=137`). Unmapped
+/// codes return `None`, matching Zig's `else => null`.
+///
+/// Keep in sync with `bun_errno::E` (src/errno/windows_errno.rs) and the Zig
+/// switch in `libuv.zig`.
+#[inline]
+pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
+    Some(match code {
+        UV_EPERM => 1,            // E::PERM
+        UV_ENOENT => 2,           // E::NOENT
+        UV_ESRCH => 3,            // E::SRCH
+        UV_EINTR => 4,            // E::INTR
+        UV_EIO => 5,              // E::IO
+        UV_ENXIO => 6,            // E::NXIO
+        UV_E2BIG => 7,            // E::_2BIG
+        UV_ENOEXEC => 8,          // E::NOEXEC
+        UV_EBADF => 9,            // E::BADF
+        UV_EAGAIN => 11,          // E::AGAIN
+        UV_ENOMEM => 12,          // E::NOMEM
+        UV_EACCES => 13,          // E::ACCES
+        UV_EFAULT => 14,          // E::FAULT
+        UV_EBUSY => 16,           // E::BUSY
+        UV_EEXIST => 17,          // E::EXIST
+        UV_EXDEV => 18,           // E::XDEV
+        UV_ENODEV => 19,          // E::NODEV
+        UV_ENOTDIR => 20,         // E::NOTDIR
+        UV_EISDIR => 21,          // E::ISDIR
+        UV_EINVAL => 22,          // E::INVAL
+        UV_ENFILE => 23,          // E::NFILE
+        UV_EMFILE => 24,          // E::MFILE
+        UV_ENOTTY => 25,          // E::NOTTY
+        UV_EFTYPE => 137,         // E::FTYPE
+        UV_ETXTBSY => 26,         // E::TXTBSY
+        UV_EFBIG => 27,           // E::FBIG
+        UV_ENOSPC => 28,          // E::NOSPC
+        UV_ESPIPE => 29,          // E::SPIPE
+        UV_EROFS => 30,           // E::ROFS
+        UV_EMLINK => 31,          // E::MLINK
+        UV_EPIPE => 32,           // E::PIPE
+        UV_ERANGE => 34,          // E::RANGE
+        UV_ENAMETOOLONG => 36,    // E::NAMETOOLONG
+        UV_ENOSYS => 38,          // E::NOSYS
+        UV_ENOTEMPTY => 39,       // E::NOTEMPTY
+        UV_ELOOP => 40,           // E::LOOP
+        UV_EUNATCH => 49,         // E::UNATCH
+        UV_ENODATA => 61,         // E::NODATA
+        UV_ENONET => 64,          // E::NONET
+        UV_EPROTO => 71,          // E::PROTO
+        UV_EOVERFLOW => 75,       // E::OVERFLOW
+        UV_EILSEQ => 84,          // E::ILSEQ
+        UV_ENOTSOCK => 88,        // E::NOTSOCK
+        UV_EDESTADDRREQ => 89,    // E::DESTADDRREQ
+        UV_EMSGSIZE => 90,        // E::MSGSIZE
+        UV_EPROTOTYPE => 91,      // E::PROTOTYPE
+        UV_ENOPROTOOPT => 92,     // E::NOPROTOOPT
+        UV_EPROTONOSUPPORT => 93, // E::PROTONOSUPPORT
+        UV_ESOCKTNOSUPPORT => 94, // E::SOCKTNOSUPPORT
+        UV_ENOTSUP => 95,         // E::NOTSUP
+        UV_EAFNOSUPPORT => 97,    // E::AFNOSUPPORT
+        UV_EADDRINUSE => 98,      // E::ADDRINUSE
+        UV_EADDRNOTAVAIL => 99,   // E::ADDRNOTAVAIL
+        UV_ENETDOWN => 100,       // E::NETDOWN
+        UV_ENETUNREACH => 101,    // E::NETUNREACH
+        UV_ECONNABORTED => 103,   // E::CONNABORTED
+        UV_ECONNRESET => 104,     // E::CONNRESET
+        UV_ENOBUFS => 105,        // E::NOBUFS
+        UV_EISCONN => 106,        // E::ISCONN
+        UV_ENOTCONN => 107,       // E::NOTCONN
+        UV_ESHUTDOWN => 108,      // E::SHUTDOWN
+        UV_ETIMEDOUT => 110,      // E::TIMEDOUT
+        UV_ECONNREFUSED => 111,   // E::CONNREFUSED
+        UV_EHOSTDOWN => 112,      // E::HOSTDOWN
+        UV_EHOSTUNREACH => 113,   // E::HOSTUNREACH
+        UV_EALREADY => 114,       // E::ALREADY
+        UV_EREMOTEIO => 121,      // E::REMOTEIO
+        UV_ECANCELED => 125,      // E::CANCELED
+        UV_ECHARSET => 135,       // E::CHARSET
+        UV_EOF => 136,            // E::EOF
+        UV_UNKNOWN => 134,        // E::UNKNOWN
+        // EAI_* codes — `bun_errno::E::UV_EAI_*` discriminants are defined as
+        // `(-UV_EAI_*) as u16`, i.e. the raw magnitude is the discriminant.
+        UV_EAI_ADDRFAMILY => (-UV_EAI_ADDRFAMILY) as u16,
+        UV_EAI_AGAIN => (-UV_EAI_AGAIN) as u16,
+        UV_EAI_BADFLAGS => (-UV_EAI_BADFLAGS) as u16,
+        UV_EAI_BADHINTS => (-UV_EAI_BADHINTS) as u16,
+        UV_EAI_CANCELED => (-UV_EAI_CANCELED) as u16,
+        UV_EAI_FAIL => (-UV_EAI_FAIL) as u16,
+        UV_EAI_FAMILY => (-UV_EAI_FAMILY) as u16,
+        UV_EAI_MEMORY => (-UV_EAI_MEMORY) as u16,
+        UV_EAI_NODATA => (-UV_EAI_NODATA) as u16,
+        UV_EAI_NONAME => (-UV_EAI_NONAME) as u16,
+        UV_EAI_OVERFLOW => (-UV_EAI_OVERFLOW) as u16,
+        UV_EAI_PROTOCOL => (-UV_EAI_PROTOCOL) as u16,
+        UV_EAI_SERVICE => (-UV_EAI_SERVICE) as u16,
+        UV_EAI_SOCKTYPE => (-UV_EAI_SOCKTYPE) as u16,
+        _ => return None,
+    })
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ReturnCode(pub c_int);
@@ -2099,15 +2237,27 @@ impl ReturnCode {
     #[inline] pub const fn zero() -> ReturnCode { ReturnCode(0) }
     #[inline] pub const fn from_raw(v: c_int) -> ReturnCode { ReturnCode(v) }
     #[inline] pub const fn int(self) -> c_int { self.0 }
-    /// `Some(e)` when negative — caller maps via
-    /// `bun_sys::libuv_error_map::translate_uv_error_to_e`. We do **not** call
-    /// that here to keep `bun_libuv_sys` free of `bun_sys` (layering).
+    /// `Some(|UV_E*|)` when negative — the **raw** libuv error magnitude
+    /// (e.g. 4082 for `UV_EBUSY`). Use [`errno`] for the translated POSIX
+    /// `bun.sys.E` value (e.g. 16 for `BUSY`) that Zig's `errno()` returns.
     #[inline]
-    pub const fn errno(self) -> Option<u16> {
+    pub const fn raw_errno(self) -> Option<u16> {
         if self.0 < 0 { Some(self.0.unsigned_abs() as u16) } else { None }
     }
-    /// Zig `errEnum()` — alias for [`errno`]; the `bun_sys::E` mapping lives in
-    /// `bun_sys::windows::translate_uv_error_to_e` (layering).
+    /// Zig `ReturnCode.errno()` (libuv.zig:2888-2970): when negative, map the
+    /// `UV_E*` code to the small POSIX `bun.sys.E` discriminant (e.g.
+    /// `UV_ENOENT (-4058)` → `2`). Returns `None` for non-negative *or*
+    /// unmapped negative codes (Zig: `else => null`). Downstream callers
+    /// (`node_fs`, `sys::Fd`, `write_file`, …) store this directly into
+    /// `bun_sys::Error.errno`, so it MUST be the translated value, not the raw
+    /// `|UV_E*|` magnitude — see [`raw_errno`] for the latter.
+    #[inline]
+    pub const fn errno(self) -> Option<u16> {
+        if self.0 < 0 { uv_err_to_e_discriminant(self.0) } else { None }
+    }
+    /// Zig `errEnum()` (libuv.zig:2975-2979) — same translated value as
+    /// [`errno`]; for the typed `bun_sys::E` use
+    /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
     #[inline]
     pub const fn err_enum(self) -> Option<u16> { self.errno() }
     /// Layer-free `< 0` check (Zig: `Maybe(void).isErr()` after `.toError`).
@@ -2158,8 +2308,9 @@ impl fmt::Display for ReturnCodeI64 {
 // ──────────────────────────────────────────────────────────────────────────
 // `O` — `UV_FS_O_*` flag namespace + `from_bun_o`/`to_bun_o` translation
 // (libuv.zig:170-254). The `bun.O.*` POSIX-like values are passed in by the
-// caller as a raw `i32` (per `bun_sys::O` on Windows); these fns map to/from
-// libuv's MSVC `_O_*` values that `uv_fs_open` expects.
+// caller as a raw `i32` (per **Zig** `bun.O` on Windows — sys.zig:188-213 —
+// which normalises to Linux-style octal constants, NOT MSVC `libc::O_*`);
+// these fns map to/from libuv's MSVC `_O_*` values that `uv_fs_open` expects.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod O {
     pub const APPEND: i32 = 0x0008;
@@ -2186,15 +2337,22 @@ pub mod O {
     pub const NONBLOCK: i32 = 0;
     pub const SYMLINK: i32 = 0;
 
-    // `bun.O.*` — POSIX-shaped flag values Bun normalises to internally
-    // (matches `bun_sys::O` on Windows; mirrored here so this crate stays
-    // leaf). libuv.zig pulls these from `bun.O`; the constants are stable.
+    // `bun.O.*` — POSIX-shaped flag values Bun normalises to internally.
+    //
+    // ⚠ These match **Zig `bun.O` on Windows** (src/sys/sys.zig:188-213),
+    // which hard-codes Linux-style octal constants. They do **NOT** match
+    // `bun_sys::O` if that crate is built against MSVC `libc::O_*`
+    // (CREAT=0x100, EXCL=0x400, APPEND=0x8). `bun_sys::O` on Windows must
+    // mirror sys.zig — cross-crate static asserts live in `bun_sys` (this
+    // crate stays leaf). libuv.zig pulls these from `bun.O`; the constants
+    // are stable.
     mod bun_o {
         pub const WRONLY: i32 = 0o1;
         pub const RDWR: i32 = 0o2;
         pub const CREAT: i32 = 0o100;
         pub const EXCL: i32 = 0o200;
-        pub const NOCTTY: i32 = 0o400;
+        // sys.zig:195 `.windows => { NOCTTY = 0 }` — meaningless on Windows.
+        pub const NOCTTY: i32 = 0;
         pub const TRUNC: i32 = 0o1000;
         pub const APPEND: i32 = 0o2000;
         pub const NONBLOCK: i32 = 0o4000;
@@ -2347,6 +2505,17 @@ pub const UV_ENODATA: c_int = -4024;
 pub const UV_EUNATCH: c_int = -4023;
 pub const UV_ENOEXEC: c_int = -4022;
 pub const UV_ERRNO_MAX: c_int = -4096;
+
+// `uv_dirent_type_t` discriminants (libuv.zig:2497-2504) — compared against
+// `uv_dirent_t.type_` by Windows `fs.readdir`.
+pub const UV_DIRENT_UNKNOWN: c_int = 0;
+pub const UV_DIRENT_FILE: c_int = 1;
+pub const UV_DIRENT_DIR: c_int = 2;
+pub const UV_DIRENT_LINK: c_int = 3;
+pub const UV_DIRENT_FIFO: c_int = 4;
+pub const UV_DIRENT_SOCKET: c_int = 5;
+pub const UV_DIRENT_CHAR: c_int = 6;
+pub const UV_DIRENT_BLOCK: c_int = 7;
 
 // Misc flag constants.
 pub const UV_READABLE: c_int = 1;
@@ -2590,10 +2759,13 @@ unsafe extern "C" {
     pub fn uv_tty_get_winsize(handle: *mut uv_tty_t, width: *mut c_int, height: *mut c_int) -> c_int;
     pub fn uv_tty_set_vterm_state(state: uv_tty_vtermstate_t);
     pub fn uv_tty_get_vterm_state(state: *mut uv_tty_vtermstate_t) -> c_int;
-    /// Total over any `uv_file` (CRT fd int); returns one of the documented
-    /// `uv_handle_type` discriminants (0..=17), so the `#[repr(C)]` enum
-    /// round-trip is sound → `safe fn`.
-    pub safe fn uv_guess_handle(file: uv_file) -> uv_handle_type;
+    /// Raw `uv_guess_handle`. Declared `-> c_int` (not [`HandleType`]) because
+    /// returning a `#[repr(C)]` enum from a `safe extern fn` is a soundness
+    /// hole: any out-of-range discriminant (e.g. `UV_HANDLE_TYPE_MAX = 18`, or
+    /// a future libuv variant) would be instant UB with no `unsafe` at the call
+    /// site. The range-checked safe wrapper is [`uv_guess_handle`].
+    #[link_name = "uv_guess_handle"]
+    pub safe fn uv_guess_handle_raw(file: uv_file) -> c_int;
 
     // pipe
     pub fn uv_pipe_init(loop_: *mut Loop, handle: *mut Pipe, ipc: c_int) -> ReturnCode;

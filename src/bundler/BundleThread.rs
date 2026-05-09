@@ -239,11 +239,18 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: raw-ptr field projection; spawning thread is blocked in `ready_event.wait()`.
         unsafe { (*instance).ready_event.set() };
 
+        // PORT NOTE: libuv `Timer` must live at *function* scope (mirroring Zig's
+        // function-scope `var timer: ... = undefined;` in BundleThread.zig). `uv_timer_init`
+        // links `&mut timer`'s address into the loop's handle queue / timer heap, and the
+        // `loop { ... waker.wait() }` below runs `uv_run` on that loop forever. Declaring
+        // `timer` inside the `#[cfg(windows)] { ... }` block would drop its stack slot at
+        // the closing brace while libuv still holds a pointer into it (use-after-free).
+        // `thread_main` never returns, so a function-scope stack local is sufficient.
+        // SAFETY: zeroed storage is fully initialized by `init()` before any use.
+        #[cfg(windows)]
+        let mut timer: bun_sys::windows::libuv::Timer = unsafe { bun_core::ffi::zeroed_unchecked() };
         #[cfg(windows)]
         {
-            // PORT NOTE: libuv Timer lives on stack for the lifetime of this never-returning fn.
-            // SAFETY: `init()` fully initializes before use.
-            let mut timer: bun_sys::windows::libuv::Timer = unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
             // write-once in `Waker::init()` above and never mutated by `wake()`, so a
             // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)

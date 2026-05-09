@@ -231,9 +231,52 @@ mod zig_std_debug {
         }
         #[cfg(windows)]
         {
-            // PORT NOTE: VirtualQuery path — fall back to "valid" on Windows; the
-            // fp-walker is not used there (RtlVirtualUnwind path is taken instead).
-            let _ = aligned_address;
+            // Zig: `std.debug.MemoryAccessor.isValidMemory` — on Windows probes the
+            // page with `VirtualQuery` and rejects `MEM_FREE`. The fp-walker IS the
+            // active path on Windows (the RtlVirtualUnwind context-unwind path is not
+            // ported — see `!cfg!(windows)` guard at the call site), so this MUST
+            // actually validate the address or a stale fp dereference faults inside
+            // the debugger helper.
+            #[repr(C)]
+            struct MEMORY_BASIC_INFORMATION {
+                BaseAddress: *mut c_void,
+                AllocationBase: *mut c_void,
+                AllocationProtect: u32,
+                #[cfg(target_pointer_width = "64")]
+                PartitionId: u16,
+                RegionSize: usize,
+                State: u32,
+                Protect: u32,
+                Type: u32,
+            }
+            const MEM_FREE: u32 = 0x10000;
+            unsafe extern "system" {
+                fn VirtualQuery(
+                    lpAddress: *const c_void,
+                    lpBuffer: *mut MEMORY_BASIC_INFORMATION,
+                    dwLength: usize,
+                ) -> usize;
+            }
+            // SAFETY: VirtualQuery only reads lpAddress as an opaque address (no
+            // dereference) and writes into `memory_info`.
+            let mut memory_info: MEMORY_BASIC_INFORMATION =
+                unsafe { bun_core::ffi::zeroed_unchecked() };
+            let rc = unsafe {
+                VirtualQuery(
+                    aligned_address as *const c_void,
+                    &raw mut memory_info,
+                    core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+                )
+            };
+            // The only error this function can throw is ERROR_INVALID_PARAMETER.
+            // supply an address that invalid i'll be thrown.
+            if rc == 0 {
+                return false;
+            }
+            // Free pages cannot be read, they are unmapped
+            if memory_info.State == MEM_FREE {
+                return false;
+            }
             return true;
         }
         #[cfg(not(windows))]
@@ -455,8 +498,7 @@ mod zig_std_debug {
             }
             #[cfg(windows)]
             {
-                let _ = address;
-                return None;
+                return lookup_module_name_win32(address);
             }
             #[cfg(not(any(target_vendor = "apple", windows)))]
             {
@@ -683,6 +725,81 @@ mod zig_std_debug {
         Some(bun_paths::basename(name).to_vec().into_boxed_slice())
     }
 
+    /// Port of `SelfInfo.lookupModuleNameWin32`. Zig populates `self.modules` once at
+    /// `SelfInfo.init` via `CreateToolhelp32Snapshot` and scans that list here; the Rust
+    /// port does not yet store a module list on `SelfInfo`, so we re-snapshot on each call
+    /// (this path is only hit on the slow `print_unknown_source` fallback). Returns the
+    /// `szModule` of the loaded PE whose `[base, base+size)` contains `address`.
+    ///
+    /// TODO(port-windows): SPEC DIVERGENCE — Zig's `std.debug.SelfInfo` on Windows
+    /// resolves *symbols* via the loaded PE's PDB (`dbghelp.dll` `SymFromAddr`). That
+    /// path (`get_module_for_address` / `Module::get_symbol_at_address`) is not yet
+    /// ported, so every Windows backtrace falls through to `print_unknown_source` →
+    /// this function and prints bare addresses with only the containing module name
+    /// (e.g. `0x... in ??? (bun.exe)`). The dbghelp lookup must be implemented before
+    /// Windows crash reports show symbol names.
+    #[cfg(windows)]
+    fn lookup_module_name_win32(address: usize) -> Option<Box<[u8]>> {
+        const TH32CS_SNAPMODULE: u32 = 0x00000008;
+        const TH32CS_SNAPMODULE32: u32 = 0x00000010;
+        const MAX_MODULE_NAME32: usize = 255;
+        #[repr(C)]
+        struct MODULEENTRY32 {
+            dwSize: u32,
+            th32ModuleID: u32,
+            th32ProcessID: u32,
+            GlblcntUsage: u32,
+            ProccntUsage: u32,
+            modBaseAddr: *mut u8,
+            modBaseSize: u32,
+            hModule: *mut c_void,
+            szModule: [u8; MAX_MODULE_NAME32 + 1],
+            szExePath: [u8; bun_sys::windows::MAX_PATH],
+        }
+        unsafe extern "system" {
+            fn CreateToolhelp32Snapshot(dwFlags: u32, th32ProcessID: u32) -> *mut c_void;
+            fn Module32First(hSnapshot: *mut c_void, lpme: *mut MODULEENTRY32) -> i32;
+            fn Module32Next(hSnapshot: *mut c_void, lpme: *mut MODULEENTRY32) -> i32;
+        }
+
+        // SAFETY: kernel32 syscall; returns INVALID_HANDLE_VALUE on failure.
+        let handle =
+            unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, 0) };
+        if handle == bun_sys::windows::INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let _close = scopeguard::guard(handle, |h| unsafe {
+            let _ = bun_sys::windows::CloseHandle(h);
+        });
+
+        // SAFETY: Zig used `= undefined` then set dwSize; Module32First fully initializes on success.
+        let mut module_entry: MODULEENTRY32 = unsafe { bun_core::ffi::zeroed_unchecked() };
+        module_entry.dwSize = core::mem::size_of::<MODULEENTRY32>() as u32;
+        // SAFETY: handle is a valid snapshot; module_entry.dwSize is set.
+        if unsafe { Module32First(handle, &raw mut module_entry) } == 0 {
+            return None;
+        }
+
+        loop {
+            let base_address = module_entry.modBaseAddr as usize;
+            let size = module_entry.modBaseSize as usize;
+            if address >= base_address && address < base_address + size {
+                // Zig: `mem.sliceTo(&module_entry.szModule, 0)` — NUL-terminated module name.
+                let name = module_entry
+                    .szModule
+                    .iter()
+                    .position(|&b| b == 0)
+                    .map(|n| &module_entry.szModule[..n])
+                    .unwrap_or(&module_entry.szModule[..]);
+                return Some(name.to_vec().into_boxed_slice());
+            }
+            // SAFETY: handle is a valid snapshot; module_entry.dwSize is set.
+            if unsafe { Module32Next(handle, &raw mut module_entry) } != 1 {
+                return None;
+            }
+        }
+    }
+
     // ── std.debug.getSelfDebugInfo ───────────────────────────────────────
     // PORTING.md §Global mutable state: lazy debug-only singleton. RacyCell —
     // btjs is only called from lldb on a stopped process, so no concurrent
@@ -747,10 +864,26 @@ mod tty {
 
     /// Port of `process.hasNonEmptyEnvVarConstant`.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {
-        // SAFETY: getenv only reads; name is a valid NUL-terminated C string.
-        let val = unsafe { libc::getenv(name.as_ptr()) };
-        // SAFETY: getenv returns either NULL or a valid NUL-terminated C string.
-        !val.is_null() && unsafe { *val } != 0
+        #[cfg(windows)]
+        {
+            // Zig: `const value = getenvW(key_w) orelse return false; return value.len != 0;`
+            // — reads the live Win32 environment block (PEB), not the CRT's narrow-string
+            // snapshot that `libc::getenv` would consult. Callers pass ASCII literals
+            // (`NO_COLOR`, `CLICOLOR_FORCE`), so byte→u16 widening is the WTF-8→WTF-16
+            // conversion. `getenv_w` appends its own NUL.
+            let key_w: Vec<u16> = name.to_bytes().iter().map(|&b| b as u16).collect();
+            return match bun_sys::windows::getenv_w(&key_w) {
+                Some(value) => !value.is_empty(),
+                None => false,
+            };
+        }
+        #[cfg(not(windows))]
+        {
+            // SAFETY: getenv only reads; name is a valid NUL-terminated C string.
+            let val = unsafe { libc::getenv(name.as_ptr()) };
+            // SAFETY: getenv returns either NULL or a valid NUL-terminated C string.
+            !val.is_null() && unsafe { *val } != 0
+        }
     }
 
     /// Port of `std.io.tty.detectConfig(std.fs.File.stdout())`.

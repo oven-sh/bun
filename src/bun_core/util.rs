@@ -498,18 +498,26 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
         return Some(core::slice::from_raw_parts(p.cast::<u8>(), len));
     }
     #[cfg(windows)]
-    {
+    unsafe {
         // Windows env names are case-insensitive. Zig walks `std.os.environ`
         // (`PEB.ProcessParameters.Environment`) and returns a borrowed slice
-        // into the WTF-16 block. Box::leak is forbidden (PORTING.md §Forbidden);
-        // returning a borrowed UTF-8 slice requires walking the *narrow* C
-        // runtime environ, which `_wgetenv`/`GetEnvironmentVariableW` don't
-        // expose. Correct port lands with `windows_sys::env_block()` (UTF-16
-        // walk) + a process-lifetime intern table OR returning &[u16].
-        // TODO(b2-blocked): bun_windows_sys::env_block — until then, no env on
-        // Windows via this path (callers use `bun.DotEnv.Loader` instead).
-        let _ = key;
-        None
+        // into the WTF-16 block. Returning a borrowed UTF-8 slice from the
+        // wide env would require an intern table; instead use the narrow CRT
+        // `getenv`, which on msvcrt/ucrt is case-insensitive and points into
+        // the process-lifetime narrow environ block. This covers the ASCII
+        // keys actually queried via this path (`UV_THREADPOOL_SIZE`,
+        // `GOMAXPROCS`, `BUN_*`). Non-ASCII keys/values go through
+        // `bun.DotEnv.Loader` instead.
+        // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
+        let p = libc::getenv(key.as_ptr());
+        if p.is_null() {
+            return None;
+        }
+        // SAFETY: msvcrt getenv returns a pointer into the CRT's narrow environ
+        // block, valid for process lifetime (modulo _putenv races — same caveat
+        // as Zig original).
+        let len = libc::strlen(p);
+        Some(core::slice::from_raw_parts(p.cast::<u8>(), len))
     }
 }
 
@@ -844,7 +852,16 @@ impl Fd {
     /// for call sites that read better as a constructor (`Fd::invalid()`).
     #[inline] pub const fn invalid() -> Fd { Fd::INVALID }
 
+    #[cfg(not(windows))]
     #[inline] pub const fn from_native(v: FdBacking) -> Fd { Fd(v) }
+    #[cfg(windows)]
+    #[inline] pub const fn from_native(v: FdBacking) -> Fd {
+        // Zig fd.zig:43-50 `fromNative` on Windows takes a HANDLE and stores
+        // `{ kind=.system, value=handleToNumber(value) }` — bit 63 forced to 0.
+        // Mask here so callers passing a raw handle integer never accidentally
+        // produce a Uv-kind Fd.
+        Fd(v & FD_VALUE_MASK)
+    }
     /// libuv fd (== posix fd on non-windows; uv-tagged on windows).
     #[inline] pub const fn from_uv(v: i32) -> Fd {
         #[cfg(windows)]
@@ -1261,16 +1278,16 @@ pub mod fd {
         pub fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
     }
     #[cfg(windows)]
-    use crate::windows_sys::kernel32::GetStdHandle;
-    #[cfg(windows)]
     pub use crate::windows_sys::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
     #[cfg(windows)]
     pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
-        // SAFETY: GetStdHandle is always safe to call.
-        let h = unsafe { GetStdHandle(id) };
-        // Zig: `getStdHandle catch return false; handle == h`. INVALID_HANDLE_VALUE
-        // (failure) won't equal a valid handle, so the equality check suffices.
-        !h.is_null() && handle == h
+        // Zig fd.zig:568-571: `std.os.windows.GetStdHandle(id) catch return false;
+        // return handle == h;` — the Zig wrapper maps BOTH `INVALID_HANDLE_VALUE`
+        // (failure) and `NULL` (no device) to an error. The raw kernel32 call
+        // returns INVALID_HANDLE_VALUE on failure, which `decode_windows()` also
+        // produces for `Fd::INVALID`, so a null-only guard would mis-classify an
+        // invalid Fd as stdio. Use the safe wrapper that filters both sentinels.
+        crate::windows_sys::GetStdHandle(id).is_some_and(|h| handle == h)
     }
 
     /// PEB ProcessParameters subset for stdio/cwd handle lookup.
@@ -1291,14 +1308,17 @@ pub mod fd {
         // cast is sound.
         // SAFETY: PEB is process-lifetime; handle fields are at fixed offsets.
         unsafe {
-            let pp = crate::windows_sys::peb().ProcessParameters;
-            &*(core::ptr::addr_of!(pp.hStdInput) as *const ProcessParametersStdio)
+            let pp = (*crate::windows_sys::peb()).ProcessParameters;
+            &*(core::ptr::addr_of!((*pp).hStdInput) as *const ProcessParametersStdio)
         }
     }
     #[cfg(windows)]
     pub unsafe fn windows_current_directory_handle() -> *mut c_void {
-        // TODO(b2-windows): PEB().ProcessParameters.CurrentDirectory.Handle
-        core::ptr::null_mut()
+        // Zig `std.fs.cwd().fd` on Windows reads
+        // `peb().ProcessParameters.CurrentDirectory.Handle`.
+        // SAFETY: PEB is process-lifetime; the CURDIR handle field is at a
+        // fixed offset and is kept valid by the loader for the process duration.
+        unsafe { (*(*crate::windows_sys::peb()).ProcessParameters).CurrentDirectoryHandle }
     }
 }
 
@@ -2922,10 +2942,29 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
         Ok(ZStr::from_raw(buf.0.as_ptr(), len))
     }
     #[cfg(windows)]
-    {
-        // TODO(port): GetCurrentDirectoryW → WTF-8. Phase B via bun_sys.
-        let _ = buf;
-        Err(crate::err!(Unexpected))
+    unsafe {
+        unsafe extern "system" {
+            fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
+        }
+        let mut wbuf = WPathBuffer::uninit();
+        // SAFETY: lpBuffer points to PATH_MAX_WIDE u16s; nBufferLength matches.
+        let n = GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr());
+        if n == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if n as usize >= wbuf.0.len() {
+            // Buffer too small (return value is required size incl. NUL).
+            return Err(crate::err!(NameTooLong));
+        }
+        let utf16 = &wbuf.0[..n as usize];
+        // Reserve 1 byte for the trailing NUL.
+        let cap = buf.0.len().saturating_sub(1);
+        let written = match crate::strings::convert_utf16_to_utf8_in_buffer(&mut buf.0[..cap], utf16) {
+            Ok(s) => s.len(),
+            Err(_) => return Err(crate::err!(NameTooLong)),
+        };
+        buf.0[written] = 0;
+        Ok(ZStr::from_raw(buf.0.as_ptr(), written))
     }
     #[cfg(not(any(unix, windows)))]
     { let _ = buf; Err(crate::err!(Unexpected)) }
@@ -2954,13 +2993,15 @@ pub fn which<'a>(
         }
         false
     }
+    #[inline]
+    fn is_sep(b: u8) -> bool { b == b'/' || (cfg!(windows) && b == b'\\') }
     let check = |buf: &mut PathBuffer, dir: &[u8], bin: &[u8]| -> Option<usize> {
         let mut n = 0usize;
         if !dir.is_empty() {
             if dir.len() + 1 + bin.len() + 1 > buf.0.len() { return None; }
             buf.0[..dir.len()].copy_from_slice(dir);
             n = dir.len();
-            if buf.0[n - 1] != b'/' { buf.0[n] = b'/'; n += 1; }
+            if !is_sep(buf.0[n - 1]) { buf.0[n] = SEP; n += 1; }
         }
         if n + bin.len() + 1 > buf.0.len() { return None; }
         buf.0[n..n + bin.len()].copy_from_slice(bin);
@@ -2982,13 +3023,18 @@ pub fn which<'a>(
     }
     if has_sep {
         // Relative with separator → resolve against cwd only. Zig trims
-        // trailing '/' from cwd and strips a leading "./" from bin.
+        // trailing sep from cwd and strips a leading "./" (or ".\") from bin.
         let cwd = {
             let mut c = cwd;
-            while let [rest @ .., b'/'] = c { c = rest; }
+            while let [rest @ .., last] = c {
+                if is_sep(*last) { c = rest; } else { break; }
+            }
             c
         };
-        let bin = bin.strip_prefix(b"./").unwrap_or(bin);
+        let bin = match bin {
+            [b'.', s, rest @ ..] if is_sep(*s) => rest,
+            _ => bin,
+        };
         // SAFETY: n < buf.len, buf[n]==0.
         return check(buf, cwd, bin).map(|n| unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
     }

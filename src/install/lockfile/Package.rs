@@ -1789,11 +1789,23 @@ impl Package<u64> {
                             );
                             #[cfg(windows)]
                             {
-                                // SAFETY: thread-local scratch; single live borrow per thread.
-                                path::dangerously_convert_path_to_posix_in_place::<u8>(
-                                    &mut unsafe { &mut *path::relative_to_common_path_buf() }[0..rel.len()],
-                                );
+                                // `rel` is a shared borrow into the thread-local
+                                // `relative_to_common_path_buf()`. To convert it in place we
+                                // need a `&mut` into that same buffer, but creating one while
+                                // `rel` is live and then reading `rel` afterward is
+                                // Stacked-Borrows UB. Capture the length, drop `rel`, take a
+                                // single fresh `&mut` reborrow, mutate, then downgrade that
+                                // same borrow to `&[u8]` for the append.
+                                let len = rel.len();
+                                let _ = rel;
+                                // SAFETY: thread-local scratch; this is the only live borrow
+                                // on this thread for the remainder of this block.
+                                let buf = unsafe { &mut *path::relative_to_common_path_buf() };
+                                let s: &mut [u8] = &mut buf[0..len];
+                                path::dangerously_convert_path_to_posix_in_place::<u8>(s);
+                                break 'brk &*s;
                             }
+                            #[cfg(not(windows))]
                             break 'brk rel;
                         }
                     });

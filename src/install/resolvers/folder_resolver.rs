@@ -403,22 +403,45 @@ pub fn get_or_put(
     manager: &mut PackageManager,
 ) -> FolderResolution {
     let mut joined = PathBuffer::uninit();
+    #[cfg(windows)]
+    let mut rel_buf = PathBuffer::uninit();
     let paths = normalize_package_json_path(global_or_relative, &mut joined, non_normalized_path);
+
+    #[cfg(not(windows))]
     let abs = paths.abs;
+    #[cfg(not(windows))]
     let rel = paths.rel;
 
     // replace before getting hash. rel may or may not be contained in abs
     #[cfg(windows)]
-    {
-        // SAFETY: abs/rel point into `joined` (or a threadlocal buffer) which is mutable here.
-        // PORT NOTE: @constCast — rel is always backed by mutable storage.
-        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            bun_core::ffi::slice_mut(abs.as_ptr().cast_mut().cast::<u8>(), abs.len())
-        });
-        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            bun_core::ffi::slice_mut(rel.as_ptr().cast_mut(), rel.len())
-        });
-    }
+    let (abs, rel): (&ZStr, &[u8]) = {
+        // Zig (folder_resolver.zig:249-252) does `@constCast(abs)` /
+        // `@constCast(rel)` and mutates in place — well-defined in Zig, which
+        // has no provenance-based aliasing model. In Rust, writing through
+        // `(&ZStr).as_ptr().cast_mut()` / `(&[u8]).as_ptr().cast_mut()` is UB
+        // under Stacked/Tree Borrows: those pointers carry read-only
+        // provenance, and the optimizer may assume `abs`'s bytes are
+        // unchanged when computing `hash(abs.as_bytes())` below.
+        //
+        // Instead: capture lengths, let the shared borrows of `joined` die,
+        // then take a fresh `&mut joined[..abs_len]` (write provenance) and
+        // mutate that. `rel` points into FileSystem's thread-local relative
+        // buffer which we only ever see as `&[u8]`, so copy it into a local
+        // we own and convert the copy — same pattern as
+        // WorkspacePackageJSONCache::get_with_path.
+        let abs_len = paths.abs.len();
+        let rel_len = paths.rel.len();
+        rel_buf[..rel_len].copy_from_slice(paths.rel);
+        // `paths` is dead past this point → `joined` is no longer borrowed.
+        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined[..abs_len]);
+        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut rel_buf[..rel_len]);
+        (
+            // SAFETY: normalize_package_json_path wrote `joined[abs_len] = 0`;
+            // the separator rewrite above never touches the NUL.
+            unsafe { ZStr::from_raw(joined.as_ptr(), abs_len) },
+            &rel_buf[..rel_len],
+        )
+    };
     let abs_hash = hash(abs.as_bytes());
 
     // PORT NOTE: reshaped for borrowck — Zig used getOrPut to reserve the slot before reading

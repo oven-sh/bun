@@ -46,9 +46,12 @@ macro_rules! format_bytes {
 /// module load alone can exceed the production 5ms threshold.
 pub const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
-/// Owns the coordinator-side per-run worker temp directory path (NUL-terminated
-/// bytes); recursively removes it on drop. Mirrors the Zig
+/// Owns the coordinator-side per-run worker temp directory path bytes;
+/// recursively removes it on drop. Mirrors the Zig
 /// `defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {}`.
+/// Zig stored a `[:0]const u8` whose `.len` excludes the sentinel; here we
+/// store the bare path with no trailing NUL so `path()`/Drop hand the exact
+/// same bytes to `delete_tree` that `make_path` created.
 struct WorkerTmpdir(Option<Box<[u8]>>);
 
 impl WorkerTmpdir {
@@ -97,9 +100,10 @@ pub fn run_as_coordinator(
 
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
 
-    // Owned NUL-terminated path bytes (Zig: `[:0]const u8` from allocPrintSentinel).
-    // ZStr is a borrow header; we must own the backing storage here. Drop
-    // recursively removes the directory once the run finishes.
+    // Owned path bytes (Zig: `[:0]const u8` from allocPrintSentinel — the
+    // sentinel was for C interop only, `.len` excluded it). ZStr is a borrow
+    // header; we must own the backing storage here. Drop recursively removes
+    // the directory once the run finishes.
     let mut worker_tmpdir = WorkerTmpdir(None);
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
@@ -118,15 +122,14 @@ pub fn run_as_coordinator(
                 unsafe { libc::getpid() as i64 }
             }
         };
-        // TODO(port): allocPrintSentinel — was arena-backed; sentinel handling for make_path/delete_tree
-        let mut dir = format_bytes!(
+        // TODO(port): allocPrintSentinel — was arena-backed; sentinel dropped (no C-string consumer on this path)
+        let dir: Box<[u8]> = format_bytes!(
             "{}/bun-test-worker-{}",
             bstr::BStr::new(RealFS::get_default_temp_dir()),
             pid
-        );
-        dir.push(0);
-        let dir: Box<[u8]> = dir.into_boxed_slice();
-        let dir_bytes = &dir[..dir.len() - 1];
+        )
+        .into_boxed_slice();
+        let dir_bytes: &[u8] = &dir;
         if let Err(e) = Fd::cwd().make_path(dir_bytes) {
             Output::err(e, "failed to create worker temp dir {}", &[&bstr::BStr::new(dir_bytes)]);
             Global::exit(1);

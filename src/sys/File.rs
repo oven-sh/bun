@@ -148,14 +148,14 @@ impl File {
     }
 
     pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> Result<(), bun_core::Error> {
-        // On Windows, close the file before moving it.
-        #[cfg(windows)]
-        self.close();
         let cwd = Fd::cwd();
-        // TODO(port): narrow error set
+        // Close after the move on all platforms so `move_file_z_with_handle`'s
+        // EXDEV fallback (fstat/lseek/copy on `from_handle`) sees a live handle.
+        // (Zig closes first on Windows because its rename uses `MoveFileExW`; the
+        // Rust port goes through `rename_at_w` → `NtSetInformationFile` which
+        // opens its own source handle, so keeping `self` open across the call is
+        // fine and avoids passing a closed handle into the EXDEV fallback.)
         let result = sys::move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
-        // On POSIX, close the file after moving it.
-        #[cfg(unix)]
         self.close();
         result
     }
@@ -191,8 +191,10 @@ impl File {
     }
 
     pub fn is_tty(self) -> bool {
-        // TODO(port): std.posix.isatty — confirm bun_sys::isatty signature
-        sys::isatty(self.handle.cast())
+        // `sys::isatty` takes the wrapped `Fd` (handles the uv/system split on
+        // Windows internally) — Zig called `std.posix.isatty(fd_t)` with `.cast()`,
+        // but the Rust signature is `fn isatty(fd: Fd) -> bool`.
+        sys::isatty(self.handle)
     }
 
     /// Asserts in debug that this File object is valid
@@ -214,16 +216,14 @@ impl File {
     pub fn kind(self) -> SysResult<FileKind> {
         #[cfg(windows)]
         {
-            let rt = windows::GetFileType(self.handle.cast());
+            let rt = windows::GetFileType(self.handle.native());
             if rt == windows::FILE_TYPE_UNKNOWN {
-                match windows::GetLastError() {
-                    windows::ERROR_SUCCESS => {}
-                    err => {
-                        return SysResult::Err(SysError::from_code(
-                            SystemErrno::init(err).unwrap_or(SystemErrno::EUNKNOWN).to_e(),
-                            sys::Tag::fstat,
-                        ));
-                    }
+                let err = windows::get_last_win32_error();
+                if err != windows::Win32Error::SUCCESS {
+                    return SysResult::Err(SysError::from_code(
+                        err.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::EUNKNOWN),
+                        sys::Tag::fstat,
+                    ));
                 }
             }
 

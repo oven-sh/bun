@@ -1907,11 +1907,14 @@ pub fn to_executable(
 
         use bun_sys::windows;
         // Move the file using MoveFileExW
-        // SAFETY: NUL-terminated wide strings constructed above.
+        // SAFETY: NUL-terminated wide strings constructed above. Pass the
+        // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
+        // provenance covers the trailing NUL at index `len` that the W-suffix
+        // API will read — matches Zig's `buf[0..len :0].ptr` sentinel slice.
         if unsafe {
             windows::kernel32::MoveFileExW(
-                temp_buf_u16[..temp_w_len].as_ptr(),
-                dest_buf_u16[..dest_w_len].as_ptr(),
+                temp_buf_u16.as_ptr(),
+                dest_buf_u16.as_ptr(),
                 windows::MOVEFILE_COPY_ALLOWED | windows::MOVEFILE_REPLACE_EXISTING | windows::MOVEFILE_WRITE_THROUGH,
             )
         } == windows::FALSE
@@ -1946,8 +1949,10 @@ pub fn to_executable(
             || windows_options.copyright.is_some()
         {
             // The file has been moved to dest_path
+            // SAFETY: full-buffer pointer so provenance includes the NUL at
+            // `dest_buf_u16[dest_w_len]` (FFI reads it as a C wide string).
             if let Err(e) = windows::rescle::set_windows_metadata(
-                dest_buf_u16[..dest_w_len].as_ptr(),
+                dest_buf_u16.as_ptr(),
                 windows_options.icon.as_deref(),
                 windows_options.title.as_deref(),
                 windows_options.publisher.as_deref(),

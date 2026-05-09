@@ -16,6 +16,7 @@ using namespace WTF;
 class CredentialFramework {
 public:
     void* handle;
+    bool loaded;
 
     // Function pointers
     BOOL(WINAPI* CredWriteW)(PCREDENTIALW Credential, DWORD Flags);
@@ -25,12 +26,13 @@ public:
 
     CredentialFramework()
         : handle(nullptr)
+        , loaded(false)
     {
     }
 
     bool load()
     {
-        if (handle) return true;
+        if (loaded) return true;
 
         // Load advapi32.dll which contains the Credential Manager API
         handle = LoadLibraryW(L"advapi32.dll");
@@ -43,7 +45,8 @@ public:
         CredDeleteW = (BOOL(WINAPI*)(LPCWSTR, DWORD, DWORD))GetProcAddress((HMODULE)handle, "CredDeleteW");
         CredFree = (VOID(WINAPI*)(PVOID))GetProcAddress((HMODULE)handle, "CredFree");
 
-        return CredWriteW && CredReadW && CredDeleteW && CredFree;
+        loaded = CredWriteW && CredReadW && CredDeleteW && CredFree;
+        return loaded;
     }
 };
 
@@ -57,7 +60,7 @@ static CredentialFramework* credentialFramework()
             // Framework failed to load, but object is still constructed
         }
     });
-    return framework->handle ? &framework.get() : nullptr;
+    return framework->loaded ? &framework.get() : nullptr;
 }
 
 // Convert CString to Windows wide string
@@ -203,11 +206,13 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
         return std::nullopt;
     }
 
-    // Convert credential blob to CString for thread safety
-    std::optional<WTF::Vector<uint8_t>> result;
+    // Convert credential blob to CString for thread safety.
+    // CredReadW succeeded, so the credential exists — always return a value (possibly empty)
+    // so callers can distinguish "exists with empty value" from "not found" (std::nullopt).
+    std::optional<WTF::Vector<uint8_t>> result = WTF::Vector<uint8_t>();
     if (cred->CredentialBlob && cred->CredentialBlobSize > 0) {
-        result = WTF::Vector<uint8_t>(std::span<const char>(
-            reinterpret_cast<const char*>(cred->CredentialBlob),
+        result->append(std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t*>(cred->CredentialBlob),
             cred->CredentialBlobSize));
     }
 

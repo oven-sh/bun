@@ -188,22 +188,29 @@ impl Worker {
             use bun_sys::windows::libuv as uv;
 
             // SAFETY: all-zero is a valid uv::Pipe (matches Zig std.mem.zeroes).
-            let ipc_pipe = bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
-            // TODO(port): errdefer — if adoptPipe below is never reached, closeAndDestroy(ipc_pipe).
-            // A nested scopeguard cannot hold `&mut *this` here while the outer guard already
-            // holds it; Phase B should fold this into the outer cleanup path (check
-            // `this.ipc.backend.pipe.is_none()` and close_and_destroy the leaked pipe).
+            // Zig `errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();`:
+            // the guard owns the heap allocation until `adopt_pipe` succeeds and
+            // transfers it into `this.ipc.backend.pipe`. On any error return
+            // before that point (spawn_process / start_with_pipe / adopt_pipe
+            // false) the guard `close_and_destroy`s — which handles both the
+            // never-init'd case (frees the Box directly) and the post-spawn
+            // case (uv_close + free). Defused via `into_inner` on success.
+            let ipc_pipe = scopeguard::guard(
+                bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() })),
+                // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
+                |p| unsafe { uv::Pipe::close_and_destroy(p) },
+            );
 
             // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
             // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
-            this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
+            this.extra_fd_stdio = [Stdio::Ipc(*ipc_pipe)];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 // SAFETY: all-zero is a valid uv::Pipe.
                 stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
                 // SAFETY: all-zero is a valid uv::Pipe.
                 stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
-                extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
+                extra_fds: vec![Stdio::Ipc(*ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
                     loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
@@ -220,26 +227,36 @@ impl Worker {
                         Output::err(e, "spawnProcess failed for test worker", ());
                         bun_core::err!("SpawnFailed")
                     })?;
-            // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
+            // Zig `defer spawned.extra_pipes.deinit()`: `WindowsStdioResult::Buffer`
+            // holds a raw non-owning `*mut uv::Pipe`, so dropping the Vec at end
+            // of scope only frees list capacity (no element destructors) —
+            // matches Zig. The same `ipc_pipe` allocation appears in
+            // `extra_pipes[0]` and in the `ipc_pipe` guard above; sole ownership
+            // stays with the guard until `adopt_pipe`, so there is no
+            // double-free when `spawned` drops.
             this.process = Some(spawned.to_process(coord.vm.event_loop(), false));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
-                // ownership transfers into the reader's `Source` (heap::take inside).
-                unsafe { this.out.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
+                // SAFETY: `pipe` is the Box-allocated `*mut uv::Pipe` produced by
+                // spawn_process; ownership transfers into the reader's `Source`
+                // (heap::take inside `start_with_pipe`).
+                unsafe { this.out.reader.start_with_pipe(pipe) }
                     .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
                 // SAFETY: see stdout above.
-                unsafe { this.err.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
+                unsafe { this.err.reader.start_with_pipe(pipe) }
                     .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
-            // `ipc_pipe` was Box-allocated via heap::into_raw above and
-            // initialised by spawn_process; ownership of the *mut Pipe transfers
-            // to the Channel on success (it does the Box::from_raw internally).
-            if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
+            // `ipc_pipe` was Box-allocated above and initialised by
+            // spawn_process; ownership of the *mut Pipe transfers to the Channel
+            // on success (it does the Box::from_raw internally). On failure the
+            // caller retains ownership and the `ipc_pipe` guard fires on return.
+            if !this.ipc.adopt_pipe(coord.vm, *ipc_pipe) {
                 return Err(bun_core::err!("ChannelAdoptFailed"));
             }
+            // Ownership now in `this.ipc.backend.pipe`; disarm the errdefer.
+            let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe);
         }
 
         let process_ptr = this.process.expect("set above");

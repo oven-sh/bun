@@ -258,7 +258,7 @@ pub fn encode(
     let _ = unsafe {
         bun_wic_propbag_write_f32(
             props as *mut c_void,
-            bun_str::w!("ImageQuality").as_ptr(),
+            bun_core::wstr!("ImageQuality").as_ptr(),
             (opts.quality as f32) / 100.0,
         )
     };
@@ -271,7 +271,7 @@ pub fn encode(
     if unsafe {
         bun_wic_propbag_write_u8(
             props as *mut c_void,
-            bun_str::w!("HeifCompressionMethod").as_ptr(),
+            bun_core::wstr!("HeifCompressionMethod").as_ptr(),
             method,
         )
     } == 0

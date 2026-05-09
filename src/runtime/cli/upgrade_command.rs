@@ -1107,19 +1107,34 @@ impl UpgradeCommand {
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
                 .map_err(|_| bun_core::err!("UpgradeFailedMissingExecutable"))?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();
-            // PORT NOTE: reshaped for borrowck — use stack-local buffer
+            // PORT NOTE: reshaped for borrowck — use stack-local buffer.
+            // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
+            // route every read/write through it. Indexing the `PathBuffer`
+            // directly (via Deref/DerefMut) would materialize a fresh `&[u8]`
+            // or `&mut [u8]` over the *whole* array, retagging it and
+            // invalidating the raw-pointer-derived `&ZStr` views below. The
+            // Zig original freely re-slices a global `var` with no aliasing
+            // model; here the single `buf_ptr` is the shared provenance root.
             let mut current_executable_buf = PathBuffer::uninit();
-            current_executable_buf[..destination_executable.len()]
-                .copy_from_slice(destination_executable);
-            current_executable_buf[destination_executable.len()] = 0;
+            let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
+            // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
+            // came from `self_exe_path()` which is bounded by that.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    destination_executable.as_ptr(),
+                    buf_ptr,
+                    destination_executable.len(),
+                );
+                *buf_ptr.add(destination_executable.len()) = 0;
+            }
 
             let target_filename_ = bun_paths::basename(destination_executable);
-            // SAFETY: buf[destination_executable.len()] == 0 written above
+            // SAFETY: buf[destination_executable.len()] == 0 written above; the
+            // view is derived from `buf_ptr` so later disjoint writes through
+            // `buf_ptr` (at `target_dir_len`, outside this range) don't pop it.
             let target_filename = unsafe {
                 ZStr::from_raw(
-                    current_executable_buf
-                        .as_ptr()
-                        .add(destination_executable.len() - target_filename_.len()),
+                    buf_ptr.add(destination_executable.len() - target_filename_.len()),
                     target_filename_.len(),
                 )
             };
@@ -1127,15 +1142,16 @@ impl UpgradeCommand {
                 .ok_or(bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
-            current_executable_buf[target_dir_len] = 0;
-            // SAFETY: buf[target_dir_len]==0 (just written). `from_raw` (NOT
-            // `from_buf`) because this buffer is mutated and re-NUL-terminated
-            // at lines 1252/1273 below while `target_dirname` is still live —
-            // a borrow tied to `&current_executable_buf` would be E0502. The
-            // detached pointer is sound: each mutation re-establishes the NUL
-            // at `target_dir_len` before `target_dirname` is read again.
-            let target_dirname =
-                unsafe { ZStr::from_raw(current_executable_buf.as_ptr(), target_dir_len) };
+            // SAFETY: in-bounds; write is at the separator byte between dirname
+            // and basename, disjoint from both `&ZStr` views' ranges.
+            unsafe { *buf_ptr.add(target_dir_len) = 0 };
+            // SAFETY: buf[target_dir_len]==0 (just written). Derived from
+            // `buf_ptr`; the Windows block below toggles the byte at
+            // `target_dir_len` (outside `[0, target_dir_len)`) through the same
+            // raw pointer, so this view's provenance stays valid across those
+            // writes. Each mutation re-establishes the NUL before
+            // `target_dirname` is read again.
+            let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
             let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
                 Ok(d) => sys::Dir::from_fd(d),
                 Err(err) => {
@@ -1254,7 +1270,10 @@ impl UpgradeCommand {
                     // On Windows, we cannot replace the running executable directly.
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
-                    current_executable_buf[target_dir_len] = b'\\';
+                    // SAFETY: see `buf_ptr` note above — write through the shared
+                    // raw provenance root, not via DerefMut (which would retag
+                    // the whole buffer and invalidate `target_filename`/`target_dirname`).
+                    unsafe { *buf_ptr.add(target_dir_len) = b'\\' };
                     let mut buf = Vec::new();
                     write!(
                         &mut buf,
@@ -1275,7 +1294,8 @@ impl UpgradeCommand {
                         ));
                         Global::exit(1);
                     }
-                    current_executable_buf[target_dir_len] = 0;
+                    // SAFETY: restore NUL via `buf_ptr` (see aliasing note above).
+                    unsafe { *buf_ptr.add(target_dir_len) = 0 };
                 }
 
                 if let Err(err) = sys::move_file_z(

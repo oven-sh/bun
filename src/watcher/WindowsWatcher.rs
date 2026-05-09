@@ -257,20 +257,26 @@ impl WindowsWatcher {
             let _ = w::CloseHandle(h);
         });
 
-        self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
-            .map_err(|_| bun_core::Error::from(Error::IocpFailed))?;
+        // PORT NOTE: Zig `try w.CreateIoCompletionPort(...)` propagates std's
+        // `error.Unexpected` on NULL — do not remap to `Error::IocpFailed` (a variant
+        // the Zig spec defines but never returns); bubble up the wrapper's error as-is.
+        self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)?;
         let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
             // SAFETY: iocp handle was successfully created above.
             let _ = w::CloseHandle(h);
         });
 
-        self.watcher = DirWatcher {
-            // SAFETY: all-zero is a valid OVERLAPPED (#[repr(C)] POD; kernel treats zero as "no event/offset").
-            overlapped: unsafe { core::mem::zeroed::<w::OVERLAPPED>() },
-            // SAFETY: buf is an output buffer filled by ReadDirectoryChangesW before read.
-            buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
-            dir_handle: *handle_guard,
-        };
+        // PORT NOTE: Zig `this.watcher = .{ .dirHandle = handle }` uses result-location
+        // semantics — only the changed fields are written, no 64KB stack temporary is
+        // materialized, and `buf` is left as-is (Zig `= undefined` is not UB until read).
+        // In Rust, building a `DirWatcher { .. }` literal would (a) allocate a ~64KB
+        // temporary on the stack and memcpy it into place, and (b) require producing a
+        // `[u8; 64*1024]` value — `MaybeUninit::uninit().assume_init()` on an integer
+        // array is *immediate* UB regardless of later use. Assign fields in place instead;
+        // `buf` was already zero-filled by `Default`.
+        // SAFETY: all-zero is a valid OVERLAPPED (#[repr(C)] POD; kernel treats zero as "no event/offset").
+        self.watcher.overlapped = unsafe { core::mem::zeroed::<w::OVERLAPPED>() };
+        self.watcher.dir_handle = *handle_guard;
 
         self.buf[..root.len()].copy_from_slice(root);
         let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
@@ -457,6 +463,11 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 if event_id >= this.watch_events.len() {
                     // Process current batch of events
                     process_watch_event_batch(this, event_id)?;
+                    // PORT NOTE: `process_watch_event_batch` reborrows the whole
+                    // `&mut Watcher`, which under Stacked Borrows invalidates the
+                    // raw `*const DirWatcher` `iter.watcher` was derived from.
+                    // Re-derive it before the outer `iter.next()` dereferences it.
+                    iter.watcher = &this.platform.watcher as *const DirWatcher;
                     // Reset event_id to start a new batch
                     event_id = 0;
                 }
@@ -487,17 +498,21 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     all_events.sort_unstable_by(WatchEvent::sort_by_index);
 
     let mut last_event_index: usize = 0;
-    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
+    // PORT NOTE: Zig deliberately widens the sentinel to `u32::MAX` so the first
+    // iteration's `index == last_event_id` is guaranteed false for every possible
+    // WatchItemIndex (u16). Narrowing to `WatchItemIndex::MAX` would collide with
+    // `no_watch_item` (65535) and take the merge-branch on the first event.
+    let mut last_event_id: u32 = u32::MAX;
 
     for i in 0..all_events.len() {
-        if all_events[i].index == last_event_id {
+        if u32::from(all_events[i].index) == last_event_id {
             // PORT NOTE: reshaped for borrowck — copy then merge to avoid two &mut into all_events.
             let ev = all_events[i];
             all_events[last_event_index].merge(ev);
             continue;
         }
         last_event_index = i;
-        last_event_id = all_events[i].index;
+        last_event_id = u32::from(all_events[i].index);
     }
     if all_events.is_empty() {
         return Ok(());

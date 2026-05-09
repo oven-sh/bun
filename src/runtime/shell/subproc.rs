@@ -639,6 +639,19 @@ impl ShellSubprocess {
             spawn_args.env_array.as_ptr(),
         ) {
             Err(err) => {
+                // Zig: `spawn_options.deinit()` (subproc.zig:872). On Windows,
+                // WindowsSpawnOptions has no Drop — WindowsStdio::Buffer holds a
+                // raw heap `*mut uv::Pipe` from `as_spawn_option` that must be
+                // closed+freed explicitly via `WindowsStdio::deinit` or it leaks
+                // (process.rs: "callers must invoke WindowsStdio::deinit
+                // explicitly on the error path"). POSIX `deinit` is a no-op.
+                // `extra_fds` is empty (Default) here so stdin/out/err suffice.
+                #[cfg(windows)]
+                {
+                    spawn_options.stdin.deinit();
+                    spawn_options.stdout.deinit();
+                    spawn_options.stderr.deinit();
+                }
                 drop(spawn_options);
                 let mut msg = Vec::<u8>::new();
                 use std::io::Write;
@@ -647,6 +660,12 @@ impl ShellSubprocess {
             }
             Ok(r) => match r {
                 bun_sys::Result::Err(err) => {
+                    #[cfg(windows)]
+                    {
+                        spawn_options.stdin.deinit();
+                        spawn_options.stdout.deinit();
+                        spawn_options.stderr.deinit();
+                    }
                     drop(spawn_options);
                     return Err(ShellErr::Sys(err.to_shell_system_error()));
                 }

@@ -101,7 +101,12 @@ bitflags::bitflags! {
         const IS_CLOSED    = 1 << 1;
         const IS_CLIENT    = 1 << 2;
         const IS_SSL       = 1 << 3;
-        // _: u4 padding
+        /// Rust-only bookkeeping: set once `start_with_pipe` adopts the
+        /// `Box<uv::Pipe>` leaked in [`from`]. Lets `Drop` reclaim the orphan
+        /// allocation on early-error paths (before adoption) without risking a
+        /// double-free once the writer owns it.
+        const PIPE_ADOPTED = 1 << 4;
+        // _: u3 padding
     }
 }
 
@@ -194,20 +199,38 @@ impl WindowsNamedPipe {
         unsafe { self.incoming.set_len(self.incoming.len() + nread) };
         debug_assert!(self.incoming.len() <= self.incoming.capacity());
 
-        // PORT NOTE: reordered before `incoming.slice()` for borrowck — `reset_timeout`
-        // only touches timer fields, never `self.incoming`.
         self.reset_timeout();
 
-        let data = self.incoming.slice();
+        // Stacked-Borrows: `receive_data` may synchronously re-enter this
+        // struct via the SSL trampolines (`ssl_write`/`ssl_on_*`), which form
+        // `&mut *this` over the WHOLE struct from the raw `*mut Self` stored in
+        // `wrapper.handlers.ctx`. That Unique retag would pop (a) any SharedRO
+        // borrow of `self.incoming` held by `data`, and (b) any live `&mut`
+        // borrow of `self.wrapper`. Decouple both before calling in:
+        //   (a) move the buffer out so `data` is independent of `*self`;
+        //   (b) call `receive_data` through a raw `*mut WrapperType` so no
+        //       outer `&mut self.wrapper` Unique tag is held across the
+        //       re-entrant retag (raw-ptr-per-field pattern, see jsc_hooks.rs).
+        // The Zig original aliases freely (`wrapper.receiveData(data)` while
+        // `data` points into `this.incoming`); Rust needs the explicit detach.
+        let mut data = core::mem::take(&mut self.incoming);
 
-        if let Some(wrapper) = self.wrapper.as_mut() {
-            // PORT NOTE: reshaped for borrowck — `data` borrows self.incoming while wrapper borrows self.wrapper
-            // TODO(port): verify no aliasing between wrapper.receiveData and self.incoming
-            wrapper.receive_data(data);
+        if self.wrapper.is_some() {
+            let w: *mut WrapperType =
+                // SAFETY: `is_some()` checked just above; single JS thread.
+                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // SAFETY: `w` points into `self.wrapper`'s payload; the re-entrant
+            // `&mut *this` formed by the SSL trampolines does not touch
+            // `self.wrapper` (only timer/writer/flags via `internal_write`), so
+            // the wrapper bytes stay valid for the duration of the call.
+            unsafe { (*w).receive_data(data.as_slice()) };
         } else {
-            (self.handlers.on_data)(self.handlers.ctx, data);
+            (self.handlers.on_data)(self.handlers.ctx, data.as_slice());
         }
-        self.incoming.clear();
+        // Zig: `this.incoming.len = 0` — restore the (cleared) allocation so
+        // the next `on_read_alloc` reuses it instead of growing from empty.
+        data.clear();
+        self.incoming = data;
     }
 
     fn on_write(&mut self, amount: usize, status: WriteStatus) {
@@ -310,6 +333,15 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
         if !self.flags.is_closed() {
             self.flags.set_is_closed(true); // only call onClose once
+            // Drop the non-owning alias now: the writer's `close()` has
+            // already handed the Box off to libuv's async close callback (or
+            // will), so any later `pause_stream()` would deref freed memory.
+            // (Zig leaves `this.pipe` dangling here — its `onPipeClose` is
+            // dead code; we diverge to avoid the latent UAF.)
+            #[cfg(windows)]
+            {
+                self.pipe = None;
+            }
             (self.handlers.on_close)(self.handlers.ctx);
             self.release_resources();
         }
@@ -663,7 +695,7 @@ impl WindowsNamedPipe {
                 ctx.cast::<c_void>(),
                 Self::uv_on_connect,
             )
-            .to_error(bun_sys::Tag::connect)
+            .to_error(bun_sys::Tag::connect2)
         {
             return Err(err);
         }
@@ -793,9 +825,12 @@ impl WindowsNamedPipe {
             // adopted (asserted by `start_with_pipe`'s
             // `debug_assert!(source.is_none())`). After this call
             // `self.writer.source` holds the SOLE `Box` for the allocation;
-            // `self.pipe` stays a non-owning alias for `pause_stream`, cleared
-            // (not dropped — `NonNull` has no `Drop`) by `on_pipe_close` before
-            // the writer's `close_and_destroy` frees it.
+            // `self.pipe` remains a non-owning alias for `pause_stream`. NOTE:
+            // nothing clears that alias when the writer frees the Box (the
+            // `on_pipe_close` method above is dead code, matching Zig) — so
+            // `on_close` nulls it defensively and `Drop` only reclaims when
+            // `PIPE_ADOPTED` was never set.
+            self.flags.insert(Flags::PIPE_ADOPTED);
             let start_pipe_result = unsafe { self.writer.start_with_pipe(pipe_nn.as_ptr()) };
             if let bun_sys::Result::Err(err) = start_pipe_result {
                 self.on_error(err);
@@ -976,6 +1011,16 @@ impl WindowsNamedPipe {
             // succeeds and is a no-op if not reading.
             unsafe { (*stream).read_stop() };
         }
+        // Zig: `this.writer.deinit()` — release the queued outgoing bytes NOW
+        // rather than when the embedding context finally drops. The source is
+        // already closed by the time `on_close` reaches here (that close is
+        // what fired the callback), and `current_payload` may still back an
+        // in-flight `uv_write` so it is left to the writer's own Drop; but the
+        // `outgoing` queue is purely Rust-side and safe to drop immediately.
+        #[cfg(windows)]
+        {
+            self.writer.outgoing = Default::default();
+        }
         self.wrapper = None;
         self.ssl_error = CertError::default();
     }
@@ -984,6 +1029,26 @@ impl WindowsNamedPipe {
 impl Drop for WindowsNamedPipe {
     fn drop(&mut self) {
         self.release_resources();
+        // Reclaim the `Box<uv::Pipe>` leaked in `from()` if it was never
+        // adopted by `self.writer.source` (early-error returns from
+        // `connect`/`open`/`get_accepted_by` before `start()` runs). Once
+        // `PIPE_ADOPTED` is set the writer is the sole owner and frees via
+        // its libuv close callback — touching it here would double-free.
+        // `close_and_destroy` handles both un-adopted states: if `pipe.init()`
+        // never ran (`loop_` still null) it just `Box::from_raw`-drops the
+        // allocation; if init() DID run before the later open/accept/connect
+        // failure it `uv_close`s first so the handle is unlinked from libuv's
+        // `handle_queue` before the heap block is freed.
+        #[cfg(windows)]
+        if !self.flags.contains(Flags::PIPE_ADOPTED) {
+            if let Some(pipe) = self.pipe.take() {
+                // SAFETY: `pipe` is the `NonNull` from `Box::leak` in `from()`,
+                // never adopted (gated on `!PIPE_ADOPTED`); `close_and_destroy`
+                // is the unique reclaim and accepts both never-init'd and
+                // init'd-but-unowned handles.
+                unsafe { uv::Pipe::close_and_destroy(pipe.as_ptr()) };
+            }
+        }
     }
 }
 
@@ -1046,14 +1111,13 @@ impl uv::StreamReader for WindowsNamedPipe {
     }
     #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        // Zig: `errEnum() orelse bun.sys.E.CANCELED` — promote raw libuv errno.
-        // `translate_uv_error_to_e`'s fallback for unmapped codes is `UNKNOWN`,
-        // but the Zig spec (libuv.zig `errEnum() orelse .CANCELED`) wants
-        // `CANCELED` for the unmapped case, so post-process.
-        let e = match bun_sys::windows::translate_uv_error_to_e(err) {
-            bun_sys::E::UNKNOWN => bun_sys::E::CANCELED,
-            e => e,
-        };
+        // Zig: `ReturnCodeI64.init(nreads).errEnum() orelse .CANCELED` — but
+        // `errEnum()` returns `null` ONLY for non-negative values, and the
+        // trampoline only reaches this arm when `nreads < 0`, so the `orelse`
+        // is dead in spec. For any negative code `translateUVErrorToE` already
+        // yields a concrete `E` (falling back to `UNKNOWN` for unmapped
+        // codes). Pass it straight through; do NOT remap UNKNOWN→CANCELED.
+        let e = bun_sys::windows::translate_uv_error_to_e(err);
         WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]

@@ -1243,7 +1243,15 @@ impl<'a> ReadFileUV<'a> {
             }
 
             let buf = self.remaining_buffer();
-            let mut bufs: [libuv::uv_buf_t; 1] = [libuv::uv_buf_t::init(buf)];
+            // Construct uv_buf_t directly from `as_mut_ptr()` so the stored
+            // `base` carries write provenance — `uv_buf_t::init` takes `&[u8]`
+            // and would implicitly reborrow `buf` as shared, yielding a
+            // SharedReadOnly-tagged pointer that libuv then *writes* through
+            // (uv_fs_read fills this buffer), which is UB under Stacked Borrows.
+            let mut bufs: [libuv::uv_buf_t; 1] = [libuv::uv_buf_t {
+                len: buf.len() as libuv::ULONG,
+                base: buf.as_mut_ptr(),
+            }];
             self.req.assert_cleaned_up();
             // SAFETY: FFI — `loop_` is the live VM uv loop, `self.req` is a
             // cleaned-up `fs_t` owned by `self`, `bufs` points at a stack uv_buf

@@ -277,8 +277,12 @@ pub fn platform_iovec_const_create(input: &[u8]) -> PlatformIOVecConst {
 
 pub fn platform_iovec_to_slice(iovec: &PlatformIOVec) -> &mut [u8] {
     #[cfg(windows)]
-    {
-        bun_sys::windows::libuv::uv_buf_t::slice(iovec)
+    unsafe {
+        // SAFETY: iovec.base/len describe a valid mutable buffer owned by caller.
+        // Spec (bun.zig:272): `uv_buf_t.slice()` returns Zig `[]u8` (mutable). The
+        // bun_libuv_sys::uv_buf_t::slice() wrapper is `&self -> &[u8]` (immutable),
+        // so build the &mut slice directly. `len` is ULONG on Windows.
+        core::slice::from_raw_parts_mut(iovec.base, iovec.len as usize)
     }
     #[cfg(not(windows))]
     unsafe {
@@ -580,9 +584,12 @@ pub fn is_readable(fd: FD) -> PollFlag {
 pub fn is_writable(fd: FD) -> PollFlag {
     #[cfg(windows)]
     {
+        // Spec (bun.zig:672/679): `std.posix.POLL.WRNORM` on Windows is winsock's
+        // POLLWRNORM (0x0010). There is no `bun_sys::POLL` namespace on Windows;
+        // use the ws2_32 constant directly.
         let mut polls = [bun_sys::windows::ws2_32::WSAPOLLFD {
             fd: fd.as_socket_fd(),
-            events: bun_sys::POLL::WRNORM,
+            events: bun_sys::windows::ws2_32::POLLWRNORM,
             revents: 0,
         }];
         // SAFETY: polls is a valid 1-element WSAPOLLFD array; len=1 matches the buffer
@@ -593,7 +600,7 @@ pub fn is_writable(fd: FD) -> PollFlag {
             0
         }) != 0;
         bun_sys::syslog!("poll({}) writable: {} ({})", fd, result, polls[0].revents);
-        if result && polls[0].revents & bun_sys::POLL::WRNORM != 0 {
+        if result && polls[0].revents & bun_sys::windows::ws2_32::POLLWRNORM != 0 {
             return PollFlag::hup;
         } else if result {
             return PollFlag::ready;
@@ -1205,7 +1212,16 @@ pub fn reload_process<const MAY_RETURN: bool>(clear_terminal: bool) {
     #[cfg(windows)]
     {
         // on windows we assume that we have a parent process that is monitoring us
-        let rc = unsafe { c::TerminateProcess(c::GetCurrentProcess(), windows::watcher_reload_exit) };
+        //
+        // Spec (bun.zig:1593): `c.TerminateProcess(c.GetCurrentProcess(), windows.watcher_reload_exit)`.
+        // `bun_sys::c` does not re-export TerminateProcess/GetCurrentProcess, and the
+        // exit code constant is ported as `bun_sys::windows::WATCHER_RELOAD_EXIT`.
+        // Declare the kernel32 externs locally (matches bun_core/util.rs:3113).
+        unsafe extern "system" {
+            fn TerminateProcess(hProcess: *mut core::ffi::c_void, uExitCode: u32) -> i32;
+            fn GetCurrentProcess() -> *mut core::ffi::c_void;
+        }
+        let rc = unsafe { TerminateProcess(GetCurrentProcess(), bun_sys::windows::WATCHER_RELOAD_EXIT) };
         if rc == 0 {
             let err = bun_sys::windows::GetLastError();
             if MAY_RETURN {
@@ -1777,6 +1793,16 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
                 _ => Err(bun_core::err!("Unknown")),
             };
         }
+        // MSDN: CommandLineToArgvW allocates a contiguous block via LocalAlloc that
+        // the caller must free with a single LocalFree (the comment in bun.zig:2173
+        // quotes the GetCommandLineW docs, not CommandLineToArgvW). We copy every
+        // argument into our own StringBuilder storage below, so the source block is
+        // safe to release once copied — including on early-return paths.
+        unsafe extern "system" {
+            fn LocalFree(hMem: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
+        }
+        let _argvu16_free =
+            scopeguard::guard(argvu16_ptr, |p| unsafe { LocalFree(p.cast()); });
         let argvu16 =
             unsafe { core::slice::from_raw_parts(argvu16_ptr, usize::try_from(length).expect("int cast")) };
         let mut out_argv: Vec<Box<bun_str::ZStr>> = Vec::with_capacity(argvu16.len());

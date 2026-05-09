@@ -455,10 +455,13 @@ pub const SCS_POSIX_BINARY: DWORD = 4;
 pub use bun_windows_sys::externs::SetCurrentDirectoryW;
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
 
-// TODO(port): move to windows_sys
-unsafe extern "system" {
-    pub fn RtlNtStatusToDosError(status: NTSTATUS) -> Win32Error;
-}
+// Re-export the correctly-typed extern (returns `ULONG`/`DWORD`, not `Win32Error`).
+// The Zig spec (windows.zig:141) declares the return as the `enum(u16)` `Win32Error`,
+// which Zig's C-ABI lowering happens to widen, but in Rust declaring a 16-bit return
+// for a function whose real ABI returns 32 bits is undefined behaviour. The
+// `bun_windows_sys::externs` declaration already has the correct `-> DWORD` shape;
+// callers (`Win32Error::from_nt_status`) truncate explicitly with `as u16`.
+pub use bun_windows_sys::externs::RtlNtStatusToDosError;
 
 pub use bun_windows_sys::externs::SaferiIsExecutableFileType;
 
@@ -2308,7 +2311,7 @@ impl Win32Error {
     pub const DESTROY_OBJECT_OF_OTHER_THREAD: Win32Error = Win32Error(1435);
 
     /// The data present in the reparse point buffer is invalid.
-    pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(3492);
+    pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
 
     /// Childwin32.cannot have menus.
     pub const CHILD_WINDOW_MENU: Win32Error = Win32Error(1436);
@@ -3294,8 +3297,10 @@ impl Win32Error {
     }
 
     pub fn from_nt_status(status: NTSTATUS) -> Win32Error {
-        // SAFETY: RtlNtStatusToDosError is total over NTSTATUS
-        unsafe { RtlNtStatusToDosError(status) }
+        // SAFETY: RtlNtStatusToDosError is total over NTSTATUS. The real Win32
+        // ABI returns `ULONG`; truncate to the documented 16-bit code space at
+        // the FFI boundary so the extern declaration matches the C signature.
+        Win32Error(unsafe { bun_windows_sys::externs::RtlNtStatusToDosError(status) } as u16)
     }
 }
 
@@ -3674,7 +3679,8 @@ pub fn exe_path_w() -> &'static bun_str::WStr {
     // `peb()` lives in `bun_core::windows_sys` (tier-0; needs inline asm),
     // not `bun_windows_sys`.
     unsafe {
-        let image_path = &bun_core::windows_sys::peb().ProcessParameters.ImagePathName;
+        let pp = (*bun_core::windows_sys::peb()).ProcessParameters;
+        let image_path = &(*pp).ImagePathName;
         let len = (image_path.Length as usize) / 2;
         bun_str::WStr::from_raw(image_path.Buffer, len)
     }
@@ -3877,10 +3883,14 @@ pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(
     Err(bun_core::Error::intern(tag))
 }
 
-pub fn WSAGetLastError() -> Option<E> {
-    // SAFETY: ws2_32 is loaded
-    SystemErrno::init(u32::try_from(unsafe { win32::ws2_32::WSAGetLastError() }).expect("int cast"))
-        .map(SystemErrno::to_e)
+pub fn WSAGetLastError() -> Option<SystemErrno> {
+    // Zig (windows.zig:3303-3305): `SystemErrno.init(@intFromEnum(ws2_32.WSAGetLastError()))`.
+    // The raw extern is `-> c_int`; Zig's `@intFromEnum` is a total truncating cast, so use
+    // `as u32` here rather than `try_from().expect()` (which would add a panic edge the spec
+    // lacks if Winsock ever returned a negative value). Returns `SystemErrno`, not `E` —
+    // callers that need `E` apply `.to_e()` themselves.
+    // SAFETY: ws2_32 is loaded.
+    SystemErrno::init(unsafe { win32::ws2_32::WSAGetLastError() } as u32)
 }
 
 // BOOL CreateDirectoryExW(
@@ -3943,6 +3953,7 @@ pub fn GetFinalPathNameByHandle(
     Ok(ret)
 }
 
+const GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT: DWORD = 0x00000002;
 const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: DWORD = 0x00000004;
 
 pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
@@ -3950,7 +3961,13 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
     // SAFETY: addr cast to LPCWSTR per Win32 docs when FROM_ADDRESS flag set
     let rc = unsafe {
         externs::GetModuleHandleExW(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            // Without UNCHANGED_REFCOUNT, GetModuleHandleExW increments the
+            // module's load count and the caller must FreeLibrary the returned
+            // HMODULE. No caller of this helper does so (they only feed it to
+            // GetModuleFileNameW), so leave the refcount untouched. The Zig
+            // spec (windows.zig:3353-3359) also omits this flag — that's a
+            // latent leak in the spec; fixed here.
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             // Docs: when FROM_ADDRESS is set, lpModuleName is "an address in
             // the module" — typed as LPCWSTR but really an opaque pointer.
             addr as *mut c_void,
@@ -4017,7 +4034,11 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         Buffer: sub_path_w.as_ptr().cast_mut().cast::<u16>(),
     };
 
-    if sub_path_w[0] == b'.' as u16 && sub_path_w[1] == 0 {
+    // Zig (windows.zig:3410) indexes [0]/[1] directly, relying on the buffer's sentinel byte
+    // being readable past `.len` in release-fast. Rust slice indexing is always bounds-checked,
+    // so a 1-element ['.'] slice would panic instead of matching. Guard the access and treat a
+    // bare ['.'] (no following element) the same as ".\0".
+    if sub_path_w.first() == Some(&(b'.' as u16)) && sub_path_w.get(1).copied().unwrap_or(0) == 0 {
         // Windows does not recognize this, but it does work with empty string.
         nt_name.Length = 0;
     }
@@ -4496,10 +4517,11 @@ pub fn become_watcher_manager() -> ! {
     // SAFETY: null args allowed
     let job = unsafe { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
     if job.is_null() {
-        let err = kernel32::GetLastError();
+        // Zig: `@tagName(std.os.windows.kernel32.GetLastError())` — print the
+        // human-readable Win32 error name, not the raw DWORD.
         bun_core::Output::panic(format_args!(
             "Could not create watcher Job Object: {}",
-            err
+            get_last_error_tag()
         ));
     }
     // SAFETY: all-zero is valid for this C struct
@@ -4519,10 +4541,9 @@ pub fn become_watcher_manager() -> ! {
         )
     } == 0
     {
-        let err = kernel32::GetLastError();
         bun_core::Output::panic(format_args!(
             "Could not configure watcher Job Object: {}",
-            err
+            get_last_error_tag()
         ));
     }
 
@@ -4530,22 +4551,24 @@ pub fn become_watcher_manager() -> ! {
         if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
             bun_core::handle_error_return_trace(err);
             if err == bun_core::err!("Win32Error") {
-                let last = GetLastError();
-                bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", last));
+                // Zig: `@tagName(GetLastError())`.
+                bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", get_last_error_tag()));
             }
             bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err.name()));
         }
         // SAFETY: hProcess valid
         if let Err(err) = unsafe { win32::WaitForSingleObject(procinfo.hProcess, win32::INFINITE) } {
-            bun_core::Output::panic(format_args!("Failed to wait for child process: {}\n", err.0));
+            // Zig: `@errorName(err)` — print the error's name, not its raw discriminant.
+            bun_core::Output::panic(format_args!("Failed to wait for child process: {:?}\n", err));
         }
         let mut exit_code: DWORD = 0;
         // SAFETY: hProcess valid, exit_code is out-param
         if unsafe { externs::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) } == 0 {
-            let err = GetLastError();
+            // Zig: `@tagName(windows.GetLastError())` — capture before NtClose may clobber it.
+            let err = get_last_win32_error();
             // SAFETY: hProcess owned by this fn; closing on error path
             unsafe { let _ = externs::NtClose(procinfo.hProcess); }
-            bun_core::Output::panic(format_args!("Failed to get exit code of child process: {}\n", err));
+            bun_core::Output::panic(format_args!("Failed to get exit code of child process: {:?}\n", err));
         }
         // SAFETY: hProcess owned by this fn
         unsafe { let _ = externs::NtClose(procinfo.hProcess); }
@@ -5008,12 +5031,22 @@ pub fn translate_ntstatus_to_errno(status: NTSTATUS) -> E {
 }
 
 /// `bun.windows.getenvW` — read a UTF-16 env var into an owned `Vec<u16>`.
+///
+/// Zig's `std.process.getenvW` takes `[:0]const u16` (sentinel-terminated), and Zig's
+/// `bun.strings.w` / `toUTF16Literal` produce sentinel-terminated literals. The Rust `w!`
+/// macro and other call sites pass plain `&[u16]` *without* a trailing NUL, so we must
+/// append one locally before handing it to `GetEnvironmentVariableW` (which reads `lpName`
+/// until it sees a 0 WCHAR — passing an unterminated slice is an OOB read / wrong lookup).
 pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
+    // Defensively NUL-terminate; callers are not required to (and several do not).
+    let mut name_z: Vec<u16> = Vec::with_capacity(name.len() + 1);
+    name_z.extend_from_slice(name);
+    name_z.push(0);
     let mut buf = vec![0u16; 256];
     loop {
-        // SAFETY: name and buf are valid for the call's duration.
+        // SAFETY: name_z is NUL-terminated and buf is valid for the call's duration.
         let n = unsafe {
-            kernel32_2::GetEnvironmentVariableW(name.as_ptr(), buf.as_mut_ptr(), buf.len() as DWORD)
+            kernel32_2::GetEnvironmentVariableW(name_z.as_ptr(), buf.as_mut_ptr(), buf.len() as DWORD)
         };
         if n == 0 { return None; }
         if (n as usize) < buf.len() { buf.truncate(n as usize); return Some(buf); }

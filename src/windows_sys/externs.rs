@@ -900,7 +900,7 @@ impl Win32Error {
     pub const CANT_ACCESS_FILE: Win32Error = Win32Error(1920);
     pub const CANT_RESOLVE_FILENAME: Win32Error = Win32Error(1921);
     pub const NOT_CONNECTED: Win32Error = Win32Error(2250);
-    pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(3492);
+    pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
     pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
 
     // — WSA pseudo-variants (Zig: `pub const WSAE*: Win32Error = @enumFromInt(N)`) —
@@ -1001,17 +1001,25 @@ impl Win32Error {
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
+// CommandLineToArgvW is exported by shell32.dll, NOT kernel32. The Zig spec at
+// externs.zig:12 declares it `extern "kernel32"`, but Zig's link model still pulls
+// shell32 implicitly so it works there. In Rust, #[link(name=..)] is the only thing
+// adding the import library, so it must be correct or the Windows link step fails
+// with `unresolved external symbol __imp_CommandLineToArgvW`.
+#[link(name = "shell32")]
+unsafe extern "system" {
+    pub fn CommandLineToArgvW(
+        lpCmdLine: LPCWSTR,
+        pNumArgs: *mut c_int,
+    ) -> *mut LPWSTR;
+}
+
 #[link(name = "kernel32")]
 unsafe extern "system" {
     pub fn GetFileInformationByHandle(
         hFile: HANDLE,
         lpFileInformation: *mut BY_HANDLE_FILE_INFORMATION,
     ) -> BOOL;
-
-    pub fn CommandLineToArgvW(
-        lpCmdLine: LPCWSTR,
-        pNumArgs: *mut c_int,
-    ) -> *mut LPWSTR;
 
     pub fn GetBinaryTypeW(
         lpApplicationName: LPCWSTR,

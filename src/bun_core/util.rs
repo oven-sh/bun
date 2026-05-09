@@ -544,17 +544,12 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     }
     #[cfg(windows)]
     {
-        // Windows env names are case-insensitive. Zig walks `std.os.environ`
-        // (`PEB.ProcessParameters.Environment`) and returns a borrowed slice
-        // into the WTF-16 block. Box::leak is forbidden (PORTING.md §Forbidden);
-        // returning a borrowed UTF-8 slice requires walking the *narrow* C
-        // runtime environ, which `_wgetenv`/`GetEnvironmentVariableW` don't
-        // expose. Correct port lands with `windows_sys::env_block()` (UTF-16
-        // walk) + a process-lifetime intern table OR returning &[u16].
-        // TODO(b2-blocked): bun_windows_sys::env_block — until then, no env on
-        // Windows via this path (callers use `bun.DotEnv.Loader` instead).
-        let _ = key;
-        None
+        // Windows env names are case-insensitive (Zig spec: `getenvZ` on
+        // Windows delegates to `getenvZAnyCase`). Walk the WTF-8 env block
+        // populated at startup by `bun_sys::windows::env::convert_env_to_wtf8`
+        // (main.zig:47). The block is `Box::leak`'d for process lifetime so
+        // `'static` borrows here are sound.
+        getenv_z_any_case(key)
     }
 }
 
@@ -598,9 +593,39 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         }
         None
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        getenv_z(key)
+        // Walk `os::environ()` — WTF-8 `KEY=VALUE` C strings populated at
+        // startup by `convert_env_to_wtf8`. Same scan as the unix arm above
+        // but the block is owned by us (Box::leak'd) instead of libc.
+        // SAFETY: env block is process-lifetime; written exactly once at
+        // startup before any reader runs.
+        let environ = unsafe { crate::os::environ() };
+        for &entry in environ {
+            if entry.is_null() { continue; }
+            // SAFETY: each entry is a NUL-terminated WTF-8 string into the
+            // leaked `WTF8_ENV_BUF` allocation.
+            let line = unsafe {
+                let mut len = 0usize;
+                while *entry.add(len) != 0 { len += 1; }
+                core::slice::from_raw_parts(entry.cast::<u8>(), len)
+            };
+            let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
+            if line[..key_end].len() == key.len()
+                && line[..key_end]
+                    .iter()
+                    .zip(key.as_bytes())
+                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
+            {
+                return Some(&line[(key_end + 1).min(line.len())..]);
+            }
+        }
+        None
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = key;
+        None
     }
 }
 

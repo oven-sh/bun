@@ -23,6 +23,13 @@ pub struct SourceLocation {
     pub line: u32,
 }
 
+// SAFETY: both pointers always reference `'static` data — either compile-time literals
+// from `concat!(file!(), "\0")` / `c"…"`, or leaked interned `CString`s from
+// `intern_location_file`. They are never freed and never written through, so sharing
+// across threads is sound.
+unsafe impl Send for SourceLocation {}
+unsafe impl Sync for SourceLocation {}
+
 impl SourceLocation {
     /// Build from the runtime `#[track_caller]` location. The `file()` string is not
     /// NUL-terminated, so we intern it (leaked, bounded by the number of distinct call

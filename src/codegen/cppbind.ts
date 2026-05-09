@@ -420,7 +420,10 @@ type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "null_is_th
 const rustSharedTypes: Record<string, string> = {
   // Primitives
   "bool": "bool",
-  "char": "u8",
+  // `char` signedness is platform-dependent (signed on x86_64-linux/windows,
+  // unsigned on aarch64); match Zig's `c_char` so a future by-value return
+  // doesn't silently sign-flip.
+  "char": "core::ffi::c_char",
   "unsigned char": "u8",
   "signed char": "i8",
   "char16_t": "u16",
@@ -607,11 +610,19 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     .join(", ");
 
   if (fn.tag === "check_slow") {
+    // Inline the `top_scope!` body (rather than the `call_check_slow` *function* form,
+    // which routes `SourceLocation::from_caller()` → thread-local intern probe per call
+    // in debug builds). This is the highest-volume mode — keep it as cheap as the
+    // zero/false/null arms below. `src!()` resolves to the wrapper file/line, matching
+    // Zig's `cpp.zig` (`@src()` inside the wrapper); `#[track_caller]` would be a no-op
+    // against a syntactic `file!()`, so don't emit it.
     rustWrap.push(
-      `#[track_caller]`,
       `#[inline]`,
       `pub unsafe fn ${fn.name}(${wrapParams}) -> crate::JsResult<${ret}> {`,
-      `    crate::call_check_slow(${gname}, || unsafe { raw::${fn.name}(${callArgs}) })`,
+      `    crate::top_scope!(__scope, ${gname});`,
+      `    let __r = unsafe { raw::${fn.name}(${callArgs}) };`,
+      `    __scope.return_if_exception()?;`,
+      `    Ok(__r)`,
       `}`,
     );
     return;
@@ -635,8 +646,10 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     okType = `core::ptr::NonNull<${generateRustType((fn.returnType as CppType & { type: "pointer" }).child, fn.returnType)}>`;
   } else assertNever(fn.tag);
 
+  // `validation_scope!` expands `src!()` syntactically (resolves to this generated
+  // file/line — parity with Zig's `@src()` inside cpp.zig wrappers). `#[track_caller]`
+  // can't influence a compile-time `file!()`, so don't emit it.
   rustWrap.push(
-    `#[track_caller]`,
     `#[inline]`,
     `pub unsafe fn ${fn.name}(${wrapParams}) -> crate::JsResult<${okType}> {`,
     `    crate::validation_scope!(__scope, ${gname});`,

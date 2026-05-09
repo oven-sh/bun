@@ -1472,7 +1472,8 @@ impl PublishCommand {
             if entry.kind == bun_sys::EntryKind::Directory {
                 continue;
             }
-            let name = entry.name.slice();
+            // Zig: `DirIterator.iterate(dir, .u8)` — entry names are UTF-8 on every platform.
+            let name = entry.name.slice_u8();
             if !is_readme_filename(name) {
                 continue;
             }
@@ -1672,7 +1673,8 @@ impl PublishCommand {
                     let mut iter = DirIterator::iterate(dir);
                     while let Some(entry) = iter.next().ok().flatten() {
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
-                            let name = entry.name.slice();
+                            // Zig: `DirIterator.iterate(dir, .u8)` — UTF-8 entry name on every platform.
+                            let name = entry.name.slice_u8();
                             let mut join: Vec<u8> = Vec::new();
                             write!(
                                 &mut join,

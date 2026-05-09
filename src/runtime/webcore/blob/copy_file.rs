@@ -1117,15 +1117,19 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     // Re-use the fs request.
     // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
     unsafe { (*req).deinit() };
-    let rc2 = libuv::uv_fs_write(
-        event_loop.uv_loop(),
-        &mut this.io_request,
-        destination_fd.uv(),
-        core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
-        1,
-        -1,
-        Some(on_write),
-    );
+    // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` points into
+    // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`.
+    let rc2 = unsafe {
+        libuv::uv_fs_write(
+            event_loop.uv_loop(),
+            &mut this.io_request,
+            destination_fd.uv(),
+            core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
+            1,
+            -1,
+            Some(on_write),
+        )
+    };
     this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
     if let Some(err) = rc2.to_error(bun_sys::Tag::write) {

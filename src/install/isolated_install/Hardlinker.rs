@@ -80,9 +80,13 @@ impl Hardlinker {
                 };
                 // SAFETY: `dest_cwd` is a sub-slice of `cwd_buf` by contract of
                 // `get_fd_path_w` (it returns `&mut out_buffer[off..]`).
-                let off =
-                    unsafe { dest_cwd.as_ptr().offset_from(cwd_buf.as_ptr()) } as usize;
-                (off, dest_cwd.len())
+                // NB: capture `len`/`dest_ptr` first so NLL drops the `&mut cwd_buf`
+                // loan (held via `dest_cwd`) before `cwd_buf.as_ptr()` takes `&cwd_buf`
+                // — otherwise E0502 on x86_64-pc-windows-msvc.
+                let len = dest_cwd.len();
+                let dest_ptr = dest_cwd.as_ptr();
+                let off = unsafe { dest_ptr.offset_from(cwd_buf.as_ptr()) } as usize;
+                (off, len)
             };
 
             loop {

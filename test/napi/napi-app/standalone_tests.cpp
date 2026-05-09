@@ -2351,22 +2351,14 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
   return env.Undefined();
 }
 
-// https://github.com/oven-sh/bun/issues/22259
-// napi_create_error must succeed even when a VM-level exception is pending.
-// This test uses napi_run_script("throw ...") to create a VM-level exception,
 // Regression test for https://github.com/oven-sh/bun/issues/22259
-// Before the fix, napi_create_error used NAPI_PREAMBLE which includes
-// RETURN_IF_EXCEPTION. This checked vm.m_exception and returned
-// napi_pending_exception early when a VM-level exception was pending.
-// The fix uses NAPI_PREAMBLE_NO_THROW_SCOPE, matching Node.js behavior
-// where napi_create_error only creates an error value without checking
-// VM exception state.
+// napi_create_error and friends must succeed even when a VM-level exception is
+// pending. Before the fix, createErrorWithNapiValues had a local
+// DECLARE_THROW_SCOPE with RETURN_IF_EXCEPTION checks that returned
+// napi_pending_exception when vm.m_exception was set.
 //
-// To set vm.m_exception (which RETURN_IF_EXCEPTION checks), we need a
-// VM-level exception, not just an N-API-level one (napi_throw only sets
-// m_pendingException, not vm.m_exception). We create a VM-level exception
-// by creating a napi callback that throws, then calling it via
-// napi_call_function, which causes JSC::call to set vm.m_exception.
+// We create a VM-level exception via napi_call_function: calling a C++
+// callback that throws sets vm.m_exception through JSC::call.
 static napi_value thrower_cb(napi_env env, napi_callback_info) {
   napi_value msg;
   napi_create_string_utf8(env, "vm-level", NAPI_AUTO_LENGTH, &msg);
@@ -2417,6 +2409,7 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
   status = napi_call_function(env, global, throw_fn, 0, nullptr, &call_result);
   if (status != napi_pending_exception) {
     printf("napi_call_function unexpected status: %d (expected %d)\n", status, napi_pending_exception);
+    return nullptr;
   }
 
   // Verify VM exception is pending

@@ -378,7 +378,9 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 pipe.as_stream(),
                 &self.backend.write_buf,
                 this,
-                WindowsHandlers::<Owner>::on_write,
+                // SAFETY: `p` was `this: *mut Self`; libuv invokes on the loop
+                // thread with no other Rust borrow live, so `&mut *p` is unique.
+                |p, s| unsafe { WindowsHandlers::<Owner>::on_write(&mut *p, s) },
             )
             .is_err()
         {

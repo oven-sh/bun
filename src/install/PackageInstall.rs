@@ -267,10 +267,15 @@ struct InstallDirState {
     // PORT NOTE: `Walker` has no `Default`; Zig used `undefined`. Wrap in Option.
     walker: Option<Walker>,
     subdir: Dir,
+    // PORT NOTE: Zig's `buf: bun.windows.WPathBuffer = undefined` is in-place
+    // (result-location, no zero-fill). A by-value `WPathBuffer` here would
+    // memset+move ~128 KB through `Default::default()` per package. Use the
+    // thread-local pool guard (heap-backed, uninit) so construction is O(1)
+    // and the struct stays small enough to return by value.
     #[cfg(windows)]
-    buf: WPathBuffer,
+    buf: bun_paths::w_path_buffer_pool::Guard,
     #[cfg(windows)]
-    buf2: WPathBuffer,
+    buf2: bun_paths::w_path_buffer_pool::Guard,
     #[cfg(windows)]
     to_copy_buf: *mut [u16], // slice into `buf`
     #[cfg(windows)]
@@ -296,9 +301,9 @@ impl Default for InstallDirState {
             #[cfg(windows)]
             subdir: Dir::from_fd(Fd::INVALID),
             #[cfg(windows)]
-            buf: WPathBuffer::uninit(),
+            buf: bun_paths::w_path_buffer_pool::get(),
             #[cfg(windows)]
-            buf2: WPathBuffer::uninit(),
+            buf2: bun_paths::w_path_buffer_pool::get(),
             #[cfg(windows)]
             to_copy_buf: core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0),
             #[cfg(windows)]
@@ -359,7 +364,11 @@ fn mkdir_recursive_os_path(fullpath: &bun_str::WStr) -> sys::Maybe<()> {
         },
     }
 
-    let mut working_mem = WPathBuffer::uninit();
+    // Zig routes through `node_fs_for_package_installer()`, whose `working_mem`
+    // is `&this.sync_error_buf` — a buffer in the threadlocal NodeFS struct,
+    // not stack. Use the thread-local WPathBuffer pool so we don't add 64 KB
+    // of stack on ThreadPool worker threads (HardLinkWindowsInstallTask::run).
+    let mut working_mem = bun_paths::w_path_buffer_pool::get();
     working_mem[..usize::from(len)].copy_from_slice(path);
 
     #[inline]
@@ -381,10 +390,23 @@ fn mkdir_recursive_os_path(fullpath: &bun_str::WStr) -> sys::Maybe<()> {
                     break;
                 }
                 Err(err) => {
-                    working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
                     match err.get_errno() {
-                        E::EEXIST => break,
-                        E::ENOENT => {}
+                        E::EEXIST => {
+                            // node_fs.zig:4159-4172 — on Windows, if the existing
+                            // entry is a *file*, bail with ENOTDIR instead of
+                            // forward-walking under it. `parent` is still
+                            // NUL-terminated (separator not yet restored).
+                            let mut tmp = bun_paths::path_buffer_pool::get();
+                            let narrow = strings::from_wpath(&mut tmp[..], parent.as_slice());
+                            if let Ok(false) = sys::directory_exists_at(Fd::INVALID, narrow) {
+                                return Err(sys::Error::from_code(E::ENOTDIR, sys::Tag::mkdir));
+                            }
+                            working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
+                            break;
+                        }
+                        E::ENOENT => {
+                            working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
+                        }
                         _ => return Err(err),
                     }
                 }

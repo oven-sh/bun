@@ -1417,14 +1417,32 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 match core::mem::take(&mut subprocess.stdio_pipes[idx]) {
                     spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
                     other => {
-                        // Restore and fall through with null — matches Zig's
-                        // safety-checked `.buffer` access on a non-buffer slot.
+                        // Restore the slot before panicking so the
+                        // `Subprocess` finalizer still sees the original
+                        // variant. Zig's `.buffer` field access is
+                        // safety-checked in ReleaseSafe and panics on a
+                        // non-`.buffer` variant; mirror that with
+                        // `unreachable!` (NOT `debug_assert!` — that would
+                        // compile out in release and feed null to
+                        // `windows_configure_server`, which immediately
+                        // dereferences it).
                         subprocess.stdio_pipes[idx] = other;
-                        debug_assert!(false, "IPC channel stdio is not a buffer pipe");
-                        core::ptr::null_mut()
+                        unreachable!("IPC channel stdio is not a buffer pipe");
                     }
                 };
-            if let Some(err) = ipc_data.windows_configure_server(ipc_pipe).as_err() {
+            // PROVENANCE: `windows_configure_server` STORES the `*mut SendQueue`
+            // in `uv_handle_t.data` for the pipe's lifetime, so it takes a raw
+            // pointer (not `&mut self`) — see its safety doc. NOTE: this still
+            // derives from the `ipc_data` reborrow (same as the unix branch's
+            // `ptr::from_mut(ipc_data)` above); a true root-raw projection
+            // through `Option<SendQueue>` is tracked separately.
+            // SAFETY: `ipc_data` points at the live SendQueue inline in
+            // `*subprocess_ptr`; no other `&mut` to it is live in this scope.
+            if let Some(err) = unsafe {
+                IPC::SendQueue::windows_configure_server(core::ptr::from_mut(ipc_data), ipc_pipe)
+            }
+            .as_err()
+            {
                 let err_js = err.to_js(global_this);
                 subprocess.deref();
                 return Err(global_this.throw_value(err_js));

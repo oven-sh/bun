@@ -1914,13 +1914,19 @@ impl RunCommand {
 
             #[cfg(debug_assertions)]
             {
-                let dir_slice_u8 =
-                    bun_string::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
+                // Spec (run_command.zig:727-730) calls
+                // `std.fs.{deleteTree,makeDir}Absolute`, whose Windows impls
+                // recognise the NT-object `\??\` prefix. The bun_sys helpers
+                // route through Win32 `mkdirat`, which does NOT — strip the
+                // prefix so they see a Win32-style `C:\…\bun-node-debug` path.
+                let dir_slice_u8 = bun_string::immutable::to_utf8_alloc_with_type(
+                    &target_path_buffer[prefix.len()..dir_slice_len],
+                );
                 let _ = sys::Dir::cwd().delete_tree(&dir_slice_u8);
                 // Zig spec (run_command.zig:730): `std.fs.makeDirAbsolute` —
                 // single-level mkdir that panics on *any* error (incl.
-                // PathAlreadyExists). `make_path` would recurse into the
-                // `\??\` NT-object prefix and silently swallow EEXIST.
+                // PathAlreadyExists). `make_path` would recurse and silently
+                // swallow EEXIST.
                 sys::Dir::cwd().make_dir(&dir_slice_u8).expect("huh?");
             }
 
@@ -1949,7 +1955,9 @@ impl RunCommand {
                         sys::windows::Win32Error::ALREADY_EXISTS => {}
                         _ => {
                             {
-                                debug_assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);
+                                // Spec (run_command.zig:745): `bun.assert` is
+                                // always-on, not debug-gated.
+                                assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);
                                 target_path_buffer[dir_slice_len] = 0;
                                 // SAFETY: we just wrote a NUL terminator at
                                 // `dir_slice_len`; `target_path_buffer[..dir_slice_len]`
@@ -3993,7 +4001,10 @@ impl BunXFastPath {
     /// rules. Writes into `buffer` and returns the number of u16s written.
     #[cfg(windows)]
     fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
-        let mut wbuf = [0u16; bun_paths::MAX_WPATH];
+        // Spec (run_command.zig:2027): `var temp_buf: [2048]u16` — 4 KiB stack,
+        // not MAX_WPATH (64 KiB). Called per-arg in a loop under a deep call
+        // chain on Windows' default 1 MiB stack.
+        let mut wbuf = [0u16; 2048];
         let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
 
         if warg.is_empty() {
@@ -4160,24 +4171,16 @@ impl BunXFastPath {
         wpath: &mut [u16],
         ctx: bun_options_types::Context::Context<'_>,
     ) {
-        // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-        // `try_launch` (still on the call stack) holds live `&mut [u16]`
-        // reborrows (`path_to_use`/`command_line`) and raw pointers
-        // (`run_ctx.base_path`/`arguments`) into this same UnsafeCell.
-        // Materialising a fresh `&mut WPathBuffer` here would push a Unique
-        // tag over the whole buffer and pop those tags under Stacked Borrows.
-        // Derive the byte slice directly from the raw `*mut WPathBuffer` so no
-        // intermediate `&mut` retag covers the caller's borrows.
-        // WPathBuffer is `#[repr(transparent)] [u16; PATH_MAX_WIDE]` —
-        // reinterpret as `[u8; 2N]` for the UTF-16→UTF-8 transcoder's output.
-        let out_buf = unsafe {
-            let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
-            ::core::slice::from_raw_parts_mut(
-                raw.cast::<u8>(),
-                bun_paths::PATH_MAX_WIDE * 2,
-            )
-        };
-        let utf8 = match strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath) {
+        // Spec (run_command.zig:2164-2166) reinterprets `direct_launch_buffer`
+        // as `[u8]`, but Zig has no aliasing model. Under Stacked Borrows,
+        // forming a `&mut [u8]` over the whole `DIRECT_LAUNCH_BUFFER` cell
+        // would push a Unique tag and invalidate `try_launch`'s outstanding
+        // `path_to_use`/`command_line` borrows and the shim's `image_path_*`
+        // pointers (bun_shim_impl.rs:451-454) into the same cell. `wpath`
+        // lives in the shim's own stack `buf1`, so transcode into a fresh
+        // stack `PathBuffer` instead — no `DIRECT_LAUNCH_BUFFER` access at all.
+        let mut out_buf = PathBuffer::uninit();
+        let utf8 = match strings::convert_utf16_to_utf8_in_buffer(&mut out_buf.0, wpath) {
             Ok(u) => u,
             Err(_) => return,
         };

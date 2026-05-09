@@ -256,6 +256,40 @@ use bun_sys::sys_uv as Syscall;
 #[cfg(not(windows))]
 use bun_sys as Syscall;
 
+/// In-place RAII wrapper for a libuv `fs_t` request (Zig: `var req: uv.fs_t =
+/// uv.fs_t.uninitialized; defer req.deinit();`).
+///
+/// `scopeguard::guard(fs_t, |mut r| r.deinit())` is *wrong* here: its `Drop`
+/// `ManuallyDrop::take`s the value into the closure parameter, relocating the
+/// ~440-byte request to a new stack address before `uv_fs_req_cleanup` runs.
+/// libuv stores self-referential pointers (`req->fs.info.bufs` may point at
+/// `req->fs.info.bufsml`), so the request must not move between init and
+/// cleanup. A real `Drop` impl runs in place at the original address.
+#[cfg(windows)]
+#[repr(transparent)]
+struct UvFsReq(uv::fs_t);
+#[cfg(windows)]
+impl UvFsReq {
+    #[inline]
+    fn new() -> Self { Self(uv::fs_t::uninitialized()) }
+}
+#[cfg(windows)]
+impl Drop for UvFsReq {
+    #[inline]
+    fn drop(&mut self) { self.0.deinit(); }
+}
+#[cfg(windows)]
+impl core::ops::Deref for UvFsReq {
+    type Target = uv::fs_t;
+    #[inline]
+    fn deref(&self) -> &uv::fs_t { &self.0 }
+}
+#[cfg(windows)]
+impl core::ops::DerefMut for UvFsReq {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut uv::fs_t { &mut self.0 }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Local cross-crate shims
 //
@@ -3898,13 +3932,21 @@ pub use ret as Return;
 // https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/node/fs.d.ts
 // ──────────────────────────────────────────────────────────────────────────
 
+// `#[repr(C)]` pins `sync_error_buf` (a `[u8; N]`, nominal align = 1) at
+// offset 0. The struct's overall alignment is ≥ `align_of::<*const ()>()`
+// (from the `vm` field), so the buffer's address inherits that alignment —
+// the Rust equivalent of Zig's `sync_error_buf: bun.PathBuffer align(@alignOf(u16))`.
+// This is load-bearing on Windows where `sync_error_buf` is reinterpreted as
+// `&mut [u16]` / `&mut WPathBuffer` (see `mkdir_recursive_os_path_impl` and
+// the `os_path_kernel32` callers); a misaligned `&mut [u16]` is instant UB.
+#[repr(C)]
 pub struct NodeFS {
     /// Buffer to store a temporary file path that might appear in a returned error message.
     ///
     /// We want to avoid allocating a new path buffer for every error message so that jsc can clone + GC it.
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodeFS struct
-    pub sync_error_buf: PathBuffer, // align(@alignOf(u16))
+    pub sync_error_buf: PathBuffer, // align(@alignOf(u16)) — enforced via #[repr(C)] + field order, see above
     pub vm: Option<NonNull<VirtualMachine>>,
 }
 
@@ -4521,9 +4563,8 @@ impl NodeFS {
     pub fn futimes(&mut self, args: &args::Futimes, _: Flavor) -> Maybe<ret::Futimes> {
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), req, args.fd.uv(), args.atime, args.mtime, None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), &mut *req, args.fd.uv(), args.atime, args.mtime, None) };
             return if let Some(e) = rc.errno() {
                 Err(sys::Error { errno: e, syscall: sys::Tag::futime, fd: args.fd, ..Default::default() })
             } else { Ok(()) };
@@ -4704,12 +4745,22 @@ impl NodeFS {
             }
         }
 
-        // SAFETY: sync_error_buf is align(u16); reinterpret as OSPathBuffer.
+        // SAFETY: `NodeFS` is `#[repr(C)]` with `sync_error_buf` at offset 0 and
+        // struct alignment ≥ pointer-align (from `vm`), so this address is
+        // ≥ `align_of::<OSPathChar>()`-aligned (the Rust spelling of Zig's
+        // `align(@alignOf(u16))` field annotation). On Windows
+        // `OSPathBuffer = [u16; PATH_MAX_WIDE]` (65 534 B) which fits inside
+        // `PathBuffer` (`MAX_PATH_BYTES` = 98 302 B); on POSIX it is the same
+        // type. The `assert!` below mirrors Zig's `@alignCast` safety check.
         // Keep the raw `*mut PathBuffer` so error-return paths can re-derive a fresh
         // `&mut PathBuffer` without reborrowing `&mut self` (which would alias
         // `working_mem` under stacked borrows). On every such path `working_mem` is
         // not used afterward, so the re-derive is sound.
         let sync_error_buf_ptr: *mut PathBuffer = &raw mut self.sync_error_buf;
+        assert!(
+            sync_error_buf_ptr.cast::<OSPathChar>().is_aligned(),
+            "NodeFS.sync_error_buf misaligned for OSPathChar",
+        );
         let working_mem: &mut OSPathBuffer = unsafe { &mut *sync_error_buf_ptr.cast::<OSPathBuffer>() };
         working_mem[..len as usize].copy_from_slice(&(&path[..])[..len as usize]);
 
@@ -4722,7 +4773,12 @@ impl NodeFS {
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
-                        working_mem[i as usize] = paths::SEP as OSPathChar;
+                        // PORT NOTE: Zig restores `working_mem[i] = SEP` here, *before*
+                        // the errno match, but Zig's `[:0]u16` sentinel is advisory.
+                        // Rust's `OSPathSliceZ` (`WStr`/`ZStr`) carries a hard
+                        // `ptr[len] == 0` invariant, and the EEXIST/`_` arms below still
+                        // read `parent`. Defer the SEP-restore into each arm so `parent`
+                        // is never observed with its terminator clobbered.
                         match err.get_errno() {
                             E::EEXIST => {
                                 // On Windows, this may happen if trying to mkdir replacing a file
@@ -4742,10 +4798,15 @@ impl NodeFS {
                                         }
                                     }
                                 }
+                                working_mem[i as usize] = paths::SEP as OSPathChar;
                                 // Handle race condition
                                 break;
                             }
-                            E::ENOENT => { i -= 1; continue; }
+                            E::ENOENT => {
+                                working_mem[i as usize] = paths::SEP as OSPathChar;
+                                i -= 1;
+                                continue;
+                            }
                             _ => {
                                 #[cfg(windows)]
                                 let p = {
@@ -4843,15 +4904,14 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_mkdtemp(bun_io::Loop::get(), req, prefix_buf.as_ptr().cast(), None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_mkdtemp(bun_io::Loop::get(), &mut *req, prefix_buf.as_ptr().cast(), None) };
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::mkdtemp, path: prefix_buf[..len + 6].into(), ..Default::default() });
             }
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
-            // UTF-8 string owned by the request; `req.deinit()` (the scopeguard)
-            // releases it after we've copied the bytes out.
+            // UTF-8 string owned by the request; `UvFsReq::drop` runs
+            // `uv_fs_req_cleanup` in place after we've copied the bytes out.
             return Ok(ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes()).expect("oom"));
         }
 
@@ -6019,9 +6079,8 @@ impl NodeFS {
     pub fn realpath_inner(&mut self, args: &args::Realpath, variant: RealpathVariant) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_realpath(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_realpath(bun_io::Loop::get(), &mut *req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), None) };
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
             }
@@ -6036,10 +6095,13 @@ impl NodeFS {
             let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
+                //
+                // PORT NOTE: Zig (`buf[buf.len-1] = 0; buf.len -= 1;`) writes the
+                // NUL back to keep its `[:0]u8` sentinel invariant. In Rust `buf`
+                // is an immutable view and every consumer below copies by length,
+                // so we just shrink the slice — writing through `ptr.cast_mut()`
+                // while `buf` is live would be Stacked-Borrows UB.
                 if buf.last() == Some(&b'\\') {
-                    // SAFETY: req.path is libuv-allocated mutable storage; `ptr` is
-                    // surfaced as `*const c_char` only because `ptr_as` reads it.
-                    unsafe { *ptr.cast_mut().cast::<u8>().add(buf.len() - 1) = 0; }
                     buf = &buf[..buf.len() - 1];
                 }
             }
@@ -6407,9 +6469,8 @@ impl NodeFS {
     pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_utime(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_utime(bun_io::Loop::get(), &mut *req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Ok(()) };
@@ -6428,9 +6489,8 @@ impl NodeFS {
     pub fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_lutime(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_lutime(bun_io::Loop::get(), &mut *req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Ok(()) };
@@ -7088,7 +7148,12 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            let _ = mode;
+            if mode.is_force_clone() {
+                // Windows has no copy-on-write `clonefile` equivalent surfaced
+                // here; `COPYFILE_FICLONE_FORCE` must fail rather than silently
+                // fall back to a non-CoW `CopyFileW` (node_fs.zig:6831-6834).
+                return Maybe::<ret::CopyFile>::todo();
+            }
             // Spec (node_fs.zig:6837-6838) precomputes both ENOENT fallbacks once,
             // before any branch. Re-deriving them inline inside `unwrap_or_else`
             // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
@@ -7100,8 +7165,13 @@ impl NodeFS {
                 None => {
                     let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
+                        // `errno_sys_p(0, …)` re-reads `GetLastError()` after
+                        // `os_path_into_sync_error_buf` (a non-trivial transcode on
+                        // Windows). If anything in that path ever clears the
+                        // thread-local last-error, fall back to ENOENT instead of
+                        // panicking on `.unwrap()` (matches the neighbouring sites).
                         let p = self.os_path_into_sync_error_buf(src.as_slice());
-                        return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap();
+                        return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(src_enoent_maybe);
                     }
                     a
                 }

@@ -34,10 +34,12 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
-    // Spec parity: `bun.sys.stat` on Windows goes through libuv → `_wstat64`-
-    // equivalent. For a cache-key digest we only need (mtime, size) to change
-    // when the file changes, so go straight to `GetFileAttributesExW` — same
-    // resolution as `uv_fs_stat`'s `ftLastWriteTime`, no event-loop dependency.
+    // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
+    // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
+    // follows symlinks to the target. `GetFileAttributesExW` does NOT follow
+    // reparse points — it would return the link's own mtime/size and miss an
+    // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
+    // libuv: open query-only, `GetFileInformationByHandle`, close.
     //
     // `bun_string::to_w_path_normalized` lives above this crate, so widen
     // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
@@ -50,11 +52,28 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
         if *w == u16::from(b'/') { *w = u16::from(b'\\'); }
     }
     wbuf[n] = 0;
-    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = bun_core::ffi::zeroed();
-    // SAFETY: `wbuf` is NUL-terminated at `[n]`; `data` is a valid out-ptr.
-    let ok = unsafe {
-        fs::GetFileAttributesExW(wbuf.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
+    // SAFETY: `wbuf` is NUL-terminated at `[n]`. dwDesiredAccess=0 is query-
+    // only (metadata). FILE_FLAG_BACKUP_SEMANTICS lets this succeed on dirs;
+    // omitting FILE_FLAG_OPEN_REPARSE_POINT makes CreateFileW follow symlinks.
+    let h = unsafe {
+        fs::CreateFileW(
+            wbuf.as_ptr(),
+            0,
+            fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE,
+            ptr::null_mut(),
+            fs::OPEN_EXISTING,
+            fs::FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        )
     };
+    if h == fs::INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let mut data: fs::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: `h` is a valid open handle; `data` is a valid out-ptr.
+    let ok = unsafe { fs::GetFileInformationByHandle(h, &raw mut data) };
+    // SAFETY: `h` is a valid open handle from CreateFileW above.
+    unsafe { fs::CloseHandle(h) };
     if ok == 0 {
         return None;
     }

@@ -535,8 +535,15 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     // Windows roots under %LOCALAPPDATA%; POSIX under $HOME. The subdir
     // names come from each browser's installer — hardcoded, not
     // discoverable. Edge uses the same CDP + file format as Chrome.
+    // NB: do NOT route Windows through bun_core::getenv_z — it is stubbed to
+    // None on cfg(windows) (TODO(b2-blocked) in bun_core/util.rs), which made
+    // this whole function dead on Windows. Zig's bun.getenvZ walks the env
+    // block case-insensitively and returns a real value; std::env::var is the
+    // working equivalent here (LOCALAPPDATA is always valid Unicode).
     #[cfg(windows)]
-    let root = getenv_z(zstr!("LOCALAPPDATA"))?;
+    let root_owned = std::env::var("LOCALAPPDATA").ok()?;
+    #[cfg(windows)]
+    let root: &[u8] = root_owned.as_bytes();
     #[cfg(not(windows))]
     let root = getenv_z(zstr!("HOME"))?;
 

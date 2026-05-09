@@ -1286,6 +1286,11 @@ pub trait BaseWindowsPipeWriter {
 
     /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer.
     unsafe fn set_pipe(&mut self, pipe: *mut uv::Pipe) {
+        // Zig overwrites a raw-pointer union (worst case: leak). In Rust the
+        // assignment below would Drop the prior Box WITHOUT uv_close, leaving
+        // libuv with a dangling handle → UAF on next loop tick. All other
+        // start_* paths assert empty; enforce the same invariant here.
+        debug_assert!(self.source().is_none());
         // SAFETY: caller contract — Box-allocated, ownership transfers.
         *self.source_mut() = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
         let p = self.parent_ptr();
@@ -1294,7 +1299,9 @@ pub trait BaseWindowsPipeWriter {
 
     fn get_stream(&mut self) -> Option<*mut uv::uv_stream_t> {
         let source = self.source_mut().as_mut()?;
-        if matches!(source, Source::File(_)) {
+        // Zig spec only excludes .file (latent bug); Rust's Source::to_stream()
+        // is `unreachable!()` for SyncFile too, so exclude both to avoid panic.
+        if matches!(source, Source::File(_) | Source::SyncFile(_)) {
             return None;
         }
         Some(source.to_stream())
@@ -1589,7 +1596,11 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             let self_ptr = self as *mut Self;
             if let Some(write_err) = self
                 .write_req
-                .write(stream_raw, &self.write_buffer, self_ptr, Self::on_write_complete)
+                // SAFETY: `p` is `self_ptr`; libuv invokes on the loop thread with no
+                // other Rust borrow of `*p` live, so `&mut *p` is the sole alias.
+                .write(stream_raw, &self.write_buffer, self_ptr, |p, s| unsafe {
+                    (*p).on_write_complete(s)
+                })
                 .to_error(sys::Tag::write)
             {
                 self.close();
@@ -1883,8 +1894,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
         // Deref the parent at the end to balance the ref taken in
         // process_send before submitting the async write request.
-        // SAFETY: p is the BACKREF parent ptr; ref taken in process_send keeps it alive until this deref.
-        let _g = scopeguard::guard(self.parent, |p| unsafe { Parent::deref(p) });
+        // Zig's `defer this.parent.deref()` reads `this.parent` LAZILY at scope
+        // exit; capturing `self.parent` by value here would snapshot the old
+        // pointer and over-deref it if a re-entrant callback set_parent()s.
+        // Capture `*mut Self` and read `.parent` at guard execution instead.
+        // SAFETY: ref taken in process_send keeps parent (and self-as-field) alive until this deref.
+        let _g = scopeguard::guard(core::ptr::from_mut(self), |s| unsafe {
+            Parent::deref((*s).parent)
+        });
 
         if let Some(err) = status.to_error(sys::Tag::write) {
             log!("onWrite() = {}", bstr::BStr::new(err.name()));
@@ -1980,9 +1997,13 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         }
 
         if let Some(err) = result.to_error(sys::Tag::write) {
-            // deref to balance process_send ref
-            // SAFETY: p is the BACKREF parent ptr; ref taken in process_send keeps it alive until this deref.
-            let _g = scopeguard::guard(this.parent, |p| unsafe { Parent::deref(p) });
+            // deref to balance process_send ref — read `.parent` LAZILY at
+            // guard execution (Zig defer semantics), not eagerly, in case
+            // close()/on_error re-enter and swap the parent pointer.
+            // SAFETY: ref taken in process_send keeps parent (and self) alive until this deref.
+            let _g = scopeguard::guard(core::ptr::from_mut(this), |s| unsafe {
+                Parent::deref((*s).parent)
+            });
             this.close();
             // SAFETY: parent BACKREF valid.
             unsafe { Parent::on_error(this.parent(), err) };
@@ -2075,7 +2096,11 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             let self_ptr = self as *mut Self;
             if let Some(err) = self
                 .write_req
-                .write(stream_raw, &self.write_buffer, self_ptr, Self::on_write_complete)
+                // SAFETY: `p` is `self_ptr`; libuv invokes on the loop thread with no
+                // other Rust borrow of `*p` live, so `&mut *p` is the sole alias.
+                .write(stream_raw, &self.write_buffer, self_ptr, |p, s| unsafe {
+                    (*p).on_write_complete(s)
+                })
                 .to_error(sys::Tag::write)
             {
                 self.last_write_result = WriteResult::Err(err.clone());

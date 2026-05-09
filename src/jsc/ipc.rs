@@ -1473,12 +1473,17 @@ impl SendQueue {
                     (*pipe).as_stream(),
                     &(*write_req).write_buffer,
                     write_req,
-                    // `write()` stores a *Rust* fn pointer (`fn(&mut T, ReturnCode)`)
-                    // and thunks it through libuv; the callback signature is
-                    // `(*mut WindowsWrite, ReturnCode)` so adapt with a closure-
-                    // shaped fn item that takes `&mut`.
-                    |req: &mut WindowsWrite, rc| {
-                        SendQueue::_windows_on_write_complete(req as *mut _, rc)
+                    // `write()` stores a *Rust* fn pointer (`fn(*mut T, ReturnCode)`)
+                    // and thunks it through libuv. The callback receives the
+                    // raw `*mut WindowsWrite` (NOT `&mut`) because
+                    // `_windows_on_write_complete` deallocates the request via
+                    // `WindowsWrite::destroy`; holding a live `&mut WindowsWrite`
+                    // across that free would dangle the reference (UB) and the
+                    // `Box::from_raw` would carry the `&mut`-reborrow tag instead
+                    // of the original allocation root. Matches Zig's raw-pointer
+                    // pass-through (libuv.zig `uvWriteCb`).
+                    |req: *mut WindowsWrite, rc| {
+                        SendQueue::_windows_on_write_complete(req, rc)
                     },
                 )
             };
@@ -1580,38 +1585,51 @@ impl SendQueue {
         let _ = unsafe { bun_core::heap::take(this) };
     }
 
+    /// # Safety
+    /// `this` must point at a live `SendQueue` and must derive from the
+    /// allocation's root raw pointer (SharedReadWrite provenance), NOT from a
+    /// `&mut` reborrow: the pointer is stashed in `uv_handle_t.data` for the
+    /// pipe's lifetime and later writes through the root would otherwise pop
+    /// its tag under Stacked Borrows. Mirrors [`windows_configure_client`].
     #[cfg(windows)]
-    pub fn windows_configure_server(
-        &mut self,
+    pub unsafe fn windows_configure_server(
+        this: *mut Self,
         ipc_pipe: *mut uv::Pipe,
     ) -> bun_sys::Result<()> {
         log!("configureServer");
-        // SAFETY: ipc_pipe is a live uv_pipe_t handed in by the caller.
+        // SAFETY: ipc_pipe is a live uv_pipe_t handed in by the caller; `this`
+        // is the root-raw SendQueue pointer per the fn safety contract.
         unsafe {
-            (*ipc_pipe).data = core::ptr::from_mut(self).cast();
+            (*ipc_pipe).data = this.cast();
             (*ipc_pipe).unref();
         }
-        self.socket = SocketUnion::Open(ipc_pipe);
-        self.windows.is_server = true;
-        let pipe: *mut uv::Pipe = match self.socket {
-            SocketUnion::Open(p) => p,
+        // SAFETY: caller contract — `this` is a live SendQueue.
+        unsafe {
+            (*this).socket = SocketUnion::Open(ipc_pipe);
+            (*this).windows.is_server = true;
+        }
+        // SAFETY: caller contract — `this` is a live SendQueue.
+        let pipe: *mut uv::Pipe = match unsafe { &(*this).socket } {
+            SocketUnion::Open(p) => *p,
             _ => unreachable!(),
         };
-        // SAFETY: pipe is the live uv handle just stored in self.socket.
-        unsafe { (*pipe).data = core::ptr::from_mut(self).cast() };
+        // SAFETY: pipe is the live uv handle just stored in (*this).socket.
+        unsafe { (*pipe).data = this.cast() };
 
-        // SAFETY: pipe is the live uv handle just stored in self.socket.
+        // SAFETY: pipe is the live uv handle just stored in (*this).socket.
         let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
 
-        // SAFETY: stream points to the live uv handle just stored in self.socket.
-        // `read_start_ctx` stores `self` in `handle.data` and routes through
-        // the `StreamReader for SendQueue` impl below (wraps the
+        // SAFETY: stream points to the live uv handle; `this` is the root-raw
+        // context pointer (see fn safety contract) so storing it in
+        // `handle.data` is sound for the handle's lifetime. Routes through the
+        // `StreamReader for SendQueue` impl below (wraps the
         // `IPCHandlers::WindowsNamedPipe` callbacks).
         let read_start_result =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(self) }
+            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }
                 .to_error(bun_sys::Tag::listen);
         if let Some(err) = read_start_result {
-            self.close_socket(CloseReason::Failure, CloseFrom::User);
+            // SAFETY: caller contract — `this` is a live SendQueue.
+            unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
             return Err(err);
         }
         bun_sys::Result::Ok(())

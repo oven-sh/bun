@@ -538,9 +538,15 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
+        // SAFETY: read POD `pid` BEFORE creating `this: &mut Process` —
+        // `uv_handle` points at the inline `Poller::Uv` payload inside `*this`,
+        // so once `this` exclusively borrows the whole `Process`, dereferencing
+        // `uv_handle` would pop `this`'s Unique tag (see `on_exit_uv`).
+        let pid = unsafe { (*uv_handle).pid };
         // SAFETY: see `on_exit_uv` — `*mut Process` back-pointer in `data`.
+        // `uv_handle` is not dereferenced again after this point.
         let this: &mut Process = unsafe { &mut *(*uv_handle).data.cast::<Process>() };
-        bun_sys::windows::libuv::log!("Process.onClose({})", unsafe { (*uv_handle).pid });
+        bun_sys::windows::libuv::log!("Process.onClose({})", pid);
 
         if matches!(this.poller, Poller::Uv(_)) {
             this.poller = Poller::Detached;
@@ -1806,7 +1812,17 @@ pub fn spawn_process_windows(
                 }
                 WindowsStdio::Path(path) => {
                     let mut req = uv::fs_t::uninitialized();
-                    let path_z = bun_sys::to_posix_path(path)?;
+                    // Zig: `defer { for (uv_files_to_close) |fd| Closer.close(fd) }`
+                    // covers EVERY exit path including `try toPosixPath`. Rust
+                    // replaced the defer with manual cleanup calls, so `?` here
+                    // would leak any fds opened by earlier loop iterations.
+                    let path_z = match bun_sys::to_posix_path(path) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            cleanup_uv_files(&uv_files_to_close, loop_);
+                            return Err(e);
+                        }
+                    };
                     // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
                     // loop, `path_z` is NUL-terminated and outlives the call
                     // (sync — no callback).
@@ -1885,7 +1901,14 @@ pub fn spawn_process_windows(
             }
             WindowsStdio::Path(path) => {
                 let mut req = uv::fs_t::uninitialized();
-                let path_z = bun_sys::to_posix_path(path)?;
+                // See stdio loop above: manual cleanup on every exit path.
+                let path_z = match bun_sys::to_posix_path(path) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        cleanup_uv_files(&uv_files_to_close, loop_);
+                        return Err(e);
+                    }
+                };
                 // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
                 // `path_z` is NUL-terminated and outlives the call (sync).
                 let rc = unsafe {
@@ -2287,8 +2310,18 @@ pub mod sync {
             let this: &mut SyncWindowsPipeReader =
                 unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
             let buf = Self::on_alloc(this, suggested_size);
-            // SAFETY: `buffer` is a libuv-owned out-parameter.
-            unsafe { *buffer = uv::uv_buf_t::init(buf) };
+            // SAFETY: `buffer` is a libuv-owned out-parameter. Do NOT route
+            // through `uv_buf_t::init(&[u8])` — that reborrows the `&mut [u8]`
+            // as shared, so `as_ptr().cast_mut()` yields a SharedReadOnly tag
+            // and libuv's subsequent write into `base[..nread]` is
+            // Stacked-Borrows UB. Construct from `as_mut_ptr()` directly so the
+            // raw pointer carries write provenance.
+            unsafe {
+                *buffer = uv::uv_buf_t {
+                    len: buf.len() as uv::ULONG,
+                    base: buf.as_mut_ptr(),
+                };
+            }
         }
         unsafe extern "C" fn uv_read_cb(
             req: *mut uv::uv_stream_t,

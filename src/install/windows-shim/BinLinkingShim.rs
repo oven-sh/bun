@@ -379,11 +379,18 @@ impl<'a> BinLinkingShim<'a> {
         debug_assert!(self.bin_path[0] != b'/' as u16);
 
         // SAFETY: caller guarantees buf.len() == encoded_length() which is always
-        // a multiple of 2; Zig used @alignCast here (callers pass 2-aligned buffers).
-        // @alignCast is a runtime safety check in Zig safe builds — mirror it.
-        debug_assert_eq!(
-            buf.as_ptr() as usize & (core::mem::align_of::<u16>() - 1),
-            0,
+        // a multiple of 2; Zig used `@alignCast` here. In Rust, constructing a
+        // `&mut [u16]` from an under-aligned `*mut u8` is *instant* language UB
+        // (reference validity invariant), not merely UB-on-deref as in Zig. The
+        // sole caller (`bin.rs`) passes a stack `[u8; 65536]` whose Rust-guaranteed
+        // alignment is 1. We therefore upgrade Zig's safe-build `@alignCast` check
+        // to an unconditional `assert!` so the slice construction below is provably
+        // sound in release builds: if this passes, the pointer *is* 2-aligned and
+        // `from_raw_parts_mut::<u16>` is well-defined; if it ever fails, we panic
+        // instead of invoking UB. (The caller should be changed to a `[u16; N]`
+        // buffer to make alignment a compile-time guarantee — tracked separately.)
+        assert!(
+            buf.as_ptr() as usize & (core::mem::align_of::<u16>() - 1) == 0,
             "encode_into: buf must be 2-aligned"
         );
         let mut wbuf: &mut [u16] = unsafe {
@@ -511,14 +518,17 @@ pub fn loose_decode(input: &[u8]) -> Option<Decoded<'_>> {
 fn reinterpret_slice_u16(bytes: &[u8]) -> &[u16] {
     debug_assert!(bytes.len() % 2 == 0);
     // Zig's `bun.reinterpretSlice` uses `@alignCast(bytes.ptr)` which runtime-checks
-    // alignment in safe builds — mirror that contract.
-    debug_assert_eq!(
-        bytes.as_ptr() as usize & (core::mem::align_of::<u16>() - 1),
-        0,
+    // alignment in safe builds. In Rust, constructing a `&[u16]` from an
+    // under-aligned pointer is instant language UB regardless of build profile,
+    // and `loose_decode`'s caller (`PackageInstall::is_dangling_windows_bin_link`)
+    // forwards an externally-supplied `&mut [u8]` with no alignment guarantee.
+    // Upgrade to an unconditional `assert!` so the `from_raw_parts::<u16>` below
+    // is provably sound when reached (panic instead of UB on the misaligned path).
+    assert!(
+        bytes.as_ptr() as usize & (core::mem::align_of::<u16>() - 1) == 0,
         "reinterpret_slice_u16: bytes must be 2-aligned"
     );
-    // SAFETY: mirrors `bun.reinterpretSlice(u16, ...)` — caller-guaranteed alignment
-    // and even length. TODO(port): replace with bun_core::reinterpret_slice if it exists.
+    // SAFETY: alignment asserted immediately above; even length asserted by caller.
     unsafe { bun_core::ffi::slice(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) }
 }
 

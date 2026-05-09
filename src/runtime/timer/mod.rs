@@ -433,15 +433,31 @@ impl All {
     /// ONLY thing that wakes `uv_run` for JS timers.
     ///
     /// PORT NOTE (b2-cycle): Zig recovers `*VirtualMachine` via
-    /// `@fieldParentPtr("timer", this)` to read `vm.uvLoop()` and stash `vm`
-    /// in `uv_timer.data`. In Rust `All` is a field of `RuntimeState` (not
-    /// `VirtualMachine`), so we recover the per-thread VM via
-    /// `VirtualMachine::get_mut_ptr()` and the loop via `uv::Loop::get()`
-    /// (which is what `vm.uvLoop()` resolves to on Windows). The vm ptr is
-    /// stashed in `uv_timer.data` so [`Self::on_uv_timer`] can forward it to
-    /// `drain_timers` without a thread-local read in the hot path.
+    /// `@fieldParentPtr("timer", this)` (the VM that *owns* this `All`) and
+    /// reads `vm.uvLoop()` == `vm.event_loop_handle`. In Rust `All` is a field
+    /// of `RuntimeState` (not `VirtualMachine`) and `RuntimeState` carries no
+    /// back-pointer, so the lazy-init block falls back to the calling thread's
+    /// TLS VM/loop. That equivalence holds **only** on the owning JS thread;
+    /// `All.lock` exists precisely because `insert`/`update` may be entered
+    /// cross-thread (WTFTimer), where TLS would resolve to the wrong loop or
+    /// panic. The `debug_assert!` below makes that precondition loud. Once
+    /// initialized, the re-arm path reads the loop back from the handle itself
+    /// (`uv_handle_get_loop`), so the hot path is TLS-free and always targets
+    /// the loop the timer was actually registered on.
+    ///
+    /// TODO(b2-cycle): thread `vm: *mut VirtualMachine` through
+    /// `insert`/`insert_lock_held`/`update` (matching the Zig signature) once
+    /// the `RuntimeHooks::timer_insert` slot widens — see jsc_hooks.rs.
     #[cfg(windows)]
     fn ensure_uv_timer(&mut self) {
+        // Spec: `vm` is `@fieldParentPtr("timer", this)` — i.e. the OWNING VM,
+        // not the calling thread's. Guard the TLS fallback so a cross-thread
+        // caller fails loudly instead of silently arming a fresh `uv_loop_t`
+        // on the wrong thread.
+        debug_assert!(
+            self.thread_id == std::thread::current().id(),
+            "ensure_uv_timer: called off the owning JS thread; TLS loop/VM would diverge from vm.event_loop_handle",
+        );
         if self.uv_timer.data.is_null() {
             self.uv_timer.init(uv::Loop::get());
             self.uv_timer.data = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr()
@@ -450,8 +466,10 @@ impl All {
         }
 
         if let Some(timer) = self.timers.peek() {
-            // SAFETY: `Loop::get()` returns this thread's live initialized loop.
-            unsafe { uv::uv_update_time(uv::Loop::get()) };
+            // SAFETY: `uv_timer.data` is non-null past the lazy-init block, so
+            // `uv_timer_init` has run and the handle's `loop` field points at
+            // the owning VM's live `uv_loop_t` (== `vm.uvLoop()` per spec).
+            unsafe { uv::uv_update_time(self.uv_timer.get_loop()) };
             let now = Timespec::now(TimespecMockMode::ForceRealTime);
             // SAFETY: `peek` returns a live heap node.
             let next = unsafe { &(*timer).next };

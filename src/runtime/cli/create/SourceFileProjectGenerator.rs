@@ -441,7 +441,12 @@ pub fn generate_files(
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
-                        // TODO(port): Zig omits `.windows` here (unlike runInstall / dev-server spawns) — likely upstream bug; mirroring source exactly for now.
+
+                        #[cfg(windows)]
+                        windows: bun_process::WindowsOptions {
+                            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None, None)),
+                            ..Default::default()
+                        },
                         ..Default::default()
                     }) {
                         Ok(p) => p,

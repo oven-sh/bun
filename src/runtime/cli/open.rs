@@ -371,7 +371,14 @@ impl Editor {
         let spawned_addr = spawned_ptr as usize;
         std::thread::Builder::new()
             .spawn(move || auto_close(spawned_addr as *mut SpawnedEditorContext))
-            .map_err(|_| bun_core::err!("ThreadSpawnFailed"))?;
+            .map_err(|_| {
+                // Zig parity: `errdefer default_allocator.destroy(spawned)` (open.zig:234)
+                // covers `try std.Thread.spawn`. After `into_raw`, Box's Drop guard is gone,
+                // so reclaim explicitly on the spawn-failure path.
+                // SAFETY: closure never ran, so we are still the sole owner of `spawned_ptr`.
+                drop(unsafe { bun_core::heap::take(spawned_addr as *mut SpawnedEditorContext) });
+                bun_core::err!("ThreadSpawnFailed")
+            })?;
         Ok(())
     }
 }
@@ -475,6 +482,15 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
     // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.
     // Mapped to sync::spawn (bun.spawnSync) per src/CLAUDE.md guidance.
+    // FIXME(windows-leak): Zig's autoClose (open.zig:329-335) used std.process.Child
+    // directly (CreateProcessW) and never created a uv loop. The sync::spawn substitution
+    // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
+    // MiniEventLoop + uv_loop_t into a thread-local that is NEVER torn down. Because this
+    // runs on a fresh detached std::thread per `Editor::open()` call, every editor-open on
+    // Windows leaks one MiniEventLoop + uv_loop_t (+ DotEnv Loader/Map if env was null).
+    // Proper fix needs either (a) a MiniEventLoop teardown helper (none exists today), or
+    // (b) plumbing the caller's existing EventLoopHandle through SpawnedEditorContext
+    // (signature change to Editor::open + callers). Both are out-of-scope for this file.
     let owned_argv: Vec<Box<[u8]>> = argv[0..spawned.argc]
         .iter()
         .map(|s| s.to_vec().into_boxed_slice())

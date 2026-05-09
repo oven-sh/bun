@@ -1913,12 +1913,18 @@ pub mod fs {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
-                    let handle = match self.open_dir(dir) {
+                    // Spec fs.zig:617 — `bun.openDirForIteration(FD.cwd(), dir)`, NOT
+                    // `RealFS.openDir`. On Windows the two diverge: `open_dir` passes
+                    // `read_only: true` (no DELETE access on the handle), whereas
+                    // `openDirForIteration` uses the default `WindowsOpenDirOptions`
+                    // (`can_rename_or_delete: true`). On POSIX it's `O_DIRECTORY` only
+                    // vs `O_RDONLY|O_DIRECTORY`. Match the spec's flag set exactly.
+                    let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
                         Ok(h) => h,
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
+                            return self.read_directory_error(dir, err.into()).ok();
                         }
                     };
                     // PORT NOTE: Zig `defer handle.close()` — runs on every exit.

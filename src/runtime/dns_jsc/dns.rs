@@ -2412,14 +2412,17 @@ pub mod internal {
             unsafe {
                 let entry = results[i].as_mut_ptr();
                 (*entry).info = *info_;
-                if !(*info_).ai_addr.is_null() {
-                    if (*info_).ai_family == netc::AF_INET {
-                        let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in>();
-                        *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in>();
-                    } else if (*info_).ai_family == netc::AF_INET6 {
-                        let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in6>();
-                        *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in6>();
-                    }
+                // Always initialize `addr`: assume_init() below requires every byte written.
+                // Windows getaddrinfo may return non-null ai_addr with families other than
+                // AF_INET/AF_INET6; zero `addr` for those rather than leaving it uninit.
+                if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET {
+                    (*entry).addr = bun_core::ffi::zeroed();
+                    let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in>();
+                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in>();
+                } else if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET6 {
+                    (*entry).addr = bun_core::ffi::zeroed();
+                    let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in6>();
+                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in6>();
                 } else {
                     (*entry).addr = bun_core::ffi::zeroed();
                 }

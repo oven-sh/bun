@@ -1970,7 +1970,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         let path_env = unsafe { (*vm_mut().transpiler.env).map.get(b"PATH") }.unwrap_or(b"");
         // SAFETY: argv[0] is a NUL-terminated string from caller.
         let argv0 = unsafe { core::ffi::CStr::from_ptr(argv[0]) }.to_bytes();
-        match bun_core::which(&mut path_buf, path_env, b"", argv0) {
+        match bun_which::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
             None => {
                 s.set_err(format_args!(
@@ -2107,7 +2107,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         if let spawn::WindowsStdioResult::Buffer(dup) = spawned.stderr.take() {
             debug_assert!(core::ptr::eq(Box::as_ref(&dup), stderr_pipe_ptr));
             core::mem::forget(dup);
-            s.stderr_reader().parent = this as *mut core::ffi::c_void;
+            s.stderr_reader()
+                .set_parent(this.cast::<core::ffi::c_void>());
             *s.remaining_fds() += 1;
             if s.stderr_reader().start_with_current_pipe().is_err() {
                 s.set_err(format_args!("Failed to start reading stderr"));

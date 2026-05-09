@@ -257,12 +257,14 @@ impl WindowsWatcher {
             let _ = w::CloseHandle(h);
         });
 
-        self.watcher = DirWatcher {
-            overlapped: bun_core::ffi::zeroed::<w::OVERLAPPED>(),
-            // SAFETY: buf is an output buffer filled by ReadDirectoryChangesW before read.
-            buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
-            dir_handle: *handle_guard,
-        };
+        // PORT NOTE: Zig's `this.watcher = .{ .dirHandle = handle }` writes via result-location
+        // semantics with `buf: ... = undefined` (well-defined "unspecified bytes" in Zig). In Rust,
+        // materializing an uninit `[u8; N]` by value is immediate UB, and constructing a 64KiB
+        // `DirWatcher` temporary on the stack defeats the in-place-init intent. Assign fields in
+        // place instead — `buf` was already zero-initialised by `Default` and is an output buffer
+        // filled by ReadDirectoryChangesW before any read.
+        self.watcher.overlapped = bun_core::ffi::zeroed::<w::OVERLAPPED>();
+        self.watcher.dir_handle = *handle_guard;
 
         self.buf[..root.len()].copy_from_slice(root);
         let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
@@ -449,6 +451,15 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 if event_id >= this.watch_events.len() {
                     // Process current batch of events
                     process_watch_event_batch(this, event_id)?;
+                    // PORT NOTE: passing `this: &mut Watcher` above materialises a fresh Unique
+                    // borrow over the whole `Watcher`, which under Stacked Borrows pops the
+                    // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
+                    // an earlier `&this.platform.watcher`) carries. The next `iter.next()` would
+                    // then dereference a pointer with invalidated provenance — UB that MIRI flags.
+                    // The callee never touches `platform.watcher`, so re-deriving the pointer
+                    // here from the now-current `&mut Watcher` restores valid provenance. (Zig
+                    // has no aliasing model so the spec at WindowsWatcher.zig:245 is sound.)
+                    iter.watcher = &this.platform.watcher as *const DirWatcher;
                     // Reset event_id to start a new batch
                     event_id = 0;
                 }
@@ -479,17 +490,19 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     all_events.sort_unstable_by(WatchEvent::sort_by_index);
 
     let mut last_event_index: usize = 0;
-    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
+    // Zig: `var last_event_id: u32 = std.math.maxInt(u32);` — sentinel must be wider than
+    // WatchItemIndex (u16) so it can never collide with a real index (incl. no_watch_item=65535).
+    let mut last_event_id: u32 = u32::MAX;
 
     for i in 0..all_events.len() {
-        if all_events[i].index == last_event_id {
+        if all_events[i].index as u32 == last_event_id {
             // PORT NOTE: reshaped for borrowck — copy then merge to avoid two &mut into all_events.
             let ev = all_events[i];
             all_events[last_event_index].merge(ev);
             continue;
         }
         last_event_index = i;
-        last_event_id = all_events[i].index;
+        last_event_id = all_events[i].index as u32;
     }
     if all_events.is_empty() {
         return Ok(());

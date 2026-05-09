@@ -39,9 +39,26 @@ impl File {
     /// lives in `bun_sys`.
     #[inline]
     pub fn supports_ansi_escape_codes(&self) -> bool {
-        let tty = output_sink().is_terminal(self.fd());
-        tty && (cfg!(unix)
-            || crate::output::ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed))
+        #[cfg(windows)]
+        {
+            // Zig std.fs.File.supportsAnsiEscapeCodes(): query the live console
+            // mode for ENABLE_VIRTUAL_TERMINAL_PROCESSING — a *capability*
+            // check. Do NOT proxy through ENABLE_ANSI_COLORS_STDERR: that is a
+            // color-*preference* flag (NO_COLOR/FORCE_COLOR/tty) and never
+            // inspects whether SetConsoleMode(VT) actually succeeded, so it
+            // would pick the wrong branch in `Progress::start` on legacy
+            // conhost (emit raw escapes) or under NO_COLOR on a VT terminal
+            // (force the SetConsoleCursorPosition path).
+            let mut mode: windows::DWORD = 0;
+            // SAFETY: `mode` is a live stack out-param; if the handle is not a
+            // console GetConsoleMode returns 0 and we fall through to false.
+            (unsafe { windows::kernel32::GetConsoleMode(self.console_handle(), &mut mode) }) != 0
+                && (mode & windows::ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
+        }
+        #[cfg(not(windows))]
+        {
+            output_sink().is_terminal(self.fd())
+        }
     }
     #[inline]
     pub fn is_tty(&self) -> bool {
@@ -553,28 +570,45 @@ impl Progress {
         if !self.done {
             let mut need_ellipse = false;
             let mut maybe_node: *mut Node = &raw mut self.root;
-            // SAFETY: walking the recently_updated_child chain under update_mutex;
-            // nodes are caller-owned and outlive this call per API contract.
-            while let Some(node) = unsafe { maybe_node.as_mut() } {
+            while !maybe_node.is_null() {
+                // SAFETY: walking the recently_updated_child chain under
+                // update_mutex; nodes are caller-owned and outlive this call
+                // per API contract. Read every field through the raw pointer
+                // and advance `maybe_node` *before* any `self.buf_write` call:
+                // on the first iteration `maybe_node` is `&raw mut self.root`,
+                // and `buf_write`'s `&mut self` reborrow would invalidate any
+                // tag derived from it under Stacked Borrows. (Zig has no
+                // aliasing model, so Progress.zig:313-345 holds `node: *Node`
+                // across `self.bufWrite` freely; Rust must not.)
+                let (name, unit, eti, completed_items);
+                unsafe {
+                    name = (*maybe_node).name;
+                    unit = (*maybe_node).unit;
+                    eti = (*maybe_node)
+                        .unprotected_estimated_total_items
+                        .load(Ordering::Relaxed);
+                    completed_items = (*maybe_node)
+                        .unprotected_completed_items
+                        .load(Ordering::Relaxed);
+                    maybe_node =
+                        (*maybe_node).recently_updated_child.load(Ordering::Acquire);
+                }
+                let current_item = completed_items + 1;
+
                 if need_ellipse {
                     self.buf_write(&mut end, format_args!("... "));
                 }
                 need_ellipse = false;
-                let eti = node
-                    .unprotected_estimated_total_items
-                    .load(Ordering::Relaxed);
-                let completed_items = node.unprotected_completed_items.load(Ordering::Relaxed);
-                let current_item = completed_items + 1;
-                if !node.name.is_empty() || eti > 0 {
-                    if !node.name.is_empty() {
-                        self.buf_write(&mut end, format_args!("{}", bstr::BStr::new(node.name)));
+                if !name.is_empty() || eti > 0 {
+                    if !name.is_empty() {
+                        self.buf_write(&mut end, format_args!("{}", bstr::BStr::new(name)));
                         need_ellipse = true;
                     }
                     if eti > 0 {
                         if need_ellipse {
                             self.buf_write(&mut end, format_args!(" "));
                         }
-                        match node.unit {
+                        match unit {
                             Unit::None => {
                                 self.buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti))
                             }
@@ -593,7 +627,7 @@ impl Progress {
                         if need_ellipse {
                             self.buf_write(&mut end, format_args!(" "));
                         }
-                        match node.unit {
+                        match unit {
                             Unit::None => {
                                 self.buf_write(&mut end, format_args!("[{}] ", current_item))
                             }
@@ -608,7 +642,6 @@ impl Progress {
                         need_ellipse = false;
                     }
                 }
-                maybe_node = node.recently_updated_child.load(Ordering::Acquire);
             }
             if need_ellipse {
                 self.buf_write(&mut end, format_args!("... "));

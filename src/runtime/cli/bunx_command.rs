@@ -1113,9 +1113,20 @@ impl BunxCommand {
             windows: proc_sync::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
                     // `this_transpiler.env` is the process-lifetime loader
-                    // singleton populated during transpiler init; reborrowed `'static` here
-                    // for the Windows MiniEventLoop singleton (Zig: `initGlobal(this_transpiler.env, null)`).
-                    Some(this_transpiler.env_mut()),
+                    // singleton populated during transpiler init
+                    // (Zig: `initGlobal(this_transpiler.env, null)`).
+                    //
+                    // PORT NOTE (aliasing): do NOT call `this_transpiler.env_mut()` here —
+                    // `env_loader` (line 594) is still live and is used again below at the
+                    // post-install `Run::run_binary` calls. A second `env_mut()` would
+                    // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
+                    // Unique tag under Stacked Borrows (UB on later use). Instead reborrow
+                    // *through* `env_loader` so the new `&mut` is a child of its tag; the
+                    // child is consumed by `init_global` (converted to `NonNull`) before
+                    // `env_loader` is touched again.
+                    // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
+                    // stacked reborrow, not a sibling alias.
+                    Some(unsafe { &mut *(env_loader as *mut _) }),
                     None,
                 )),
                 ..Default::default()

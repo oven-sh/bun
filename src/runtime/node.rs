@@ -355,24 +355,24 @@ pub trait MaybeSysExt<R>: Sized {
     where
         R: Into<Vec<u8>>;
     fn errno<Er: IntoErrInt>(err: Er, syscall: bun_sys::Tag) -> Self;
-    fn errno_sys<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self>;
-    fn errno_sys_fd<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self>;
+    fn errno_sys_fd<Rc: SyscallRc>(
         rc: Rc,
         syscall: bun_sys::Tag,
         fd: bun_sys::Fd,
     ) -> Option<Self>;
-    fn errno_sys_p<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_p<Rc: SyscallRc>(
         rc: Rc,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
     ) -> Option<Self>;
-    fn errno_sys_fp<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_fp<Rc: SyscallRc>(
         rc: Rc,
         syscall: bun_sys::Tag,
         fd: bun_sys::Fd,
         file_path: impl AsRef<[u8]>,
     ) -> Option<Self>;
-    fn errno_sys_pd<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_pd<Rc: SyscallRc>(
         rc: Rc,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
@@ -444,7 +444,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         })
     }
 
-    fn errno_sys<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self> {
+    fn errno_sys<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag) -> Option<Self> {
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -453,7 +453,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
                 }
             }
         }
-        match bun_sys::get_errno(rc) {
+        match rc.syscall_errno() {
             bun_sys::posix::E::SUCCESS => None,
             e => Some(Err(bun_sys::Error {
                 // always truncate
@@ -464,7 +464,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         }
     }
 
-    fn errno_sys_fd<Rc: SyscallRc + bun_sys::GetErrno>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self> {
+    fn errno_sys_fd<Rc: SyscallRc>(rc: Rc, syscall: bun_sys::Tag, fd: bun_sys::Fd) -> Option<Self> {
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -473,7 +473,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
                 }
             }
         }
-        match bun_sys::get_errno(rc) {
+        match rc.syscall_errno() {
             bun_sys::posix::E::SUCCESS => None,
             e => Some(Err(bun_sys::Error {
                 // Always truncate
@@ -485,7 +485,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         }
     }
 
-    fn errno_sys_p<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_p<Rc: SyscallRc>(
         rc: Rc,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
@@ -500,7 +500,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
                 }
             }
         }
-        match bun_sys::get_errno(rc) {
+        match rc.syscall_errno() {
             bun_sys::posix::E::SUCCESS => None,
             e => Some(Err(bun_sys::Error {
                 // Always truncate
@@ -512,7 +512,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         }
     }
 
-    fn errno_sys_fp<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_fp<Rc: SyscallRc>(
         rc: Rc,
         syscall: bun_sys::Tag,
         fd: bun_sys::Fd,
@@ -526,7 +526,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
                 }
             }
         }
-        match bun_sys::get_errno(rc) {
+        match rc.syscall_errno() {
             bun_sys::posix::E::SUCCESS => None,
             e => Some(Err(bun_sys::Error {
                 // Always truncate
@@ -539,7 +539,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         }
     }
 
-    fn errno_sys_pd<Rc: SyscallRc + bun_sys::GetErrno>(
+    fn errno_sys_pd<Rc: SyscallRc>(
         rc: Rc,
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
@@ -554,7 +554,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
                 }
             }
         }
-        match bun_sys::get_errno(rc) {
+        match rc.syscall_errno() {
             bun_sys::posix::E::SUCCESS => None,
             e => Some(Err(bun_sys::Error {
                 // Always truncate
@@ -721,9 +721,16 @@ impl MaybeToJs for bun_sys::Error {
 /// On Windows the Zig checked `@TypeOf(rc) == std.os.windows.NTSTATUS` to
 /// skip the `rc != 0 → null` early-out; that comptime type-compare is
 /// expressed here as the `IS_NTSTATUS` associated const.
+///
+/// `syscall_errno` is the per-type Zig `sys.getErrno(rc)` dispatch: integer
+/// rc → libc/Win32 errno, NTSTATUS rc → `translateNTStatusToErrno(rc)`. This
+/// MUST live on the trait — the free `bun_sys::get_errno` on Windows is
+/// unbounded and *ignores `rc`* (reads `GetLastError()`), so routing an
+/// NTSTATUS through it would discard the status and report stale TLS state.
 pub trait SyscallRc: Copy {
     const IS_NTSTATUS: bool = false;
     fn is_zero(self) -> bool;
+    fn syscall_errno(self) -> bun_sys::posix::E;
 }
 
 // Integer rc types: Windows path applies the `rc != 0 → None` short-circuit
@@ -732,11 +739,21 @@ macro_rules! impl_syscall_rc_int {
     ($($t:ty),* $(,)?) => {$(
         impl SyscallRc for $t {
             #[inline] fn is_zero(self) -> bool { self == 0 }
+            #[inline] fn syscall_errno(self) -> bun_sys::posix::E {
+                // Trait-method dispatch (NOT the Windows free fn) so the
+                // per-OS `GetErrno for $t` impl is selected.
+                <$t as bun_sys::GetErrno>::get_errno(self)
+            }
         }
     )*};
 }
 // `c_int` is a type alias for `i32` — covered by the `i32` impl.
-impl_syscall_rc_int!(i32, i64, isize, u32, u64, usize);
+// `u64` has a `GetErrno` impl on Windows only; gate it so the macro body
+// type-checks on POSIX (matches the prior `+ GetErrno` bound's effective
+// admissible set — `u64` was never callable through `errno_sys*` on POSIX).
+impl_syscall_rc_int!(i32, i64, isize, u32, usize);
+#[cfg(windows)]
+impl_syscall_rc_int!(u64);
 
 // Zig: `if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else { ... }`
 // — NTSTATUS must OPT OUT of the `rc != 0 → None` short-circuit so real NT
@@ -748,6 +765,13 @@ impl SyscallRc for bun_sys::windows::NTSTATUS {
     #[inline]
     fn is_zero(self) -> bool {
         self.0 == 0
+    }
+    #[inline]
+    fn syscall_errno(self) -> bun_sys::posix::E {
+        // Zig windows_errno.zig:286: NTSTATUS arm of `getErrno` →
+        // `bun.windows.translateNTStatusToErrno(rc)`. Do NOT fall through to
+        // `GetLastError()`.
+        bun_sys::windows::translate_ntstatus_to_errno(self)
     }
 }
 

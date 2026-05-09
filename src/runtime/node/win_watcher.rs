@@ -212,8 +212,10 @@ impl PathWatcher {
                 on_update_end_fn(Some(ctx));
             }
 
-            this.emit_in_progress = false;
+            // Zig: `defer this.emit_in_progress = false;` fires AFTER `this.maybeDeinit()`, so
+            // the guard is still `true` when `maybeDeinit` checks it (always a no-op there).
             this.maybe_deinit();
+            this.emit_in_progress = false;
             return;
         }
 
@@ -346,7 +348,11 @@ impl PathWatcher {
         // bun.assert evaluates its argument before the inline early-return, so this runs in release too.
         // SAFETY: `this` is a freshly-allocated valid pointer; uv_loop comes from the VM.
         unsafe {
-            let rc = uv::uv_fs_event_init(manager.vm.uv_loop(), &mut (*this).handle);
+            // `ptr::addr_of_mut!` (not `&mut (*this).handle`): libuv stashes this pointer and
+            // hands it back to `uv_event_callback`, which `from_field_ptr!`-offsets it to recover
+            // the parent `PathWatcher`. Deriving via `addr_of_mut!` keeps `this`'s whole-allocation
+            // provenance so that container-of access stays in-bounds under Stacked Borrows.
+            let rc = uv::uv_fs_event_init(manager.vm.uv_loop(), ptr::addr_of_mut!((*this).handle));
             debug_assert!(rc == uv::ReturnCode::zero());
             (*this).handle.data = this.cast::<c_void>();
         }
@@ -355,7 +361,7 @@ impl PathWatcher {
         // SAFETY: `(*this).handle` was initialized by uv_fs_event_init above; event_path is NUL-terminated.
         let start_rc = unsafe {
             uv::uv_fs_event_start(
-                &mut (*this).handle,
+                ptr::addr_of_mut!((*this).handle),
                 Some(PathWatcher::uv_event_callback),
                 event_path.as_ptr().cast::<c_char>(),
                 if recursive { uv::UV_FS_EVENT_RECURSIVE as u32 } else { 0 },

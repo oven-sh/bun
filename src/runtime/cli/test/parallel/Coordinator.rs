@@ -81,14 +81,22 @@ impl<'a> Coordinator<'a> {
 
     /// The worker (spawned or not) whose range has the most files remaining.
     fn find_steal_victim(&mut self) -> Option<*mut Worker> {
-        // PORT NOTE: reshaped for borrowck — return raw ptr so callers can
-        // mutably borrow another worker simultaneously.
+        // PORT NOTE: callers (assign_work) hold a live `&mut Worker` pointing
+        // into `self.workers`. `iter_mut()` would materialize a second
+        // `&mut Worker` for that same slot — instant UB under Stacked Borrows
+        // regardless of what the loop body does. Iterate via raw pointers
+        // instead, mirroring Zig's `for (this.workers) |*v|` (raw `*Worker`).
         let mut victim: Option<*mut Worker> = None;
         let mut most: u32 = 0;
-        for v in self.workers.iter_mut() {
-            if v.range.len() > most {
-                most = v.range.len();
-                victim = Some(std::ptr::from_mut::<Worker>(v));
+        let base: *mut Worker = self.workers.as_mut_ptr();
+        let len = self.workers.len();
+        for i in 0..len {
+            // SAFETY: `i < len`; read-only inspection of `range` through *mut.
+            let v = unsafe { base.add(i) };
+            let n = unsafe { (*v).range.len() };
+            if n > most {
+                most = n;
+                victim = Some(v);
             }
         }
         victim
@@ -230,9 +238,11 @@ impl<'a> Coordinator<'a> {
         // PORT NOTE: reshaped for borrowck — find_steal_victim returns *mut so
         // we can borrow `w` and the victim disjointly.
         if let Some(v_ptr) = self.find_steal_victim() {
-            // SAFETY: v_ptr points into self.workers; w may alias v, but
-            // steal_back_half on an empty range (w's, since we just popped None)
-            // is a no-op so the alias case is benign. Mirrors Zig behavior.
+            // SAFETY: v_ptr points into self.workers. `w` cannot be the victim:
+            // `w.range` is empty here (pop_front just returned None) while the
+            // victim has the largest *non-empty* range, so `v_ptr != w` and the
+            // two `&mut Worker` are disjoint. find_steal_victim itself iterates
+            // via raw pointers and never forms a `&mut Worker` for `w`'s slot.
             let v = unsafe { &mut *v_ptr };
             if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
@@ -256,9 +266,20 @@ impl<'a> Coordinator<'a> {
             if self.bail == 1 { "" } else { "s" }
         ));
         Output::flush();
-        for other in self.workers[..self.spawned_count as usize].iter_mut() {
-            if other.alive && other.inflight.is_none() {
-                other.shutdown();
+        // PORT NOTE: reachable from on_frame/account_crash with the caller's
+        // `w: &mut Worker` still live and used afterward; iter_mut() here
+        // would create a second `&mut Worker` for `w`'s slot (UB). Iterate
+        // via raw pointers — mirrors Zig `for (this.workers[..]) |*other|`.
+        let base: *mut Worker = self.workers.as_mut_ptr();
+        let n = self.spawned_count as usize;
+        for i in 0..n {
+            // SAFETY: `i < spawned_count <= workers.len()`; access through
+            // *mut so no `&mut Worker` aliases the caller's `w`.
+            unsafe {
+                let other = base.add(i);
+                if (*other).alive && (*other).inflight.is_none() {
+                    (*other).shutdown();
+                }
             }
         }
     }
@@ -531,11 +552,20 @@ impl<'a> Coordinator<'a> {
         // crash when the exit arrives. Runs even if --bail already set
         // `bailed`, since bailOut() only shutdown()s idle workers and would
         // leave inflight ones running past the banner.
-        for other in self.workers[..self.spawned_count as usize].iter_mut() {
-            if !other.alive {
+        // PORT NOTE: reachable from reap_worker with the caller's
+        // `w: &mut Worker` still live and used afterward; iter_mut() would
+        // create a second `&mut Worker` for `w`'s slot (UB). Iterate via raw
+        // pointers — mirrors Zig `for (this.workers[..]) |*other|`.
+        let base: *mut Worker = self.workers.as_mut_ptr();
+        let n = self.spawned_count as usize;
+        for i in 0..n {
+            // SAFETY: `i < spawned_count <= workers.len()`; field reads
+            // through *mut so no `&mut Worker` aliases the caller's `w`.
+            let other = unsafe { base.add(i) };
+            if unsafe { !(*other).alive } {
                 continue;
             }
-            if let Some(p) = other.process {
+            if let Some(p) = unsafe { (*other).process } {
                 #[cfg(unix)]
                 {
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process;
@@ -561,8 +591,17 @@ impl<'a> Coordinator<'a> {
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
     /// instead of spinning when no live worker remains to make progress.
     fn abort_queued_files(&mut self, reason: &[u8]) {
-        for w in self.workers.iter_mut() {
-            while let Some(idx) = w.range.pop_front() {
+        // PORT NOTE: reachable from reap_worker/abort_on_worker_panic with the
+        // caller's `w: &mut Worker` still live and used afterward; iter_mut()
+        // would create a second `&mut Worker` for `w`'s slot (UB). Iterate via
+        // raw pointers — mirrors Zig `for (this.workers) |*w|`.
+        let base: *mut Worker = self.workers.as_mut_ptr();
+        let len = self.workers.len();
+        for i in 0..len {
+            // SAFETY: `i < len`; range mutation through *mut so no
+            // `&mut Worker` aliases the caller's live `w`.
+            let wp = unsafe { base.add(i) };
+            while let Some(idx) = unsafe { (*wp).range.pop_front() } {
                 Output::pretty_error(format_args!(
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
                     // PORT NOTE: reshaped for borrowck — inline rel_path body

@@ -19,6 +19,8 @@ use bun_paths::OsPathZ;
 
 #[cfg(windows)]
 use crate::windows;
+#[cfg(windows)]
+use crate::windows::Win32ErrorExt as _;
 
 /// "handle" matches std.fs.File
 #[derive(Clone, Copy)]
@@ -220,10 +222,7 @@ impl File {
             if rt == windows::FILE_TYPE_UNKNOWN {
                 let err = windows::get_last_win32_error();
                 if err != windows::Win32Error::SUCCESS {
-                    return SysResult::Err(SysError::from_code(
-                        err.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::EUNKNOWN),
-                        sys::Tag::fstat,
-                    ));
+                    return SysResult::Err(SysError::from_code(err.to_e(), sys::Tag::fstat));
                 }
             }
 

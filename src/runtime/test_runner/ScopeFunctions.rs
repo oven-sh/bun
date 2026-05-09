@@ -837,19 +837,19 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
             global: *mut JSGlobalObject,
         );
     }
+    // Spec codegen `bun.cpp.Bun__JSValue__setPrototypeDirect` wraps in a
+    // `TopExceptionScope` + `returnIfException()`; route through
+    // `from_js_host_call_generic` so `BUN_JSC_validateExceptionChecks=1` sees
+    // the inner ThrowScope's simulated throw as checked.
     // SAFETY: FFI into JSC; `global` is live for the call. C++ side reads
     // `value.getObject()` so `value` must be an object (always a JSBoundFunction here).
-    unsafe {
+    bun_jsc::host_fn::from_js_host_call_generic(global, || unsafe {
         Bun__JSValue__setPrototypeDirect(
             value,
             prototype,
             std::ptr::from_ref::<JSGlobalObject>(global).cast_mut(),
         );
-    }
-    if global.has_exception() {
-        return Err(bun_jsc::JsError::Thrown);
-    }
-    Ok(())
+    })
 }
 
 /// Local shim for `JSValue::withAsyncContextIfNeeded` (not yet on

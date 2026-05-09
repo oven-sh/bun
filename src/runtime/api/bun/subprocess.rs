@@ -341,19 +341,12 @@ impl Default for WaitThreadPoll {
 }
 
 #[inline]
-pub fn assert_stdio_result(result: StdioResult) {
-    #[cfg(debug_assertions)]
-    {
-        #[cfg(unix)]
-        {
-            if let Some(fd) = result {
-                debug_assert!(fd.is_valid());
-            }
-        }
-        #[cfg(not(unix))]
-        let _ = result;
+pub fn assert_stdio_result(result: &StdioResult) {
+    #[cfg(all(debug_assertions, unix))]
+    if let Some(fd) = result {
+        debug_assert!(fd.is_valid());
     }
-    #[cfg(not(debug_assertions))]
+    #[cfg(not(all(debug_assertions, unix)))]
     let _ = result;
 }
 
@@ -408,9 +401,14 @@ impl Subprocess<'_> {
 
             #[cfg(windows)]
             {
-                if matches!(self.process().poller, spawn_process::Poller::Uv(_)) {
-                    self.pid_rusage =
-                        Some(spawn_process::uv_getrusage(self.process().poller.uv()));
+                let rusage =
+                    if let spawn_process::Poller::Uv(uv_proc) = &mut self.process_mut().poller {
+                        Some(spawn_process::uv_getrusage(uv_proc))
+                    } else {
+                        None
+                    };
+                if let Some(r) = rusage {
+                    self.pid_rusage = Some(r);
                     break 'brk self.pid_rusage.as_ref().unwrap();
                 }
             }
@@ -876,7 +874,10 @@ impl Subprocess<'_> {
             #[cfg(windows)]
             {
                 if let StdioResult::Buffer(buffer) = item {
-                    let fdno: usize = buffer.fd().cast() as usize;
+                    // `UvHandle::fd()` returns a `HANDLE` (`*mut c_void`); Zig's
+                    // `@intFromPtr(item.buffer.fd().cast())` is just the
+                    // numeric handle value.
+                    let fdno: usize = buffer.fd() as usize;
                     array.push(global, JSValue::js_number(fdno as f64))?;
                 } else {
                     array.push(global, JSValue::NULL)?;

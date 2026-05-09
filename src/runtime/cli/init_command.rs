@@ -438,7 +438,7 @@ impl InitCommand {
                         if end == 0 {
                             break 'read_package_json;
                         }
-                        break 'brk end;
+                        break 'brk end as u64;
                     }
                     #[cfg(not(windows))]
                     {
@@ -1582,7 +1582,7 @@ impl Template {
 
         #[cfg(windows)]
         {
-            if let Some(user) = bun_core::getenv_z_any_case(b"USER") {
+            if let Some(user) = bun_core::getenv_z_any_case(bun_core::zstr!("USER")) {
                 let mut pathbuf = path_buffer_pool::get();
                 // Zig: `std.fmt.bufPrintZ(..) catch { return false; }` —
                 // fallible on overflow, do not panic.

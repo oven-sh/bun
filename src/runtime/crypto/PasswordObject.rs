@@ -2,7 +2,7 @@ use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
@@ -246,8 +246,8 @@ fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
 /// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
 /// the aio hook registered by `crate::init()`.
 #[inline]
-fn vm_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 #[derive(Copy, Clone)]

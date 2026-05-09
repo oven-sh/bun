@@ -5,7 +5,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_ptr::IntrusiveRc;
 use bun_boringssl as boringssl;
 // PORT NOTE: do NOT `use bun_boringssl_sys::SSL` here — it shadows the
@@ -151,10 +151,10 @@ impl<const SSL: bool> SocketHandlerAddrExt for uws::NewSocketHandler<SSL> {
 }
 
 /// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
-/// `KeepAlive::ref_/unref` — `bun_aio` no longer accepts `&VirtualMachine`).
+/// `KeepAlive::ref_/unref` — `bun_io` no longer accepts `&VirtualMachine`).
 #[inline]
-fn js_loop_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::posix_event_loop::AllocatorType::Js)
+fn js_loop_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2402,7 +2402,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.detach();
         let _ = global;
         this.poll_ref
-            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            .unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2452,7 +2452,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let _ = global;
         this.poll_ref
-            .ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            .ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2468,7 +2468,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let _ = global;
         this.poll_ref
-            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            .unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2487,7 +2487,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         this_ref
             .poll_ref
-            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            .unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         // need to deinit event without being attached
         if this_ref.flags.contains(Flags::OWNED_PROTOS) {
             this_ref.protos = None; // Box::<[u8]> drops
@@ -2974,7 +2974,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             if was_reffed {
                 (*tls_ptr)
                     .poll_ref
-                    .ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+                    .ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
             }
         }
         let _ = vm;
@@ -3737,8 +3737,8 @@ pub fn js_upgrade_duplex_to_tls(
 
     tls_ref.socket = SocketHandler::<true>::from_duplex(&mut dc.upgrade);
     tls_ref.mark_active();
-    tls_ref.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(
-        bun_aio::posix_event_loop::AllocatorType::Js,
+    tls_ref.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
+        bun_io::posix_event_loop::AllocatorType::Js,
     ));
 
     dc.start_tls();

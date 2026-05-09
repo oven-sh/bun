@@ -7300,29 +7300,20 @@ unsafe fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
     None
 }
 
-/// Backs `bun_core::output::__BUN_OUTPUT_SINK_VTABLE` — stderr/mkdir/open/
-/// QuietWriter. Declared `extern "Rust"` in `bun_core::output`; link-time
-/// resolved (no runtime registration / init-order hazard).
-#[unsafe(no_mangle)]
-pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
-    bun_core::output::OutputSinkVTable {
-        stderr: || bun_core::output::File(Fd::stderr()),
-        make_path: |cwd, dir| {
-            mkdir_recursive_at(cwd, dir).map_err(Into::into)
-        },
-        create_file: |cwd, path| {
-            openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)
-                .map_err(Into::into)
-        },
-        quiet_writer_from_fd: |fd| {
+// Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/QuietWriter.
+bun_core::link_impl_OutputSink! {
+    Sys for () => |_this| {
+        stderr() => bun_core::output::File(Fd::stderr()),
+        make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(Into::into),
+        create_file(cwd, path) =>
+            openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(Into::into),
+        quiet_writer_from_fd(fd) => {
             let mut out = bun_core::output::QuietWriter::ZEROED;
-            // SAFETY: see qw_set_fd.
-            unsafe { qw_set_fd(&raw mut out, fd) };
+            qw_set_fd(&raw mut out, fd);
             out
         },
-        quiet_writer_adapt: |qw, buf, len| {
-            // SAFETY: qw came from quiet_writer_from_fd above.
-            let fd = unsafe { qw_fd(&raw const qw) };
+        quiet_writer_adapt(qw, buf, len) => {
+            let fd = qw_fd(&raw const qw);
             let concrete = SysQuietWriterAdapter {
                 writer: bun_core::io::Writer {
                     write_all: adapter_write_all,
@@ -7335,30 +7326,18 @@ pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
             };
             let mut out = bun_core::output::QuietWriterAdapter::uninit();
             // SAFETY: size/align asserted in const block above; out is repr(C) [u8;64].
-            unsafe {
-                core::ptr::write(
-                    (&raw mut out).cast::<SysQuietWriterAdapter>(),
-                    concrete,
-                );
-            }
+            core::ptr::write((&raw mut out).cast::<SysQuietWriterAdapter>(), concrete);
             out
         },
-        quiet_writer_flush: |_qw| {
-            // QuietWriter itself is unbuffered (buffering lives in the Adapter).
-        },
-        quiet_writer_write_all: |qw, bytes| {
-            // SAFETY: qw came from quiet_writer_from_fd above.
-            let fd = unsafe { qw_fd(qw) };
-            fd_write_all_quiet(fd, bytes)
-        },
-        quiet_writer_fd: |qw| {
-            // SAFETY: qw came from quiet_writer_from_fd above.
-            unsafe { qw_fd(qw) }
-        },
-        tty_winsize: sink_tty_winsize,
-        is_terminal: |fd| isatty(fd),
-        read: |fd, buf| read(fd, buf).map_err(Into::into),
-    };
+        // QuietWriter itself is unbuffered (buffering lives in the Adapter).
+        quiet_writer_flush(_qw) => (),
+        quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
+        quiet_writer_fd(qw) => qw_fd(qw),
+        tty_winsize(fd) => sink_tty_winsize(fd),
+        is_terminal(fd) => isatty(fd),
+        read(fd, buf) => read(fd, buf).map_err(Into::into),
+    }
+}
 
 // (former `__bun_uws_stat_file` provider deleted — body moved DOWN into
 // `bun_uws_sys::socket_context::stat_for_digest`, which calls `libc::stat`

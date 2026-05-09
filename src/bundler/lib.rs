@@ -303,8 +303,8 @@ pub mod options {
 pub use cache::Set as Cache;
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
 /// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). B-3: the
-/// struct is canonical in `bun_js_parser`; the bundler-tier `put`/`disabled`/
-/// `as_printer_ref` live on `RuntimeTranspilerCacheExt`.
+/// struct is canonical in `bun_js_parser`; the bundler-tier `disabled`/
+/// `set_disabled` live on `RuntimeTranspilerCacheExt`.
 pub use cache::{RuntimeTranspilerCache, RuntimeTranspilerCacheExt};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -320,6 +320,70 @@ pub use bundle_v2::bake_types;
 // `bundle_v2` (full vtable slot set) so there is one `DevServerHandle` type.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bundle_v2::dispatch;
+
+// ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
+// Re-exported through `bundle_v2::dispatch` for existing call sites.
+
+// `bun.jsc.hot_reloader.NewHotReloader<BundleV2, …>` is a T6 generic
+// instantiated over a T5 type. Both `bun_jsc::hot_reloader` and
+// `bun_runtime::bake::DevServer` register the same `bun_watcher::Watcher`
+// owner; one variant.
+bun_dispatch::link_interface! {
+    pub WatcherHandle[Watcher] {
+        fn add_file(
+            fd: bun_sys::Fd,
+            file_path: &[u8],
+            hash: u32,
+            loader: bun_options_types::Loader,
+            dir_fd: bun_sys::Fd,
+            package_json: Option<*const ()>,
+            copy_file_path: bool,
+        ) -> Result<(), bun_core::Error>;
+    }
+}
+unsafe impl Send for WatcherHandle {}
+unsafe impl Sync for WatcherHandle {}
+
+// Erased handle to `bake::DevServer`. PORT NOTE: Zig takes
+// `*const DevServerOutput` but mutates through the `chunks: []Chunk` slice it
+// holds; in Rust the struct stores `&'a mut [Chunk]`, hence `*mut`.
+bun_dispatch::link_interface! {
+    pub DevServerHandle[Bake] {
+        fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
+        fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_logger::Log;
+        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), bun_core::Error>;
+        fn handle_parse_task_failure(err: bun_core::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_logger::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), bun_core::Error>;
+        fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), bun_core::Error>;
+        fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_options_types::Loader) -> Result<(), bun_core::Error>;
+        fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
+        fn asset_hash(abs_path: &[u8]) -> Option<u64>;
+        fn current_bundle_start_data() -> *mut ();
+        fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), bun_core::Error>;
+        fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
+    }
+}
+unsafe impl Send for DevServerHandle {}
+unsafe impl Sync for DevServerHandle {}
+
+// VirtualMachine accessors for `normalize_specifier` / `get_loader_and_virtual_source`.
+// `bun_runtime::jsc_hooks` provides the `Runtime` arm.
+bun_dispatch::link_interface! {
+    pub VmLoaderCtx[Runtime] {
+        fn origin_host() -> &'static [u8];
+        fn origin_path() -> &'static [u8];
+        fn loaders() -> *const bun_collections::StringArrayHashMap<bun_options_types::Loader>;
+        fn eval_source() -> Option<*const bun_logger::Source>;
+        fn main() -> &'static [u8];
+        fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;
+        fn is_blob_url(specifier: &[u8]) -> bool;
+        fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
+        fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_options_types::Loader>;
+        fn blob_file_name(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
+        fn blob_needs_read_file(blob: options::OpaqueBlob) -> bool;
+        fn blob_shared_view(blob: options::OpaqueBlob) -> &'static [u8];
+        fn blob_deinit(blob: options::OpaqueBlob);
+    }
+}
 
 // `OutputFile.Options` defaults (`options.zig:OutputFile.Options` field
 // default-initializers). Kept here rather than in `OutputFile.rs` so the

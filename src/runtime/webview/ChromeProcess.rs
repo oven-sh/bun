@@ -26,7 +26,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
-use bun_spawn::{self, EventLoopHandle, Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
+use bun_spawn::{self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
 use bun_str::strings;
 use bun_sys::{self, Fd, FdExt as _, O};
 
@@ -118,35 +118,19 @@ pub extern "C" fn Bun__Chrome__ensure(
     }
 }
 
-static CHROME_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
-    on_process_exit: ChromeProcess::on_process_exit,
-};
-
-impl ChromeProcess {
-    unsafe fn on_process_exit(
-        owner: *mut (),
-        _process: *mut Process,
-        status: Status,
-        _rusage: *const Rusage,
-    ) {
-        let this = owner.cast::<ChromeProcess>();
-        scoped_log!(Chrome, "chrome exited: {}", status);
-        let signo: i32 = if let Some(sig) = status.signal_code() {
-            sig as i32
-        } else {
-            0
-        };
-        // SAFETY: FFI call into ChromeBackend.cpp; signo is plain i32.
-        unsafe { Bun__Chrome__died(signo) };
-        // SAFETY: `this` was heap-allocated in spawn(); process is the
-        // intrusive-rc *mut Process whose strong ref we hold. `deref()` drops
-        // that ref (Zig: `process.deref()`), then drop the Box (Zig:
-        // `bun.destroy(this)`).
-        unsafe {
+bun_spawn::link_impl_ProcessExit! {
+    ChromeProcess for ChromeProcess => |this| {
+        on_process_exit(_process, status, _rusage) => {
+            scoped_log!(Chrome, "chrome exited: {}", status);
+            let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
+            Bun__Chrome__died(signo);
+            // `this` was heap-allocated in spawn(); process is the
+            // intrusive-rc *mut Process whose strong ref we hold. `deref()`
+            // drops that ref, then drop the Box.
             (*(*this).process.as_ptr()).deref();
             drop(bun_core::heap::take(this));
-        }
-        INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+            INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+        },
     }
 }
 
@@ -488,9 +472,11 @@ fn spawn(
         let process = NonNull::new(spawned.to_process(event_loop, false))
             .expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess { process }));
-        // SAFETY: self_ptr is a freshly-allocated, exclusively-owned Box.
+        // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
+        // owns `process` and outlives it.
         unsafe {
-            (*process.as_ptr()).set_exit_handler(self_ptr.cast(), &CHROME_EXIT_VTABLE);
+            (*process.as_ptr())
+                .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
         }
         // SAFETY: process is live and exclusively owned here.
         match unsafe { (*process.as_ptr()).watch() } {

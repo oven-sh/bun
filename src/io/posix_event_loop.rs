@@ -57,92 +57,10 @@ where
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// EventLoopCtx — manual vtable (cycle-break for bun_jsc::{AbstractVm,
-// EventLoopHandle, VirtualMachine, MiniEventLoop, EventLoop})
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Erased `jsc::OpaqueCallback` — `extern "C" fn(*mut c_void)`.
-pub type OpaqueCallback = unsafe extern "C" fn(*mut c_void);
-
-/// Manual vtable replacing the `bun_jsc` "AbstractVm"/"EventLoopHandle"
-/// abstraction so this T3 crate names no T6 types. High-tier crates
-/// (`bun_runtime`/`bun_jsc`) provide the `&'static EventLoopCtxVTable`
-/// instances. // PERF(port): was inline switch on @TypeOf.
-pub struct EventLoopCtxVTable {
-    pub platform_event_loop: unsafe fn(*mut ()) -> *mut Loop,
-    // `crate::Store`/`crate::FilePoll` resolve to the *platform* variant
-    // (posix on unix, windows_event_loop's on Windows). This module owns the
-    // shared scaffolding, so it must name the crate-level re-export rather
-    // than its local `Store`/`FilePoll` (which on Windows is the wrong type).
-    pub file_polls: unsafe fn(*mut ()) -> *mut crate::Store,
-    pub alloc_file_poll: unsafe fn(*mut ()) -> *mut crate::FilePoll,
-    pub is_js: unsafe fn(*mut ()) -> bool,
-    pub increment_pending_unref_counter: unsafe fn(*mut ()),
-    pub ref_concurrently: unsafe fn(*mut ()),
-    pub unref_concurrently: unsafe fn(*mut ()),
-    pub after_event_loop_callback: unsafe fn(*mut ()) -> Option<OpaqueCallback>,
-    pub set_after_event_loop_callback: unsafe fn(*mut (), Option<OpaqueCallback>, *mut c_void),
-}
-
-/// `{owner, vtable}` pair erasing the concrete VM/event-loop type.
-#[derive(Copy, Clone)]
-pub struct EventLoopCtx {
-    pub owner: *mut (),
-    pub vtable: &'static EventLoopCtxVTable,
-}
-
-impl EventLoopCtx {
-    /// SAFETY: `EventLoopCtx` is `Copy`; two calls would otherwise produce
-    /// aliased `&mut Loop` (UB). Caller must not hold another live `&mut` to
-    /// the same loop across this borrow (resolver-style accessor).
-    #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &mut Loop {
-        // SAFETY: vtable contract — returns the live uws loop for `owner`.
-        unsafe { &mut *(self.vtable.platform_event_loop)(self.owner) }
-    }
-    /// SAFETY: same aliasing hazard as [`platform_event_loop`] — caller must
-    /// not hold another live `&mut Store` across this borrow.
-    #[inline]
-    pub unsafe fn file_polls(&self) -> &mut crate::Store {
-        // SAFETY: vtable contract.
-        unsafe { &mut *(self.vtable.file_polls)(self.owner) }
-    }
-    #[inline]
-    pub fn alloc_file_poll(&self) -> *mut crate::FilePoll {
-        unsafe { (self.vtable.alloc_file_poll)(self.owner) }
-    }
-    #[inline]
-    pub fn is_js(&self) -> bool {
-        unsafe { (self.vtable.is_js)(self.owner) }
-    }
-    #[inline]
-    pub fn increment_pending_unref_counter(&self) {
-        unsafe { (self.vtable.increment_pending_unref_counter)(self.owner) }
-    }
-    #[inline]
-    pub fn ref_concurrently(&self) {
-        unsafe { (self.vtable.ref_concurrently)(self.owner) }
-    }
-    #[inline]
-    pub fn unref_concurrently(&self) {
-        unsafe { (self.vtable.unref_concurrently)(self.owner) }
-    }
-    #[inline]
-    pub fn after_event_loop_callback(&self) -> Option<OpaqueCallback> {
-        unsafe { (self.vtable.after_event_loop_callback)(self.owner) }
-    }
-    #[inline]
-    pub fn set_after_event_loop_callback(&self, cb: Option<OpaqueCallback>, ctx: *mut c_void) {
-        unsafe { (self.vtable.set_after_event_loop_callback)(self.owner, cb, ctx) }
-    }
-}
+pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
 
 unsafe extern "Rust" {
-    /// Returns the global event-loop context for the given allocator type
-    /// (replaces `VirtualMachine::get()` / `MiniEventLoop::global()`).
-    /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks` (link-time resolved;
-    /// Zig had no crate split here and called the VM/Mini globals directly).
+    /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
     fn __bun_get_vm_ctx(kind: AllocatorType) -> EventLoopCtx;
 }
 
@@ -368,30 +286,53 @@ macro_rules! kqueue_or_epoll { () => { "epoll" } }
 // owns the per-tag `match` so the variant types are never named in this crate.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Tag constants for `Owner`. The mapping tag→concrete type lives in
-/// `bun_runtime::dispatch` (move-in pass).
-pub mod poll_tag {
-    pub const NULL: u8 = 0;
-    pub const FILE_SINK: u8 = 1;
-    pub const STATIC_PIPE_WRITER: u8 = 2;
-    pub const SHELL_STATIC_PIPE_WRITER: u8 = 3;
-    pub const SECURITY_SCAN_STATIC_PIPE_WRITER: u8 = 4;
-    pub const BUFFERED_READER: u8 = 5;
-    pub const DNS_RESOLVER: u8 = 6;
-    pub const GET_ADDR_INFO_REQUEST: u8 = 7;
-    pub const REQUEST: u8 = 8;
-    pub const PROCESS: u8 = 9;
-    pub const SHELL_BUFFERED_WRITER: u8 = 10;
-    pub const TERMINAL_POLL: u8 = 11;
-    pub const PARENT_DEATH_WATCHDOG: u8 = 12;
-    pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: u8 = 13;
+/// Closed set of `FilePoll` owner kinds. Variant types live in higher-tier
+/// crates; `__bun_run_file_poll` (link-time, in `bun_runtime::dispatch`)
+/// matches on this and calls the per-kind handler directly — same enum-dispatch
+/// shape as `EventLoopCtx`, with the match on the runtime side because there
+/// are 13 variants × 1 dispatch fn (vs 2 × 9 for `EventLoopCtx`).
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum PollTag {
+    Null = 0,
+    FileSink,
+    StaticPipeWriter,
+    ShellStaticPipeWriter,
+    SecurityScanStaticPipeWriter,
+    BufferedReader,
+    DnsResolver,
+    GetAddrInfoRequest,
+    Request,
+    Process,
+    ShellBufferedWriter,
+    TerminalPoll,
+    ParentDeathWatchdog,
+    LifecycleScriptSubprocessOutputReader,
 }
 
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct PollTag(pub u8);
+/// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
+/// `poll_tag::FILE_SINK`. Re-export the enum variants under the old constant
+/// names; the literal values are unchanged. New code should use
+/// `PollTag::FileSink` directly.
+pub mod poll_tag {
+    use super::PollTag;
+    pub const NULL: PollTag = PollTag::Null;
+    pub const FILE_SINK: PollTag = PollTag::FileSink;
+    pub const STATIC_PIPE_WRITER: PollTag = PollTag::StaticPipeWriter;
+    pub const SHELL_STATIC_PIPE_WRITER: PollTag = PollTag::ShellStaticPipeWriter;
+    pub const SECURITY_SCAN_STATIC_PIPE_WRITER: PollTag = PollTag::SecurityScanStaticPipeWriter;
+    pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
+    pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
+    pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
+    pub const REQUEST: PollTag = PollTag::Request;
+    pub const PROCESS: PollTag = PollTag::Process;
+    pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
+    pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
+    pub const PARENT_DEATH_WATCHDOG: PollTag = PollTag::ParentDeathWatchdog;
+    pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
+        PollTag::LifecycleScriptSubprocessOutputReader;
+}
 
-/// Erased `(tag, *mut ())` pair replacing the Zig `TaggedPointerUnion(.{...})`.
 #[derive(Copy, Clone)]
 pub struct Owner {
     pub tag: PollTag,
@@ -399,10 +340,10 @@ pub struct Owner {
 }
 
 impl Owner {
-    pub const NULL: Owner = Owner { tag: PollTag(poll_tag::NULL), ptr: core::ptr::null_mut() };
+    pub const NULL: Owner = Owner { tag: PollTag::Null, ptr: core::ptr::null_mut() };
     #[inline]
-    pub const fn new(tag: u8, ptr: *mut ()) -> Owner {
-        Owner { tag: PollTag(tag), ptr }
+    pub const fn new(tag: PollTag, ptr: *mut ()) -> Owner {
+        Owner { tag, ptr }
     }
     #[inline]
     pub fn is_null(&self) -> bool {
@@ -413,15 +354,12 @@ impl Owner {
         *self = Self::NULL;
     }
     #[inline]
-    pub fn tag(&self) -> u8 {
-        self.tag.0
+    pub fn tag(&self) -> PollTag {
+        self.tag
     }
 }
 
 unsafe extern "Rust" {
-    /// Hot-path dispatch for `FilePoll::on_update`. Defined `#[no_mangle]` in
-    /// `bun_runtime::dispatch` (link-time resolved). Runtime owns the per-tag
-    /// `match` (direct calls per arm — LLVM inlines like Zig).
     fn __bun_run_file_poll(poll: *mut crate::FilePoll, size_or_offset: i64);
 }
 
@@ -1663,204 +1601,21 @@ pub enum OneShotFlag {
 
 const INVALID_FD: Fd = Fd::INVALID;
 
+
 // ──────────────────────────────────────────────────────────────────────────
-// Waker
+// Waker / Closer — canonical impls live in this crate's `mod waker` /
+// `mod closer` (lib.rs). Before the bun_io→bun_io merge each crate had its
+// own copy (this file was bun_io's, lib.rs was bun_io's, kept apart so
+// `Loop::load` had no aio→io edge). With the merge there is one definition;
+// re-export here so `posix_event_loop::Waker` / `::Closer` (and therefore
+// the `bun_io::*` shim) keep resolving for downstream callers.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(target_os = "macos")]
-pub type Waker = KEventWaker;
-// FreeBSD 13+ has eventfd(2), so the Linux waker works as-is. Android (bionic)
-// has had `eventfd(2)` since API 8 — same kernel ABI as glibc Linux.
+pub use crate::waker::Waker;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-pub type Waker = LinuxWaker;
-// Windows/wasm define `Waker` in their own event-loop modules; this module is
-// still compiled there for the *shared* scaffolding (`EventLoopCtx`, `Flags`,
-// `Owner`, …), so no `compile_error!` — just leave the alias undefined.
-
-pub struct LinuxWaker {
-    pub fd: Fd,
-}
-
-impl LinuxWaker {
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    pub fn init() -> Result<Self, bun_core::Error> {
-        // TODO(port): std.posix.eventfd → bun_sys::eventfd
-        let fd = bun_sys::eventfd(0, 0).map_err(|_| bun_core::err!("SystemResources"))?;
-        Ok(Self::init_with_file_descriptor(fd))
-    }
-
-    pub fn get_fd(&self) -> Fd {
-        self.fd
-    }
-
-    pub fn init_with_file_descriptor(fd: Fd) -> Self {
-        Self { fd }
-    }
-
-    /// See [`KEventWaker::placeholder`]. `LinuxWaker` happens to be zero-safe
-    /// (`Fd` is a plain `c_int`), but providing this keeps the call sites
-    /// platform-agnostic and documents intent.
-    pub const fn placeholder() -> Self {
-        Self { fd: Fd::INVALID }
-    }
-
-    pub fn wait(&self) {
-        // eventfd counter is 8 bytes; the value is discarded.
-        let mut buf = [0u8; 8];
-        let _ = bun_sys::read(self.fd, &mut buf);
-    }
-
-    pub fn wake(&self) {
-        let bytes: usize = 1;
-        // SAFETY: usize is 8 bytes; reinterpret as [u8; 8].
-        let buf = unsafe { &*(&raw const bytes).cast::<[u8; 8]>() };
-        let _ = bun_sys::write(self.fd, buf);
-    }
-}
-
+pub use crate::waker::LinuxWaker;
 #[cfg(target_os = "macos")]
-pub struct KEventWaker {
-    pub kq: c_int,
-    pub machport: bun_core::mach_port,
-    pub machport_buf: Box<[u8]>,
-    /// Atomic so `wake(&self)` can be called from any thread concurrently with
-    /// `wait(&self)` (matches Zig's non-exclusive `*Self` semantics; see
-    /// `BundleThread::enqueue` which calls `wake()` while the bundle thread holds
-    /// `&Waker` in `wait()`).
-    pub has_pending_wake: AtomicBool,
-}
-
-#[cfg(target_os = "macos")]
-type Kevent64 = bun_sys::darwin::kevent64_s;
-
-#[cfg(target_os = "macos")]
-impl KEventWaker {
-    // SAFETY: all-zero is a valid kevent64_s array
-    const ZEROED: [Kevent64; 16] = unsafe { bun_core::ffi::zeroed() };
-
-    /// An inert, fully-initialized waker for use as a field placeholder before
-    /// `init()` overwrites it (e.g. `BundleThread::uninitialized`). Mirrors the
-    /// Zig field defaults `kq=undefined, machport=undefined, machport_buf=&.{}`
-    /// — but unlike Zig, Rust forbids a zeroed `Box<[u8]>` (NonNull invariant),
-    /// so callers MUST NOT use `mem::zeroed()` for this type.
-    ///
-    /// `kq = -1` makes `wait()` a no-op; `machport = 0` is `MACH_PORT_NULL`.
-    /// This value is meant to be overwritten via `ptr::write` (no Drop of the
-    /// empty `machport_buf` is required, but dropping it is also harmless).
-    pub fn placeholder() -> Self {
-        Self {
-            kq: -1,
-            machport: 0,
-            machport_buf: Box::default(),
-            has_pending_wake: AtomicBool::new(false),
-        }
-    }
-
-    pub fn wake(&self) {
-        bun_core::mark_binding!();
-        // SAFETY: FFI call to io_darwin_schedule_wakeup with a valid mach_port.
-        if unsafe { io_darwin_schedule_wakeup(self.machport) } {
-            self.has_pending_wake.store(false, Ordering::Release);
-            return;
-        }
-        self.has_pending_wake.store(true, Ordering::Release);
-    }
-
-    pub fn get_fd(&self) -> Fd {
-        Fd::from_native(self.kq)
-    }
-
-    pub fn wait(&self) {
-        if !Fd::from_native(self.kq).is_valid() {
-            return;
-        }
-        bun_core::mark_binding!();
-        let mut events = Self::ZEROED;
-        // SAFETY: FFI syscall; pointers reference stack-local events array valid for the call.
-        unsafe {
-            bun_sys::darwin::kevent64(
-                self.kq,
-                events.as_ptr(),
-                0,
-                events.as_mut_ptr(),
-                c_int::try_from(events.len()).expect("int cast"),
-                0,
-                ptr::null(),
-            );
-        }
-    }
-
-    pub fn init() -> Result<Self, bun_core::Error> {
-        // TODO(port): std.posix.kqueue → bun_sys::kqueue
-        let kq = bun_sys::kqueue().map_err(|_| bun_core::err!("SystemResources"))?;
-        Self::init_with_file_descriptor(kq.native())
-    }
-
-    pub fn init_with_file_descriptor(kq: i32) -> Result<Self, bun_core::Error> {
-        bun_core::mark_binding!();
-        debug_assert!(kq > -1);
-        let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
-        // SAFETY: FFI call; buf outlives the machport.
-        let machport = unsafe { io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024) };
-        if machport == 0 {
-            return Err(bun_core::err!("MachportCreationFailed"));
-        }
-
-        Ok(Self {
-            kq,
-            machport,
-            machport_buf,
-            has_pending_wake: AtomicBool::new(false),
-        })
-    }
-}
-
-// TODO(port): move to aio_sys
-#[cfg(target_os = "macos")]
-unsafe extern "C" {
-    fn io_darwin_close_machport(port: bun_core::mach_port);
-    fn io_darwin_create_machport(
-        kq: c_int,
-        buf: *mut c_void,
-        len: usize,
-    ) -> bun_core::mach_port;
-    fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Closer
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct Closer {
-    pub fd: Fd,
-    pub task: work_pool::Task,
-}
-
-// SAFETY: `TASK_OFFSET` is `offset_of!(Closer, task)`; `task_mut` returns that
-// same field. `Closer` is `Send` (`Fd` + intrusive `Task` are both `Send`).
-unsafe impl bun_threading::work_pool::OwnedTask for Closer {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Closer, task);
-    fn task_mut(&mut self) -> &mut work_pool::Task { &mut self.task }
-    fn run(self: Box<Self>) {
-        // PORT NOTE: Zig `defer bun.destroy(closer)` — `self` drops at scope exit.
-        self.fd.close();
-    }
-}
-
-impl Closer {
-    pub fn new(fd: Fd) -> Box<Self> {
-        // `task` is overwritten by `WorkPool::schedule_owned`; placeholder callback.
-        Box::new(Self { fd, task: work_pool::Task {
-            node: bun_threading::thread_pool::Node::default(),
-            callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
-        } })
-    }
-
-    /// `_compat` arg is for compatibility with the windows version.
-    pub fn close(fd: Fd, _compat: ()) {
-        debug_assert!(fd.is_valid());
-        WorkPool::schedule_owned(Self::new(fd));
-    }
-}
+pub use crate::waker::KEventWaker;
+pub use crate::closer::Closer;
 
 // ported from: src/aio/posix_event_loop.zig

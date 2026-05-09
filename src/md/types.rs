@@ -1,4 +1,3 @@
-use core::ffi::c_void;
 
 // TODO(b1): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
 pub type JsResult<T> = Result<T, crate::parser::ParserError>;
@@ -138,8 +137,7 @@ pub struct WikilinkDetail<'a> {
 // PORT NOTE: Zig's `*anyopaque + *const VTable` manual fat-pointer is collapsed
 // into `&mut dyn RendererImpl`. LIFETIMES.tsv classified `ptr` as
 // `&'a mut dyn RendererImpl` (BORROW_PARAM) and `vtable` as `&'static VTable`
-// (STATIC); the trait object encodes both, so the explicit `vtable` field is
-// dropped here. The `VTable` struct is kept below for reference / FFI parity.
+// (STATIC); the trait object encodes both.
 pub struct Renderer<'a> {
     pub ptr: &'a mut dyn RendererImpl,
 }
@@ -151,16 +149,6 @@ pub trait RendererImpl {
     fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()>;
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
-}
-
-/// Low-level vtable layout (kept for structural parity with the Zig source).
-// TODO(port): remove if no FFI consumer needs the raw fn-pointer table.
-pub struct VTable {
-    pub enter_block: fn(ptr: *mut c_void, block_type: BlockType, data: u32, flags: u32) -> JsResult<()>,
-    pub leave_block: fn(ptr: *mut c_void, block_type: BlockType, data: u32) -> JsResult<()>,
-    pub enter_span: fn(ptr: *mut c_void, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()>,
-    pub leave_span: fn(ptr: *mut c_void, span_type: SpanType) -> JsResult<()>,
-    pub text: fn(ptr: *mut c_void, text_type: TextType, content: &[u8]) -> JsResult<()>,
 }
 
 impl<'a> Renderer<'a> {

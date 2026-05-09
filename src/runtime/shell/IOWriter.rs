@@ -345,10 +345,7 @@ impl IOWriter {
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; vtable consumers treat the pointee as read-only
-        // (`*const bun_event_loop::EventLoopHandle`) and never write through
-        // it. The pointee lives inside `Arc<IOWriter>` and outlives every
-        // FilePoll callback.
-        bun_io::EventLoopHandle(&raw const self.state().evtloop as *mut c_void)
+        self.state().evtloop.as_event_loop_ctx()
     }
 
     // ── start ────────────────────────────────────────────────────────────
@@ -998,7 +995,7 @@ enum WriteOutcome {
 
 #[cfg(not(windows))]
 impl bun_io::pipe_writer::PosixBufferedWriterParent for IOWriter {
-    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::SHELL_BUFFERED_WRITER;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::SHELL_BUFFERED_WRITER;
     unsafe fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
         // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
         // holds `&mut writer` (a field of `*this`) but never materializes
@@ -1170,12 +1167,7 @@ impl Drop for IOWriter {
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
         }
-        // SAFETY: see `io_evtloop` — pass address of the stored handle for the
-        // FilePoll vtable to recover. `s` (and thus `&s.evtloop`) is live for
-        // the duration of this call.
-        s.writer.disable_keeping_process_alive(bun_io::EventLoopHandle(
-            &raw const s.evtloop as *mut c_void,
-        ));
+        s.writer.disable_keeping_process_alive(s.evtloop.as_event_loop_ctx());
     }
 }
 

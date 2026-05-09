@@ -452,10 +452,55 @@ impl Wyhash {
         } else {
             let mut i: usize = 0;
             if input.len() >= 48 {
-                while i + 48 < input.len() {
-                    this.round(input[i..i + 48].try_into().expect("infallible: size matches"));
+                // Hot path for `Bun.hash` over large buffers. Zig spells the
+                // body as `inline fn round` calling `inline fn read`/`mix`/
+                // `mum`, all of which are *force*-inlined; Rust's `#[inline]`
+                // is a hint that opt-level 0 ignores, so the helper-function
+                // shape costs ~12 callee frames per 48-byte block. Instead,
+                // hoist state into locals and open-code one round per
+                // iteration (3× 128-bit multiply, 6× le-u64 read).
+                let [mut s0, mut s1, mut s2] = this.state;
+                let (k1, k2, k3) = (Self::SECRET[1], Self::SECRET[2], Self::SECRET[3]);
+                // Six little-endian u64 reads per round. Zig's `std.mem.readInt`
+                // is a single `@bitCast` per word; safe Rust has no
+                // unaligned-load primitive, and at opt-level 0 with ASAN
+                // every spelling that goes through `[u8; 8]` by value
+                // (`from_le_bytes`, `*<&[u8; 8]>`) is intercepted by
+                // `__asan_memcpy`, which dominated the profile. Fold each
+                // word via shift-or instead — more byte loads, but no
+                // aggregate copies for ASAN to intercept.
+                // `i + 48 < len` ⇔ `i < len - 48`; len ≥ 48 is guaranteed
+                // by the enclosing branch, so the subtraction is safe and we
+                // skip a per-iteration overflow check on the addition.
+                let bound = input.len() - 48;
+                while i < bound {
+                    let blk: &[u8; 48] = input[i..i + 48].try_into().expect("len checked");
+                    macro_rules! r8 {
+                        ($o:literal) => {
+                            (blk[$o] as u64)
+                                | ((blk[$o + 1] as u64) << 8)
+                                | ((blk[$o + 2] as u64) << 16)
+                                | ((blk[$o + 3] as u64) << 24)
+                                | ((blk[$o + 4] as u64) << 32)
+                                | ((blk[$o + 5] as u64) << 40)
+                                | ((blk[$o + 6] as u64) << 48)
+                                | ((blk[$o + 7] as u64) << 56)
+                        };
+                    }
+                    // u64×u64 → u128 cannot overflow; `wrapping_mul` skips
+                    // the debug-mode overflow check that plain `*` emits.
+                    let m0 = ((r8!(0) ^ k1) as u128)
+                        .wrapping_mul((r8!(8) ^ s0) as u128);
+                    s0 = (m0 as u64) ^ ((m0 >> 64) as u64);
+                    let m1 = ((r8!(16) ^ k2) as u128)
+                        .wrapping_mul((r8!(24) ^ s1) as u128);
+                    s1 = (m1 as u64) ^ ((m1 >> 64) as u64);
+                    let m2 = ((r8!(32) ^ k3) as u128)
+                        .wrapping_mul((r8!(40) ^ s2) as u128);
+                    s2 = (m2 as u64) ^ ((m2 >> 64) as u64);
                     i += 48;
                 }
+                this.state = [s0, s1, s2];
                 this.final0();
             }
             this.final1(input, i);

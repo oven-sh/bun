@@ -48,6 +48,31 @@
 #[path = "websocket_http_client.rs"]                pub mod websocket_http_client;
 #[path = "zlib.rs"]                                 pub mod zlib;
 
+// `FetchHeaders` and `blob::Any`/`Blob` live in bun_runtime (T6); http is T5.
+// Only consumer is `Headers::from()`. Variants live in
+// `bun_runtime::webcore::headers_ref`.
+bun_dispatch::link_interface! {
+    pub FetchHeadersRef[WebCore] {
+        fn count(header_count: &mut u32, buf_len: &mut u32);
+        fn fast_has(name: headers::HeaderName) -> bool;
+        fn copy_to(names: *mut headers::api::StringPointer, values: *mut headers::api::StringPointer, buf: *mut u8);
+    }
+}
+bun_dispatch::link_interface! {
+    pub AnyBlobRef[Any, Blob] {
+        fn has_content_type_from_user() -> bool;
+        fn content_type_ptr() -> (*const u8, usize);
+    }
+}
+impl AnyBlobRef {
+    #[inline]
+    pub fn content_type<'a>(&self) -> &'a [u8] {
+        let (ptr, len) = self.content_type_ptr();
+        // SAFETY: borrow valid for the lifetime of `owner` (established at `new()`).
+        unsafe { bun_core::ffi::slice(ptr, len) }
+    }
+}
+
 // ── crate-root re-exports (real types from un-gated modules) ──
 pub use signals::Signals;
 pub use internal_state::InternalState;

@@ -10,7 +10,7 @@ use crate::jsc::{
     JSGlobalObjectSqlExt as _, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
 };
 use bun_uws as uws;
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, StringMap, OffsetByteList};
 use crate::jsc::EventLoopTimer;
@@ -219,12 +219,12 @@ impl PostgresSQLConnection {
     }
 
     /// `KeepAlive::{ref_,unref}` take an `EventLoopCtx` (manual vtable, lives in
-    /// `bun_aio`). The sql_jsc-side `VirtualMachine` is a thin façade with no
+    /// `bun_io`). The sql_jsc-side `VirtualMachine` is a thin façade with no
     /// direct conversion; route through the global hook (`get_vm_ctx(.Js)`) which
     /// resolves to the same singleton VM stored in `self.vm`.
     #[inline]
-    fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
-        bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
+        bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
     }
 
     // ---- self-referential connection-string slices ----------------------------
@@ -2751,9 +2751,9 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
         // TODO(port): Zig reads `pending_activity_count.raw` (non-atomic). Using Relaxed load.
         if self.pending_activity_count.load(Ordering::Relaxed) > 0 {
-            self.poll_ref.r#ref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            self.poll_ref.r#ref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         } else {
-            self.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         }
     }
 

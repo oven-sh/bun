@@ -1,7 +1,7 @@
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{handle_oom, Output};
 use bun_event_loop::ManagedTask::ManagedTask;
@@ -1223,8 +1223,8 @@ impl SendQueue {
         let _ = global;
         // PORT NOTE: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`. The Zig anytype dispatch is
-        // routed through `bun_aio::get_vm_ctx` which `bun_runtime` registers.
-        let ctx = bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js);
+        // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
+        let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
         if self.should_ref() {
             self.keep_alive.ref_(ctx);
         } else {

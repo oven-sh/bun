@@ -39,14 +39,13 @@ impl File {
     /// lives in `bun_sys`.
     #[inline]
     pub fn supports_ansi_escape_codes(&self) -> bool {
-        // SAFETY: vtable installed at startup.
-        let tty = unsafe { (output_sink().is_terminal)(self.fd()) };
+        let tty = output_sink().is_terminal(self.fd());
         tty && (cfg!(unix)
             || crate::output::ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed))
     }
     #[inline]
     pub fn is_tty(&self) -> bool {
-        unsafe { (output_sink().is_terminal)(self.fd()) }
+        output_sink().is_terminal(self.fd())
     }
     /// Windows console HANDLE for the legacy `SetConsoleCursorPosition` path.
     #[cfg(windows)]
@@ -56,7 +55,7 @@ impl File {
     }
     #[inline]
     pub fn winsize(&self) -> Option<crate::Winsize> {
-        unsafe { (output_sink().tty_winsize)(self.fd()) }
+        output_sink().tty_winsize(self.fd())
     }
 }
 

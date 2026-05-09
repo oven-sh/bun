@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_core::Output;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{task_tag, Task, TaskTag, Taskable};
@@ -71,7 +71,7 @@ impl FSWatcher {
     }
 
     #[inline]
-    fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
+    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         VirtualMachine::event_loop_ctx(self.ctx)
     }
 

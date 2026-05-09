@@ -17,7 +17,7 @@ use bun_event_loop::{Taskable, TaskTag, task_tag};
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_aio::{KeepAlive, EventLoopCtx, AllocatorType};
+use bun_io::{KeepAlive, EventLoopCtx, AllocatorType};
 use bun_core::{self, Output, ZBox};
 use bun_str::{self as strings, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;
@@ -686,7 +686,7 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
 /// vtable bridge installed by `bun_runtime::init()`.
 #[inline]
 fn vm_ctx() -> EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(AllocatorType::Js)
+    bun_io::posix_event_loop::get_vm_ctx(AllocatorType::Js)
 }
 
 impl<C: TaskContext> AsyncTask<C> {

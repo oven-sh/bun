@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU32;
 
 use bun_ptr::{RefCount, RefCounted, RefPtr};
 
-use bun_aio::{FilePoll, KeepAlive};
+use bun_io::{FilePoll, KeepAlive};
 use bun_core::Output;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
@@ -90,7 +90,7 @@ type StdioPipeItem = ExtraPipe;
 pub type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
 impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
-    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -375,27 +375,14 @@ pub extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
     unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
 }
 
-/// Static vtable wired into `Process.set_exit_handler` so the low-tier
-/// `Process` can call back into this JSC-aware owner without a direct upward
-/// dependency (per §Dispatch).
-pub static PROCESS_EXIT_VTABLE: spawn_process::ProcessExitVTable = spawn_process::ProcessExitVTable {
-    on_process_exit: on_process_exit_thunk,
-};
-
-unsafe fn on_process_exit_thunk(
-    owner: *mut (),
-    process: *mut Process,
-    status: Status,
-    rusage: *const Rusage,
-) {
-    // SAFETY: owner was registered as `*mut Subprocess` in spawn_maybe_sync;
-    // process/rusage are live for the duration of the callback. `process` is
-    // forwarded as the raw `*mut Process` (not a `&Process` reborrow) so
-    // `on_process_exit` can hand it to `VirtualMachine::on_subprocess_exit`
-    // without a const→mut provenance cast.
-    let this: &mut Subprocess = unsafe { &mut *owner.cast::<Subprocess>() };
-    let rusage_ref: &Rusage = unsafe { &*rusage };
-    this.on_process_exit(process, status, rusage_ref);
+bun_spawn::link_impl_ProcessExit! {
+    Subprocess for Subprocess => |this| {
+        // `process` forwarded raw (not reborrowed) so `on_process_exit` can
+        // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
+        // provenance cast.
+        on_process_exit(process, status, rusage) =>
+            (*this).on_process_exit(process, status, &*rusage),
+    }
 }
 
 impl Subprocess<'_> {

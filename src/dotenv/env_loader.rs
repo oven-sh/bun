@@ -605,8 +605,8 @@ impl<'a> Loader<'a> {
     // unpacks its `api::StringMap` at the call site.
     pub fn copy_for_define(
         &mut self,
-        to_json: DefineStoreRef<'_>,
-        to_string: DefineStoreRef<'_>,
+        to_json: crate::DefineStore,
+        to_string: crate::DefineStore,
         framework_defaults_keys: &[&[u8]],
         framework_defaults_values: &[&[u8]],
         behavior: DotEnvBehavior,
@@ -1162,52 +1162,6 @@ impl<'a> Loader<'a> {
         // pending the `bun_logger` owning-`Str` rework.
         self.custom_files_loaded.put(file_path, logger::Source::default())?;
         Ok(())
-    }
-}
-
-// CYCLEBREAK(b0): manual vtable (cold-path §Dispatch, PORTING.md) for the
-// GENUINE upward dep on bun_bundler::defines::{DefineData, DefineDataInit, CallUnwrap}
-// + bun_js_parser::{E::String, Expr::Data}. dotenv (T2) names no high-tier types;
-// the bundler/runtime move-in pass provides `pub static ENV_DEFINE_STORE_VTABLE`
-// instances that construct `E::String` + `DefineData::init(DefineDataInit {
-// can_be_removed_if_unused: true, call_can_be_unwrapped_if_unused: CallUnwrap::IfUnused, .. })`
-// and insert into the concrete StringStore / JSONStore maps.
-// PERF(port): was inline switch.
-pub struct DefineStoreVTable {
-    pub contains: unsafe fn(owner: *mut (), key: &[u8]) -> bool,
-    /// Insert `key` → JS string-literal define wrapping `value` (E::String + DefineData).
-    /// Implementor copies/owns `value` bytes as needed.
-    pub put_string_define:
-        unsafe fn(owner: *mut (), key: &[u8], value: &[u8]) -> Result<(), bun_core::Error>,
-    /// Insert `key` → raw `value` (JSON-store fallback for framework defaults).
-    pub put_raw: unsafe fn(owner: *mut (), key: &[u8], value: &[u8]) -> Result<(), bun_core::Error>,
-}
-
-pub struct DefineStoreRef<'a> {
-    pub owner: *mut (),
-    pub vtable: &'static DefineStoreVTable,
-    _marker: core::marker::PhantomData<&'a mut ()>,
-}
-
-impl<'a> DefineStoreRef<'a> {
-    #[inline]
-    pub fn new(owner: *mut (), vtable: &'static DefineStoreVTable) -> Self {
-        Self { owner, vtable, _marker: core::marker::PhantomData }
-    }
-    #[inline]
-    pub fn contains(&self, key: &[u8]) -> bool {
-        // SAFETY: vtable contract — owner is the erased store the vtable was built for.
-        unsafe { (self.vtable.contains)(self.owner, key) }
-    }
-    #[inline]
-    pub fn put_string_define(&self, key: &[u8], value: &[u8]) -> Result<(), bun_core::Error> {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.put_string_define)(self.owner, key, value) }
-    }
-    #[inline]
-    pub fn put_raw(&self, key: &[u8], value: &[u8]) -> Result<(), bun_core::Error> {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.put_raw)(self.owner, key, value) }
     }
 }
 

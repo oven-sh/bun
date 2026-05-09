@@ -23,7 +23,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_aio::file_poll::{FilePoll, Store as FilePollStore};
+use bun_io::file_poll::{FilePoll, Store as FilePollStore};
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
@@ -544,101 +544,42 @@ impl<'a> MiniEventLoop<'a> {
     }
 }
 
-// ───────────── EventLoopCtx adapter (bun_aio cycle-break) ─────────────────
-// `bun_aio::file_poll::Store::put` and friends take an erased `EventLoopCtx`
+// ───────────── EventLoopCtx adapter (bun_io cycle-break) ─────────────────
+// `bun_io::file_poll::Store::put` and friends take an erased `EventLoopCtx`
 // instead of naming `MiniEventLoop`/`VirtualMachine` directly. This crate owns
 // `MiniEventLoop`, so the Mini-side vtable lives here. The Js-side vtable lives
 // in `bun_runtime` (it must name `jsc::VirtualMachine`).
 
-mod mini_ctx {
-    use super::*;
-    use bun_aio::{EventLoopCtxVTable, OpaqueCallback};
-
-    // SAFETY (all slots): `owner` is `self as *mut MiniEventLoop<'_> as *mut ()`,
-    // set by `MiniEventLoop::as_event_loop_ctx`. The MiniEventLoop outlives every
-    // `EventLoopCtx` derived from it (Zig invariant: callers hold the loop).
-    #[inline]
-    unsafe fn cast<'a>(owner: *mut ()) -> *mut MiniEventLoop<'a> {
-        owner.cast()
+bun_io::link_impl_EventLoopCtx! {
+    Mini for MiniEventLoop<'static> => |this| {
+        platform_event_loop_ptr() => (*this).loop_ptr(),
+        // `file_polls_raw` to avoid aliased `&mut MiniEventLoop` while `tick*`
+        // holds `&mut self` across the re-entrant `UwsLoop::tick()` that
+        // reaches this body.
+        file_polls_ptr()  => MiniEventLoop::file_polls_raw(this),
+        alloc_file_poll() => (*MiniEventLoop::file_polls_raw(this)).get(),
+        // Mini has no pending_unref_counter; the upstream deliberately panics.
+        increment_pending_unref_counter() => panic!("FIXME TODO"),
+        // `KeepAlive::{,un}refConcurrently` is JS-VM-only (statically rejected
+        // on Mini upstream); preserve that invariant rather than racily
+        // mutating uws counters off-thread.
+        ref_concurrently()   => unreachable!("KeepAlive::refConcurrently is JS-VM-only"),
+        unref_concurrently() => unreachable!("KeepAlive::unrefConcurrently is JS-VM-only"),
+        after_event_loop_callback() => (*this).after_event_loop_callback,
+        set_after_event_loop_callback(cb, ctx) => {
+            (*this).after_event_loop_callback = cb;
+            (*this).after_event_loop_callback_ctx = NonNull::new(ctx);
+        },
+        pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
     }
-
-    unsafe fn platform_event_loop(owner: *mut ()) -> *mut UwsLoop {
-        unsafe { (*cast(owner)).loop_ptr() }
-    }
-    unsafe fn file_polls(owner: *mut ()) -> *mut FilePollStore {
-        // SAFETY: see `MiniEventLoop::file_polls_raw` — avoids aliased
-        // `&mut MiniEventLoop` while `tick*` holds `&mut self` across the
-        // re-entrant `UwsLoop::tick()` that reaches this shim.
-        unsafe { MiniEventLoop::file_polls_raw(cast(owner)) }
-    }
-    unsafe fn alloc_file_poll(owner: *mut ()) -> *mut FilePoll {
-        // SAFETY: as above; the returned `*mut FilePollStore` is a stable Box
-        // heap address, so the brief `&mut FilePollStore` for `.get()` does not
-        // overlap any borrow held by the outer `tick*` frame.
-        unsafe { (*MiniEventLoop::file_polls_raw(cast(owner))).get() }
-    }
-    unsafe fn is_js(_: *mut ()) -> bool {
-        false
-    }
-    unsafe fn increment_pending_unref_counter(_: *mut ()) {
-        // Zig spec body (`MiniVM.incrementPendingUnrefCounter`): `@panic("FIXME TODO")`.
-        // This is the REAL ported body — Mini has no pending_unref_counter; the
-        // upstream Zig deliberately panics if reached.
-        panic!("FIXME TODO");
-    }
-    unsafe fn ref_concurrently(_: *mut ()) {
-        // Zig has NO Mini-side `refConcurrently` — `KeepAlive::refConcurrently`
-        // (src/aio/posix_event_loop.zig) only accepts `*jsc.VirtualMachine`;
-        // calling with a Mini loop is a Zig compile error. Preserve that
-        // invariant here rather than non-atomically mutating the uws PosixLoop
-        // counters from off-thread (data race) and omitting `wakeup()`.
-        // PORTING.md: Zig compile-error path → `unreachable!()` (not a stub).
-        unreachable!("KeepAlive::refConcurrently is JS-VM-only (Zig type error on Mini)");
-    }
-    unsafe fn unref_concurrently(_: *mut ()) {
-        // See `ref_concurrently` — Zig `KeepAlive::unrefConcurrently` only
-        // accepts `*jsc.VirtualMachine`; statically impossible for Mini.
-        unreachable!("KeepAlive::unrefConcurrently is JS-VM-only (Zig type error on Mini)");
-    }
-    unsafe fn after_event_loop_callback(owner: *mut ()) -> Option<OpaqueCallback> {
-        unsafe { (*cast(owner)).after_event_loop_callback }
-    }
-    unsafe fn set_after_event_loop_callback(
-        owner: *mut (),
-        cb: Option<OpaqueCallback>,
-        ctx: *mut c_void,
-    ) {
-        unsafe {
-            (*cast(owner)).after_event_loop_callback = cb;
-            (*cast(owner)).after_event_loop_callback_ctx = NonNull::new(ctx);
-        }
-    }
-
-    pub(super) static VTABLE: EventLoopCtxVTable = EventLoopCtxVTable {
-        platform_event_loop,
-        file_polls,
-        alloc_file_poll,
-        is_js,
-        increment_pending_unref_counter,
-        ref_concurrently,
-        unref_concurrently,
-        after_event_loop_callback,
-        set_after_event_loop_callback,
-    };
 }
 
-/// `&'static EventLoopCtxVTable` for the `MiniEventLoop` arm. Exposed so
-/// `bun_runtime::__bun_get_vm_ctx` can return it for `AllocatorType::Mini`.
-pub static MINI_EVENT_LOOP_CTX_VTABLE: &bun_aio::EventLoopCtxVTable = &mini_ctx::VTABLE;
-
 impl<'a> MiniEventLoop<'a> {
-    /// Erase `&mut self` to a `bun_aio::EventLoopCtx` for passing into
-    /// `FilePoll`/`KeepAlive`/`Store` APIs (cycle-break — bun_aio cannot name
-    /// this type). The returned ctx is `Copy` and borrows nothing in the Rust
-    /// sense; caller must keep `self` alive for its use.
     #[inline]
-    pub fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_aio::EventLoopCtx {
-        bun_aio::EventLoopCtx { owner: this.cast(), vtable: MINI_EVENT_LOOP_CTX_VTABLE }
+    pub fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
+        // SAFETY: `this` is the live per-thread MiniEventLoop singleton; it
+        // outlives every `EventLoopCtx` derived from it.
+        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
     }
 }
 
@@ -649,66 +590,7 @@ impl<'a> Drop for MiniEventLoop<'a> {
     }
 }
 
-// ───────────────────────────── JsVM / MiniVM ─────────────────────────────
-
-/// Manual vtable for the JS-VM arm of `AbstractVM` (cold dispatch — see
-/// PORTING.md §Dispatch). `bun_runtime` provides the static instance.
-// PERF(port): was inline switch
-pub struct JsVmVTable {
-    /// Returns erased `*mut jsc::EventLoop`.
-    pub event_loop: unsafe fn(*mut ()) -> *mut (),
-    pub file_polls: unsafe fn(*mut ()) -> *mut FilePollStore,
-    pub platform_event_loop: unsafe fn(*mut ()) -> *mut PlatformEventLoop,
-    pub inc_pending_unref: unsafe fn(*mut ()),
-}
-
-pub struct JsVM {
-    // SAFETY: erased `*mut jsc::VirtualMachine`.
-    pub vm: *mut (),
-    pub vtable: &'static JsVmVTable,
-}
-
-impl JsVM {
-    #[inline]
-    pub fn init(vm: *mut (), vtable: &'static JsVmVTable) -> JsVM {
-        JsVM { vm, vtable }
-    }
-
-    /// Returns erased `*mut jsc::EventLoop` — tier-6 callers cast back.
-    #[inline]
-    pub fn loop_(&self) -> *mut () {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.event_loop)(self.vm) }
-    }
-
-    #[inline]
-    pub fn alloc_file_poll(&self) -> *mut FilePoll {
-        // SAFETY: vtable contract — returns a valid &mut FilePollStore owned by the VM.
-        unsafe { (*(self.vtable.file_polls)(self.vm)).get() }
-    }
-
-    #[inline]
-    pub fn platform_event_loop(&self) -> *mut PlatformEventLoop {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.platform_event_loop)(self.vm) }
-    }
-
-    #[inline]
-    pub fn increment_pending_unref_counter(&self) {
-        // Zig: `this.vm.pending_unref_counter +|= 1;`
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.inc_pending_unref)(self.vm) };
-    }
-
-    /// SAFETY: `JsVM` holds a raw `*mut ()`; two calls would otherwise produce
-    /// aliased `&mut FilePollStore` (UB). Caller must not hold another live
-    /// `&mut` to the store across this borrow.
-    #[inline]
-    pub unsafe fn file_polls(&self) -> &mut FilePollStore {
-        // SAFETY: vtable contract.
-        unsafe { &mut *(self.vtable.file_polls)(self.vm) }
-    }
-}
+// ───────────────────────────── MiniVM ─────────────────────────────
 
 pub struct MiniVM<'a> {
     // PORT NOTE: LIFETIMES.tsv classifies this BORROW_PARAM `&'a`, but `file_polls()` /

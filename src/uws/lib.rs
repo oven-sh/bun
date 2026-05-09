@@ -1091,7 +1091,7 @@ type ZigMutex = *mut c_void; // SRWLOCK
 
 // bun_uws_sys provides the real Loop/PosixLoop/WindowsLoop/InternalLoopData/
 // SocketGroup. Re-export them here so `bun_uws::Loop` and `bun_uws_sys::Loop`
-// are the SAME type (bun_aio's EventLoopCtxVTable is typed against the uws_sys
+// are the SAME type (bun_io's EventLoopCtxVTable is typed against the uws_sys
 // version).
 pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
 pub use bun_uws_sys::loop_::LoopHandler;

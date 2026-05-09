@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::{err, Error, Output};
 use bun_js_parser::{
     self as js_ast,
-    ast::expr::{BlobRef, BlobVTable},
+    ast::expr::BlobRef,
     ast::DisableStoreReset,
     Expr, ExprData, ExprNodeList, ToJSError, E, G, S,
 };
@@ -34,6 +34,14 @@ use bun_jsc::virtual_machine::{
 };
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::{BuildMessage, ResolveMessage};
+
+bun_js_parser::link_impl_BlobRef! {
+    WebCore for WebCore::Blob => |this| {
+        // Slices borrow the blob's store, pinned by the JS cell for the call.
+        shared_view()  => bun_collections::detach_lifetime((*this).shared_view()),
+        content_type() => bun_collections::detach_lifetime((*this).content_type_slice()),
+    }
+}
 use bun_resolver::Result as ResolveResult;
 
 pub const NAMESPACE: &[u8] = b"macro";
@@ -689,28 +697,10 @@ impl<'a> Run<'a> {
                 }
 
                 if let Some(blob) = blob_ {
-                    // PORT NOTE: `Expr::from_blob` takes a `BlobRef` vtable
-                    // (cycle-break for `bun_js_parser` ← `bun_jsc`). Construct
-                    // the vtable here at the JSC tier.
-                    static BLOB_VTABLE: BlobVTable = BlobVTable {
-                        shared_view: |p| {
-                            // SAFETY: `p` is the `*const WebCore::Blob` stored
-                            // in `BlobRef.owner`; live for the call.
-                            let bytes = unsafe { (*p.cast::<WebCore::Blob>()).shared_view() };
-                            // SAFETY: lifetime-erase per `BlobVTable` contract
-                            // (the slice borrows the blob's store, which is
-                            // pinned by the JS cell for the call duration).
-                            unsafe { bun_collections::detach_lifetime(bytes) }
-                        },
-                        content_type: |p| {
-                            // SAFETY: see `shared_view`.
-                            let ct: &[u8] =
-                                unsafe { (*p.cast::<WebCore::Blob>()).content_type_slice() };
-                            // SAFETY: lifetime-erase per `BlobVTable` contract.
-                            unsafe { bun_collections::detach_lifetime(ct) }
-                        },
+                    // SAFETY: `blob` (a JS cell) is pinned for the call.
+                    let blob_ref = unsafe {
+                        BlobRef::new(bun_js_parser::BlobRefKind::WebCore, blob.cast_mut())
                     };
-                    let blob_ref = BlobRef { owner: blob.cast(), vtable: &BLOB_VTABLE };
                     return Expr::from_blob(
                         blob_ref,
                         self.bump,

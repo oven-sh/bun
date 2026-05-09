@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
@@ -496,7 +496,7 @@ impl StatWatcher {
     }
 
     #[inline]
-    fn ctx_el_ctx(&self) -> bun_aio::EventLoopCtx {
+    fn ctx_el_ctx(&self) -> bun_io::EventLoopCtx {
         VirtualMachine::event_loop_ctx(self.ctx)
     }
 

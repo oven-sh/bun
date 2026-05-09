@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::mem::size_of;
 
-use bun_aio::Loop as AsyncLoop;
+use bun_io::Loop as AsyncLoop;
 use bun_io::{BufferedWriter, WriteStatus};
 use bun_jsc::EventLoopHandle;
 use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
@@ -23,11 +23,11 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 /// Method takes `*mut Self` (not `&mut self`) because the writer is a field of
 /// the process — materializing `&mut P` while `&mut writer` is live would alias.
 pub trait StaticPipeWriterProcess {
-    /// `bun_aio::poll_tag` constant for this process's `StaticPipeWriter`
+    /// `bun_io::poll_tag` constant for this process's `StaticPipeWriter`
     /// `FilePoll` owner. Threaded down to `PosixBufferedWriterParent` so the
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll` can
     /// recover the monomorphized `*mut PosixBufferedWriter<StaticPipeWriter<Self>>`.
-    const POLL_OWNER_TAG: u8;
+    const POLL_OWNER_TAG: bun_io::PollTag;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
@@ -93,7 +93,7 @@ pub type Poll<P> = IOWriter<P>;
 impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
     for StaticPipeWriter<P>
 {
-    const POLL_OWNER_TAG: u8 = P::POLL_OWNER_TAG;
+    const POLL_OWNER_TAG: bun_io::PollTag = P::POLL_OWNER_TAG;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via set_parent; the BufferedWriter
         // never materializes `&mut StaticPipeWriter`, so this is the unique
@@ -173,10 +173,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     /// can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; vtable consumers treat the pointee as read-only
-        // (`*const bun_jsc::EventLoopHandle`) and never write through it.
-        bun_io::EventLoopHandle((&raw const self.event_loop).cast_mut().cast::<c_void>())
+        self.event_loop.as_event_loop_ctx()
     }
 
     pub fn update_ref(&mut self, add: bool) {

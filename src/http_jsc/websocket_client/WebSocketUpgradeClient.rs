@@ -24,7 +24,7 @@ use core::ffi::{c_int, c_void, CStr};
 use core::ptr;
 use std::io::Write as _;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_collections::StringSet;
 use bun_core::fmt::HostFormatter;
@@ -63,7 +63,7 @@ macro_rules! log {
 /// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
 /// Forwards to the canonical fully-populated vtable in `bun_jsc`.
 #[inline]
-fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_aio::EventLoopCtx {
+fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
     bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm)
 }
 

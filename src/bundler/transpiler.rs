@@ -2230,15 +2230,12 @@ impl<'a> Transpiler<'a> {
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
         // regression of oven-sh/bun#15738 if left at the `Browser` default).
-        // `runtime_transpiler_cache` is now forwarded — erased through
-        // `cache::RUNTIME_TRANSPILER_CACHE_VTABLE` so js_printer can call
-        // `put` without naming `crate::cache`. Spec: zig:601/627/662.
+        // `runtime_transpiler_cache` is now forwarded — js_printer holds the
+        // `NonNull<RuntimeTranspilerCache>` directly. Spec: zig:601/627/662.
         // `module_info` is now forwarded — this fn's parameter is the
         // printer-crate `analyze_transpiled_module::ModuleInfo` (see the `use`
         // above), so the seam is gone. Spec: zig:663 — EsmAscii arm only.
 
-        let runtime_transpiler_cache =
-            runtime_transpiler_cache.map(RuntimeTranspilerCache::as_printer_ref);
 
         let require_ref = ast.require_ref;
         let import_meta_ref = ast.import_meta_ref;

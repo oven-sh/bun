@@ -1567,9 +1567,9 @@ pub struct RuntimeTranspilerCache {
     /// the concrete type lives a tier up and is round-tripped via cast.
     pub entry: Option<*mut ()>,
 
-    /// Dispatch slot — `bun_jsc` writes `&JSC_TRANSPILER_CACHE_VTABLE` at init.
-    /// `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
-    pub vtable: Option<&'static RuntimeTranspilerCacheVTable>,
+    /// Dispatch slot — `bun_jsc` sets `Some(TranspilerCacheImplKind::Jsc)` at
+    /// init. `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
+    pub r#impl: Option<TranspilerCacheImplKind>,
 }
 
 impl Default for RuntimeTranspilerCache {
@@ -1581,34 +1581,30 @@ impl Default for RuntimeTranspilerCache {
             exports_kind: ExportsKind::None,
             output_code: None,
             entry: None,
-            vtable: None,
+            r#impl: None,
         }
     }
 }
 
-/// Manual vtable per PORTING.md §Dispatch (cold path: at most twice per parse).
-/// Low tier (`js_parser`) names no `bun_jsc` types; high tier owns the impls.
-// PERF(port): was direct call into bun.jsc — acceptable, callee does file I/O.
-pub struct RuntimeTranspilerCacheVTable {
-    /// Zig `RuntimeTranspilerCache.get(source, parser_options, used_jsx) bool`.
-    /// `parser_options` is passed as `*const ()` because `parser::Options`
-    /// would be a forward edge here; the jsc impl casts it back.
-    pub get: unsafe fn(
-        this: *mut RuntimeTranspilerCache,
-        source: *const logger::Source,
-        parser_options: *const (),
-        used_jsx: bool,
-    ) -> bool,
-    /// Zig `RuntimeTranspilerCache.put(output_code, sourcemap, esm_record)` —
-    /// writes the cache entry to disk and stores `output_code` on `this`.
-    pub put: unsafe fn(
-        this: *mut RuntimeTranspilerCache,
-        output_code: &[u8],
-        sourcemap: &[u8],
-        esm_record: &[u8],
-    ),
-    /// Zig `RuntimeTranspilerCache.is_disabled` — runtime flag, not const.
-    pub is_disabled: fn() -> bool,
+// `Expr::from_blob` (macro-expansion path) reads a `bun_jsc::webcore::Blob`
+// (T6 upward ref). `bun_js_parser_jsc` provides the `WebCore` arm.
+bun_dispatch::link_interface! {
+    pub BlobRef[WebCore] {
+        fn shared_view() -> &'static [u8];
+        fn content_type() -> &'static [u8];
+    }
+}
+
+// Low tier (`js_parser`) names no `bun_jsc` types; `bun_jsc` provides the
+// `Jsc` arm. Cold path: at most twice per parse; callee does file I/O.
+// `parser_options` is `*const ()` because `parser::Options` would be a forward
+// edge here; the jsc impl casts it back.
+bun_dispatch::link_interface! {
+    pub TranspilerCacheImpl[Jsc] {
+        fn get(source: *const logger::Source, parser_options: *const (), used_jsx: bool) -> bool;
+        fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
+        fn is_disabled() -> bool;
+    }
 }
 
 impl RuntimeTranspilerCache {
@@ -1619,16 +1615,40 @@ impl RuntimeTranspilerCache {
         parser_options: *const (),
         used_jsx: bool,
     ) -> bool {
-        match self.vtable {
-            // SAFETY: `self` is a valid &mut; vtable contract per §Dispatch.
-            Some(vt) => unsafe { (vt.get)(std::ptr::from_mut(self), std::ptr::from_ref(source), parser_options, used_jsx) },
+        match self.r#impl {
+            // SAFETY: `self` is a valid &mut for the dispatch.
+            Some(k) => unsafe { TranspilerCacheImpl::new(k, self) }
+                .get(core::ptr::from_ref(source), parser_options, used_jsx),
             None => false,
         }
     }
 
     #[inline]
+    pub fn put(&mut self, output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
+        match self.r#impl {
+            // SAFETY: `self` is a valid &mut for the dispatch.
+            Some(k) => unsafe { TranspilerCacheImpl::new(k, self) }
+                .put(output_code, sourcemap, esm_record),
+            None => {
+                if self.input_hash.is_none() {
+                    return;
+                }
+                debug_assert!(self.entry.is_none());
+                self.output_code = Some(Box::<[u8]>::from(output_code));
+            }
+        }
+    }
+
+    #[inline]
     pub fn is_disabled(&self) -> bool {
-        self.vtable.map_or(true, |vt| (vt.is_disabled)())
+        match self.r#impl {
+            // SAFETY: `self` is a valid & for the dispatch (body ignores `this`).
+            Some(k) => unsafe {
+                TranspilerCacheImpl::new(k, core::ptr::from_ref(self).cast_mut())
+            }
+            .is_disabled(),
+            None => true,
+        }
     }
 }
 
@@ -1888,10 +1908,7 @@ pub mod defines {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
-            // Pure-global fallback — table lives at this tier (no hook).
-            crate::defines_table::PURE_GLOBAL_IDENTIFIER_MAP
-                .get(name)
-                .map(|v| v.value())
+            crate::defines_table::lookup_pure_global_identifier(name).map(|v| v.value())
         }
 
         // Zig: `comptime Iterator: type, iter: Iterator` — type param dropped.

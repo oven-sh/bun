@@ -160,7 +160,7 @@ pub type Poll = IOWriter;
 // FileSink state-machine handlers below.
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
-    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::FILE_SINK;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::FILE_SINK;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via set_parent; the StreamingWriter
@@ -656,9 +656,9 @@ impl FileSink {
     }
 
     /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
-    /// `us_loop_t*` on POSIX). `bun_aio::Loop` is the cfg-aliased nominal that
+    /// `us_loop_t*` on POSIX). `bun_io::Loop` is the cfg-aliased nominal that
     /// resolves to the correct one per target — see `aio/{posix,windows}_event_loop.rs`.
-    pub fn loop_(&self) -> *mut bun_aio::Loop {
+    pub fn loop_(&self) -> *mut bun_io::Loop {
         #[cfg(windows)]
         {
             self.event_loop_handle.uv_loop()
@@ -681,10 +681,7 @@ impl FileSink {
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; the vtable consumers treat the pointee as read-only
-        // (`*const bun_jsc::EventLoopHandle`) to recover the loop pointer and
-        // never write through it. The `as *mut` is an erasure cast, not a
-        // mutability claim — the field itself is never mutated via this path.
-        bun_io::EventLoopHandle((&raw const self.event_loop_handle).cast_mut().cast::<c_void>())
+        self.event_loop_handle.as_event_loop_ctx()
     }
 
     /// `EventLoopHandle::global_object()` returns an erased `*mut ()`; recover

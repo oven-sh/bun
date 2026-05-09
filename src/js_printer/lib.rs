@@ -655,25 +655,10 @@ pub mod analyze_transpiled_module {
     }
 }
 
-/// Erased handle to the high-tier `RuntimeTranspilerCache` (lives in `bun_jsc`, T6).
-/// Cold path — called at most once per print to persist output. The high tier provides
-/// a `&'static RuntimeTranspilerCacheVTable` instance; see CYCLEBREAK.md §Dispatch.
-// PERF(port): was direct `&mut bun_jsc::RuntimeTranspilerCache` method call.
-pub struct RuntimeTranspilerCacheVTable {
-    pub put: unsafe fn(owner: *mut (), output: &[u8], source_map: &[u8], module_info: &[u8]),
-}
-#[derive(Clone, Copy)]
-pub struct RuntimeTranspilerCacheRef {
-    pub owner: *mut (),
-    pub vtable: &'static RuntimeTranspilerCacheVTable,
-}
-impl RuntimeTranspilerCacheRef {
-    #[inline]
-    pub fn put(&self, output: &[u8], source_map: &[u8], module_info: &[u8]) {
-        // SAFETY: erased bun_jsc::RuntimeTranspilerCache; vtable provided by bun_runtime/bun_jsc.
-        unsafe { (self.vtable.put)(self.owner, output, source_map, module_info) }
-    }
-}
+/// Cold path — called at most once per print to persist output. Dispatch lives
+/// on the parser-tier `RuntimeTranspilerCache` (`TranspilerCacheImpl`
+/// link-interface); the printer just holds the raw pointer.
+pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_js_parser::RuntimeTranspilerCache>;
 
 const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
 const FIRST_ASCII: u32 = 0x20;
@@ -6973,12 +6958,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     } else { None };
     // defer: if let Some(chunk) = &mut source_maps_chunk { chunk.deinit() } — Drop handles.
 
-    if let Some(cache) = &printer.options.runtime_transpiler_cache {
+    if let Some(cache) = printer.options.runtime_transpiler_cache {
         let mut srlz_res: Vec<u8> = Vec::new();
         if have_module_info {
             printer.module_info.as_ref().unwrap().as_deserialized().serialize(&mut srlz_res)?;
         }
-        cache.put(
+        // SAFETY: caller guarantees the cache outlives the print call.
+        unsafe { &mut *cache.as_ptr() }.put(
             printer.writer.slice(),
             source_maps_chunk.as_ref().map(|c| c.buffer.list.as_slice()).unwrap_or(b""),
             &srlz_res,

@@ -56,8 +56,6 @@ const CallstackChild = struct {
     completed: bool = false,
 };
 
-pub const auto_poll = false;
-
 pub const WriterImpl = bun.io.BufferedWriter(IOWriter, struct {
     pub const onWrite = IOWriter.onWritePollable;
     pub const onError = IOWriter.onError;

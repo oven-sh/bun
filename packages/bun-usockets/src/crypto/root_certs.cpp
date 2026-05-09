@@ -252,6 +252,21 @@ extern "C" X509_STORE *us_get_default_ca_store() {
 
   return store;
 }
+
+// Process-wide immutable default store. Safe to share across SSL_CTXs that
+// don't add per-config CAs (the user-`ca` path in build_raw still calls
+// us_get_default_ca_store() to get a fresh, mutable copy). This makes the
+// ~150-root build a once-per-process cost instead of once-per-SSL_CTX, which
+// is what kept Bun.connect({tls:true}) under the node-tls-server.test.ts
+// 100ms cold-path budget in debug+ASAN.
+extern "C" X509_STORE *us_get_shared_default_ca_store() {
+  static X509_STORE *shared = nullptr;
+  static std::once_flag once;
+  std::call_once(once, []() { shared = us_get_default_ca_store(); });
+  if (shared) X509_STORE_up_ref(shared);
+  return shared;
+}
+
 extern "C" const char *us_get_default_ciphers() {
   return DEFAULT_CIPHER_LIST;
 }

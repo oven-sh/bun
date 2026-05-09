@@ -254,7 +254,7 @@ inline fn allocator(self: *const Scanner) Allocator {
 }
 
 const std = @import("std");
-const BundleOptions = @import("../../options.zig").BundleOptions;
+const BundleOptions = @import("../../bundler/options.zig").BundleOptions;
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");

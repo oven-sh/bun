@@ -184,7 +184,7 @@ pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) s
 }
 
 pub fn cachedGitFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
-    return cachedGitFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash);
+    return cachedGitFolderNamePrint(PackageManager.cached_package_folder_name_buf(), this.lockfile.str(&repository.resolved), patch_hash);
 }
 
 pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -195,7 +195,7 @@ pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *co
     if (!repository.repo.isEmpty() and !repository.committish.isEmpty()) {
         const string_buf = this.lockfile.buffers.string_bytes.items;
         return std.fmt.bufPrintZ(
-            &PackageManager.cached_package_folder_name_buf,
+            PackageManager.cached_package_folder_name_buf(),
             "@G@{f}{f}{f}",
             .{
                 repository.committish.fmt(string_buf),
@@ -217,7 +217,7 @@ pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64
 }
 
 pub fn cachedGitHubFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
-    return cachedGitHubFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash);
+    return cachedGitHubFolderNamePrint(PackageManager.cached_package_folder_name_buf(), this.lockfile.str(&repository.resolved), patch_hash);
 }
 
 pub fn cachedGitHubFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -226,7 +226,7 @@ pub fn cachedGitHubFolderNamePrintAuto(this: *const PackageManager, repository: 
     }
 
     if (!repository.owner.isEmpty() and !repository.repo.isEmpty() and !repository.committish.isEmpty()) {
-        return cachedGitHubFolderNamePrintGuess(&PackageManager.cached_package_folder_name_buf, this.lockfile.buffers.string_bytes.items, repository, patch_hash);
+        return cachedGitHubFolderNamePrintGuess(PackageManager.cached_package_folder_name_buf(), this.lockfile.buffers.string_bytes.items, repository, patch_hash);
     }
 
     return "";
@@ -282,7 +282,7 @@ fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repositor
     ) catch unreachable;
 }
 pub fn cachedNPMPackageFolderName(this: *const PackageManager, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
-    return this.cachedNPMPackageFolderNamePrint(&PackageManager.cached_package_folder_name_buf, name, version, patch_hash);
+    return this.cachedNPMPackageFolderNamePrint(PackageManager.cached_package_folder_name_buf(), name, version, patch_hash);
 }
 
 // TODO: normalize to alphanumeric
@@ -358,7 +358,7 @@ pub fn cachedTarballFolderNamePrint(buf: []u8, url: string, patch_hash: ?u64) st
 }
 
 pub fn cachedTarballFolderName(this: *const PackageManager, url: String, patch_hash: ?u64) stringZ {
-    return cachedTarballFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&url), patch_hash);
+    return cachedTarballFolderNamePrint(PackageManager.cached_package_folder_name_buf(), this.lockfile.str(&url), patch_hash);
 }
 
 pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {

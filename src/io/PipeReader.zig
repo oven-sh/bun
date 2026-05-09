@@ -447,9 +447,11 @@ const PosixBufferedReader = struct {
         return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .nonblocking_pipe, wrapReadFn(bun.sys.readNonblocking));
     }
 
-    fn readBlockingPipe(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FD, _: isize, received_hup: bool) void {
+    fn readBlockingPipe(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FD, _: isize, received_hup_initially: bool) void {
+        var received_hup = received_hup_initially;
         while (true) {
             const streaming = parent.vtable.isStreamingEnabled();
+            var got_retry = false;
 
             if (resizable_buffer.capacity == 0) {
                 // Use stack buffer for streaming
@@ -480,6 +482,7 @@ const PosixBufferedReader = struct {
                             return;
                         }
                         // EAGAIN - fall through to register for next poll
+                        got_retry = true;
                     },
                 }
             } else {
@@ -510,6 +513,7 @@ const PosixBufferedReader = struct {
                             parent.onError(err);
                             return;
                         }
+                        got_retry = true;
                     },
                 }
             }
@@ -520,8 +524,47 @@ const PosixBufferedReader = struct {
                 return;
             }
 
-            // We have received HUP but have not consumed it yet. We can't register for next poll cycle.
-            // We need to keep going.
+            // We have received HUP. Normally that means all writers are gone
+            // and draining the buffer will eventually hit EOF (read() == 0),
+            // so we loop locally instead of re-arming the poll (HUP is
+            // level-triggered and would fire again immediately).
+            //
+            // But `received_hup` is a snapshot from when the epoll/kqueue
+            // event fired. `onReadChunk` above re-enters JS (resolves the
+            // pending read, drains microtasks, fires the 'data' event), and
+            // user code there can open a new writer on the same FIFO — after
+            // which the pipe is no longer hung up. Looping again would then
+            // either spin forever on EAGAIN (if the fd is O_NONBLOCK) or
+            // block the event loop in read() (if the fd is blocking and
+            // RWF_NOWAIT is unavailable — Linux named FIFOs return
+            // EOPNOTSUPP for it, unlike anonymous pipes).
+            //
+            // An explicit EAGAIN proves the HUP is stale, so re-arm.
+            if (got_retry) {
+                parent.registerPoll();
+                return;
+            }
+            // Otherwise we just returned from user JS; re-poll the fd to see
+            // whether HUP still holds before committing to another blocking
+            // read. This is one extra poll() per chunk only on the HUP path
+            // (i.e. while draining the final buffered bytes), not per read.
+            switch (bun.isReadable(fd)) {
+                .hup => {
+                    // Still hung up; keep draining towards EOF.
+                },
+                .ready => {
+                    // Data is available but HUP cleared — a writer came back.
+                    // Drop the stale HUP so the next iteration takes the
+                    // normal registerPoll() exit once the data is drained.
+                    received_hup = false;
+                },
+                .not_ready => {
+                    // No data and no HUP: a writer exists. Go back to the
+                    // event loop instead of blocking in read().
+                    parent.registerPoll();
+                    return;
+                },
+            }
         }
     }
 

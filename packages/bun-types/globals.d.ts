@@ -1456,6 +1456,19 @@ interface Blob {
   json(): Promise<any>;
 
   /**
+   * Wrap this blob in a {@link Bun.Image} pipeline. Equivalent to
+   * `new Bun.Image(this, options)` — the constructor is synchronous (the
+   * underlying read happens lazily when an Image terminal is awaited), so
+   * this works on `Bun.file()`, `Bun.s3()`, fd-backed and in-memory blobs
+   * alike:
+   *
+   * ```ts
+   * await Bun.file("photo.jpg").image().resize(400).webp().write("thumb.webp");
+   * ```
+   */
+  image(options?: Bun.Image.ConstructorOptions): Bun.Image;
+
+  /**
    * Read the data from the blob as a {@link FormData} object.
    *
    * This first decodes the data from UTF-8, then parses it as a
@@ -1987,6 +2000,20 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   unix?: string;
+
+  /**
+   * Force the underlying HTTP version. `"http2"` advertises only `h2` in
+   * the TLS ALPN list and the request fails with `HTTP2Unsupported` if the
+   * server doesn't select it. `"http1.1"` pins the request to HTTP/1.1,
+   * overriding `--experimental-http2-fetch` /
+   * `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` if set. Omit to use the
+   * default (h2 is offered iff the flag is on).
+   *
+   * Requires `https`. This is a custom property that is not part of the
+   * Fetch API specification.
+   * @experimental
+   */
+  protocol?: "http2" | "http1.1" | "h2" | "h1";
 
   /**
    * Control automatic decompression of the response body.

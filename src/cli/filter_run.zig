@@ -391,12 +391,12 @@ const AbortHandler = struct {
 
     pub fn install() void {
         if (Environment.isPosix) {
-            const action = std.posix.Sigaction{
+            const action = bun.sys.Sigaction{
                 .handler = .{ .sigaction = AbortHandler.posixSignalHandler },
-                .mask = std.posix.sigemptyset(),
+                .mask = bun.sys.sigemptyset(),
                 .flags = std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND,
             };
-            std.posix.sigaction(std.posix.SIG.INT, &action, null);
+            bun.sys.sigaction(std.posix.SIG.INT, &action, null);
         } else {
             const res = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
             if (res == 0) {
@@ -537,6 +537,10 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null);
+    // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
+    // (the VirtualMachine.init path is never reached for --filter). Linux is
+    // already covered by prctl in enable() + linux_pdeathsig on each spawn.
+    bun.ParentDeathWatchdog.installOnEventLoop(bun.jsc.EventLoopHandle.init(event_loop));
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
         RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else

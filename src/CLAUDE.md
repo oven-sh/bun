@@ -27,7 +27,7 @@ Conventions:
 | `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents              |
 | `std.process.Child`                                          | `bun.spawnSync`                      |
 
-## `bun.sys` — System Calls (`src/sys.zig`)
+## `bun.sys` — System Calls (`src/sys/sys.zig`)
 
 All return `Maybe(T)` — a tagged union of `.result: T` or `.err: bun.sys.Error`:
 
@@ -78,7 +78,7 @@ Key methods:
 - `File.writeFile(dir_fd, path, data)` — open + write + close
 - `file.stat()`, `file.close()`, `file.writer()`, `file.reader()`
 
-### `bun.FD` (`src/fd.zig`)
+### `bun.FD` (`src/sys/fd.zig`)
 
 Cross-platform file descriptor. Use `bun.FD.cwd()` for cwd, `bun.invalid_fd` for sentinel, `fd.close()` to close.
 
@@ -122,7 +122,7 @@ strings.firstNonASCII(slice)                   // ?u32
 
 Bun handles UTF-8, Latin-1, and UTF-16/WTF-16 because JSC uses Latin-1 and UTF-16 internally. Latin-1 is NOT UTF-8 — bytes 128-255 are single chars in Latin-1 but invalid UTF-8.
 
-### `bun.String` (`src/string.zig`)
+### `bun.String` (`src/string/string.zig`)
 
 Bridges Zig and JavaScriptCore. Prefer over `ZigString` in new code.
 
@@ -137,7 +137,7 @@ const js_value = s.toJS(globalObject);
 const js_str = try bun.String.createUTF8ForJS(globalObject, utf8_slice);
 ```
 
-## `bun.path` — Path Manipulation (`src/resolver/resolve_path.zig`)
+## `bun.path` — Path Manipulation (`src/paths/resolve_path.zig`)
 
 Use instead of `std.fs.path`. Platform param: `.auto` (current platform), `.posix`, `.windows`, `.loose` (both separators).
 
@@ -238,7 +238,7 @@ const buf = bun.handleOom(allocator.alloc(u8, size));  // correct
 // NOT: allocator.alloc(u8, size) catch bun.outOfMemory()  — could swallow non-OOM errors
 ```
 
-## Environment Variables (`src/env_var.zig`)
+## Environment Variables (`src/bun_core/env_var.zig`)
 
 Type-safe, cached environment variable accessors via `bun.env_var`:
 
@@ -248,7 +248,7 @@ bun.env_var.CI.get()                                // ?bool
 bun.env_var.BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get() // u64 (has default: 30)
 ```
 
-## Logging (`src/output.zig`)
+## Logging (`src/bun_core/output.zig`)
 
 ```zig
 const log = bun.Output.scoped(.MY_FEATURE, .visible);  // .hidden = opt-in via BUN_DEBUG_MY_FEATURE=1
@@ -259,7 +259,7 @@ bun.Output.pretty("<green>success<r>: {s}\n", .{msg});
 bun.Output.prettyErrorln("<red>error<r>: {s}", .{msg});
 ```
 
-## Spawning Subprocesses (`src/bun.js/api/bun/process.zig`)
+## Spawning Subprocesses (`src/runtime/api/bun/process.zig`)
 
 Use `bun.spawnSync` instead of `std.process.Child`:
 

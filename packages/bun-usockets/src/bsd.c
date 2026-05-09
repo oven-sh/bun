@@ -132,7 +132,15 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
     while (1) {
         ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
         if (ret < 0) {
-            if (WSAGetLastError() == WSAEINTR) continue;
+            int err = WSAGetLastError();
+            if (err == WSAEINTR) continue;
+            /* Winsock surfaces ICMP "port/host unreachable" from a previous
+             * sendto as WSAECONNRESET (or WSAENETRESET for TTL-expired) on the
+             * next recv. That's per-destination, not per-socket, so treat it as
+             * "no packet" and retry — bubbling it up makes loop.c close the
+             * socket and tear down every conn that shares it (e.g. the QUIC
+             * client endpoint). Mirrors libuv's uv__udp_recv handling. */
+            if (err == WSAECONNRESET || err == WSAENETRESET) continue;
             return ret;
         }
         recvbuf->recvlen = ret;
@@ -1374,6 +1382,20 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
             setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
         }
     }
+
+#if defined(_WIN32)
+    /* By default Winsock reports ICMP "port unreachable" from a previous
+     * sendto as WSAECONNRESET on the next recv. bsd_recvmmsg already swallows
+     * it, but disabling the report at the source means a queued ICMP can't
+     * race ahead of a real packet in WSARecvFrom either. */
+    {
+        DWORD off = 0, br;
+        WSAIoctl(listenFd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#ifdef SIO_UDP_NETRESET
+        WSAIoctl(listenFd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#endif
+    }
+#endif
 
 #if defined(__linux__)
     /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL

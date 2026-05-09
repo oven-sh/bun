@@ -1085,7 +1085,7 @@ pub fn generateEntryPointTailJS(
     };
 }
 
-const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const std = @import("std");
 
 const bun = @import("bun");

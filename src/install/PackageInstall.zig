@@ -497,7 +497,10 @@ pub const PackageInstall = struct {
         }
     };
 
-    threadlocal var node_fs_for_package_installer: bun.jsc.Node.fs.NodeFS = .{};
+    const node_fs_bufs = bun.ThreadlocalBuffers(struct { fs: bun.jsc.Node.fs.NodeFS = .{} });
+    inline fn node_fs_for_package_installer() *bun.jsc.Node.fs.NodeFS {
+        return &node_fs_bufs.get().fs;
+    }
 
     fn initInstallDir(this: *@This(), state: *InstallDirState, destination_dir: std.fs.Dir, method: Method) Result {
         const destbase = destination_dir;
@@ -559,7 +562,7 @@ pub const PackageInstall = struct {
         state.buf[i] = 0;
         const fullpath = state.buf[0..i :0];
 
-        _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
+        _ = node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
         state.to_copy_buf = state.buf[fullpath.len..];
 
         const cache_path_length = bun.windows.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
@@ -827,7 +830,7 @@ pub const PackageInstall = struct {
 
             dest[dest.len - task.basename - 1] = 0;
             const dirpath = dest[0 .. dest.len - task.basename - 1 :0];
-            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
+            _ = node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
             dest[dest.len - task.basename - 1] = std.fs.path.sep;
 
             if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
@@ -1287,7 +1290,7 @@ pub const PackageInstall = struct {
                 wbuf[i] = 0;
                 const fullpath = wbuf[0..i :0];
 
-                _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
+                _ = node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
             }
 
             const res = strings.copyUTF16IntoUTF8(dest_buf[0..], wbuf[0..i]);
@@ -1356,7 +1359,7 @@ pub const PackageInstall = struct {
                 if (this.patch == null) {
                     const exists = switch (resolution_tag) {
                         .npm => package_json_exists: {
-                            var buf = &PackageManager.cached_package_folder_name_buf;
+                            var buf = PackageManager.cached_package_folder_name_buf();
 
                             if (comptime Environment.isDebug) {
                                 bun.assertWithLocation(bun.isSliceInBuffer(this.cache_dir_subpath, buf), @src());
@@ -1479,7 +1482,7 @@ pub const PackageInstall = struct {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const Walker = @import("../walker_skippable.zig");
+const Walker = @import("../sys/walker_skippable.zig");
 const std = @import("std");
 
 const bun = @import("bun");

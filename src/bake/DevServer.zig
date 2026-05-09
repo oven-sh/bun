@@ -593,14 +593,31 @@ pub fn deinit(dev: *DevServer) void {
         .ssr_transpiler = {},
         .vm = {},
 
-        // WebSockets should be deinitialized before other parts
+        // WebSockets should be deinitialized before other parts.
+        //
+        // `websocket.close()` synchronously dispatches `HmrSocket.onClose`,
+        // which calls `dev.active_websocket_connections.remove(s)` and
+        // destroys the `HmrSocket`. Iterating the map directly while calling
+        // `close()` would therefore mutate the map mid-iteration and free the
+        // pointer the iterator just yielded. Snapshot the keys first so that
+        // `onClose` is free to mutate the live map.
         .active_websocket_connections = {
-            var it = dev.active_websocket_connections.keyIterator();
-            while (it.next()) |item| {
-                const s: *HmrSocket = item.*;
-                if (s.underlying) |websocket|
-                    websocket.close();
+            const count = dev.active_websocket_connections.count();
+            if (count > 0) {
+                const sockets = bun.handleOom(alloc.alloc(*HmrSocket, count));
+                defer alloc.free(sockets);
+                {
+                    var it = dev.active_websocket_connections.keyIterator();
+                    var i: usize = 0;
+                    while (it.next()) |item| : (i += 1) sockets[i] = item.*;
+                    bun.assert(i == count);
+                }
+                for (sockets) |s| {
+                    if (s.underlying) |websocket|
+                        websocket.close();
+                }
             }
+            bun.debugAssert(dev.active_websocket_connections.count() == 0);
             dev.active_websocket_connections.deinit(alloc);
         },
 
@@ -905,7 +922,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             .mime_type = &.json,
         });
         defer response.deref();
-        response.onRequest(req, resp);
+        response.onRequest(.{ .h1 = req }, resp);
         return;
     }
 
@@ -2041,6 +2058,14 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
 
     // Run tracing
     dev.client_graph.reset();
+    // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
+    // the HMR pipeline. `startAsyncBundle` resets them and `finalizeBundle`
+    // expects them to still be empty when it begins appending hot-update
+    // chunks. Because `onJsRequest` can run between those two (the route is
+    // already `.loaded` so it does not go through `ensureRouteIsBundled`),
+    // we must leave the buffers cleared on every exit path so the next
+    // hot-update does not pick up the files we traced here.
+    defer dev.client_graph.reset();
     try dev.traceAllRouteImports(route_bundle, &gts, .find_client_modules);
 
     var react_fast_refresh_id: []const u8 = "";
@@ -3787,7 +3812,7 @@ pub fn onWebSocketUpgrade(
     dev: *DevServer,
     res: anytype,
     req: *Request,
-    upgrade_ctx: *uws.SocketContext,
+    upgrade_ctx: *uws.WebSocketUpgradeContext,
     id: usize,
 ) void {
     assert(id == 0);
@@ -4105,7 +4130,18 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 // INotifyWatcher stores sub paths into `changed_files`
                 // the other platforms do not appear to write anything into `changed_files` ever.
                 if (Environment.isLinux) {
-                    ev.appendDir(dev.allocator(), file_path, if (event.name_len > 0) changed_files[event.name_off] else null);
+                    // A merged WatchEvent may carry multiple sub-path names
+                    // (e.g. CREATE a.tmp + MOVED_TO a.ts in one coalesced
+                    // batch). Forward every name; indexing only the first
+                    // would drop the rename target and leave it un-watched.
+                    const names = event.names(changed_files);
+                    if (names.len > 0) {
+                        for (names) |maybe_sub_path| {
+                            ev.appendDir(dev.allocator(), file_path, maybe_sub_path);
+                        }
+                    } else {
+                        ev.appendDir(dev.allocator(), file_path, null);
+                    }
                 } else {
                     ev.appendDir(dev.allocator(), file_path, null);
                 }
@@ -4434,6 +4470,14 @@ pub fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
 }
 
 const TestingBatch = struct {
+    /// Keys are borrowed. `IncrementalGraph.invalidate` populates the local
+    /// `entry_points` with graph-owned `bundled_files.keys()[index]` (and the
+    /// tailwind hack uses DevServer-owned map keys), both of which outlive
+    /// the batch. Borrowing — rather than duping and freeing after
+    /// `startAsyncBundle` returns — keeps the keys valid through the async
+    /// onResolve-plugin path, which stores `abs_path` as
+    /// `Resolve.import_record.specifier` without copying and reads it on a
+    /// later event-loop tick.
     entry_points: EntryPointList,
 
     pub const empty: @This() = .{ .entry_points = .empty };

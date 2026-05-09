@@ -192,62 +192,8 @@ function handleSocketAfterProxy(err, req) {
   }
 }
 
-Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */, localAddress /* legacy */) {
+Agent.prototype.addRequest = function addRequest(_req, _options, _port /* legacy */, _localAddress /* legacy */) {
   $debug("WARN: Agent.addRequest is a no-op");
-  return; // TODO:
-
-  // Legacy API: addRequest(req, host, port, localAddress)
-  if (typeof options === "string") {
-    options = {
-      __proto__: null,
-      host: options,
-      port,
-      localAddress,
-    };
-  }
-
-  // Here the agent options will override per-request options.
-  options = { __proto__: null, ...options, ...this.options };
-  if (options.socketPath) options.path = options.socketPath;
-
-  normalizeServerName(options, req);
-
-  const name = this.getName(options);
-  this.sockets[name] ||= [];
-
-  const freeSockets = this.freeSockets[name];
-  let socket;
-  if (freeSockets) {
-    while (freeSockets.length && freeSockets[0].destroyed) {
-      freeSockets.shift();
-    }
-    socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
-    if (!freeSockets.length) delete this.freeSockets[name];
-  }
-
-  const freeLen = freeSockets ? freeSockets.length : 0;
-  const sockLen = freeLen + this.sockets[name].length;
-
-  if (socket) {
-    this.reuseSocket(socket, req);
-    setRequestSocket(this, req, socket);
-    this.sockets[name].push(socket);
-  } else if (sockLen < this.maxSockets && this.totalSocketCount < this.maxTotalSockets) {
-    this.createSocket(req, options, (err, socket) => {
-      if (err) {
-        handleSocketAfterProxy(err, req);
-        $debug("call onSocket", sockLen, freeLen);
-        req.onSocket(socket, err);
-        return;
-      }
-      setRequestSocket(this, req, socket);
-    });
-  } else {
-    $debug("wait for socket");
-    this.requests[name] ||= [];
-    req[kRequestOptions] = options;
-    this.requests[name].push(req);
-  }
 };
 
 Agent.prototype.createSocket = function createSocket(req, options, cb) {

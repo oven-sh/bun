@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -98,7 +98,7 @@ test("--parallel surfaces failures and exits non-zero", async () => {
   expect(exitCode).toBe(1);
 });
 
-test("--parallel re-queues a file when its worker crashes mid-run", async () => {
+test("--parallel marks a file whose worker exits mid-run as failed (no retry)", async () => {
   using dir = tempDir("parallel-crash", {
     "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
     "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`,
@@ -114,13 +114,14 @@ test("--parallel re-queues a file when its worker crashes mid-run", async () => 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // good files still ran and passed
+  // good files still ran and passed in a fresh worker
   expect(stderr).toContain("a.test.js");
   expect(stderr).toContain("b.test.js");
-  // crashed file was retried then marked failed
-  expect(stderr).toContain("crashed running");
+  // crashed file is counted as a failure once — never retried, so an
+  // intermittent worker crash can't be masked by a passing second attempt.
+  expect(stderr).not.toContain("retrying");
   expect(stderr).toContain("boom.test.js");
-  expect(stderr).toContain("(crashed:");
+  expect(stderr).toContain("(worker crashed: exit code 7)");
   // summary counts the crash as one failure
   expect(stderr).toContain("Ran 3 tests across 3 files.");
   expect(exitCode).toBe(1);
@@ -735,11 +736,13 @@ test("--parallel: a test writing garbage to fd 3 does not hang the coordinator",
   expect(result).not.toBe("TIMEOUT");
   const [stdout, stderr, exitCode] = result as [string, string, number];
   expect(stdout).toContain("PARALLEL");
-  // ok.test.js's pass survives; bad.test.js's worker is treated as crashed once
-  // its IPC pipe is dropped, then retried. We don't assert exact counts (the
-  // retry may also corrupt fd 3) — only that the run completes deterministically.
+  // ok.test.js's pass survives; bad.test.js's worker is treated as crashed
+  // once its IPC pipe is dropped — no retry, so the run is deterministically
+  // 1 pass / 1 fail. The coordinator kill(9)s the hostile worker, which on
+  // POSIX surfaces as SIGKILL (non-panic → no whole-run abort).
+  expect(stderr).not.toContain("retrying");
   expect(stderr).toContain("Ran ");
-  expect([0, 1]).toContain(exitCode);
+  expect(exitCode).toBe(1);
 });
 
 test("--parallel --randomize without --seed is reproducible via the printed seed", async () => {
@@ -776,6 +779,39 @@ test("--parallel --randomize without --seed is reproducible via the printed seed
   const second = await run([`--seed=${first.seed}`]);
   // Within-file ordering must match exactly when the printed seed is replayed.
   expect({ a: second.a, b: second.b }).toEqual({ a: first.a, b: first.b });
+});
+
+test("--parallel forwards --experimental-http2-fetch to workers", async () => {
+  // The worker's Bun.argv/execArgv are rewritten to look like `bun <file>`, so
+  // assert the *effect*: an h2-only server (allowHTTP1:false) replies 200 only
+  // when ALPN offered h2; without the flag the worker would see 403 "Missing
+  // ALPN Protocol".
+  const fixture = `import {test,expect} from "bun:test";
+    import {createSecureServer} from "node:http2";
+    import {once} from "node:events";
+    test("h2", async () => {
+      const {key, cert} = JSON.parse(process.env.H2_TLS);
+      const s = createSecureServer({key, cert, allowHTTP1:false}, (q,r)=>r.end(q.httpVersion));
+      s.listen(0); await once(s,"listening");
+      try {
+        const r = await fetch("https://localhost:"+s.address().port, {tls:{rejectUnauthorized:false}});
+        expect(r.status).toBe(200);
+        expect(await r.text()).toBe("2.0");
+      } finally { s.close(); }
+    });`;
+  using dir = tempDir("parallel-h2-flag", { "a.test.js": fixture, "b.test.js": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--experimental-http2-fetch"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", H2_TLS: JSON.stringify(tls) },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
 });
 
 test("--parallel forwards --conditions to workers", async () => {

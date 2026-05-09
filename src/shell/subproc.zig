@@ -1,4 +1,4 @@
-// const IPC = @import("../bun.js/ipc.zig");
+// const IPC = @import("../jsc/ipc.zig");
 
 pub const Stdio = util.Stdio;
 // pub const ShellSubprocess = NewShellSubprocess(.js);

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 33
+# Version: 34
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -774,6 +774,7 @@ install_common_software() {
 	install_rosetta
 	install_nodejs
 	install_bun
+	install_curl_h3
 	install_tailscale
 	install_buildkite
 }
@@ -954,6 +955,54 @@ setup_node_gyp_cache() {
 
 bun_version_exact() {
 	print "1.3.13"
+}
+
+curl_h3_version() {
+	# https://github.com/stunnel/static-curl/releases
+	print "8.19.0"
+}
+
+# Installs a fully-static curl built with nghttp3/ngtcp2 as `curl-h3` so the
+# HTTP/3 server tests (test/js/bun/http/serve-http3.test.ts, fetch-h3.ts) can
+# run in CI. Kept separate from the system `curl` so nothing else changes
+# behavior. Tests discover it via $CURL_HTTP3, then `curl-h3` in PATH.
+install_curl_h3() {
+	case "$arch" in
+	x64) curl_h3_arch="x86_64" ;;
+	aarch64) curl_h3_arch="aarch64" ;;
+	*) return ;;
+	esac
+	case "$os" in
+	linux)
+		case "$abi" in
+		musl) curl_h3_asset="curl-linux-$curl_h3_arch-musl" ;;
+		*) curl_h3_asset="curl-linux-$curl_h3_arch-glibc" ;;
+		esac
+		;;
+	darwin)
+		case "$arch" in
+		aarch64) curl_h3_asset="curl-macos-arm64" ;;
+		*) curl_h3_asset="curl-macos-x86_64" ;;
+		esac
+		;;
+	*) return ;;
+	esac
+
+	case "$pm" in
+	apt) install_packages xz-utils ;;
+	apk | dnf | yum | zypper) install_packages xz ;;
+	esac
+
+	curl_h3_url="https://github.com/stunnel/static-curl/releases/download/$(curl_h3_version)/$curl_h3_asset-$(curl_h3_version).tar.xz"
+	curl_h3_tar="$(download_file "$curl_h3_url")"
+	curl_h3_dir="$(dirname "$curl_h3_tar")"
+	execute tar -xJf "$curl_h3_tar" -C "$curl_h3_dir" curl
+	execute mv "$curl_h3_dir/curl" "$curl_h3_dir/curl-h3"
+	move_to_bin "$curl_h3_dir/curl-h3"
+
+	curl_h3_bin="$(which curl-h3)"
+	append_to_profile "export CURL_HTTP3=$curl_h3_bin"
+	execute "$curl_h3_bin" --version | head -n1
 }
 
 install_bun() {

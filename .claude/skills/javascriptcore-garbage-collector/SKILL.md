@@ -33,7 +33,7 @@ Roots are not a hardcoded list — they are **marking constraints** registered w
 | `Jw`  | JIT Worklist      | CodeBlocks queued for compilation                                                                                                                                       |
 | `Cb`  | CodeBlocks        | Executing/compiling CodeBlocks                                                                                                                                          |
 
-Bun registers an additional constraint, `DOMGCOutputConstraint` (`src/bun.js/bindings/BunGCOutputConstraint.cpp`), which calls `visitOutputConstraints` on every marked cell in Bun's output-constraint subspaces (event targets, generated classes with `visitAdditionalChildren`, etc.).
+Bun registers an additional constraint, `DOMGCOutputConstraint` (`src/jsc/bindings/BunGCOutputConstraint.cpp`), which calls `visitOutputConstraints` on every marked cell in Bun's output-constraint subspaces (event targets, generated classes with `visitAdditionalChildren`, etc.).
 
 **Constraint volatility** controls when they re-run during the fixpoint:
 
@@ -215,7 +215,7 @@ JSC::Weak<JSFoo> m_wrapper { jsFoo, &myOwnerSingleton, nativeThing };
 
 ## Zig: `jsc.JSRef` — the native↔wrapper reference pattern
 
-In Bun's Zig code, when a native object needs to hold a reference back to its own JS wrapper, **use `jsc.JSRef`** (`src/bun.js/bindings/JSRef.zig`), not `gcProtect`, not a raw `JSValue` field, and usually not `jsc.Strong` directly.
+In Bun's Zig code, when a native object needs to hold a reference back to its own JS wrapper, **use `jsc.JSRef`** (`src/jsc/bindings/JSRef.zig`), not `gcProtect`, not a raw `JSValue` field, and usually not `jsc.Strong` directly.
 
 `JSRef` is a tagged union with three states:
 
@@ -363,4 +363,4 @@ If GC runs constantly with little garbage → missing `reportExtraMemoryVisited`
 - `vendor/WebKit/Source/JavaScriptCore/heap/HeapAnalyzer.h`, `vendor/WebKit/Source/JavaScriptCore/heap/HeapSnapshotBuilder.cpp`, Bun: `vendor/WebKit/Source/JavaScriptCore/heap/BunV8HeapSnapshotBuilder.cpp`
 - `vendor/WebKit/Source/JavaScriptCore/heap/DeferGC.h`, `vendor/WebKit/Source/JavaScriptCore/heap/Strong.h`, `vendor/WebKit/Source/JavaScriptCore/heap/HandleSet.h`
 - `runtime/JSCell.h` / `JSCellInlines.h` — header layout, `visitChildren` base
-- Bun: `src/bun.js/bindings/BunGCOutputConstraint.cpp`, `ZigGeneratedClasses.cpp` (codegen'd `visitChildren` / `visitOutputConstraints`)
+- Bun: `src/jsc/bindings/BunGCOutputConstraint.cpp`, `ZigGeneratedClasses.cpp` (codegen'd `visitChildren` / `visitOutputConstraints`)

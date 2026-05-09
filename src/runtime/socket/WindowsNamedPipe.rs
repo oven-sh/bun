@@ -60,8 +60,12 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
 
 pub struct WindowsNamedPipe {
     pub wrapper: Option<WrapperType>,
+    /// Non-owning alias of the heap `uv::Pipe` (Zig: `?*uv.Pipe`). The owning
+    /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
+    /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
+    /// ever observes/null-checks the handle, never frees it.
     #[cfg(windows)]
-    pub pipe: Option<Box<uv::Pipe>>, // any duplex
+    pub pipe: Option<NonNull<uv::Pipe>>, // any duplex
     #[cfg(not(windows))]
     pub pipe: (),
     // TODO(port): lifetime — JSC_BORROW; VM outlives this struct. Using &'static for Phase A;
@@ -127,6 +131,23 @@ pub struct Handlers {
 }
 
 impl WindowsNamedPipe {
+    /// Dereference the non-owning [`pipe`](Self::pipe) alias.
+    ///
+    /// The heap `uv::Pipe` is owned by `self.writer.source` once [`start`]
+    /// adopts it (before adoption it is the leaked `Box` from [`from`]).
+    /// Single JS thread; the writer never holds a competing `&mut uv::Pipe`
+    /// across a call into this struct, so the borrow is exclusive for its
+    /// duration. FFI-adjacent: this is the libuv-handle raw-pointer deref the
+    /// Zig `this.pipe.?` does implicitly.
+    #[cfg(windows)]
+    #[inline]
+    fn pipe_mut(&mut self) -> Option<&mut uv::Pipe> {
+        // SAFETY: see doc comment — non-owning libuv-handle alias, single JS
+        // thread, no overlapping `&mut uv::Pipe` from the writer for the
+        // returned borrow's duration.
+        self.pipe.map(|p| unsafe { &mut *p.as_ptr() })
+    }
+
     fn on_writable(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
         // flush pending data
@@ -140,6 +161,9 @@ impl WindowsNamedPipe {
         self.flags.set_disconnected(true);
         #[cfg(windows)]
         {
+            // Non-owning `NonNull` — clearing it does NOT free. The writer's
+            // `Source::Pipe(Box)` is the sole owner and frees via
+            // `close_and_destroy` (Zig: `this.pipe = null` is a raw-ptr null-out).
             self.pipe = None;
         }
         self.on_close();
@@ -357,7 +381,7 @@ impl WindowsNamedPipe {
     pub fn pause_stream(&mut self) -> bool {
         #[cfg(windows)]
         {
-            let Some(pipe) = self.pipe.as_mut() else {
+            let Some(pipe) = self.pipe_mut() else {
                 return false;
             };
             pipe.read_stop();
@@ -417,7 +441,11 @@ impl WindowsNamedPipe {
         WindowsNamedPipe {
             vm,
             event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
-            pipe: Some(pipe),
+            // Leak the `Box` and keep only a non-owning `NonNull` alias (Zig:
+            // `?*uv.Pipe`). Ownership of the allocation is later transferred to
+            // `self.writer.source` via `start_with_pipe` in `start()`, which
+            // re-materialises the `Box` and is responsible for freeing it.
+            pipe: Some(NonNull::from(Box::leak(pipe))),
             wrapper: None,
             handlers,
             // defaults:
@@ -461,7 +489,7 @@ impl WindowsNamedPipe {
         // to capture &mut self alongside body uses). Call deref() explicitly at each return.
 
         #[cfg(windows)]
-        if let Some(pipe) = self.pipe.as_mut() {
+        if let Some(pipe) = self.pipe_mut() {
             pipe.unref();
         }
 
@@ -530,14 +558,14 @@ impl WindowsNamedPipe {
         }
         #[cfg(windows)]
         {
-            self.pipe
-                .as_mut()
+            let uv_loop = self.vm.uv_loop();
+            self.pipe_mut()
                 .unwrap()
-                .init(self.vm.uv_loop(), false)
+                .init(uv_loop, false)
                 .to_result(bun_sys::Tag::pipe)?;
 
             server
-                .accept(self.pipe.as_mut().unwrap())
+                .accept(self.pipe_mut().unwrap())
                 .to_result(bun_sys::Tag::accept)?;
         }
 
@@ -571,14 +599,13 @@ impl WindowsNamedPipe {
                 return result;
             }
         }
-        self.pipe
-            .as_mut()
+        let uv_loop = self.vm.uv_loop();
+        self.pipe_mut()
             .unwrap()
-            .init(self.vm.uv_loop(), false)
+            .init(uv_loop, false)
             .to_result(bun_sys::Tag::pipe)?;
 
-        self.pipe
-            .as_mut()
+        self.pipe_mut()
             .unwrap()
             .open(fd.uv())
             .to_result(bun_sys::Tag::open)?;
@@ -598,17 +625,17 @@ impl WindowsNamedPipe {
         debug_assert!(self.pipe.is_some());
         self.flags.set_disconnected(true);
         // ref because we are connecting
-        self.pipe.as_mut().unwrap().ref_();
+        self.pipe_mut().unwrap().ref_();
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             if result.is_err() {
                 return result;
             }
         }
-        self.pipe
-            .as_mut()
+        let uv_loop = self.vm.uv_loop();
+        self.pipe_mut()
             .unwrap()
-            .init(self.vm.uv_loop(), false)
+            .init(uv_loop, false)
             .to_result(bun_sys::Tag::pipe)?;
 
         // BORROW_PARAM: `connect()` takes `&mut self.connect_req`, a `*mut c_void`
@@ -623,10 +650,10 @@ impl WindowsNamedPipe {
         // SAFETY: `ctx` is `self`; field projections are in-bounds and disjoint.
         let req: *mut uv::uv_connect_t = unsafe { core::ptr::addr_of_mut!((*ctx).connect_req) };
         unsafe { (*req).data = ctx.cast::<c_void>() };
-        // `pipe` lives in a separate heap allocation (`Box<uv::Pipe>`), so its
-        // bytes are outside `*self` and unaffected by the `req` projection.
-        let pipe: *mut uv::Pipe =
-            unsafe { (*ctx).pipe.as_mut().unwrap().as_mut() as *mut uv::Pipe };
+        // `pipe` lives in a separate heap allocation (the `uv::Pipe` aliased by
+        // `self.pipe: NonNull`), so its bytes are outside `*self` and unaffected
+        // by the `req` projection.
+        let pipe: *mut uv::Pipe = unsafe { (*ctx).pipe }.unwrap().as_ptr();
         // SAFETY: `req`/`pipe` are live disjoint fields of `*self`; libuv stashes
         // `req`/`ctx` until the connect callback fires (this struct outlives that).
         if let Some(err) = unsafe { &mut *pipe }
@@ -752,22 +779,24 @@ impl WindowsNamedPipe {
         self.flags.set_is_client(is_client);
         #[cfg(windows)]
         {
-            if self.pipe.is_none() {
+            let Some(pipe_nn) = self.pipe else {
                 return false;
-            }
-            self.pipe.as_mut().unwrap().unref();
+            };
+            self.pipe_mut().unwrap().unref();
             // raw self-ptr first to dodge the &mut self.writer / &mut *self overlap
             // (Zig: `this.writer.setParent(this)` — `this` is already `*WindowsNamedPipe`).
             let this: *mut Self = core::ptr::from_mut(self);
             self.writer.set_parent(this);
-            // SAFETY: FFI ownership hand-off — `pipe` is the `Box<uv::Pipe>`-backed
-            // allocation in `self.pipe`; `start_with_pipe` adopts it as the writer's
-            // `Source::Pipe` (Zig: `this.writer.startWithPipe(this.pipe.?)`). The
-            // `self.pipe` slot continues to alias the same heap object for
-            // `pause_stream`/`get_name`; `on_pipe_close` nulls it before the writer's
-            // `close_and_destroy` frees, so no double-free.
-            let pipe_ptr: *mut uv::Pipe = self.pipe.as_mut().unwrap().as_mut();
-            let start_pipe_result = unsafe { self.writer.start_with_pipe(pipe_ptr) };
+            // SAFETY: `start_with_pipe`'s contract is "Box-allocated pointer;
+            // ownership transfers to `self.source`". `pipe_nn` is the `NonNull`
+            // recorded from the `Box<uv::Pipe>` leaked in `from()` and not yet
+            // adopted (asserted by `start_with_pipe`'s
+            // `debug_assert!(source.is_none())`). After this call
+            // `self.writer.source` holds the SOLE `Box` for the allocation;
+            // `self.pipe` stays a non-owning alias for `pause_stream`, cleared
+            // (not dropped — `NonNull` has no `Drop`) by `on_pipe_close` before
+            // the writer's `close_and_destroy` frees it.
+            let start_pipe_result = unsafe { self.writer.start_with_pipe(pipe_nn.as_ptr()) };
             if let bun_sys::Result::Err(err) = start_pipe_result {
                 self.on_error(err);
                 return false;
@@ -1018,7 +1047,13 @@ impl uv::StreamReader for WindowsNamedPipe {
     #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
         // Zig: `errEnum() orelse bun.sys.E.CANCELED` — promote raw libuv errno.
-        let e = bun_sys::windows::translate_uv_error_to_e(err);
+        // `translate_uv_error_to_e`'s fallback for unmapped codes is `UNKNOWN`,
+        // but the Zig spec (libuv.zig `errEnum() orelse .CANCELED`) wants
+        // `CANCELED` for the unmapped case, so post-process.
+        let e = match bun_sys::windows::translate_uv_error_to_e(err) {
+            bun_sys::E::UNKNOWN => bun_sys::E::CANCELED,
+            e => e,
+        };
         WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]

@@ -181,9 +181,10 @@ impl PathWatcher {
         events: c_int,
         status: uv::ReturnCode,
     ) {
-        // SAFETY: libuv guarantees `event` is the handle we registered.
-        let event_ref = unsafe { &mut *event };
-        if event_ref.data.is_null() {
+        // SAFETY: libuv guarantees `event` is the handle we registered; read `.data`
+        // through the raw pointer so we don't form a `&mut uv_fs_event_t` that would
+        // alias the `&mut PathWatcher` we derive below (Stacked Borrows).
+        if unsafe { (*event).data }.is_null() {
             Output::debug_warn("uvEventCallback called with null data");
             return;
         }
@@ -192,14 +193,15 @@ impl PathWatcher {
             bun_core::from_field_ptr!(PathWatcher, handle, event)
         };
         // SAFETY: `this` was heap-allocated in `init` and is kept alive until uv_close fires.
+        // This is the *only* live `&mut` covering the embedded handle for the rest of this fn.
         let this = unsafe { &mut *this };
         #[cfg(debug_assertions)]
         {
-            debug_assert!(event_ref.data == this as *mut PathWatcher as *mut c_void);
+            debug_assert!(this.handle.data == this as *mut PathWatcher as *mut c_void);
         }
 
         // SAFETY: libuv contract — `loop_` is valid while the handle is open.
-        let timestamp = unsafe { (*event_ref.loop_).time };
+        let timestamp = unsafe { (*this.handle.loop_).time };
 
         if let Some(err) = status.to_error(sys::Tag::watch) {
             this.emit_in_progress = true;
@@ -227,12 +229,14 @@ impl PathWatcher {
             return;
         };
 
+        // @truncate — intentional wrap to bun_watcher::HashType
+        let hash = this.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
+        let is_file = !this.handle.is_dir();
         this.emit(
             path.as_bytes(),
-            // @truncate — intentional wrap to bun_watcher::HashType
-            event_ref.hash(path.as_bytes(), events, status) as bun_watcher::HashType,
+            hash,
             timestamp,
-            !event_ref.is_dir(),
+            is_file,
             if events & uv::UV_RENAME != 0 {
                 EventType::Rename
             } else {

@@ -1983,10 +1983,16 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
     // PORT NOTE: Zig stashes the heap libuv pipe in
     // `stderr_reader.source.?.pipe` and reuses the same pointer for
-    // `SpawnOptions.stderr = .{ .buffer = pipe }`. Rust's `Source::Pipe`
-    // owns a `Box<uv::Pipe>`; capture the stable heap address before moving
-    // the Box into `source` so `Stdio::Buffer` can name it without
-    // re-borrowing through the enum.
+    // `SpawnOptions.stderr = .{ .buffer = pipe }`. In the Rust port BOTH
+    // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
+    // and `spawn_process_windows` unconditionally `heap::take`s the raw
+    // `Stdio::Buffer` pointer back into a second Box on success
+    // (process.rs:1980-1982). We keep `stderr_reader.source` as the SOLE
+    // owner (matches the Zig spec, where the reader frees it) and pass a raw
+    // non-owning alias to `Stdio::Buffer`; the duplicate Box that comes back
+    // in `spawned.stderr` is disarmed via `mem::forget` below before
+    // `spawned` drops. On spawn-error paths `heap::take` never ran, so
+    // `stderr_reader.source` remains the only owner there too.
     #[cfg(windows)]
     let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = {
         // SAFETY: all-zero is a valid uv_pipe_t init state (matches Zig
@@ -2086,7 +2092,16 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
     #[cfg(windows)]
     {
-        if matches!(spawned.stderr, spawn::WindowsStdioResult::Buffer(_)) {
+        // `spawn_process_windows` reconstructed a SECOND `Box<uv::Pipe>` from
+        // `stderr_pipe_ptr` via `heap::take` into `spawned.stderr`. The real
+        // owner is `stderr_reader.source` (set above); leaving the duplicate
+        // in `spawned` would free the live, libuv-registered handle when
+        // `spawned` drops at the end of this function (`to_process` takes
+        // `&mut`, not `self`) → use-after-free in the read callback +
+        // double-free on reader close. Take it out and forget it.
+        if let spawn::WindowsStdioResult::Buffer(dup) = spawned.stderr.take() {
+            debug_assert!(core::ptr::eq(Box::as_ref(&dup), stderr_pipe_ptr));
+            core::mem::forget(dup);
             s.stderr_reader().parent = this as *mut core::ffi::c_void;
             *s.remaining_fds() += 1;
             if s.stderr_reader().start_with_current_pipe().is_err() {

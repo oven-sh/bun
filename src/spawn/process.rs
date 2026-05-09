@@ -202,15 +202,34 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 // JS-side ctx vtable lands.
 impl Process {
     #[cfg(windows)]
-    pub fn update_status_on_windows(&mut self) {
-        // Zig: `onExitUV(&this.poller.uv, 0, 0)` — uses @fieldParentPtr to
-        // recover `self`. In Rust the back-pointer lives in `uv.data`; obtain
-        // the raw `*mut uv_process_t` and forward.
-        if let Poller::Uv(uv_proc) = &mut self.poller {
-            if !uv_proc.is_active() && matches!(self.status, Status::Running) {
-                let handle: *mut uv::uv_process_t = core::ptr::from_mut(uv_proc);
-                Self::on_exit_uv(handle, 0, 0);
+    /// SAFETY: `this` must be the live heap-allocated `Process` (the same
+    /// pointer stored in `uv_process_t.data`).
+    ///
+    /// Receiver is `*mut Process`, not `&mut self`: this path synchronously
+    /// runs the exit logic, and `on_exit_uv` re-derives `&mut Process` from
+    /// the heap-root `data` pointer. A `&mut self` argument carries a
+    /// Stacked-Borrows protector for the call's full duration, so that
+    /// re-derivation would pop the protected tag → instant UB. Zig used
+    /// `@fieldParentPtr` (no aliasing model), so this was sound there.
+    pub unsafe fn update_status_on_windows(this: *mut Process) {
+        // Zig: `onExitUV(&this.poller.uv, 0, 0)`. Inlined here with
+        // exit_status=0 / term_signal=0 (→ `Exited{0,0}`) instead of
+        // round-tripping through `on_exit_uv`'s `data`-ptr lookup, which
+        // would create a second `&mut Process` aliasing the one below.
+        // SAFETY: caller contract — `this` is live and exclusively accessed.
+        let p = unsafe { &mut *this };
+        if let Poller::Uv(uv_proc) = &mut p.poller {
+            if uv_proc.is_active() || !matches!(p.status, Status::Running) {
+                return;
             }
+            let rusage = uv_getrusage(uv_proc);
+            // NLL: `uv_proc`'s borrow of `p.poller` ends here; `p` is free
+            // to be reborrowed whole for `close()` / `on_exit()`.
+            p.close();
+            p.on_exit(
+                Status::Exited(Exited { code: 0, signal: 0 }),
+                &rusage,
+            );
         }
     }
 
@@ -459,8 +478,21 @@ impl Process {
         // stable variant-payload offset, so the back-pointer is stored in
         // `uv_process_t.data` (set in `spawn_process_windows` immediately
         // after the handle is zeroed).
+        //
+        // Read everything needed from `*process` BEFORE creating
+        // `this: &mut Process`. The handle is the inline `Poller::Uv` field,
+        // so once `this` exclusively borrows the whole `Process`, any later
+        // `&mut *process` (or raw read via `process`) overlaps that borrow
+        // and pops `this`'s Unique tag under Stacked Borrows — the
+        // subsequent `this.close()` (which touches `self.poller`) would then
+        // use an invalidated tag.
+        // SAFETY: libuv passes the live handle; only reads its POD fields.
+        let rusage = uv_getrusage(unsafe { &mut *process });
+        // SAFETY: raw read of POD `pid` field on the live handle.
+        let pid = unsafe { (*process).pid };
         // SAFETY: `data` was set to the owning `*mut Process` before
-        // `uv_spawn`; libuv never overwrites it.
+        // `uv_spawn`; libuv never overwrites it. `process` is not
+        // dereferenced again after this point.
         let this: &mut Process = unsafe { &mut *(*process).data.cast::<Process>() };
         let exit_code: u8 = if exit_status >= 0 { (exit_status as u64) as u8 } else { 0 };
         // Zig: `if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS))
@@ -471,11 +503,10 @@ impl Process {
             } else {
                 None
             };
-        let rusage = uv_getrusage(unsafe { &mut *process });
 
         bun_sys::windows::libuv::log!(
             "Process.onExit({}) code: {}, signal: {:?}",
-            unsafe { (*process).pid },
+            pid,
             exit_code,
             signal_code
         );
@@ -1412,6 +1443,39 @@ impl WindowsStdioResult {
     #[inline]
     pub fn take(&mut self) -> Self {
         core::mem::take(self)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsSpawnResult {
+    fn drop(&mut self) {
+        // Any `Buffer(Box<uv::Pipe>)` still held here was `uv_pipe_init`'d in
+        // `spawn_process_windows` and is linked into the loop's handle queue;
+        // auto-dropping the Box would deallocate a live handle and the next
+        // `uv_run` would walk freed memory. Zig's `StdioResult.buffer` is a
+        // raw `*uv.Pipe` (drop is a no-op leak), so the Rust port's `Box`
+        // tightened a leak into UB. Route un-consumed pipes through
+        // `uv_close` (free in the close callback). Slots already consumed via
+        // `.take()` are `Unavailable` and skip this.
+        //
+        // `WindowsStdioResult` itself deliberately has no `Drop` so callers
+        // can keep destructuring `Buffer(pipe)` by value; the container is
+        // the ownership boundary.
+        for slot in [&mut self.stdin, &mut self.stdout, &mut self.stderr] {
+            if let WindowsStdioResult::Buffer(pipe) = core::mem::take(slot) {
+                // SAFETY: `pipe` is the Box-allocated `uv::Pipe` from
+                // `create_zeroed_pipe`; `close_and_destroy` reclaims it via
+                // `Box::from_raw` in the close callback (or immediately if
+                // never init'd / `loop_ == null`).
+                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
+            }
+        }
+        for slot in self.extra_pipes.drain(..) {
+            if let WindowsStdioResult::Buffer(pipe) = slot {
+                // SAFETY: see above.
+                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
+            }
+        }
     }
 }
 

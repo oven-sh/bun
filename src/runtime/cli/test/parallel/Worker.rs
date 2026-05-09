@@ -189,10 +189,17 @@ impl Worker {
 
             // SAFETY: all-zero is a valid uv::Pipe (matches Zig std.mem.zeroes).
             let ipc_pipe = bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
-            // TODO(port): errdefer — if adoptPipe below is never reached, closeAndDestroy(ipc_pipe).
-            // A nested scopeguard cannot hold `&mut *this` here while the outer guard already
-            // holds it; Phase B should fold this into the outer cleanup path (check
-            // `this.ipc.backend.pipe.is_none()` and close_and_destroy the leaked pipe).
+            // Zig spec: `errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();`
+            // The guard owns the raw Box ptr; `close_and_destroy` handles both
+            // never-initialized (loop_ null → free directly) and initialized
+            // (uv_close + free in callback). Disarmed only after `adopt_pipe`
+            // succeeds and the Channel takes ownership. The guard captures only
+            // the raw ptr, so it nests cleanly under the outer `this` guard.
+            let ipc_pipe_guard = scopeguard::guard(ipc_pipe, |p| {
+                // SAFETY: `p` is the live Box-allocated uv_pipe_t; sole owner
+                // on every error path (extra_pipes is drained back to raw below).
+                unsafe { uv::Pipe::close_and_destroy(p) };
+            });
 
             // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
             // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
@@ -220,7 +227,22 @@ impl Worker {
                         Output::err(e, "spawnProcess failed for test worker", ());
                         bun_core::err!("SpawnFailed")
                     })?;
-            // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
+            // Zig `defer spawned.extra_pipes.deinit()` only freed the ArrayList
+            // backing (items were raw `*uv.Pipe` with no destructor). The Rust
+            // port made `WindowsStdioResult::Buffer` hold `Box<uv::Pipe>`, and
+            // `spawn_process_windows` does `heap::take(ipc_pipe)` into it — so
+            // the Vec now holds a second `Box` to the SAME heap address that
+            // `ipc_pipe_guard` / `adopt_pipe` claim. Drain the Vec and release
+            // each Box back to a raw ptr so the Vec drop is inert and
+            // `ipc_pipe_guard` remains the sole owner across the
+            // `start_with_pipe` error window below.
+            for item in core::mem::take(&mut spawned.extra_pipes) {
+                if let spawn::WindowsStdioResult::Buffer(p) = item {
+                    let raw = bun_core::heap::into_raw(p);
+                    debug_assert_eq!(raw, ipc_pipe, "extra_pipes Box must wrap ipc_pipe");
+                    let _ = raw;
+                }
+            }
             this.process = Some(spawned.to_process(coord.vm.event_loop(), false));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
@@ -237,9 +259,16 @@ impl Worker {
             // `ipc_pipe` was Box-allocated via heap::into_raw above and
             // initialised by spawn_process; ownership of the *mut Pipe transfers
             // to the Channel on success (it does the Box::from_raw internally).
+            // On failure the caller still owns it (Channel.rs:294) and the
+            // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
             if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
                 return Err(bun_core::err!("ChannelAdoptFailed"));
             }
+            // Channel now owns the Box; disarm the errdefer so end-of-block
+            // doesn't double-close. Any later error (watch_or_reap) is handled
+            // by the outer `this` guard, whose `Channel::default()` assignment
+            // drops the old Channel and `close_and_destroy`s the pipe via Drop.
+            let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe_guard);
         }
 
         let process_ptr = this.process.expect("set above");

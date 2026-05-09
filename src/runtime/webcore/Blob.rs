@@ -6392,8 +6392,14 @@ pub trait FileOpener: Sized {
 
             self.set_open_callback(callback);
             let loop_ = self.loop_();
-            let self_ptr = core::ptr::from_mut(self);
+            let self_ptr: *mut Self = core::ptr::from_mut(self);
             let req = self.req();
+            // Stash `self` on the request BEFORE dispatch. libuv never touches
+            // `req.data`, so pre-setting is safe; doing it after `uv_fs_open`
+            // is a UAF when the call fails synchronously and `callback` frees
+            // `self` (ReadFileUV::on_finish → finalize → heap::take). The Zig
+            // spec at Blob.zig:4956 has this ordering bug; we diverge to fix it.
+            req.data = self_ptr.cast();
             // SAFETY: loop_/req are live for the duration of the async open;
             // req.data is consumed by `wrapped_callback::<Self>` above.
             let rc = unsafe {
@@ -6415,10 +6421,11 @@ pub trait FileOpener: Sized {
                         .into(),
                 );
                 self.set_opened_fd(bun_sys::Fd::INVALID);
+                // `callback` may free `self` (see comment above) — must be the
+                // last thing we touch on this path.
                 callback(self, bun_sys::Fd::INVALID);
+                return;
             }
-            // SAFETY: req() borrows self; re-borrow to set data after rc check.
-            self.req().data = self_ptr.cast();
             return;
         }
 

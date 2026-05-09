@@ -1624,7 +1624,29 @@ impl WindowsStdio {
 
 // WindowsSpawnOptions: no Drop. `WindowsStdio` holds FFI-owned `*mut uv::Pipe`
 // whose ownership is transferred to `WindowsStdioResult` on success; callers
-// must invoke `WindowsStdio::deinit` explicitly on the error path (Zig spec).
+// must invoke `WindowsSpawnOptions::deinit` explicitly on the error path (Zig spec).
+#[cfg(windows)]
+impl WindowsSpawnOptions {
+    /// Explicit destructor — matches Zig `WindowsSpawnOptions.deinit`
+    /// (process.zig:1193). Closes and frees the heap-allocated `uv::Pipe`
+    /// handles for `Buffer`/`Ipc` stdio.
+    ///
+    /// **Not** `Drop`: on the *success* path `spawn_process_windows` transfers
+    /// sole ownership of each pipe into `WindowsStdioResult::Buffer` via
+    /// `heap::take`, leaving the raw pointers in `self` stale. An auto-Drop
+    /// would then double-free. Callers invoke this only on the *error* path
+    /// where ownership was never taken — failing to do so leaks `uv_pipe_t`
+    /// handles on the spawn-sync loop, which makes `uv_loop_close` return
+    /// `EBUSY` and trips `assert(err == 0)` in `uv_loop_delete` (uv-common.c).
+    pub fn deinit(&mut self) {
+        self.stdin.deinit();
+        self.stdout.deinit();
+        self.stderr.deinit();
+        for stdio in self.extra_fds.iter_mut() {
+            stdio.deinit();
+        }
+    }
+}
 
 /// Event-loop-aware extension on the raw [`PosixSpawnResult`] from
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no

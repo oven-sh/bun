@@ -237,6 +237,14 @@ impl Default for PosixSpawnOptions {
     }
 }
 
+impl PosixSpawnOptions {
+    /// No-op — matches Zig `PosixSpawnOptions.deinit` (process.zig:1104).
+    /// Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which closes
+    /// heap-allocated `uv::Pipe` handles on the spawn error path.
+    #[inline]
+    pub fn deinit(&mut self) {}
+}
+
 /// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
 /// the spawn-sys layer leaf. The `bun_spawn::subprocess` module re-exports this.
 #[repr(u8)]

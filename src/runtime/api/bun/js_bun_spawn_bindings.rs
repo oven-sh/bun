@@ -1025,7 +1025,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
-    let spawn_options = SpawnOptions {
+    let mut spawn_options = SpawnOptions {
         cwd: cwd.to_vec().into_boxed_slice(),
         detached,
         stdin: match stdio[0].as_spawn_option(0) {
@@ -1072,7 +1072,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         env_array.as_ptr(),
     ) {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
-            drop(spawn_options);
+            // Windows: close+free the heap `uv::Pipe` handles that
+            // `as_spawn_option` allocated and `spawn_process_windows` may have
+            // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
+            // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
+            // `SpawnSyncEventLoop::Drop`. POSIX: no-op. (Zig spec
+            // js_bun_spawn_bindings.zig:627 — `spawn_options.deinit()`.)
+            spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is a NUL-terminated string we built above.
                 unsafe { &*(std::ptr::from_ref::<[u8]>(bun_core::ffi::cstr(argv[0]).to_bytes()) as *const ZStr) }
@@ -1093,13 +1099,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             return Err(global_this.throw_value(sys_system_error_to_js(systemerror, global_this)));
         }
         Err(err) => {
-            drop(spawn_options);
+            // See EMFILE arm above — Zig spec js_bun_spawn_bindings.zig:637.
+            spawn_options.deinit();
             let _ = global_this.throw_error(err, ": failed to spawn process");
             return Ok(JSValue::ZERO);
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
-                drop(spawn_options);
+                // See EMFILE arm above — Zig spec js_bun_spawn_bindings.zig:642.
+                spawn_options.deinit();
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
                     | sys::Errno::ENOENT

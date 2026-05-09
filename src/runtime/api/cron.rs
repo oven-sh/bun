@@ -1981,6 +1981,26 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             }
         }
     }
+    // PERF(port): was arena bulk-free for envp on Windows
+    #[cfg(unix)]
+    let envp: *const *const c_char = bun_core::c_environ();
+    #[cfg(windows)]
+    let envp_owned;
+    #[cfg(windows)]
+    let envp: *const *const c_char = {
+        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
+        match unsafe { (*vm_mut().transpiler.env).map.create_null_delimited_env_map() } {
+            Ok(v) => {
+                envp_owned = v;
+                envp_owned.as_ptr().cast()
+            }
+            Err(_) => {
+                s.set_err(format_args!("Failed to create environment block"));
+                return unsafe { T::finish(this) };
+            }
+        }
+    };
+
     // PORT NOTE: Zig stashes the heap libuv pipe in
     // `stderr_reader.source.?.pipe` and reuses the same pointer for
     // `SpawnOptions.stderr = .{ .buffer = pipe }`. In the Rust port BOTH
@@ -1993,6 +2013,13 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // in `spawned.stderr` is disarmed via `mem::forget` below before
     // `spawned` drops. On spawn-error paths `heap::take` never ran, so
     // `stderr_reader.source` remains the only owner there too.
+    //
+    // ORDERING: this block is the LAST fallible pre-spawn step. It must run
+    // AFTER `which`/envp above because `T::finish` on those error paths drops
+    // the job → `WindowsBufferedReader::Drop` → `close_impl` → `uv_close` on
+    // a still-zeroed handle (NULL `loop_`, type 0) = crash. In Zig the
+    // equivalent path merely leaked a raw `*uv.Pipe`; the Rust Box+Drop
+    // tightened that leak into uv_close-on-uninit, so we reorder instead.
     #[cfg(windows)]
     let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = {
         let mut pipe =
@@ -2019,26 +2046,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             ..Default::default()
         },
         ..SpawnOptions::default()
-    };
-
-    // PERF(port): was arena bulk-free for envp on Windows
-    #[cfg(unix)]
-    let envp: *const *const c_char = bun_core::c_environ();
-    #[cfg(windows)]
-    let envp_owned;
-    #[cfg(windows)]
-    let envp: *const *const c_char = {
-        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
-        match unsafe { (*vm_mut().transpiler.env).map.create_null_delimited_env_map() } {
-            Ok(v) => {
-                envp_owned = v;
-                envp_owned.as_ptr().cast()
-            }
-            Err(_) => {
-                s.set_err(format_args!("Failed to create environment block"));
-                return unsafe { T::finish(this) };
-            }
-        }
     };
 
     let spawned = match spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) {

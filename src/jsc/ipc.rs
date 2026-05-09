@@ -1482,11 +1482,24 @@ impl SendQueue {
                     },
                 )
             };
-            if let Some(err) = result.to_error(bun_sys::Tag::write) {
-                Self::_windows_on_write_complete(
-                    write_req,
-                    uv::ReturnCode::from_raw(-(err.errno as c_int)),
-                );
+            if result.to_error(bun_sys::Tag::write).is_some() {
+                // Synchronous-error path: do NOT call `_windows_on_write_complete`
+                // here — that helper rebuilds `&mut SendQueue` from the raw
+                // `write_req.owner` backref, which would alias the `&mut self`
+                // already live in this frame (and in `continue_send` above it).
+                // Inline the same cleanup through `self` instead. The async
+                // libuv-callback path still uses `_windows_on_write_complete`
+                // (sound there: no `&mut self` is live when libuv fires it).
+                WindowsWrite::destroy(write_req);
+                self.windows.windows_write = None;
+                // SAFETY: pipe is live (socket == .open); pairs with the
+                // `(*pipe).ref_()` above.
+                unsafe { (*pipe).unref() };
+                self._on_write_complete(-1);
+                if self.windows.try_close_after_write {
+                    self.close_socket(CloseReason::Normal, CloseFrom::User);
+                }
+                return;
             }
             // write request is queued. it will call _onWriteComplete when it completes.
         }

@@ -331,6 +331,19 @@ impl WindowsNamedPipe {
 
     fn on_close(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
+        #[cfg(windows)]
+        {
+            // PORT NOTE: `self.pipe` is a non-owning `NonNull` alias of the
+            // `Box<uv::Pipe>` owned by `writer.source`. By the time the writer
+            // invokes this `on_close` hook it has already `take()`n that Box and
+            // scheduled `uv_close` → `Box::from_raw` on it (PipeWriter::close),
+            // so the alias is about to dangle. Clear it here so later
+            // `pipe_mut()` callers (e.g. `pause_stream` exported to JS) observe
+            // `None` instead of a freed pointer. The Zig spec's `onPipeClose`
+            // (which would null `this.pipe`) is dead code there too — the
+            // writer's `.onClose` slot is wired to `onClose`, not `onPipeClose`.
+            self.pipe = None;
+        }
         if !self.flags.is_closed() {
             self.flags.set_is_closed(true); // only call onClose once
             (self.handlers.on_close)(self.handlers.ctx);
@@ -516,6 +529,15 @@ impl WindowsNamedPipe {
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
+            // PORT NOTE: divergence from Zig spec — on async connect failure the
+            // leaked `Box<uv::Pipe>` was never adopted by `writer.source`
+            // (`start_with_pipe` only runs on the success branch below), so
+            // `on_error → close → writer.end()` is a no-op for it. Reclaim it
+            // here via `discard_unadopted_pipe` (which schedules `uv_close` and
+            // `Box::from_raw`s in the callback), mirroring the synchronous
+            // early-error paths in `connect`/`open`/`get_accepted_by`. The Zig
+            // original leaks the init'd `uv_pipe_t` in this path.
+            self.discard_unadopted_pipe();
             self.on_error(err);
             self.deref();
             return;

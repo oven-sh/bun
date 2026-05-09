@@ -1154,11 +1154,24 @@ pub trait BaseWindowsPipeWriter {
                         // op completes); on_close_complete heap::take()s `raw`.
                         (*raw).detach();
                     } else {
-                        // Don't own fd, just stop operations and detach parent.
-                        // Matches Zig: the File outlives any pending cancel callback
-                        // (on_fs_write_complete sees parent_ptr null and returns).
+                        // Don't own fd: stop any in-flight op and detach parent so
+                        // on_fs_write_complete won't touch the (possibly freed)
+                        // writer. We must still reclaim the Box<File> — the Zig
+                        // spec leaks it here (source.zig heap-allocates and never
+                        // destroys on this path); Rust port fixes that leak.
                         (*raw).stop();
                         (*raw).fs.data = core::ptr::null_mut();
+                        if (*raw).state == crate::source::FileState::Deinitialized {
+                            // No callback will ever fire for this fs_t — sole
+                            // owner, free now.
+                            // SAFETY: `raw` is the Box<File> leaked above via
+                            // into_raw; no libuv request references it.
+                            drop(bun_core::heap::take(raw));
+                        }
+                        // else: state is Operating/Canceling — libuv still owns a
+                        // request pointing into *raw. on_fs_write_complete sees
+                        // parent_ptr null, observes state == Deinitialized after
+                        // complete(), and heap::take()s there.
                     }
                 }
             }
@@ -1475,6 +1488,15 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
 
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
         if parent_ptr.is_null() {
+            // owns_fd detach() path: complete() already kicked off start_close()
+            // (state == Closing) and on_close_complete will heap::take the Box.
+            // !owns_fd close() path: complete() left state == Deinitialized and
+            // nothing else will reclaim the Box<File>; this callback is the sole
+            // remaining owner, so free it here.
+            // SAFETY: `file` is the Box<File> leaked in close() via into_raw.
+            if unsafe { (*file).state } == crate::source::FileState::Deinitialized {
+                drop(unsafe { bun_core::heap::take(file) });
+            }
             return;
         }
 
@@ -1938,6 +1960,15 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd).
         // The deref to balance processSend's ref was already done in close().
         if parent_ptr.is_null() {
+            // owns_fd detach() path: complete() already kicked off start_close()
+            // (state == Closing) and on_close_complete will heap::take the Box.
+            // !owns_fd close() path: complete() left state == Deinitialized and
+            // nothing else will reclaim the Box<File>; this callback is the sole
+            // remaining owner, so free it here.
+            // SAFETY: `file` is the Box<File> leaked in close() via into_raw.
+            if unsafe { (*file).state } == crate::source::FileState::Deinitialized {
+                drop(unsafe { bun_core::heap::take(file) });
+            }
             return;
         }
 

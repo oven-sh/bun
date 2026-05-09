@@ -779,8 +779,10 @@ where
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
-        // SAFETY: req is the live libuv request passed to this callback
-        this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, unsafe { (*req).result }.int());
+        // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
+        // `this: &mut Self` is live, re-deriving through the raw `req` would create a
+        // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
+        this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result.int());
         // Zig clones `err` here so its `.path` outlives the stack `node_fs.sync_error_buf`
         // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
         // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
@@ -790,17 +792,17 @@ where
 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
         // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
-        // Copy the raw pointer for the cleanup guard so the `defer!` closure
-        // captures `req_cleanup` (not `req`) — borrowck otherwise treats the
-        // closure's `&req` capture as conflicting with `&mut *req` below.
-        let req_cleanup: *mut uv::fs_t = req;
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req_cleanup) } };
+        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
-        // SAFETY: req is the live libuv request passed to this callback
-        this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
+        // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
+        // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
+        // borrow alongside `&this.args` / `this.result =`. Hoist the result read so it isn't
+        // evaluated after `&mut this.req` is formed in the same call expression.
+        let rc = this.req.result.int();
+        this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
         // No `err.clone()` needed — see `uv_callback` above.
         let this_ptr: *mut Self = this;
         this.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(this_ptr));

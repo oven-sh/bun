@@ -4692,10 +4692,9 @@ pub const H2FrameParser = struct {
                     if (parent <= 0 or parent > MAX_STREAM_ID) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
-                        const bad_parent_id = stream.id;
                         this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                        this.removeStreamByID(bad_parent_id);
-                        return jsc.JSValue.jsNumber(bad_parent_id);
+                        this.removeStreamByID(stream_id);
+                        return jsc.JSValue.jsNumber(stream_id);
                     }
                     stream.streamDependency = @intCast(parent);
                 } else {

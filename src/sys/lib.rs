@@ -3264,7 +3264,11 @@ impl File {
         #[cfg(not(windows))]
         {
             let st = self.stat()?;
-            Ok(kind_from_mode(st.st_mode as Mode))
+            // Zig spec (File.zig:258): unrecognized `st_mode & IFMT` falls back to
+            // `.file`, not `.unknown`. `kind_from_mode` returns `Unknown` for that
+            // case, so post-process here to match the spec's else arm.
+            let k = kind_from_mode(st.st_mode as Mode);
+            Ok(if matches!(k, FileKind::Unknown) { FileKind::File } else { k })
         }
     }
     pub fn close(self) -> Maybe<()> { close(self.handle) }

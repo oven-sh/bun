@@ -16,8 +16,8 @@
  * `--paginate` is one shell call and gh handles Link headers + retries.
  */
 
-import { Database } from "bun:sqlite";
 import { $ } from "bun";
+import { Database } from "bun:sqlite";
 
 const DB_PATH = Bun.argv[2] ?? "tmp/bun-issues.sqlite";
 const WITH_COMMENTS = Bun.argv.includes("--with-comments");

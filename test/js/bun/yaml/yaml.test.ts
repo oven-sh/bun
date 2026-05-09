@@ -1310,38 +1310,43 @@ config:
       });
     }
 
-    test("strings are properly referenced", () => {
-      const config = {
-        version: "1.0",
-        services: {
-          web: {
-            image: "nginx:latest",
-            ports: ["80:80", "443:443"],
-            environment: {
-              NODE_ENV: "production",
-              DEBUG: false,
+    test(
+      "strings are properly referenced",
+      () => {
+        const config = {
+          version: "1.0",
+          services: {
+            web: {
+              image: "nginx:latest",
+              ports: ["80:80", "443:443"],
+              environment: {
+                NODE_ENV: "production",
+                DEBUG: false,
+              },
+            },
+            db: {
+              image: "postgres:13",
+              environment: {
+                POSTGRES_PASSWORD: "secret",
+                POSTGRES_DB: "myapp",
+              },
+              volumes: ["./data:/var/lib/postgresql/data"],
             },
           },
-          db: {
-            image: "postgres:13",
-            environment: {
-              POSTGRES_PASSWORD: "secret",
-              POSTGRES_DB: "myapp",
+          networks: {
+            default: {
+              driver: "bridge",
             },
-            volumes: ["./data:/var/lib/postgresql/data"],
           },
-        },
-        networks: {
-          default: {
-            driver: "bridge",
-          },
-        },
-      };
+        };
 
-      for (let i = 0; i < 10000; i++) {
-        expect(YAML.stringify(config)).toBeString();
-      }
-    });
+        for (let i = 0; i < 10000; i++) {
+          expect(YAML.stringify(config)).toBeString();
+        }
+      },
+      // 10k iterations of a nested-object stringify — debug+ASAN CI hits the default 5s.
+      60_000,
+    );
 
     // Anchor and alias tests (reference handling)
     describe("reference handling", () => {

@@ -793,16 +793,29 @@ pub use bun_alloc::SEP;
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {
     pub const ZEROED: Self = Self([0; MAX_PATH_BYTES]);
-    /// Zig `= undefined`. Returns a zero-initialised buffer (cheap, avoids
-    /// `MaybeUninit` ceremony at every call site; the bytes are immediately
-    /// overwritten by the syscall that fills it).
+    /// Zig `= undefined`. The bytes are immediately overwritten by the syscall
+    /// that fills it, so the initial contents are never observed.
+    ///
+    /// On Windows `MAX_PATH_BYTES` is 98 302 (vs 4 096 Linux / 1 024 macOS), so
+    /// the previous `Self::ZEROED` body here was a ~100 KB `memset` at every
+    /// one of the ~400 call sites — turning hot loops (glob scan, module load,
+    /// stack-trace formatting) into multi-GB zero-fill workloads and timing out
+    /// the leak/stress tests. Match the Zig spec and leave the bytes uninit.
     #[inline]
-    pub fn uninit() -> Self { Self::ZEROED }
+    #[allow(invalid_value, clippy::uninit_assumed_init)]
+    pub fn uninit() -> Self {
+        // SAFETY: `PathBuffer` is `repr(transparent)` over `[u8; N]`; every bit
+        // pattern is a valid `u8`, and callers treat this as a write-only
+        // scratch buffer (length-tracked) exactly like Zig
+        // `var buf: bun.PathBuffer = undefined`. No byte is read before being
+        // written by the consuming syscall / encoder.
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    }
     #[inline] pub fn as_mut_slice(&mut self) -> &mut [u8] { &mut self.0 }
     #[inline] pub fn as_slice(&self) -> &[u8] { &self.0 }
 }
 impl Default for PathBuffer {
-    #[inline] fn default() -> Self { Self::ZEROED }
+    #[inline] fn default() -> Self { Self::uninit() }
 }
 impl core::ops::Deref for PathBuffer {
     type Target = [u8];
@@ -817,8 +830,19 @@ impl core::ops::DerefMut for PathBuffer {
 pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
 impl WPathBuffer {
     pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
+    /// Zig `= undefined`. See [`PathBuffer::uninit`] — `PATH_MAX_WIDE` is
+    /// 32 767 `u16`s (~64 KB), and these are allocated per Windows syscall
+    /// for UTF-8→UTF-16 path conversion, so zero-initialising dominated the
+    /// hot path on Windows.
     #[inline]
-    pub fn uninit() -> Self { Self::ZEROED }
+    #[allow(invalid_value, clippy::uninit_assumed_init)]
+    pub fn uninit() -> Self {
+        // SAFETY: `repr(transparent)` over `[u16; N]`; every bit pattern is a
+        // valid `u16`. Callers treat this as a write-only scratch buffer and
+        // track the written length out-of-band — mirrors Zig
+        // `var wbuf: bun.WPathBuffer = undefined`.
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    }
     /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
     /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.
     #[inline]
@@ -827,7 +851,7 @@ impl WPathBuffer {
     pub fn as_mut_slice(&mut self) -> &mut [u16] { &mut self.0 }
 }
 impl Default for WPathBuffer {
-    #[inline] fn default() -> Self { Self::ZEROED }
+    #[inline] fn default() -> Self { Self::uninit() }
 }
 impl core::ops::Deref for WPathBuffer {
     type Target = [u16];

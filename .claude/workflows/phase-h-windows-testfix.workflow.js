@@ -107,6 +107,8 @@ const fixed = await pipeline(
     agent(
       `Fix Windows test failure (signature seen in ${s.count} tests). You are in an ISOLATED git worktree — edits here do NOT touch the main repo.
 
+**FIRST:** the worktree may have been created from \`main\` instead of the port branch. Run \`git fetch origin claude/phase-a-port && git checkout origin/claude/phase-a-port -- .\` to sync your worktree's files to the port branch HEAD before reading/editing anything. (This is the ONLY git command you may run besides \`git diff\` at the end.)
+
 **Signature:** \`${s.sig}\`
 **Example test:** \`test/${s.example_test}\`
 **Stdout/stderr (last 3k):**

@@ -5092,17 +5092,28 @@ pub fn normalize_path_windows_opts<'a>(
         }
         if opts.add_nt_prefix {
             // Absolute → add `\??\` (idempotent if already present), normalize
-            // separators/`..` and NUL-terminate.
+            // separators/`.`/`..` and NUL-terminate.
             // sys.zig:1001/1052 — `nt_prefix_headroom = 8`; `if (path.len >
             // buf.len -| nt_prefix_headroom) return name_too_long;`.
-            // `to_nt_path16` (≡ `normalizeStringGenericTZ`) performs no bounds
-            // checking of its own, so reserve room for `\??\` + trailing-`\`
-            // growth + NUL before calling it.
+            // `normalizeStringGenericTZ` performs no bounds checking of its
+            // own, so reserve room for `\??\` + trailing-`\` growth + NUL
+            // before calling it. NOTE: `to_nt_path16` is NOT a substitute here
+            // — it only normalizes slashes and leaves `.`/`..` segments in
+            // place, which `NtCreateFile` rejects (e.g. `\??\C:\dir\.` →
+            // OBJECT_NAME_NOT_FOUND).
             if path.len() > buf.len().saturating_sub(8) {
                 return Err(too_long());
             }
-            let nt = bun_str::strings::paths::to_nt_path16(buf, path);
-            return Ok(nt);
+            let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
+                u16,
+                /*ALLOW_ABOVE_ROOT*/ false,
+                /*PRESERVE_TRAILING_SLASH*/ false,
+                /*ZERO_TERMINATE*/ true,
+                /*ADD_NT_PREFIX*/ true,
+            >(path, buf, b'\\' as u16, |c| c == b'\\' as u16 || c == b'/' as u16);
+            let len = norm.len();
+            // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
+            return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
         }
         // sys.zig:1056 `.{ .add_nt_prefix = false }` — produce a Win32 path
         // (no `\??\` object prefix) for callers that feed kernel32 APIs
@@ -5156,13 +5167,26 @@ pub fn normalize_path_windows_opts<'a>(
     let joined_len = base.len() + 1 + rel.len();
     // sys.zig:1092 — `if (joined_len > buf1.len -| nt_prefix_headroom) return
     // name_too_long;`. Reserve 8 u16 for the `\??\` prefix + NUL that
-    // `to_nt_path16` writes into `buf` (which is the same length as `joined`).
+    // `normalizeStringGenericTZ` writes into `buf` (same length as `joined`).
     if joined_len > joined.0.len().saturating_sub(8) { return Err(too_long()); }
     joined.0[..base.len()].copy_from_slice(base);
     joined.0[base.len()] = b'\\' as u16;
     joined.0[base.len() + 1..joined_len].copy_from_slice(rel);
-    let nt = bun_str::strings::paths::to_nt_path16(buf, &joined.0[..joined_len]);
-    Ok(nt)
+    // sys.zig:1095 — `normalizeStringGenericTZ(u16, joined, buf,
+    // .{ .add_nt_prefix = true, .zero_terminate = true })`. Must collapse
+    // `.`/`..` segments here: the relative input may be `"."` (e.g.
+    // `bun build entry.js` → dirname → `"."`), and the joined `…\.` is
+    // rejected by `NtCreateFile` if passed through verbatim.
+    let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
+        u16,
+        /*ALLOW_ABOVE_ROOT*/ false,
+        /*PRESERVE_TRAILING_SLASH*/ false,
+        /*ZERO_TERMINATE*/ true,
+        /*ADD_NT_PREFIX*/ true,
+    >(&joined.0[..joined_len], buf, b'\\' as u16, |c| c == b'\\' as u16 || c == b'/' as u16);
+    let len = norm.len();
+    // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
+    Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) })
 }
 
 /// sys.zig:1382 — open a `\\.\…` device path via kernel32 `CreateFileW`

@@ -157,7 +157,10 @@ impl<'a> ProcessHandle<'a> {
         // end. Phase A uses heap; profile in Phase B.
         let envp;
         let env_ptr = state.env;
-        let spawned: SpawnProcessResult = {
+        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`;
+        // on POSIX `to_process` consumes `self` by value.
+        #[allow(unused_mut)]
+        let mut spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
             let env = unsafe { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
@@ -175,7 +178,12 @@ impl<'a> ProcessHandle<'a> {
             )?
             .map_err(|e| Error::from(e))?
         };
+        // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
+        // On Windows the readers are wired via `Source::Pipe` from `self.options`
+        // below (per .zig spec), and `WindowsStdioResult` is not `Copy`.
+        #[cfg(unix)]
         let stdout_fd = spawned.stdout;
+        #[cfg(unix)]
         let stderr_fd = spawned.stderr;
         let process =
             spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
@@ -224,7 +232,6 @@ impl<'a> ProcessHandle<'a> {
         }
         #[cfg(not(unix))]
         {
-            let _ = (stdout_fd, stderr_fd);
             self.stdout_reader.reader.start_with_current_pipe().map_err(Error::from)?;
             self.stderr_reader.reader.start_with_current_pipe().map_err(Error::from)?;
         }

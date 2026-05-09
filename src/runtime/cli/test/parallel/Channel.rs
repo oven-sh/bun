@@ -367,6 +367,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         if self.out.is_empty() || !self.backend.inflight.is_empty() || self.done {
             return;
         }
+        // Capture the raw self pointer for uv_write's `data` field before
+        // taking any field borrows below (the borrow used by from_mut ends
+        // immediately; raw pointers carry no lifetime).
+        let this: *mut Self = core::ptr::from_mut(self);
         let Some(pipe) = self.backend.pipe.as_mut() else { return };
         // Swap: out → inflight (stable for uv_write), out becomes empty.
         core::mem::swap(&mut self.backend.inflight, &mut self.out);
@@ -377,7 +381,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             .write(
                 pipe.as_stream(),
                 &self.backend.write_buf,
-                core::ptr::from_mut(self),
+                this,
                 WindowsHandlers::<Owner>::on_write,
             )
             .is_err()

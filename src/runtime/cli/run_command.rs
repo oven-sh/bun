@@ -1726,10 +1726,15 @@ impl RunCommand {
         {
             let mut temp_path_buffer = WPathBuffer::uninit();
             let mut target_path_buffer = PathBuffer::uninit();
-            let len = sys::windows::GetTempPathW(
-                u32::try_from(temp_path_buffer.len()).expect("int cast"),
-                temp_path_buffer.as_mut_ptr(),
-            );
+            // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
+            // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
+            // capacity in WCHARs; the call writes at most that many wide chars.
+            let len = unsafe {
+                sys::windows::GetTempPathW(
+                    u32::try_from(temp_path_buffer.len()).expect("int cast"),
+                    temp_path_buffer.as_mut_ptr(),
+                )
+            };
             if len == 0 {
                 return Err(bun_core::err!("FailedToGetTempPath"));
             }
@@ -1868,11 +1873,16 @@ impl RunCommand {
 
             let prefix = bun_str::w!("\\??\\");
 
-            let len = sys::windows::GetTempPathW(
-                u32::try_from(target_path_buffer.len() - prefix.len()).expect("int cast"),
-                // SAFETY: prefix.len() < target_path_buffer.len(); pointer stays in bounds.
-                unsafe { target_path_buffer.as_mut_ptr().add(prefix.len()) },
-            );
+            // SAFETY: FFI Win32 `GetTempPathW`. We pass a valid writable
+            // pointer into `target_path_buffer` offset by `prefix.len()`
+            // (in-bounds: prefix.len() < target_path_buffer.len()) and the
+            // remaining capacity in WCHARs as `nBufferLength`.
+            let len = unsafe {
+                sys::windows::GetTempPathW(
+                    u32::try_from(target_path_buffer.len() - prefix.len()).expect("int cast"),
+                    target_path_buffer.as_mut_ptr().add(prefix.len()),
+                )
+            };
             if len == 0 {
                 Output::debug(format_args!(
                     "Failed to create temporary node dir: {}",
@@ -1929,10 +1939,11 @@ impl RunCommand {
                 off += name.len();
                 target_path_buffer[off] = 0;
 
-                let file_slice = &target_path_buffer[..off];
-
+                // Zig's `file_slice.ptr` is the buffer base (slice starts at 0);
+                // use the raw base ptr to avoid holding an immutable borrow
+                // across the `target_path_buffer[dir_slice_len]` mutation below.
                 if sys::windows::CreateHardLinkW(
-                    file_slice.as_ptr(),
+                    target_path_buffer.as_ptr(),
                     image_path.as_ptr(),
                     None,
                 ) == 0

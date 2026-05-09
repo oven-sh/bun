@@ -77,30 +77,41 @@ impl SecretsJob {
     }
 
     fn run_from_js_erased(this: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
-        Self::run_from_js(this.cast::<SecretsJob>());
-        Ok(())
+        Self::run_from_js(this.cast::<SecretsJob>())
     }
 
-    pub fn run_from_js(this: *mut SecretsJob) {
+    pub fn run_from_js(this: *mut SecretsJob) -> bun_event_loop::JsResult<()> {
         // `defer this.deinit()` — take ownership; Drop runs at scope exit on all paths.
         // SAFETY: `this` was produced by heap::alloc in `create` and is uniquely owned here.
         let this = unsafe { bun_core::heap::take(this) };
         let vm = this.vm;
 
         if VirtualMachine::get().is_shutting_down() {
-            return;
+            return Ok(());
         }
 
         let promise = this.promise.get();
         if promise.is_empty() {
-            return;
+            return Ok(());
         }
 
+        // SAFETY: `vm` is the live per-thread VM stored at `create`; its `global`
+        // field is initialized during VM startup and valid for the VM lifetime.
+        let global = unsafe { &*(*vm).global };
+        // `Bun__SecretsJobOptions__runFromJS` opens a `DECLARE_THROW_SCOPE` and
+        // returns via `RELEASE_AND_RETURN`, which simulates a throw to the parent
+        // scope under `BUN_JSC_validateExceptionChecks=1`. Without an enclosing
+        // scope here, `drainMicrotasks`'s `TopExceptionScope` ctor asserts on the
+        // unchecked simulated throw — same shape as `JSCDeferredWorkTask::run`.
+        crate::validation_scope!(scope, global);
         // SAFETY: ctx is a valid C++ SecretsJobOptions* held alive until Drop.
         // vm.global is already *mut JSGlobalObject (Zig `*JSGlobalObject` freely aliases).
         unsafe {
             Bun__SecretsJobOptions__runFromJS(this.ctx, (*vm).global, promise);
         }
+        scope
+            .assert_no_exception_except_termination()
+            .map_err(Into::into)
     }
 
     pub fn schedule(&mut self) {

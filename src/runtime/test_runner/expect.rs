@@ -1121,8 +1121,8 @@ impl Expect {
 
             // 2. save to write later
             runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {
-                line: srcloc.line as u64,
-                col: srcloc.column as u64,
+                line: core::ffi::c_ulong::from(srcloc.line),
+                col: core::ffi::c_ulong::from(srcloc.column),
                 value: core::mem::take(&mut pretty_value).into_boxed_slice(),
                 has_matchers: property_matchers.is_some(),
                 is_added: result.is_none(),

@@ -15,6 +15,8 @@ use core::mem::offset_of;
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_threading::Mutex;
+#[cfg(windows)]
+use bun_libuv_sys::UvHandle as _;
 
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).

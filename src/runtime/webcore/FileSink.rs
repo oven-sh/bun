@@ -292,16 +292,27 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
         if let Some(source) = this.writer.source.as_mut() {
             match source {
                 bun_io::Source::Pipe(pipe) => {
-                    if uv::uv_stream_set_blocking((*pipe) as *mut _ as *mut uv::uv_stream_t, 1)
-                        == uv::ReturnCode::ZERO
-                    {
+                    // SAFETY: `pipe` is a live `Box<uv::Pipe>` owned by `writer.source`;
+                    // `uv_pipe_t` is `#[repr(C)]` with `uv_stream_t` as its first field
+                    // (libuv handle subtyping), so the pointer cast is valid (Zig: `@ptrCast(pipe)`).
+                    let rc = unsafe {
+                        uv::uv_stream_set_blocking(
+                            (&mut **pipe) as *mut uv::Pipe as *mut uv::uv_stream_t,
+                            1,
+                        )
+                    };
+                    if rc == uv::ReturnCode::ZERO {
                         return;
                     }
                 }
                 bun_io::Source::Tty(tty) => {
-                    if uv::uv_stream_set_blocking((*tty) as *mut _ as *mut uv::uv_stream_t, 1)
-                        == uv::ReturnCode::ZERO
-                    {
+                    // SAFETY: `tty` is a live `NonNull<uv_tty_t>` (heap or static stdin tty);
+                    // `uv_tty_t` embeds `uv_stream_t` as its first field, so the cast is the
+                    // libuv handle-subtype downcast (Zig: `@ptrCast(tty)`).
+                    let rc = unsafe {
+                        uv::uv_stream_set_blocking(tty.as_ptr().cast::<uv::uv_stream_t>(), 1)
+                    };
+                    if rc == uv::ReturnCode::ZERO {
                         return;
                     }
                 }

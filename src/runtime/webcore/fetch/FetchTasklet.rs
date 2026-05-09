@@ -1409,27 +1409,9 @@ impl FetchTasklet {
         // here leaked one ref per Blob-backed body (issue: fetch-leak fixture #5 RSS
         // growth). `clear_data() → request_body.detach()` releases it.
         //
-        // NB this affects native Blob.Store refcount (RSS) only — it does NOT touch
-        // JSPromise retention. fixture-5's inner `heapStats().Promise ≤ 35` check
-        // overshoots (=41) for `stream`/`iterator` bodies on the ReadableStream path,
-        // but that overshoot is bit-identical to Zig main (verified
-        // `USE_SYSTEM_BUN=1 bun test fetch-leak.test.ts -t 'Sending stream'` vs
-        // `bun bd test ...` — both `Received: 41`, both leak ResumableFetchSink JS
-        // wrappers +10/batch in heapStats).
-        //
-        // Root cause (pre-existing, FetchTasklet.zig has it too): the fixture's
-        // server returns without reading the request body, so the upload stalls at
-        // `paused` after the first chunk and `js_end`/`detach_js` never fire. That
-        // leaves a ref cycle: `start_request_stream`'s `self.ref_()` is balanced
-        // only by `write_end_request`, and the sink's `js_this` Strong is released
-        // only by `detach_js` — neither runs, so FetchTasklet.deinit (and thus
-        // `clear_sink`) is never reached. The wrapper test still passes because it
-        // checks RSS growth only and ignores the spawned fixture's exit code; the
-        // inner assertion fails on iteration 1 leaving a single RSS sample
-        // (iteration 0's), so `last < first*10` is trivially true. Not a port
-        // divergence;
-        // any fix belongs in the spec (cancel the sink when `is_done && success`
-        // in `on_progress_update`, mirroring the `!success` branch).
+        // NB: fixture-5's stream/iterator Promise-count overshoot is a pre-existing
+        // Zig spec bug (paused ResumableFetchSink ref-cycle when the server never
+        // reads the body), not a port divergence — tracked upstream.
 
         let mut url = fetch_options.url;
         let mut proxy: Option<ZigURL> = None;

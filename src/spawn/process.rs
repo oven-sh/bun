@@ -422,8 +422,9 @@ impl Process {
                 )
             };
 
-            // SAFETY: `poll` is a live hive slot (just allocated or recycled).
-            self.poller = Poller::Fd(unsafe { core::ptr::NonNull::new_unchecked(poll) });
+            self.poller = Poller::Fd(
+                core::ptr::NonNull::new(poll).expect("FilePoll::init returns a live hive slot"),
+            );
             // SAFETY: poll is live; exclusive on this thread (event loop).
             let fd = unsafe { &mut *poll };
             fd.enable_keeping_process_alive(ctx);
@@ -495,7 +496,7 @@ impl Process {
         // SAFETY: `data` was set to the owning `*mut Process` before
         // `uv_spawn`; libuv never overwrites it. `process` is not
         // dereferenced again after this point.
-        let this: &mut Process = unsafe { &mut *(*process).data.cast::<Process>() };
+        let this: &mut Process = unsafe { bun_ptr::callback_ctx::<Process>((*process).data) };
         let exit_code: u8 = if exit_status >= 0 { (exit_status as u64) as u8 } else { 0 };
         // Zig: `if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS))
         //   @enumFromInt(term_signal) else null` — upper-bound exclusive of SIGSYS.
@@ -539,7 +540,7 @@ impl Process {
     #[cfg(windows)]
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
         // SAFETY: see `on_exit_uv` — `*mut Process` back-pointer in `data`.
-        let this: &mut Process = unsafe { &mut *(*uv_handle).data.cast::<Process>() };
+        let this: &mut Process = unsafe { bun_ptr::callback_ctx::<Process>((*uv_handle).data) };
         bun_sys::windows::libuv::log!("Process.onClose({})", unsafe { (*uv_handle).pid });
 
         if matches!(this.poller, Poller::Uv(_)) {

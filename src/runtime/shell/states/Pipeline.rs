@@ -15,7 +15,7 @@ use crate::shell::{ExitCode, ShellErr};
 
 pub struct Pipeline {
     pub base: Base,
-    pub node: *const ast::Pipeline,
+    pub node: bun_ptr::BackRef<ast::Pipeline>,
     pub io: IO,
     pub exited_count: u32,
     pub cmds: Option<Box<[CmdOrResult]>>,
@@ -45,13 +45,13 @@ impl Pipeline {
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Pipeline,
+        node: &ast::Pipeline,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Pipeline(Pipeline {
             base: Base::new(StateKind::Pipeline, parent, shell),
-            node,
+            node: bun_ptr::BackRef::new(node),
             io,
             exited_count: 0,
             cmds: None,
@@ -103,9 +103,7 @@ impl Pipeline {
             let me = interp.as_pipeline(this);
             (me.node, me.base.shell, interp.event_loop)
         };
-        // SAFETY: `node` points into the AST arena which outlives every state
-        // node.
-        let items: &[ast::PipelineItem] = unsafe { &*(*node).items };
+        let items: &[ast::PipelineItem] = node.items;
         // Spec (Pipeline.zig setupCommands): assigns inside a pipeline are
         // no-ops — they're not counted, not duped, not started. `cmd_count`
         // here is the number of *runnable* children.

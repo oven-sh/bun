@@ -1503,7 +1503,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // SAFETY: data was set to `self as *mut Self` in write(); libuv invokes
         // this callback on the single-threaded event loop with no other Rust
         // borrow of `*this` live, so this is the sole `&mut` at this point.
-        let this = unsafe { &mut *parent_ptr.cast::<Self>() };
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(parent_ptr) };
 
         if was_canceled {
             // Canceled write - clear pending state
@@ -1683,16 +1683,14 @@ impl StreamBuffer {
         Ok(())
     }
 
-    pub fn write_type_as_bytes<T>(&mut self, data: &T) -> Result<(), OOM> {
-        // SAFETY: caller passes POD T (matches Zig std.mem.asBytes contract).
-        self.write(unsafe { bun_core::bytes_of(data) })
+    pub fn write_type_as_bytes<T: bun_core::NoUninit>(&mut self, data: &T) -> Result<(), OOM> {
+        self.write(bun_core::bytes_of(data))
     }
 
-    pub fn write_type_as_bytes_assume_capacity<T>(&mut self, data: T) {
+    pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
         // TODO(port): Zig round-trips through bun.Vec<u8> here; Rust just writes bytes.
-        // SAFETY: caller passes POD T.
         // PERF(port): was assume_capacity
-        self.list.extend_from_slice(unsafe { bun_core::bytes_of(&data) });
+        self.list.extend_from_slice(bun_core::bytes_of(&data));
     }
 
     /// Zig: `writeOrFallback(buffer: anytype, comptime writeFn: anytype)` —
@@ -1969,7 +1967,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // SAFETY: data was set to `self as *mut Self` in process_send(); libuv
         // invokes this callback on the single-threaded event loop with no other
         // Rust borrow of `*this` live, so this is the sole `&mut` at this point.
-        let this = unsafe { &mut *parent_ptr.cast::<Self>() };
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(parent_ptr) };
 
         if was_canceled {
             // Canceled write - reset buffers and deref to balance process_send ref

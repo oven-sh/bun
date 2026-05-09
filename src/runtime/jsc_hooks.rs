@@ -550,10 +550,7 @@ unsafe fn load_preloads(
         );
         return Ok(ptr::null_mut());
     }
-    // SAFETY: `vm.transpiler.fs` points at the process-global `Fs::FileSystem`
-    // singleton (transpiler.rs:66 — Zig used `Fs.FileSystem.instance`).
-    let fs = unsafe { &*vm }.transpiler.fs;
-    let top_level_dir: *const [u8] = unsafe { &*fs }.top_level_dir;
+    let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir;
     // Spec VirtualMachine.zig:2213 — `if (this.standalone_module_graph == null)
     // .read_only else .disable`.
     // SAFETY: per fn contract.
@@ -3022,8 +3019,7 @@ fn transpile_source_code_inner(
                 // wrapper over `get_public_path_with_asset_prefix` with
                 // `dir = VM.top_level_dir`, `asset_prefix = ""`, `.loose`.
                 // Inline that body here (mirrors filesystem_router.rs).
-                let fs = unsafe { &*jsc_vm }.transpiler.fs;
-                let top_level_dir = unsafe { &*fs }.top_level_dir;
+                let top_level_dir = Fs::FileSystem::get().top_level_dir;
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,
                     top_level_dir,
@@ -4429,10 +4425,7 @@ unsafe fn _resolve<'a>(
     let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
     // Spec :1771-1778. `Fs.PathName.init(source).dirWithTrailingSlash()` slices
     // `source` in place, so the `'a` lifetime is preserved.
-    // SAFETY: `vm.transpiler.fs` is the `'static` `FileSystem` singleton
-    // pointer set in `init_runtime_state`.
-    let top_level_dir: &'a [u8] =
-        unsafe { bun_ptr::detach_lifetime((*(*vm).transpiler.fs).top_level_dir) };
+    let top_level_dir: &'a [u8] = Fs::FileSystem::get().top_level_dir;
     let source_to_use: &[u8] = if !is_special_source {
         if is_a_file_path {
             Fs::PathName::init(source).dir_with_trailing_slash()

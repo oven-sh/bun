@@ -808,15 +808,7 @@ impl Stringifier {
                         }
                         tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                             // inline .git, .github
-                            // SAFETY: `tag` is `Git` or `Github`; the matching
-                            // union arm is read.
-                            let repo: &Repository = unsafe {
-                                if tag == ResolutionTag::Git {
-                                    &res.value.git
-                                } else {
-                                    &res.value.github
-                                }
-                            };
+                            let repo: &Repository = res.repository();
                             let prefix: &str = if tag == ResolutionTag::Git { "git+" } else { "github:" };
                             write!(
                                 writer,

@@ -1793,8 +1793,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let p = tunnel_ptr.cast::<WebSocketProxyTunnel>();
             // SAFETY: caller passes a live tunnel pointer (extern-C contract).
             unsafe { (*p).ref_() };
-            // SAFETY: caller guarantees non-null (extern-C contract).
-            unsafe { NonNull::new_unchecked(p) }
+            NonNull::new(p).expect("extern-C contract: tunnel_ptr is non-null")
         };
 
         // ref_count starts at 1: this is the I/O-layer ref, owned by the

@@ -462,13 +462,13 @@ pub fn writable_stream(
     // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
     fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
-        wrapper_callback(result, unsafe { &mut *ctx.cast::<NetworkSink>() })
+        wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
     }
     fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         // SAFETY: task is the live MultiPartUpload; ctx is the NetworkSink set as callback_context.
         let _ = NetworkSink::on_writable(
             unsafe { &mut *task },
-            unsafe { &mut *ctx.cast::<NetworkSink>() },
+            unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) },
             flushed,
         );
     }
@@ -811,13 +811,13 @@ pub fn upload_stream(
     // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
     fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: ctx was set to `*mut S3UploadStreamWrapper` below.
-        S3UploadStreamWrapper::resolve(result, unsafe { &mut *ctx.cast::<S3UploadStreamWrapper>() })
+        S3UploadStreamWrapper::resolve(result, unsafe { bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx) })
     }
     fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         // SAFETY: task is the live MultiPartUpload; ctx is the wrapper set as callback_context.
         S3UploadStreamWrapper::on_writable(
             unsafe { &mut *task },
-            unsafe { &mut *ctx.cast::<S3UploadStreamWrapper>() },
+            unsafe { bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx) },
             flushed,
         );
     }
@@ -978,8 +978,8 @@ pub fn download_stream(
         http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
         proxy_url: owned_proxy,
-        // SAFETY: callers always pass a non-null context (Box-allocated wrapper).
-        callback_context: unsafe { NonNull::new_unchecked(callback_context.cast::<()>()) },
+        callback_context: NonNull::new(callback_context.cast::<()>())
+            .expect("callers always pass a non-null Box-allocated context"),
         callback,
         range: range.map(Vec::into_boxed_slice),
         headers,
@@ -1105,15 +1105,15 @@ pub fn readable_stream(
                     }
                     if has_more {
                         bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
-                            // SAFETY: chunk.list is borrowed for the duration of on_data.
-                            unsafe { Vec::<u8>::from_borrowed_slice_dangerous(chunk.list.as_slice()) },
+                            // chunk.list is borrowed for the duration of on_data.
+                            bun_ptr::RawSlice::new(chunk.list.as_slice()),
                         ))?;
                         return Ok(());
                     }
 
                     bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-                        // SAFETY: chunk.list is borrowed for the duration of on_data.
-                        unsafe { Vec::<u8>::from_borrowed_slice_dangerous(chunk.list.as_slice()) },
+                        // chunk.list is borrowed for the duration of on_data.
+                        bun_ptr::RawSlice::new(chunk.list.as_slice()),
                     ))?;
                     return Ok(());
                 }
@@ -1152,7 +1152,7 @@ pub fn readable_stream(
             opaque_self: *mut c_void,
         ) {
             // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
-            let self_: &mut Self = unsafe { &mut *opaque_self.cast::<Self>() };
+            let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
             let _ = Self::callback(chunk, has_more, err, self_); // TODO: properly propagate exception upwards
         }
     }

@@ -354,8 +354,7 @@ impl UpgradedDuplex {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
             unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
         });
-        // SAFETY: contract — caller passes a non-null SSL_CTX* with one adopted ref.
-        let ctx_nn = unsafe { NonNull::new_unchecked(ctx) };
+        let ctx_nn = NonNull::new(ctx).expect("caller passes a non-null SSL_CTX* with one adopted ref");
         self.wrapper = Some(WrapperType::init_with_ctx(
             ctx_nn,
             is_client,
@@ -532,7 +531,7 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { &mut *self_ptr.cast::<UpgradedDuplex>() };
+        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         if args.len >= 1 {
             let data_arg = args.ptr[0];
             if this.origin.has() {
@@ -567,7 +566,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { &mut *self_ptr.cast::<UpgradedDuplex>() };
+        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
 
         if this.wrapper.is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
@@ -584,7 +583,7 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { &mut *self_ptr.cast::<UpgradedDuplex>() };
+        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         // flush pending data
         if let Some(wrapper) = &mut this.wrapper {
             let _ = wrapper.flush();
@@ -604,7 +603,7 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { &mut *self_ptr.cast::<UpgradedDuplex>() };
+        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         // flush pending data
         if let Some(wrapper) = &mut this.wrapper {
             let _ = wrapper.shutdown(true);

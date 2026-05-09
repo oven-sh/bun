@@ -505,8 +505,7 @@ impl BunxCommand {
         let mut opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
-        // SAFETY: `ctx.log` is set during `create_context_data` (process-lifetime).
-        let ctx_log = unsafe { &mut *ctx.log };
+        let ctx_log = ctx.log_mut();
         let update_requests = UpdateRequest::parse(
             None,
             ctx_log,

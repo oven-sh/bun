@@ -1242,15 +1242,17 @@ pub use self::js_promise::Unwrapped as PromiseResult;
 // `ZigString` → JS bridges used by the `ZigStringJsc` extension trait below
 // (the rest of the `JSGlobalObject` extern surface lives in `JSGlobalObject.rs`).
 unsafe extern "C" {
-    fn ZigString__toErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toTypeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toSyntaxErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toRangeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toDOMExceptionInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject, code: u8) -> JSValue;
-    fn ZigString__toValueGC(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toAtomicValue(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toExternalValue(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toJSONObject(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    // safe: `ZigString` is `#[repr(C)]` and read-only across the call; `JSGlobalObject` is an
+    // opaque `UnsafeCell`-backed ZST handle. `&T` is ABI-identical to a non-null `*const T`.
+    safe fn ZigString__toErrorInstance(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
+    safe fn ZigString__toTypeErrorInstance(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
+    safe fn ZigString__toSyntaxErrorInstance(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
+    safe fn ZigString__toRangeErrorInstance(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
+    safe fn ZigString__toDOMExceptionInstance(this: &bun_string::ZigString, global: &JSGlobalObject, code: u8) -> JSValue;
+    safe fn ZigString__toValueGC(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
+    safe fn ZigString__toAtomicValue(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
+    safe fn ZigString__toExternalValue(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
+    safe fn ZigString__toJSONObject(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
     fn ZigString__external(
         this: *const bun_string::ZigString,
         global: *const JSGlobalObject,
@@ -1723,40 +1725,33 @@ pub trait ZigStringJsc: Sized {
 }
 impl ZigStringJsc for bun_string::ZigString {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `self` is borrowed for the call; `global` is live.
-        unsafe { ZigString__toErrorInstance(self, global) }
+        ZigString__toErrorInstance(self, global)
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `self` is borrowed for the call; `global` is live.
-        unsafe { ZigString__toTypeErrorInstance(self, global) }
+        ZigString__toTypeErrorInstance(self, global)
     }
     #[inline]
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-        unsafe { ZigString__toSyntaxErrorInstance(self, global) }
+        ZigString__toSyntaxErrorInstance(self, global)
     }
     #[inline]
     fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-        unsafe { ZigString__toRangeErrorInstance(self, global) }
+        ZigString__toRangeErrorInstance(self, global)
     }
     #[inline]
     fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode) -> JSValue {
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live; `code` is a plain u8 discriminant.
-        unsafe { ZigString__toDOMExceptionInstance(self, global, code as u8) }
+        ZigString__toDOMExceptionInstance(self, global, code as u8)
     }
     #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         if self.is_globally_allocated() {
             return self.to_external_value(global);
         }
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-        unsafe { ZigString__toValueGC(self, global) }
+        ZigString__toValueGC(self, global)
     }
     #[inline]
     fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-        unsafe { ZigString__toAtomicValue(self, global) }
+        ZigString__toAtomicValue(self, global)
     }
     #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
@@ -1775,13 +1770,11 @@ impl ZigStringJsc for bun_string::ZigString {
                 .throw();
             return JSValue::ZERO;
         }
-        // SAFETY: `self` points to globally-allocated bytes; ownership transferred to JSC.
-        unsafe { ZigString__toExternalValue(self, global) }
+        ZigString__toExternalValue(self, global)
     }
     #[inline]
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-        unsafe { ZigString__toJSONObject(self, global) }
+        ZigString__toJSONObject(self, global)
     }
     #[inline]
     fn external(
@@ -1990,7 +1983,7 @@ where
     // TODO(port): Zig used `comptime Function: fn(*Context) void` as a value param.
     unsafe extern "C" fn callback<Context, F: FnTyped<Context>>(ctx: *mut c_void) {
         // SAFETY: caller guarantees ctx is a valid *mut Context.
-        let context: &mut Context = unsafe { &mut *ctx.cast::<Context>() };
+        let context: &mut Context = unsafe { bun_ptr::callback_ctx::<Context>(ctx) };
         F::call(context);
     }
     callback::<Context, F>

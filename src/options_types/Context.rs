@@ -109,6 +109,52 @@ impl ContextData {
         unsafe { &mut *self.log }
     }
 
+    /// Safe accessor for the process-lifetime CLI `Log`.
+    ///
+    /// `self.log` is the `*mut logger::Log` written exactly once by
+    /// `create_context_data()` during single-threaded CLI startup, pointing at
+    /// the static `Cli::LOG_` storage. CLI command bodies are single-threaded
+    /// and never hold two `&mut Log` simultaneously — the same invariant every
+    /// prior `unsafe { &mut *ctx.log }` call site relied on. Other subsystems
+    /// that copy the same `*mut Log` (transpiler, install) reborrow it via
+    /// their own raw-pointer accessors and never hold a live `&mut Log` across
+    /// a call back into a CLI body. Centralizing the deref here removes ~20
+    /// identical `unsafe` blocks.
+    ///
+    /// Takes `&self` (not `&mut self`) because several CLI entry points hold
+    /// `&Context<'_>` (= `&&mut ContextData`) and the `&mut self` receiver
+    /// could not prove exclusivity over the `Log` anyway — the pointer is
+    /// aliased outside `ContextData` (see `Transpiler::log_mut`,
+    /// `PackageManager::log_mut`, which use the same `&self → &mut Log`
+    /// pattern). The returned borrow's lifetime is tied to `&self` so callers
+    /// still cannot statically interleave two `log_mut()` results from the
+    /// same `&ContextData`.
+    ///
+    /// # Panics
+    /// If `self.log` is null (i.e. `create_context_data()` has not run).
+    #[track_caller]
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn log_mut(&self) -> &mut logger::Log {
+        assert!(!self.log.is_null(), "ContextData::log_mut() before create_context_data()");
+        // SAFETY: `self.log` is non-null (asserted) and points at the
+        // process-static `Cli::LOG_` (`'static`); CLI dispatch is
+        // single-threaded and callers do not hold an overlapping `&mut Log`
+        // — the same contract as the open-coded `unsafe { &mut *ctx.log }`
+        // this accessor replaces.
+        unsafe { &mut *self.log }
+    }
+
+    /// Shared-ref counterpart of [`log_mut`] for read-only inspection
+    /// (`has_errors()`, `print()`).
+    #[track_caller]
+    #[inline]
+    pub fn log_ref(&self) -> &logger::Log {
+        assert!(!self.log.is_null(), "ContextData::log_ref() before create_context_data()");
+        // SAFETY: see `log_mut`; shared `&` aliases freely.
+        unsafe { &*self.log }
+    }
+
     /// `Arguments.parse` lives in `cli/`; forward-aliased so
     /// `Command::ContextData::create(...)` keeps working.
     // TODO(port): Zig was `pub const create = bun.cli.Command.createContextData;`

@@ -1103,8 +1103,7 @@ pub mod store {
         #[inline]
         fn from(b: Box<Store>) -> Self {
             // `Store::new` initializes `ref_count` to 1 — adopt that +1.
-            // SAFETY: `heap::alloc` never returns null.
-            Self { ptr: unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(b)) } }
+            Self { ptr: bun_core::heap::into_raw_nn(b) }
         }
     }
 

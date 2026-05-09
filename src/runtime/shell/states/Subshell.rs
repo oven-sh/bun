@@ -10,7 +10,7 @@ use crate::shell::ExitCode;
 
 pub struct Subshell {
     pub base: Base,
-    pub node: *const ast::Subshell,
+    pub node: bun_ptr::BackRef<ast::Subshell>,
     pub io: IO,
     pub state: SubshellState,
     pub exit_code: ExitCode,
@@ -33,13 +33,13 @@ impl Subshell {
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Subshell,
+        node: &ast::Subshell,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Subshell(Subshell {
             base: Base::new(StateKind::Subshell, parent, shell),
-            node,
+            node: bun_ptr::BackRef::new(node),
             io,
             state: SubshellState::Idle,
             exit_code: 0,
@@ -52,7 +52,7 @@ impl Subshell {
     pub fn init_dupe_shell_state(
         interp: &mut Interpreter,
         parent_shell: *mut ShellExecEnv,
-        node: *const ast::Subshell,
+        node: &ast::Subshell,
         parent: NodeId,
         io: IO,
     ) -> bun_sys::Result<NodeId> {
@@ -81,9 +81,7 @@ impl Subshell {
                     let me = interp.as_subshell(this);
                     (me.base.shell, me.io.clone(), me.node)
                 };
-                // SAFETY: `node` points into the AST arena which outlives every
-                // state node.
-                let script_node: *const ast::Script = unsafe { &raw const (*node).script };
+                let script_node: *const ast::Script = &node.get().script;
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
                 // TODO(b2-blocked): apply `(*node).redirect` / `redirect_flags`
                 // to `io` once IOWriter redirect open is wired.

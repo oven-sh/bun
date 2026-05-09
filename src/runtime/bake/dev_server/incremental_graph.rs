@@ -309,7 +309,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Server => offset_of!(DevServer, server_graph),
         };
         // SAFETY: `self` is the `<side>_graph` field of `DevServer`.
-        unsafe { std::ptr::from_mut::<Self>(self).cast::<u8>().sub(offset).cast::<DevServer>() }
+        unsafe { bun_core::container_of::<DevServer, Self>(std::ptr::from_mut(self), offset) }
+    }
+
+    /// Safe sibling-projection: borrow the owning [`DevServer`]'s
+    /// `incremental_result` while holding `&mut self`. The two fields are
+    /// disjoint, so the returned `&mut` does not alias `self`.
+    #[inline]
+    fn dev_incremental_result(&mut self) -> &mut super::IncrementalResult {
+        // SAFETY: `owner()` recovers the heap-allocated `DevServer`;
+        // `incremental_result` is field-disjoint from both `client_graph` and
+        // `server_graph`, so the returned borrow and `&mut self` cover
+        // non-overlapping memory.
+        unsafe { &mut (*self.owner()).incremental_result }
     }
 
     /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.
@@ -843,8 +855,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // '.seen = false' means an import was removed and should be freed.
         for val in &quick_lookup.values()[0..quick_lookup_values_to_care_len] {
             if !val.seen {
-                // SAFETY: sibling-field access via `owner()`.
-                unsafe { (*self.owner()).incremental_result.had_adjusted_edges = true };
+                self.dev_incremental_result().had_adjusted_edges = true;
                 self.disconnect_edge_from_dependency_list(val.edge_index);
                 self.free_edge(val.edge_index);
             }
@@ -1006,8 +1017,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             *new_imports = Some(edge);
             self.first_dep[imported_file_index.get() as usize] = Some(edge);
 
-            // SAFETY: sibling-field access via `owner()`.
-            unsafe { (*self.owner()).incremental_result.had_adjusted_edges = true };
+            self.dev_incremental_result().had_adjusted_edges = true;
 
             *gop.value_ptr = TempLookup { edge_index: edge, seen: true };
         }

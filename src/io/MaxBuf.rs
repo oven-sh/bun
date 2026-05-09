@@ -27,13 +27,11 @@ impl MaxBuf {
             *ptr = None;
             return;
         };
-        let maxbuf = bun_core::heap::into_raw(Box::new(MaxBuf {
+        *ptr = Some(bun_core::heap::into_raw_nn(Box::new(MaxBuf {
             owned_by_subprocess: true,
             owned_by_reader: false,
             remaining_bytes: initial,
-        }));
-        // SAFETY: heap::alloc never returns null.
-        *ptr = Some(unsafe { NonNull::new_unchecked(maxbuf) });
+        })));
     }
 
     fn disowned(&self) -> bool {

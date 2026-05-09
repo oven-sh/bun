@@ -154,8 +154,7 @@ impl SpawnSyncEventLoop {
         // The Rust wrapper takes a `LoopHandler` impl with associated-const fn ptrs.
         let loop_ = uws::Loop::create::<handler::Handler>();
 
-        // SAFETY: `Loop::create` never returns null (asserts on OOM in uws).
-        let loop_ = unsafe { NonNull::new_unchecked(loop_) };
+        let loop_ = NonNull::new(loop_).expect("uws::Loop::create never returns null (asserts on OOM)");
 
         // Initialize the JSC EventLoop with empty state.
         // CRITICAL: On Windows, the impl stores our isolated loop pointer in `uws_loop`.
@@ -285,9 +284,10 @@ impl SpawnSyncEventLoop {
         #[cfg(unix)]
         let new_handle: VmEventLoopHandle = Some(self.uws_loop);
         #[cfg(windows)]
-        // SAFETY: `uv_loop` is set by C `us_create_loop` and non-null for the loop's lifetime.
-        let new_handle: VmEventLoopHandle =
-            Some(unsafe { NonNull::new_unchecked(self.uws_loop().uv_loop) });
+        let new_handle: VmEventLoopHandle = Some(
+            NonNull::new(self.uws_loop().uv_loop)
+                .expect("uv_loop is set by us_create_loop for the loop's lifetime"),
+        );
         // SAFETY: `vm` is the live per-thread VM.
         unsafe { __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle) };
     }
@@ -357,11 +357,10 @@ impl SpawnSyncEventLoop {
             Some(t) => t,
             None => 'brk: {
                 let uv_timer: Box<libuv::Timer> = Box::new(bun_core::ffi::zeroed());
-                let uv_timer = bun_core::heap::into_raw(uv_timer);
+                let uv_timer = bun_core::heap::into_raw_nn(uv_timer);
                 // SAFETY: uv_timer just allocated; `uv_loop` is set by C `us_create_loop`.
-                unsafe { (*uv_timer).init(self.uws_loop().uv_loop) };
-                // SAFETY: heap::alloc never returns null.
-                break 'brk unsafe { NonNull::new_unchecked(uv_timer) };
+                unsafe { (*uv_timer.as_ptr()).init(self.uws_loop().uv_loop) };
+                break 'brk uv_timer;
             }
         };
 

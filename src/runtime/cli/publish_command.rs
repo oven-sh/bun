@@ -599,8 +599,7 @@ impl PublishCommand {
                 "\n<green> +<r> {}@{}{}",
                 bstr::BStr::new(&context.package_name),
                 bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-                // SAFETY: `manager_ptr` is the same process-lifetime singleton.
-                if unsafe { &*manager_ptr }.options.dry_run { " (dry-run)" } else { "" },
+                if PackageManager::get().options.dry_run { " (dry-run)" } else { "" },
             ));
 
             return Ok(());
@@ -655,16 +654,13 @@ impl PublishCommand {
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
             bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-            // SAFETY: `manager_ptr` is the same process-lifetime singleton.
-            if unsafe { &*manager_ptr }.options.dry_run { " (dry-run)" } else { "" },
+            if PackageManager::get().options.dry_run { " (dry-run)" } else { "" },
         ));
 
-        // SAFETY: `manager_ptr` is the same process-lifetime singleton.
-        if unsafe { &*manager_ptr }.options.do_.contains(install::PackageManagerDoStub::RUN_SCRIPTS) {
+        if PackageManager::get().options.do_.contains(install::PackageManagerDoStub::RUN_SCRIPTS) {
             let abs_workspace_path: Box<[u8]> = strings::without_trailing_slash(
                 strings::without_suffix_comptime(
-                    // SAFETY: `manager_ptr` is the same process-lifetime singleton.
-                    unsafe { &*manager_ptr }.original_package_json_path.as_bytes(),
+                    PackageManager::get().original_package_json_path.as_bytes(),
                     b"package.json",
                 ),
             ).into();

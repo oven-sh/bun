@@ -380,8 +380,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // outlives this call frame.
     let jsc_vm: &mut jsc::VirtualMachineRef = global_this.bun_vm().as_mut();
 
-    // SAFETY: `transpiler.fs` is the singleton `FileSystem` instance, valid for VM lifetime.
-    let mut cwd: &[u8] = unsafe { (*jsc_vm.transpiler.fs).top_level_dir };
+    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
 

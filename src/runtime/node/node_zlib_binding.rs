@@ -903,13 +903,9 @@ macro_rules! __impl_compression_stream {
             #[inline]
             unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {
                 // SAFETY: `task` points at the `task` field of a live `Self`
-                // (Zig `@fieldParentPtr("task", task)`); offset_of yields the
-                // byte offset within `Self`.
-                unsafe {
-                    task.cast::<u8>()
-                        .sub(::core::mem::offset_of!(Self, task))
-                        .cast::<Self>()
-                }
+                // (Zig `@fieldParentPtr("task", task)`); `from_field_ptr!`
+                // computes the byte offset via `offset_of!(Self, task)`.
+                unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
             }
 
             #[inline] fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }

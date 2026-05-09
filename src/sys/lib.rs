@@ -6396,7 +6396,7 @@ pub mod elf {
             data: *mut c_void,
         ) -> c_int {
             // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
-            let context = unsafe { &mut *data.cast::<Ctx>() };
+            let context = unsafe { bun_core::callback_ctx::<Ctx>(data) };
             // SAFETY: dl_iterate_phdr passes a valid info pointer.
             let info = unsafe { &*info };
             // The base address is too high
@@ -7623,6 +7623,20 @@ const _: () = {
         >= core::mem::align_of::<SysQuietWriterAdapter>());
 };
 
+impl SysQuietWriterAdapter {
+    /// View of the bytes buffered so far (`buf[0..pos]`). Centralises the
+    /// (ptr, len) → slice reconstruction; the buffer is owned by the adapter
+    /// and lives for `&self`.
+    #[inline]
+    fn buffered(&self) -> &[u8] {
+        // SAFETY: `buf` is a `cap`-byte allocation owned by this adapter (set
+        // at construction); `pos <= cap` is upheld by `adapter_write_all`
+        // (drains before writing past `cap`). Bytes `[0, pos)` were written by
+        // `copy_nonoverlapping` and are initialized. Borrow tied to `&self`.
+        unsafe { core::slice::from_raw_parts(self.buf, self.pos) }
+    }
+}
+
 unsafe fn adapter_write_all(w: *mut bun_core::io::Writer, bytes: &[u8])
     -> core::result::Result<(), bun_core::Error>
 {
@@ -7635,8 +7649,7 @@ unsafe fn adapter_write_all(w: *mut bun_core::io::Writer, bytes: &[u8])
     if this.pos + bytes.len() > this.cap {
         // Drain buffered bytes first.
         if this.pos > 0 {
-            let buffered = unsafe { core::slice::from_raw_parts(this.buf, this.pos) };
-            let _ = fd_write_all_quiet(this.fd, buffered);
+            let _ = fd_write_all_quiet(this.fd, this.buffered());
             this.pos = 0;
         }
         // Large writes bypass the buffer so the next small write still coalesces.
@@ -7657,8 +7670,7 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer)
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.pos > 0 {
-        let buffered = unsafe { core::slice::from_raw_parts(this.buf, this.pos) };
-        let _ = fd_write_all_quiet(this.fd, buffered);
+        let _ = fd_write_all_quiet(this.fd, this.buffered());
         this.pos = 0;
     }
     Ok(())

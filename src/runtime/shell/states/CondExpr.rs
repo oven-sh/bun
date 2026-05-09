@@ -10,7 +10,7 @@ use crate::shell::ExitCode;
 
 pub struct CondExpr {
     pub base: Base,
-    pub node: *const ast::CondExpr,
+    pub node: bun_ptr::BackRef<ast::CondExpr>,
     pub io: IO,
     pub state: CondExprState,
     pub args: Vec<Vec<u8>>,
@@ -30,13 +30,13 @@ impl CondExpr {
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::CondExpr,
+        node: &ast::CondExpr,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::CondExpr(CondExpr {
             base: Base::new(StateKind::Condexpr, parent, shell),
-            node,
+            node: bun_ptr::BackRef::new(node),
             io,
             state: CondExprState::Idle,
             args: Vec::new(),
@@ -55,9 +55,7 @@ impl CondExpr {
                 let me = interp.as_condexpr(this);
                 (me.base.shell, me.node)
             };
-            // SAFETY: `node` points into the AST arena which outlives every
-            // state node.
-            let n = unsafe { &*node };
+            let n = node.get();
             match interp.as_condexpr(this).state {
                 CondExprState::Idle => {
                     interp.as_condexpr_mut(this).state = CondExprState::ExpandingArgs { idx: 0 };
@@ -221,8 +219,7 @@ impl CondExpr {
             interp.as_condexpr(this).state,
             CondExprState::WaitingStat
         ));
-        // SAFETY: `node` points into the AST arena which outlives this node.
-        let op = unsafe { (*interp.as_condexpr(this).node).op };
+        let op = interp.as_condexpr(this).node.op;
         let exit = match stat {
             Err(_) => 1,
             Ok(st) => {

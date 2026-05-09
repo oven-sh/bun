@@ -130,7 +130,7 @@ impl FileCloser for WriteFile {
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut WriteFile` set below.
-            let this = unsafe { &mut *ctx.cast::<WriteFile>() };
+            let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
         // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
@@ -179,7 +179,7 @@ impl WriteFile {
     pub fn on_io_error(this: *mut (), err: sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
-        let this = unsafe { &mut *this.cast::<WriteFile>() };
+        let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
         this.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
@@ -868,7 +868,7 @@ mod windows_impl {
         fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
             // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
             // by `mkdirp` above; sole owner on this concurrent path.
-            let this = unsafe { &mut *ctx.cast::<WriteFileWindows>() };
+            let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
             bun_output::scoped_log!(WriteFile, "mkdirp complete");
             debug_assert!(this.err.is_none());
             this.err = match err_ {
@@ -1121,9 +1121,8 @@ impl WriteFileWaitFromLockedValueTask {
     ) -> Result<(), JsTerminated> {
         // SAFETY: this is a Box-allocated task (see Blob.zig:1581).
         let this_ref = unsafe { &mut *this };
-        // SAFETY: sole `&mut JSPromise` borrow in this scope; `get()` returns a
-        // GC-owned cell, valid past `heap::take(this)`.
-        let promise: *mut JSPromise = unsafe { this_ref.promise.get() };
+        // `get()` returns a GC-owned cell, valid past `heap::take(this)`.
+        let promise: *mut JSPromise = this_ref.promise.get();
         // SAFETY: `global_this` was set from a live `&JSGlobalObject` when this
         // task was scheduled; the global outlives every `Body::Value` callback.
         let global_this = unsafe { &*this_ref.global_this };

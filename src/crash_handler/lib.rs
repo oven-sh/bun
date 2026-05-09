@@ -2637,7 +2637,7 @@ pub fn append_pre_crash_handler<T: 'static>(
     let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
         // SAFETY: `opaque_ptr` is the `ptr.cast()` stored below; it was a valid *mut T
         // when registered and remove_pre_crash_handler() unregisters it before drop.
-        let this = unsafe { &mut *opaque_ptr.cast::<T>() };
+        let this = unsafe { bun_ptr::callback_ctx::<T>(opaque_ptr) };
         let _ = handler(this);
     });
 

@@ -675,22 +675,22 @@ impl AnyRoute {
                 }
             }
 
-            // SAFETY: init_from_blob returns a freshly heap-allocated FileRoute (rc=1).
-            return Ok(AnyRoute::File(unsafe {
-                NonNull::new_unchecked(FileRoute::init_from_blob(
+            return Ok(AnyRoute::File(
+                NonNull::new(FileRoute::init_from_blob(
                     blob,
                     super::file_route::InitOptions { server: None, status_code: 200, headers },
                 ))
-            }));
+                .expect("FileRoute::init_from_blob returns a fresh heap allocation"),
+            ));
         }
 
-        // SAFETY: init_from_any_blob returns a freshly heap-allocated StaticRoute (rc=1).
-        Ok(AnyRoute::Static(unsafe {
-            NonNull::new_unchecked(StaticRoute::init_from_any_blob(
+        Ok(AnyRoute::Static(
+            NonNull::new(StaticRoute::init_from_any_blob(
                 AnyBlob::Blob(blob),
                 super::static_route::InitFromBytesOptions { server: None, headers, ..Default::default() },
             ))
-        }))
+            .expect("StaticRoute::init_from_any_blob returns a fresh heap allocation"),
+        ))
     }
 
     pub fn html_route_from_js(
@@ -795,12 +795,14 @@ impl AnyRoute {
         }
 
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
-            // SAFETY: from_js returns a freshly heap-allocated FileRoute (rc=1).
-            return Ok(Some(AnyRoute::File(unsafe { NonNull::new_unchecked(file_route) })));
+            return Ok(Some(AnyRoute::File(
+                NonNull::new(file_route).expect("FileRoute::from_js returns a fresh heap allocation"),
+            )));
         }
         match StaticRoute::from_js(global, argument)? {
-            // SAFETY: from_js returns a freshly heap-allocated StaticRoute (rc=1).
-            Some(s) => Ok(Some(AnyRoute::Static(unsafe { NonNull::new_unchecked(s) }))),
+            Some(s) => Ok(Some(AnyRoute::Static(
+                NonNull::new(s).expect("StaticRoute::from_js returns a fresh heap allocation"),
+            ))),
             None => Ok(None),
         }
     }

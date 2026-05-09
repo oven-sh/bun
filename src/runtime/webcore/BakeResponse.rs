@@ -84,8 +84,7 @@ pub fn constructor(
         *bake_ssr_has_jsx = 0;
         if arguments[0].is_jsx_element(global_this)? {
             let vm = global_this.bun_vm().as_mut();
-            // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-            if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
+            if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
                 assert_streaming_disabled(
                     global_this,
                     async_local_storage,
@@ -118,8 +117,7 @@ pub fn construct_redirect(
 
     let vm = global_this.bun_vm().as_mut();
     // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
-    // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-    if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
+    if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
         assert_streaming_disabled(global_this, async_local_storage, b"Response.redirect")?;
         // Ownership of the allocation transfers to the JS wrapper.
         let ptr = bun_core::heap::into_raw(response);
@@ -154,8 +152,7 @@ pub fn construct_render(
     let vm = global_this.bun_vm().as_mut();
 
     // Check if dev server async local_storage is set
-    // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-    let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? else {
+    let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? else {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "Response.render() is only available in the Bun dev server"
         )));

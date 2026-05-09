@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use core::cell::Cell;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
@@ -135,16 +136,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     install_peer: bool,
     log_level: Options::LogLevel,
 ) -> Result<(), bun_core::Error> {
-    let mut has_updated_this_run = false;
+    // `Cell<bool>` so the `scopeguard::defer!` below can read it via `&self`
+    // while the loop body sets it — no raw-ptr provenance dance needed.
+    let has_updated_this_run = Cell::new(false);
     let mut has_network_error = false;
 
     let mut timestamp_this_tick: Option<u32> = None;
 
     // Zig: `defer { manager.drainDependencyList(); ... progress update ... }`
-    // PORT NOTE: scopeguard captures `manager` / `has_updated_this_run` via raw
-    // pointers because the loop body holds `&mut` to both for the function's
-    // duration. The guard runs on every exit (incl. `?` early-returns), matching
-    // Zig `defer` semantics.
+    // PORT NOTE: scopeguard captures `manager` via raw pointer because the loop
+    // body holds `&mut` to it for the function's duration; `has_updated_this_run`
+    // is a `Cell<bool>` so the guard captures it by shared ref. The guard runs
+    // on every exit (incl. `?` early-returns), matching Zig `defer` semantics.
     //
     // Stacked Borrows: the raw pointers must remain the provenance root for all
     // body accesses, otherwise the first direct use of the `&mut` fn params
@@ -159,18 +162,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // for the body. Dropped before the guards reborrow the same pointers.
     let manager = unsafe { &mut *manager_ptr };
     let extract_ctx = unsafe { &mut *extract_ctx_ptr };
-    let has_updated_ptr: *mut bool = &raw mut has_updated_this_run;
-    // SAFETY: same shadow-reborrow as `manager`/`extract_ctx` above — every body
-    // write goes through this `&mut` so `has_updated_ptr` keeps provenance for
-    // the guard's read.
-    let has_updated_this_run = unsafe { &mut *has_updated_ptr };
     scopeguard::defer! {
-        // SAFETY: guard drops after every body borrow of `manager` /
-        // `has_updated_this_run` has ended (scope exit or `?` unwind);
-        // `manager_ptr` / `has_updated_ptr` retain provenance because the body
-        // only ever accessed those allocations through reborrows of them.
+        // SAFETY: guard drops after every body borrow of `manager` has ended
+        // (scope exit or `?` unwind); `manager_ptr` retains provenance because
+        // the body only ever accessed that allocation through reborrows of it.
         let manager = unsafe { &mut *manager_ptr };
-        let has_updated_this_run = unsafe { *has_updated_ptr };
         manager.drain_dependency_list();
 
         if log_level.show_progress() {
@@ -182,7 +178,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // points into `manager.progress` which is live.
                 let node = manager.downloads_node_mut();
                 if completed_items != node.unprotected_completed_items.load(Ordering::Relaxed)
-                    || has_updated_this_run
+                    || has_updated_this_run.get()
                 {
                     node.set_completed_items(completed_items);
                     node.set_estimated_total_items(manager.total_tasks as usize);
@@ -368,13 +364,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let name = unsafe { bun_ptr::detach_lifetime(name.slice()) };
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
-                    if !*has_updated_this_run {
+                    if !has_updated_this_run.get() {
                         manager.set_node_name::<true>(
                             manager.downloads_node_mut(),
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
-                        *has_updated_this_run = true;
+                        has_updated_this_run.set(true);
                     }
                 }
 
@@ -892,13 +888,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.show_progress() {
-                    if !*has_updated_this_run {
+                    if !has_updated_this_run.get() {
                         manager.set_node_name::<true>(
                             manager.downloads_node_mut(),
                             extract.name.slice(),
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                             );
-                        *has_updated_this_run = true;
+                        has_updated_this_run.set(true);
                     }
                 }
 
@@ -957,9 +953,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // PORT NOTE: capture the `*mut NetworkTask` up front — the
                 // `&'a mut NetworkTask` field can't be moved out through
                 // `ManuallyDrop`'s immutable `Deref` inside the defer body.
-                // SAFETY: `task.tag == PackageManifest` — active union arm.
                 let net_ptr: *mut NetworkTask = {
-                    let req = unsafe { &mut *task.request.package_manifest };
+                    let req = task.request_package_manifest_mut();
                     &raw mut *req.network
                 };
                 scopeguard::defer! {
@@ -971,8 +966,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 };
                 if task.status == Task::Status::Fail {
-                    // SAFETY: `task.tag == PackageManifest` — active union arm.
-                    let req = unsafe { &*task.request.package_manifest };
+                    let req = task.request_package_manifest();
                     let name = req.name.slice();
                     let err = task.err.unwrap_or(bun_core::err!("Failed"));
 
@@ -997,9 +991,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     continue;
                 }
-                // SAFETY: `task.tag == PackageManifest` — `data.package_manifest`
-                // is the active union arm.
-                let manifest: &npm::PackageManifest = unsafe { &task.data.package_manifest };
+                let manifest: &npm::PackageManifest = task.data_package_manifest();
 
                 manager.manifests.insert(manifest.pkg.name.hash, manifest)?;
 
@@ -1013,13 +1005,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 process_dependency_list_for_ctx::<C>(manager, dependency_list, extract_ctx, install_peer)?;
 
                 if log_level.show_progress() {
-                    if !*has_updated_this_run {
+                    if !has_updated_this_run.get() {
                         manager.set_node_name::<true>(
                             manager.downloads_node_mut(),
                             manifest.name(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
-                        *has_updated_this_run = true;
+                        has_updated_this_run.set(true);
                     }
                 }
             }
@@ -1029,8 +1021,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // Extract arm) so the defer body need not move the `&mut` out
                 // through `ManuallyDrop`'s immutable `Deref`.
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
-                    // SAFETY: `task.tag == Extract` — active union arm.
-                    let req = unsafe { &mut *task.request.extract };
+                    let req = task.request_extract_mut();
                     &raw mut *req.network
                 } else {
                     core::ptr::null_mut()
@@ -1162,7 +1153,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
-                        let mut any_root = false;
+                        let any_root = Cell::new(false);
                         let dependency_list: TaskCallbackList = {
                             let Some(entry) = manager.task_queue.get_mut(&task.id) else {
                                 break 'handle_pkg;
@@ -1173,15 +1164,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
                         // `dependency_list` is a Drop type (frees on every path); only the
                         // `on_resolve` side-effect needs the guard so it fires on `?` too.
-                        let any_root_ptr: *mut bool = &raw mut any_root;
-                        // SAFETY: shadow-reborrow so the loop body's `&mut` is a child
-                        // of `any_root_ptr` and the guard's read keeps provenance.
-                        let any_root = unsafe { &mut *any_root_ptr };
                         scopeguard::defer! {
-                            // SAFETY: `any_root_ptr` outlives this labeled block and the
-                            // body only touches it via the shadow above; `extract_ctx_ptr`
-                            // is the function-scope provenance root for `extract_ctx`.
-                            if C::HAS_ON_RESOLVE && unsafe { *any_root_ptr } {
+                            // SAFETY: `extract_ctx_ptr` is the function-scope provenance
+                            // root for `extract_ctx`.
+                            if C::HAS_ON_RESOLVE && any_root.get() {
                                 C::on_resolve(unsafe { &mut *extract_ctx_ptr });
                             }
                         };
@@ -1210,7 +1196,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     }
                                     manager.process_dependency_list_item(
                                         dep,
-                                        Some(&mut *any_root),
+                                        Some(&any_root),
                                         install_peer,
                                     )?;
                                 }
@@ -1248,21 +1234,19 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
 
                 if log_level.show_progress() {
-                    if !*has_updated_this_run {
+                    if !has_updated_this_run.get() {
                         manager.set_node_name::<true>(
                             manager.downloads_node_mut(),
                             alias,
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                             );
-                        *has_updated_this_run = true;
+                        has_updated_this_run.set(true);
                     }
                 }
             }
             Task::Tag::GitClone => {
-                // SAFETY: `task.tag == GitClone` — `request.git_clone` /
-                // `data.git_clone` are the active union arms.
-                let clone = unsafe { &*task.request.git_clone };
-                let repo_fd: bun_sys::Fd = unsafe { *task.data.git_clone };
+                let clone = task.request_git_clone();
+                let repo_fd: bun_sys::Fd = task.data_git_clone();
                 let name = clone.name.slice();
                 let url = clone.url.slice();
 
@@ -1424,13 +1408,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.show_progress() {
-                    if !*has_updated_this_run {
+                    if !has_updated_this_run.get() {
                         manager.set_node_name::<true>(
                             manager.downloads_node_mut(),
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
-                        *has_updated_this_run = true;
+                        has_updated_this_run.set(true);
                     }
                 }
             }
@@ -1505,7 +1489,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     log_level,
                 ) {
                     'handle_pkg: {
-                        let mut any_root = false;
+                        let any_root = Cell::new(false);
                         let dependency_list: TaskCallbackList = {
                             let Some(entry) = manager.task_queue.get_mut(&task.id) else {
                                 break 'handle_pkg;
@@ -1514,15 +1498,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
-                        let any_root_ptr: *mut bool = &raw mut any_root;
-                        // SAFETY: shadow-reborrow so the loop body's `&mut` is a child
-                        // of `any_root_ptr` and the guard's read keeps provenance.
-                        let any_root = unsafe { &mut *any_root_ptr };
                         scopeguard::defer! {
-                            // SAFETY: see Extract arm resolve `defer!` — `any_root_ptr`
-                            // accessed only via the shadow; `extract_ctx_ptr` is the
-                            // function-scope provenance root for `extract_ctx`.
-                            if C::HAS_ON_RESOLVE && unsafe { *any_root_ptr } {
+                            // SAFETY: `extract_ctx_ptr` is the function-scope provenance
+                            // root for `extract_ctx`.
+                            if C::HAS_ON_RESOLVE && any_root.get() {
                                 C::on_resolve(unsafe { &mut *extract_ctx_ptr });
                             }
                         };
@@ -1546,7 +1525,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     repo.package_name = pkg.name;
                                     manager.process_dependency_list_item(
                                         dep,
-                                        Some(&mut *any_root),
+                                        Some(&any_root),
                                         install_peer,
                                     )?;
                                 }
@@ -1568,13 +1547,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 if log_level.show_progress() {
-                    if !*has_updated_this_run {
+                    if !has_updated_this_run.get() {
                         manager.set_node_name::<true>(
                             manager.downloads_node_mut(),
                             alias.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
-                        *has_updated_this_run = true;
+                        has_updated_this_run.set(true);
                     }
                 }
             }

@@ -1456,9 +1456,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 };
                 #[cfg(not(windows))]
-                // SAFETY: bun_vm() returns the live thread-local VM pointer; `transpiler.fs`
-                // is a raw `*mut FileSystem` set during init.
-                let cwd = unsafe { (*global_this.bun_vm().as_mut().transpiler.fs).top_level_dir };
+                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 let main = global_this.bun_vm().as_mut().main();
@@ -1702,16 +1700,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `self.sync_error_buf` for path-variant inputs, so a fresh `NodeFS`
             // is sufficient here.
             let mut node_fs = node::fs::NodeFS::default();
-            let res = node_fs.read_file(
-                &node::fs::args::ReadFile {
-                    encoding: Encoding::Buffer,
-                    path: PathOrFileDescriptor::Fd(opened_fd),
-                    offset: blob_offset,
-                    max_size: Some(blob_size),
-                    ..Default::default()
-                },
-                node::fs::Flavor::Sync,
-            );
+            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
+            let mut rf_args = node::fs::args::ReadFile::default();
+            rf_args.encoding = Encoding::Buffer;
+            rf_args.path = PathOrFileDescriptor::Fd(opened_fd);
+            rf_args.offset = blob_offset;
+            rf_args.max_size = Some(blob_size);
+            let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
             if pathlike_is_path {
                 opened_fd.close();

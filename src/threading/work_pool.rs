@@ -46,7 +46,7 @@ pub unsafe trait OwnedTask: Send + Sized + 'static {
         // inside a `Box<Self>` that `WorkPool::schedule_owned` leaked. The
         // thread pool guarantees this callback fires exactly once per
         // scheduled task, so reclaiming the `Box` here is sound.
-        let this = unsafe { Box::from_raw(task.cast::<u8>().sub(Self::TASK_OFFSET).cast::<Self>()) };
+        let this = unsafe { Box::from_raw(bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET)) };
         this.run();
     }
 }

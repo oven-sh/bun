@@ -1265,7 +1265,7 @@ extern "C" fn for_each_hash(
     }
     // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
     let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-        unsafe { &mut *ctx.cast::<CaseInsensitiveAsciiStringArrayHashMap<()>>() };
+        unsafe { bun_ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
     // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
     // from BoringSSL's static tables.
     let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();

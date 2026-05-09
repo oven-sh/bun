@@ -1802,8 +1802,8 @@ pub fn enqueue_git_checkout(
                     )
                     .expect("unreachable"),
                     url: StringOrTinyString::init_append_if_needed(
-                        // SAFETY: `resolution.tag == Git` for the git-checkout path.
-                        this.lockfile.str(&resolution.value.git.repo),
+                        // `resolution.tag == Git` for the git-checkout path.
+                        this.lockfile.str(&resolution.git().repo),
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),

@@ -603,8 +603,7 @@ impl<'a> NamesIterator<'a> {
             let joined = resolve_path::join_string_buf::<PlatformAuto>(&mut self.buf[..], &parts);
             let joined_len = joined.len();
             self.buf[joined_len] = 0;
-            // SAFETY: buf[joined_len] == 0 written above
-            let joined_ = unsafe { ZStr::from_raw_mut(self.buf.as_mut_ptr(), joined_len) };
+            let joined_ = ZStr::from_buf_mut(&mut self.buf, joined_len);
             // TODO(port): bun.openDir(dir, path) → bun_sys equivalent
             let child_dir = sys::open_dir(dir, joined_)?;
             self.dir_iterator = Some(sys::iterate_dir(child_dir.fd));
@@ -1583,8 +1582,7 @@ impl<'a> Linker<'a> {
                     dest_off += unscoped_package_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above
-                    let abs_dest = ZStr::from_raw(self.abs_dest_buf.as_ptr(), abs_dest_len);
+                    let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
 
                     Self::unlink_bin_or_shim(abs_dest);
                 }
@@ -1601,8 +1599,7 @@ impl<'a> Linker<'a> {
                     dest_off += normalized_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above
-                    let abs_dest = ZStr::from_raw(self.abs_dest_buf.as_ptr(), abs_dest_len);
+                    let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
 
                     Self::unlink_bin_or_shim(abs_dest);
                 }
@@ -1626,8 +1623,7 @@ impl<'a> Linker<'a> {
                         dest_off += normalized_bin_dest.len();
                         self.abs_dest_buf[dest_off] = 0;
                         let abs_dest_len = dest_off;
-                        // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above
-                        let abs_dest = ZStr::from_raw(self.abs_dest_buf.as_ptr(), abs_dest_len);
+                        let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
 
                         Self::unlink_bin_or_shim(abs_dest);
 
@@ -1668,9 +1664,7 @@ impl<'a> Linker<'a> {
                                 dest_off += entry_name.len();
                                 self.abs_dest_buf[dest_off] = 0;
                                 let abs_dest_len = dest_off;
-                                // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above
-                                let abs_dest =
-                                    ZStr::from_raw(self.abs_dest_buf.as_ptr(), abs_dest_len);
+                                let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
 
                                 Self::unlink_bin_or_shim(abs_dest);
                             }

@@ -953,8 +953,7 @@ pub fn get_fd_path<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut [u8], 
 pub fn get_fd_path_z<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut bun_str::ZStr, bun_core::Error> {
     let len = get_fd_path(fd, buf)?.len();
     buf[len] = 0;
-    // SAFETY: buf[len] == 0 written above
-    Ok(unsafe { bun_str::ZStr::from_raw_mut(buf.as_mut_ptr(), len) })
+    Ok(bun_str::ZStr::from_buf_mut(buf, len))
 }
 
 /// TODO: move to bun.sys and add a method onto FD
@@ -1570,7 +1569,7 @@ impl<Parent, const FIELD_OFFSET: usize> LazyBool<Parent, FIELD_OFFSET> {
         if self.value == LazyBoolValue::Unknown {
             // SAFETY: self points to Parent.<field> at FIELD_OFFSET
             let parent = unsafe {
-                &mut *(core::ptr::from_mut(self).cast::<u8>().sub(FIELD_OFFSET).cast::<Parent>())
+                &mut *bun_core::container_of::<Parent, Self>(core::ptr::from_mut(self), FIELD_OFFSET)
             };
             self.value = if (self.getter)(parent) {
                 LazyBoolValue::Yes

@@ -2516,7 +2516,7 @@ impl<'a> ValueBufferer<'a> {
 
     fn on_receive_value(ctx: *mut c_void, value: &mut Value) {
         // SAFETY: ctx was set from `self as *mut Self` in buffer_locked_body_value.
-        let sink = unsafe { &mut *ctx.cast::<Self>() };
+        let sink = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
         match value {
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue Error");

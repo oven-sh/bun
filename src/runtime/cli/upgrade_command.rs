@@ -710,8 +710,9 @@ impl UpgradeCommand {
                 None,
                 HTTP::FetchRedirect::Follow,
             ));
-            // SAFETY: progress is leaked; AsyncHTTP holds a NonNull into it.
-            async_http.client.progress_node = Some(unsafe { NonNull::new_unchecked(progress) });
+            // `progress` is leaked; AsyncHTTP holds a NonNull into it.
+            async_http.client.progress_node =
+                Some(NonNull::new(progress).expect("leaked Box is non-null"));
             // TODO(port): lifetime — progress_node stores a borrow of progress
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 

@@ -75,7 +75,7 @@ impl AbortSignal {
         unsafe extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
             // SAFETY: ptr was registered below as `*mut C`; C++ calls back on
             // the same thread before `cleanNativeBindings` removes it.
-            let val = unsafe { &mut *ptr.cast::<C>() };
+            let val = unsafe { bun_ptr::callback_ctx::<C>(ptr) };
             C::on_abort(val, reason);
         }
         self.add_listener(ctx.cast::<c_void>(), callback::<C>)
@@ -200,71 +200,48 @@ impl AbortSignal {
     }
 }
 
+// SAFETY: `WebCore::AbortSignal` is intrusively refcounted on the C++ side
+// (`WTF::RefCounted<AbortSignal>`); `ref()`/`unref()` are the canonical
+// retain/release pair, and the pointee remains valid while the count is > 0.
+// `AbortSignal` is an `opaque_ffi!` type (`!Freeze` via `UnsafeCell`), so
+// `&AbortSignal` derived from the stored pointer carries no read-only
+// assumption that C++-side mutation could violate.
+unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
+    #[inline]
+    unsafe fn ext_ref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a live `WebCore::AbortSignal`.
+        WebCore__AbortSignal__ref(unsafe { &*this });
+    }
+    #[inline]
+    unsafe fn ext_deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a live `WebCore::AbortSignal`;
+        // C++ frees the object iff the count reaches zero.
+        WebCore__AbortSignal__unref(unsafe { &*this });
+    }
+}
+
 /// Intrusive smart pointer over a C++-refcounted `WebCore::AbortSignal`.
 ///
 /// `Clone` bumps the C++ refcount via `ref()`; `Drop` decrements via `unref()`.
 /// Replaces the broken `Arc<AbortSignal>` pattern (an `Arc` of an opaque ZST
 /// cannot own a C++-allocated object — its payload address is not the C++
 /// object address). Mirrors Zig `?*AbortSignal` + manual `ref()`/`unref()`.
-#[repr(transparent)]
-pub struct AbortSignalRef(NonNull<AbortSignal>);
+pub type AbortSignalRef = bun_ptr::ExternalShared<AbortSignal>;
 
-impl AbortSignalRef {
-    /// Adopt a `+1`-ref'd `*mut AbortSignal` (e.g. from `AbortSignal::ref_()`
-    /// or `AbortSignal::new`).
-    ///
-    /// # Safety
-    /// `ptr` must be non-null, point to a live `WebCore::AbortSignal`, and
-    /// carry an owned reference that this `AbortSignalRef` will release on drop.
-    #[inline]
-    pub unsafe fn adopt(ptr: *mut AbortSignal) -> Self {
-        debug_assert!(!ptr.is_null());
-        // SAFETY: caller contract — `ptr` is non-null.
-        Self(unsafe { NonNull::new_unchecked(ptr) })
-    }
-
+impl AbortSignal {
     /// Downcast a JS value, ref the underlying signal, and wrap. Returns
     /// `None` if `value` is not a JS `AbortSignal`.
+    ///
+    /// (Was `AbortSignalRef::from_js` when that was a hand-rolled newtype;
+    /// moved here because inherent impls cannot be added to a type alias.)
     #[inline]
-    pub fn from_js(value: JSValue) -> Option<Self> {
+    pub fn ref_from_js(value: JSValue) -> Option<AbortSignalRef> {
         AbortSignal::from_js(value).map(|p| {
             // SAFETY: `from_js` returned a live borrow of the JS wrapper's
             // payload; `ref_()` bumps the intrusive refcount and returns the
             // same non-null pointer with +1 ownership.
-            unsafe { Self::adopt((*p).ref_()) }
+            unsafe { AbortSignalRef::adopt((*p).ref_()) }
         })
-    }
-
-    #[inline]
-    pub fn as_ptr(&self) -> *mut AbortSignal {
-        self.0.as_ptr()
-    }
-}
-
-impl core::ops::Deref for AbortSignalRef {
-    type Target = AbortSignal;
-    #[inline]
-    fn deref(&self) -> &AbortSignal {
-        // SAFETY: held +1 ref keeps the C++ object alive for `'_`.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl Clone for AbortSignalRef {
-    #[inline]
-    fn clone(&self) -> Self {
-        // SAFETY: `ref_()` returns the same non-null pointer with +1 refcount;
-        // `Deref` (above) yields the live `&AbortSignal`.
-        unsafe { Self::adopt((**self).ref_()) }
-    }
-}
-
-impl Drop for AbortSignalRef {
-    #[inline]
-    fn drop(&mut self) {
-        // Held +1 ref keeps the C++ object alive until this unref; `Deref`
-        // encapsulates the NonNull access.
-        (**self).unref();
     }
 }
 
@@ -339,8 +316,7 @@ impl Timeout {
             },
             signal: signal_,
             flags: TimerFlags::default(),
-            // SAFETY: `vm` is the live per-thread VM (caller contract).
-            generation: unsafe { (*vm).test_isolation_generation },
+            generation: VirtualMachine::get().test_isolation_generation,
         }));
 
         // PORT NOTE: `Environment.ci_assert` → `debug_assertions`
@@ -404,18 +380,16 @@ impl Timeout {
     }
 
     fn dispatch(vm: *mut VirtualMachine, signal_ptr: *mut AbortSignal) {
-        // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
-        let event_loop = unsafe { (*vm).event_loop() };
+        let _ = vm;
+        let vm = VirtualMachine::get();
         // PORT NOTE: `loop.enter(); defer loop.exit();` — RAII guard `exit`s on
         // drop even if `signal` unwinds, and holds the raw VM-owned pointer so
         // borrowck doesn't see two live `&mut EventLoop` across re-entrant JS.
-        // SAFETY: per above; `enter`/`exit` mutate per-thread bookkeeping only.
-        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(event_loop) };
+        let _guard = vm.enter_event_loop_scope();
         // signalAbort() releases the extra ref from timeout() after all
         // abort work completes, so we must not unref here.
-        // SAFETY: signal_ptr is held alive by the extra ref documented above;
-        // `vm.global` is process-lifetime.
-        unsafe { (*signal_ptr).signal(&*(*vm).global, CommonAbortReason::Timeout) };
+        // SAFETY: signal_ptr is held alive by the extra ref documented above.
+        unsafe { (*signal_ptr).signal(vm.global(), CommonAbortReason::Timeout) };
     }
 
     // This may run inside the "signal" call.

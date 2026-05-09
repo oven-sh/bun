@@ -552,15 +552,13 @@ pub mod windows_stdio {
         // MOVE_DOWN: bun_sys::fd → bun_core (move-in pass).
         use crate::fd as fd_internals;
         let invalid = w::INVALID_HANDLE_VALUE;
-        // SAFETY: single-threaded startup; these statics are write-once caches.
-        unsafe {
-            fd_internals::WINDOWS_CACHED_STDERR
-                .write(if stderr != invalid { Fd::from_system(stderr) } else { Fd::INVALID });
-            fd_internals::WINDOWS_CACHED_STDOUT
-                .write(if stdout != invalid { Fd::from_system(stdout) } else { Fd::INVALID });
-            fd_internals::WINDOWS_CACHED_STDIN
-                .write(if stdin != invalid { Fd::from_system(stdin) } else { Fd::INVALID });
-        }
+        // Single-threaded startup; these statics are write-once caches.
+        let _ = fd_internals::WINDOWS_CACHED_STDERR
+            .set(if stderr != invalid { Fd::from_system(stderr) } else { Fd::INVALID });
+        let _ = fd_internals::WINDOWS_CACHED_STDOUT
+            .set(if stdout != invalid { Fd::from_system(stdout) } else { Fd::INVALID });
+        let _ = fd_internals::WINDOWS_CACHED_STDIN
+            .set(if stdin != invalid { Fd::from_system(stdin) } else { Fd::INVALID });
         #[cfg(debug_assertions)]
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
@@ -1453,8 +1451,7 @@ impl ScopedLogger {
         let mut env_key = vec![0u8; key_len + 1]; // +1 NUL
         env_key[..prefix.len()].copy_from_slice(prefix);
         env_key[prefix.len()..key_len].copy_from_slice(tag);
-        // SAFETY: NUL written at key_len; bytes ..key_len are initialized ASCII.
-        let key = unsafe { crate::ZStr::from_raw(env_key.as_ptr(), key_len) };
+        let key = crate::ZStr::from_buf(&env_key, key_len);
 
         if let Some(val) = crate::getenv_z_any_case(key) {
             self.really_disable.store(val == b"0", Ordering::Relaxed);

@@ -1216,8 +1216,8 @@ pub mod package_manifest {
             }
             stream.write_byte(0)?;
             let len = stream.pos;
-            // SAFETY: we wrote `len` bytes ending in a NUL into `buf`.
-            Ok(unsafe { bun_str::ZStr::from_raw_mut(buf.as_mut_ptr(), len - 1) })
+            // We wrote `len` bytes ending in a NUL into `buf`.
+            Ok(bun_str::ZStr::from_buf_mut(buf, len - 1))
         }
 
         pub fn save(
@@ -1236,8 +1236,7 @@ pub mod package_manifest {
             write!(dest_path_stream, "{}.npm-{}", file_id_hex_fmt, hex_timestamp_fmt)?;
             dest_path_stream.write_byte(0)?;
             let pos = dest_path_stream.pos;
-            // SAFETY: dest_path_buf[pos-1] == 0 written above
-            let tmp_path = unsafe { bun_str::ZStr::from_raw_mut(dest_path_buf.as_mut_ptr(), pos - 1) };
+            let tmp_path = bun_str::ZStr::from_buf_mut(&mut dest_path_buf, pos - 1);
             let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;
             Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
         }

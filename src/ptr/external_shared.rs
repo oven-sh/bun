@@ -43,6 +43,13 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         self.ptr.as_ptr()
     }
 
+    /// Alias of [`Self::get`] — provided so call sites that previously used a
+    /// hand-rolled `NonNull` wrapper (e.g. `AbortSignalRef`) keep compiling.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut T {
+        self.ptr.as_ptr()
+    }
+
     /// # Safety
     /// `raw` must be a valid pointer managed by the external refcount.
     pub unsafe fn clone_from_raw(raw: *mut T) -> Self {
@@ -70,6 +77,21 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
 
     // TODO(port): Zig's `ExternalShared(T).Optional` was an inherent associated type.
     // Stable Rust callers spell `ExternalSharedOptional<T>` directly.
+}
+
+impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: `ExternalSharedDescriptor` guarantees the pointee remains
+        // alive while the externally-managed refcount is > 0, and `self` owns
+        // exactly one such ref for its entire lifetime (released only in
+        // `Drop`). The pointee is treated as shared-immutable from Rust's
+        // side; any C++-side mutation goes through `UnsafeCell`/opaque-FFI
+        // interior mutability on `T` itself, so `&T` carries no `noalias
+        // readonly` assumption that the FFI could violate.
+        unsafe { self.ptr.as_ref() }
+    }
 }
 
 /// Clones the shared pointer, incrementing the ref count.

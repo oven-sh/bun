@@ -16,7 +16,7 @@ use crate::shell::{ExitCode, ShellErr};
 
 pub struct Expansion {
     pub base: Base,
-    pub node: *const ast::Atom,
+    pub node: bun_ptr::BackRef<ast::Atom>,
     pub io: IO,
     pub state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;
@@ -83,7 +83,12 @@ impl Expansion {
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(StateKind::Expansion, parent, shell),
-            node,
+            // SAFETY: `node` is non-null and points into the AST arena
+            // (`ShellArgs::__arena`), which the interpreter holds for its
+            // entire lifetime — strictly outliving every state node (the
+            // BackRef invariant). Callers pass `&raw const` only to escape
+            // borrowck across the `&mut Interpreter` reborrow.
+            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
             io,
             state: ExpansionState::Idle,
             word_idx: 0,
@@ -130,9 +135,10 @@ impl Expansion {
                 ExpansionState::Walking => {}
             }
 
-            // SAFETY: `node` points into the AST arena (`ShellArgs::__arena`)
-            // which the interpreter holds for its entire lifetime.
-            let atom = unsafe { &*me.node };
+            // Copy the BackRef out so `atom` borrows a local, leaving `me`
+            // free for the `&mut me.*` field writes below.
+            let node = me.node;
+            let atom = node.get();
             let atoms_len = atom.atoms_len();
             // Leading `~` in a compound is skipped during the walk and
             // post-processed below (Spec: Expansion.zig next() lines 186-203).
@@ -261,8 +267,8 @@ impl Expansion {
             me.out.buf.extend_from_slice(&s);
         }
 
-        // SAFETY: `node` points into the AST arena which outlives this state.
-        let atom = unsafe { &*me.node };
+        let node = me.node;
+        let atom = node.get();
         me.state = if atom.has_glob_expansion() {
             // Spec: brace+glob composes — re-enter via the glob arm. The
             // NodeId port currently routes glob through `current_out`, so
@@ -442,12 +448,10 @@ impl Expansion {
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command). Spec: childDone:517.
-        let sole_cmd_subst = {
-            // SAFETY: `node` points into the AST arena which outlives every
-            // state node.
-            matches!(unsafe { &*interp.as_expansion(this).node },
-                ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_)))
-        };
+        let sole_cmd_subst = matches!(
+            interp.as_expansion(this).node.get(),
+            ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
+        );
 
         let quoted = interp.as_expansion(this).cmd_subst_quoted;
         {

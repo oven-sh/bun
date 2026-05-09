@@ -585,8 +585,7 @@ impl<'a> Snapshots<'a> {
                     // TODO(port): TSXParser::init takes out-param in Zig; reshaped `-> Result<Self>`.
                     let mut parser = js_parser::TSXParser::init(
                         &arena,
-                        // SAFETY: `log_ptr` was just derived from `&mut *log` above.
-                        unsafe { core::ptr::NonNull::new_unchecked(log_ptr) },
+                        core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
                         &source,
                         &vm.transpiler.options.define,
                         lexer,

@@ -324,8 +324,7 @@ impl Job {
         // dropping the Box at any return point runs `impl Drop for Job` (Zig: `defer this.deinit()`).
         let mut this = unsafe { bun_core::heap::take(this) };
 
-        // SAFETY: `vm` is the live per-thread VirtualMachine pointer captured in `create()`.
-        let vm = unsafe { &*this.vm };
+        let vm = VirtualMachine::get();
         if vm.is_shutting_down() {
             return Ok(());
         }

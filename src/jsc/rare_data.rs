@@ -945,9 +945,8 @@ pub enum StdinFdType {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Process__getStdinFdType(vm: *mut VirtualMachine, fd: i32) -> StdinFdType {
-    // SAFETY: vm is a valid VirtualMachine pointer passed from C++.
-    let rare = unsafe { (*vm).rare_data() };
+pub extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
+    let rare = vm.as_mut().rare_data();
     // PORT NOTE: Zig read `store.data.file.mode`; the store is erased here, so
     // `stderr/stdout/stdin()` cache `mode` alongside the pointer.
     let mode = match fd {

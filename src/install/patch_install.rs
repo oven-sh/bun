@@ -518,13 +518,9 @@ impl PatchTask {
         // PORT NOTE: `defer allocator.free(resolution_label)` — Vec drops at scope end.
 
         // 3. copy the unpatched files into temp dir
-        // SAFETY: `cache_dir_subpath_without_patch_hash` was built by `dupe_z` (NUL-terminated).
-        let cache_dir_subpath_z = unsafe {
-            ZStr::from_raw(
-                patch.cache_dir_subpath_without_patch_hash.as_ptr(),
-                patch.cache_dir_subpath_without_patch_hash.len().saturating_sub(1),
-            )
-        };
+        // `cache_dir_subpath_without_patch_hash` was built by `dupe_z` (NUL-terminated).
+        let cache_dir_subpath_z =
+            ZStr::from_slice_with_nul(&patch.cache_dir_subpath_without_patch_hash);
         // PORT NOTE: borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
         // `PackageInstall` also wants `&mut tmpname_buf[..]` for
         // `destination_dir_subpath_buf`. Zig aliased the two; `PackageInstall`
@@ -641,13 +637,8 @@ impl PatchTask {
             ],
         );
 
-        // SAFETY: `cache_dir_subpath` was built by `dupe_z` (NUL-terminated).
-        let cache_dir_subpath_z = unsafe {
-            ZStr::from_raw(
-                patch.cache_dir_subpath.as_ptr(),
-                patch.cache_dir_subpath.len().saturating_sub(1),
-            )
-        };
+        // `cache_dir_subpath` was built by `dupe_z` (NUL-terminated).
+        let cache_dir_subpath_z = ZStr::from_slice_with_nul(&patch.cache_dir_subpath);
         if let Err(e) = sys::renameat_concurrently(
             system_tmpdir.fd,
             path_in_tmpdir,

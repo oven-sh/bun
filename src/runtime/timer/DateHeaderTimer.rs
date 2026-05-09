@@ -89,8 +89,7 @@ impl DateHeaderTimer {
 
     pub fn run(&mut self, vm: &mut VirtualMachine) {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        // SAFETY: uws_loop() returns a valid live *mut Loop owned by the VM.
-        let loop_ = unsafe { &mut *vm.uws_loop() };
+        let loop_ = vm.uws_loop_mut();
         let now = Timespec::now_allow_mocked_time();
 
         // Record when we last ran it.

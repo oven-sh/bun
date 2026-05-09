@@ -792,7 +792,7 @@ impl BlobExt for Blob {
         ) {
             // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
             // erased lifetime is the caller's stack frame in `from_dom_form_data`.
-            let ctx = unsafe { &mut *ctx_ptr.cast::<FormDataContext<'_>>() };
+            let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
             let entry = if is_blob == 0 {
                 // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
                 FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
@@ -3518,14 +3518,14 @@ impl FormDataContext<'_> {
                             // `NodeFS` (it is stateless aside from a path scratch
                             // buffer; the per-VM cache is purely a perf reuse).
                             let mut node_fs = crate::node::fs::NodeFS::default();
+                            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
+                            let mut rf_args = crate::node::fs::args::ReadFile::default();
+                            rf_args.encoding = crate::node::types::Encoding::Buffer;
+                            rf_args.path = file.pathlike.clone();
+                            rf_args.offset = blob.offset;
+                            rf_args.max_size = Some(blob.size);
                             let res = node_fs.read_file(
-                                &crate::node::fs::args::ReadFile {
-                                    encoding: crate::node::types::Encoding::Buffer,
-                                    path: file.pathlike.clone(),
-                                    offset: blob.offset,
-                                    max_size: Some(blob.size),
-                                    ..Default::default()
-                                },
+                                &rf_args,
                                 crate::node::fs::Flavor::Sync,
                             );
                             match res {
@@ -3787,9 +3787,8 @@ impl URLSearchParamsConverter {
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
     let this = Blob::from_js(value)?;
-    // SAFETY: Blob__dupe returns heap::alloc of a fresh allocation; never null.
     // SAFETY: `from_js` returns a live heap pointer when Some.
-    Some(unsafe { NonNull::new_unchecked(Blob__dupe(&*this)) })
+    Some(NonNull::new(Blob__dupe(unsafe { &*this })).expect("Blob__dupe returns a fresh heap allocation"))
 }
 
 #[unsafe(no_mangle)]
@@ -4066,9 +4065,8 @@ fn write_file_with_empty_source_to_destination(
                     match result {
                         S3UploadResult::Success => this.promise.resolve(global, JSValue::js_number(0.0))?,
                         S3UploadResult::Failure(err) => {
-                            // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
                             let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                &err, global, this.store.get_path(), unsafe { this.promise.get() },
+                                &err, global, this.store.get_path(), this.promise.get(),
                             );
                             this.promise.reject(global, Ok(err_js))?;
                         }
@@ -4207,9 +4205,7 @@ pub fn write_file_with_source_destination(
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
-                // SAFETY: `bun_vm()` is live for the duration of a host call;
-                // the event loop outlives the async copy state machine.
-                unsafe { &*ctx.bun_vm().event_loop() },
+                ctx.bun_vm().event_loop_shared(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size,
                 options.mode,
@@ -4326,9 +4322,8 @@ pub fn write_file_with_source_destination(
                                     this.promise.resolve(global, JSValue::js_number(this.store.data.as_bytes().len() as f64))?;
                                 }
                                 S3UploadResult::Failure(err) => {
-                                    // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
                                     let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                        &err, global, this.store.get_path(), unsafe { this.promise.get() },
+                                        &err, global, this.store.get_path(), this.promise.get(),
                                     );
                                     this.promise.reject(global, Ok(err_js))?;
                                 }
@@ -4908,8 +4903,7 @@ pub extern "C" fn JSDOMFile__construct(
     callframe: &CallFrame,
 ) -> Option<NonNull<Blob>> {
     match jsdom_file_construct_(global_this, callframe) {
-        // SAFETY: jsdom_file_construct_ returns Blob::new (heap::alloc); never null on Ok.
-        Ok(b) => Some(unsafe { NonNull::new_unchecked(b) }),
+        Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct_ returns Blob::new (heap::alloc)")),
         Err(jsc::JsError::Thrown) => None,
         Err(jsc::JsError::OutOfMemory) => {
             let _ = global_this.throw_out_of_memory();
@@ -5188,8 +5182,7 @@ impl S3BlobDownloadTask {
             }
             crate::webcore::__s3_client::S3DownloadResult::NotFound(err) | crate::webcore::__s3_client::S3DownloadResult::Failure(err) => {
                 let path = this.blob.store.as_ref().and_then(|s| s.get_path());
-                // SAFETY: sole `&mut JSPromise` borrow; consumed by `reject` below.
-                let promise = unsafe { this.promise.get() };
+                let promise = this.promise.get();
                 let value = crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack(
                     &err, global, path, promise,
                 );
@@ -6357,7 +6350,7 @@ pub trait FileOpener: Sized {
                 use bun_sys::ReturnCodeExt as _;
                 // SAFETY: `req.data` was set to `self as *mut Self` below before
                 // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
-                let self_: &mut S = unsafe { &mut *(*req).data.cast::<S>() };
+                let self_: &mut S = unsafe { bun_ptr::callback_ctx::<S>((*req).data) };
                 {
                     // SAFETY: req points into self_.req(); cleanup before reuse.
                     scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }

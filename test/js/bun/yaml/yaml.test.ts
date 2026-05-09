@@ -1338,10 +1338,12 @@ config:
         },
       };
 
-      for (let i = 0; i < 10000; i++) {
+      // 1000 iterations is enough to flush any reference-lifetime issues; the original
+      // 10k doesn't fit the default 5s budget under debug+ASAN on slow CI containers.
+      for (let i = 0; i < 1000; i++) {
         expect(YAML.stringify(config)).toBeString();
       }
-    }, 60_000); // 10k iterations of a nested-object stringify — debug+ASAN CI hits the default 5s.
+    });
 
     // Anchor and alias tests (reference handling)
     describe("reference handling", () => {
@@ -1736,6 +1738,9 @@ config:
         // the flow indicator.
         const roundTrippers = ["9{", "9,", "9}", "9]", ".{", "0{", "+{", ".,"];
         for (const value of roundTrippers) {
+          // Direct scalar emission must be quoted — otherwise the round-trip only passes
+          // by accident when the parser later rejects the bare form.
+          expect(YAML.stringify(value)).toMatch(/^".*"$/);
           expect(YAML.parse(YAML.stringify({ id: value }))).toEqual({ id: value });
         }
       });

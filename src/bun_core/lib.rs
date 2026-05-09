@@ -909,6 +909,60 @@ pub mod feature_flag {
     )* } }
     flag!(BUN_FEATURE_FLAG_NO_LIBDEFLATE, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE);
 }
+/// Port of `bun.linuxKernelVersion()` (src/bun.zig) → `analytics.GeneratePlatform.kernelVersion()`.
+/// Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,
+/// ioctl_ficlone, RWF_NONBLOCK) and cannot depend on `bun_analytics`. Parses
+/// `uname(2).release` major.minor.patch directly; the full Semver parse with
+/// pre/build tags stays in `bun_analytics`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn linux_kernel_version() -> Version {
+    use core::sync::atomic::{AtomicU32, Ordering};
+    // Packed u32: u32::MAX = uninit, otherwise (major<<20)|(minor<<10)|patch.
+    // (Using MAX, not 0, as the sentinel so a parse that yields {0,0,0} caches
+    // as 0 and round-trips to {0,0,0} on every call — the previous 0-sentinel
+    // stored 1 in that case, returning {0,0,1} on subsequent calls.)
+    static CACHE: AtomicU32 = AtomicU32::new(u32::MAX);
+    let packed = CACHE.load(Ordering::Relaxed);
+    if packed != u32::MAX {
+        return Version {
+            major: (packed >> 20) & 0x3ff,
+            minor: (packed >> 10) & 0x3ff,
+            patch: packed & 0x3ff,
+        };
+    }
+    // SAFETY: utsname is plain C struct of NUL-terminated char arrays; uname(2)
+    // fills it on success. Zero-init so a failed call leaves release == "".
+    let mut uts: libc::utsname = unsafe { core::mem::zeroed() };
+    // SAFETY: `uts` is valid for writes for sizeof(utsname); uname(2) always
+    // succeeds on Linux per POSIX (may set EFAULT on bad ptr only).
+    let _ = unsafe { libc::uname(&mut uts) };
+    let release = {
+        let raw = &uts.release;
+        let len = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
+        // SAFETY: c_char[] reinterpret as u8[] — same layout, len bounded above.
+        unsafe { core::slice::from_raw_parts(raw.as_ptr().cast::<u8>(), len) }
+    };
+    // Parse leading "MAJOR.MINOR.PATCH"; stop at first non-digit per component.
+    let mut nums = [0u32; 3];
+    let mut idx = 0usize;
+    let mut i = 0usize;
+    while idx < 3 {
+        let start = i;
+        while i < release.len() && release[i].is_ascii_digit() {
+            nums[idx] = nums[idx].wrapping_mul(10).wrapping_add((release[i] - b'0') as u32);
+            i += 1;
+        }
+        if i == start { break }
+        idx += 1;
+        if i < release.len() && release[i] == b'.' { i += 1 } else { break }
+    }
+    let v = Version { major: nums[0], minor: nums[1], patch: nums[2] };
+    // Cache; clamp components to 10 bits (kernel versions fit comfortably).
+    let p = ((v.major & 0x3ff) << 20) | ((v.minor & 0x3ff) << 10) | (v.patch & 0x3ff);
+    CACHE.store(p, Ordering::Relaxed);
+    v
+}
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 #[inline] pub fn linux_kernel_version() -> Version { Version { major: 0, minor: 0, patch: 0 } }
 
 /// Port of `bun.assertWithLocation` (src/bun_core/bun.zig) — `bun.assert` plus

@@ -3959,8 +3959,15 @@ impl NodeFS {
             if stat_size > stack_buf_len * 16 {
                 // Don't allocate more than 8 MB at a time
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
-                let Ok(()) = (|| { buf_to_free.try_reserve_exact(clamped_size)?; buf_to_free.resize(clamped_size, 0); Ok::<(), std::collections::TryReserveError>(()) })()
-                    else { break 'maybe_allocate_large_temp_buf };
+                // PORT NOTE: Zig used `bun.default_allocator.alloc(u8, clamped_size)` —
+                // uninitialised heap. `Vec::resize` here was a debug-build hot path
+                // (byte-by-byte `extend_with`); use `expand_to_capacity` to match the spec
+                // (the slab is write-only — `Syscall::read` fills it from the kernel).
+                use bun_collections::vec_ext::VecExt as _;
+                if buf_to_free.try_reserve_exact(clamped_size).is_err() {
+                    break 'maybe_allocate_large_temp_buf;
+                }
+                buf_to_free.expand_to_capacity();
                 buf = &mut buf_to_free[..];
             }
         }
@@ -5741,11 +5748,13 @@ impl NodeFS {
             buf.extend_from_slice(temporary_read_buffer_before_stat_call);
         }
         // PORT NOTE: Zig `buf.expandToCapacity()` then indexed `buf.items.ptr[total..cap]`
-        // to read into uninitialised tail. Rust forbids indexing past `len`, so we
-        // `resize` to capacity (zero-filling the tail). Slightly more work than the Zig,
-        // but keeps the slice handed to `Syscall::read` valid.
-        let cap = buf.capacity();
-        buf.resize(cap, 0);
+        // to read into uninitialised tail. `Vec::resize(cap, 0)` is *not* equivalent in
+        // debug builds: it goes through `extend_with`'s byte-by-byte loop (no memset
+        // specialisation), which dominated `readFileSync` of large files. Match the spec
+        // exactly via `VecExt::expand_to_capacity` (the tail is write-only — `Syscall::read`
+        // hands it straight to the kernel, which only stores into it).
+        use bun_collections::vec_ext::VecExt as _;
+        buf.expand_to_capacity();
 
         // Two-phase read: first up to `size`, then keep going until EOF.
         // PORT NOTE: Zig spelled this as `while (total < size) { ... } else { while (true) { ... } }`.
@@ -5775,8 +5784,7 @@ impl NodeFS {
                         if buf.try_reserve(8192).is_err() {
                             return Err(with_path_like(sys::Error::from_code(E::ENOMEM, sys::Tag::read), &args.path));
                         }
-                        let cap = buf.capacity();
-                        buf.resize(cap, 0);
+                        buf.expand_to_capacity();
                         continue;
                     }
 

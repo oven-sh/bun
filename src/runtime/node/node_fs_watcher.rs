@@ -45,7 +45,8 @@ pub struct FSWatcher {
     global_this: GlobalRef,
     // TODO(port): bare JSValue heap field — self-wrapper; consider JsRef in Phase B
     pub(super) js_this: JSValue,
-    encoding: Encoding,
+    // pub(super): read directly by `win_watcher::PathWatcher::emit` (matches Zig `ctx.encoding`).
+    pub(super) encoding: Encoding,
 
     /// User can call close and pre-detach so we need to track this
     closed: bool,
@@ -333,6 +334,17 @@ pub enum StringOrBytesToDecode {
     BytesToFree(Box<[u8]>),
 }
 
+// Zig: `StringOrBytesToDecode{ .bytes_to_free = try default_allocator.dupe(u8, path) }`.
+// `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
+// it into the owned `bytes_to_free` arm so the Windows task can carry it across
+// the thread hop (matches `FSWatchTaskWindows.run`'s `default_allocator.free`).
+impl From<&[u8]> for StringOrBytesToDecode {
+    #[inline]
+    fn from(bytes: &[u8]) -> Self {
+        StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(bytes))
+    }
+}
+
 impl core::fmt::Display for StringOrBytesToDecode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -399,7 +411,7 @@ impl FSWatchTaskWindows {
                 // TODO(port): Zig accesses `path.string` unconditionally here
                 unreachable!()
             };
-            let Ok(js) = s.transfer_to_js(ctx.global_this) else { return };
+            let Ok(js) = s.transfer_to_js(&ctx.global_this) else { return };
             ctx.emit_with_filename::<EVENT_TYPE>(js);
         } else {
             let StringOrBytesToDecode::BytesToFree(bytes_ref) = path else {

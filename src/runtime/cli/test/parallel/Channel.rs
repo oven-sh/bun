@@ -28,6 +28,8 @@ use bun_uws as uws;
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
+use bun_libuv_sys::{UvHandle as _, UvStream as _};
 
 use super::frame;
 
@@ -194,7 +196,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         let vm: &mut VirtualMachine = unsafe { &mut *vm.cast_mut() };
         #[cfg(windows)]
         {
-            let _ = vm;
             // ipc=true matches ipc.zig windowsConfigureClient. With ipc=true
             // libuv wraps reads/writes in its own framing; both ends use it so
             // the wrapping is transparent and our payload bytes pass through
@@ -208,7 +209,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             if let Some(e) = pipe.init(uv::Loop::get(), true).to_error(bun_sys::Tag::pipe) {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_init failed: {}",
-                    e.name(),
+                    e.name().escape_ascii(),
                 ));
                 drop(pipe);
                 return false;
@@ -217,16 +218,17 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_open({}) failed: {}",
                     fd.uv(),
-                    e.name(),
+                    e.name().escape_ascii(),
                 ));
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                 unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
                 return false;
             }
+            let pipe = bun_core::heap::into_raw(pipe);
             if !self.adopt_pipe(vm, pipe) {
-                // adopt_pipe consumed the Box on failure path itself.
-                // TODO(port): Zig caller still owned `pipe` on adoptPipe failure
-                // and called closeAndDestroy here; reconcile ownership in Phase B.
+                // Caller still owns `pipe` on adopt_pipe failure (Zig spec).
+                // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
+                unsafe { uv::Pipe::close_and_destroy(pipe) };
                 return false;
             }
             return true;
@@ -275,28 +277,26 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
     /// returning, so the extra ref never holds the process open.
     #[cfg(windows)]
-    pub fn adopt_pipe(&mut self, _vm: &mut VirtualMachine, mut pipe: Box<uv::Pipe>) -> bool {
-        if let Err(e) = pipe
-            .read_start(
-                core::ptr::from_mut(self),
-                WindowsHandlers::<Owner>::on_alloc,
-                WindowsHandlers::<Owner>::on_error,
-                WindowsHandlers::<Owner>::on_read,
-            )
-            .unwrap_result()
-        {
+    pub fn adopt_pipe(&mut self, _vm: *const VirtualMachine, pipe: *mut uv::Pipe) -> bool {
+        // PORT NOTE: Zig's `pipe.readStart(self, onAlloc, onError, onRead)`
+        // bakes the three callbacks at comptime; the Rust binding expresses
+        // that via the `StreamReader` trait impl below and routes through
+        // `read_start_ctx`, which stashes `self` in `handle.data`.
+        // SAFETY: `pipe` is a live, init'ed `Box<Pipe>` allocation owned by the
+        // caller; we only borrow it to start reading.
+        let rc = unsafe { (*pipe).read_start_ctx::<Self>(core::ptr::from_mut(self)) };
+        if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
             Output::debug_warn(format_args!(
                 "Channel.adoptPipe: readStart failed: {}",
-                e.name(),
+                e.name().escape_ascii(),
             ));
-            // TODO(port): Zig returned false leaving caller owning `pipe`;
-            // with Box we'd need to hand it back. Phase B: take `&mut Box` or
-            // return the Box on failure.
-            // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-            unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
+            // Caller still owns `pipe` on failure (Zig spec) and is responsible
+            // for `close_and_destroy`.
             return false;
         }
-        self.backend.pipe = Some(pipe);
+        // SAFETY: `pipe` was Box-allocated by the caller (`bun.new(uv.Pipe)` /
+        // `bun_core::heap::into_raw`); on success the channel takes ownership.
+        self.backend.pipe = Some(unsafe { Box::from_raw(pipe) });
         true
     }
 
@@ -340,9 +340,13 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // so this currently always falls through to submit_windows_write —
         // kept because EBADF/EPIPE here mean the pipe is dead and must not
         // silently drop the frame.
-        let w: usize = match pipe.try_write(frame_bytes) {
-            bun_sys::Result::Ok(n) => n,
-            bun_sys::Result::Err(e) => {
+        // PORT NOTE: Zig `pipe.tryWrite([]const u8) Maybe(usize)` is inlined
+        // here against the low-level `UvStream::try_write(&[uv_buf_t])`.
+        let buf = uv::uv_buf_t::init(frame_bytes);
+        let rc = pipe.try_write(core::slice::from_ref(&buf));
+        let w: usize = match rc.to_error(bun_sys::Tag::try_write) {
+            None => rc.int() as usize,
+            Some(e) => {
                 if e.get_errno() == bun_sys::E::AGAIN {
                     0
                 } else {
@@ -363,6 +367,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         if self.out.is_empty() || !self.backend.inflight.is_empty() || self.done {
             return;
         }
+        // Capture the raw self pointer for uv_write's `data` field before
+        // taking any field borrows below (the borrow used by from_mut ends
+        // immediately; raw pointers carry no lifetime).
+        let this: *mut Self = core::ptr::from_mut(self);
         let Some(pipe) = self.backend.pipe.as_mut() else { return };
         // Swap: out → inflight (stable for uv_write), out becomes empty.
         core::mem::swap(&mut self.backend.inflight, &mut self.out);
@@ -373,7 +381,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             .write(
                 pipe.as_stream(),
                 &self.backend.write_buf,
-                core::ptr::from_mut(self),
+                this,
                 WindowsHandlers::<Owner>::on_write,
             )
             .is_err()
@@ -655,6 +663,42 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
             return;
         }
         self_.submit_windows_write();
+    }
+}
+
+/// Adapter from `UvStream::read_start_ctx` to `WindowsHandlers` — Zig's
+/// `pipe.readStart(self, onAlloc, onError, onRead)` captures the three
+/// callbacks at comptime; Rust expresses that as this trait impl so the
+/// `extern "C"` trampoline stays zero-alloc.
+#[cfg(windows)]
+impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
+    #[inline]
+    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
+        WindowsHandlers::<Owner>::on_alloc(this, suggested_size)
+    }
+    #[inline]
+    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+        let e = bun_sys::windows::translate_uv_error_to_e(err);
+        WindowsHandlers::<Owner>::on_error(this, e);
+    }
+    #[inline]
+    unsafe fn on_read(this: *mut Self, data: &[u8]) {
+        // `data` points into `(*this).backend.read_chunk` (returned from
+        // `on_read_alloc`). Forming `&mut *this` retags every byte Unique and
+        // pops `data`'s SharedRW tag, so capture the length, drop `data`, then
+        // re-derive the bytes from the freshly-retagged `this` via a disjoint
+        // field split (read_chunk → r#in).
+        let n = data.len();
+        let _ = data;
+        // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
+        // `read_start_ctx`; `data` is no longer live so the retag is sound.
+        let this = unsafe { &mut *this };
+        if this.done {
+            return;
+        }
+        this.r#in.extend_from_slice(&this.backend.read_chunk[..n]);
+        // Run the shared decode loop; the empty append is a no-op.
+        this.ingest(&[]);
     }
 }
 

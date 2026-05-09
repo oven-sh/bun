@@ -7,20 +7,21 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc as jsc;
 use bun_paths::PathBuffer;
 use bun_str::{self as strings, String as BunString, ZStr};
 use bun_sys::{self as sys, windows};
 use bun_sys::windows::libuv as uv;
+use bun_sys::windows::libuv::UvHandle as _;
 use bun_sys::ReturnCodeExt as _;
 
 use super::path_watcher::EventType;
 // Zig: `const onPathUpdateFn = jsc.Node.fs.Watcher.onPathUpdate;` (win_watcher.zig:306) —
 // the callbacks are *associated functions* on `FSWatcher`, not free fns.
 // lower_snake names mirror the Zig `onPathUpdateFn`/`onUpdateEndFn` decls.
-use crate::node::node_fs_watcher::{FSWatcher, Event};
+use crate::node::node_fs_watcher::{FSWatcher, Event, StringOrBytesToDecode};
 #[allow(non_upper_case_globals)]
 const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
 #[allow(non_upper_case_globals)]
@@ -42,8 +43,9 @@ static DEFAULT_MANAGER: bun_core::RacyCell<Option<*mut PathWatcherManager>> =
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub struct PathWatcherManager {
-    // Keys are owned NUL-terminated path bytes (Zig: `dupeZ`), values are raw heap PathWatcher ptrs.
-    watchers: ArrayHashMap<Box<[u8]>, *mut PathWatcher>,
+    // Keys are owned path bytes (Zig: `bun.StringArrayHashMapUnmanaged`), values are raw heap
+    // PathWatcher ptrs. `StringArrayHashMap` lets `get`/`insert` take `&[u8]` borrows.
+    watchers: StringArrayHashMap<*mut PathWatcher>,
     // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine`. The manager is heap-allocated and stored in a
     // process-global, so we spell the borrow as `'static`.
     // TODO(port): revisit once VirtualMachine lifetime plumbing lands in bun_jsc.
@@ -54,7 +56,7 @@ pub struct PathWatcherManager {
 impl PathWatcherManager {
     pub fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
-            watchers: ArrayHashMap::default(),
+            watchers: StringArrayHashMap::default(),
             vm,
             deinit_on_last_watcher: false,
         }))
@@ -203,7 +205,8 @@ impl PathWatcher {
             this.emit_in_progress = true;
 
             for &ctx in this.handlers.keys() {
-                on_path_update_fn(Some(ctx), Event::Error(err), false);
+                // Zig: `bun.sys.Error` is a value type — implicitly copied per handler.
+                on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
                 on_update_end_fn(Some(ctx));
             }
 
@@ -258,11 +261,16 @@ impl PathWatcher {
                 let ctx: *mut FSWatcher = self.handlers.keys()[i].cast::<FSWatcher>();
                 // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
                 let encoding = unsafe { (*ctx).encoding };
+                // Zig builds the tagged payload `{ .string | .bytes_to_free }` then calls
+                // `event_type.toEvent(..)` — `EventPathString` on Windows is `StringOrBytesToDecode`.
                 let payload = match encoding {
-                    crate::node::Encoding::Utf8 => Event::path_string(BunString::clone_utf8(path)),
-                    _ => Event::path_bytes_to_free(ZStr::from_bytes(path).into_boxed()),
-                    // TODO(port): exact `Event`/`EventType::to_event` shape — Zig builds a tagged
-                    // payload `{ .string | .bytes_to_free }` then calls `event_type.toEvent(...)`.
+                    crate::node::Encoding::Utf8 => {
+                        StringOrBytesToDecode::String(BunString::clone_utf8(path))
+                    }
+                    // Zig: `bun.default_allocator.dupeZ(u8, path)` — owned copy; the trailing NUL is
+                    // a sentinel only (slice `.len` excludes it), so `Box<[u8]>::from(path)` is the
+                    // semantic equivalent for the Rust `BytesToFree` payload.
+                    _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
                 };
                 on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
                 #[cfg(debug_assertions)]
@@ -294,7 +302,11 @@ impl PathWatcher {
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
         let mut outbuf = PathBuffer::uninit();
-        let event_path: &ZStr = match sys::readlink(path, &mut outbuf) {
+        // Windows `sys::readlink` returns the byte length (`Maybe<usize>`); the link target is
+        // written into `outbuf[..len]` with `outbuf[len] == 0` (sys_uv NUL-terminates). Reconstruct
+        // the `[:0]const u8` Zig sees from `Maybe([:0]u8)` via `ZStr::from_buf`.
+        let readlink_result = sys::readlink(path, &mut outbuf);
+        let event_path: &ZStr = match readlink_result {
             sys::Result::Err(err) => 'brk: {
                 if err.errno == sys::E::NOENT as _ {
                     return sys::Result::Err(sys::Error {
@@ -305,7 +317,7 @@ impl PathWatcher {
                 }
                 break 'brk path;
             }
-            sys::Result::Ok(event_path) => event_path,
+            sys::Result::Ok(len) => ZStr::from_buf(outbuf.as_slice(), len),
         };
 
         // BACKREF field stays raw (LIFETIMES.tsv); capture the pointer once before further &mut use.
@@ -343,7 +355,7 @@ impl PathWatcher {
                 &mut (*this).handle,
                 Some(PathWatcher::uv_event_callback),
                 event_path.as_ptr().cast::<c_char>(),
-                if recursive { uv::UV_FS_EVENT_RECURSIVE } else { 0 },
+                if recursive { uv::UV_FS_EVENT_RECURSIVE as u32 } else { 0 },
             )
         };
         if let Some(err) = start_rc.to_error(sys::Tag::watch) {
@@ -363,17 +375,19 @@ impl PathWatcher {
         // SAFETY: handle is open (uv_fs_event_start succeeded); uv_unref only flips the ref flag.
         unsafe { uv::uv_unref(ptr::addr_of_mut!((*this).handle).cast()) };
 
-        // Owned key: NUL-terminated dupe of event_path (Zig: `dupeZ`).
-        manager.watchers
-            .insert(ZStr::from_bytes(event_path.as_bytes()).into_boxed(), this);
-        // TODO(port): `ZStr::from_bytes(..).into_boxed()` is a placeholder for `allocator.dupeZ(u8, ..)`
-        // — confirm bun_str API for "owned NUL-terminated byte slice".
+        // Owned key: dupe of event_path bytes (Zig: `dupeZ` — the sentinel NUL is not part of the
+        // slice's `.len`, so the StringArrayHashMap key compares equal to `event_path.as_bytes()`).
+        manager
+            .watchers
+            .insert(event_path.as_bytes(), this);
 
         sys::Result::Ok(this)
     }
 
-    extern "C" fn uv_closed_callback(handler: *mut c_void) {
+    unsafe extern "C" fn uv_closed_callback(handler: *mut uv::uv_handle_t) {
         bun_output::scoped_log!(fs_watch, "onClose");
+        // SAFETY: `uv_fs_event_t` is `#[repr(C)]` and prefixed with `uv_handle_t` (UvHandle impl);
+        // libuv passes back the same pointer registered in `uv_close`.
         let event = handler.cast::<uv::uv_fs_event_t>();
         // SAFETY: event.data was set to the PathWatcher* in `init`.
         let this = unsafe { (*event).data.cast::<PathWatcher>() };
@@ -388,7 +402,7 @@ impl PathWatcher {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let me = unsafe { &mut *this };
-        if me.handlers.swap_remove(&handler).is_some() {
+        if me.handlers.swap_remove(&handler) {
             me.maybe_deinit();
         }
     }
@@ -423,8 +437,8 @@ impl PathWatcher {
             unsafe { (*manager).unregister_watcher(this, path) };
         }
 
-        // SAFETY: handle was initialized via uv_fs_event_init; uv_is_closed only reads flags.
-        if unsafe { uv::uv_is_closed(ptr::addr_of!(me.handle).cast()) } {
+        // `UvHandle::is_closed` reads `flags & UV_HANDLE_CLOSED` via the handle prefix.
+        if me.handle.is_closed() {
             // SAFETY: `this` was heap-allocated in `init`.
             drop(unsafe { bun_core::heap::take(this) });
         } else {

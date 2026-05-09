@@ -340,6 +340,13 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
+        /// Port of `FileSystem.absBufZ` in `fs.zig` — like `abs_buf` but writes a
+        /// NUL sentinel and returns a `ZStr` borrowing `buf`.
+        pub fn abs_buf_z<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b ZStr {
+            use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
+            join_abs_string_buf_z::<platform::Loose>(self.top_level_dir, buf, parts)
+        }
+
         /// Port of `FileSystem.normalizeBuf` in `fs.zig`.
         pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{normalize_string_buf, platform};

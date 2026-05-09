@@ -15,6 +15,8 @@ use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::api::bun::process::Status as SpawnStatus;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(windows)]
+use bun_sys::windows::libuv::UvHandle as _;
 
 bun_core::declare_scope!(FileSink, visible);
 
@@ -290,16 +292,27 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
         if let Some(source) = this.writer.source.as_mut() {
             match source {
                 bun_io::Source::Pipe(pipe) => {
-                    if uv::uv_stream_set_blocking((*pipe) as *mut _ as *mut uv::uv_stream_t, 1)
-                        == uv::ReturnCode::ZERO
-                    {
+                    // SAFETY: `pipe` is a live `Box<uv::Pipe>` owned by `writer.source`;
+                    // `uv_pipe_t` is `#[repr(C)]` with `uv_stream_t` as its first field
+                    // (libuv handle subtyping), so the pointer cast is valid (Zig: `@ptrCast(pipe)`).
+                    let rc = unsafe {
+                        uv::uv_stream_set_blocking(
+                            (&mut **pipe) as *mut uv::Pipe as *mut uv::uv_stream_t,
+                            1,
+                        )
+                    };
+                    if rc == uv::ReturnCode::ZERO {
                         return;
                     }
                 }
                 bun_io::Source::Tty(tty) => {
-                    if uv::uv_stream_set_blocking((*tty) as *mut _ as *mut uv::uv_stream_t, 1)
-                        == uv::ReturnCode::ZERO
-                    {
+                    // SAFETY: `tty` is a live `NonNull<uv_tty_t>` (heap or static stdin tty);
+                    // `uv_tty_t` embeds `uv_stream_t` as its first field, so the cast is the
+                    // libuv handle-subtype downcast (Zig: `@ptrCast(tty)`).
+                    let rc = unsafe {
+                        uv::uv_stream_set_blocking(tty.as_ptr().cast::<uv::uv_stream_t>(), 1)
+                    };
+                    if rc == uv::ReturnCode::ZERO {
                         return;
                     }
                 }
@@ -520,7 +533,13 @@ impl FileSink {
             ref_count: Cell::new(1),
             event_loop_handle: evtloop,
             // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
-            fd: unsafe { (*pipe).fd() },
+            // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
+            // Zig's `HandleMixin.fd` maps INVALID_HANDLE_VALUE → `bun.invalid_fd`
+            // and otherwise tags kind=system via `.fromNative`.
+            fd: match unsafe { (*pipe).fd() } {
+                h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
+                h => Fd::from_system(h),
+            },
             ..FileSink::default_fields()
         }));
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);

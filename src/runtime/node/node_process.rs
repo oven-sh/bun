@@ -523,15 +523,18 @@ pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
     if k.tag() == bun_str::Tag::Empty {
         return;
     }
-    let wtf1 = k.value().wtf_string_impl();
+    // Zig: `k.value.WTFStringImpl` — `value` is a private union field in Rust;
+    // `String::{is_8bit,latin1,utf16,length}` dispatch to the WTF impl when
+    // `tag == WTFStringImpl` (guaranteed here: C++ caller passes WTF-backed
+    // strings and we've already returned on `Empty`).
     // PERF(port): was stack-fallback alloc (1025 bytes) — profile in Phase B
     let mut buf1: Vec<u16> = vec![0u16; k.utf16_byte_length() + 1];
     let mut buf2: Vec<u16> = vec![0u16; v.utf16_byte_length() + 1];
-    let len1: usize = if wtf1.is_8bit() {
-        strings::copy_latin1_into_utf16(&mut buf1, wtf1.latin1_slice()).written
+    let len1: usize = if k.is_8bit() {
+        strings::copy_latin1_into_utf16(&mut buf1, k.latin1()).written as usize
     } else {
-        buf1[0..wtf1.length()].copy_from_slice(wtf1.utf16_slice());
-        wtf1.length()
+        buf1[0..k.length()].copy_from_slice(k.utf16());
+        k.length()
     };
     buf1[len1] = 0;
 
@@ -541,12 +544,11 @@ pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
             if v.tag() == bun_str::Tag::Empty {
                 break 'str_ EMPTY_W.as_ptr();
             }
-            let wtf2 = v.value().wtf_string_impl();
-            let len2: usize = if wtf2.is_8bit() {
-                strings::copy_latin1_into_utf16(&mut buf2, wtf2.latin1_slice()).written
+            let len2: usize = if v.is_8bit() {
+                strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written as usize
             } else {
-                buf2[0..wtf2.length()].copy_from_slice(wtf2.utf16_slice());
-                wtf2.length()
+                buf2[0..v.length()].copy_from_slice(v.utf16());
+                v.length()
             };
             buf2[len2] = 0;
             buf2.as_ptr()

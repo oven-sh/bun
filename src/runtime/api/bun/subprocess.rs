@@ -25,6 +25,8 @@ use crate::api::bun_process::{self as spawn_process, Process, Rusage, Status};
 use crate::api::bun_process::ExtraPipe;
 #[cfg(windows)]
 use crate::api::bun_process::WindowsStdioResult;
+#[cfg(windows)]
+use bun_libuv_sys::UvHandle as _;
 use crate::api::bun::Terminal;
 use crate::api::js_bun_spawn_bindings;
 use crate::jsc::ipc as IPC;
@@ -339,19 +341,12 @@ impl Default for WaitThreadPoll {
 }
 
 #[inline]
-pub fn assert_stdio_result(result: StdioResult) {
-    #[cfg(debug_assertions)]
-    {
-        #[cfg(unix)]
-        {
-            if let Some(fd) = result {
-                debug_assert!(fd.is_valid());
-            }
-        }
-        #[cfg(not(unix))]
-        let _ = result;
+pub fn assert_stdio_result(result: &StdioResult) {
+    #[cfg(all(debug_assertions, unix))]
+    if let Some(fd) = result {
+        debug_assert!(fd.is_valid());
     }
-    #[cfg(not(debug_assertions))]
+    #[cfg(not(all(debug_assertions, unix)))]
     let _ = result;
 }
 
@@ -406,9 +401,14 @@ impl Subprocess<'_> {
 
             #[cfg(windows)]
             {
-                if matches!(self.process().poller, spawn_process::Poller::Uv(_)) {
-                    self.pid_rusage =
-                        Some(spawn_process::uv_getrusage(self.process().poller.uv()));
+                let rusage =
+                    if let spawn_process::Poller::Uv(uv_proc) = &mut self.process_mut().poller {
+                        Some(spawn_process::uv_getrusage(uv_proc))
+                    } else {
+                        None
+                    };
+                if let Some(r) = rusage {
+                    self.pid_rusage = Some(r);
                     break 'brk self.pid_rusage.as_ref().unwrap();
                 }
             }
@@ -874,7 +874,10 @@ impl Subprocess<'_> {
             #[cfg(windows)]
             {
                 if let StdioResult::Buffer(buffer) = item {
-                    let fdno: usize = buffer.fd().cast() as usize;
+                    // `UvHandle::fd()` returns a `HANDLE` (`*mut c_void`); Zig's
+                    // `@intFromPtr(item.buffer.fd().cast())` is just the
+                    // numeric handle value.
+                    let fdno: usize = buffer.fd() as usize;
                     array.push(global, JSValue::js_number(fdno as f64))?;
                 } else {
                     array.push(global, JSValue::NULL)?;
@@ -1231,22 +1234,26 @@ impl Subprocess<'_> {
         self.close_io(StdioKind::Stdout);
         self.close_io(StdioKind::Stderr);
 
-        for item in self.stdio_pipes.iter() {
-            #[cfg(windows)]
-            {
-                if let StdioResult::Buffer(buffer) = item {
-                    buffer.close(on_pipe_close);
-                }
+        #[cfg(windows)]
+        for item in core::mem::take(&mut self.stdio_pipes) {
+            if let StdioResult::Buffer(buffer) = item {
+                // `uv_close` is async — the pipe must outlive this scope until
+                // `on_pipe_close` runs and reclaims the allocation. Hand the
+                // `Box` back to libuv as a raw pointer (Zig keeps `*uv.Pipe`
+                // and `clearAndFree` only frees the slice of pointers).
+                Box::leak(buffer).close(on_pipe_close);
             }
-            #[cfg(not(windows))]
-            {
+        }
+        #[cfg(not(windows))]
+        {
+            for item in self.stdio_pipes.iter() {
                 match item {
                     ExtraPipe::OwnedFd(fd) => fd.close(),
                     ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
                 }
             }
+            self.stdio_pipes.clear();
         }
-        self.stdio_pipes.clear();
         self.stdio_pipes.shrink_to_fit();
     }
 

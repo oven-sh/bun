@@ -252,11 +252,19 @@ impl CronRegisterJob {
                     && !(s.state == RegisterState::ReadingCrontab && exited.code == 1)
                     && s.state != RegisterState::BootingOut
                 {
+                    // Materialize the trimmed stderr into an owned buffer:
+                    // `final_buffer()` borrows `s` mutably, and `set_err`
+                    // below needs another `&mut s` — copy out so the two
+                    // borrows do not overlap (Windows only; POSIX ignores
+                    // stderr here).
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = bun_string::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_string::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
-                    );
+                    )
+                    .to_vec();
+                    #[cfg(windows)]
+                    let stderr_output: &[u8] = stderr_owned.as_slice();
                     #[cfg(not(windows))]
                     let stderr_output: &[u8] = b"";
                     // On Windows, detect the SID resolution error and provide
@@ -379,6 +387,7 @@ impl CronRegisterJob {
     // -- Linux --
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(not(windows))]
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -983,11 +992,16 @@ impl CronRemoveJob {
                     // removal of a non-existent job should resolve without error.
                     || (cfg!(windows) && s.state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
+                    // Owned copy: `final_buffer()` is `&mut self` and would
+                    // alias `s.set_err` below. Copy the trimmed bytes out.
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = bun_string::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_string::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
-                    );
+                    )
+                    .to_vec();
+                    #[cfg(windows)]
+                    let stderr_output: &[u8] = stderr_owned.as_slice();
                     #[cfg(not(windows))]
                     let stderr_output: &[u8] = b"";
                     if !stderr_output.is_empty() {
@@ -1102,6 +1116,7 @@ impl CronRemoveJob {
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(not(windows))]
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -1951,15 +1966,10 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     #[cfg(windows)]
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
-        // SAFETY: per-thread VM singleton.
-        let path_env = unsafe { vm_mut() }
-            .transpiler
-            .env
-            .map
-            .get(b"PATH")
-            .unwrap_or(b"");
+        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
+        let path_env = unsafe { (*vm_mut().transpiler.env).map.get(b"PATH") }.unwrap_or(b"");
         // SAFETY: argv[0] is a NUL-terminated string from caller.
-        let argv0 = unsafe { ZStr::from_ptr(argv[0]) }.as_bytes();
+        let argv0 = unsafe { core::ffi::CStr::from_ptr(argv[0]) }.to_bytes();
         match bun_core::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
             None => {
@@ -1971,28 +1981,38 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             }
         }
     }
+    // PORT NOTE: Zig stashes the heap libuv pipe in
+    // `stderr_reader.source.?.pipe` and reuses the same pointer for
+    // `SpawnOptions.stderr = .{ .buffer = pipe }`. Rust's `Source::Pipe`
+    // owns a `Box<uv::Pipe>`; capture the stable heap address before moving
+    // the Box into `source` so `Stdio::Buffer` can name it without
+    // re-borrowing through the enum.
     #[cfg(windows)]
-    {
-        s.stderr_reader().source = Some(bun_io::Source::Pipe(Box::new(
-            // SAFETY: all-zero is a valid uv_pipe_t init state.
-            unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
-        )));
-    }
+    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = {
+        // SAFETY: all-zero is a valid uv_pipe_t init state (matches Zig
+        // `std.mem.zeroes(uv.Pipe)`).
+        let mut pipe =
+            Box::new(unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() });
+        let ptr: *mut bun_sys::windows::libuv::Pipe = core::ptr::from_mut(pipe.as_mut());
+        s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
+        ptr
+    };
     // SAFETY: per-thread VM singleton.
     let cwd = unsafe { (*vm_mut().transpiler.fs).top_level_dir };
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
-        stderr: spawn::Stdio::Buffer(s.stderr_reader().source.as_ref().unwrap().pipe()),
+        stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
         #[cfg(not(windows))]
         stderr: spawn::Stdio::Ignore,
         cwd: cwd.into(),
         argv0: resolved_argv0,
         #[cfg(windows)]
-        windows: SpawnOptions::Windows {
+        windows: spawn::WindowsOptions {
             // SAFETY: per-thread VM singleton.
-            loop_: EventLoopHandle::init(unsafe { vm_mut() }.event_loop()),
+            loop_: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
+            ..Default::default()
         },
         ..SpawnOptions::default()
     };
@@ -2010,13 +2030,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let envp_owned;
     #[cfg(windows)]
     let envp: *const *const c_char = {
-        // SAFETY: per-thread VM singleton.
-        match unsafe { vm_mut() }
-            .transpiler
-            .env
-            .map
-            .create_null_delimited_env_map()
-        {
+        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
+        match unsafe { (*vm_mut().transpiler.env).map.create_null_delimited_env_map() } {
             Ok(v) => {
                 envp_owned = v;
                 envp_owned.as_ptr().cast()
@@ -2080,7 +2095,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         if matches!(spawned.stderr, spawn::WindowsStdioResult::Buffer(_)) {
             s.stderr_reader().parent = this as *mut core::ffi::c_void;
             *s.remaining_fds() += 1;
-            if s.stderr_reader().start_with_current_pipe().unwrap_result().is_err() {
+            if s.stderr_reader().start_with_current_pipe().is_err() {
                 s.set_err(format_args!("Failed to start reading stderr"));
                 return unsafe { T::finish(this) };
             }

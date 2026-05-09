@@ -571,6 +571,12 @@ mod windows_impl {
         }
     }
 
+    impl PartialEq<bun_core::Error> for WriteFileWindowsError {
+        fn eq(&self, other: &bun_core::Error) -> bool {
+            <&'static str>::from(self) == other.name()
+        }
+    }
+
     impl WriteFileWindows {
         pub fn create_with_ctx(
             file_blob: Blob,
@@ -614,13 +620,25 @@ mod windows_impl {
                     }
                     PathOrFileDescriptor::Fd(fd) => {
                         wf.fd = 'brk: {
-                            if let Some(rare) = (*event_loop).virtual_machine.rare_data.as_ref() {
-                                if wf.file_blob.store == rare.stdout_store {
-                                    break 'brk 1;
-                                } else if wf.file_blob.store == rare.stderr_store {
-                                    break 'brk 2;
-                                } else if wf.file_blob.store == rare.stdin_store {
-                                    break 'brk 0;
+                            // `EventLoop.virtual_machine` is `Option<NonNull<VirtualMachine>>`;
+                            // `RareData::std{out,err,in}_store` is type-erased
+                            // `Option<NonNull<c_void>>` — compare on raw pointer identity.
+                            if let Some(vm) = (*event_loop).virtual_machine {
+                                if let Some(rare) = (*vm.as_ptr()).rare_data.as_ref() {
+                                    let store_ptr = wf
+                                        .file_blob
+                                        .store
+                                        .as_ref()
+                                        .unwrap()
+                                        .as_ptr()
+                                        .cast::<c_void>();
+                                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                        break 'brk 1;
+                                    } else if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                        break 'brk 2;
+                                    } else if rare.stdin_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                        break 'brk 0;
+                                    }
                                 }
                             }
 
@@ -632,7 +650,9 @@ mod windows_impl {
                     }
                 }
 
-                wf.poll_ref.ref_((*wf.event_loop).virtual_machine);
+                wf.poll_ref.ref_(jsc::VirtualMachineRef::event_loop_ctx(
+                    (*wf.event_loop).virtual_machine.unwrap().as_ptr(),
+                ));
             }
             Ok(write_file)
         }
@@ -644,6 +664,9 @@ mod windows_impl {
         }
 
         pub fn open(&mut self) -> Result<(), WriteFileWindowsError> {
+            // Set req.data first so the subsequent shared borrow of `file_blob`
+            // for `path` doesn't overlap a `&mut self` (borrowck split).
+            self.io_request.data = (core::ptr::from_mut(self)).cast::<c_void>();
             let path = self
                 .file_blob
                 .store
@@ -654,7 +677,6 @@ mod windows_impl {
                 .pathlike
                 .path()
                 .slice();
-            self.io_request.data = (core::ptr::from_mut(self)).cast::<c_void>();
             let posix_path = match sys::to_posix_path(path) {
                 Ok(p) => p,
                 Err(_) => {
@@ -777,6 +799,10 @@ mod windows_impl {
             bun_output::scoped_log!(WriteFile, "mkdirp");
             self.mkdirp_if_not_exists = false;
 
+            // Compute the raw self pointer first so the immutable borrow of
+            // `path` (into `self.file_blob.store`) does not conflict with the
+            // `&mut self` reborrow needed by `from_mut`.
+            let ctx = core::ptr::from_mut(self).cast::<()>();
             let path = self
                 .file_blob
                 .store
@@ -789,11 +815,14 @@ mod windows_impl {
                 .slice();
             crate::node::fs::async_::AsyncMkdirp::new(crate::node::fs::async_::AsyncMkdirp {
                 completion: Self::on_mkdirp_complete_concurrent,
-                completion_ctx: (core::ptr::from_mut(self)).cast::<()>(),
+                completion_ctx: ctx,
+                // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
+                // points into `self.file_blob.store`, which outlives the mkdirp
+                // task (it's released only in `deinit()`).
                 path: bun_core::dirname(path)
                     // this shouldn't happen
-                    .unwrap_or(path)
-                    .into(),
+                    .unwrap_or(path) as *const [u8],
+                ..Default::default()
             })
             .schedule();
         }
@@ -818,6 +847,17 @@ mod windows_impl {
             }
         }
 
+        /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
+        /// `*mut Self` and returns the event-loop `JsResult<()>` (always `Ok`;
+        /// the inner body already swallows `JSTerminated` per the Zig spec).
+        fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
+            // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
+            // pointer was stashed in `on_mkdirp_complete_concurrent` below;
+            // the JS thread is the sole accessor at this point.
+            unsafe { (*this).on_mkdirp_complete() };
+            Ok(())
+        }
+
         fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
             // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
             // by `mkdirp` above; sole owner on this concurrent path.
@@ -831,7 +871,7 @@ mod windows_impl {
             // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
             unsafe {
                 (*this.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
-                    ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete),
+                    ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
                 ));
             }
         }
@@ -849,7 +889,7 @@ mod windows_impl {
             let rc = this.io_request.result;
             if let Some(err) = rc.errno() {
                 match this.throw(sys::Error {
-                    errno: i32::try_from(err).expect("int cast"),
+                    errno: err,
                     syscall: sys::Tag::write,
                     ..Default::default()
                 }) {
@@ -912,7 +952,7 @@ mod windows_impl {
                     PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
                 };
 
-                return Some(sys_err.to_system_error());
+                return Some(sys_err.to_system_error().into());
             }
             None
         }

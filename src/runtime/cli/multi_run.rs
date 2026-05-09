@@ -157,7 +157,10 @@ impl<'a> ProcessHandle<'a> {
         // end. Phase A uses heap; profile in Phase B.
         let envp;
         let env_ptr = state.env;
-        let spawned: SpawnProcessResult = {
+        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`;
+        // on POSIX `to_process` consumes `self` by value.
+        #[allow(unused_mut)]
+        let mut spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
             let env = unsafe { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
@@ -175,7 +178,12 @@ impl<'a> ProcessHandle<'a> {
             )?
             .map_err(|e| Error::from(e))?
         };
+        // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
+        // On Windows the readers are wired via `Source::Pipe` from `self.options`
+        // below (per .zig spec), and `WindowsStdioResult` is not `Copy`.
+        #[cfg(unix)]
         let stdout_fd = spawned.stdout;
+        #[cfg(unix)]
         let stderr_fd = spawned.stderr;
         let process =
             spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
@@ -191,9 +199,24 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            // TODO(port): SpawnOptions stdout/stderr `.buffer` payload type on Windows (libuv Pipe)
-            self.stdout_reader.reader.source = bun_io::Source::Pipe(self.options.stdout.buffer);
-            self.stderr_reader.reader.source = bun_io::Source::Pipe(self.options.stderr.buffer);
+            // Zig: `this.stdout_reader.reader.source = .{ .pipe = this.options.stdout.buffer }`.
+            // On Windows `Stdio` is the `WindowsStdio` enum; the `.buffer` union
+            // payload maps to `Stdio::Buffer(*mut uv::Pipe)`. Ownership of the
+            // heap-allocated pipe (created via `heap::into_raw` at handle init)
+            // transfers into `Source::Pipe(Box<Pipe>)` here. `WindowsStdio` has
+            // no `Drop`, so the raw pointer left in `self.options` is inert.
+            if let spawn::Stdio::Buffer(pipe) = self.options.stdout {
+                // SAFETY: `pipe` was Box-allocated via `heap::into_raw` when
+                // `self.options` was constructed; sole ownership moves into the
+                // reader's `Source` (freed via `Pipe::close_and_destroy`).
+                self.stdout_reader.reader.source =
+                    Some(bun_io::Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+            }
+            if let spawn::Stdio::Buffer(pipe) = self.options.stderr {
+                // SAFETY: see stdout above — same allocation/ownership contract.
+                self.stderr_reader.reader.source =
+                    Some(bun_io::Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+            }
         }
 
         #[cfg(unix)]
@@ -209,7 +232,6 @@ impl<'a> ProcessHandle<'a> {
         }
         #[cfg(not(unix))]
         {
-            let _ = (stdout_fd, stderr_fd);
             self.stdout_reader.reader.start_with_current_pipe().map_err(Error::from)?;
             self.stderr_reader.reader.start_with_current_pipe().map_err(Error::from)?;
         }

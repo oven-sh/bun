@@ -128,8 +128,27 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            handle.stdout.source = bun_io::Source::Pipe(handle.options.stdout.buffer);
-            handle.stderr.source = bun_io::Source::Pipe(handle.options.stderr.buffer);
+            // Zig: `handle.stdout.source = .{ .pipe = this.options.stdout.buffer }` —
+            // tagged-union payload access. We constructed `.Buffer(_)` ourselves in
+            // `run_filtered_scripts`, so the match arm is infallible (Zig's payload
+            // access panics on wrong tag in safe builds; mirror that here).
+            let stdout_pipe = match &handle.options.stdout {
+                spawn::Stdio::Buffer(p) => *p,
+                _ => unreachable!("filter_run options.stdout is always Buffer on Windows"),
+            };
+            let stderr_pipe = match &handle.options.stderr {
+                spawn::Stdio::Buffer(p) => *p,
+                _ => unreachable!("filter_run options.stderr is always Buffer on Windows"),
+            };
+            // SAFETY: pipes were heap-allocated via `heap::into_raw(Box::new(zeroed()))`
+            // in `run_filtered_scripts` and initialised by `spawn_process_windows`;
+            // ownership now transfers from `options` (no Drop on WindowsStdio) into
+            // the reader's `source`. Same `*mut uv::Pipe → Box<Pipe>` pattern as
+            // `PipeReader::set_stdio_result`.
+            handle.stdout.source =
+                Some(bun_io::Source::Pipe(unsafe { bun_core::heap::take(stdout_pipe) }));
+            handle.stderr.source =
+                Some(bun_io::Source::Pipe(unsafe { bun_core::heap::take(stderr_pipe) }));
         }
 
         #[cfg(unix)]
@@ -651,7 +670,7 @@ impl AbortHandler {
             let res = unsafe { bun_sys::c::SetConsoleCtrlHandler(Some(Self::windows_ctrl_handler), bun_sys::windows::TRUE) };
             if res == 0 {
                 if cfg!(debug_assertions) {
-                    Output::warn("Failed to set abort handler\n", ());
+                    Output::warn("Failed to set abort handler\n");
                 }
             }
         }

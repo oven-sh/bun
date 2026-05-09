@@ -273,7 +273,9 @@ fn find_playwright_shell() -> Option<ZBox> {
         if entry.kind != bun_sys::EntryKind::Directory {
             continue;
         }
-        let name = entry.name.slice();
+        // Zig spec: `bun.DirIterator.iterate(fd, .u8)` — request UTF-8 names
+        // even on Windows. `slice_u8()` is the cross-platform `&[u8]` borrow.
+        let name = entry.name.slice_u8();
         if !name.starts_with(PREFIX) {
             continue;
         }

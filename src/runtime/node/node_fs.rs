@@ -399,6 +399,23 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
+/// `bun.sys.directoryExistsAt` — Zig dispatches on `anytype` element width
+/// (sys.zig:3601 → `existsAtType` picks `toNTPath16` for `[*]const u16`). The
+/// Rust `sys::directory_exists_at` only accepts `&ZStr` and re-widens
+/// internally, so for `OSPathSliceZ` callers we narrow the already-wide
+/// Windows path through a pooled UTF-8 buffer first. POSIX is a forwarder.
+#[inline]
+fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
+    #[cfg(not(windows))]
+    { sys::directory_exists_at(dir, path) }
+    #[cfg(windows)]
+    {
+        let mut tmp = paths::path_buffer_pool::get();
+        let narrow = strings::from_wpath(&mut tmp[..], path.as_slice());
+        sys::directory_exists_at(dir, narrow)
+    }
+}
+
 type ReadPosition = i64;
 type Buffer = super::types::Buffer;
 type ArrayBuffer = bun_jsc::MarkedArrayBuffer;
@@ -774,8 +791,12 @@ where
 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
         // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
+        // Copy the raw pointer for the cleanup guard so the `defer!` closure
+        // captures `req_cleanup` (not `req`) — borrowck otherwise treats the
+        // closure's `&req` capture as conflicting with `&mut *req` below.
+        let req_cleanup: *mut uv::fs_t = req;
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
+        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req_cleanup) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
@@ -1566,7 +1587,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 this.finish_concurrently(Err(sys::Error {
                     errno: SystemErrno::ENOENT as _,
                     syscall: sys::Tag::copyfile,
-                    path: nodefs.os_path_into_sync_error_buf(src),
+                    path: nodefs.os_path_into_sync_error_buf(src).into(),
                     ..Default::default()
                 }));
                 return;
@@ -3899,10 +3920,15 @@ pub use ret as ReturnType;
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
-        let path: &OSPathSliceZ = if args.path.slice().is_empty() {
-            os_path_literal_empty()
+        // PORT: Zig passes `osPathKernel32(...)` (wide on Windows) into
+        // `Syscall.access(OSPathSliceZ)`. The Rust `bun_sys::access` Windows
+        // arm takes `&ZStr` and performs the kernel32 widening internally
+        // (sys/lib.rs `windows_impl::access`), so feed it the UTF-8 path on
+        // every platform — net behaviour is identical.
+        let path: &ZStr = if args.path.slice().is_empty() {
+            ZStr::EMPTY
         } else {
-            args.path.os_path_kernel32(&mut self.sync_error_buf)
+            args.path.slice_z(&mut self.sync_error_buf)
         };
         match Syscall::access(path, args.mode.as_int()) {
             Err(err) => Err(err.with_path(args.path.slice())),
@@ -4377,7 +4403,11 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut dest_buf = paths::os_path_buffer_pool::get();
-            let src = strings::to_kernel32_path(bun_core::reinterpret_slice::<u16>(&mut self.sync_error_buf), args.src.slice());
+            // SAFETY: `sync_error_buf` is `align(@alignOf(u16))` (see field decl);
+            // reinterpreting the byte buffer as `&mut [u16]` is the documented
+            // pattern for the Windows wide-path scratch (matches Zig
+            // `@ptrCast(@alignCast(&this.sync_error_buf))`).
+            let src = strings::to_kernel32_path(unsafe { bun_core::reinterpret_slice::<u16>(&mut self.sync_error_buf) }, args.src.slice());
             let dest = strings::to_kernel32_path(&mut *dest_buf, args.dest.slice());
             // SAFETY: src/dest are NUL-terminated wide paths; CopyFileW is the Win32 FFI
             if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), if args.mode.shouldnt_overwrite() { 1 } else { 0 }) } == windows::FALSE {
@@ -4641,7 +4671,7 @@ impl NodeFS {
                 // it is unclear if macOS lies about if the existing item is
                 // a directory or not, so it is checked.
                 E::EISDIR | E::EEXIST => {
-                    return match sys::directory_exists_at(FD::INVALID, path) {
+                    return match directory_exists_at_os_path(FD::INVALID, path) {
                         Err(_) => Err(sys::Error {
                             errno: err.errno, syscall: sys::Tag::mkdir,
                             path: self.os_path_into_sync_error_buf(without_nt_prefix((&path[..]))).into(),
@@ -4701,7 +4731,7 @@ impl NodeFS {
                                 // On Windows, this may happen if trying to mkdir replacing a file
                                 #[cfg(windows)]
                                 {
-                                    if let Ok(res) = sys::directory_exists_at(FD::INVALID, parent) {
+                                    if let Ok(res) = directory_exists_at_os_path(FD::INVALID, parent) {
                                         // is a directory. break.
                                         if !res {
                                             // SAFETY: `working_mem` is not used after this return; re-derive
@@ -4822,7 +4852,10 @@ impl NodeFS {
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::mkdtemp, path: prefix_buf[..len + 6].into(), ..Default::default() });
             }
-            return Ok(ZigString::dupe_for_js(unsafe { bun_string::slice_to_nul(req.path) }).expect("oom"));
+            // SAFETY: on success libuv populates `req.path` with a NUL-terminated
+            // UTF-8 string owned by the request; `req.deinit()` (the scopeguard)
+            // releases it after we've copied the bytes out.
+            return Ok(ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes()).expect("oom"));
         }
 
         #[cfg(not(windows))]
@@ -5927,12 +5960,12 @@ impl NodeFS {
         if (args.flag.as_int() & sys::O::APPEND) == 0 && !matches!(args.file, PathOrFileDescriptor::Fd(_)) {
             // If this errors, we silently ignore it.
             // Not all files are seekable (and thus, not all files can be truncated).
-            #[cfg(windows)] { let _ = unsafe { windows::SetEndOfFile(fd.cast()) }; }
+            #[cfg(windows)] { let _ = unsafe { windows::SetEndOfFile(fd.native()) }; }
             #[cfg(not(windows))] { let _ = Syscall::ftruncate(fd, (written as u64 & ((1u64 << 63) - 1)) as i64); }
         }
 
         if args.flush {
-            #[cfg(windows)] { let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.cast()) }; }
+            #[cfg(windows)] { let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) }; }
             #[cfg(not(windows))] { let _ = unsafe { libc::fsync(fd.native()) }; }
         }
 
@@ -5947,7 +5980,10 @@ impl NodeFS {
         let mut outbuf = PathBuffer::uninit();
         let inbuf = &mut self.sync_error_buf;
         let path = args.path.slice_z(inbuf);
-        let link_len = match Syscall::readlink(path, &mut outbuf[..]) {
+        // PORT: `Syscall` (= `sys_uv` on Windows) returns the link slice
+        // directly there but `usize` on POSIX. `bun_sys::readlink` is the
+        // length-normalised wrapper on every platform.
+        let link_len = match sys::readlink(path, &mut outbuf[..]) {
             Err(err) => return Err(err.with_path(args.path.slice())),
             Ok(result) => result,
         };
@@ -5992,10 +6028,14 @@ impl NodeFS {
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
             }
-            let result_ptr: Option<*const c_char> = req.ptr_as::<Option<*const c_char>>();
-            let Some(ptr) = result_ptr else {
+            // Zig: `req.ptrAs(?[*:0]u8)` — `fs_t.ptr` *is* the nullable C
+            // string pointer (libuv stores the realpath result directly), so
+            // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
+            // SAFETY: `rc.errno()` was None ⇒ libuv populated `req.ptr`.
+            let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
+            if ptr.is_null() {
                 return Err(sys::Error { errno: E::ENOENT as _, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
-            };
+            }
             let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
@@ -6212,13 +6252,13 @@ impl NodeFS {
                 args::SymlinkLinkType::Dir => ResolvedLinkType::Dir,
                 args::SymlinkLinkType::Junction => ResolvedLinkType::Junction,
                 args::SymlinkLinkType::Unspecified => 'auto_detect: {
-                    let cwd = match sys::getcwd(&mut to_buf) {
+                    let cwd_len = match sys::getcwd(&mut to_buf[..]) {
                         Ok(c) => c,
                         Err(_) => panic!("failed to resolve current working directory"),
                     };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
                     let src_len = paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
-                        cwd,
+                        &to_buf[..cwd_len],
                         &mut self.sync_error_buf[..],
                         &[dir, target_path],
                     ).len();
@@ -6239,13 +6279,13 @@ impl NodeFS {
                 if resolved_link_type == ResolvedLinkType::Junction {
                     // this is similar to the `const src` above, but these cases
                     // are mutually exclusive, so it isn't repeating any work.
-                    let cwd = match sys::getcwd(&mut to_buf) {
+                    let cwd_len = match sys::getcwd(&mut to_buf[..]) {
                         Ok(c) => c,
                         Err(_) => panic!("failed to resolve current working directory"),
                     };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
                     let target_len = paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
-                        cwd,
+                        &to_buf[..cwd_len],
                         &mut self.sync_error_buf[4..],
                         &[dir, target_path],
                     ).len();
@@ -6680,9 +6720,10 @@ impl NodeFS {
 
     fn _cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
-        // PORT NOTE: Rust `Syscall::readlink` returns the byte length, not the
-        // slice — reconstruct the `[:0]const u8` view from `target_buf`.
-        let link_len = match Syscall::readlink(src, &mut target_buf[..]) {
+        // PORT NOTE: `bun_sys::readlink` returns the byte length on every
+        // platform (the `Syscall` alias = `sys_uv` on Windows would return the
+        // slice itself); reconstruct the `[:0]const u8` view from `target_buf`.
+        let link_len = match sys::readlink(src, &mut target_buf[..]) {
             Ok(result) => result,
             Err(err) => {
                 self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
@@ -7058,8 +7099,8 @@ impl NodeFS {
             // before any branch. Re-deriving them inline inside `unwrap_or_else`
             // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
             // a borrow into `sync_error_buf`).
-            let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice()));
-            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()));
+            let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(SystemErrno::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice()));
+            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(SystemErrno::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()));
             let stat_ = match reuse_stat {
                 Some(a) => a,
                 None => {
@@ -7073,14 +7114,17 @@ impl NodeFS {
             };
             if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
                 if unsafe { sys::c::CopyFileW(src.as_ptr(), dest.as_ptr(), mode.shouldnt_overwrite() as i32) } == 0 {
-                    let mut err = unsafe { windows::GetLastError() };
+                    // Zig `windows.GetLastError()` returns the `Win32Error`
+                    // enum, not the raw DWORD — use the typed wrapper so the
+                    // associated-const match arms type-check.
+                    let mut err = windows::Win32Error::get();
                     match err {
                         windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS => {}
                         windows::Win32Error::PATH_NOT_FOUND => {
                             let _ = sys::make_path::make_path_u16(sys::Dir::cwd(), paths::dirname_w(dest.as_slice()));
                             let second_try = unsafe { sys::c::CopyFileW(src.as_ptr(), dest.as_ptr(), mode.shouldnt_overwrite() as i32) };
                             if second_try > 0 { return Ok(()); }
-                            err = unsafe { windows::GetLastError() };
+                            err = windows::Win32Error::get();
                         }
                         _ => {}
                     }
@@ -7097,7 +7141,7 @@ impl NodeFS {
                 };
                 let _close = scopeguard::guard(handle, |fd| fd.close());
                 let mut wbuf = paths::os_path_buffer_pool::get();
-                let len = unsafe { windows::GetFinalPathNameByHandleW(handle.cast(), wbuf.as_mut_ptr(), wbuf.len() as u32, 0) } as usize;
+                let len = unsafe { windows::GetFinalPathNameByHandleW(handle.native(), wbuf.as_mut_ptr(), wbuf.len() as u32, 0) } as usize;
                 if len == 0 || len >= wbuf.len() {
                     let p = self.os_path_into_sync_error_buf(dest.as_slice());
                     return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(dst_enoent_maybe);
@@ -7122,7 +7166,10 @@ impl NodeFS {
     /// Tries `open(dest, flags, default_permission)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    fn _cp_open_dest_with_mkdir(&mut self, dest: &OSPathSliceZ, flags: i32) -> Maybe<FD> {
+    fn _cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32) -> Maybe<FD> {
+        // PORT: extracted from the mac/linux/freebsd arms of `_copySingleFileSync`
+        // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
+        // monomorphic (and lets it type-check on Windows where it's dead code).
         match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
             Ok(result) => Ok(result),
             Err(err) => {

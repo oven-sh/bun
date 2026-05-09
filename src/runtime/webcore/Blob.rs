@@ -393,13 +393,16 @@ impl BlobExt for Blob {
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start(
-                // SAFETY: `bun_vm()` returns the live VM for this global.
+            read_file::ReadFileUV::start::<Handler<'_, F>>(
+                // `bun_vm()` returns the live VM for this global; the event
+                // loop outlives any in-flight async fs request. `start<H>`
+                // takes the already-erased `*anyopaque` (caller casts); `H`
+                // (turbofish) supplies `Handler::run` for the callback.
                 global.bun_vm().event_loop(),
                 self.store.as_ref().expect("infallible: store present").clone(),
                 self.offset,
                 self.size,
-                handler,
+                handler.cast(),
             );
             return promise_value;
         }
@@ -585,7 +588,7 @@ impl BlobExt for Blob {
     ) {
         #[cfg(windows)]
         {
-            return read_file::ReadFileUV::start(
+            return read_file::ReadFileUV::start_with_ctx(
                 // SAFETY: `bun_vm()` returns the live VM for this global.
                 global.bun_vm().event_loop(),
                 self.store.as_ref().expect("infallible: store present").clone(),
@@ -1328,7 +1331,7 @@ impl BlobExt for Blob {
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 global_this,
-                                err.with_path(path).to_js(global_this)?,
+                                err.with_path(path).to_js(global_this),
                             ));
                         }
                     }
@@ -1379,7 +1382,7 @@ impl BlobExt for Blob {
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
-                            err.to_js(global_this)?,
+                            err.to_js(global_this),
                         ));
                     }
                 } else {
@@ -1388,7 +1391,7 @@ impl BlobExt for Blob {
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
-                            err.to_js(global_this)?,
+                            err.to_js(global_this),
                         ));
                     }
                 }
@@ -3279,10 +3282,10 @@ impl BlobExt for Blob {
             PathOrFileDescriptor::Path(_) => {
                 #[cfg(windows)]
                 if path_or_fd.path().slice() == b"/dev/null" {
-                    // Release the caller-owned path before overwriting (Zig:
-                    // `path_or_fd.deinit()`); the assignment also runs
-                    // PathLike's Drop, but the explicit call keeps Zig parity.
-                    path_or_fd.deinit();
+                    // Zig: `path_or_fd.deinit()` then re-assign. In Rust the
+                    // assignment below drops the old `PathLike` (releasing the
+                    // caller-owned path), so the explicit deinit is folded into
+                    // the `*path_or_fd = …` write.
                     *path_or_fd = PathOrFileDescriptor::Path(
                         crate::webcore::node_types::PathLike::String(
                             // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.
@@ -4165,7 +4168,7 @@ pub fn write_file_with_source_destination(
             let promise_value = promise.as_value(ctx);
             promise_value.ensure_still_alive();
             // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise.strong.set(ctx, promise_value) };
+            unsafe { (*write_file_promise).promise.set(ctx, promise_value) };
             match write_file_mod::WriteFileWindows::create(
                 ctx.bun_vm().event_loop(),
                 destination_blob.borrowed_view(),
@@ -4174,8 +4177,10 @@ pub fn write_file_with_source_destination(
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
-                Err(e) if e == bun_core::err!("WriteFileWindowsDeinitialized") => {}
-                Err(e) => return Err(e.into()),
+                Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
+                Err(write_file_mod::WriteFileWindowsError::JSTerminated) => {
+                    return Err(jsc::JsTerminated::JSTerminated.into());
+                }
                 Ok(_) => {}
             }
             return Ok(promise_value);
@@ -4208,14 +4213,16 @@ pub fn write_file_with_source_destination(
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
         #[cfg(windows)]
         {
-            return copy_file::CopyFileWindows::init(
+            return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
-                ctx.bun_vm().event_loop(),
+                // SAFETY: `bun_vm()` is live for the duration of a host call;
+                // the event loop outlives the async copy state machine.
+                unsafe { &*ctx.bun_vm().event_loop() },
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size,
                 options.mode,
-            );
+            ));
         }
         #[cfg(not(windows))]
         {
@@ -4893,7 +4900,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     if truncate {
         #[cfg(windows)]
         // SAFETY: fd is a valid open handle on this code path; FFI call.
-        unsafe { bun_sys::windows::kernel32::SetEndOfFile(fd.cast()) };
+        unsafe { bun_sys::windows::kernel32::SetEndOfFile(fd.native()) };
         #[cfg(not(windows))]
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }
@@ -6355,9 +6362,11 @@ pub trait FileOpener: Sized {
 
         #[cfg(windows)]
         {
+            use bun_sys::ReturnCodeExt as _;
             // Monomorphic libuv completion thunk — recovers `*mut Self` from
             // `req.data`, mirrors Zig's `WrappedCallback.callback`.
             extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
+                use bun_sys::ReturnCodeExt as _;
                 // SAFETY: `req.data` was set to `self as *mut Self` below before
                 // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
                 let self_: &mut S = unsafe { &mut *(*req).data.cast::<S>() };
@@ -6366,20 +6375,21 @@ pub trait FileOpener: Sized {
                     scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
                     // SAFETY: req is the live uv_fs_t from the open request.
                     let result = unsafe { (*req).result };
-                    if let Some(err_enum) = result.err_enum() {
+                    if let Some(err_enum) = result.err_enum_e() {
                         let path_string_2 = match self_.pathlike() {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
                         };
-                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as _));
+                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as i32));
                         self_.set_system_error(
                             bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
                                 .with_path(path_string_2.slice())
-                                .to_system_error(),
+                                .to_system_error()
+                                .into(),
                         );
                         self_.set_opened_fd(bun_sys::Fd::INVALID);
                     } else {
-                        self_.set_opened_fd(result.to_fd());
+                        self_.set_opened_fd(Fd::from_uv(result.to_fd()));
                     }
                 }
                 let cb = self_.open_callback();
@@ -6398,16 +6408,17 @@ pub trait FileOpener: Sized {
                     req,
                     path.as_ptr(),
                     Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    node::fs::DEFAULT_PERMISSION,
+                    node::fs::DEFAULT_PERMISSION as i32,
                     Some(wrapped_callback::<Self>),
                 )
             };
-            if let Some(errno) = rc.err_enum() {
-                self.set_errno(bun_core::errno_to_zig_err(errno as _));
+            if let Some(errno) = rc.err_enum_e() {
+                self.set_errno(bun_core::errno_to_zig_err(errno as i32));
                 self.set_system_error(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::open)
                         .with_path(path_string.slice())
-                        .to_system_error(),
+                        .to_system_error()
+                        .into(),
                 );
                 self.set_opened_fd(bun_sys::Fd::INVALID);
                 callback(self, bun_sys::Fd::INVALID);

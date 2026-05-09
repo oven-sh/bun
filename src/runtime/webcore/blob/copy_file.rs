@@ -19,6 +19,8 @@ use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 use bun_sys::windows::libuv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
+use bun_sys_jsc::ErrorJsc as _;
 
 
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
@@ -972,7 +974,6 @@ pub struct CopyFileWindows<'a> {
     pub read_write_loop: ReadWriteLoop,
 }
 
-#[derive(Default)]
 #[cfg(windows)]
 pub struct ReadWriteLoop {
     pub source_fd: Fd,
@@ -982,6 +983,22 @@ pub struct ReadWriteLoop {
     pub written: usize,
     pub read_buf: Vec<u8>,
     pub uv_buf: libuv::uv_buf_t,
+}
+
+#[cfg(windows)]
+impl Default for ReadWriteLoop {
+    fn default() -> Self {
+        Self {
+            source_fd: Fd::INVALID,
+            must_close_source_fd: false,
+            destination_fd: Fd::INVALID,
+            must_close_destination_fd: false,
+            written: 0,
+            read_buf: Vec::new(),
+            // Zig: `.{ .base = undefined, .len = 0 }`
+            uv_buf: libuv::uv_buf_t { len: 0, base: core::ptr::null_mut() },
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -996,7 +1013,10 @@ impl ReadWriteLoop {
         self.read_buf.clear();
         // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
         let cap = self.read_buf.capacity();
-        self.uv_buf = libuv::uv_buf_t::init_raw(self.read_buf.as_mut_ptr(), cap);
+        self.uv_buf = libuv::uv_buf_t {
+            len: cap as libuv::ULONG,
+            base: self.read_buf.as_mut_ptr(),
+        };
         let loop_ = this.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.
@@ -1004,15 +1024,20 @@ impl ReadWriteLoop {
         // we've finished writing all the previous chunks.
         this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
-        let rc = libuv::uv_fs_read(
-            loop_,
-            &mut this.io_request,
-            self.source_fd.uv(),
-            core::ptr::from_mut(&mut self.uv_buf),
-            1,
-            -1,
-            Some(on_read),
-        );
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is a zeroed/cleaned
+        // `fs_t` owned by `this`, `uv_buf` points into `read_buf`'s capacity, and
+        // `on_read` is a valid `uv_fs_cb`.
+        let rc = unsafe {
+            libuv::uv_fs_read(
+                loop_,
+                &mut this.io_request,
+                self.source_fd.uv(),
+                core::ptr::from_mut(&mut self.uv_buf),
+                1,
+                -1,
+                Some(on_read),
+            )
+        };
 
         if let Some(err) = rc.to_error(bun_sys::Tag::read) {
             return bun_sys::Result::Err(err);
@@ -1092,15 +1117,19 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     // Re-use the fs request.
     // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
     unsafe { (*req).deinit() };
-    let rc2 = libuv::uv_fs_write(
-        event_loop.uv_loop(),
-        &mut this.io_request,
-        destination_fd.uv(),
-        core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
-        1,
-        -1,
-        Some(on_write),
-    );
+    // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` points into
+    // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`.
+    let rc2 = unsafe {
+        libuv::uv_fs_write(
+            event_loop.uv_loop(),
+            &mut this.io_request,
+            destination_fd.uv(),
+            core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
+            1,
+            -1,
+            Some(on_write),
+        )
+    };
     this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
     if let Some(err) = rc2.to_error(bun_sys::Tag::write) {
@@ -1151,15 +1180,20 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
         let prev = this.read_write_loop.uv_buf.slice();
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
-        let rc2 = libuv::uv_fs_write(
-            this.event_loop.uv_loop(),
-            &mut this.io_request,
-            destination_fd.uv(),
-            core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
-            1,
-            -1,
-            Some(on_write),
-        );
+        // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` is a tail
+        // slice of the previous write buffer (still backed by `read_buf`), and
+        // `on_write` is a valid `uv_fs_cb`.
+        let rc2 = unsafe {
+            libuv::uv_fs_write(
+                this.event_loop.uv_loop(),
+                &mut this.io_request,
+                destination_fd.uv(),
+                core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
+                1,
+                -1,
+                Some(on_write),
+            )
+        };
 
         if let Some(err) = rc2.to_error(bun_sys::Tag::write) {
             this.err = Some(err);
@@ -1211,10 +1245,13 @@ impl<'a> CopyFileWindows<'a> {
         destination_mode: Option<Mode>,
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
+        // SAFETY: `event_loop.global` is set to the VM's `JSGlobalObject` before any JS task can
+        // schedule a CopyFile; it has process lifetime.
+        let global = unsafe { event_loop.global.unwrap().as_ref() };
         let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
-            promise: jsc::JSPromiseStrong::init(event_loop.global),
+            promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: unsafe { core::mem::zeroed::<libuv::fs_t>() },
             event_loop,
@@ -1257,9 +1294,9 @@ impl<'a> CopyFileWindows<'a> {
                     Err(_) => {
                         result.close();
                         return bun_sys::Result::Err(bun_sys::Error {
-                            errno: bun_sys::SystemErrno::EMFILE as c_int,
+                            errno: bun_sys::SystemErrno::EMFILE as u16,
                             syscall: bun_sys::Tag::open,
-                            path: Some(path.slice().into()),
+                            path: path.slice().into(),
                             ..Default::default()
                         });
                     }
@@ -1281,7 +1318,7 @@ impl<'a> CopyFileWindows<'a> {
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut self.destination_file_store.data.as_file().pathlike,
+            &mut self.destination_file_store.data_mut().as_file_mut().pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
             false,
         ) {
@@ -1298,7 +1335,7 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut self.source_file_store.data.as_file().pathlike,
+            &mut self.source_file_store.data_mut().as_file_mut().pathlike,
             &mut self.read_write_loop.must_close_source_fd,
             true,
         ) {
@@ -1334,7 +1371,14 @@ impl<'a> CopyFileWindows<'a> {
 
         let mut pathbuf1 = PathBuffer::uninit();
         let mut pathbuf2 = PathBuffer::uninit();
-        // PORT NOTE: reshaped for borrowck — borrow file stores after computing paths
+        // PORT NOTE: capture the raw `self` pointer before borrowing the file
+        // stores. `slice_z` ties the returned `&ZStr` lifetime to `&self`, so
+        // `new_path`/`old_path` keep `self.{destination,source}_file_store`
+        // borrowed across the `uv_fs_copyfile` call below; taking
+        // `core::ptr::from_mut(self)` there would require an exclusive reborrow
+        // of all of `*self` and conflict. The pointer is only stored in
+        // `io_request.data` for the libuv callback to recover `self`.
+        let this_ptr: *mut c_void = core::ptr::from_mut(self).cast::<c_void>();
         let destination_file_store = &mut self.destination_file_store.data.as_file();
         let source_file_store = &mut self.source_file_store.data.as_file();
 
@@ -1345,7 +1389,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match bun_sys::File::from(fd).kind() {
+                    match (bun_sys::File { handle: fd }).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;
@@ -1392,7 +1436,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match bun_sys::File::from(fd).kind() {
+                    match (bun_sys::File { handle: fd }).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;
@@ -1433,27 +1477,32 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
         let loop_ = self.event_loop.uv_loop();
-        self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
+        self.io_request.data = this_ptr;
 
-        let rc = libuv::uv_fs_copyfile(
-            loop_,
-            &mut self.io_request,
-            old_path,
-            new_path,
-            0,
-            Some(on_copy_file),
-        );
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is owned by `self`,
+        // `old_path`/`new_path` are NUL-terminated (from `slice_z`/`ZStr`), and
+        // `on_copy_file` is a valid `uv_fs_cb`.
+        let rc = unsafe {
+            libuv::uv_fs_copyfile(
+                loop_,
+                &mut self.io_request,
+                old_path.as_ptr(),
+                new_path.as_ptr(),
+                0,
+                Some(on_copy_file),
+            )
+        };
 
         if let Some(errno) = rc.errno() {
             self.throw(bun_sys::Error {
                 // #6336
-                errno: if errno == bun_sys::SystemErrno::EPERM as c_int {
-                    bun_sys::SystemErrno::ENOENT as c_int
+                errno: if errno == bun_sys::SystemErrno::EPERM as u16 {
+                    bun_sys::SystemErrno::ENOENT as u16
                 } else {
                     errno
                 },
                 syscall: bun_sys::Tag::copyfile,
-                path: Some(old_path.as_bytes().into()),
+                path: old_path.as_bytes().into(),
                 ..Default::default()
             });
             return;
@@ -1462,9 +1511,15 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub fn throw(&mut self, err: bun_sys::Error) {
-        let global_this = self.event_loop.global;
-        let promise = self.promise.swap();
-        let err_instance = err.to_js_with_async_stack(global_this, &promise);
+        // SAFETY: `event_loop.global` is the VM's `JSGlobalObject` (process lifetime).
+        let global_this = unsafe { self.event_loop.global.unwrap().as_ref() };
+        // PORT NOTE: `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
+        // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
+        // borrowck doesn't tie it to `self` across `destroy` below.
+        let promise: *mut JSPromise = self.promise.swap();
+        // SAFETY: `promise` is a live GC cell (held strongly until `swap` released the
+        // slot; the JS-side promise chain still roots it for the duration of this tick).
+        let err_instance = err.to_js_with_async_stack(global_this, unsafe { &*promise });
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
@@ -1473,7 +1528,9 @@ impl<'a> CopyFileWindows<'a> {
         };
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
-        let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
+        // SAFETY: `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid
+        // after `destroy`.
+        let _ = unsafe { (*promise).reject(global_this, err_instance) }; // TODO: properly propagate exception upwards
     }
 
     pub fn on_complete(&mut self, written_actual: usize) {
@@ -1491,26 +1548,38 @@ impl<'a> CopyFileWindows<'a> {
             ) {
                 self.written_bytes = written;
                 let mut pathbuf = PathBuffer::uninit();
-                let path = self
+                // PORT NOTE (borrowck): `slice_z` ties the returned `&ZStr` to
+                // `&self.destination_file_store`, which would conflict with the
+                // `core::ptr::from_mut(self)` below. Capture the raw C pointer now —
+                // it points either into the stack-local `pathbuf` or into the
+                // Arc-held `destination_file_store` path bytes, both of which outlive
+                // the `uv_fs_chmod` call (libuv `strdup`s the path internally).
+                let path_ptr = self
                     .destination_file_store
                     .data
                     .as_file()
                     .pathlike
                     .path()
-                    .slice_z(&mut pathbuf);
+                    .slice_z(&mut pathbuf)
+                    .as_ptr();
                 let loop_ = self.event_loop.uv_loop();
                 self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
                 self.io_request = unsafe { core::mem::zeroed::<libuv::fs_t>() };
                 self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
-                let rc = libuv::uv_fs_chmod(
-                    loop_,
-                    &mut self.io_request,
-                    path,
-                    i32::try_from(mode).expect("int cast"),
-                    Some(on_chmod),
-                );
+                // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` was just zeroed,
+                // `path_ptr` is NUL-terminated (from `slice_z`) and live for this call,
+                // and `on_chmod` is a valid `uv_fs_cb`.
+                let rc = unsafe {
+                    libuv::uv_fs_chmod(
+                        loop_,
+                        &mut self.io_request,
+                        path_ptr,
+                        i32::try_from(mode).expect("int cast"),
+                        Some(on_chmod),
+                    )
+                };
 
                 // chmod failed to start - reject the promise to report the error.
                 // PORT NOTE: previously `transmute::<c_int, SystemErrno>(errno)` — wrong on
@@ -1535,8 +1604,11 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn resolve_promise(&mut self, written: usize) {
-        let global_this = self.event_loop.global;
-        let promise = self.promise.swap();
+        // SAFETY: `event_loop.global` is the VM's `JSGlobalObject` (process lifetime).
+        let global_this = unsafe { self.event_loop.global.unwrap().as_ref() };
+        // PORT NOTE: see `throw` — decay the `&mut JSPromise` (GC cell) to a raw ptr so it
+        // outlives `destroy(self)` for borrowck.
+        let promise: *mut JSPromise = self.promise.swap();
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
         let _guard = unsafe {
@@ -1545,7 +1617,9 @@ impl<'a> CopyFileWindows<'a> {
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
-        let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
+        // SAFETY: `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid
+        // after `destroy`.
+        let _ = unsafe { (*promise).resolve(global_this, JSValue::js_number_from_uint64(written as u64)) }; // TODO: properly propagate exception upwards
     }
 
     #[cold]
@@ -1568,7 +1642,7 @@ impl<'a> CopyFileWindows<'a> {
     pub unsafe fn destroy(this: *mut Self) {
         (*this).read_write_loop.close();
         // destination_file_store.deref() / source_file_store.deref() — Arc Drop on Box drop
-        (*this).promise.deinit();
+        // promise.deinit() — handled by JscStrong's Drop on Box drop
         (*this).io_request.deinit();
         drop(bun_core::heap::take(this));
     }
@@ -1576,28 +1650,34 @@ impl<'a> CopyFileWindows<'a> {
     fn mkdirp(&mut self) {
         bun_sys::syslog!("mkdirp");
         self.mkdirp_if_not_exists = false;
-        let destination = &self.destination_file_store.data.as_file();
-        if !matches!(
-            destination.pathlike,
-            PathOrFileDescriptor::Path(_)
-        ) {
-            self.throw(bun_sys::Error {
-                errno: bun_sys::SystemErrno::EINVAL as c_int,
-                syscall: bun_sys::Tag::mkdir,
-                ..Default::default()
-            });
-            return;
-        }
+        // PORT NOTE (borrowck): compute the raw path slice pointer up-front so the
+        // immutable borrow of `self.destination_file_store` ends before we take
+        // `core::ptr::from_mut(self)` for `completion_ctx` below.
+        let path: *const [u8] = {
+            let destination = &self.destination_file_store.data.as_file();
+            if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
+                self.throw(bun_sys::Error {
+                    errno: bun_sys::SystemErrno::EINVAL as u16,
+                    syscall: bun_sys::Tag::mkdir,
+                    ..Default::default()
+                });
+                return;
+            }
+            let path_slice = destination.pathlike.path().slice();
+            // BORROW: not owned — `destination_file_store` (and thus its path) is held in
+            // `self`, which outlives the workpool task (completion runs `copyfile`/`throw`
+            // on `self` before any `destroy`).
+            bun_paths::dirname(path_slice)
+                // this shouldn't happen
+                .unwrap_or(path_slice) as *const [u8]
+        };
 
         self.event_loop.ref_concurrently();
         node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
-            // TODO(port): callback ABI — Zig casts &onMkdirpCompleteConcurrent to a generic completion fn ptr
-            completion: on_mkdirp_complete_concurrent as *const c_void,
-            completion_ctx: core::ptr::from_mut(self).cast::<c_void>(),
-            path: bun_paths::dirname(destination.pathlike.path().slice())
-                // this shouldn't happen
-                .unwrap_or(destination.pathlike.path().slice())
-                .into(),
+            completion: on_mkdirp_complete_concurrent,
+            completion_ctx: core::ptr::from_mut(self).cast::<()>(),
+            path,
+            ..Default::default()
         })
         .schedule();
     }
@@ -1606,9 +1686,10 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.unref_concurrently();
 
         if let Some(err) = self.err.take() {
-            let mut err2 = err.clone();
+            // PORT NOTE: Zig `var err2 = err; err2.deinit();` freed the borrowed path; in
+            // Rust `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with `err`
+            // inside `throw`.
             self.throw(err);
-            err2.deinit();
             return;
         }
 
@@ -1666,7 +1747,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 
     // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `statbuf` for a successful uv_fs_copyfile.
     let size = unsafe { (*req).statbuf.size() };
-    this.on_complete(size);
+    this.on_complete(size as usize);
 }
 
 #[cfg(windows)]
@@ -1697,20 +1778,27 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-extern "C" fn on_mkdirp_complete_concurrent(
-    this: *mut CopyFileWindows,
-    err_: bun_sys::Result<()>,
-) {
+fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     bun_sys::syslog!("mkdirp complete");
-    // SAFETY: this is a valid CopyFileWindows from completion_ctx
-    let this = unsafe { &mut *this };
+    // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
+    // by `mkdirp` above; sole owner on this concurrent path.
+    let this = unsafe { &mut *ctx.cast::<CopyFileWindows>() };
     debug_assert!(this.err.is_none());
     this.err = match err_ {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
+    // PORT NOTE: `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
+    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
+    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
+        // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
+        // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
+        // do not touch `this` afterward.
+        unsafe { (*this).on_mkdirp_complete() };
+        Ok(())
+    }
     this.event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, CopyFileWindows::on_mkdirp_complete),
+        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
     ));
 }
 

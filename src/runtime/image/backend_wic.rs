@@ -85,6 +85,15 @@ impl From<BackendError> for bun_core::Error {
     }
 }
 
+// Zig: `dupGlobal` is `error{OutOfMemory}!?[]u8`, flat-unioned into
+// `clipboard()`'s `error{BackendUnavailable, OutOfMemory}` set.
+impl From<bun_alloc::AllocError> for BackendError {
+    #[inline]
+    fn from(_: bun_alloc::AllocError) -> Self {
+        BackendError::OutOfMemory
+    }
+}
+
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let f = factory()?;
     // IWICStream::InitializeFromMemory takes a DWORD count; Windows ships
@@ -177,14 +186,16 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         return Err(DecodeFailed);
     }
 
-    Ok(codecs::Decoded { rgba: out, width: w, height: h })
+    // System backends colour-manage into sRGB during decode (WICConvertBitmapSource
+    // → 32bppRGBA), so the source ICC profile is consumed, not forwarded.
+    Ok(codecs::Decoded { rgba: out, width: w, height: h, icc_profile: None })
 }
 
 pub fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
-    opts: codecs::EncodeOptions,
+    opts: &codecs::EncodeOptions,
 ) -> Result<Vec<u8>, BackendError> {
     // Punt to the static codecs for everything WIC can't express the same way:
     //   • palette PNG — WIC's PNG encoder won't quantise for us;
@@ -746,12 +757,14 @@ fn load_factory() {
     // Resolve the one flat C export first; if windowscodecs.dll isn't present
     // we never attempt CoCreateInstance and the whole backend stays disabled.
     // SAFETY: literal C string; LoadLibraryA is safe to call from any thread.
-    let Some(dll) = (unsafe { windows::LoadLibraryA(c"windowscodecs.dll".as_ptr()) }) else {
+    let dll = unsafe { windows::LoadLibraryA(c"windowscodecs.dll".as_ptr()) };
+    if dll.is_null() {
         return;
-    };
-    // SAFETY: dll is a valid HMODULE.
-    let Some(sym) = (unsafe { windows::GetProcAddressA(dll, c"WICConvertBitmapSource".as_ptr()) })
-    else {
+    }
+    let Some(sym) = windows::GetProcAddressA(
+        Some(dll),
+        bun_core::ZStr::from_static(b"WICConvertBitmapSource\0"),
+    ) else {
         return;
     };
     // SAFETY: write under FACTORY_ONCE; sym is the export of WICConvertBitmapSource.
@@ -889,9 +902,10 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
         if ih_size < 40 || off > buf.len() as u64 {
             continue;
         }
+        let file_size = u32::try_from(buf.len()).expect("int cast");
         buf[0] = b'B';
         buf[1] = b'M';
-        buf[2..6].copy_from_slice(&u32::try_from(buf.len()).expect("int cast").to_le_bytes());
+        buf[2..6].copy_from_slice(&file_size.to_le_bytes());
         buf[6..10].copy_from_slice(&0u32.to_le_bytes());
         buf[10..14].copy_from_slice(&u32::try_from(off).expect("int cast").to_le_bytes());
         return Ok(Some(buf));

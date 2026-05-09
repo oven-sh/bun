@@ -3095,6 +3095,13 @@ impl File {
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | if truncate { O::TRUNC } else { 0 };
         openat_a(dir, path, flags, 0o666).map(Self::from_fd)
     }
+    /// `std.fs.cwd().createFileW(path, .{})` replacement (Windows wide-path).
+    /// Default `.{}` in Zig means `.truncate = true, .read = false`.
+    #[cfg(windows)]
+    pub fn create_w(dir: Fd, path: &[u16]) -> Maybe<Self> {
+        let flags = O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC;
+        openat_windows(dir, path, flags, 0o666).map(Self::from_fd)
+    }
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> { read(self.handle, buf) }
     pub fn write(&self, buf: &[u8]) -> Maybe<usize> { write(self.handle, buf) }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
@@ -3221,7 +3228,45 @@ impl File {
     pub fn seek_to(&self, offset: u64) -> Maybe<()> {
         set_file_offset(self.handle, offset)
     }
+    /// `std.fs.File.getPos` — current file position via `lseek(0, SEEK_CUR)`.
+    /// On Windows this routes through `SetFilePointerEx(.., FILE_CURRENT)` (whence
+    /// values match: `SEEK_CUR == FILE_CURRENT == 1`).
+    #[inline]
+    pub fn get_pos(&self) -> Maybe<u64> {
+        lseek(self.handle, 0, libc::SEEK_CUR).map(|p| p as u64)
+    }
     pub fn stat(&self) -> Maybe<Stat> { fstat(self.handle) }
+    /// Port of `bun.sys.File.kind` (File.zig:220).
+    ///
+    /// Be careful about using this on Linux or macOS — calls `fstat()`
+    /// internally there. On Windows it routes through `GetFileType`.
+    pub fn kind(&self) -> Maybe<FileKind> {
+        #[cfg(windows)]
+        {
+            let rt = windows::GetFileType(self.handle.cast());
+            if rt == windows::FILE_TYPE_UNKNOWN {
+                let err = windows::get_last_win32_error();
+                if err != windows::Win32Error::SUCCESS {
+                    return Err(Error::from_code(
+                        err.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::EUNKNOWN),
+                        Tag::fstat,
+                    ));
+                }
+            }
+            Ok(match rt {
+                windows::FILE_TYPE_CHAR => FileKind::CharacterDevice,
+                windows::FILE_TYPE_REMOTE | windows::FILE_TYPE_DISK => FileKind::File,
+                windows::FILE_TYPE_PIPE => FileKind::NamedPipe,
+                windows::FILE_TYPE_UNKNOWN => FileKind::Unknown,
+                _ => FileKind::File,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            let st = self.stat()?;
+            Ok(kind_from_mode(st.st_mode as Mode))
+        }
+    }
     pub fn close(self) -> Maybe<()> { close(self.handle) }
     /// Port of `bun.sys.File.openatOSPath` (File.zig:65) — `openat` accepting
     /// the platform-native NUL-terminated path type (`ZStr` POSIX / `WStr`
@@ -6188,6 +6233,14 @@ pub mod freebsd {}
 #[derive(Clone, Copy)]
 pub struct Dir { pub fd: Fd }
 
+/// Options for `Dir::copy_file` (Zig: `std.fs.Dir.CopyFileOptions`).
+#[derive(Clone, Copy, Default)]
+pub struct CopyFileOptions {
+    /// When set, the destination is created with this mode instead of the
+    /// source file's mode (Zig: `override_mode: ?File.Mode`).
+    pub override_mode: Option<Mode>,
+}
+
 /// Options for `Dir::make_open_path` (Zig: `std.fs.Dir.OpenOptions`).
 #[derive(Clone, Copy, Default)]
 pub struct OpenDirOptions {
@@ -6497,6 +6550,48 @@ impl Dir {
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
         unlinkat(self.fd, sub_path).map_err(Into::into)
+    }
+
+    /// `std.fs.Dir.copyFile` — open `source_path` (relative to `self`), create
+    /// `dest_path` (relative to `dest_dir`) with `O_CREAT|O_TRUNC`, then stream
+    /// the contents via [`copy_file`]. Mode is taken from the source's `fstat`
+    /// unless `options.override_mode` is set (Zig stdlib semantics, minus the
+    /// `AtomicFile` rename — Bun's only call site is `gitignore` → `.gitignore`
+    /// where atomicity isn't required).
+    pub fn copy_file(
+        &self,
+        source_path: &[u8],
+        dest_dir: &Dir,
+        dest_path: &[u8],
+        options: CopyFileOptions,
+    ) -> core::result::Result<(), bun_core::Error> {
+        let in_fd = openat_a(self.fd, source_path, O::RDONLY | O::CLOEXEC, 0)?;
+        let mode = match options.override_mode {
+            Some(m) => m,
+            None => match fstat(in_fd) {
+                Ok(st) => st.st_mode as Mode,
+                Err(e) => {
+                    let _ = close(in_fd);
+                    return Err(e.into());
+                }
+            },
+        };
+        let out_fd = match openat_a(
+            dest_dir.fd,
+            dest_path,
+            O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC,
+            mode,
+        ) {
+            Ok(fd) => fd,
+            Err(e) => {
+                let _ = close(in_fd);
+                return Err(e.into());
+            }
+        };
+        let r = copy_file(in_fd, out_fd);
+        let _ = close(in_fd);
+        let _ = close(out_fd);
+        r.map_err(Into::into)
     }
 
     /// `std.fs.Dir.openDirZ` — open `sub_path` (NUL-terminated) relative to

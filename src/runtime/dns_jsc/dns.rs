@@ -420,8 +420,9 @@ pub mod lib_uv_backend {
                 ctx: NonNull::new(holder.cast()),
                 callback: Holder::run,
             };
-            (*(*this).head.global_this()
-                .bun_vm())
+            (*this).head.global_this()
+                .bun_vm()
+                .as_mut()
                 .enqueue_task(jsc::Task::init(&mut (*holder).task));
         }
     }
@@ -460,10 +461,13 @@ pub mod lib_uv_backend {
         let mut hostname = PathBuffer::uninit();
         // Reserve the last byte for the NUL terminator so the index below can never
         // exceed the buffer even if the upstream length guard in `doLookup` is bypassed.
-        let copied = strings::copy(&mut hostname[..hostname.len() - 1], query.name.as_ref());
-        hostname[copied.len()] = 0;
-        // SAFETY: hostname[copied.len()] == 0 written above
-        let host = unsafe { ZStr::from_raw(hostname.as_ptr(), copied.len()) };
+        let cap = hostname.len() - 1;
+        // `strings::copy` returns a slice borrowing `hostname`; take only its length
+        // so the mutable borrow ends immediately and `hostname` can be indexed again.
+        let copied_len = strings::copy(&mut hostname[..cap], query.name.as_ref()).len();
+        hostname[copied_len] = 0;
+        // SAFETY: hostname[copied_len] == 0 written above
+        let host = unsafe { ZStr::from_raw(hostname.as_ptr(), copied_len) };
 
         // SAFETY: request lives until completion; backend.libc.uv is the embedded uv_getaddrinfo_t
         let promise = unsafe {
@@ -4167,11 +4171,18 @@ impl Resolver {
     }
 
     #[cfg(windows)]
-    pub extern "C" fn on_close_uv(watcher: *mut c_void) {
+    pub unsafe extern "C" fn on_close_uv(watcher: *mut libuv::uv_handle_t) {
+        // SAFETY: libuv invokes the close cb with the same handle pointer passed
+        // to `uv_close`, which was `&mut UvDnsPoll::poll` (a `uv_poll_t` whose
+        // header is `uv_handle_t`); `from_poll` recovers the containing struct.
         let poll = UvDnsPoll::from_poll(watcher.cast());
         UvDnsPoll::destroy(poll);
     }
 
+    /// POSIX `FilePoll` callback (kqueue/epoll). Windows drives c-ares via
+    /// libuv (`on_dns_poll_uv`) instead, and the only caller
+    /// (`dispatch::__bun_run_file_poll`) is itself `#[cfg(not(windows))]`.
+    #[cfg(not(windows))]
     pub fn on_dns_poll(&mut self, poll: &mut FilePoll) {
         // Drop to a raw pointer immediately: `Channel::process` (== `ares_process_fd`)
         // synchronously fires c-ares completion callbacks which re-enter this
@@ -4206,29 +4217,45 @@ impl Resolver {
         {
             use libuv as uv;
             if !readable && !writable {
-                // cleanup
-                if let Some(entry) = self.polls.fetch_ordered_remove(&fd) {
-                    unsafe { uv::uv_close(core::ptr::from_mut(&mut (*entry.value).poll).cast(), Some(Self::on_close_uv)) };
+                // cleanup — Zig: `fetchOrderedRemove`; our `remove` is the
+                // ordered, value-returning variant.
+                if let Some(entry) = self.polls.remove(&fd) {
+                    // SAFETY: `entry` is the heap `UvDnsPoll` we inserted below;
+                    // libuv takes ownership of the handle until `on_close_uv`
+                    // frees the allocation.
+                    unsafe { uv::uv_close(core::ptr::from_mut(&mut (*entry).poll).cast(), Some(Self::on_close_uv)) };
                 }
                 return;
             }
 
-            let poll_entry = self.polls.get_or_put(fd);
-            if !poll_entry.found_existing {
-                let poll = UvDnsPoll::new(self, fd);
-                if unsafe { uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*poll).poll, fd as _) } < 0 {
-                    UvDnsPoll::destroy(poll);
+            // Capture `self` as a raw backref for `UvDnsPoll::parent` before
+            // `get_or_put` mutably borrows `self.polls`.
+            let this_ptr: *mut Self = self;
+            let poll_entry = bun_core::handle_oom(self.polls.get_or_put(fd));
+            let poll: *mut UvDnsPoll = if poll_entry.found_existing {
+                *poll_entry.value_ptr
+            } else {
+                let new_poll = UvDnsPoll::new(this_ptr, fd);
+                // Publish into the map first so the `GetOrPutResult` borrow can
+                // end (NLL) before we may need to `swap_remove` on init failure.
+                *poll_entry.value_ptr = new_poll;
+                // SAFETY: `Loop::get()` is the live per-thread uws loop;
+                // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
+                if unsafe { uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*new_poll).poll, fd as _) } < 0 {
+                    UvDnsPoll::destroy(new_poll);
                     let _ = self.polls.swap_remove(&fd);
                     return;
                 }
-                *poll_entry.value_ptr = poll;
-            }
-
-            let poll: *mut UvDnsPoll = *poll_entry.value_ptr;
+                new_poll
+            };
 
             let uv_events = (if readable { uv::UV_READABLE } else { 0 }) | (if writable { uv::UV_WRITABLE } else { 0 });
+            // SAFETY: `poll` is the live entry just inserted/looked up above.
             if unsafe { uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv)) } < 0 {
                 let _ = self.polls.swap_remove(&fd);
+                // SAFETY: handle was successfully `uv_poll_init_socket`-ed, so
+                // `uv_close` is the required teardown path; `on_close_uv` frees
+                // the `UvDnsPoll` box.
                 unsafe { uv::uv_close(core::ptr::from_mut(&mut (*poll).poll).cast(), Some(Self::on_close_uv)) };
             }
         }
@@ -5010,7 +5037,10 @@ impl Resolver {
         // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
         // `&mut sockaddr` view into that storage.
         if c_ares::get_sockaddr(addr_s, port, unsafe {
-            &mut *(&raw mut sa).cast::<libc::sockaddr>()
+            // Target type inferred from `get_sockaddr`'s signature: `libc::sockaddr`
+            // on POSIX, `bun_cares_sys::winsock::sockaddr` on Windows (the latter
+            // is crate-private, so it cannot be named here).
+            &mut *(&raw mut sa).cast()
         }) != 0
         {
             return Err(global_this.throw_invalid_argument_value(b"address", addr_value));
@@ -5052,7 +5082,9 @@ impl Resolver {
         // `heap::alloc`'d and is owned by c-ares until the callback fires.
         unsafe {
             (*channel).get_name_info(
-                &mut *(&raw mut sa).cast::<libc::sockaddr>(),
+                // See `get_sockaddr` call above — inferred `sockaddr` type is
+                // platform-dependent and unnameable on Windows from this crate.
+                &mut *(&raw mut sa).cast(),
                 &mut *request,
             );
         }

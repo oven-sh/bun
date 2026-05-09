@@ -3,6 +3,8 @@ use core::mem::size_of;
 
 use bun_io::Loop as AsyncLoop;
 use bun_io::{BufferedWriter, WriteStatus};
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_jsc::EventLoopHandle;
 use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use bun_sys;
@@ -245,7 +247,17 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let this_ref = unsafe { &mut *this };
         #[cfg(windows)]
         {
-            this_ref.writer.set_pipe(this_ref.stdio_result.buffer);
+            // Zig: `this.writer.setPipe(this.stdio_result.buffer)` — on Windows
+            // `StdioResult` is the `WindowsStdioResult` enum and the `.buffer`
+            // payload is a heap-allocated `uv::Pipe`. Ownership transfers to the
+            // writer's `source`; we leave `stdio_result` as `Unavailable`.
+            if let StdioResult::Buffer(pipe) = this_ref.stdio_result.take() {
+                let raw = bun_core::heap::into_raw(pipe);
+                // SAFETY: `raw` is a `Box<uv::Pipe>` produced by spawn (heap-
+                // allocated); ownership transfers into `writer.source` here and
+                // is freed via `close()`/`end()`.
+                unsafe { this_ref.writer.set_pipe(raw) };
+            }
         }
         this_ref.writer.set_parent(this);
         // SAFETY: ownership of the initial ref is transferred to the returned IntrusiveRc.

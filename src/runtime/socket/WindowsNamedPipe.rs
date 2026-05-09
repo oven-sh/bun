@@ -33,10 +33,12 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
+use bun_libuv_sys::{UvHandle as _, UvStream as _};
 use bun_sys::{self, Fd};
 use bun_uws::us_bun_verify_error_t;
 
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::socket::SSLConfig;
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
 
@@ -156,18 +158,17 @@ impl WindowsNamedPipe {
         unsafe { core::slice::from_raw_parts_mut(available.as_mut_ptr().cast::<u8>(), suggested_size) }
     }
 
-    fn on_read(&mut self, buffer: &[u8]) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", buffer.len());
-        unsafe { self.incoming.set_len(self.incoming.len() + buffer.len()) };
+    // PORT NOTE: takes `nread` (not the libuv `buffer` slice) because that
+    // slice points *into* `self.incoming` — see `StreamReader::on_read` below
+    // for the Stacked-Borrows split. The Zig `is_slice_in_buffer` debug assert
+    // is dropped: libuv guarantees the read buffer is the one returned from
+    // `on_read_alloc`, and we no longer hold the original pointer here.
+    fn on_read(&mut self, nread: usize) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
+        // SAFETY: `nread` bytes were just written by libuv into the
+        // unused-capacity tail handed out by `on_read_alloc`.
+        unsafe { self.incoming.set_len(self.incoming.len() + nread) };
         debug_assert!(self.incoming.len() <= self.incoming.capacity());
-        debug_assert!({
-            let alloc = self.incoming.allocated_slice();
-            // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; only used for
-            // a pointer-range containment check, never read.
-            let alloc_bytes =
-                unsafe { core::slice::from_raw_parts(alloc.as_ptr().cast::<u8>(), alloc.len()) };
-            bun_core::is_slice_in_buffer(buffer, alloc_bytes)
-        });
 
         // PORT NOTE: reordered before `incoming.slice()` for borrowck — `reset_timeout`
         // only touches timer fields, never `self.incoming`.
@@ -202,8 +203,11 @@ impl WindowsNamedPipe {
             WriteStatus::Drained => {
                 // unref after sending all data
                 #[cfg(windows)]
-                if let Some(source) = self.writer.source.as_ref() {
-                    source.pipe.unref();
+                if let Some(source) = self.writer.source.as_mut() {
+                    // Zig: `source.pipe.unref()` — Rust `Source` is an enum;
+                    // `unref()` matches the active variant (always `Pipe` here
+                    // via `start_with_pipe`).
+                    source.unref();
                 }
             }
             WriteStatus::EndOfFile => {
@@ -292,8 +296,10 @@ impl WindowsNamedPipe {
             if !bytes.is_empty() {
                 // ref because we have pending data
                 #[cfg(windows)]
-                if let Some(source) = self.writer.source.as_ref() {
-                    source.pipe.r#ref();
+                if let Some(source) = self.writer.source.as_mut() {
+                    // Zig: `source.pipe.ref()` — see `on_write` for the
+                    // enum-vs-union note.
+                    source.ref_();
                 }
                 if self.flags.disconnected() {
                     // enqueue to be sent after connecting
@@ -331,12 +337,11 @@ impl WindowsNamedPipe {
             let Some(stream) = self.writer.get_stream() else {
                 return false;
             };
-            let read_start_result = stream.read_start(
-                self,
-                Self::on_read_alloc,
-                Self::on_read_error,
-                Self::on_read,
-            );
+            // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
+            // (returned by `writer.get_stream()`); the `StreamReader` impl
+            // below routes the trampolines back to `self`.
+            let read_start_result = unsafe { (*stream).read_start_ctx::<Self>(self) }
+                .to_result(bun_sys::Tag::listen);
             if read_start_result.is_err() {
                 return false;
             }
@@ -421,11 +426,10 @@ impl WindowsNamedPipe {
             ssl_error: CertError::default(),
             // SAFETY: all-zero is a valid uv_connect_t (#[repr(C)] POD, libuv expects zeroed)
             connect_req: unsafe { core::mem::zeroed::<uv::uv_connect_t>() },
-            event_loop_timer: EventLoopTimer {
-                next: timespec::EPOCH,
-                tag: EventLoopTimer::Tag::WindowsNamedPipe,
-                ..Default::default()
-            },
+            // Zig: `.{ .next = .epoch, .tag = .WindowsNamedPipe }` with field
+            // defaults `state = .PENDING`, `heap = .{}`, `in_heap = .none` —
+            // exactly what `init_paused` produces.
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WindowsNamedPipe),
             current_timeout: 0,
             flags: Flags::DISCONNECTED, // disconnected: bool = true is the only non-false default
         }
@@ -458,7 +462,7 @@ impl WindowsNamedPipe {
 
         #[cfg(windows)]
         if let Some(pipe) = self.pipe.as_mut() {
-            let _ = pipe.unref();
+            pipe.unref();
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
@@ -594,7 +598,7 @@ impl WindowsNamedPipe {
         debug_assert!(self.pipe.is_some());
         self.flags.set_disconnected(true);
         // ref because we are connecting
-        let _ = self.pipe.as_mut().unwrap().r#ref();
+        self.pipe.as_mut().unwrap().ref_();
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             if result.is_err() {
@@ -751,12 +755,19 @@ impl WindowsNamedPipe {
             if self.pipe.is_none() {
                 return false;
             }
-            let _ = self.pipe.as_mut().unwrap().unref();
-            self.writer.set_parent(self);
-            // TODO(port): start_with_pipe takes the pipe pointer; Box<uv::Pipe> must yield a stable *mut uv::Pipe.
-            let start_pipe_result = self
-                .writer
-                .start_with_pipe(self.pipe.as_mut().unwrap().as_mut() as *mut uv::Pipe);
+            self.pipe.as_mut().unwrap().unref();
+            // raw self-ptr first to dodge the &mut self.writer / &mut *self overlap
+            // (Zig: `this.writer.setParent(this)` — `this` is already `*WindowsNamedPipe`).
+            let this: *mut Self = core::ptr::from_mut(self);
+            self.writer.set_parent(this);
+            // SAFETY: FFI ownership hand-off — `pipe` is the `Box<uv::Pipe>`-backed
+            // allocation in `self.pipe`; `start_with_pipe` adopts it as the writer's
+            // `Source::Pipe` (Zig: `this.writer.startWithPipe(this.pipe.?)`). The
+            // `self.pipe` slot continues to alias the same heap object for
+            // `pause_stream`/`get_name`; `on_pipe_close` nulls it before the writer's
+            // `close_and_destroy` frees, so no double-free.
+            let pipe_ptr: *mut uv::Pipe = self.pipe.as_mut().unwrap().as_mut();
+            let start_pipe_result = unsafe { self.writer.start_with_pipe(pipe_ptr) };
             if let bun_sys::Result::Err(err) = start_pipe_result {
                 self.on_error(err);
                 return false;
@@ -769,12 +780,11 @@ impl WindowsNamedPipe {
                 return false;
             };
 
-            let read_start_result = stream.read_start(
-                self,
-                Self::on_read_alloc,
-                Self::on_read_error,
-                Self::on_read,
-            );
+            // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
+            // (returned by `writer.get_stream()`); the `StreamReader` impl
+            // below routes the trampolines back to `self`.
+            let read_start_result = unsafe { (*stream).read_start_ctx::<Self>(self) }
+                .to_result(bun_sys::Tag::listen);
             if let bun_sys::Result::Err(err) = read_start_result {
                 self.on_error(err);
                 return false;
@@ -840,7 +850,9 @@ impl WindowsNamedPipe {
         } else {
             #[cfg(windows)]
             if let Some(stream) = self.writer.get_stream() {
-                let _ = stream.read_stop();
+                // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
+                // always succeeds and is a no-op if not reading.
+                unsafe { (*stream).read_stop() };
             }
         }
     }
@@ -931,7 +943,9 @@ impl WindowsNamedPipe {
         self.set_timeout(0);
         #[cfg(windows)]
         if let Some(stream) = self.writer.get_stream() {
-            let _ = stream.read_stop();
+            // SAFETY: `stream` is the live pipe stream; `uv_read_stop` always
+            // succeeds and is a no-op if not reading.
+            unsafe { (*stream).read_stop() };
         }
         self.wrapper = None;
         self.ssl_error = CertError::default();
@@ -989,6 +1003,36 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
     unsafe fn on_close(this: *mut Self) {
         // SAFETY: see on_write.
         WindowsNamedPipe::on_close(unsafe { &mut *this })
+    }
+}
+
+/// Port of the three `comptime` fn-pointer args to Zig `stream.readStart(this,
+/// onReadAlloc, onReadError, onRead)` — Rust bakes them into a trait so the
+/// `extern "C"` libuv trampoline is monomorphised over `WindowsNamedPipe`.
+#[cfg(windows)]
+impl uv::StreamReader for WindowsNamedPipe {
+    #[inline]
+    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
+        WindowsNamedPipe::on_read_alloc(this, suggested_size)
+    }
+    #[inline]
+    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+        // Zig: `errEnum() orelse bun.sys.E.CANCELED` — promote raw libuv errno.
+        let e = bun_sys::windows::translate_uv_error_to_e(err);
+        WindowsNamedPipe::on_read_error(this, e);
+    }
+    #[inline]
+    unsafe fn on_read(this: *mut Self, data: &[u8]) {
+        // `data` points into `(*this).incoming` (it was returned from
+        // `on_read_alloc`). Forming `&mut *this` would retag every byte of
+        // `*this` Unique and pop the SharedRW tag `data` descends from — UB
+        // under Stacked Borrows. Capture the only thing the body needs (length),
+        // drop the slice, *then* reborrow `*this`.
+        let nread = data.len();
+        let _ = data;
+        // SAFETY: `this` is the live context stashed in `handle.data` by
+        // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
+        WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
     }
 }
 

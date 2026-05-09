@@ -21,6 +21,8 @@ use core::ffi::c_void;
 use bun_sys::{self as sys, Fd, E};
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter as _;
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;

@@ -528,11 +528,16 @@ impl<const SSL: bool> NewSocket<SSL> {
                 self.socket = SocketHandler::<SSL>::from(s);
             }
             Some(UnixOrHost::Fd(f)) => {
+                // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET`
+                // (`usize`) on Windows; `Fd::native()` is `c_int` / HANDLE
+                // (`*mut c_void`) respectively. The Zig spec passes
+                // `f.native()` verbatim (Zig's descriptor type *is*
+                // `*anyopaque`); cast to bridge the Rust-side `usize` alias.
                 let s = group.from_fd(
                     kind,
                     ssl_ctx,
                     core::mem::size_of::<*mut c_void>() as c_int,
-                    f.native(),
+                    f.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
                     false,
                 );
                 if s.is_null() {

@@ -194,6 +194,8 @@ impl Worker {
             // holds it; Phase B should fold this into the outer cleanup path (check
             // `this.ipc.backend.pipe.is_none()` and close_and_destroy the leaked pipe).
 
+            // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
+            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
             this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
@@ -201,24 +203,40 @@ impl Worker {
                 stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
                 // SAFETY: all-zero is a valid uv::Pipe.
                 stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
-                extra_fds: &mut this.extra_fd_stdio,
-                cwd: coord.cwd,
-                windows: spawn::WindowsOptions { loop_: jsc::EventLoopHandle::init(coord.vm), ..Default::default() },
+                extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
+                cwd: coord.cwd.to_vec().into_boxed_slice(),
+                windows: spawn::WindowsOptions {
+                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
+                    ..Default::default()
+                },
                 stream: true,
                 ..Default::default()
             };
+            // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
+            // anyerror, inner map for the bun_sys::Result.
             let mut spawned =
                 spawn::spawn_process(&options, coord.argv.as_ptr(), coord.envps[this.idx as usize].as_ptr())?
-                    .unwrap()?;
+                    .map_err(|e| {
+                        Output::err(e, "spawnProcess failed for test worker", ());
+                        bun_core::err!("SpawnFailed")
+                    })?;
             // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
             this.process = Some(spawned.to_process(coord.vm.event_loop(), false));
 
-            if let Stdio::Buffer(pipe) = spawned.stdout {
-                this.out.reader.start_with_pipe(pipe).unwrap()?;
+            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
+                // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
+                // ownership transfers into the reader's `Source` (heap::take inside).
+                unsafe { this.out.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
+                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
-            if let Stdio::Buffer(pipe) = spawned.stderr {
-                this.err.reader.start_with_pipe(pipe).unwrap()?;
+            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
+                // SAFETY: see stdout above.
+                unsafe { this.err.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
+                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
+            // `ipc_pipe` was Box-allocated via heap::into_raw above and
+            // initialised by spawn_process; ownership of the *mut Pipe transfers
+            // to the Channel on success (it does the Box::from_raw internally).
             if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
                 return Err(bun_core::err!("ChannelAdoptFailed"));
             }

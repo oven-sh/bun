@@ -529,7 +529,10 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         if DIRS_ONLY && child_is_file {
             continue;
         }
-        let name = entry.name.slice();
+        // Zig: `bun.DirIterator.iterate(dfd, .u8)` — force-u8 mode so `name.slice()`
+        // is `[]const u8` even on Windows. The Rust iterator caches the UTF-8
+        // transcode and exposes it as `slice_u8()`.
+        let name = entry.name.slice_u8();
         let child_abs =
             join_z_buf::<platform::Posix>(abs_buf.as_mut_slice(), &[abs_dir.as_bytes(), name]);
         let child_rel: &[u8] = if rel_dir.is_empty() {

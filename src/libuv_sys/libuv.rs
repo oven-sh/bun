@@ -1650,6 +1650,23 @@ pub struct uv_fs_event_t {
 }
 impl uv_fs_event_t {
     #[inline] pub fn is_dir(&self) -> bool { !self.dirw.is_null() }
+
+    /// Port of `uv_fs_event_t.hash` (libuv.zig:1750) — `std.hash.Wyhash` over
+    /// `path ?? "null"`, `events` bytes, `filename`, `status` bytes.
+    pub fn hash(&self, filename: &[u8], events: c_int, status: ReturnCode) -> u64 {
+        let mut hasher = bun_wyhash::Wyhash::init(0);
+        if self.path.is_null() {
+            hasher.update(b"null");
+        } else {
+            // SAFETY: `path` is a valid NUL-terminated C string owned by libuv
+            // for the lifetime of the open handle.
+            hasher.update(unsafe { core::ffi::CStr::from_ptr(self.path) }.to_bytes());
+        }
+        hasher.update(&events.to_ne_bytes());
+        hasher.update(filename);
+        hasher.update(&status.0.to_ne_bytes());
+        hasher.final_()
+    }
 }
 #[repr(C)]
 pub struct uv_fs_poll_t {

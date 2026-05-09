@@ -934,8 +934,12 @@ impl<'a> FileCloser for ReadFileUV<'a> {
 
 #[cfg(windows)]
 impl<'a> ReadFileUV<'a> {
+    /// Typed entry — mirrors Zig `start(event_loop, store, off, max_len,
+    /// comptime Handler, handler: *anyopaque)`: caller passes the already-erased
+    /// `*anyopaque`; `H` (via turbofish) supplies `Handler.run` through the
+    /// `ReadFileUvHandler` blanket impl.
     pub fn start<H>(
-        event_loop: &'a EventLoop,
+        event_loop: *mut EventLoop,
         store: StoreRef,
         off: SizeType,
         max_len: SizeType,
@@ -944,10 +948,37 @@ impl<'a> ReadFileUV<'a> {
     where
         H: ReadFileUvHandler,
     {
+        Self::start_with_ctx(
+            event_loop,
+            store,
+            off,
+            max_len,
+            // Zig: @ptrCast(&Handler.run) — erase the typed handler to the C ABI cb.
+            H::run as ReadFileOnReadFileCallback,
+            handler,
+        )
+    }
+
+    /// Raw entry — caller already has the type-erased `(fn, *anyopaque)` pair
+    /// (Zig `NewInternalReadFileHandler` path). Shares the body with `start`.
+    pub fn start_with_ctx(
+        event_loop: *mut EventLoop,
+        store: StoreRef,
+        off: SizeType,
+        max_len: SizeType,
+        on_complete_fn: ReadFileOnReadFileCallback,
+        handler: *mut c_void,
+    ) {
         log!("ReadFileUV.start");
+        // SAFETY: `event_loop` is the per-thread `EventLoop` singleton owned by
+        // the VM (`global.bun_vm().event_loop()`); it strictly outlives this
+        // async op, which additionally pins it via `ref_concurrently()` below.
+        let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
         let this = Box::new(ReadFileUV {
-            loop_: event_loop.virtual_machine().uv_loop(),
+            // Zig: `event_loop.virtual_machine.uvLoop()` — projected through the
+            // helper to avoid materializing a `&VirtualMachine`.
+            loop_: event_loop.uv_loop().cast(),
             event_loop,
             file_store,
             byte_store: ByteStore::default(),
@@ -964,8 +995,7 @@ impl<'a> ReadFileUV<'a> {
             system_error: None,
             errno: None,
             on_complete_data: handler,
-            // Zig: @ptrCast(&Handler.run) — erase the typed handler to the C ABI cb.
-            on_complete_fn: H::run as ReadFileOnReadFileCallback,
+            on_complete_fn,
             is_regular_file: false,
             // SAFETY: all-zero is a valid libuv fs_t (matches std.mem.zeroes).
             req: unsafe { bun_core::ffi::zeroed() },
@@ -1048,17 +1078,22 @@ impl<'a> ReadFileUV<'a> {
         self.req.deinit();
         self.req.data = core::ptr::from_mut(self).cast::<c_void>();
 
-        if let Some(errno) = libuv::uv_fs_fstat(
-            self.loop_,
-            &mut self.req,
-            opened_fd.uv(),
-            Some(Self::on_file_initial_stat),
-        )
-        .err_enum_e()
-        {
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `self.req` is a freshly
+        // deinit'd `fs_t` owned by `self`, `opened_fd.uv()` is the just-opened fd,
+        // and `on_file_initial_stat` is a valid `uv_fs_cb` that recovers `self`
+        // from `req.data` (set above).
+        let rc = unsafe {
+            libuv::uv_fs_fstat(
+                self.loop_,
+                &mut self.req,
+                opened_fd.uv(),
+                Some(Self::on_file_initial_stat),
+            )
+        };
+        if let Some(errno) = rc.err_enum_e() {
             self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             self.system_error =
-                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error());
+                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error().into());
             self.on_finish();
             return;
         }
@@ -1074,7 +1109,7 @@ impl<'a> ReadFileUV<'a> {
         if let Some(errno) = unsafe { (*req).result.err_enum_e() } {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error =
-                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error());
+                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error().into());
             this.on_finish();
             return;
         }
@@ -1083,7 +1118,10 @@ impl<'a> ReadFileUV<'a> {
 
         // keep in sync with resolveSizeAndLastModified
         if let Data::File(file) = this.store.data_mut() {
-            file.last_modified = jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
+            // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
+            // platform-width `isize` `to_js_time` expects.
+            file.last_modified =
+                jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize);
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
@@ -1129,7 +1167,9 @@ impl<'a> ReadFileUV<'a> {
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
         if this.size == 0 && this.is_regular_file {
-            this.byte_store = ByteStore::init(this.buffer.as_slice());
+            // Zig: `ByteStore.init(this.buffer.items, ..)` — buffer is empty here,
+            // so move it (Vec<u8>) into the owning ByteStore rather than borrow.
+            this.byte_store = ByteStore::init(core::mem::take(&mut this.buffer));
             this.on_finish();
             return;
         }
@@ -1138,7 +1178,8 @@ impl<'a> ReadFileUV<'a> {
             this.errno = Some(bun_core::errno_to_zig_err(bun_sys::E::NOMEM as i32));
             this.system_error =
                 Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
-                    .to_system_error());
+                    .to_system_error()
+                    .into());
             this.on_finish();
             return;
         }
@@ -1149,7 +1190,8 @@ impl<'a> ReadFileUV<'a> {
             this.errno = Some(bun_core::err!("OutOfMemory"));
             this.system_error =
                 Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
-                    .to_system_error());
+                    .to_system_error()
+                    .into());
             this.on_finish();
             return;
         }
@@ -1192,7 +1234,8 @@ impl<'a> ReadFileUV<'a> {
                     self.errno = Some(bun_core::err!("OutOfMemory"));
                     self.system_error = Some(
                         bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
-                            .to_system_error(),
+                            .to_system_error()
+                            .into(),
                     );
                     self.on_finish();
                     return;
@@ -1202,20 +1245,27 @@ impl<'a> ReadFileUV<'a> {
             let buf = self.remaining_buffer();
             let mut bufs: [libuv::uv_buf_t; 1] = [libuv::uv_buf_t::init(buf)];
             self.req.assert_cleaned_up();
-            let res = libuv::uv_fs_read(
-                self.loop_,
-                &mut self.req,
-                self.opened_fd.uv(),
-                bufs.as_mut_ptr(),
-                bufs.len() as u32,
-                i64::try_from(self.offset + self.read_off).expect("int cast"),
-                Some(Self::on_read),
-            );
+            // SAFETY: FFI — `loop_` is the live VM uv loop, `self.req` is a
+            // cleaned-up `fs_t` owned by `self`, `bufs` points at a stack uv_buf
+            // wrapping `self.buffer`'s spare capacity (libuv copies the iovec
+            // descriptor before returning), `opened_fd.uv()` is the open fd, and
+            // `on_read` is a valid `uv_fs_cb` that recovers `self` from `req.data`.
+            let res = unsafe {
+                libuv::uv_fs_read(
+                    self.loop_,
+                    &mut self.req,
+                    self.opened_fd.uv(),
+                    bufs.as_mut_ptr(),
+                    bufs.len() as u32,
+                    i64::try_from(self.offset + self.read_off).expect("int cast"),
+                    Some(Self::on_read),
+                )
+            };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(errno) = res.err_enum_e() {
                 self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
                 self.system_error =
-                    Some(bun_sys::Error::from_code(errno, bun_sys::Tag::read).to_system_error());
+                    Some(bun_sys::Error::from_code(errno, bun_sys::Tag::read).to_system_error().into());
                 self.on_finish();
             }
         } else {
@@ -1238,7 +1288,7 @@ impl<'a> ReadFileUV<'a> {
         if let Some(errno) = result.err_enum_e() {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error =
-                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::read).to_system_error());
+                Some(bun_sys::Error::from_code(errno, bun_sys::Tag::read).to_system_error().into());
             this.on_finish();
             return;
         }

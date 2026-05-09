@@ -343,15 +343,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             copy_script.clone().into_boxed_slice(),
         ];
 
-        let ipc_fd: Option<bun_sys::Fd> = if !cfg!(windows) {
+        #[cfg(not(windows))]
+        let ipc_fd: Option<bun_sys::Fd> =
             bun_core::env_var::NODE_CHANNEL_FD.get().and_then(|s| {
                 ::core::str::from_utf8(s).ok()?.parse::<u32>().ok().and_then(|fd| {
                     i32::try_from(fd).ok().map(bun_sys::Fd::from_native)
                 })
-            })
-        } else {
-            None // TODO: implement on Windows
-        };
+            });
+        #[cfg(windows)]
+        let ipc_fd: Option<bun_sys::Fd> = None; // TODO: implement on Windows
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
@@ -1726,10 +1726,15 @@ impl RunCommand {
         {
             let mut temp_path_buffer = WPathBuffer::uninit();
             let mut target_path_buffer = PathBuffer::uninit();
-            let len = sys::windows::GetTempPathW(
-                u32::try_from(temp_path_buffer.len()).expect("int cast"),
-                temp_path_buffer.as_mut_ptr(),
-            );
+            // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
+            // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
+            // capacity in WCHARs; the call writes at most that many wide chars.
+            let len = unsafe {
+                sys::windows::GetTempPathW(
+                    u32::try_from(temp_path_buffer.len()).expect("int cast"),
+                    temp_path_buffer.as_mut_ptr(),
+                )
+            };
             if len == 0 {
                 return Err(bun_core::err!("FailedToGetTempPath"));
             }
@@ -1737,7 +1742,8 @@ impl RunCommand {
             let converted = strings::convert_utf16_to_utf8_in_buffer(
                 &mut target_path_buffer,
                 &temp_path_buffer[..len as usize],
-            )?;
+            )
+            .map_err(|_| bun_core::err!("InvalidUtf16"))?;
 
             const FILE_NAME: &str = const_format::concatcp!(
                 "bun-node",
@@ -1867,16 +1873,21 @@ impl RunCommand {
 
             let prefix = bun_str::w!("\\??\\");
 
-            let len = sys::windows::GetTempPathW(
-                u32::try_from(target_path_buffer.len() - prefix.len()).expect("int cast"),
-                // SAFETY: prefix.len() < target_path_buffer.len(); pointer stays in bounds.
-                unsafe { target_path_buffer.as_mut_ptr().add(prefix.len()) },
-            );
+            // SAFETY: FFI Win32 `GetTempPathW`. We pass a valid writable
+            // pointer into `target_path_buffer` offset by `prefix.len()`
+            // (in-bounds: prefix.len() < target_path_buffer.len()) and the
+            // remaining capacity in WCHARs as `nBufferLength`.
+            let len = unsafe {
+                sys::windows::GetTempPathW(
+                    u32::try_from(target_path_buffer.len() - prefix.len()).expect("int cast"),
+                    target_path_buffer.as_mut_ptr().add(prefix.len()),
+                )
+            };
             if len == 0 {
-                Output::debug(
+                Output::debug(format_args!(
                     "Failed to create temporary node dir: {}",
-                    (sys::windows::get_last_error_tag(),),
-                );
+                    sys::windows::get_last_error_tag(),
+                ));
                 return Ok(());
             }
             let len = len as usize;
@@ -1928,12 +1939,13 @@ impl RunCommand {
                 off += name.len();
                 target_path_buffer[off] = 0;
 
-                let file_slice = &target_path_buffer[..off];
-
+                // Zig's `file_slice.ptr` is the buffer base (slice starts at 0);
+                // use the raw base ptr to avoid holding an immutable borrow
+                // across the `target_path_buffer[dir_slice_len]` mutation below.
                 if sys::windows::CreateHardLinkW(
-                    file_slice.as_ptr(),
+                    target_path_buffer.as_ptr(),
                     image_path.as_ptr(),
-                    std::ptr::null_mut(),
+                    None,
                 ) == 0
                 {
                     match sys::windows::get_last_win32_error() {
@@ -1942,14 +1954,23 @@ impl RunCommand {
                             {
                                 debug_assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);
                                 target_path_buffer[dir_slice_len] = 0;
-                                let _ = sys::mkdir_w(&target_path_buffer[..dir_slice_len], 0);
+                                // SAFETY: we just wrote a NUL terminator at
+                                // `dir_slice_len`; `target_path_buffer[..dir_slice_len]`
+                                // is initialised wide-string data → valid `WStr`.
+                                let dir_w = unsafe {
+                                    bun_core::WStr::from_raw(
+                                        target_path_buffer.as_ptr(),
+                                        dir_slice_len,
+                                    )
+                                };
+                                let _ = sys::mkdir_w(dir_w);
                                 target_path_buffer[dir_slice_len] = b'\\' as u16;
                             }
 
                             if sys::windows::CreateHardLinkW(
-                                file_slice.as_ptr(),
+                                target_path_buffer.as_ptr(),
                                 image_path.as_ptr(),
-                                std::ptr::null_mut(),
+                                None,
                             ) == 0
                             {
                                 return Ok(());
@@ -1969,7 +1990,7 @@ impl RunCommand {
             strings::to_utf8_append_to_list(
                 path,
                 &target_path_buffer[prefix.len()..dir_slice_len],
-            )?;
+            );
             path.push(DELIMITER);
         }
         Ok(())
@@ -3525,12 +3546,16 @@ impl RunCommand {
             }
             #[cfg(windows)]
             {
-                if let Ok(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
+                if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
                     // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
                     let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
                         unsafe { bun_core::ffi::zeroed() };
-                    if sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
-                        != sys::windows::FALSE
+                    // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
+                    // is a valid console output HANDLE from GetStdHandle and
+                    // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
+                    if unsafe {
+                        sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
+                    } != sys::windows::FALSE
                     {
                         let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
                         if w > 0 {
@@ -3980,9 +4005,11 @@ mod bunx_fast_path_buffers {
     // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
     // buffers (bunx fast-path runs once on the main thread) → RacyCell.
     pub static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
-        bun_core::RacyCell::new([0; bun_paths::MAX_WPATH]);
-    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<[u16; 32768]> =
-        bun_core::RacyCell::new([0; 32768]);
+        bun_core::RacyCell::new(WPathBuffer::ZEROED);
+    // Zig spec (run_command.zig:2014): `var environment_buffer: bun.WPathBuffer`
+    // — same `[PATH_MAX_WIDE]u16` shape as the launch buffer.
+    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
+        bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 
 impl BunXFastPath {
@@ -4084,18 +4111,22 @@ impl BunXFastPath {
         );
         debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
 
-        let handle = match sys::open_file_at_windows_a(
+        let handle = match sys::open_file_at_windows(
             Fd::INVALID, // absolute path is given
             path_to_use,
-            sys::windows::STANDARD_RIGHTS_READ
-                | sys::windows::FILE_READ_DATA
-                | sys::windows::FILE_READ_ATTRIBUTES
-                | sys::windows::FILE_READ_EA
-                | sys::windows::SYNCHRONIZE,
-            sys::windows::FILE_OPEN,
-            sys::windows::FILE_NON_DIRECTORY_FILE | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
+            sys::NtCreateFileOptions {
+                access_mask: sys::windows::STANDARD_RIGHTS_READ
+                    | sys::windows::FILE_READ_DATA
+                    | sys::windows::FILE_READ_ATTRIBUTES
+                    | sys::windows::FILE_READ_EA
+                    | sys::windows::SYNCHRONIZE,
+                disposition: sys::windows::FILE_OPEN,
+                options: sys::windows::FILE_NON_DIRECTORY_FILE
+                    | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
+                ..Default::default()
+            },
         ) {
-            Ok(fd) => fd.cast(),
+            Ok(fd) => fd.native(),
             Err(err) => {
                 bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "Failed to open bunx file: '{}'", err);
                 return;
@@ -4118,8 +4149,8 @@ impl BunXFastPath {
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let env_buf = unsafe { &mut *bunx_fast_path_buffers::ENVIRONMENT_BUFFER.get() };
-        let environment = match env.map.write_windows_env_block(env_buf) {
-            Ok(env) => Some(env.as_ptr()),
+        let environment = match env.map.write_windows_env_block(&mut env_buf.0) {
+            Ok(env) => Some(env),
             Err(_) => return,
         };
 
@@ -4164,7 +4195,7 @@ impl BunXFastPath {
         };
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
+            let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

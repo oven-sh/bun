@@ -24,6 +24,8 @@ use crate::api::bun::process::{
 };
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_sys::{self, Fd, FdExt, SystemError};
 use enumset::{EnumSet, EnumSetType};
 use strum::IntoStaticStr;
@@ -88,6 +90,52 @@ use crate::shell::ShellErr;
 pub type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
 pub type StdioResult = Option<Fd>;
+
+/// RAII handle owning one intrusive ref on a heap `FileSink` (Zig's
+/// `Writable.pipe: *FileSink`). `FileSink` carries its own
+/// `#[derive(CellRefCounted)]` refcount and is allocated via `Box::into_raw`
+/// in `FileSink::create*`, so it cannot live behind an `Arc`. Drop derefs
+/// (and frees on last ref), matching Zig's `pipe.deref()` on teardown.
+pub struct FileSinkPtr(core::ptr::NonNull<FileSink>);
+
+impl FileSinkPtr {
+    /// Adopt the +1 ref returned by `FileSink::create*`.
+    ///
+    /// # Safety
+    /// `ptr` is non-null, points to a live `FileSink` from
+    /// `FileSink::create*`, and the caller transfers its single owned ref to
+    /// this handle.
+    #[inline]
+    unsafe fn adopt(ptr: *mut FileSink) -> Self {
+        // SAFETY: caller contract — `ptr` is non-null.
+        Self(unsafe { core::ptr::NonNull::new_unchecked(ptr) })
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut FileSink {
+        self.0.as_ptr()
+    }
+
+    /// Mutably borrow the payload. Shell is single-threaded; mirrors Zig's
+    /// `*FileSink` mutation through any alias.
+    ///
+    /// # Safety
+    /// Caller must ensure no overlapping `&`/`&mut` to the `FileSink` is live.
+    #[inline]
+    pub unsafe fn as_mut(&self) -> &mut FileSink {
+        // SAFETY: caller contract.
+        unsafe { &mut *self.0.as_ptr() }
+    }
+}
+
+impl Drop for FileSinkPtr {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `adopt` contract — `self.0` is live with one owned intrusive
+        // ref; `FileSink::deref` (CellRefCounted derive) frees on zero.
+        unsafe { FileSink::deref(self.0.as_ptr()) };
+    }
+}
 
 bun_output::declare_scope!(SHELL_SUBPROC, visible);
 
@@ -355,9 +403,11 @@ impl ShellSubprocess {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
-                    // SAFETY: Arc<FileSink> is single-thread; raw mut access mirrors Zig.
-                    unsafe { (*Arc::as_ptr(pipe).cast_mut()).signal.clear() };
-                    // drop Arc<FileSink>
+                    // SAFETY: shell is single-threaded; no other borrow of the
+                    // FileSink is live across this call (mirrors Zig
+                    // `this.stdin.pipe.signal.clear()`).
+                    unsafe { pipe.as_mut() }.signal.clear();
+                    // FileSinkPtr::drop derefs (Zig: `pipe.deref()`).
                     self.stdin = Writable::Ignore;
                 }
                 Writable::Buffer(_) => {
@@ -525,13 +575,16 @@ impl ShellSubprocess {
 
         // Hoist asSpawnOption results so a later one failing doesn't strand an earlier
         // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
-        let stdin_opt = match stdio_guard[0].as_spawn_option(0) {
+        // `mut` only for the Windows-only `.deinit()` rollback below.
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut stdin_opt = match stdio_guard[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
-        let stdout_opt = match stdio_guard[1].as_spawn_option(1) {
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut stdout_opt = match stdio_guard[1].as_spawn_option(1) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 #[cfg(windows)]
@@ -706,14 +759,14 @@ impl ShellSubprocess {
             // SAFETY: reborrow as a child of `stdin_ptr` so it does not
             // invalidate the sibling we store in `signal`.
             if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
-                // SAFETY: `Arc<FileSink>` is single-thread (mirrors Zig's
-                // intrusive `*FileSink`); the FileSink allocation is disjoint
-                // from `*stdin_ptr`. `stdin_ptr` outlives the sink — the
-                // Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the Arc. `init_with_type` is `unsafe fn`
-                // (caller asserts the handler outlives the `Signal`).
+                // SAFETY: shell is single-threaded; the FileSink allocation is
+                // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
+                // the Subprocess owns both and `Writable::on_close` is the only
+                // path that drops the FileSinkPtr. `init_with_type` is
+                // `unsafe fn` (caller asserts the handler outlives the
+                // `Signal`).
                 unsafe {
-                    arc_mut(pipe).signal =
+                    pipe.as_mut().signal =
                         webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr);
                 }
             }
@@ -804,7 +857,7 @@ pub enum WritableInitError {
 }
 
 pub enum Writable {
-    Pipe(Arc<FileSink>),
+    Pipe(FileSinkPtr),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
     Memfd(Fd),
@@ -834,7 +887,7 @@ impl Writable {
         match self {
             Writable::Pipe(pipe) => {
                 // SAFETY: single-thread; raw mut access mirrors Zig.
-                unsafe { arc_mut(pipe) }.update_ref(add);
+                unsafe { pipe.as_mut() }.update_ref(add);
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
@@ -878,7 +931,7 @@ impl Writable {
         subprocess: *mut Subprocess,
         result: StdioResult,
     ) -> Result<Writable, WritableInitError> {
-        assert_stdio_result(result);
+        assert_stdio_result(&result);
 
         // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out via
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
@@ -888,13 +941,21 @@ impl Writable {
         {
             match &mut stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if matches!(result, StdioResult::Buffer(_)) {
-                        let pipe = FileSink::create_with_pipe(event_loop, result.buffer());
+                    if let StdioResult::Buffer(buf) = result {
+                        // Ownership of the `Box<uv::Pipe>` transfers into the
+                        // FileSink's writer (Zig: `result.buffer` is the same
+                        // heap pointer the sink takes over).
+                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buf);
+                        let pipe_ptr = FileSink::create_with_pipe(event_loop, uv_pipe);
 
-                        match pipe.writer.start_with_current_pipe() {
+                        // SAFETY: `create_with_pipe` returns a freshly-boxed
+                        // non-null FileSink with refcount 1; sole reference.
+                        match unsafe { (*pipe_ptr).writer.start_with_current_pipe() } {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
-                                drop(pipe); // deref
+                                // SAFETY: pipe_ptr is live with refcount 1;
+                                // deref frees it (Zig: `pipe.deref()`).
+                                unsafe { FileSink::deref(pipe_ptr) };
                                 return Err(WritableInitError::UnexpectedCreatingStdin);
                             }
                         }
@@ -903,7 +964,9 @@ impl Writable {
                         // subprocess.weak_file_sink_stdin_ptr = pipe;
                         // subprocess.flags.has_stdin_destructor_called = false;
 
-                        return Ok(Writable::Pipe(pipe));
+                        // SAFETY: `create_with_pipe` returns non-null with one
+                        // owned ref; `adopt` takes it over.
+                        return Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -1065,7 +1128,7 @@ impl Writable {
         match self {
             Writable::Pipe(pipe) => {
                 // SAFETY: single-thread; raw mut access mirrors Zig.
-                let _ = unsafe { (*Arc::as_ptr(pipe).cast_mut()).end(None) };
+                let _ = unsafe { pipe.as_mut() }.end(None);
             }
             Writable::Memfd(fd) | Writable::Fd(fd) => {
                 fd.close();
@@ -1121,13 +1184,17 @@ impl Readable {
 
     pub fn r#ref(&mut self) {
         if let Readable::Pipe(pipe) = self {
-            pipe.update_ref(true);
+            // SAFETY: see `arc_mut` — single-threaded shell; Windows
+            // `BufferedReader::update_ref` needs `&mut` to touch the libuv
+            // `Source` ref/unref.
+            unsafe { arc_mut(pipe) }.update_ref(true);
         }
     }
 
     pub fn unref(&mut self) {
         if let Readable::Pipe(pipe) = self {
-            pipe.update_ref(false);
+            // SAFETY: see `arc_mut` — single-threaded shell.
+            unsafe { arc_mut(pipe) }.update_ref(false);
         }
     }
 
@@ -1149,7 +1216,7 @@ impl Readable {
         _max_size: u32,
         _is_sync: bool,
     ) -> Readable {
-        assert_stdio_result(result);
+        assert_stdio_result(&result);
 
         // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
         // Default-able payloads instead of partial moves (E0509).
@@ -1815,9 +1882,19 @@ impl PipeReader {
 
         #[cfg(windows)]
         {
-            this.reader.source = match result {
+            // Zig aliases the same `*uv.Pipe` heap pointer in both
+            // `stdio_result.buffer` and `reader.source.pipe`. With
+            // `Box<uv::Pipe>` we cannot alias, so ownership transfers to
+            // `reader.source` (`stdio_result` is never read again on Windows —
+            // `start()` goes through `start_with_current_pipe`).
+            this.reader.source = match core::mem::take(&mut this.stdio_result) {
                 StdioResult::Buffer(buf) => Some(bun_io::Source::Pipe(buf)),
-                StdioResult::BufferFd(fd) => Some(bun_io::Source::File(bun_io::Source::open_file(fd))),
+                StdioResult::BufferFd(fd) => {
+                    // `Fd` is Copy; restore so `stdio_result` keeps reflecting
+                    // the spawn outcome (Zig leaves it in place).
+                    this.stdio_result = StdioResult::BufferFd(fd);
+                    Some(bun_io::Source::File(bun_io::Source::open_file(fd)))
+                }
                 StdioResult::Unavailable => panic!("Shouldn't happen."),
             };
         }
@@ -2075,7 +2152,7 @@ impl PipeReader {
         // may realloc to shrink. Profile in Phase B.
     }
 
-    pub fn update_ref(&self, add: bool) {
+    pub fn update_ref(&mut self, add: bool) {
         self.reader.update_ref(add);
     }
 
@@ -2279,7 +2356,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
 // enum the trait was declared with.
 
 #[inline]
-pub fn assert_stdio_result(result: StdioResult) {
+pub fn assert_stdio_result(result: &StdioResult) {
     if cfg!(debug_assertions) {
         #[cfg(unix)]
         {

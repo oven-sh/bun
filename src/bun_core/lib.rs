@@ -113,7 +113,19 @@ pub mod build_options {
     pub const ENABLE_LOGS: bool = cfg!(debug_assertions);
     pub const ENABLE_ASAN: bool = cfg!(bun_asan);
     pub const ENABLE_FUZZILLI: bool = false;
-    pub const ENABLE_TINYCC: bool = true;
+    /// Whether `libtcc.a` is built and linked. Mirrors `cfg.tinycc` in
+    /// `scripts/build/config.ts`: TinyCC is disabled on Windows/aarch64
+    /// (TinyCC has no aarch64-pe-coff backend), Android, and FreeBSD (the
+    /// vendored fork doesn't support those targets and the dep is skipped).
+    /// Has to be a *compile-time* `false` on those targets — `ffi_body.rs`
+    /// gates its `bun_tcc_sys::*` calls behind `if !ENABLE_TINYCC { return }`,
+    /// and rustc only DCEs the `tcc_*` extern refs when the const folds; a
+    /// runtime check would still leave undefined symbols at link.
+    pub const ENABLE_TINYCC: bool = !cfg!(any(
+        all(windows, target_arch = "aarch64"),
+        target_os = "android",
+        target_os = "freebsd",
+    ));
     /// `<build>/codegen`. `scripts/build/rust.ts` exports `BUN_CODEGEN_DIR` to
     /// every crate's rustc env; fall back to the default debug profile path.
     pub const CODEGEN_PATH: &[u8] = match option_env!("BUN_CODEGEN_DIR") {

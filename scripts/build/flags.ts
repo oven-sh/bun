@@ -928,7 +928,6 @@ export const linkerFlags: Flag[] = [
     flag: [
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      "-Wl,--compress-debug-sections=zlib",
       "-Wl,-z,lazy",
       "-Wl,-z,norelro",
       "-Wl,-O2",
@@ -997,7 +996,6 @@ export const linkerFlags: Flag[] = [
       "-Wl,-O2",
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      "-Wl,--compress-debug-sections=zlib",
       "-Wl,-z,lazy",
       "-Wl,-z,norelro",
       "-Wl,--gdb-index",
@@ -1007,6 +1005,21 @@ export const linkerFlags: Flag[] = [
     ],
     when: c => c.freebsd,
     desc: "FreeBSD linker tuning (same as Linux ELF)",
+  },
+  {
+    // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for
+    // the lld they bundle as `rust-lld`, so this flag hard-fails there:
+    //   `rust-lld: error: --compress-debug-sections: LLVM was not built with
+    //   LLVM_ENABLE_ZLIB or did not find zlib at build time`.
+    // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
+    // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
+    // that case, drop the flag rather than fail the link. Larger debug
+    // sections in `bun-profile` is a build-size cost, not a correctness one —
+    // and only on agents where the LLVM versions diverge. The system lld path
+    // (linux/freebsd llvm-* packages) keeps compressing.
+    flag: "-Wl,--compress-debug-sections=zlib",
+    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
+    desc: "Compress ELF debug sections (skipped with rust-lld — built without zlib)",
   },
   {
     flag: "-Wl,--gc-sections",

@@ -14,8 +14,44 @@ pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *c
 /// Zig: `fn ErrorFunc(Ctx: type) type { return fn (ctx: ?*Ctx, msg: [*:0]const u8) callconv(.c) void; }`
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
 
-// TODO(port): move to tcc_sys (already in *_sys crate — verify crate layout in Phase B)
-unsafe extern "C" {
+// `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
+// not Windows/aarch64 (TinyCC has no aarch64-pe-coff backend), not Android, not
+// FreeBSD (the vendored fork doesn't support those targets). On those platforms
+// these `extern "C"` decls would be undefined at link. Zig's `comptime
+// !Environment.enable_tinycc` early-returns in `ffi.zig` keep the *Zig*
+// callers off the analysis graph, so the Zig externs never get emitted; Rust
+// has no lazy analysis — `bun_runtime::ffi::ffi_body::{Source::add,
+// CompileC::compile}` are reachable from `extern "C"` JS bindings and the
+// monomorphized refs land in `libbun_rust.a` regardless of any
+// `if !ENABLE_TINYCC { return }` runtime guard. Swap the `extern` block for
+// stub *definitions* on those targets so the link resolves; the gated Rust
+// callers never reach them at runtime (they early-return with "not available
+// in this build"), and the `unreachable!()` makes any future gate regression
+// loud rather than silently UB.
+//
+// Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`.
+macro_rules! tcc_externs {
+    ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
+        #[cfg(not(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64"))))]
+        // TODO(port): move to tcc_sys (already in *_sys crate — verify crate layout in Phase B)
+        unsafe extern "C" {
+            $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
+        }
+        $(
+            #[cfg(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64")))]
+            #[allow(unused_variables, clippy::missing_safety_doc)]
+            unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
+                unreachable!(concat!(
+                    stringify!($name),
+                    " called but TinyCC is disabled on this target — keep the ",
+                    "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
+                ));
+            }
+        )*
+    };
+}
+
+tcc_externs! {
     fn tcc_new() -> *mut TCCState;
     fn tcc_delete(s: *mut TCCState);
     fn tcc_set_lib_path(s: *mut TCCState, path: *const c_char);

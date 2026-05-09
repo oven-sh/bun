@@ -55,11 +55,16 @@ pub unsafe trait OpaqueHandle: Sized {
     fn as_handle<'a>(p: *mut Self) -> &'a mut Self {
         const { assert!(core::mem::size_of::<Self>() == 0, "OpaqueHandle impl must be a ZST") };
         const { assert!(core::mem::align_of::<Self>() == 1, "OpaqueHandle impl must be align-1") };
-        debug_assert!(!p.is_null(), "OpaqueHandle::as_handle: null uWS handle");
-        // SAFETY: per trait contract `Self` is a ZST with align 1, so `p` (a
-        // non-null pointer the caller obtained from uWS) is dereferenceable
-        // for zero bytes; the resulting `&mut` covers no memory and so cannot
-        // alias. C++ owns the real object; Rust never reads/writes through it.
+        // Not `debug_assert!`: the ZST/align-1 contract discharges aliasing and
+        // dereferenceable-for-zero-bytes, but NOT the `&mut T` validity invariant
+        // that references are non-null. This is a *safe* fn and `AnyResponse` is a
+        // public `Copy` enum of raw pointers, so safe code can reach here with
+        // null in release builds — that must be a panic, not UB.
+        assert!(!p.is_null(), "OpaqueHandle::as_handle: null uWS handle");
+        // SAFETY: per trait contract `Self` is a ZST with align 1, so `p` (now
+        // checked non-null above) is dereferenceable for zero bytes; the
+        // resulting `&mut` covers no memory and so cannot alias. C++ owns the
+        // real object; Rust never reads/writes through it.
         unsafe { &mut *p }
     }
 }

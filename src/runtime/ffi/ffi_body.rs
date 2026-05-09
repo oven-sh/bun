@@ -2067,14 +2067,7 @@ impl Function {
 
     pub fn ffi_header() -> &'static [u8] {
         // Port of `Function.ffiHeader` (ffi.zig:1517).
-        #[cfg(bun_codegen_embed)]
-        {
-            include_bytes!("./FFI.h")
-        }
-        #[cfg(not(bun_codegen_embed))]
-        {
-            bun_core::runtime_embed_file!(bun_core::EmbedKind::Src, "runtime/ffi/FFI.h").as_bytes()
-        }
+        bun_core::runtime_embed_file!(Src, "runtime/ffi/FFI.h").as_bytes()
     }
 
     /// # Safety

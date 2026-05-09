@@ -2310,9 +2310,8 @@ pub fn ipc_serialize(
     message: JSValue,
     handle: JSValue,
 ) -> JsResult<JSValue> {
-    // `[[ZIG_EXPORT(zero_is_throw)]]` — SAFETY: JSValue args are Copy stack values kept
-    // alive by conservative scan.
-    unsafe { crate::cpp::IPCSerialize(global_object, message, handle) }
+    // `[[ZIG_EXPORT(zero_is_throw)]]`
+    crate::cpp::IPCSerialize(global_object, message, handle)
 }
 
 #[track_caller]
@@ -2322,8 +2321,8 @@ pub fn ipc_parse(
     serialized: JSValue,
     fd: JSValue,
 ) -> JsResult<JSValue> {
-    // `[[ZIG_EXPORT(zero_is_throw)]]` — SAFETY: see `ipc_serialize`.
-    unsafe { crate::cpp::IPCParse(global_object, target, serialized, fd) }
+    // `[[ZIG_EXPORT(zero_is_throw)]]`
+    crate::cpp::IPCParse(global_object, target, serialized, fd)
 }
 
 // ported from: src/jsc/ipc.zig

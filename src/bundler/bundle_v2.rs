@@ -495,18 +495,13 @@ pub mod bake_types {
         match side {
             Side::Client => *CLIENT.get_or_init(|| {
                 HmrRuntime::init(
-                    bun_core::runtime_embed_file!(
-                        bun_core::EmbedKind::CodegenEager,
-                        "bake.client.js"
-                    )
-                    .as_bytes(),
+                    bun_core::runtime_embed_file!(CodegenEager, "bake.client.js").as_bytes(),
                 )
             }),
             // Server runtime is loaded once; non-eager.
             Side::Server => *SERVER.get_or_init(|| {
                 HmrRuntime::init(
-                    bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bake.server.js")
-                        .as_bytes(),
+                    bun_core::runtime_embed_file!(Codegen, "bake.server.js").as_bytes(),
                 )
             }),
         }

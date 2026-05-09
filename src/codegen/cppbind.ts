@@ -577,14 +577,83 @@ function isGlobalObjectPtr(t: CppType): boolean {
   );
 }
 
+// C++ named types that map to opaque ZST handles in `bun_jsc`
+// (`#[repr(C)] struct X { _p: UnsafeCell<[u8; 0]> }`). A `&X` covers zero
+// Rust-visible bytes, so passing it to C++ that mutates the underlying GC
+// cell never violates Stacked Borrows — these can always be lifted from
+// `*mut X` to `&X` in wrapper signatures, mirroring the existing
+// `JSGlobalObject*` → `&JSGlobalObject` rule.
+const rustOpaqueHandles = new Set([
+  "JSC::JSGlobalObject",
+  "Zig::GlobalObject",
+  "JSC::VM",
+  "JSC::JSPromise",
+  "JSC::JSInternalPromise",
+  "JSC::JSMap",
+  "JSC::JSObject",
+  "JSC::JSString",
+  "JSC::Exception",
+  "JSC::CallFrame",
+  "JSC::CustomGetterSetter",
+  "JSC::SourceProvider",
+  "WebCore::DOMURL",
+]);
+
+function opaqueHandleRustType(t: CppType): string | null {
+  if (t.type !== "pointer" || t.child.type !== "named") return null;
+  if (!rustOpaqueHandles.has(t.child.name)) return null;
+  return rustSharedTypes[t.child.name] ?? null;
+}
+
 function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void {
   const ret = generateRustType(fn.returnType, null);
   const rawParams = fn.parameters.map(p => `${rustIdent(p.name)}: ${generateRustType(p.type, null)}`).join(", ");
   rustRaw.push(`    pub fn ${fn.name}(${rawParams})${ret === "()" ? "" : ` -> ${ret}`};`);
 
+  // Compute wrapper parameter list: opaque-ZST handle pointers become `&T`;
+  // everything else passes through verbatim. The wrapper is `pub fn` (safe)
+  // iff no raw pointer survives — otherwise the caller is still responsible
+  // for the pointer's validity invariants and the wrapper stays `unsafe fn`.
+  let needsUnsafe = false;
+  const wrapParams: string[] = [];
+  const callArgs: string[] = [];
+  for (const p of fn.parameters) {
+    const ident = rustIdent(p.name);
+    const handle = opaqueHandleRustType(p.type);
+    if (handle) {
+      wrapParams.push(`${ident}: &${handle}`);
+      callArgs.push(
+        p.type.type === "pointer" && p.type.isConst
+          ? `${ident} as *const ${handle}`
+          : `${ident} as *const ${handle} as *mut ${handle}`,
+      );
+    } else if (p.type.type === "pointer" || p.type.type === "fn") {
+      needsUnsafe = true;
+      wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
+      callArgs.push(ident);
+    } else {
+      wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
+      callArgs.push(ident);
+    }
+  }
+  const safeKw = needsUnsafe ? "unsafe " : "";
+  const wrapParamsStr = wrapParams.join(", ");
+  const callArgsStr = callArgs.join(", ");
+
   if (fn.tag === "nothrow") {
-    // No scope needed; expose the raw symbol directly.
-    rustWrap.push(`pub use self::raw::${fn.name};`);
+    // No scope needed. If every param is by-value or `&OpaqueHandle`, emit a
+    // safe `pub fn`; otherwise the raw extern is already an `unsafe fn` with
+    // the right signature, so re-export it directly.
+    if (needsUnsafe) {
+      rustWrap.push(`pub use self::raw::${fn.name};`);
+    } else {
+      rustWrap.push(
+        `#[inline]`,
+        `pub fn ${fn.name}(${wrapParamsStr})${ret === "()" ? "" : ` -> ${ret}`} {`,
+        `    unsafe { raw::${fn.name}(${callArgsStr}) }`,
+        `}`,
+      );
+    }
     return;
   }
 
@@ -597,18 +666,6 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   }
   const gname = rustIdent(globalArg.name);
 
-  // Wrapper signature: globalThis as `&JSGlobalObject`, everything else as-is.
-  const wrapParams = fn.parameters
-    .map(p =>
-      p === globalArg ? `${gname}: &crate::JSGlobalObject` : `${rustIdent(p.name)}: ${generateRustType(p.type, null)}`,
-    )
-    .join(", ");
-  const callArgs = fn.parameters
-    .map(p =>
-      p === globalArg ? `${gname} as *const crate::JSGlobalObject as *mut crate::JSGlobalObject` : rustIdent(p.name),
-    )
-    .join(", ");
-
   if (fn.tag === "check_slow") {
     // Inline the `top_scope!` body (rather than the `call_check_slow` *function* form,
     // which routes `SourceLocation::from_caller()` → thread-local intern probe per call
@@ -618,9 +675,9 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     // against a syntactic `file!()`, so don't emit it.
     rustWrap.push(
       `#[inline]`,
-      `pub unsafe fn ${fn.name}(${wrapParams}) -> crate::JsResult<${ret}> {`,
+      `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${ret}> {`,
       `    crate::top_scope!(__scope, ${gname});`,
-      `    let __r = unsafe { raw::${fn.name}(${callArgs}) };`,
+      `    let __r = unsafe { raw::${fn.name}(${callArgsStr}) };`,
       `    __scope.return_if_exception()?;`,
       `    Ok(__r)`,
       `}`,
@@ -651,9 +708,9 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   // can't influence a compile-time `file!()`, so don't emit it.
   rustWrap.push(
     `#[inline]`,
-    `pub unsafe fn ${fn.name}(${wrapParams}) -> crate::JsResult<${okType}> {`,
+    `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${okType}> {`,
     `    crate::validation_scope!(__scope, ${gname});`,
-    `    let __v = unsafe { raw::${fn.name}(${callArgs}) };`,
+    `    let __v = unsafe { raw::${fn.name}(${callArgsStr}) };`,
     `    __scope.assert_exception_presence_matches(${errCond});`,
     `    if ${errCond} { Err(crate::JsError::Thrown) } else { Ok(${okExpr}) }`,
     `}`,

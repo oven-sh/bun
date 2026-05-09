@@ -55,41 +55,17 @@ impl Fallback {
 
     #[inline]
     pub fn error_js() -> &'static [u8] {
-        // TODO(port): `Environment.codegen_embed` build option → cfg feature
-        // NOTE: must use `#[cfg]` (not `if cfg!()`) so `include_bytes!`/`env!` in the
-        // disabled branch are not evaluated when the file/env-var is absent.
-        #[cfg(bun_codegen_embed)]
-        {
-            return include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-error/index.js"));
-        }
-        #[cfg(not(bun_codegen_embed))]
-        {
-            return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bun-error/index.js").as_bytes();
-        }
+        bun_core::runtime_embed_file!(Codegen, "bun-error/index.js").as_bytes()
     }
 
     #[inline]
     pub fn error_css() -> &'static [u8] {
-        #[cfg(bun_codegen_embed)]
-        {
-            return include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-error/bun-error.css"));
-        }
-        #[cfg(not(bun_codegen_embed))]
-        {
-            return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bun-error/bun-error.css").as_bytes();
-        }
+        bun_core::runtime_embed_file!(Codegen, "bun-error/bun-error.css").as_bytes()
     }
 
     #[inline]
     pub fn fallback_decoder_js() -> &'static [u8] {
-        #[cfg(bun_codegen_embed)]
-        {
-            return include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/fallback-decoder.js"));
-        }
-        #[cfg(not(bun_codegen_embed))]
-        {
-            return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "fallback-decoder.js").as_bytes();
-        }
+        bun_core::runtime_embed_file!(Codegen, "fallback-decoder.js").as_bytes()
     }
 
     // Zig: `@import("build_options").fallback_html_version` — wired via build.rs.
@@ -236,14 +212,7 @@ pub struct Runtime;
 
 impl Runtime {
     pub fn source_code() -> &'static [u8] {
-        #[cfg(bun_codegen_embed)]
-        {
-            return include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/runtime.out.js"));
-        }
-        #[cfg(not(bun_codegen_embed))]
-        {
-            return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "runtime.out.js").as_bytes();
-        }
+        bun_core::runtime_embed_file!(Codegen, "runtime.out.js").as_bytes()
     }
 
     pub fn version_hash() -> u32 {

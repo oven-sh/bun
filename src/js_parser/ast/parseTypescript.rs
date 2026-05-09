@@ -75,7 +75,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        Ok(ExprNodeList::from_bump_slice(decorators.into_bump_slice_mut()))
+        Ok(unsafe { ExprNodeList::from_bump_slice(decorators.into_bump_slice_mut()) })
     }
 
     /// Parse a standard (TC39) decorator expression following the `@` token.

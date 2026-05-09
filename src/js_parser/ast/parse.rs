@@ -362,7 +362,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.expect(T::TCloseParen)?;
         p.allow_in = old_allow_in;
         Ok(ExprListLoc {
-            list: ExprNodeList::from_bump_slice(args.into_bump_slice_mut()),
+            list: unsafe { ExprNodeList::from_bump_slice(args.into_bump_slice_mut()) },
             loc: close_paren_loc,
         })
     }
@@ -598,7 +598,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return Ok(p.new_expr(
                 E::Call {
                     target: async_expr,
-                    args: ExprNodeList::from_bump_slice(items),
+                    args: unsafe { ExprNodeList::from_bump_slice(items) },
                     ..Default::default()
                 },
                 loc,
@@ -1257,7 +1257,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
         }
 
-        Ok(G::DeclList::from_bump_slice(decls.into_bump_slice_mut()))
+        Ok(unsafe { G::DeclList::from_bump_slice(decls.into_bump_slice_mut()) })
     }
 
     pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {

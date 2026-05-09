@@ -150,7 +150,7 @@ impl<'a> ImportRecordList<'a> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => {
                 let leaked: &'a mut [ImportRecord] = v.into_bump_slice_mut();
-                Vec::from_bump_slice(leaked)
+                unsafe { Vec::from_bump_slice(leaked) }
             }
             Self::Borrowed(v) => core::mem::take(v),
         }
@@ -6009,7 +6009,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                         for arg_decorator in arg.ts_decorators.slice() {
                                             let arg0 = self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc);
                                             let args = self.arena.alloc_slice_copy(&[arg0, *arg_decorator]);
-                                            let args = ExprNodeList::from_bump_slice(args);
+                                            let args = unsafe { ExprNodeList::from_bump_slice(args) };
                                             let call = self.call_runtime(arg_decorator.loc, b"__legacyDecorateParamTS", args);
                                             let decorators = if is_constructor {
                                                 // `prop` borrows the (separate) properties arena
@@ -6071,10 +6071,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         );
                         full.extend_from_slice(prop.ts_decorators.slice());
                         full.extend_from_slice(&array);
-                        let full_items = ExprNodeList::from_bump_slice(full.into_bump_slice_mut());
+                        let full_items = unsafe { ExprNodeList::from_bump_slice(full.into_bump_slice_mut()) };
                         let array_expr = self.new_expr(E::Array { items: full_items, ..Default::default() }, loc);
                         let args_slice = self.arena.alloc_slice_copy(&[array_expr, target, descriptor_key, descriptor_kind]);
-                        let args = ExprNodeList::from_bump_slice(args_slice);
+                        let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
 
                         let decorator = self.call_runtime(prop.key.expect("infallible: prop has key").loc, b"__legacyDecorateClassTS", args);
                         let decorator_stmt = self.s(S::SExpr { value: decorator, ..Default::default() }, decorator.loc);
@@ -6246,14 +6246,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self.serialize_metadata(ca.ts_metadata.clone()).expect("unreachable");
                                 }
-                                let items = ExprNodeList::from_bump_slice(param_array);
+                                let items = unsafe { ExprNodeList::from_bump_slice(param_array) };
                                 self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY)
                             } else {
                                 self.new_expr(E::Array { items: ExprNodeList::default(), ..Default::default() }, logger::Loc::EMPTY)
                             };
                             let label = self.new_expr(E::EString::from_static(b"design:paramtypes"), logger::Loc::EMPTY);
                             let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
-                            let args = ExprNodeList::from_bump_slice(args_slice);
+                            let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
                             array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
                         }
                     }
@@ -6264,7 +6264,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let array_expr = self.new_expr(E::Array { items: array_items, ..Default::default() }, stmt.loc);
                     let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let args_slice = self.arena.alloc_slice_copy(&[array_expr, class_ident]);
-                    let args = ExprNodeList::from_bump_slice(args_slice);
+                    let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
 
                     let lhs = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let rhs = self.call_runtime(stmt.loc, b"__legacyDecorateClassTS", args);
@@ -6299,7 +6299,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let label = self.new_expr(E::EString::from_static($label), logger::Loc::EMPTY);
                 let value = $value;
                 let args = self.arena.alloc_slice_copy(&[label, value]);
-                let args = ExprNodeList::from_bump_slice(args);
+                let args = unsafe { ExprNodeList::from_bump_slice(args) };
                 array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
             }};
         }
@@ -6322,7 +6322,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
-                            let items = ExprNodeList::from_bump_slice(args_array);
+                            let items = unsafe { ExprNodeList::from_bump_slice(args_array) };
                             let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
                         }
@@ -6363,7 +6363,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
-                            let items = ExprNodeList::from_bump_slice(args_array);
+                            let items = unsafe { ExprNodeList::from_bump_slice(args_array) };
                             let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
                         }
@@ -7272,9 +7272,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             // field assignment.
                             core::mem::forget(core::mem::replace(
                                 &mut part.import_record_indices,
-                                Vec::from_bump_slice(
-                                    arena.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
-                                ),
+                                // SAFETY: `alloc_slice_copy` returns a leaked
+                                // bump-arena slice; elements are never dropped
+                                // again after this bitwise move.
+                                unsafe {
+                                    Vec::from_bump_slice(
+                                        arena.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
+                                    )
+                                },
                             ));
                         } else {
                             part.import_record_indices
@@ -7538,11 +7543,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             core::mem::replace(&mut self.symbols, BumpVec::new_in(arena)).into_bump_slice_mut();
         // SAFETY: bump-arena storage lives for 'a, which outlives the Ast;
         // Borrowed origin → Vec::drop is a no-op.
-        let symbols = js_ast::symbol::List::from_bump_slice(symbols_slice);
+        let symbols = unsafe { js_ast::symbol::List::from_bump_slice(symbols_slice) };
         let parts_slice: &'a mut [js_ast::Part] =
             core::mem::replace(parts, BumpVec::new_in(arena)).into_bump_slice_mut();
         // SAFETY: same — `parts` was a BumpVec<'a, Part>; now leaked into the arena.
-        let parts_list = Vec::<js_ast::Part>::from_bump_slice(parts_slice);
+        let parts_list = unsafe { Vec::<js_ast::Part>::from_bump_slice(parts_slice) };
         // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
         // Round-G fix: use the dedicated adapter so the parser-side list is
         // left empty (Zig move-and-zero) and the BumpVec is leaked into the
@@ -8012,7 +8017,7 @@ impl LowerUsingDeclarationsContext {
                         ),
                     ]);
                     decl.value = Some(p.call_runtime(value_loc, b"__using",
-                        ExprNodeList::from_bump_slice(args)));
+                        unsafe { ExprNodeList::from_bump_slice(args) }));
                 }
             }
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -8147,7 +8152,7 @@ impl LowerUsingDeclarationsContext {
                 p.new_expr(E::Identifier { ref_: err_ref, ..Default::default() }, loc),
                 p.new_expr(E::Identifier { ref_: has_err_ref, ..Default::default() }, loc),
             ]);
-            p.call_runtime(loc, b"__callDispose", ExprNodeList::from_bump_slice(args))
+            p.call_runtime(loc, b"__callDispose", unsafe { ExprNodeList::from_bump_slice(args) })
         };
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {

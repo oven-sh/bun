@@ -241,11 +241,19 @@ for (const server_tls of [false, true]) {
 }
 
 test("unsupported protocol", async () => {
-  expect(
-    fetch("https://httpbin.org/get", {
+  const tls = { ca: tlsCert.cert };
+  const doFetch = () =>
+    fetch(httpsServer.url, {
       proxy: "ftp://asdf.com",
+      tls,
+    });
+
+  await expect(doFetch()).rejects.toThrowError(
+    expect.objectContaining({
+      code: "UnsupportedProxyProtocol",
     }),
-  ).rejects.toThrowError(
+  );
+  await expect(doFetch()).rejects.toThrowError(
     expect.objectContaining({
       code: "UnsupportedProxyProtocol",
     }),
@@ -1052,7 +1060,7 @@ describe("fetch through SOCKS5 proxy", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(records[0]).toMatchObject({ atyp: 0x03, host: "127.0.0.1", port: httpServer.port });
+    expect(records[0]).toMatchObject({ atyp: 0x01, host: "127.0.0.1", port: httpServer.port });
   });
 
   test("HTTPS fetch through socks5h proxy", async () => {
@@ -1065,7 +1073,7 @@ describe("fetch through SOCKS5 proxy", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(records[0]).toMatchObject({ atyp: 0x03, host: "127.0.0.1", port: httpsServer.port });
+    expect(records[0]).toMatchObject({ atyp: 0x01, host: "127.0.0.1", port: httpsServer.port });
   });
 
   test("HTTP POST through socks5 proxy with username/password", async () => {

@@ -1942,6 +1942,7 @@ fn completeSocksFromDnsReq(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    this.socks_dns_pending = null;
     defer bun.dns.internal.freeaddrinfo(dns_req, 0);
 
     const result = dns_req.result orelse {
@@ -1969,6 +1970,7 @@ pub fn completeSocksWithAddress(
     address: std.net.Address,
     target_port: u16,
 ) void {
+    this.socks_dns_pending = null;
     const proxy = if (this.socks_proxy) |*proxy| proxy else {
         this.closeAndFail(error.ProxyProtocolError, is_ssl, socket);
         return;

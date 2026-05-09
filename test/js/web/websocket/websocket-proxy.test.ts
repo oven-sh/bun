@@ -843,7 +843,7 @@ describe("WebSocket through SOCKS5 proxy", () => {
     ws.onerror = reject;
 
     expect(await promise).toContain("hello via socks");
-    expect(records[0]).toMatchObject({ atyp: 0x03, host: "127.0.0.1", port: wsPort });
+    expect(records[0]).toMatchObject({ atyp: 0x01, host: "127.0.0.1", port: wsPort });
   });
 
   test("wss:// through socks5h proxy", async () => {
@@ -865,7 +865,7 @@ describe("WebSocket through SOCKS5 proxy", () => {
     ws.onerror = reject;
 
     expect(await promise).toContain("hello via secure socks");
-    expect(records[0]).toMatchObject({ atyp: 0x03, host: "127.0.0.1", port: wssPort });
+    expect(records[0]).toMatchObject({ atyp: 0x01, host: "127.0.0.1", port: wssPort });
   });
 
   test("ws:// through socks5 proxy with username/password", async () => {

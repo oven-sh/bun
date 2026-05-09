@@ -226,7 +226,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         kind,
                         if (username_slice) |s| s.slice() else "",
                         if (password_slice) |s| s.slice() else "",
-                    ) catch return null;
+                    ) catch |err| {
+                        switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                            else => {
+                                allocator.free(body);
+                                return null;
+                            },
+                        }
+                    };
                     socks.?.begin() catch |err| bun.handleOom(err);
                     connect_request = allocator.dupe(u8, socks.?.write_buffer.slice()) catch |err| bun.handleOom(err);
                     socks.?.write_buffer.cursor = socks.?.write_buffer.list.items.len;

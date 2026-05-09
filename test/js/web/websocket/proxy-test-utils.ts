@@ -221,16 +221,31 @@ export function createSocksProxy(options: SocksProxyOptions = {}): net.Server {
       while (true) {
         if (stage === "method") {
           if (buffer.length < 2) return;
+          if (buffer[0] !== 0x05) {
+            clientSocket.destroy();
+            return;
+          }
           const nmethods = buffer[1];
           if (buffer.length < 2 + nmethods) return;
+          const methods = new Set(buffer.subarray(2, 2 + nmethods));
+          const selectedMethod = options.requireAuth ? 0x02 : 0x00;
+          if (!methods.has(selectedMethod)) {
+            clientSocket.write(Buffer.from([0x05, 0xff]));
+            clientSocket.end();
+            return;
+          }
           buffer = buffer.subarray(2 + nmethods);
-          clientSocket.write(Buffer.from([0x05, options.requireAuth ? 0x02 : 0x00]));
+          clientSocket.write(Buffer.from([0x05, selectedMethod]));
           stage = options.requireAuth ? "auth" : "connect";
           continue;
         }
 
         if (stage === "auth") {
           if (buffer.length < 2) return;
+          if (buffer[0] !== 0x01) {
+            clientSocket.destroy();
+            return;
+          }
           const ulen = buffer[1];
           if (buffer.length < 2 + ulen + 1) return;
           const plen = buffer[2 + ulen];
@@ -251,6 +266,14 @@ export function createSocksProxy(options: SocksProxyOptions = {}): net.Server {
 
         if (stage === "connect") {
           if (buffer.length < 5) return;
+          if (buffer[0] !== 0x05 || buffer[2] !== 0x00) {
+            fail(0x01);
+            return;
+          }
+          if (buffer[1] !== 0x01) {
+            fail(0x07);
+            return;
+          }
           const atyp = buffer[3];
           let offset = 4;
           let host = "";

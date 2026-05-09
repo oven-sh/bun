@@ -227,7 +227,14 @@ fn writeAuth(this: *SocksProxy) !void {
 const ConnectWriteResult = enum { written, needs_dns_resolve };
 
 fn writeConnect(this: *SocksProxy, target_host: []const u8, target_port: u16) !ConnectWriteResult {
-    // socks5h: always send domain name to proxy for remote DNS
+    // Both socks5:// and socks5h:// should preserve numeric IP literals.
+    if (std.net.Address.parseIp(target_host, target_port)) |address| {
+        try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
+        try this.writeAddress(address, target_port);
+        this.state = .connect_response;
+        return .written;
+    } else |_| {}
+
     if (this.kind == .socks5h) {
         try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
         if (target_host.len > 255) return error.SocksDomainTooLong;
@@ -237,14 +244,6 @@ fn writeConnect(this: *SocksProxy, target_host: []const u8, target_port: u16) !C
         this.state = .connect_response;
         return .written;
     }
-
-    // socks5: try parse as IP literal first
-    if (std.net.Address.parseIp(target_host, target_port)) |address| {
-        try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
-        try this.writeAddress(address, target_port);
-        this.state = .connect_response;
-        return .written;
-    } else |_| {}
 
     // socks5 + hostname: caller must resolve DNS asynchronously
     return .needs_dns_resolve;

@@ -261,6 +261,9 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !?New
                 client.setCustomSslCtx(entry.ctx);
                 // Keepalive is now supported for custom SSL contexts
                 if (client.http_proxy) |url| {
+                    if (!(url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http") or strings.eqlComptime(url.protocol, "socks5") or strings.eqlComptime(url.protocol, "socks5h"))) {
+                        return error.UnsupportedProxyProtocol;
+                    }
                     return try entry.ctx.connect(client, url.hostname, proxyPort(url));
                 } else {
                     return try entry.ctx.connect(client, client.url.hostname, client.url.getPortAuto());

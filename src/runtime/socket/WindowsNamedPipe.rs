@@ -266,6 +266,16 @@ impl WindowsNamedPipe {
             // `self.wrapper = None` instead of dropping the `SSLWrapper`
             // (and rewriting the `Option` discriminant) while `*w` is still
             // mid-execution inside its payload.
+            //
+            // Re-entrancy: the SSL trampolines (`on_data`/`on_open`/
+            // `on_handshake`) call into JS, which may call back into
+            // `encode_and_write`/`flush`/`close`/`shutdown` — each of which
+            // ALSO sets/clears WRAPPER_BUSY. A nested clear would prematurely
+            // disarm the OUTER guard and let the inner epilogue (or a
+            // subsequent `release_resources`) drop `self.wrapper` while THIS
+            // `(*w).receive_data()` is still executing. Capture the prior
+            // state and only run the clear+epilogue at the outermost level.
+            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
             self.flags.insert(Flags::WRAPPER_BUSY);
             // SAFETY: `w` points into `self.wrapper`'s `Some` payload. The
             // re-entrant `&mut *this` formed by the SSL trampolines touches
@@ -275,13 +285,15 @@ impl WindowsNamedPipe {
             // skips its `= None`, so the payload bytes stay valid and
             // un-overwritten for the duration of this call.
             unsafe { (*w).receive_data(data.as_slice()) };
-            self.flags.remove(Flags::WRAPPER_BUSY);
-            // If close fired re-entrantly, the deferred drop is now safe:
-            // `receive_data` has returned and no `&mut` into the wrapper is
-            // live. (`release_resources` is idempotent, but we only need the
-            // wrapper teardown it skipped.)
-            if self.flags.is_closed() {
-                self.wrapper = None;
+            if !was_busy {
+                self.flags.remove(Flags::WRAPPER_BUSY);
+                // If close fired re-entrantly, the deferred drop is now safe:
+                // `receive_data` has returned and no `&mut` into the wrapper
+                // is live. (`release_resources` is idempotent, but we only
+                // need the wrapper teardown it skipped.)
+                if self.flags.is_closed() {
+                    self.wrapper = None;
+                }
             }
         } else {
             (self.handlers.on_data)(self.handlers.ctx, data.as_slice());
@@ -438,13 +450,18 @@ impl WindowsNamedPipe {
                 let w: *mut WrapperType =
                     // SAFETY: `is_some()` checked just above; single JS thread.
                     unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+                // Re-entrancy: see `on_read` — only the OUTERMOST scope may
+                // clear the flag / run the deferred-drop epilogue.
+                let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
                 self.flags.insert(Flags::WRAPPER_BUSY);
                 // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
                 // bytes at `*w` valid for the call's duration.
                 unsafe { let _ = (*w).shutdown(false); }
-                self.flags.remove(Flags::WRAPPER_BUSY);
-                if self.flags.is_closed() {
-                    self.wrapper = None;
+                if !was_busy {
+                    self.flags.remove(Flags::WRAPPER_BUSY);
+                    if self.flags.is_closed() {
+                        self.wrapper = None;
+                    }
                 }
             }
             self.writer.end();
@@ -516,13 +533,18 @@ impl WindowsNamedPipe {
             let w: *mut WrapperType =
                 // SAFETY: `is_some()` checked just above; single JS thread.
                 unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
+            // the flag / run the deferred-drop epilogue.
+            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
             self.flags.insert(Flags::WRAPPER_BUSY);
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
             unsafe { let _ = (*w).flush(); }
-            self.flags.remove(Flags::WRAPPER_BUSY);
-            if self.flags.is_closed() {
-                self.wrapper = None;
+            if !was_busy {
+                self.flags.remove(Flags::WRAPPER_BUSY);
+                if self.flags.is_closed() {
+                    self.wrapper = None;
+                }
             }
         }
         if !self.flags.disconnected() {
@@ -543,13 +565,18 @@ impl WindowsNamedPipe {
             let w: *mut WrapperType =
                 // SAFETY: `is_some()` checked above; single JS thread.
                 unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
+            // the flag / run the deferred-drop epilogue.
+            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
             self.flags.insert(Flags::WRAPPER_BUSY);
             // SAFETY: see `on_read` — `WRAPPER_BUSY` keeps the `Some` payload
             // bytes at `*w` valid and un-overwritten for the call's duration.
             unsafe { (*w).receive_data(data) };
-            self.flags.remove(Flags::WRAPPER_BUSY);
-            if self.flags.is_closed() {
-                self.wrapper = None;
+            if !was_busy {
+                self.flags.remove(Flags::WRAPPER_BUSY);
+                if self.flags.is_closed() {
+                    self.wrapper = None;
+                }
             }
         }
     }
@@ -658,13 +685,18 @@ impl WindowsNamedPipe {
                     let w: *mut WrapperType =
                         // SAFETY: `is_some()` checked just above; single JS thread.
                         unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+                    // Re-entrancy: see `on_read` — only the OUTERMOST scope
+                    // may clear the flag / run the deferred-drop epilogue.
+                    let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
                     self.flags.insert(Flags::WRAPPER_BUSY);
                     // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some`
                     // payload bytes at `*w` valid for the call's duration.
                     unsafe { (*w).start() };
-                    self.flags.remove(Flags::WRAPPER_BUSY);
-                    if self.flags.is_closed() {
-                        self.wrapper = None;
+                    if !was_busy {
+                        self.flags.remove(Flags::WRAPPER_BUSY);
+                        if self.flags.is_closed() {
+                            self.wrapper = None;
+                        }
                     }
                 }
             } else {
@@ -751,13 +783,18 @@ impl WindowsNamedPipe {
                     let w: *mut WrapperType =
                         // SAFETY: `is_some()` checked just above; single JS thread.
                         unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+                    // Re-entrancy: see `on_read` — only the OUTERMOST scope
+                    // may clear the flag / run the deferred-drop epilogue.
+                    let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
                     self.flags.insert(Flags::WRAPPER_BUSY);
                     // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some`
                     // payload bytes at `*w` valid for the call's duration.
                     unsafe { (*w).start() };
-                    self.flags.remove(Flags::WRAPPER_BUSY);
-                    if self.flags.is_closed() {
-                        self.wrapper = None;
+                    if !was_busy {
+                        self.flags.remove(Flags::WRAPPER_BUSY);
+                        if self.flags.is_closed() {
+                            self.wrapper = None;
+                        }
                     }
                 }
             } else {
@@ -978,13 +1015,18 @@ impl WindowsNamedPipe {
             let w: *mut WrapperType =
                 // SAFETY: just assigned `Some(..)` above; single JS thread.
                 unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
+            // the flag / run the deferred-drop epilogue.
+            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
             self.flags.insert(Flags::WRAPPER_BUSY);
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
             unsafe { (*w).start() };
-            self.flags.remove(Flags::WRAPPER_BUSY);
-            if self.flags.is_closed() {
-                self.wrapper = None;
+            if !was_busy {
+                self.flags.remove(Flags::WRAPPER_BUSY);
+                if self.flags.is_closed() {
+                    self.wrapper = None;
+                }
             }
         }
         Ok(())
@@ -1072,13 +1114,20 @@ impl WindowsNamedPipe {
             let w: *mut WrapperType =
                 // SAFETY: `is_some()` checked just above; single JS thread.
                 unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
+            // the flag / run the deferred-drop epilogue. (JS `socket.write()`
+            // from inside `onData`/`onOpen`/`onHandshake` re-enters here while
+            // the outer `(*w).receive_data()`/`(*w).start()` is still running.)
+            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
             self.flags.insert(Flags::WRAPPER_BUSY);
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
             let r = unsafe { (*w).write_data(data) };
-            self.flags.remove(Flags::WRAPPER_BUSY);
-            if self.flags.is_closed() {
-                self.wrapper = None;
+            if !was_busy {
+                self.flags.remove(Flags::WRAPPER_BUSY);
+                if self.flags.is_closed() {
+                    self.wrapper = None;
+                }
             }
             return i32::try_from(r.unwrap_or(0)).expect("int cast");
         } else {
@@ -1103,13 +1152,18 @@ impl WindowsNamedPipe {
             let w: *mut WrapperType =
                 // SAFETY: `is_some()` checked just above; single JS thread.
                 unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
+            // the flag / run the deferred-drop epilogue.
+            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
             self.flags.insert(Flags::WRAPPER_BUSY);
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
             unsafe { let _ = (*w).shutdown(false); }
-            self.flags.remove(Flags::WRAPPER_BUSY);
-            if self.flags.is_closed() {
-                self.wrapper = None;
+            if !was_busy {
+                self.flags.remove(Flags::WRAPPER_BUSY);
+                if self.flags.is_closed() {
+                    self.wrapper = None;
+                }
             }
         }
         self.writer.end();
@@ -1122,13 +1176,18 @@ impl WindowsNamedPipe {
             let w: *mut WrapperType =
                 // SAFETY: `is_some()` checked just above; single JS thread.
                 unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
+            // the flag / run the deferred-drop epilogue.
+            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
             self.flags.insert(Flags::WRAPPER_BUSY);
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
             unsafe { let _ = (*w).shutdown(false); }
-            self.flags.remove(Flags::WRAPPER_BUSY);
-            if self.flags.is_closed() {
-                self.wrapper = None;
+            if !was_busy {
+                self.flags.remove(Flags::WRAPPER_BUSY);
+                if self.flags.is_closed() {
+                    self.wrapper = None;
+                }
             }
         }
     }

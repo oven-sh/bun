@@ -68,22 +68,7 @@ fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
 // ── ResolverLike bridge ───────────────────────────────────────────────────
 // `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
 // `bun_resolver::Resolver` is the concrete impl. The orphan-rule-compliant
-// impl lives here in `bun_runtime` (the runtime sees both). `DirInfoRef`
-// erases `*const bun_resolver::DirInfo` so the router stays generic.
-
-static RESOLVER_DIR_INFO_VTABLE: Router::DirInfoVTable = Router::DirInfoVTable {
-    get_entries_const: |owner| {
-        // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo` produced by
-        // `dir_info_ref` below; the resolver's BSSMap singleton outlives the walk.
-        let di = unsafe { &*owner.cast::<bun_resolver::DirInfo>() };
-        di.get_entries_const().map(|e| std::ptr::from_ref::<Fs::DirEntry>(e))
-    },
-};
-
-#[inline]
-fn dir_info_ref(di: *const bun_resolver::DirInfo) -> Router::DirInfoRef {
-    Router::DirInfoRef { owner: di.cast::<()>(), vtable: &RESOLVER_DIR_INFO_VTABLE }
-}
+// impl lives here in `bun_runtime` (the runtime sees both).
 
 /// Newtype so the orphan rule lets us `impl ResolverLike` for the foreign
 /// `bun_resolver::Resolver`.
@@ -100,8 +85,8 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
         unsafe { &raw mut (*self.0.fs()).fs }
     }
     #[inline]
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<Router::DirInfoRef> {
-        self.0.read_dir_info_ignore_error(path).map(dir_info_ref)
+    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<*const bun_resolver::DirInfo> {
+        self.0.read_dir_info_ignore_error(path)
     }
 }
 
@@ -298,7 +283,8 @@ impl FileSystemRouter {
             if router
                 .load_routes(
                     &mut log,
-                    dir_info_ref(root_dir_info),
+                    // SAFETY: resolver-owned DirInfo, valid for process lifetime.
+                    unsafe { &*root_dir_info },
                     &mut RouterResolver(&mut vm.transpiler.resolver),
                     &config_dir,
                 )
@@ -509,7 +495,8 @@ impl FileSystemRouter {
             if router
                 .load_routes(
                     &mut log,
-                    dir_info_ref(root_dir_info),
+                    // SAFETY: resolver-owned DirInfo, valid for process lifetime.
+                    unsafe { &*root_dir_info },
                     &mut RouterResolver(&mut vm.transpiler.resolver),
                     &config_dir,
                 )

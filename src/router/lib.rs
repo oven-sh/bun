@@ -39,6 +39,7 @@ mod logger {
 // name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::FileSystem;
+use bun_resolver::DirInfo;
 
 // peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
 // the route-config pair lives in `bun_options_types::schema::api`.
@@ -212,31 +213,6 @@ impl RouteConfig {
     }
 }
 
-// GENUINE(b0): bun_resolver::dir_info::DirInfo — erased via manual vtable (cold path).
-// PERF(port): was inline `&DirInfo`; route loading runs once at startup so the
-// indirect call is acceptable. bun_resolver provides the static `DirInfoVTable`
-// instance (move-in pass adds `bun_resolver::DIR_INFO_VTABLE`).
-pub struct DirInfoVTable {
-    /// Returns the cached directory listing for this DirInfo, if loaded.
-    pub get_entries_const: unsafe fn(*const ()) -> Option<*const Fs::DirEntry>,
-}
-
-#[derive(Copy, Clone)]
-pub struct DirInfoRef {
-    // SAFETY: erased *const bun_resolver::dir_info::DirInfo
-    pub owner: *const (),
-    pub vtable: &'static DirInfoVTable,
-}
-
-impl DirInfoRef {
-    #[inline]
-    pub fn get_entries_const(&self) -> Option<&Fs::DirEntry> {
-        // SAFETY: vtable upholds that the returned pointer (if Some) is valid for
-        // the lifetime of the erased DirInfo behind `owner`.
-        unsafe { (self.vtable.get_entries_const)(self.owner).map(|p| &*p) }
-    }
-}
-
 // const index_route_hash = @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123"))
 // TODO(port): make this a true const once bun_wyhash::hash is const fn
 fn index_route_hash() -> u32 {
@@ -310,7 +286,7 @@ impl<'a> Router<'a> {
     pub fn load_routes<R: ResolverLike>(
         &mut self,
         log: &mut logger::Log,
-        root_dir_info: DirInfoRef,
+        root_dir_info: &DirInfo,
         resolver: &mut R,
         base_dir: &[u8],
     ) -> Result<(), CoreError> {
@@ -742,7 +718,7 @@ impl<'a> RouteLoader<'a> {
         config: RouteConfig,
         log: &'a mut logger::Log,
         resolver: &mut R,
-        root_dir_info: DirInfoRef,
+        root_dir_info: &DirInfo,
         base_dir: &[u8],
     ) -> Routes {
         let mut route_dirname_len: u16 = 0;
@@ -846,7 +822,7 @@ impl<'a> RouteLoader<'a> {
     pub(crate) fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
-        root_dir_info: DirInfoRef,
+        root_dir_info: &DirInfo,
         base_dir: &[u8],
     ) {
         let fs = self.fs;
@@ -887,7 +863,8 @@ impl<'a> RouteLoader<'a> {
                         if let Some(_dir_info) =
                             resolver.read_dir_info_ignore_error(&fs.abs(&abs_parts))
                         {
-                            let dir_info: DirInfoRef = _dir_info;
+                            // SAFETY: resolver's BSSMap-owned DirInfo outlives the route walk.
+                            let dir_info: &DirInfo = unsafe { &*_dir_info };
 
                             self.load(resolver, dir_info, base_dir);
                         }
@@ -1537,7 +1514,9 @@ pub trait ResolverLike {
     /// Zig: `&fs.fs` — the resolver's `Implementation` field, passed to
     /// `Entry.kind` for lazy stat.
     fn fs_impl(&self) -> *mut Fs::Implementation;
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
+    /// Returns a raw pointer (not a borrow) so the resolver's `&mut self`
+    /// borrow ends before the recursive `load()` re-borrows it.
+    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<*const DirInfo>;
 }
 
 pub trait WatcherLike {
@@ -2150,28 +2129,6 @@ mod tests {
         Ok(())
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Bridge the real `bun_resolver::Resolver` to this crate's erased
-    // `ResolverLike` / `DirInfoRef` surface (dev-dep only).
-    // ──────────────────────────────────────────────────────────────────────
-
-    /// vtable mapping `bun_resolver::DirInfo::get_entries_const` onto the
-    /// `bun_resolver::fs::DirEntry` listing the router walks.
-    static RESOLVER_DIR_INFO_VTABLE: DirInfoVTable = DirInfoVTable {
-        get_entries_const: |owner| {
-            // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo`
-            // produced by `dir_info_ref` below; the resolver guarantees it
-            // outlives the router walk.
-            let di = unsafe { &*owner.cast::<bun_resolver::DirInfo>() };
-            di.get_entries_const().map(core::ptr::from_ref)
-        },
-    };
-
-    #[inline]
-    fn dir_info_ref(di: *const bun_resolver::DirInfo) -> DirInfoRef {
-        DirInfoRef { owner: di.cast::<()>(), vtable: &RESOLVER_DIR_INFO_VTABLE }
-    }
-
     /// Newtype so the orphan rule lets us `impl ResolverLike` for a
     /// foreign-crate type.
     struct TestResolver<'a>(bun_resolver::Resolver<'a>);
@@ -2185,8 +2142,8 @@ mod tests {
             // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
             unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
         }
-        fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-            self.0.read_dir_info_ignore_error(path).map(dir_info_ref)
+        fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<*const DirInfo> {
+            self.0.read_dir_info_ignore_error(path)
         }
     }
 
@@ -2264,7 +2221,8 @@ mod tests {
                 router.config.clone(),
                 unsafe { &mut *core::ptr::from_mut(&mut log) },
                 &mut resolver,
-                dir_info_ref(root_dir),
+                // SAFETY: resolver-owned DirInfo, valid for process lifetime.
+                unsafe { &*root_dir },
                 top_level_dir,
             );
             scopeguard::ScopeGuard::into_inner(_err_dump);
@@ -2328,7 +2286,8 @@ mod tests {
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             router.load_routes(
                 unsafe { &mut *core::ptr::from_mut(&mut log) },
-                dir_info_ref(root_dir),
+                // SAFETY: resolver-owned DirInfo, valid for process lifetime.
+                unsafe { &*root_dir },
                 &mut resolver,
                 top_level_dir,
             )?;

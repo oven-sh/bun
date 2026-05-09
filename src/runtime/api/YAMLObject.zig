@@ -741,8 +741,11 @@ const Stringifier = struct {
                         }
                     }
 
-                    if (i == 0 and stringIsNumber(str, &i)) {
-                        return true;
+                    if (i == 0) {
+                        var n_i: usize = 0;
+                        if (stringIsNumber(str, &n_i)) {
+                            return true;
+                        }
                     }
                     i += 1;
                 },
@@ -766,15 +769,32 @@ const Stringifier = struct {
                         }
                     }
 
-                    if (i == 0 and stringIsNumber(str, &i)) {
-                        return true;
+                    if (i == 0) {
+                        var n_i: usize = 0;
+                        if (stringIsNumber(str, &n_i)) {
+                            return true;
+                        }
                     }
                     i += 1;
                 },
 
                 '0'...'9' => {
-                    if (i == 0 and stringIsNumber(str, &i)) {
-                        return true;
+                    if (i == 0) {
+                        var n_i: usize = 0;
+                        if (stringIsNumber(str, &n_i)) {
+                            return true;
+                        }
+                    }
+                    i += 1;
+                },
+
+                '+' => {
+                    // Leading '+' followed by digits/dot parses as a positive number.
+                    if (i == 0) {
+                        var n_i: usize = 0;
+                        if (stringIsNumber(str, &n_i)) {
+                            return true;
+                        }
                     }
                     i += 1;
                 },
@@ -854,19 +874,27 @@ const Stringifier = struct {
                         switch (str.charAt(i + 1)) {
                             'x', 'X' => {
                                 base = .hex;
+                                i += 1;
                             },
                             'o', 'O' => {
                                 base = .oct;
+                                i += 1;
                             },
-                            '0'...'9' => {
-                                // 0 prefix allowed
+                            '0'...'9',
+                            // 'e'/'E' — exponent continues a decimal float like "0e6836".
+                            // '.' — decimal point continues a decimal float like "0.0".
+                            // Fall through and let the next iteration handle them.
+                            'e',
+                            'E',
+                            '.',
+                            => {
+                                // leading 0 is fine; continue
                             },
                             else => {
                                 offset.* = i;
                                 return false;
                             },
                         }
-                        i += 1;
                     } else {
                         return true;
                     }

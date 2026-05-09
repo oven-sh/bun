@@ -9,8 +9,8 @@
 // reproduction below panics on `bun bd` too.
 import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { join } from "path";
 
 test("bare-specifier virtual CJS module does not panic on transpiler-cache hit", async () => {
   const dir = tmpdirSync();
@@ -21,8 +21,7 @@ test("bare-specifier virtual CJS module does not panic on transpiler-cache hit",
   // (MINIMUM_CACHE_SIZE is 50 KiB). The content must match between the
   // primer run and the virtual module so that `RuntimeTranspilerCache.get`
   // (keyed by content hash) restores it.
-  const payload =
-    "// " + "x".repeat(80 * 1024) + "\nmodule.exports = { ok: true };\n";
+  const payload = "// " + "x".repeat(80 * 1024) + "\nmodule.exports = { ok: true };\n";
   const primer = join(dir, "primer.cjs");
   writeFileSync(primer, payload);
 

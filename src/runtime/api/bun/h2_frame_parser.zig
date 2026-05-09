@@ -3421,10 +3421,10 @@ pub const H2FrameParser = struct {
         const stream = this.streams.get(stream_id) orelse {
             // Stream was removed after close — report a CLOSED state so
             // JS consumers get a consistent answer instead of a throw.
-            const closed_state_number: u8 = 7; // Stream.state enum value for CLOSED
+            const closed_state_value = @intFromEnum(@as(@FieldType(Stream, "state"), .CLOSED));
             var closed_state = jsc.JSValue.createEmptyObject(globalObject, 6);
             closed_state.put(globalObject, jsc.ZigString.static("localWindowSize"), jsc.JSValue.jsNumber(0));
-            closed_state.put(globalObject, jsc.ZigString.static("state"), jsc.JSValue.jsNumber(closed_state_number));
+            closed_state.put(globalObject, jsc.ZigString.static("state"), jsc.JSValue.jsNumber(closed_state_value));
             closed_state.put(globalObject, jsc.ZigString.static("localClose"), jsc.JSValue.jsNumber(1));
             closed_state.put(globalObject, jsc.ZigString.static("remoteClose"), jsc.JSValue.jsNumber(1));
             closed_state.put(globalObject, jsc.ZigString.static("sumDependencyWeight"), jsc.JSValue.jsNumber(0));

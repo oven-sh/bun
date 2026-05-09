@@ -8,8 +8,8 @@ use core::mem::offset_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
-use bun_aio::{AllocatorType, KeepAlive};
-use bun_aio::posix_event_loop::get_vm_ctx;
+use bun_io::{AllocatorType, KeepAlive};
+use bun_io::posix_event_loop::get_vm_ctx;
 use bun_alloc::Arena;
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::{self, Loader, ModuleType};
@@ -40,7 +40,7 @@ use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
-    RuntimeTranspilerCache as JscRuntimeTranspilerCache, JSC_PARSER_CACHE_VTABLE,
+    RuntimeTranspilerCache as JscRuntimeTranspilerCache,
 };
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{create_if_different, SourceMapHandlerGetter, VirtualMachine};
@@ -599,7 +599,7 @@ impl TranspilerJob {
         // disk-backed `Entry` loader; on a hit `cache.entry` holds a type-erased
         // `*mut CacheEntry` which is unboxed below.
         let mut cache = RuntimeTranspilerCache {
-            vtable: Some(&JSC_PARSER_CACHE_VTABLE),
+            r#impl: Some(bun_js_parser::TranspilerCacheImplKind::Jsc),
             ..Default::default()
         };
 

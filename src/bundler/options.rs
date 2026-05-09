@@ -763,30 +763,8 @@ impl LoaderExt for Loader {
 /// stores/drops via vtable, never dereferences.
 pub type OpaqueBlob = *mut ();
 
-// PERF(port): was inline field access on jsc::VirtualMachine
-pub struct VmLoaderVTable {
-    pub origin_host: unsafe fn(*const ()) -> &'static [u8],
-    pub origin_path: unsafe fn(*const ()) -> &'static [u8],
-    pub loaders: unsafe fn(*const ()) -> *const StringArrayHashMap<Loader>,
-    pub eval_source: unsafe fn(*const ()) -> Option<*const logger::Source>,
-    pub main: unsafe fn(*const ()) -> &'static [u8],
-    pub read_dir_info_package_json: unsafe fn(*const (), &[u8]) -> Option<*const PackageJSON>,
-    pub is_blob_url: unsafe fn(&[u8]) -> bool,
-    pub resolve_blob: unsafe fn(&[u8]) -> Option<OpaqueBlob>,
-    pub blob_loader: unsafe fn(OpaqueBlob, *const ()) -> Option<Loader>,
-    pub blob_file_name: unsafe fn(OpaqueBlob) -> Option<&'static [u8]>,
-    pub blob_needs_read_file: unsafe fn(OpaqueBlob) -> bool,
-    pub blob_shared_view: unsafe fn(OpaqueBlob) -> &'static [u8],
-    pub blob_deinit: unsafe fn(OpaqueBlob),
-}
+pub use crate::{VmLoaderCtx, VmLoaderCtxKind};
 
-pub struct VmLoaderCtx {
-    pub vm: *const (), // SAFETY: erased jsc::VirtualMachine
-    pub vtable: &'static VmLoaderVTable,
-}
-
-// TODO(b0-genuine): bun_jsc::VirtualMachine — body still references VM fields
-// directly; rewrite to go through `VmLoaderCtx` once runtime registers vtable.
 pub fn normalize_specifier<'a>(
     jsc_vm: &VmLoaderCtx,
     slice_: &'a [u8],
@@ -796,9 +774,8 @@ pub fn normalize_specifier<'a>(
         return (slice, slice, b"");
     }
 
-    // SAFETY: vtable returns borrows tied to jsc_vm.vm lifetime
-    let host = unsafe { (jsc_vm.vtable.origin_host)(jsc_vm.vm) };
-    let opath = unsafe { (jsc_vm.vtable.origin_path)(jsc_vm.vm) };
+    let host = jsc_vm.origin_host();
+    let opath = jsc_vm.origin_path();
     if slice.starts_with(host) {
         slice = &slice[host.len()..];
     }
@@ -847,16 +824,15 @@ pub fn get_loader_and_virtual_source<'a>(
     blob_to_deinit: &mut Option<OpaqueBlob>,
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
-    let vt = jsc_vm.vtable;
     let (normalized_file_path_from_specifier, specifier, query) =
         normalize_specifier(jsc_vm, specifier_str);
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
-    // SAFETY: vt.loaders returns a borrow tied to jsc_vm.vm
-    let mut loader: Option<Loader> = path.loader(unsafe { &*(vt.loaders)(jsc_vm.vm) });
+    // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
+    let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
     let mut virtual_source: Option<&'a logger::Source> = None;
 
-    if let Some(eval_source) = unsafe { (vt.eval_source)(jsc_vm.vm) } {
+    if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a logger::Source = unsafe { &*eval_source };
         // PORT NOTE: Zig used `bun.OSPathLiteral("/[eval]")` (slash on POSIX,
@@ -873,23 +849,23 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    if unsafe { (vt.is_blob_url)(specifier) } {
-        if let Some(blob) = unsafe { (vt.resolve_blob)(&specifier[b"blob:".len()..]) } {
+    if jsc_vm.is_blob_url(specifier) {
+        if let Some(blob) = jsc_vm.resolve_blob(&specifier[b"blob:".len()..]) {
             *blob_to_deinit = Some(blob);
-            loader = unsafe { (vt.blob_loader)(blob, jsc_vm.vm) };
+            loader = jsc_vm.blob_loader(blob);
 
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
-            if let Some(filename) = unsafe { (vt.blob_file_name)(blob) } {
+            if let Some(filename) = jsc_vm.blob_file_name(blob) {
                 let current_path = Fs::Path::init(filename);
 
                 // Only treat it as a file if is a Bun.file()
-                if unsafe { (vt.blob_needs_read_file)(blob) } {
+                if jsc_vm.blob_needs_read_file(blob) {
                     path = current_path;
                 }
             }
 
-            if !unsafe { (vt.blob_needs_read_file)(blob) } {
+            if !jsc_vm.blob_needs_read_file(blob) {
                 // SAFETY: `path.text` aliases jsc_vm-owned storage (blob filename
                 // or normalized specifier), which outlives the `virtual_source`
                 // returned to the caller — matches Zig `getLoaderAndVirtualSource`
@@ -898,7 +874,7 @@ pub fn get_loader_and_virtual_source<'a>(
                     bun_js_parser::StoreStr::new(path.text).slice();
                 *virtual_source_to_use = Some(logger::Source {
                     path: logger::fs::Path::init(static_text),
-                    contents: Cow::Borrowed(unsafe { (vt.blob_shared_view)(blob) }),
+                    contents: Cow::Borrowed(jsc_vm.blob_shared_view(blob)),
                     ..Default::default()
                 });
                 virtual_source = virtual_source_to_use.as_ref();
@@ -917,14 +893,14 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    let is_main = strings::eql_long(specifier, unsafe { (vt.main)(jsc_vm.vm) }, true);
+    let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
 
     let dir = path.name.dir.as_ref();
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
-        unsafe { (vt.read_dir_info_package_json)(jsc_vm.vm, dir).map(|p| &*p) }
+        jsc_vm.read_dir_info_package_json(dir).map(|p| unsafe { &*p })
     } else {
         None
     };

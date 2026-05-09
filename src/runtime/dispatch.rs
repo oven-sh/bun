@@ -8,7 +8,7 @@
 //!
 //! Three dispatchers are defined:
 //!   1. [`run_task`] — `bun_event_loop::Task` (~96 variants; src/jsc/Task.zig).
-//!   2. [`run_file_poll`] — `bun_aio::FilePoll::Owner` (~13 variants;
+//!   2. [`run_file_poll`] — `bun_io::FilePoll::Owner` (~13 variants;
 //!      src/aio/posix_event_loop.zig `FilePoll.onUpdate`).
 //!
 //! Low-tier crates declare these as `extern "Rust"`; this crate defines them
@@ -16,7 +16,7 @@
 //! registration, no `AtomicPtr`, no init-order hazard.
 //!
 //! **Adding a variant** (do all three):
-//!   1. tag constant in `bun_event_loop::task_tag` (or `bun_aio::poll_tag`);
+//!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
 //!   2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`;
 //!   3. a match arm here.
 
@@ -34,7 +34,7 @@ use bun_event_loop::ManagedTask::ManagedTask;
 // `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
 // where libuv drives I/O readiness directly).
 #[cfg(not(windows))]
-use bun_aio::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag};
+use bun_io::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag};
 
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec,
@@ -600,8 +600,8 @@ pub fn tick_queue_with_count(
 // FilePoll dispatch (src/aio/posix_event_loop.zig `FilePoll.onUpdate` switch)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Hot-path dispatcher for `bun_aio::FilePoll::on_update`. Declared
-/// `extern "Rust"` in `bun_aio::posix_event_loop`; the low-tier `FilePoll`
+/// Hot-path dispatcher for `bun_io::FilePoll::on_update`. Declared
+/// `extern "Rust"` in `bun_io::posix_event_loop`; the low-tier `FilePoll`
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
@@ -636,11 +636,11 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             proc.on_wait_pid_from_event_loop_task();
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
-            let wd = owner_as!(bun_aio::parent_death_watchdog::ParentDeathWatchdog);
+            let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
             // Zig gates this `comptime !Environment.isMac => unreachable`;
             // mirror with a debug-assert (Linux uses prctl(PR_SET_PDEATHSIG)).
             #[cfg(target_os = "macos")]
-            bun_aio::parent_death_watchdog::on_parent_exit(wd);
+            bun_io::parent_death_watchdog::on_parent_exit(wd);
             #[cfg(not(target_os = "macos"))]
             {
                 debug_assert!(false, "ParentDeathWatchdog poll on non-mac");

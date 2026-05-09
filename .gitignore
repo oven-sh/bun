@@ -54,6 +54,7 @@
 /.cache
 /.webkit-cache
 /build-*/
+/test/build/
 /bun-webkit
 /kcov-out
 /test-report.json

@@ -317,7 +317,7 @@ pub unsafe fn pwritev(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> R
 // ──────────────────────────────────────────────────────────────────────────
 // Linux-only kernel features (epoll / pidfd / copy_file_range / sendfile /
 // getdents64). These keep the *libc-convention* return shape (`-1` on error
-// with thread-local errno set) so existing callers in `bun_aio`/`bun_runtime`
+// with thread-local errno set) so existing callers in `bun_io`/`bun_runtime`
 // that decode via `GetErrno for isize` continue to work unchanged. The syscall
 // itself is raw; glibc's `syscall(2)` trampoline writes thread-local errno on
 // `-errno` returns, which callers decode via `GetErrno for isize`.

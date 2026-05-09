@@ -32,7 +32,7 @@ pub(crate) fn server_js_create(
     }
 }
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
@@ -1584,7 +1584,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener = Some(socket);
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); single-threaded JS context.
-        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_aio::Loop::get()) };
+        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
         if !SSL {
             // SAFETY: `socket` is a live uws ListenSocket FFI handle just bound
             // by `app.listen`; deref'd once to read the socket fd. `vm` is a
@@ -2473,7 +2473,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         if !unsafe { &*this }.config.h1 {
                             // SAFETY: per-thread VM singleton; no aliasing `&mut`.
                             jsc::VirtualMachine::get().as_mut().event_loop_handle =
-                                Some(bun_aio::Loop::get());
+                                Some(bun_io::Loop::get());
                         }
                     }
                 }

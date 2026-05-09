@@ -36,6 +36,10 @@ const patterns = {
   bunError: {
     paths: ["packages/bun-error/*.{json,ts,tsx,css}", "packages/bun-error/img/*"],
   },
+  /** `*.string-map.ts` — input to generate-string-map codegen */
+  stringMaps: {
+    paths: ["src/**/*.string-map.ts"],
+  },
   /** `src/node-fallbacks/*.js` */
   nodeFallbacks: {
     paths: ["src/node-fallbacks/*.js"],

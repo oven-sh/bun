@@ -66,7 +66,7 @@ members = [
   "src/sys_jsc",
   "src/url_jsc",
   "src/zlib_sys",
-  "src/aio",
+  "src/dispatch",
   "src/brotli",
   "src/bundler_jsc",
   "src/perf",
@@ -252,7 +252,7 @@ bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
 bun_url_jsc = { path = "src/url_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
-bun_aio = { path = "src/aio" }
+bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
 bun_perf = { path = "src/perf" }

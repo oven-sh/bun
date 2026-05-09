@@ -519,7 +519,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::TestCommand
     ) {
         if args.flag(b"--no-orphans") {
-            bun_aio::parent_death_watchdog::enable();
+            bun_io::parent_death_watchdog::enable();
         }
     }
 

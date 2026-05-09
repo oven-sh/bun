@@ -5,7 +5,7 @@ use core::mem::offset_of;
 use std::sync::Arc;
 
 use bun_alloc::Arena;
-use bun_aio::Loop as AsyncLoop;
+use bun_io::Loop as AsyncLoop;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::Output;
 use bun_io::{BufferedReader, ReadState};
@@ -204,7 +204,7 @@ impl Drop for ShellSubprocess {
 pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
 
 impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
-    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -213,23 +213,11 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 
 pub type WatchFd = Fd;
 
-// PORT NOTE: ProcessExitOwner trait does not exist; the vtable pattern uses
-// a free fn registered in ProcessExitVTable. This adapter is referenced by
-// `SHELL_EXIT_VTABLE` and wired via `Process::set_exit_handler` below.
-static SHELL_EXIT_VTABLE: bun_process::ProcessExitVTable = bun_process::ProcessExitVTable {
-    on_process_exit: shell_on_process_exit_thunk,
-};
-
-unsafe fn shell_on_process_exit_thunk(
-    owner: *mut (),
-    process: *mut Process,
-    status: bun_process::Status,
-    rusage: *const Rusage,
-) {
-    // SAFETY: `owner` was registered as `*mut ShellSubprocess` via
-    // `set_exit_handler` and the owning Cmd outlives the Process exit callback.
-    // `process`/`rusage` are live for the duration of the callback.
-    unsafe { (*owner.cast::<ShellSubprocess>()).on_process_exit(&*process, status, &*rusage) };
+bun_spawn::link_impl_ProcessExit! {
+    Shell for ShellSubprocess => |this| {
+        on_process_exit(process, status, rusage) =>
+            (*this).on_process_exit(&*process, status, &*rusage),
+    }
 }
 
 impl ShellSubprocess {
@@ -691,7 +679,11 @@ impl ShellSubprocess {
         let _ = bun_core::heap::into_raw(unsafe { slot.assume_init() });
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
-        subproc.proc().set_exit_handler(subprocess.cast::<()>(), &SHELL_EXIT_VTABLE);
+        // SAFETY: `subprocess` is the just-allocated `ShellSubprocess`; the
+        // owning `Cmd` outlives the `Process` exit callback.
+        subproc.proc().set_exit_handler(unsafe {
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess)
+        });
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
         // Spec: `subprocess.stdin.pipe.signal = Signal.init(&subprocess.stdin)`.
@@ -2271,10 +2263,8 @@ impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see trait contract.
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it.
-        bun_io::EventLoopHandle(unsafe { &raw const (*this).event_loop }.cast_mut().cast::<c_void>())
+        // SAFETY: see on_read_chunk.
+        unsafe { (*this).event_loop.as_event_loop_ctx() }
     }
 }
 

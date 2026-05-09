@@ -6,7 +6,7 @@ use core::mem;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_aio::{KeepAlive, Loop as AsyncLoop};
+use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_alloc::AllocError;
 use bun_boringssl as boringssl;
 use bun_collections::HashMap;

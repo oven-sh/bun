@@ -13,7 +13,7 @@
 //!
 //! Dependencies are deliberately leaf-only: `libc`, `bun_sys`, `bun_core`,
 //! `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
-//! `bun_event_loop`/`bun_aio`/`bun_io`/`bun_threading` dependency — `Process`,
+//! `bun_event_loop`/`bun_io`/`bun_io`/`bun_threading` dependency — `Process`,
 //! `Poller`, `WaiterThread`, and the `sync` runner stay in `bun_spawn` and
 //! depend on this crate.
 //!
@@ -134,7 +134,7 @@ pub mod waiter_thread_flag {
 // ──────────────────────────────────────────────────────────────────────────
 // `PR_SET_PDEATHSIG` default — `spawn_process_posix` consults this when
 // `PosixSpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
-// tier that reads it); `bun_aio::ParentDeathWatchdog::enable()` flips it on
+// tier that reads it); `bun_io::ParentDeathWatchdog::enable()` flips it on
 // from the main thread. `PR_SET_PDEATHSIG` is *thread*-scoped in the kernel,
 // so the default only applies when spawning from the same thread that armed
 // the watchdog (a `Bun.spawn` from a JS Worker would otherwise kill the child

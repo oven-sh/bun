@@ -63,7 +63,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_string::{String as BunString, WTFStringImpl};
 use bun_threading::{Futex, Mutex};
 
@@ -385,8 +385,8 @@ pub extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void
 /// `release_parent_poll_ref` / `create` are all called on the PARENT thread,
 /// so the JS-tier event-loop ctx for the current thread IS the parent's loop.
 #[inline]
-fn parent_event_loop_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn parent_event_loop_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 impl WebWorker {

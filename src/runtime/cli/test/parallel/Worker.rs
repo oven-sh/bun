@@ -7,12 +7,12 @@ use core::ffi::c_void;
 
 use bun_core::{self, Output};
 use bun_jsc as jsc;
-use bun_aio as r#async;
+use bun_io as r#async;
 use bun_io;
 use bun_sys;
 // `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
 // `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
-use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(not(unix))]
@@ -242,10 +242,14 @@ impl Worker {
         this.alive = true;
         // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
         unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
-        process.set_exit_handler(
-            (&raw mut **this).cast::<()>(),
-            &WORKER_EXIT_VTABLE,
-        );
+        // SAFETY: `this` is the live `Box<Worker>` slot in
+        // `Coordinator.workers`; it outlives `process`.
+        process.set_exit_handler(unsafe {
+            bun_spawn::ProcessExit::new(
+                bun_spawn::ProcessExitKind::TestParallelWorker,
+                &raw mut **this,
+            )
+        });
         match process.watch_or_reap() {
             Ok(_) => {}
             Err(e) => {
@@ -327,22 +331,12 @@ impl Worker {
     }
 }
 
-/// `ProcessExitHandler` vtable entry — recovers `&mut Worker` from the erased
-/// owner pointer registered via `set_exit_handler` (Zig: `setExitHandler(this)`).
-unsafe fn worker_on_process_exit(
-    owner: *mut (),
-    process: *mut Process,
-    status: Status,
-    rusage: *const Rusage,
-) {
-    // SAFETY: `owner` is the `*mut Worker` stored in `set_exit_handler`;
-    // `process`/`rusage` are non-null per `ProcessExitHandler::call`.
-    unsafe { (*owner.cast::<Worker>()).on_process_exit(&*process, status, &*rusage) };
+bun_spawn::link_impl_ProcessExit! {
+    TestParallelWorker for Worker => |this| {
+        on_process_exit(process, status, rusage) =>
+            (*this).on_process_exit(&*process, status, &*rusage),
+    }
 }
-
-static WORKER_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
-    on_process_exit: worker_on_process_exit,
-};
 
 impl ChannelOwner for Worker {
     /// `offset_of!(Worker, ipc)` — recovers `&mut Worker` from `&mut Channel<Worker>`
@@ -444,21 +438,17 @@ impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
     unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
         unsafe { WorkerPipe::on_reader_error(&mut *this, err) }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_aio::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
         // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        // `vm.uv_loop()` is `*mut bun_aio::Loop` on every target (uv on
+        // `vm.uv_loop()` is `*mut bun_io::Loop` on every target (uv on
         // Windows, us_loop on POSIX) — exactly the trait's nominal.
         unsafe { (*(*(*this).worker).coord).vm.uv_loop() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
-        // SAFETY: worker/coord backrefs valid for pipe lifetime; the
-        // `Coordinator` outlives every `WorkerPipe` callback.
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of!((*(*(*this).worker).coord).event_loop_handle).cast_mut().cast::<c_void>()
-        })
+        // SAFETY: worker/coord backrefs valid for pipe lifetime.
+        unsafe { (*(*(*this).worker).coord).event_loop_handle.as_event_loop_ctx() }
     }
 }
 

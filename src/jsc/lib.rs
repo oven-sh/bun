@@ -639,7 +639,7 @@ impl ThrowFmtArgs for core::fmt::Arguments<'_> {
 }
 
 /// Debug-only binding-presence marker. In Zig this is `jsc.markBinding(@src())`.
-/// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_aio` /
+/// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_io` /
 /// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
 /// Re-exported here so existing `crate::mark_binding!()` call sites resolve.
 pub use bun_core::mark_binding;
@@ -1477,13 +1477,13 @@ pub use self::event_loop::{
     ConcurrentPromiseTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle,
     EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsTerminated,
     JsTerminatedResult,
-    JsVM, ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
+    ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
     WorkPoolTask, WorkTask, WorkTaskContext,
 };
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
-pub type PlatformEventLoop = bun_aio::Loop;
+pub type PlatformEventLoop = bun_io::Loop;
 
 pub use self::c_api as C;
 /// Legacy lower-case alias (Zig: `jsc.c`).

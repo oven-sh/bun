@@ -12,7 +12,7 @@ use bun_io::{BufferedReader, ReadState};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
-use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_str::{strings, ZStr};
 use bun_sys as sys;
 
@@ -153,10 +153,14 @@ impl<'a> ProcessHandle<'a> {
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // sole owner until reaped, owner backref set before reap callback can fire.
         let process = unsafe { &mut *process };
-        process.set_exit_handler(
-            std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<()>(),
-            &PROCESS_HANDLE_EXIT_VTABLE,
-        );
+        // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
+        // it owns `process` and outlives it.
+        process.set_exit_handler(unsafe {
+            bun_spawn::ProcessExit::new(
+                bun_spawn::ProcessExitKind::FilterRunHandle,
+                std::ptr::from_mut::<ProcessHandle<'a>>(handle),
+            )
+        });
 
         match process.watch_or_reap() {
             Ok(_) => {}
@@ -188,24 +192,11 @@ impl<'a> ProcessHandle<'a> {
 
 }
 
-/// `ProcessExitHandler` vtable for [`ProcessHandle`]. Mirrors the Zig
-/// `TaggedPointerUnion` arm `ProcessHandle => onProcessExit(...)`.
-static PROCESS_HANDLE_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
-    on_process_exit: process_handle_on_process_exit,
-};
-
-unsafe fn process_handle_on_process_exit(
-    owner: *mut (),
-    process: *mut Process,
-    status: Status,
-    rusage: *const Rusage,
-) {
-    // SAFETY: `owner` is the `*mut ProcessHandle` registered via
-    // `set_exit_handler`; it outlives the Process.
-    unsafe {
-        (*owner.cast::<ProcessHandle<'static>>())
-            .on_process_exit(&mut *process, status, &*rusage)
-    };
+bun_spawn::link_impl_ProcessExit! {
+    FilterRunHandle for ProcessHandle<'static> => |this| {
+        on_process_exit(process, status, rusage) =>
+            (*this).on_process_exit(&mut *process, status, &*rusage),
+    }
 }
 
 impl<'a> ProcessHandle<'a> {
@@ -224,7 +215,7 @@ impl<'a> ProcessHandle<'a> {
         self.state.event_loop
     }
 
-    pub fn loop_(&self) -> *mut bun_aio::Loop {
+    pub fn loop_(&self) -> *mut bun_io::Loop {
         #[cfg(windows)]
         {
             // SAFETY: state backref valid; event_loop is the live MiniEventLoop
@@ -255,17 +246,13 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for ProcessHandle<'a> {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
         unsafe { (*this).on_reader_error(err) }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_aio::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
         unsafe { (*this).loop_() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_event_loop::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: state backref valid for the lifetime of the run loop.
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of_mut!((*(*this).state.as_ptr()).event_loop_handle).cast::<c_void>()
-        })
+        unsafe { (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx() }
     }
 }
 
@@ -876,7 +863,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_aio::ParentDeathWatchdog::install_on_event_loop(
+    bun_io::ParentDeathWatchdog::install_on_event_loop(
         MiniEventLoop::as_event_loop_ctx(event_loop),
     );
     let shell_bin: &'static ZStr = {

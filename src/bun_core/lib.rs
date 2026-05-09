@@ -69,6 +69,28 @@ pub mod fmt;
 #[path = "output.rs"]
 pub mod output;
 
+// `bun_core` (T0) cannot name `bun_sys` I/O primitives. Single-variant
+// link-interface (owner is unused / null); `bun_sys` provides the `Sys` arm.
+bun_dispatch::link_interface! {
+    pub OutputSink[Sys] {
+        fn stderr() -> output::File;
+        fn make_path(cwd: Fd, dir: &[u8]) -> core::result::Result<(), Error>;
+        fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
+        fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
+        fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
+        fn quiet_writer_flush(qw: &mut output::QuietWriter);
+        fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
+        fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
+        fn tty_winsize(fd: Fd) -> Option<Winsize>;
+        fn is_terminal(fd: Fd) -> bool;
+        fn read(fd: Fd, buf: &mut [u8]) -> core::result::Result<usize, Error>;
+    }
+}
+
+impl OutputSink {
+    pub const SYS: Self = Self { kind: OutputSinkKind::Sys, owner: core::ptr::null_mut() };
+}
+
 /// Compile-time `<tag>` → ANSI rewrite (proc-macro). Re-exported at crate root
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
 pub use bun_core_macros::pretty_fmt;

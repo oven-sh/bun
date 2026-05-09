@@ -7,7 +7,7 @@
 //! shapes). `Process`, `Poller`, `WaiterThread`, `spawn_process`, and
 //! `sync::spawn` were MOVED DOWN here from `bun_runtime::api::bun::process`;
 //! `bun_runtime` re-exports them. The only non-leaf dependencies are
-//! `bun_aio` (`FilePoll`/`KeepAlive`/`EventLoopCtx`), `bun_ptr`
+//! `bun_io` (`FilePoll`/`KeepAlive`/`EventLoopCtx`), `bun_ptr`
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! `bun_threading`, and `bun_crash_handler` — none of which depend back on
 //! this crate, so no cycle.
@@ -72,10 +72,55 @@ pub use bun_event_loop::EventLoopHandle;
 pub use bun_spawn_sys::{ffi, Argv, CStrPtr, Envp};
 
 pub use process::{
-    spawn_process, Dup2, Exited, ExtraPipe, PidT, Poller, Process,
-    ProcessExitHandler, ProcessExitVTable, Rusage, SignalCodeExt, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread,
+    spawn_process, Dup2, Exited, ExtraPipe, PidT, Poller, Process, Rusage,
+    SignalCodeExt, SpawnOptions, SpawnProcessResult, SpawnResultExt, Status,
+    StdioKind, WaiterThread,
 };
+
+// Variant types live in `bun_runtime`/`bun_install`; each provides its body
+// via `bun_spawn::link_impl_ProcessExit!`. Adding a handler kind = add a
+// variant here + one `link_impl_ProcessExit!` in the owning crate.
+bun_dispatch::link_interface! {
+    pub ProcessExit[
+        Subprocess,
+        LifecycleScript,
+        SecurityScan,
+        Shell,
+        FilterRunHandle,
+        MultiRunHandle,
+        TestParallelWorker,
+        CronRegister,
+        CronRemove,
+        ChromeProcess,
+        HostProcess,
+        SyncWindows,
+    ] {
+        fn on_process_exit(process: *mut Process, status: Status, rusage: *const Rusage);
+    }
+}
+
+/// `None` = no handler set (the default for `Process::exit_handler`).
+pub type ProcessExitHandler = Option<ProcessExit>;
+
+// In-crate `link_impl_*!` calls must be textually after the `link_interface!`
+// that emits the macro (`#[macro_export]` is path-addressable from *other*
+// crates only; same-crate use is textual-scope). POSIX `spawn_sync` waits
+// inline and never installs a handler, so the `SyncWindows` arm is genuinely
+// unreachable there — but every variant needs a body or the link fails.
+#[cfg(windows)]
+link_impl_ProcessExit! {
+    SyncWindows for process::sync::SyncWindowsProcess => |this| {
+        on_process_exit(process, status, rusage) =>
+            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
+    }
+}
+#[cfg(not(windows))]
+link_impl_ProcessExit! {
+    SyncWindows for process::SyncProcessPosix => |_this| {
+        on_process_exit(_process, _status, _rusage) =>
+            unreachable!("SyncWindows exit handler is Windows-only"),
+    }
+}
 /// Compat re-export: the `process::spawn_sys` shim module was dissolved into
 /// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on
 /// `bun_spawn`). Downstream `runtime/api/bun/*` still spells the old path.

@@ -1,7 +1,7 @@
 use core::cell::UnsafeCell;
 use core::mem;
 
-use bun_aio as aio;
+use bun_io as aio;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_io::{BufferedReader, FileType, ReadState};
 use bun_sys::{self as sys, Fd, FdExt};
@@ -281,7 +281,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
         {
             // Spec FileReader.zig:163: `this.eventLoop().loop()` → libuv
             // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
-            // `bun_uws_sys::Loop` nominal with `bun_aio::Loop` (= `uv::Loop`);
+            // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`);
             // the trait-side alias (PipeReader.rs) already resolves to the
             // libuv loop on Windows, so this is a nominal-only erasure.
             ev.uv_loop().cast()
@@ -293,12 +293,8 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; the
-        // "concrete repr is bun_jsc::EventLoopHandle" (io/lib.rs). Hand it the
-        // address of our stored handle; the FilePoll vtable derefs it back.
-        // Raw `addr_of!` — no `&Self` materialized (reader field may be borrowed).
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of!((*this).event_loop) as *mut core::ffi::c_void
-        })
+        // SAFETY: see on_read_chunk.
+        unsafe { (*this).event_loop.as_event_loop_ctx() }
     }
 }
 
@@ -320,7 +316,7 @@ impl FileReader {
 
     /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
     /// `us_loop_t*` on POSIX). See `aio/{posix,windows}_event_loop.rs`.
-    pub fn loop_(&self) -> *mut bun_aio::Loop {
+    pub fn loop_(&self) -> *mut bun_io::Loop {
         #[cfg(windows)]
         {
             self.event_loop().uv_loop()

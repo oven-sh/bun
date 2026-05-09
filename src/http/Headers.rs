@@ -9,82 +9,12 @@ pub mod api {
 
 // TYPE_ONLY moved-in: `bun_http_types::Method::HeaderName` is the `#[repr(u8)]`
 // enum mirroring WebCore's `HTTPHeaderNames.in` (same discriminants as
-// `bun_jsc::HTTPHeaderName`). Re-export for the `FetchHeadersVTable::fast_has`
-// signature so vtable impls can forward the discriminant straight to
+// `bun_jsc::HTTPHeaderName`). Re-export for the `FetchHeadersRef::fast_has`
+// signature so impls can forward the discriminant straight to
 // `WebCore__FetchHeaders__fastHas_`.
 pub use bun_http_types::Method::HeaderName;
 
-// ──────────────────────── cycle-break vtables ────────────────────────
-// `FetchHeaders` and `blob::Any` live in bun_runtime (T6); http is T5. The
-// only consumer here is `Headers::from()`, called by higher-tier code that
-// owns the concrete types. Per CYCLEBREAK §Dispatch (cold path), expose a
-// manual vtable; bun_runtime provides the static instances.
-// PERF(port): was inline switch / direct call.
-
-pub struct FetchHeadersVTable {
-    pub count: unsafe fn(owner: *const (), header_count: &mut u32, buf_len: &mut u32),
-    pub fast_has: unsafe fn(owner: *const (), name: HeaderName) -> bool,
-    pub copy_to: unsafe fn(
-        owner: *const (),
-        names: *mut api::StringPointer,
-        values: *mut api::StringPointer,
-        buf: *mut u8,
-    ),
-}
-
-#[derive(Clone, Copy)]
-pub struct FetchHeadersRef<'a> {
-    pub owner: *const (),
-    pub vtable: &'static FetchHeadersVTable,
-    pub _phantom: core::marker::PhantomData<&'a ()>,
-}
-
-impl<'a> FetchHeadersRef<'a> {
-    #[inline]
-    pub fn count(&self, header_count: &mut u32, buf_len: &mut u32) {
-        unsafe { (self.vtable.count)(self.owner, header_count, buf_len) }
-    }
-    #[inline]
-    pub fn fast_has(&self, name: HeaderName) -> bool {
-        unsafe { (self.vtable.fast_has)(self.owner, name) }
-    }
-    #[inline]
-    pub fn copy_to(
-        &self,
-        names: *mut api::StringPointer,
-        values: *mut api::StringPointer,
-        buf: *mut u8,
-    ) {
-        unsafe { (self.vtable.copy_to)(self.owner, names, values, buf) }
-    }
-}
-
-pub struct AnyBlobVTable {
-    pub has_content_type_from_user: unsafe fn(owner: *const ()) -> bool,
-    /// Returns a borrow valid for the lifetime of `owner`.
-    pub content_type: unsafe fn(owner: *const ()) -> (*const u8, usize),
-}
-
-#[derive(Clone, Copy)]
-pub struct AnyBlobRef<'a> {
-    pub owner: *const (),
-    pub vtable: &'static AnyBlobVTable,
-    pub _phantom: core::marker::PhantomData<&'a ()>,
-}
-
-impl<'a> AnyBlobRef<'a> {
-    #[inline]
-    pub fn has_content_type_from_user(&self) -> bool {
-        unsafe { (self.vtable.has_content_type_from_user)(self.owner) }
-    }
-    #[inline]
-    pub fn content_type(&self) -> &'a [u8] {
-        unsafe {
-            let (ptr, len) = (self.vtable.content_type)(self.owner);
-            bun_core::ffi::slice(ptr, len)
-        }
-    }
-}
+pub use crate::{AnyBlobRef, FetchHeadersRef};
 
 // LAYERING: `Headers` (and its tier-safe inherent methods: `memory_cost`,
 // `get`, `append`, `get_content_*`, `as_str`, `Clone`) is owned by
@@ -102,7 +32,7 @@ pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryLis
 /// callers can keep writing `Headers::from(...)`.
 pub trait HeadersExt {
     fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers;
-    fn from(fetch_headers_ref: Option<FetchHeadersRef<'_>>, options: Options<'_>) -> Headers;
+    fn from(fetch_headers_ref: Option<FetchHeadersRef>, options: Options) -> Headers;
 }
 
 impl HeadersExt for Headers {
@@ -151,7 +81,7 @@ impl HeadersExt for Headers {
     }
 
     // PORT NOTE: was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
-    fn from(fetch_headers_ref: Option<FetchHeadersRef<'_>>, options: Options<'_>) -> Headers {
+    fn from(fetch_headers_ref: Option<FetchHeadersRef>, options: Options) -> Headers {
         let mut header_count: u32 = 0;
         let mut buf_len: u32 = 0;
         if let Some(headers_ref) = fetch_headers_ref {
@@ -238,14 +168,9 @@ pub fn append_etag(bytes: &[u8], headers: &mut Headers) {
     let _ = bun_http_types::ETag::append_to_headers(bytes, headers);
 }
 
-pub struct Options<'a> {
-    pub body: Option<AnyBlobRef<'a>>,
-}
-
-impl<'a> Default for Options<'a> {
-    fn default() -> Self {
-        Self { body: None }
-    }
+#[derive(Default)]
+pub struct Options {
+    pub body: Option<AnyBlobRef>,
 }
 
 // ported from: src/http/Headers.zig

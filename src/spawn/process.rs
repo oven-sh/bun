@@ -5,9 +5,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
-use bun_aio::{FilePoll, KeepAlive};
+use bun_io::{FilePoll, KeepAlive};
 use bun_core::{Global, Output};
-use bun_aio::ParentDeathWatchdog;
+use bun_io::ParentDeathWatchdog;
 use bun_event_loop::EventLoopHandle;
 use bun_sys::{self, Fd, Maybe};
 #[cfg(windows)]
@@ -16,32 +16,6 @@ use bun_sys::windows::libuv as uv;
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use uv::{UvHandle as _, UvStream as _};
-
-// ─── §Dispatch: cross-tier exit handlers ─────────────────────────────────────
-// Zig: `TaggedPointerUnion` of 12 concrete *Handler types living in higher-tier
-// crates (cli::filter_run, cli::multi_run, cli::test, install, shell, webview,
-// api::cron, api::Subprocess). Per PORTING.md §Dispatch (cold path — called
-// once per process exit, callee does real work), the low tier defines a manual
-// vtable and the high tier provides static instances. This breaks the import
-// cycle without losing inlining where it doesn't matter.
-//
-// High-tier wiring (Phase B): each handler module defines
-//   pub static EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
-//       on_process_exit: |p, proc, st, ru| unsafe { &mut *p.cast::<Self>() }.on_process_exit(proc, st, ru),
-//   };
-// and constructs `ProcessExitHandler { owner, vtable: &EXIT_VTABLE }`.
-
-// MOVE_DOWN: this file was `src/runtime/api/bun/process.rs`. Moved into
-// `bun_spawn` so `bun_install`, `bun_jsc`, and `bun_patch` can spawn / track
-// processes without depending on `bun_runtime` (cycle: runtime → install/jsc).
-//
-// The Zig `ProcessExitHandler.ptr` was a `bun.TaggedPointerUnion` over 12
-// concrete handler types living across cli/install/shell/webview/subprocess.
-// Per PORTING.md §Dispatch (cold path — fired once per process exit), the low
-// tier (this crate) defines `ProcessExitVTable` and high-tier handlers each
-// supply their own static vtable instance; the vtable travels with the value
-// (`ProcessExitHandler { owner, vtable }`), so no global hook registration is
-// required.
 
 // posix_spawn(2) wrappers — owned by the `bun_spawn_sys` leaf crate.
 #[allow(unused_imports)]
@@ -114,26 +88,7 @@ pub use bun_spawn_sys::uv_getrusage;
 #[cfg(unix)]
 const PROCESS_POLL_ONE_SHOT: bool = !cfg!(target_os = "linux");
 
-/// §Dispatch cold-path vtable. One static instance per high-tier handler type.
-/// Replaces the Zig `TaggedPointerUnion` 12-way `inline switch`.
-// PERF(port): was inline switch
-#[derive(Clone, Copy)]
-pub struct ProcessExitVTable {
-    pub on_process_exit:
-        unsafe fn(owner: *mut (), process: *mut Process, status: Status, rusage: *const Rusage),
-}
-
-#[derive(Clone, Copy)]
-pub struct ProcessExitHandler {
-    pub owner: *mut (),
-    pub vtable: Option<&'static ProcessExitVTable>,
-}
-
-impl Default for ProcessExitHandler {
-    fn default() -> Self {
-        Self { owner: core::ptr::null_mut(), vtable: None }
-    }
-}
+pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
 #[cfg(windows)]
 type SyncProcess = sync::SyncWindowsProcess;
@@ -146,22 +101,18 @@ pub struct SyncProcessPosix {
 #[cfg(not(windows))]
 type SyncProcess = SyncProcessPosix;
 
-impl ProcessExitHandler {
-    /// Zig: `init(anytype)` — high-tier callers pass `(&mut self, &SELF_EXIT_VTABLE)`.
-    pub fn init(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {
-        self.owner = owner;
-        self.vtable = Some(vtable);
+#[inline]
+pub(crate) fn call_exit_handler(
+    h: &ProcessExitHandler,
+    process: &mut Process,
+    status: Status,
+    rusage: &Rusage,
+) {
+    let Some(h) = h else { return };
+    if h.owner.is_null() {
+        return;
     }
-
-    pub fn call(&self, process: &mut Process, status: Status, rusage: &Rusage) {
-        let Some(vt) = self.vtable else { return };
-        if self.owner.is_null() {
-            return;
-        }
-        // SAFETY: vtable was registered with a matching owner type by the
-        // high-tier static; owner outlives the Process (it holds the strong ref).
-        unsafe { (vt.on_process_exit)(self.owner, process, status, rusage) };
-    }
+    h.on_process_exit(process, status, rusage);
 }
 
 // bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
@@ -195,13 +146,12 @@ impl Process {
         core::mem::size_of::<Self>()
     }
 
-    pub fn set_exit_handler(&mut self, owner: *mut (), vtable: &'static ProcessExitVTable) {
-        self.exit_handler.init(owner, vtable);
+    pub fn set_exit_handler(&mut self, h: ProcessExit) {
+        self.exit_handler = Some(h);
     }
 
-    /// Reset the exit handler to "no handler" (Zig: `exit_handler = .{}`).
     pub fn set_exit_handler_default(&mut self) {
-        self.exit_handler = ProcessExitHandler::default();
+        self.exit_handler = None;
     }
 
     pub fn has_exited(&self) -> bool {
@@ -232,39 +182,24 @@ impl Process {
         unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(std::ptr::from_mut(self)) };
     }
 
-    /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_aio::EventLoopCtx`
+    /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_io::EventLoopCtx`
     /// for FilePoll/KeepAlive calls. Zig used `anytype` and dispatched at
     /// comptime; the Rust port split this into two erased layers, so we
     /// reconstitute the aio-level ctx here.
     #[inline]
-    fn event_loop_ctx(&self) -> bun_aio::EventLoopCtx {
+    fn event_loop_ctx(&self) -> bun_io::EventLoopCtx {
         event_loop_handle_to_ctx(self.event_loop)
     }
 }
 
-/// Convert an `EventLoopHandle` to the aio-level `EventLoopCtx`.
-///
-/// `Mini` constructs the ctx directly from the published vtable. `Js` defers
-/// to `bun_aio::__bun_get_vm_ctx` (link-time, definer in `bun_runtime`) since
-/// the JS event-loop ctx vtable lives in `bun_jsc` (T6) and bun_runtime is the
-/// only crate that sees both. Per-thread there is exactly one JS event loop,
-/// so the global lookup is equivalent to dispatching on `owner`.
 #[inline]
-pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_aio::EventLoopCtx {
-    match handle {
-        EventLoopHandle::Js { .. } => {
-            bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
-        }
-        EventLoopHandle::Mini(mini) => bun_aio::EventLoopCtx {
-            owner: mini.cast(),
-            vtable: bun_event_loop::MINI_EVENT_LOOP_CTX_VTABLE,
-        },
-    }
+pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx {
+    handle.as_event_loop_ctx()
 }
 
 // ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
 // Un-gated: `super::bun_spawn::posix_spawn` (Actions/Attr/wait4) and the
-// `bun_aio::FilePoll` method surface are stable. `EventLoopHandle` →
+// `bun_io::FilePoll` method surface are stable. `EventLoopHandle` →
 // `EventLoopCtx` bridging is local (`event_loop_handle_to_ctx`) until a
 // JS-side ctx vtable lands.
 impl Process {
@@ -315,13 +250,12 @@ impl Process {
 
     pub fn on_exit(&mut self, status: Status, rusage: &Rusage) {
         // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
-        // Zig exactly: snapshot, assign status, detach-if-exited, then call.
         let exit_handler = self.exit_handler;
         self.status = status.clone();
         if self.has_exited() {
             self.detach();
         }
-        exit_handler.call(self, status, rusage);
+        call_exit_handler(&exit_handler, self, status, rusage);
     }
 
     #[cfg(unix)]
@@ -461,9 +395,9 @@ impl Process {
                 FilePoll::init(
                     ctx,
                     Fd::from_native(watchfd),
-                    bun_aio::file_poll::FlagsSet::default(),
-                    bun_aio::Owner::new(
-                        bun_aio::posix_event_loop::poll_tag::PROCESS,
+                    bun_io::file_poll::FlagsSet::default(),
+                    bun_io::Owner::new(
+                        bun_io::posix_event_loop::poll_tag::PROCESS,
                         std::ptr::from_mut::<Process>(self).cast(),
                     ),
                 )
@@ -477,7 +411,7 @@ impl Process {
 
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            match fd.register(loop_, bun_aio::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
+            match fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
                 Ok(()) => {
                     self.ref_();
                     Ok(())
@@ -510,7 +444,7 @@ impl Process {
             let fd = unsafe { poll.as_mut() };
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            let maybe = fd.register(loop_, bun_aio::PollKind::Process, PROCESS_POLL_ONE_SHOT);
+            let maybe = fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
             if maybe.is_ok() {
                 self.ref_();
             }
@@ -824,7 +758,7 @@ impl core::fmt::Display for Status {
 
 #[cfg(unix)]
 pub enum PollerPosix {
-    /// Hive-allocated `bun_aio::FilePoll` slot. Pointer (not `Box`) because the
+    /// Hive-allocated `bun_io::FilePoll` slot. Pointer (not `Box`) because the
     /// poll lives in `Store` (Zig: `*FilePoll`); freed via `FilePoll::deinit`,
     /// never via Rust `drop`.
     Fd(core::ptr::NonNull<FilePoll>),
@@ -860,7 +794,7 @@ impl PollerPosix {
         }
     }
 
-    pub fn enable_keeping_event_loop_alive(&mut self, ctx: bun_aio::EventLoopCtx) {
+    pub fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
         match self {
             PollerPosix::Fd(poll) => {
                 // SAFETY: poll is a live hive slot, exclusive on the event-loop thread.
@@ -873,7 +807,7 @@ impl PollerPosix {
         }
     }
 
-    pub fn disable_keeping_event_loop_alive(&mut self, ctx: bun_aio::EventLoopCtx) {
+    pub fn disable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
         match self {
             PollerPosix::Fd(poll) => {
                 // SAFETY: see `enable_keeping_event_loop_alive`.
@@ -919,7 +853,7 @@ impl PollerWindows {
         }
     }
 
-    pub fn enable_keeping_event_loop_alive(&mut self, _event_loop: bun_aio::EventLoopCtx) {
+    pub fn enable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
         match self {
             PollerWindows::Uv(process) => {
                 process.ref_();
@@ -928,7 +862,7 @@ impl PollerWindows {
         }
     }
 
-    pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_aio::EventLoopCtx) {
+    pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
         // This is disabled on Windows
         // uv_unref() causes the onExitUV callback to *never* be called
         // This breaks a lot of stuff...
@@ -2083,7 +2017,7 @@ pub fn spawn_process_windows(
 #[cfg(windows)]
 fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
     for &fd in files {
-        bun_aio::Closer::close(Fd::from_uv(fd), loop_);
+        bun_io::Closer::close(Fd::from_uv(fd), loop_);
     }
 }
 
@@ -2457,21 +2391,6 @@ pub mod sync {
         }
     }
 
-    /// §Dispatch vtable for `SyncWindowsProcess` — forwards the
-    /// `(owner, process, status, rusage)` quad straight through so
-    /// `on_process_exit` can use the caller-provenance `process` pointer.
-    #[cfg(windows)]
-    static SYNC_WINDOWS_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
-        on_process_exit: |owner, process, status, rusage| unsafe {
-            SyncWindowsProcess::on_process_exit(
-                owner.cast::<SyncWindowsProcess>(),
-                process,
-                status,
-                &*rusage,
-            )
-        },
-    };
-
     fn flatten_owned_chunks(chunks: Vec<Box<[u8]>>) -> Vec<u8> {
         let mut total_size: usize = 0;
         for chunk in &chunks {
@@ -2563,7 +2482,11 @@ pub mod sync {
         unsafe {
             let p = &mut *(*this_ptr).process;
             p.ref_();
-            p.set_exit_handler(this_ptr.cast(), &SYNC_WINDOWS_EXIT_VTABLE);
+            // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
+            // caller's stack; `p` is owned by it and dropped before return.
+            p.set_exit_handler(unsafe {
+                ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr)
+            });
             p.enable_keeping_event_loop_alive();
         }
 

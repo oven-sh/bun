@@ -78,9 +78,9 @@ pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
     //      (Zig's `initArgv`/`start_time` are folded into `bun_core::argv()`
     //      and `bun_core::start_time()` — no eager call needed.)
 
-    // 4. Stdio + Output sink. The `OutputSinkVTable` is link-time provided by
-    //    `bun_sys` (`__BUN_OUTPUT_SINK_VTABLE`); `stdio::init()` calls C's
-    //    `bun_initialize_process()` and wires stdout/stderr `Source`s.
+    // 4. Stdio + Output sink. `bun_core::OutputSink[Sys]` is link-time provided
+    //    by `bun_sys`; `stdio::init()` calls C's `bun_initialize_process()` and
+    //    wires stdout/stderr `Source`s.
     output::stdio::init();
     struct FlushOnDrop;
     impl Drop for FlushOnDrop {
@@ -104,7 +104,7 @@ pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
-    bun_aio::ParentDeathWatchdog::install();
+    bun_io::ParentDeathWatchdog::install();
 
     // 6. Push high-tier allocator vtable addresses into the
     //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch

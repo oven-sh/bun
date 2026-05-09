@@ -15,7 +15,7 @@ use super::cron_parser::{self, CronExpression};
 use core::ffi::c_char;
 use std::cell::Cell;
 
-use bun_aio::{KeepAlive, Loop as AsyncLoop};
+use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_jsc::{
@@ -47,8 +47,8 @@ use bun_sys::{self as sys, Fd, File};
 /// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
 /// the aio hook registered by `crate::init()`.
 #[inline]
-fn vm_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 /// Recover `&mut VirtualMachine` from the per-thread singleton.
@@ -203,12 +203,8 @@ impl BufferedReaderParent for CronRegisterJob {
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
-        // SAFETY: `this` is non-null/live per trait contract; field is `Copy`
-        // and disjoint from the reader.
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of_mut!((*this).event_loop_handle).cast::<core::ffi::c_void>()
-        })
+        // SAFETY: `this` is non-null/live per trait contract.
+        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
 }
 
@@ -933,12 +929,8 @@ impl BufferedReaderParent for CronRemoveJob {
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
-        // SAFETY: `this` is non-null/live per trait contract; field is `Copy`
-        // and disjoint from the reader.
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of_mut!((*this).event_loop_handle).cast::<core::ffi::c_void>()
-        })
+        // SAFETY: `this` is non-null/live per trait contract.
+        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
 }
 
@@ -1884,9 +1876,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
 // TODO(port): merge with CronJobBase in Phase B.
 trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
-    /// Per-type [`ProcessExitVTable`] static; replaces Zig's
-    /// `process.setExitHandler(this)` anytype dispatch.
-    const EXIT_VTABLE: &'static spawn::ProcessExitVTable;
+    const EXIT_KIND: bun_spawn::ProcessExitKind;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);
     /// Consumes and frees `this`.
     unsafe fn finish(this: *mut Self);
@@ -1896,34 +1886,22 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     fn remaining_fds(&mut self) -> &mut i8;
 }
 
-/// `ProcessExitVTable` thunk: forward the type-erased owner ptr (raw) to
-/// [`CronJobBase::on_process_exit`], which may free it.
-unsafe fn cron_on_process_exit_thunk<T: CronJobBase>(
-    owner: *mut (),
-    process: *mut Process,
-    status: Status,
-    rusage: *const Rusage,
-) {
-    // SAFETY: `owner` was registered as `*mut T` via `set_exit_handler` in
-    // `spawn_cmd_generic`; the owning Box<T> outlives the Process exit
-    // callback (it is only freed in `T::finish`, gated on
-    // `has_called_process_exit`). `process`/`rusage` are live for the call.
-    // Forward as raw ptr — `on_process_exit` → `maybe_finished` may free it.
-    let this = owner.cast::<T>();
-    let process_ref: &Process = unsafe { &*process };
-    let rusage_ref: &Rusage = unsafe { &*rusage };
-    unsafe { T::on_process_exit(this, process_ref, status, rusage_ref) };
+bun_spawn::link_impl_ProcessExit! {
+    CronRegister for CronRegisterJob => |this| {
+        // Forward `this` raw — `on_process_exit` → `maybe_finished` may free it.
+        on_process_exit(process, status, rusage) =>
+            <CronRegisterJob as CronJobBase>::on_process_exit(this, &*process, status, &*rusage),
+    }
+}
+bun_spawn::link_impl_ProcessExit! {
+    CronRemove for CronRemoveJob => |this| {
+        on_process_exit(process, status, rusage) =>
+            <CronRemoveJob as CronJobBase>::on_process_exit(this, &*process, status, &*rusage),
+    }
 }
 
-static CRON_REGISTER_EXIT_VTABLE: spawn::ProcessExitVTable = spawn::ProcessExitVTable {
-    on_process_exit: cron_on_process_exit_thunk::<CronRegisterJob>,
-};
-static CRON_REMOVE_EXIT_VTABLE: spawn::ProcessExitVTable = spawn::ProcessExitVTable {
-    on_process_exit: cron_on_process_exit_thunk::<CronRemoveJob>,
-};
-
 impl SpawnCmdTarget for CronRegisterJob {
-    const EXIT_VTABLE: &'static spawn::ProcessExitVTable = &CRON_REGISTER_EXIT_VTABLE;
+    const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRegister;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRegisterJob::set_err(self, args) }
     unsafe fn finish(this: *mut Self) { unsafe { CronRegisterJob::finish(this) } }
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
@@ -1932,7 +1910,7 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn remaining_fds(&mut self) -> &mut i8 { &mut self.remaining_fds }
 }
 impl SpawnCmdTarget for CronRemoveJob {
-    const EXIT_VTABLE: &'static spawn::ProcessExitVTable = &CRON_REMOVE_EXIT_VTABLE;
+    const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRemoveJob::set_err(self, args) }
     unsafe fn finish(this: *mut Self) { unsafe { CronRemoveJob::finish(this) } }
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
@@ -2109,11 +2087,10 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle, false);
     *s.process_slot() = Some(process);
-    // Zig: `process.setExitHandler(this)` (anytype dispatch over the
-    // TaggedPointerUnion of handler types). The Rust port uses a per-type
-    // static vtable; see `cron_on_process_exit_thunk`.
-    // SAFETY: `process` was just allocated by `to_process`; we hold the only ref.
-    unsafe { (*process).set_exit_handler(this.cast::<()>(), T::EXIT_VTABLE) };
+    // SAFETY: `process` was just allocated by `to_process`; we hold the only
+    // ref. `this` is the owning `Box<T>` (only freed in `T::finish`, gated on
+    // `has_called_process_exit`), so it outlives `process`.
+    unsafe { (*process).set_exit_handler(bun_spawn::ProcessExit::new(T::EXIT_KIND, this)) };
     // `s` not used past this point — `watch_or_reap` may synchronously invoke
     // the exit handler, which can free `this`.
     // SAFETY: `process` is live; `watch_or_reap` may synchronously invoke the

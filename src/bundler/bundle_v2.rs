@@ -1334,106 +1334,21 @@ pub type MangledProps = ArrayHashMap<Ref, Box<[u8]>>;
 // static instances and registers hooks at init. See PORTING.md §Dispatch.
 // ══════════════════════════════════════════════════════════════════════════
 pub mod dispatch {
-    /// Erased handle to bake::DevServer. PERF(port): was direct struct access.
-    #[derive(Copy, Clone)]
-    pub struct DevServerHandle {
-        pub owner: *mut (),
-        pub vtable: &'static DevServerVTable,
-    }
-    // SAFETY: `owner` is an erased `*mut bake::DevServer` — the Zig side passes it
-    // across the worker pool freely (DevServer is the single-instance coordinator
-    // and its methods take `*DevServer`). The vtable is `&'static`. Marking the
-    // handle `Send + Sync` matches the Zig threading model; callee fns are
-    // responsible for any internal synchronization.
-    unsafe impl Send for DevServerHandle {}
-    unsafe impl Sync for DevServerHandle {}
-    pub struct DevServerVTable {
-        pub barrel_needed_exports:
-            unsafe fn(*mut ()) -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>,
-        pub log_for_resolution_failures:
-            unsafe fn(*mut (), &[u8], super::bake_types::Graph) -> *mut bun_logger::Log,
-        /// `dev.finalizeBundle(bv2, result)` — DevServer.zig:2239.
-        /// PORT NOTE: Zig takes `*const DevServerOutput` but mutates through the
-        /// `chunks: []Chunk` slice it holds; in Rust the struct stores
-        /// `&'a mut [Chunk]`, so the whole result must be `*mut` to reborrow it.
-        pub finalize_bundle:
-            unsafe fn(*mut (), *mut super::BundleV2, *mut super::DevServerOutput<'_>) -> Result<(), bun_core::Error>,
-        // ── slots below cover every remaining direct DevServer access in bundler ──
-        /// `dev.handleParseTaskFailure(err, graph, abs_path, log, bv2)` — DevServer.zig:3063.
-        pub handle_parse_task_failure:
-            unsafe fn(*mut (), err: bun_core::Error, graph: super::bake_types::Graph, abs_path: &[u8], log: *const bun_logger::Log, bv2: *mut super::BundleV2) -> Result<(), bun_core::Error>,
-        /// `dev.putOrOverwriteAsset(path, contents, hash)` — DevServer.zig:4398.
-        /// `path` is `&fs::Path` erased; `contents` is the raw bytes (runtime impl
-        /// wraps into `AnyBlob`). Ownership of contents transfers to the callee.
-        pub put_or_overwrite_asset:
-            unsafe fn(*mut (), path: *const (), contents: &[u8], content_hash: u64) -> Result<(), bun_core::Error>,
-        /// `dev.track_resolution_failure(...)`
-        pub track_resolution_failure:
-            unsafe fn(*mut (), import_source: &[u8], specifier: &[u8], renderer: super::bake_types::Graph, loader: bun_options_types::Loader) -> Result<(), bun_core::Error>,
-        /// `dev.is_file_cached(abs_path, side)` — None if not cached.
-        pub is_file_cached:
-            unsafe fn(*mut (), abs_path: &[u8], side: super::bake_types::Graph) -> Option<super::bake_types::CacheEntry>,
-        /// `dev.assets.get_hash(abs_path)`
-        pub asset_hash: unsafe fn(*mut (), abs_path: &[u8]) -> Option<u64>,
-        /// `dev.current_bundle.?.start_data` accessor for finish_from_bake_dev_server.
-        /// Returns `*mut` because the caller mutates `start.css_entry_points`
-        /// throughout finalize (Zig spec bundle_v2.zig:2442 takes `&dev_server.current_bundle.?.start_data`).
-        pub current_bundle_start_data: unsafe fn(*mut ()) -> *mut (),
-        /// `dev.barrel_files_with_deferrals.get_or_put(path)` + key dupe.
-        pub register_barrel_with_deferrals: unsafe fn(*mut (), path: &[u8]) -> Result<(), bun_core::Error>,
-        /// `dev.barrel_needed_exports.get_or_put(path).get_or_put(alias)` — wraps the
-        /// full body of `barrel_imports.zig:persistBarrelExport` so the bundler crate
-        /// doesn't name DevServer.
-        pub register_barrel_export: unsafe fn(*mut (), barrel_path: &[u8], alias: &[u8]),
-    }
+    pub use crate::{DevServerHandle, DevServerHandleKind, WatcherHandle, WatcherHandleKind};
+
     impl DevServerHandle {
         #[inline]
-        pub fn handle_parse_task_failure(
-            &self,
-            err: bun_core::Error,
-            graph: super::bake_types::Graph,
-            abs_path: &[u8],
-            log: *const bun_logger::Log,
-            bv2: *mut super::BundleV2,
-        ) -> Result<(), bun_core::Error> {
-            // SAFETY: owner is a live *mut DevServer per handle invariant.
-            unsafe { (self.vtable.handle_parse_task_failure)(self.owner, err, graph, abs_path, log, bv2) }
-        }
-        #[inline]
-        pub fn finalize_bundle(
-            &self,
-            bv2: &mut super::BundleV2,
-            result: &mut super::DevServerOutput<'_>,
-        ) -> Result<(), bun_core::Error> {
-            // SAFETY: owner is a live *mut DevServer; bv2/result are valid for the call.
-            unsafe { (self.vtable.finalize_bundle)(self.owner, bv2, result) }
-        }
-        #[inline]
-        pub fn put_or_overwrite_asset<P>(
+        pub fn put_or_overwrite_asset_erased<P>(
             &self,
             path: &P,
             contents: &[u8],
             content_hash: u64,
         ) -> Result<(), bun_core::Error> {
-            // SAFETY: erases &P to *const () for the vtable boundary; runtime impl
-            // casts back to &fs::Path. Ownership of `contents` transfers per Zig contract.
-            unsafe {
-                (self.vtable.put_or_overwrite_asset)(
-                    self.owner,
-                    std::ptr::from_ref::<P>(path).cast::<()>(),
-                    contents,
-                    content_hash,
-                )
-            }
-        }
-        #[inline] pub fn track_resolution_failure(&self, src: &[u8], spec: &[u8], r: super::bake_types::Graph, l: bun_options_types::Loader) -> Result<(), bun_core::Error> {
-            unsafe { (self.vtable.track_resolution_failure)(self.owner, src, spec, r, l) }
-        }
-        #[inline] pub fn is_file_cached(&self, path: &[u8], side: super::bake_types::Graph) -> Option<super::bake_types::CacheEntry> {
-            unsafe { (self.vtable.is_file_cached)(self.owner, path, side) }
-        }
-        #[inline] pub fn asset_hash(&self, path: &[u8]) -> Option<u64> {
-            unsafe { (self.vtable.asset_hash)(self.owner, path) }
+            self.put_or_overwrite_asset(
+                core::ptr::from_ref::<P>(path).cast::<()>(),
+                contents,
+                content_hash,
+            )
         }
     }
 
@@ -1476,63 +1391,6 @@ pub mod dispatch {
     ) -> Option<Box<[u8]>> {
         // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc`.
         unsafe { __bun_jsc_generate_cached_bytecode(format, source, source_provider_url) }
-    }
-
-    /// CYCLEBREAK GENUINE: `bun.jsc.hot_reloader.NewHotReloader<BundleV2, …>` is
-    /// a T6 generic instantiated over a T5 type. The bundler stores the erased
-    /// owner together with its `&'static` vtable so `on_load_complete` can call
-    /// `add_file` without naming the concrete reloader type. Constructed by the
-    /// high tier (`bun_runtime`) and written into `BundleV2.bun_watcher`.
-    /// PERF(port): was inline switch.
-    pub struct WatcherVTable {
-        /// `watcher.add_file(fd, path, hash, loader, dir_fd, package_json, copy)`
-        /// (Watcher.zig:addFile).
-        pub add_file: unsafe fn(
-            watcher: *mut (),
-            fd: bun_sys::Fd,
-            file_path: &[u8],
-            hash: u32,
-            loader: bun_options_types::Loader,
-            dir_fd: bun_sys::Fd,
-            package_json: Option<*const ()>,
-            copy_file_path: bool,
-        ) -> Result<(), bun_core::Error>,
-    }
-    #[derive(Copy, Clone)]
-    pub struct WatcherHandle {
-        pub owner: core::ptr::NonNull<()>,
-        pub vtable: &'static WatcherVTable,
-    }
-    // SAFETY: erased `*mut hot_reloader::Watcher` — Zig passed it across the
-    // worker pool freely; callee fns handle internal synchronization.
-    unsafe impl Send for WatcherHandle {}
-    unsafe impl Sync for WatcherHandle {}
-    impl WatcherHandle {
-        #[inline]
-        pub fn add_file(
-            &self,
-            fd: bun_sys::Fd,
-            file_path: &[u8],
-            hash: u32,
-            loader: bun_options_types::Loader,
-            dir_fd: bun_sys::Fd,
-            package_json: Option<*const ()>,
-            copy_file_path: bool,
-        ) -> Result<(), bun_core::Error> {
-            // SAFETY: vtable contract — `owner` is a live erased watcher.
-            unsafe {
-                (self.vtable.add_file)(
-                    self.owner.as_ptr(),
-                    fd,
-                    file_path,
-                    hash,
-                    loader,
-                    dir_fd,
-                    package_json,
-                    copy_file_path,
-                )
-            }
-        }
     }
 
     /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` (JSBundler.zig) — the
@@ -1919,7 +1777,7 @@ impl<'a> BundleV2<'a> {
         if let Some(dev) = self.dev_server_handle() {
             // CYCLEBREAK GENUINE: DevServer → vtable. PERF(port): was inline switch.
             // SAFETY: owner is a live *mut DevServer per handle invariant.
-            return unsafe { &mut *(dev.vtable.log_for_resolution_failures)(dev.owner, abs_path, bake_graph) };
+            return unsafe { &mut *dev.log_for_resolution_failures(abs_path, bake_graph) };
         }
         // SAFETY: `transpiler.log` is set from a live `*mut Log` in `init` and
         // outlives `BundleV2`.
@@ -4627,8 +4485,7 @@ impl<'a> BundleV2<'a> {
         // DevServer holds it exclusively for the duration of finalize, so the `&mut DevServerInput`
         // here is mut-valid and unaliased until this fn returns.
         let start = unsafe {
-            &mut *(dev_server.vtable.current_bundle_start_data)(dev_server.owner)
-                .cast::<DevServerInput>()
+            &mut *dev_server.current_bundle_start_data().cast::<DevServerInput>()
         };
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -6139,7 +5996,7 @@ impl<'a> BundleV2<'a> {
                 if !result.unique_key_for_additional_file.is_empty() && result.loader.should_copy_for_bundling() {
                     if let Some(dev) = this.dev_server {
                         let source = &this.graph.input_files.items_source()[result_source_index];
-                        dev.put_or_overwrite_asset(
+                        dev.put_or_overwrite_asset_erased(
                             &source.path,
                             // SAFETY: when shouldCopyForBundling is true, the
                             // contents are allocated by bun.default_allocator

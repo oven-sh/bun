@@ -383,32 +383,24 @@ impl fmt::Display for CrashReason {
 
 /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
 ///
-/// Cycle-break (b0): the bundler types (`LinkerContext` / `Chunk` / `PartRange`)
-/// live in a higher-tier crate, so this struct holds erased pointers and a
-/// vtable supplied by `bun_bundler`. The bundler constructs this with
-/// `bun_bundler::BUNDLE_GENERATE_CHUNK_VTABLE` (added by the move-in pass).
-// PERF(port): was inline switch — cold path (crash trace only).
+/// The bundler types (`LinkerContext` / `Chunk` / `PartRange`) live in a
+/// higher-tier crate; `chunk`/`part_range` stay erased and are reinterpreted by
+/// the `Linker` impl in `bun_bundler::LinkerContext`.
 #[cfg(feature = "show_crash_trace")]
 #[derive(Clone, Copy)]
 pub struct BundleGenerateChunk {
-    /// SAFETY: erased `&bun_bundler::LinkerContext`
-    pub context: *const (),
+    pub ctx: BundleGenerateChunkCtx,
     /// SAFETY: erased `&bun_bundler::Chunk`
     pub chunk: *const (),
     /// SAFETY: erased `&bun_bundler::PartRange`
     pub part_range: *const (),
-    pub vtable: &'static BundleGenerateChunkVTable,
 }
 
 #[cfg(feature = "show_crash_trace")]
-pub struct BundleGenerateChunkVTable {
-    /// Format the chunk context into `writer` (called from `Action::fmt`).
-    pub fmt: unsafe fn(
-        context: *const (),
-        chunk: *const (),
-        part_range: *const (),
-        writer: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result,
+bun_dispatch::link_interface! {
+    pub BundleGenerateChunkCtx[Linker] {
+        fn fmt(chunk: *const (), part_range: *const (), writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result;
+    }
 }
 
 #[cfg(feature = "show_crash_trace")]
@@ -446,11 +438,7 @@ impl fmt::Display for Action {
             Action::Visit(path) => write!(writer, "visiting {}", bstr::BStr::new(path)),
             Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
             #[cfg(feature = "show_crash_trace")]
-            Action::BundleGenerateChunk(data) => {
-                // SAFETY: `data` was constructed by bun_bundler with matching
-                // erased pointer types; vtable.fmt casts them back.
-                unsafe { (data.vtable.fmt)(data.context, data.chunk, data.part_range, writer) }
-            }
+            Action::BundleGenerateChunk(data) => data.ctx.fmt(data.chunk, data.part_range, writer),
             #[cfg(not(feature = "show_crash_trace"))]
             Action::BundleGenerateChunk(()) => Ok(()),
             #[cfg(feature = "show_crash_trace")]
@@ -460,7 +448,7 @@ impl fmt::Display for Action {
                     "resolving {} from {} ({})",
                     bstr::BStr::new(res.import_path),
                     bstr::BStr::new(res.source_dir),
-                    res.kind.label(),
+                    bstr::BStr::new(res.kind.label()),
                 )
             }
             #[cfg(not(feature = "show_crash_trace"))]

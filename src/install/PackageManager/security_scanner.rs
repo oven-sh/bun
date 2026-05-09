@@ -7,10 +7,10 @@ use bstr::BStr;
 
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_aio::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
+// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
-use bun_aio::Loop as AsyncLoop;
+use bun_io::Loop as AsyncLoop;
 use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
@@ -26,7 +26,7 @@ use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_logger as logger;
 use bun_ptr::{RefPtr, ThreadSafeRefCount};
-use bun_spawn::{self as spawn, Exited, Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
+use bun_spawn::{self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
 use bun_str::strings;
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -975,7 +975,7 @@ pub type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<
 // `StaticPipeWriter::start()` while `finish_spawn` still has `&mut self` on
 // the stack (small JSON fits the pipe buffer → write completes → close).
 impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
-    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
         // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
         // the subprocess outlives its writer (it `deref`s the writer in `deinit`/Drop).
@@ -985,24 +985,12 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     }
 }
 
-/// Static exit-handler vtable registered with `Process::set_exit_handler`.
-/// Mirrors the Zig `setExitHandler(this)` duck-typed dispatch.
-static SECURITY_SCAN_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
-    on_process_exit: {
-        unsafe fn call(
-            owner: *mut (),
-            process: *mut Process,
-            status: Status,
-            rusage: *const Rusage,
-        ) {
-            // SAFETY: `owner` is the `*mut SecurityScanSubprocess` registered in
-            // `finish_spawn`; the subprocess outlives its `Process` (it `deref`s
-            // it in `Drop`).
-            unsafe { (*owner.cast::<SecurityScanSubprocess>()).on_process_exit(&mut *process, status, &*rusage) };
-        }
-        call
-    },
-};
+bun_spawn::link_impl_ProcessExit! {
+    SecurityScan for SecurityScanSubprocess => |this| {
+        on_process_exit(process, status, rusage) =>
+            (*this).on_process_exit(&mut *process, status, &*rusage),
+    }
+}
 
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
@@ -1046,13 +1034,8 @@ impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
         unsafe { (*this).loop_() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is an opaque `*mut c_void` that `io_ev`
-        // reads back as `*const bun_event_loop::EventLoopHandle`. Pass the
-        // address of the stored handle (NOT `manager.event_loop`, which is an
-        // `AnyEventLoop` with a different layout).
-        bun_io::EventLoopHandle(
-            unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
-        )
+        // SAFETY: see `loop_`.
+        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
 }
 
@@ -1341,9 +1324,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `parent` to keep a single provenance path (no overlapping `&mut`).
         let parent: *mut Self = self;
         // SAFETY: `process` is the freshly-allocated intrusive `*mut Process`
-        // (refcount == 1, owned by us); `parent` was just derived from `&mut self`.
+        // (refcount == 1, owned by us); `parent` was just derived from
+        // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
         unsafe {
-            (*process).set_exit_handler(parent.cast(), &SECURITY_SCAN_EXIT_VTABLE);
+            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
             (*parent).process = Some(process);
         }
 
@@ -1426,7 +1410,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn loop_(&mut self) -> *mut AsyncLoop {
-        // POSIX: `bun_aio::Loop` is `PosixLoop` — identity cast. Windows: the
+        // POSIX: `bun_io::Loop` is `PosixLoop` — identity cast. Windows: the
         // uws wrapper (`WindowsLoop`) stores the real `*mut uv_loop_t` in its
         // `uv_loop` field; project it so `BufferedReaderParent` consumers
         // (which feed `uv_fs_*` / `Source::open`) get a libuv loop directly.

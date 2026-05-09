@@ -36,7 +36,7 @@
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
@@ -286,6 +286,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   const ctx: Ctx = { n, cfg, sources, o, dirStamp };
 
   emitBunError(ctx);
+  emitStringMaps(ctx);
   emitFallbackDecoder(ctx);
   emitRuntimeJs(ctx);
   emitNodeFallbacks(ctx);
@@ -526,6 +527,37 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(rrOut);
   o.rustInputs.push(rrOut);
+}
+
+/**
+ * `*.string-map.ts` → length-bucketed lookup fns (`generate-string-map.ts`).
+ * Output lands **in-tree** as `<dir>/<stem>.generated.rs` (checked in) so
+ * plain `cargo check` / rust-analyzer work without `BUN_CODEGEN_DIR` or a
+ * per-crate `build.rs`. The `.string-map.ts` is the source of truth; the
+ * `.generated.rs` is a deterministic artifact whose drift is caught by
+ * `bun run codegen:verify` in CI (format job). `restat = 1` on the codegen
+ * rule + `writeIfNotChanged` in the script keep this a no-op when unchanged.
+ */
+function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-string-map.ts");
+  for (const src of sources.stringMaps) {
+    // `src/js_parser/defines_table.string-map.ts` → `src/js_parser/defines_table.generated.rs`
+    const stem = basename(src).replace(/\.string-map\.ts$/, "");
+    const out = resolve(dirname(src), `${stem}.generated.rs`);
+    n.build({
+      outputs: [out],
+      rule: "codegen",
+      inputs: [script, src],
+      orderOnlyInputs: [dirStamp],
+      vars: {
+        cwd: cfg.cwd,
+        desc: `string-map ${stem}`,
+        args: shJoin(cfg, ["run", script, src, out]),
+      },
+    });
+    o.all.push(out);
+    o.rustInputs.push(out);
+  }
 }
 
 function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {

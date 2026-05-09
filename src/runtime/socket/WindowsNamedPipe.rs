@@ -21,7 +21,7 @@
 use core::ffi::{c_uint, c_void, CStr};
 use core::ptr::NonNull;
 
-use bun_aio::Loop as AsyncLoop;
+use bun_io::Loop as AsyncLoop;
 use bun_boringssl_sys as boringssl;
 use bun_collections::VecExt;
 use bun_core::timespec;
@@ -1004,7 +1004,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
     // runtime); the impl exists purely so the `StreamingWriter<Self>` field
     // type-checks. NULL keeps the dispatch table from being silently wrong if
     // a poll is ever (incorrectly) created.
-    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::NULL;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::NULL;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via `set_parent`; unique for the
@@ -1026,12 +1026,8 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see on_write. Shared-only read of `event_loop_handle`.
-        // opaque `*mut c_void` round-tripped through io-layer
-        // vtable; pass the address of the stored `bun_jsc::EventLoopHandle` so
-        // the (runtime-registered) FilePoll vtable can recover it via `io_ev`.
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of_mut!((*this).event_loop_handle).cast::<c_void>()
-        })
+        // SAFETY: see on_write.
+        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: see on_write. Shared-only read of `vm`.

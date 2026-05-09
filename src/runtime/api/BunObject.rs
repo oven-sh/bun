@@ -101,7 +101,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::{self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES};
 use bun_str::{self, strings, String as BunString, ZigString};
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_aio::{self as Async, KeepAlive};
+use bun_io::{self as Async, KeepAlive};
 use bun_threading::work_pool::WorkPool;
 
 use bun_shell_parser::braces as Braces;
@@ -2979,8 +2979,8 @@ pub mod JSZstd {
         pub unsafe fn destroy(this: *mut ZstdJob) {
             // SAFETY: caller contract — `this` is the unique raw Box pointer.
             let mut boxed = unsafe { bun_core::heap::take(this) };
-            boxed.poll.unref(bun_aio::posix_event_loop::get_vm_ctx(
-                bun_aio::AllocatorType::Js,
+            boxed.poll.unref(bun_io::posix_event_loop::get_vm_ctx(
+                bun_io::AllocatorType::Js,
             ));
             // `buffer: ThreadSafe<StringOrBuffer>` unprotects + drops with `boxed`.
             boxed.promise = Default::default();
@@ -3025,8 +3025,8 @@ pub mod JSZstd {
                     ZstdJob::run_from_js(p.cast::<ZstdJob>()).map_err(Into::into)
                 },
             };
-            job_ref.poll.ref_(bun_aio::posix_event_loop::get_vm_ctx(
-                bun_aio::AllocatorType::Js,
+            job_ref.poll.ref_(bun_io::posix_event_loop::get_vm_ctx(
+                bun_io::AllocatorType::Js,
             ));
             WorkPool::schedule(&raw mut job_ref.task);
 

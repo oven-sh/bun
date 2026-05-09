@@ -908,7 +908,7 @@ impl<'a> Parser<'a> {
                 if let Some(no_orphans) = expr_get(&run_expr, b"noOrphans") {
                     if let Some(value) = expr_as_bool(&no_orphans) {
                         if value {
-                            bun_aio::ParentDeathWatchdog::enable();
+                            bun_io::ParentDeathWatchdog::enable();
                         }
                     } else {
                         self.add_error(no_orphans.loc, b"Expected boolean")?;

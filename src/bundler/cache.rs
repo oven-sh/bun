@@ -18,10 +18,10 @@ use js_parser::defines::Define;
 // B-3 UNIFIED: `RuntimeTranspilerCache` is canonical in `bun_js_parser`
 // (lower tier) so `Features.runtime_transpiler_cache: Option<*mut RTC>` and
 // `ParseOptions.runtime_transpiler_cache: Option<&mut RTC>` are the same
-// nominal type. This crate adds the disk-I/O / `js_printer` dispatch surface
-// (`put` / `disabled` / `as_printer_ref`) via the `RuntimeTranspilerCacheExt`
-// trait below — those need `bun_js_printer` / `bun_core::env_var` which sit a
-// tier above js_parser. `Entry` / `Metadata` stay concrete here; the canonical
+// nominal type. This crate adds the env-var-gated `disabled`/`set_disabled` via
+// the `RuntimeTranspilerCacheExt` trait below — those need `bun_core::env_var`
+// which sits a tier above js_parser. `Entry` / `Metadata` stay concrete here;
+// the canonical
 // struct stores them type-erased as `*mut ()`.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::RuntimeTranspilerCache;
@@ -37,19 +37,13 @@ pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
 pub static DISABLED: AtomicBool = AtomicBool::new(false);
 
 /// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
-/// `bun_js_parser`). Separate trait so the `bun_js_printer`/env-var-dependent
-/// bodies stay in this crate without an orphan-rule violation.
+/// `bun_js_parser`). Separate trait so the env-var-dependent bodies stay in
+/// this crate without an orphan-rule violation.
 pub trait RuntimeTranspilerCacheExt {
     /// Mirrors the Zig `pub var is_disabled` namespaced const — kept as an
     /// associated fn so call-sites read `RuntimeTranspilerCache::disabled()`.
     fn disabled() -> bool;
     fn set_disabled(v: bool);
-    /// Spec: src/jsc/RuntimeTranspilerCache.zig:683 `put`.
-    fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]);
-    /// Erase a live `*mut Self` into the js_printer dispatch handle so
-    /// `js_printer::Options.runtime_transpiler_cache` can call back without
-    /// naming this crate. See PORTING.md §Dispatch.
-    fn as_printer_ref(this: core::ptr::NonNull<Self>) -> bun_js_printer::RuntimeTranspilerCacheRef;
 }
 
 impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
@@ -66,47 +60,7 @@ impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
     fn set_disabled(v: bool) {
         DISABLED.store(v, Ordering::Relaxed);
     }
-
-    /// Dispatches through the parser-side vtable so T6's `to_file` disk write
-    /// runs. Falls back to in-memory only when no vtable is wired (e.g. unit
-    /// tests that construct the cache without a JSC owner).
-    fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
-        if let Some(vt) = self.vtable {
-            // SAFETY: vtable contract per §Dispatch — `self` is a valid &mut.
-            unsafe { (vt.put)(core::ptr::from_mut(self), output_code_bytes, sourcemap, esm_record) }
-            return;
-        }
-        if self.input_hash.is_none() || <Self as RuntimeTranspilerCacheExt>::disabled() {
-            return;
-        }
-        debug_assert!(self.entry.is_none());
-        self.output_code = Some(Box::<[u8]>::from(output_code_bytes));
-    }
-
-    #[inline]
-    fn as_printer_ref(
-        this: core::ptr::NonNull<Self>,
-    ) -> bun_js_printer::RuntimeTranspilerCacheRef {
-        bun_js_printer::RuntimeTranspilerCacheRef {
-            owner: this.as_ptr().cast::<()>(),
-            vtable: &RUNTIME_TRANSPILER_CACHE_VTABLE,
-        }
-    }
 }
-
-/// SAFETY: `owner` was produced by `RuntimeTranspilerCache::as_printer_ref`
-/// from a `NonNull<RuntimeTranspilerCache>` that outlives the print call;
-/// js_printer invokes this at most once, after all writer output is flushed.
-unsafe fn rtc_vtable_put(owner: *mut (), output: &[u8], source_map: &[u8], module_info: &[u8]) {
-    unsafe { (*owner.cast::<RuntimeTranspilerCache>()).put(output, source_map, module_info) }
-}
-
-/// Bundler-tier vtable for `js_printer::RuntimeTranspilerCacheRef`. T6 may
-/// supply its own (with the `to_file` disk write) when it constructs the ref
-/// directly; this one backs the bundler's `ParseResult.runtime_transpiler_cache`
-/// round-trip.
-pub static RUNTIME_TRANSPILER_CACHE_VTABLE: bun_js_printer::RuntimeTranspilerCacheVTable =
-    bun_js_printer::RuntimeTranspilerCacheVTable { put: rtc_vtable_put };
 
 /// Mirrors `RuntimeTranspilerCache.Encoding` (RuntimeTranspilerCache.zig:405).
 ///

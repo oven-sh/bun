@@ -331,7 +331,7 @@ unsafe fn init_runtime_state(
     // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`.
     // The low-tier `VirtualMachine::init` doc-comment delegates this here; not
     // arming it means a child Bun process won't exit when its parent dies.
-    // Gate on `opts.is_main_thread` once `bun_aio::parent_death_watchdog`
+    // Gate on `opts.is_main_thread` once `bun_io::parent_death_watchdog`
     // un-gates.
 
     // Spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)` —
@@ -1246,87 +1246,13 @@ unsafe fn ipc_child_singleton_deinit() {
 // VirtualMachine` / `*mut Blob` from the erased `*const ()` / `OpaqueBlob`.
 // ────────────────────────────────────────────────────────────────────────────
 
-mod vm_loader_vtable {
+mod vm_loader_ctx {
     use super::*;
-    use bun_bundler::options::{OpaqueBlob, VmLoaderVTable};
-    use bun_collections::StringArrayHashMap;
+    use bun_bundler::options::OpaqueBlob;
     use bun_resolver::package_json::PackageJSON;
     use crate::webcore::Blob;
     use crate::webcore::blob::BlobExt as _;
 
-    /// Recover the erased VM as a **raw pointer** (not `&VirtualMachine`).
-    ///
-    /// Returning a raw `*const` keeps every accessor below a raw place
-    /// projection — `(*vm(p)).field` — so no `&VirtualMachine` retag is
-    /// materialized for the simple field reads. This matters because
-    /// [`read_dir_info_package_json`] holds a live `&mut transpiler.resolver`
-    /// across a re-entrant `read_dir_info` that can call back into these hooks;
-    /// a `&VirtualMachine` formed here would alias that `&mut` (SB/TB UB). The
-    /// two accessors that call `&self` methods (`main`, `blob_loader`) form a
-    /// transient `&VirtualMachine` scoped to the single call, which never spans
-    /// the re-entrant path.
-    ///
-    /// # Safety
-    /// `p` is the live per-thread VM erased by the caller.
-    #[inline]
-    unsafe fn vm(p: *const ()) -> *const VirtualMachine {
-        p.cast::<VirtualMachine>()
-    }
-
-    unsafe fn origin_host(p: *const ()) -> &'static [u8] {
-        // SAFETY: raw place projection — no `&VirtualMachine` formed.
-        unsafe { (*vm(p)).origin.host }
-    }
-    unsafe fn origin_path(p: *const ()) -> &'static [u8] {
-        // SAFETY: see `origin_host`.
-        unsafe { (*vm(p)).origin.path }
-    }
-    unsafe fn loaders(p: *const ()) -> *const StringArrayHashMap<Loader> {
-        // SAFETY: `&raw const` over a raw place — no reference formed.
-        unsafe { &raw const (*vm(p)).transpiler.options.loaders }
-    }
-    unsafe fn eval_source(p: *const ()) -> Option<*const bun_logger::Source> {
-        // SAFETY: `.as_deref()` autorefs only the `eval_source` field, not the VM.
-        unsafe { (*vm(p)).module_loader.eval_source.as_deref() }
-            .map(|s| std::ptr::from_ref::<bun_logger::Source>(s))
-    }
-    unsafe fn main(p: *const ()) -> &'static [u8] {
-        // `main()` is a `&self` method, so a transient `&VirtualMachine` is
-        // formed here — scoped to this single call, it never spans the
-        // re-entrant `read_dir_info` path. The returned slice borrows
-        // VM-lifetime storage; the hook contract erases it to `'static`.
-        // SAFETY: `p` is the live per-thread VM.
-        unsafe { &*std::ptr::from_ref::<[u8]>((*vm(p)).main()) }
-    }
-    unsafe fn read_dir_info_package_json(p: *const (), dir: &[u8]) -> Option<*const PackageJSON> {
-        // SAFETY: `p` is the live per-thread VM; `read_dir_info` is re-entrant
-        // on the JS thread and returns interned cache slots. A short-lived
-        // `&mut VirtualMachine` is materialized only for this non-JS call.
-        let vm = p.cast::<VirtualMachine>().cast_mut();
-        // A short-lived `&mut Resolver` (not `&mut VirtualMachine`) is formed
-        // for the duration of the call — mirrors the raw-place projection the
-        // open-coded site used, narrowing the borrow re-entrant JS could alias.
-        match unsafe { &mut (*vm).transpiler.resolver }.read_dir_info(dir) {
-            Ok(Some(dir_info)) => {
-                // SAFETY: `read_dir_info` returns a stable `*mut DirInfo`
-                // owned by the resolver's interned arena.
-                let dir_info = unsafe { &*dir_info };
-                dir_info
-                    .package_json()
-                    .or(dir_info.enclosing_package_json)
-                    .map(|pj| std::ptr::from_ref::<PackageJSON>(pj))
-            }
-            _ => None,
-        }
-    }
-    unsafe fn is_blob_url(spec: &[u8]) -> bool {
-        crate::webcore::object_url_registry::is_blob_url(spec)
-    }
-    unsafe fn resolve_blob(spec: &[u8]) -> Option<OpaqueBlob> {
-        crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-            .resolve_and_dupe(spec)
-            .map(|blob| bun_core::heap::into_raw(Box::new(blob)).cast::<()>())
-    }
     /// Recover an [`OpaqueBlob`] as a shared `&Blob` (live until `blob_deinit`).
     ///
     /// # Safety
@@ -1336,51 +1262,62 @@ mod vm_loader_vtable {
         // SAFETY: per fn contract.
         unsafe { &*b.cast::<Blob>() }
     }
-    unsafe fn blob_loader(b: OpaqueBlob, p: *const ()) -> Option<Loader> {
-        // SAFETY: `b` was produced by `resolve_blob` above; `p` is the live VM.
-        // A transient `&VirtualMachine` is formed for `get_loader` only — not
-        // on the re-entrant `read_dir_info` path.
-        unsafe { blob(b) }.get_loader(unsafe { &*vm(p) })
-    }
-    unsafe fn blob_file_name(b: OpaqueBlob) -> Option<&'static [u8]> {
-        // The returned slice borrows the blob's heap-owned name buffer, which
-        // lives until `blob_deinit`. Erased to `'static` per the vtable
-        // signature — sound because the bundler caller drops the slice before
-        // calling `blob_deinit`.
-        unsafe { blob(b) }
-            .get_file_name()
-            .map(|s| unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
-    }
-    unsafe fn blob_needs_read_file(b: OpaqueBlob) -> bool {
-        unsafe { blob(b) }.needs_to_read_file()
-    }
-    unsafe fn blob_shared_view(b: OpaqueBlob) -> &'static [u8] {
-        // lifetime erased per `blob_file_name`'s rationale.
-        let v = unsafe { blob(b) }.shared_view();
-        unsafe { core::slice::from_raw_parts(v.as_ptr(), v.len()) }
-    }
-    unsafe fn blob_deinit(b: OpaqueBlob) {
-        // SAFETY: `b` was produced by `heap::alloc` in `resolve_blob` above.
-        drop(unsafe { bun_core::heap::take(b.cast::<Blob>()) });
-    }
 
-    pub static VM_LOADER_VTABLE: VmLoaderVTable = VmLoaderVTable {
-        origin_host,
-        origin_path,
-        loaders,
-        eval_source,
-        main,
-        read_dir_info_package_json,
-        is_blob_url,
-        resolve_blob,
-        blob_loader,
-        blob_file_name,
-        blob_needs_read_file,
-        blob_shared_view,
-        blob_deinit,
-    };
+    // `this: *mut VirtualMachine`. Bodies use raw place projections —
+    // `(*this).field` — so no `&VirtualMachine` retag is materialized for the
+    // simple field reads. This matters because `read_dir_info_package_json`
+    // holds a live `&mut transpiler.resolver` across a re-entrant `read_dir_info`
+    // that can call back into these hooks; a `&VirtualMachine` formed here would
+    // alias that `&mut` (SB/TB UB). The two accessors that call `&self` methods
+    // (`main`, `blob_loader`) form a transient `&VirtualMachine` scoped to the
+    // single call, which never spans the re-entrant path.
+    bun_bundler::link_impl_VmLoaderCtx! {
+        Runtime for VirtualMachine => |this| {
+            origin_host() => (*this).origin.host,
+            origin_path() => (*this).origin.path,
+            loaders() => &raw const (*this).transpiler.options.loaders,
+            eval_source() => (*this)
+                .module_loader
+                .eval_source
+                .as_deref()
+                .map(core::ptr::from_ref::<bun_logger::Source>),
+            main() => &*core::ptr::from_ref::<[u8]>((*this).main()),
+            read_dir_info_package_json(dir) => {
+                // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
+                // the call — narrows the borrow re-entrant JS could alias.
+                match (&mut (*this).transpiler.resolver).read_dir_info(dir) {
+                    Ok(Some(dir_info)) => {
+                        let dir_info = &*dir_info;
+                        dir_info
+                            .package_json()
+                            .or(dir_info.enclosing_package_json)
+                            .map(core::ptr::from_ref::<PackageJSON>)
+                    }
+                    _ => None,
+                }
+            },
+            is_blob_url(spec) => crate::webcore::object_url_registry::is_blob_url(spec),
+            resolve_blob(spec) => {
+                crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
+                    .resolve_and_dupe(spec)
+                    .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
+            },
+            blob_loader(b) => blob(b).get_loader(&*this),
+            // Returned slices borrow blob heap storage that lives until
+            // `blob_deinit`; erased to `'static` per the interface signature —
+            // sound because the bundler caller drops them before `blob_deinit`.
+            blob_file_name(b) => blob(b)
+                .get_file_name()
+                .map(|s| core::slice::from_raw_parts(s.as_ptr(), s.len())),
+            blob_needs_read_file(b) => blob(b).needs_to_read_file(),
+            blob_shared_view(b) => {
+                let v = blob(b).shared_view();
+                core::slice::from_raw_parts(v.as_ptr(), v.len())
+            },
+            blob_deinit(b) => drop(bun_core::heap::take(b.cast::<Blob>())),
+        }
+    }
 }
-pub use vm_loader_vtable::VM_LOADER_VTABLE;
 
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.
 #[unsafe(no_mangle)]
@@ -1401,7 +1338,6 @@ pub static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     init_request_body_value,
     has_blob_url,
     body_mixin_get_blob,
-    vm_loader_vtable: &VM_LOADER_VTABLE,
     process_exit,
     handle_ipc_internal_child,
     ipc_child_singleton_deinit,
@@ -2061,7 +1997,7 @@ fn transpile_source_code_inner(
             // dropped those fields per PORTING.md §Allocators (cache buffers use
             // global mimalloc), so `Default::default()` matches.
             let mut cache = bun_bundler::cache::RuntimeTranspilerCache {
-                vtable: Some(&bun_jsc::runtime_transpiler_cache::JSC_PARSER_CACHE_VTABLE),
+                r#impl: Some(bun_js_parser::TranspilerCacheImplKind::Jsc),
                 ..Default::default()
             };
 
@@ -4863,19 +4799,19 @@ pub static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
 // `__bun_run_wtf_timer`) live in [`crate::dispatch`] alongside the other
 // §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_file_poll`).
 
-/// `bun_aio::__bun_get_vm_ctx` body — recover the global event-loop context
+/// `bun_io::__bun_get_vm_ctx` body — recover the global event-loop context
 /// for the requested arm. Zig had no crate split here: callers reached
 /// `VirtualMachine.get()` / `MiniEventLoop.global` directly. Declared
-/// `extern "Rust"` in `bun_aio::posix_event_loop`; link-time resolved.
+/// `extern "Rust"` in `bun_io::posix_event_loop`; link-time resolved.
 #[unsafe(no_mangle)]
-pub fn __bun_get_vm_ctx(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
+pub fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
     match kind {
-        bun_aio::AllocatorType::Js => {
+        bun_io::AllocatorType::Js => {
             bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr(),
             )
         }
-        bun_aio::AllocatorType::Mini => {
+        bun_io::AllocatorType::Mini => {
             // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
             // any caller asks for `AllocatorType::Mini` (Zig: `MiniEventLoop.
             // global` is the only mini loop and is init-once).

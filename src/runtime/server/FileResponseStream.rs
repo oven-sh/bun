@@ -12,7 +12,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_aio::Closer;
+use bun_io::Closer;
 use bun_io::{BufferedReader, FileType, ReadState};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
@@ -516,7 +516,7 @@ impl FileResponseStream {
         EventLoopHandle::init(unsafe { (*self.vm).event_loop() }.cast::<()>())
     }
 
-    pub fn r#loop(&self) -> *mut bun_aio::Loop {
+    pub fn r#loop(&self) -> *mut bun_io::Loop {
         #[cfg(windows)]
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
@@ -615,12 +615,8 @@ impl bun_io::BufferedReaderParent for FileResponseStream {
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
-        // SAFETY: `this` non-null/live per trait contract; `event_loop_handle`
-        // is `Copy` and disjoint from `reader`.
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of_mut!((*this).event_loop_handle).cast::<c_void>()
-        })
+        // SAFETY: `this` non-null/live per trait contract.
+        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
 }
 

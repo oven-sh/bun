@@ -4,7 +4,7 @@
 use core::ffi::{c_char, c_void};
 use core::mem::offset_of;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_jsc::{
@@ -24,8 +24,8 @@ use crate::node::StringOrBuffer;
 /// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
 /// the aio hook registered by `crate::init()`.
 #[inline]
-fn vm_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 unsafe extern "C" {

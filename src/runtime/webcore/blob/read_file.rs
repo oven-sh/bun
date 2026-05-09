@@ -935,14 +935,15 @@ impl<'a> FileCloser for ReadFileUV<'a> {
 #[cfg(windows)]
 impl<'a> ReadFileUV<'a> {
     /// Typed entry — mirrors Zig `start(event_loop, store, off, max_len,
-    /// comptime Handler, handler)`: erase `*mut H` → `*anyopaque` and pick up
-    /// `Handler.run` via the `ReadFileUvHandler` blanket impl.
+    /// comptime Handler, handler: *anyopaque)`: caller passes the already-erased
+    /// `*anyopaque`; `H` (via turbofish) supplies `Handler.run` through the
+    /// `ReadFileUvHandler` blanket impl.
     pub fn start<H>(
         event_loop: *mut EventLoop,
         store: StoreRef,
         off: SizeType,
         max_len: SizeType,
-        handler: *mut H,
+        handler: *mut c_void,
     )
     where
         H: ReadFileUvHandler,
@@ -954,7 +955,7 @@ impl<'a> ReadFileUV<'a> {
             max_len,
             // Zig: @ptrCast(&Handler.run) — erase the typed handler to the C ABI cb.
             H::run as ReadFileOnReadFileCallback,
-            handler.cast::<c_void>(),
+            handler,
         )
     }
 
@@ -1077,14 +1078,19 @@ impl<'a> ReadFileUV<'a> {
         self.req.deinit();
         self.req.data = core::ptr::from_mut(self).cast::<c_void>();
 
-        if let Some(errno) = libuv::uv_fs_fstat(
-            self.loop_,
-            &mut self.req,
-            opened_fd.uv(),
-            Some(Self::on_file_initial_stat),
-        )
-        .err_enum_e()
-        {
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `self.req` is a freshly
+        // deinit'd `fs_t` owned by `self`, `opened_fd.uv()` is the just-opened fd,
+        // and `on_file_initial_stat` is a valid `uv_fs_cb` that recovers `self`
+        // from `req.data` (set above).
+        let rc = unsafe {
+            libuv::uv_fs_fstat(
+                self.loop_,
+                &mut self.req,
+                opened_fd.uv(),
+                Some(Self::on_file_initial_stat),
+            )
+        };
+        if let Some(errno) = rc.err_enum_e() {
             self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             self.system_error =
                 Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error().into());

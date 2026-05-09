@@ -3550,8 +3550,12 @@ impl RunCommand {
                     // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
                     let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
                         unsafe { bun_core::ffi::zeroed() };
-                    if sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
-                        != sys::windows::FALSE
+                    // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
+                    // is a valid console output HANDLE from GetStdHandle and
+                    // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
+                    if unsafe {
+                        sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
+                    } != sys::windows::FALSE
                     {
                         let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
                         if w > 0 {

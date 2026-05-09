@@ -60,6 +60,10 @@ struct State {
     #[cfg(windows)]
     is_reading: bool,
     started: bool,
+    /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
+    /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
+    /// `init()` (the sole constructor).
+    self_weak: std::sync::Weak<IOReader>,
     /// Backref so async read callbacks can drive `Yield::run`. See
     /// `IOWriter::interp`.
     interp: *mut Interpreter,
@@ -111,6 +115,18 @@ impl IOReader {
         unsafe { &mut *self.reader.get() }
     }
 
+    /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
+    /// whose child callback may drop the last external ref and free us
+    /// mid-method. Spec gets the same guarantee from `asyncDeinit`'s next-tick
+    /// hop (IOReader.zig:197); here we keep a strong ref on the stack instead.
+    #[inline]
+    fn keepalive(&self) -> std::sync::Arc<IOReader> {
+        self.state()
+            .self_weak
+            .upgrade()
+            .expect("IOReader::keepalive after last Arc dropped")
+    }
+
     pub fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
@@ -121,7 +137,7 @@ impl IOReader {
         {
             reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
         }
-        let this = std::sync::Arc::new(IOReader {
+        let this = std::sync::Arc::new_cyclic(|w| IOReader {
             reader: UnsafeCell::new(reader),
             state: UnsafeCell::new(State {
                 fd,
@@ -134,6 +150,7 @@ impl IOReader {
                 #[cfg(windows)]
                 is_reading: false,
                 started: false,
+                self_weak: w.clone(),
                 interp: core::ptr::null_mut(),
             }),
         });
@@ -247,6 +264,11 @@ impl IOReader {
 
     /// Spec: IOReader.zig `onReadChunk` (the `BufferedReader.onReadChunk` hook).
     fn on_read_chunk_cb(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
+        // `dispatch_read_chunk` → `Cat::on_io_reader_chunk` may drop the last
+        // external Arc; hold one across the whole body so the trailing
+        // `state()` accesses (and `run_yield`'s re-read of `interp`) see live
+        // memory. Spec gets this from `asyncDeinit`'s next-tick hop.
+        let _keepalive = self.keepalive();
         self.set_reading(false);
         // PORT NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
         // both re-derive `state()` (and the interpreter callback may re-enter
@@ -291,6 +313,9 @@ impl IOReader {
 
     /// Spec: IOReader.zig `onReaderError`.
     fn on_reader_error(&self, err: sys::Error) {
+        // `dispatch_reader_done` may drop the last external Arc; keep `self`
+        // alive across the loop. Spec gets this from `asyncDeinit`'s hop.
+        let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
         s.err = Some(err.to_shell_system_error());
@@ -308,6 +333,11 @@ impl IOReader {
 
     /// Spec: IOReader.zig `onReaderDone`.
     fn on_reader_done_cb(&self) {
+        // `dispatch_reader_done` → `Cat::on_io_reader_done` drops Cat's
+        // `Arc<IOReader>`; if that was the last external ref, `self` is freed
+        // mid-loop and `run_yield`'s `state().interp` reads 0xdfdf poison.
+        // Hold a strong ref across the body. Spec: `asyncDeinit` next-tick hop.
+        let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
         let readers: Vec<ChildPtr> = s.readers.clone();

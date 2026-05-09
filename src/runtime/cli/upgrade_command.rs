@@ -1128,9 +1128,14 @@ impl UpgradeCommand {
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
             current_executable_buf[target_dir_len] = 0;
-            // SAFETY: buf[target_dir_len] == 0 written above
+            // SAFETY: buf[target_dir_len]==0 (just written). `from_raw` (NOT
+            // `from_buf`) because this buffer is mutated and re-NUL-terminated
+            // at lines 1252/1273 below while `target_dirname` is still live —
+            // a borrow tied to `&current_executable_buf` would be E0502. The
+            // detached pointer is sound: each mutation re-establishes the NUL
+            // at `target_dir_len` before `target_dirname` is read again.
             let target_dirname =
-                ZStr::from_buf(&current_executable_buf[..], target_dir_len);
+                unsafe { ZStr::from_raw(current_executable_buf.as_ptr(), target_dir_len) };
             let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
                 Ok(d) => sys::Dir::from_fd(d),
                 Err(err) => {

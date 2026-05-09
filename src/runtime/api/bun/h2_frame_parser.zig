@@ -675,10 +675,6 @@ pub const H2FrameParser = struct {
     outStandingPings: u64 = 0,
     maxSendHeaderBlockLength: u32 = 0,
     lastStreamID: u32 = 0,
-    /// Highest stream id we've removed from the map via removeStreamByID.
-    /// Used to distinguish stale (previously-open, now-reclaimed) stream ids
-    /// from brand-new ones we've simply never seen. Monotonic: only advances.
-    max_removed_stream_id: u32 = 0,
     isServer: bool = false,
     prefaceReceivedLen: u8 = 0,
     // we buffer requests until we get the first settings ACK
@@ -1258,9 +1254,6 @@ pub const H2FrameParser = struct {
         if (this.isServer) return;
         if (this.streams.fetchRemove(stream_id)) |kv| {
             const stream = kv.value;
-            if (stream_id > this.max_removed_stream_id) {
-                this.max_removed_stream_id = stream_id;
-            }
             // freeResources is idempotent; call again in case an earlier path
             // skipped it (e.g. request() error branches that set state = .CLOSED
             // without invoking freeResources).
@@ -1280,9 +1273,6 @@ pub const H2FrameParser = struct {
     fn detachStreamFromMap(this: *H2FrameParser, stream_id: u32) void {
         if (this.isServer) return; // mirror removeStreamByID's server gate
         _ = this.streams.fetchRemove(stream_id);
-        if (stream_id > this.max_removed_stream_id) {
-            this.max_removed_stream_id = stream_id;
-        }
     }
 
     /// Free a `*Stream` that was previously unlinked via
@@ -4344,6 +4334,11 @@ pub const H2FrameParser = struct {
     /// removing in-place during a StreamResumableIterator walk could disturb
     /// the iterator, so terminal paths batch the removal here.
     fn removeAllClosedStreams(this: *H2FrameParser) void {
+        // Mirror removeStreamByID's server-side gate so we don't walk the
+        // map + heap-allocate an O(N) id list on every flushStreamQueue for
+        // a long-lived server session (the sweep would no-op via
+        // removeStreamByID anyway).
+        if (this.isServer) return;
         // Collect ids to remove. Iteration is stable as long as nothing grows
         // the map; we only read keys here.
         var to_remove: std.ArrayListUnmanaged(u32) = .{};

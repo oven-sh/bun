@@ -3095,6 +3095,13 @@ impl File {
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | if truncate { O::TRUNC } else { 0 };
         openat_a(dir, path, flags, 0o666).map(Self::from_fd)
     }
+    /// `std.fs.cwd().createFileW(path, .{})` replacement (Windows wide-path).
+    /// Default `.{}` in Zig means `.truncate = true, .read = false`.
+    #[cfg(windows)]
+    pub fn create_w(dir: Fd, path: &[u16]) -> Maybe<Self> {
+        let flags = O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC;
+        openat_windows(dir, path, flags, 0o666).map(Self::from_fd)
+    }
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> { read(self.handle, buf) }
     pub fn write(&self, buf: &[u8]) -> Maybe<usize> { write(self.handle, buf) }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {

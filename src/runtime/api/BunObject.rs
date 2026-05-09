@@ -1637,7 +1637,7 @@ pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
     {
-        return global_this.throw_todo("mmapFile is not supported on Windows");
+        return Err(global_this.throw_todo(b"mmapFile is not supported on Windows"));
     }
 
     #[cfg(not(windows))]

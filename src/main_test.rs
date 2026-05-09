@@ -37,10 +37,10 @@ pub fn main() {
         // SAFETY: mimalloc fns match the libuv allocator signatures; environ is process-global.
         unsafe {
             let _ = bun_sys::windows::libuv::uv_replace_allocator(
-                bun_alloc::mimalloc::mi_malloc as *mut _,
-                bun_alloc::mimalloc::mi_realloc as *mut _,
-                bun_alloc::mimalloc::mi_calloc as *mut _,
-                bun_alloc::mimalloc::mi_free as *mut _,
+                Some(bun_alloc::mimalloc::mi_malloc),
+                Some(bun_alloc::mimalloc::mi_realloc),
+                Some(bun_alloc::mimalloc::mi_calloc),
+                Some(bun_alloc::mimalloc::mi_free),
             );
             // TODO(port): std.os.environ.ptr — obtain the raw environ block pointer for Windows
             // and store it into `environ`/`_environ` so linked C code (libuv, getenv, native

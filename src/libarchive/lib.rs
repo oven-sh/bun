@@ -1481,6 +1481,10 @@ impl Archiver {
                 break 'brk d;
             }
         };
+        // PORT NOTE: Zig spec also lacks `defer dir.close()` here (pre-existing leak).
+        // Fd has no Drop impl; close explicitly on every return path to avoid leaking
+        // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
+        let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime

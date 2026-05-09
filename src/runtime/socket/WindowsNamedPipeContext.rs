@@ -55,8 +55,9 @@ pub struct WindowsNamedPipeContext {
 pub type RefCount = bun_ptr::IntrusiveRc<WindowsNamedPipeContext>;
 
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
-    // SAFETY: called from deref() when count hits zero; `this` still live until deinit_in_next_tick fires
-    unsafe { (*this).deinit_in_next_tick() };
+    // SAFETY: called from deref() when count hits zero; `this` still live until deinit_in_next_tick fires.
+    // Forward the raw pointer — do NOT autoref to `&mut *this` (see `deinit_in_next_tick`).
+    unsafe { WindowsNamedPipeContext::deinit_in_next_tick(this) };
 }
 
 #[repr(u8)]
@@ -287,14 +288,25 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn deinit_in_next_tick(&mut self) {
-        debug_assert!(self.task_event != EventState::Deinit);
-        self.task_event = EventState::Deinit;
+    /// # Safety
+    /// `this` must be live. Takes a raw `*mut Self` (NOT `&mut self`): this is
+    /// reached from `on_close` → `Self::deref` → `schedule_deinit` while
+    /// `WindowsNamedPipe::on_close` still holds a live `&mut (*this).named_pipe`
+    /// and touches it again after the handler returns (`self.release_resources()`).
+    /// Forming `&mut *this` here would retag from the allocation root and pop
+    /// the caller's Unique tag — same Stacked-Borrows constraint as the eight
+    /// `on_*` handlers above.
+    unsafe fn deinit_in_next_tick(this: *mut Self) {
+        // SAFETY: `this` is live; `task_event`/`vm`/`task` are disjoint from
+        // the caller's `&mut named_pipe`.
+        debug_assert!(unsafe { (*this).task_event } != EventState::Deinit);
+        unsafe { (*this).task_event = EventState::Deinit };
         // SAFETY: `vm` is the process-global VirtualMachine; `enqueue_task` mutates
         // its task queue. We hold `&'static VirtualMachine` (JSC_BORROW) so cast
         // through a raw pointer to obtain the `&mut` the upstream API requires.
-        let vm = std::ptr::from_ref::<VirtualMachine>(self.vm).cast_mut();
-        unsafe { (*vm).enqueue_task(Task::init(&raw mut self.task)) };
+        let vm = ptr::from_ref::<VirtualMachine>(unsafe { (*this).vm }).cast_mut();
+        let task = unsafe { ptr::addr_of_mut!((*this).task) };
+        unsafe { (*vm).enqueue_task(Task::init(task)) };
     }
 
     pub fn create(global_this: &JSGlobalObject, socket: SocketType) -> *mut WindowsNamedPipeContext {
@@ -317,7 +329,14 @@ impl WindowsNamedPipeContext {
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the
             // WindowsNamedPipe never invokes a handler after `on_close`
             // schedules deinit, so the allocation is live for the call.
-            ref_ctx: |p| unsafe { (*p.cast::<Self>()).ref_() },
+            // Project `ref_count` directly via raw place — `(*p).ref_()` would
+            // autoref `&Self` over the whole struct, but `WindowsNamedPipe::r#ref`
+            // holds `&mut (*this).named_pipe` across this callback (same
+            // Stacked-Borrows constraint as the `on_*` handlers above).
+            ref_ctx: |p| unsafe {
+                let rc = &*ptr::addr_of!((*p.cast::<Self>()).ref_count);
+                rc.set(rc.get() + 1);
+            },
             deref_ctx: |p| unsafe { Self::deref(p.cast::<Self>()) },
             on_open: |p| Self::on_open(p.cast::<Self>()),
             on_data: |p, d| Self::on_data(p.cast::<Self>(), d),

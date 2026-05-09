@@ -1924,12 +1924,15 @@ impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
         unsafe { (*this).event_loop_handle.uv_loop() }
     }
     unsafe fn ref_(this: *mut Self) {
-        // SAFETY: see loop_.
-        unsafe { &*this }.ref_()
+        // SAFETY: see loop_. Intrusive refcount bump via raw pointer — do NOT
+        // form &Terminal here: this is called from inside writer methods while
+        // a &mut self.writer borrow is live (Stacked-Borrows aliasing).
+        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
     }
     unsafe fn deref(this: *mut Self) {
-        // SAFETY: see loop_.
-        unsafe { &mut *this }.deref_()
+        // SAFETY: see loop_. Intrusive refcount drop via raw pointer; may free
+        // `this`. See ref_ for aliasing rationale.
+        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
     }
 }
 

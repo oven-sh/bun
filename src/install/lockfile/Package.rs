@@ -1784,19 +1784,28 @@ impl Package<u64> {
                             );
                             #[cfg(windows)]
                             {
-                                // `rel` is a shared borrow into the thread-local
-                                // `relative_to_common_path_buf()`. To convert it in place we
-                                // need a `&mut` into that same buffer, but creating one while
-                                // `rel` is live and then reading `rel` afterward is
-                                // Stacked-Borrows UB. Capture the length, drop `rel`, take a
-                                // single fresh `&mut` reborrow, mutate, then downgrade that
-                                // same borrow to `&[u8]` for the append.
+                                // Zig spec (Package.zig:1175-1178) converts
+                                // `relative_to_common_path_buf()[0..rel.len]` in place but then
+                                // returns `rel`. With ALWAYS_COPY=false, `rel` may instead borrow
+                                // RELATIVE_TO_BUF (resolve_path.rs early returns at L450/457/500/
+                                // 522) or be `b""`. Re-deriving a slice of the common-path buf
+                                // would yield stale bytes in those cases. Capture `rel`'s ptr+len,
+                                // copy into the common-path scratch when it isn't already there,
+                                // then convert and return that — preserving the spec's "return
+                                // `rel`'s bytes" contract while avoiding aliasing UB.
                                 let len = rel.len();
-                                let _ = rel;
-                                // SAFETY: thread-local scratch; this is the only live borrow
-                                // on this thread for the remainder of this block.
-                                let buf = unsafe { &mut *path::relative_to_common_path_buf() };
-                                let s: &mut [u8] = &mut buf[0..len];
+                                let rel_ptr = rel.as_ptr();
+                                // SAFETY: thread-local scratch; sole live borrow on this thread
+                                // for the remainder of this block (`rel` is not used after this).
+                                let common = unsafe { &mut *path::relative_to_common_path_buf() };
+                                if rel_ptr != common.as_ptr() {
+                                    // SAFETY: rel_ptr is into a disjoint thread-local
+                                    // (RELATIVE_TO_BUF) or `b""` (len==0 → no read), valid for
+                                    // `len` bytes; `common` is a separate allocation.
+                                    let src = unsafe { core::slice::from_raw_parts(rel_ptr, len) };
+                                    common[..len].copy_from_slice(src);
+                                }
+                                let s: &mut [u8] = &mut common[..len];
                                 path::dangerously_convert_path_to_posix_in_place::<u8>(s);
                                 break 'brk &*s;
                             }

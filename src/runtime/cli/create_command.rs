@@ -130,6 +130,9 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
 
     let npm_args = 2 * usize::from(npm_client.is_some());
     let total = count + npm_args;
+    // Zig fills `alloc(string, total)` by index; in Rust, `set_len` + index-write into
+    // uninitialized `&[u8]` slots is UB (invalid references exist before assignment).
+    // Build with `push` instead — same allocation, no unsafe.
     let mut argv: Vec<&[u8]> = Vec::with_capacity(total);
 
     if let Some(ref client) = npm_client {

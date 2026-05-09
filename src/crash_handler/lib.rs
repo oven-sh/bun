@@ -350,9 +350,42 @@ pub struct StderrWriter;
 pub fn stderr_writer() -> StderrWriter { StderrWriter }
 impl Write for StderrWriter {
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
-        // (`count` is `c_uint` on the Windows CRT, `usize` on POSIX.)
-        unsafe { libc::write(2, bytes.as_ptr().cast(), bytes.len() as _); }
+        #[cfg(windows)]
+        {
+            // Zig spec: `std.fs.File.stderr().writerStreaming(&.{})` — on
+            // Windows that is `GetStdHandle(STD_ERROR_HANDLE)` + kernel32
+            // `WriteFile`, NOT the CRT. Routing through MSVCRT `_write(2,…)`
+            // would (1) text-mode-translate `\n`→`\r\n` and (2) take the CRT
+            // per-fd lock, which can self-deadlock when the VEH crash handler
+            // fires on a thread that faulted *inside* CRT stdio. WriteFile is
+            // lock-free at the kernel32 layer.
+            // `WriteFile` is declared locally because `bun_windows_sys::
+            // kernel32` does not (yet) export it (cf. src/sys/lib.rs).
+            #[link(name = "kernel32")]
+            unsafe extern "system" {
+                fn WriteFile(
+                    hFile: bun_sys::windows::HANDLE,
+                    lpBuffer: *const u8,
+                    nNumberOfBytesToWrite: u32,
+                    lpNumberOfBytesWritten: *mut u32,
+                    lpOverlapped: *mut core::ffi::c_void,
+                ) -> i32;
+            }
+            let h = bun_sys::windows::kernel32::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE);
+            let mut written: u32 = 0;
+            // SAFETY: `h` is the cached stderr HANDLE (or INVALID_HANDLE_VALUE,
+            // in which case WriteFile fails harmlessly); `bytes` is valid for
+            // reads of `len`; `written` is a valid out-pointer; lpOverlapped
+            // is null for synchronous I/O.
+            unsafe {
+                WriteFile(h, bytes.as_ptr(), bytes.len() as u32, &mut written, core::ptr::null_mut());
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
+            unsafe { libc::write(2, bytes.as_ptr().cast(), bytes.len() as _); }
+        }
         Ok(())
     }
 }
@@ -870,6 +903,11 @@ pub fn crash_handler(
                                     core::slice::from_raw_parts(name, len)
                                 };
                                 if write!(writer, "({})", bun_fmt::utf16(span)).is_err() { abort(); }
+                                // NOTE: `GetThreadDescription` heap-allocates `name` and the
+                                // caller is meant to `LocalFree` it. The Zig spec leaks it
+                                // identically (crash_handler.zig:316-322) — this runs on a
+                                // `noreturn` crash path immediately before `ExitProcess(3)`,
+                                // so the leak is intentional.
                             } else {
                                 // SAFETY: GetCurrentThreadId is an infallible Win32 call with no pointer/precondition requirements
                                 if write!(writer, "(thread {})", unsafe { bun_sys::windows::kernel32::GetCurrentThreadId() }).is_err() { abort(); }
@@ -2240,6 +2278,11 @@ fn report(url: &[u8]) {
         };
 
         // we don't care what happens with the process
+        // NOTE: on success `CreateProcessW` returns two open kernel handles in
+        // `process.hProcess` / `process.hThread` that the caller is meant to
+        // `CloseHandle`. The Zig spec leaks them identically (crash_handler.zig:
+        // 1545-1546 `_ = spawn_result;`); `report()` runs immediately before
+        // `crash()` → `ExitProcess(3)`, so the kernel reclaims them anyway.
         let _ = spawn_result;
         let _ = url;
     }

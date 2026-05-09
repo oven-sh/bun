@@ -111,26 +111,28 @@ impl Error {
     }
 
     /// `Some(err)` when a libuv `ReturnCode` is negative; `None` on success.
-    /// Sets `from_libuv` so later display goes through the uv→errno mapper.
+    /// `ReturnCode::errno()` already maps the `UV_E*` code to the POSIX `E`
+    /// discriminant, so `from_libuv` stays at its default `false` (matches Zig
+    /// `ReturnCode.toError`, libuv.zig).
     #[cfg(windows)]
     #[inline]
     pub fn from_uv_rc(rc: crate::windows::libuv::ReturnCode, syscall_tag: Tag) -> Option<Error> {
         rc.errno().map(|e| Error {
             errno: e,
             syscall: syscall_tag,
-            from_libuv: true,
             ..Default::default()
         })
     }
 
     /// `Some(err)` when a libuv `ReturnCodeI64` is negative; `None` on success.
+    /// Matches Zig `ReturnCodeI64.toError` (libuv.zig): `from_libuv` left at
+    /// default `false`.
     #[cfg(windows)]
     #[inline]
     pub fn from_uv_rc64(rc: crate::windows::libuv::ReturnCodeI64, syscall_tag: Tag) -> Option<Error> {
         rc.errno().map(|e| Error {
             errno: e,
             syscall: syscall_tag,
-            from_libuv: true,
             ..Default::default()
         })
     }
@@ -549,7 +551,8 @@ impl bun_core::output::ErrName for &Error {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 pub trait ReturnCodeExt: Sized {
-    /// `Some(err)` (with `from_libuv = true`) when negative; `None` on success.
+    /// `Some(err)` when negative; `None` on success. Mirrors Zig
+    /// `ReturnCode.toError` — `from_libuv` stays at default `false`.
     fn to_error(self, syscall_tag: Tag) -> Option<Error>;
     /// `Maybe(void)`-shape adapter: `Ok(())` on success, `Err` on negative rc.
     /// Mirrors Zig's libuv wrappers (`Pipe.init` etc.) that hand back

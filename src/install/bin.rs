@@ -1027,7 +1027,19 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
     ) {
-        let mut shim_buf = [0u8; 65536];
+        // PORT NOTE: Zig declares `var shim_buf: [65536]u8` and later
+        // `@ptrCast(@alignCast(...))`s it to `[*]u16` inside encode_into. In Zig
+        // `@alignCast` is a *runtime safety check* (panics in safe builds on
+        // misalignment), but in Rust constructing a `&mut [u16]` from a pointer
+        // that is not 2-aligned is *immediate language UB* — the reference
+        // validity invariant requires alignment even if never dereferenced.
+        // `[u8; N]` has `align_of == 1`, so the compiler is free to place it at
+        // an odd address. Force 2-byte alignment at the declaration site so the
+        // `*mut u16` slice construction in `encode_into` is provably sound.
+        #[repr(align(2))]
+        struct ShimBuf([u8; 65536]);
+        let mut shim_buf = ShimBuf([0u8; 65536]);
+        let shim_buf = &mut shim_buf.0;
         let mut read_in_buf = [0u8; WinShimShebang::MAX_SHEBANG_INPUT_LENGTH];
         let mut dest_buf = WPathBuffer::uninit();
         let mut target_buf = WPathBuffer::uninit();

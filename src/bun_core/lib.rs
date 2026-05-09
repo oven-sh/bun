@@ -1380,10 +1380,42 @@ pub mod strings {
     /// `bun.strings.basename` — pass-through to the path-module impl. Lives
     /// here so T1 `bun_paths` (which can't depend on `bun_string`) can call it
     /// via `bun_core::strings`.
+    ///
+    /// PORT NOTE: Zig's `bun.strings.basename` comptime-dispatches to
+    /// `basenameWindows` on Windows (treats `':'` at index 1 as a root
+    /// delimiter: `"C:"` → `""`, `"C:foo"` → `"foo"`, `"C:\\"` → `""`) and
+    /// `basenamePosix` elsewhere. Mirror that split exactly.
+    #[cfg(windows)]
     #[inline]
     pub fn basename(path: &[u8]) -> &[u8] {
-        // PORT NOTE: matches std.fs.path.basenamePosix — last component after
-        // stripping trailing separators; "/" → "".
+        // std.fs.path.basenameWindows — see src/string/immutable/paths.zig.
+        if path.is_empty() { return b""; }
+        let mut end = path.len() - 1;
+        loop {
+            let byte = path[end];
+            if byte == b'/' || byte == b'\\' {
+                if end == 0 { return b""; }
+                end -= 1;
+                continue;
+            }
+            if byte == b':' && end == 1 {
+                return b"";
+            }
+            break;
+        }
+        let mut start = end;
+        end += 1;
+        while path[start] != b'/' && path[start] != b'\\' && !(path[start] == b':' && start == 1) {
+            if start == 0 { return &path[0..end]; }
+            start -= 1;
+        }
+        &path[start + 1..end]
+    }
+    #[cfg(not(windows))]
+    #[inline]
+    pub fn basename(path: &[u8]) -> &[u8] {
+        // std.fs.path.basenamePosix — last component after stripping trailing
+        // '/' separators; "/" → "".
         let mut end = path.len();
         while end > 0 && (path[end - 1] == b'/' || path[end - 1] == b'\\') { end -= 1; }
         if end == 0 { return b""; }

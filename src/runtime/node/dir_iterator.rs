@@ -546,7 +546,9 @@ mod platform {
                     };
                     let filter_ptr: *mut UNICODE_STRING = match self.name_filter {
                         Some((ptr, len)) => {
-                            let len_bytes = (len * 2) as u16;
+                            // Zig spec uses @intCast which panics on overflow in safe builds;
+                            // mirror that with try_from rather than `as u16` silent truncation.
+                            let len_bytes = u16::try_from(len * 2).expect("name_filter too long");
                             filter_us.Length = len_bytes;
                             filter_us.MaximumLength = len_bytes;
                             filter_us.Buffer = ptr as *mut u16;

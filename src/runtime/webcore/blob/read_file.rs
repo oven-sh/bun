@@ -1105,7 +1105,9 @@ impl<'a> ReadFileUV<'a> {
         // SAFETY: req.data was set to *mut Self in on_file_open().
         let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
 
-        if let Some(errno) = unsafe { (*req).result.err_enum_e() } {
+        // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
+        // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
+        if let Some(errno) = this.req.result.err_enum_e() {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error =
                 Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error().into());
@@ -1113,7 +1115,7 @@ impl<'a> ReadFileUV<'a> {
             return;
         }
 
-        let stat = unsafe { (*req).statbuf };
+        let stat = this.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
         if let Data::File(file) = this.store.data_mut() {
@@ -1290,7 +1292,9 @@ impl<'a> ReadFileUV<'a> {
         // SAFETY: req.data was set to *mut Self in queue_read().
         let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
 
-        let result = unsafe { (*req).result };
+        // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
+        // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
+        let result = this.req.result;
 
         if let Some(errno) = result.err_enum_e() {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));

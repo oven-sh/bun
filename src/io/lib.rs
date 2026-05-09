@@ -1476,7 +1476,14 @@ impl FilePollRef {
         #[cfg(not(windows))]
         { unsafe { self.get() }.can_enable_keeping_process_alive() }
         #[cfg(windows)]
-        { unsafe { !self.get().flags.contains(PollFlags::Closed) && self.get().can_ref() } }
+        {
+            // Zig spec: `canEnableKeepingProcessAlive` is POSIX-only (posix_event_loop.zig:656-658);
+            // windows_event_loop.zig has no such method. The previous synthesized expression
+            // `!closed && can_ref()` reduced to `!has_incremented_poll_count` — the OPPOSITE
+            // polarity of the POSIX semantics (`keeps_event_loop_alive && has_incremented_poll_count`).
+            // All callers (PipeWriter PosixWriter, process.rs PollerPosix) are POSIX-only.
+            unreachable!("FilePoll::canEnableKeepingProcessAlive is POSIX-only")
+        }
     }
     #[inline]
     pub fn enable_keeping_process_alive(self, ev: EventLoopHandle) {

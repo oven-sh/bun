@@ -125,14 +125,21 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 #[cfg(windows)]
 pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
-    // Zig used a single buf for both `getFdPath` and `joinZBuf`; Rust borrowck
-    // forbids overlapping &mut, so split into two buffers.
-    let mut dir_buf = PathBuffer::uninit();
+    // Zig uses a SINGLE stack `bun.PathBuffer` for both `getFdPath` and
+    // `joinZBuf` (the join assembles parts into a temp scratch first, so the
+    // in/out alias is benign there). Rust's `&mut`/`&` aliasing rules forbid
+    // passing the same buffer as both `join_z_buf`'s output and an input part,
+    // so we still need two buffers — but on Windows `PathBuffer` is ~96 KB,
+    // and this is called from deep inside `Iterator::next()` (via `lstatat`
+    // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB, zero-
+    // initialized by `PathBuffer::uninit()`) risk overflowing the smaller
+    // worker-thread stacks. Draw both from the per-thread heap pool instead
+    // (uninit, RAII-returned) — zero stack footprint, no zero-fill.
+    let mut dir_buf = bun_paths::path_buffer_pool::get();
     let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
     let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
-    let mut join_buf = PathBuffer::uninit();
+    let mut join_buf = bun_paths::path_buffer_pool::get();
     let statpath = resolve_path::join_z_buf::<platform::Auto>(&mut join_buf[..], parts);
-    // TODO(port): verify on windows — `bun_sys::get_fd_path` / `stat` shapes unchecked off-target.
     Syscall::stat(statpath)
 }
 

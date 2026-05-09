@@ -1100,6 +1100,12 @@ impl WindowsBufferedReader {
         other.flags.insert(WindowsFlags::IS_DONE);
         other._offset = 0;
         // other._buffer / other.source already cleared by mem::take above.
+        // Zig spec (PipeReader.zig:825-831) re-inits `to.*` with a struct literal,
+        // which resets every unlisted field — including `maxbuf` — to its default
+        // (`null`) BEFORE `transferToPipereader`. The field-by-field assigns above
+        // leave `self.maxbuf` untouched, so drop any prior owner-count first to
+        // avoid leaking a MaxBuf ref when the destination already held one.
+        MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         self.set_parent(parent);
     }
@@ -1596,7 +1602,10 @@ impl WindowsBufferedReader {
                 }
                 .to_error(sys::Tag::open)
                 {
-                    bun_sys::syslog!(
+                    // Zig spec PipeReader.zig:1171 routes through
+                    // `bun.windows.libuv.log` (the `uv` debug scope, toggled by
+                    // `BUN_DEBUG_uv=1`), not `SYS`.
+                    bun_sys::windows::libuv::log!(
                         "uv_read_start() = {}",
                         bstr::BStr::new(err.name()),
                     );
@@ -1785,7 +1794,26 @@ impl WindowsBufferedReader {
             self._buffer.set_len(self._buffer.len() + amount_result);
         }
 
-        let _ = self._on_read_chunk(slice, has_more);
+        let should_continue = self._on_read_chunk(slice, has_more);
+
+        // PORT NOTE: Spec parents that stream (IOReader.zig:161,
+        // shell/subproc.zig:1230) call `this.reader.startWithCurrentPipe()`
+        // from inside their `onReadChunk` callback on Windows. The Rust
+        // shell IOReader port cannot re-derive `&mut Self` from inside the
+        // vtable callback (Stacked-Borrows; see shell/IOReader.rs PORT NOTE),
+        // so the call is omitted there. The re-arm half of that call is
+        // already handled by `on_file_read`'s defer block / `uv_read_start`,
+        // but its other side effect — `buffer().clearRetainingCapacity()`
+        // (PipeReader.zig:949) — is load-bearing: without it `_buffer.len`
+        // grows by `amount_result` every chunk and never resets, so a 1 GB
+        // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
+        // the streaming consumer has finished with `slice`.
+        if should_continue
+            && has_more != ReadState::Eof
+            && self.vtable.is_streaming_enabled()
+        {
+            self._buffer.clear();
+        }
 
         if has_more == ReadState::Eof {
             self.close();

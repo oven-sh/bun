@@ -1518,6 +1518,14 @@ impl WindowsNamedPipeListeningContext {
         };
         if result.is_err() {
             // connection dropped
+            // PORT NOTE: Zig (Listener.zig:994) calls `client.deinit()` synchronously here,
+            // freeing the ctx before returning from the libuv connection callback. We instead
+            // release the only ref, which goes 1→0 → schedule_deinit → next-tick free. The
+            // deferred path is kept because `get_accepted_by` may have already `uv_pipe_init`'d
+            // the client's inner handle on the loop; freeing the backing storage in-callback
+            // before `uv_close` completes is the exact pattern libuv forbids. Drop semantics
+            // match Zig's `deinit` (socket.deref() then named_pipe.deinit()), so this is a
+            // timing divergence only.
             // SAFETY: `client` was just allocated via `WindowsNamedPipeContext::create`
             // with refcount==1; releasing the only ref schedules deinit.
             unsafe { WindowsNamedPipeContext::deref(client) };
@@ -1598,7 +1606,7 @@ impl WindowsNamedPipeListeningContext {
         let init_result = this_ref
             .uv_pipe
             .init(unsafe { (*this_ref.vm).uv_loop() }.cast(), false);
-        if init_result.errno().is_some() {
+        if init_result.is_err() {
             return Err(bun_core::err!("FailedToInitPipe"));
         }
         cleanup.1 = true;
@@ -1624,7 +1632,7 @@ impl WindowsNamedPipeListeningContext {
                 Self::uv_on_client_connect,
             )
         };
-        if listen_rc.errno().is_some() {
+        if listen_rc.is_err() {
             return Err(bun_core::err!("FailedToBindPipe"));
         }
         //TODO: add readableAll and writableAll support if someone needs it

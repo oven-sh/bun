@@ -96,7 +96,7 @@ impl JSValueAsyncCtxExt for JSValue {
     }
 }
 
-use bun_string::immutable::inet_pton;
+use bun_string::immutable::ares_inet_pton as inet_pton;
 
 #[allow(dead_code)]
 unsafe extern "C" {
@@ -1302,8 +1302,31 @@ impl UDPSocket {
                             // Windows: zone identifier is a numeric scope id, not an
                             // interface name (`fe80::1%5`). Mirrors Zig
                             // `str.substring(percent+1).toInt32()` + `std.math.cast(u32, ..)`.
-                            if let Ok(s) = core::str::from_utf8(&address_slice[percent + 1..bytes_len]) {
-                                if let Ok(signed) = s.parse::<i32>() {
+                            // toInt32 → BunString__toInt32 → WTF::parseIntegerAllowingTrailingJunk<int32_t>:
+                            // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
+                            // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
+                            let zone = &address_slice[percent + 1..bytes_len];
+                            let mut i = 0usize;
+                            while i < zone.len()
+                                && matches!(zone[i], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
+                            {
+                                i += 1;
+                            }
+                            let neg = i < zone.len() && zone[i] == b'-';
+                            if neg {
+                                i += 1;
+                            }
+                            let digits_start = i;
+                            let mut acc: i64 = 0;
+                            while i < zone.len() && zone[i].is_ascii_digit() {
+                                acc = acc
+                                    .saturating_mul(10)
+                                    .saturating_add(i64::from(zone[i] - b'0'));
+                                i += 1;
+                            }
+                            if i > digits_start {
+                                let signed = if neg { acc.saturating_neg() } else { acc };
+                                if let Ok(signed) = i32::try_from(signed) {
                                     if let Ok(id) = u32::try_from(signed) {
                                         break 'blk id;
                                     }

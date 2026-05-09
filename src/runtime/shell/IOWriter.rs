@@ -414,6 +414,28 @@ impl IOWriter {
             }
             return Err(e);
         }
+        #[cfg(windows)]
+        {
+            // Spec: PipeWriter.zig:919-924 — when `Source::open` produced a uv
+            // pipe/tty, libuv has TAKEN OWNERSHIP of the underlying HANDLE
+            // (`uv_pipe_open`/`uv_tty_init`) and `uv_close` (issued by
+            // `s.writer.close()` in Drop) will close it. Zig records this via
+            // `rawfd.take()` on the `*MovableIfWindowsFd` it passes to
+            // `writer.start`, nulling `this.fd` so `deinitOnMainThread`'s
+            // `if (this.fd.isValid()) this.fd.close()` is a no-op. The Rust
+            // port stores a plain `Fd` and `BaseWindowsPipeWriter::start`
+            // drops the `take()` (TODO at PipeWriter.rs:1277), so disarm the
+            // Drop close here instead. The `Source::File`/`SyncFile` case
+            // (incl. the EBADF→`start_with_file` fallback above, which
+            // `return`s early) keeps `s.fd` valid: with `owns_fd=false`
+            // PipeWriter does NOT close it there, so Drop must.
+            if matches!(
+                s.writer.source,
+                Some(bun_io::Source::Pipe(_) | bun_io::Source::Tty(_))
+            ) {
+                s.fd = Fd::INVALID;
+            }
+        }
         #[cfg(not(windows))]
         {
             use bun_io::FilePollFlag;

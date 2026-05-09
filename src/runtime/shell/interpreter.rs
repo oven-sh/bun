@@ -507,8 +507,10 @@ impl Interpreter {
         // ── cwd / cwd_fd ───────────────────────────────────────────────────
         // Hoisted PathBuffer so the error's borrowed `.path` stays valid until
         // we've converted it to an owned `ShellErr` (Zig hoists for the same
-        // reason).
-        let mut pathbuf = bun_paths::PathBuffer::uninit();
+        // reason). Heap-pooled (not stack) per spec — on Windows
+        // `MAX_PATH_BYTES` is ~96 KiB and `init` runs from JS-triggered paths
+        // that may already be deep on the stack (interpreter.zig:913-914).
+        let mut pathbuf = bun_paths::path_buffer_pool::get();
         let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
             Ok(n) => n,
             Err(e) => return Err(ShellErr::new_sys(e)),

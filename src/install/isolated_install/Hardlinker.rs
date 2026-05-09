@@ -8,8 +8,12 @@ use bun_sys::{self as sys, EntryKind, Fd, FdDirExt, FdExt};
 // `#[cfg]` divergence.
 use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
-type OsAbsPath = AbsPath<OSPathChar>;
-type OsPath = Path<OSPathChar>;
+type OsAbsPath = AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
+type OsPath = Path<
+    OSPathChar,
+    { bun_paths::path_options::Kind::ANY },
+    { bun_paths::path_options::PathSeparators::AUTO },
+>;
 
 pub struct Hardlinker {
     pub src_dir: Fd,

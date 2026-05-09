@@ -410,6 +410,11 @@ pub fn get_errno<T>(_rc: T) -> E {
         return sys.to_e();
     }
 
+    // Zig: `if (bun.windows.WSAGetLastError()) |wsa| return wsa.toE();` where
+    // `WSAGetLastError()` is `?SystemErrno` (already routed through the
+    // Win32Error→errno switch). An unmapped non-zero WSA code yields `null`
+    // there and falls through to `.SUCCESS` — it must NOT surface as
+    // `E::UNKNOWN` (which `Win32ErrorExt::to_e`'s `unwrap_or` would do).
     if let Some(wsa) = windows::wsa_get_last_error() {
         return wsa.to_e();
     }
@@ -422,7 +427,7 @@ pub fn get_errno<T>(_rc: T) -> E {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, strum::FromRepr, enum_map::Enum)]
 pub enum SystemErrno {
     SUCCESS = 0,
     EPERM = 1,
@@ -809,7 +814,28 @@ pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
 impl SystemErrnoInit for i64 {
-    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_c_int(self as c_int) }
+    #[inline] fn into_system_errno(self) -> Option<SystemErrno> {
+        // Zig `init(anytype)` only enters the Win32/uv mapping branch when
+        // `@TypeOf(code) == u16` or `(@TypeOf(code) == c_int and code > 0)`.
+        // For every other signed width (i64 here) it falls through to
+        // `if (code < 0) return init(-code); return @enumFromInt(code);` — a
+        // direct discriminant cast, NOT the Win32Error mapper. Routing i64
+        // through `init_c_int` would mis-map e.g. 13 → EINVAL (Win32
+        // ERROR_INVALID_DATA) instead of EACCES (discriminant 13).
+        //
+        // CHECKED, not `from_raw`: the Rust i64 impl is a cross-platform shim
+        // and some Windows-reachable callers (`Listener.rs`, `udp_socket.rs`)
+        // widened a `c_int` holding `WSAGetLastError()` (e.g. 10048). Those are
+        // NOT valid `SystemErrno` discriminants, so an unchecked transmute is
+        // immediate UB. Validate first; on miss, fall through to the Win32/uv
+        // mapper so WSA codes still resolve (10048 → EADDRINUSE) instead of
+        // silently degrading to `None`.
+        let n = u16::try_from(self.unsigned_abs()).ok()?;
+        if let Some(e) = SystemErrno::from_repr(n) {
+            return Some(e);
+        }
+        SystemErrno::init_c_int(self as c_int)
+    }
 }
 impl SystemErrnoInit for i32 {
     #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_c_int(self) }
@@ -1489,6 +1515,16 @@ pub mod windows {
     /// inherent `to_system_errno()` from the Zig API surfaces here instead.
     pub trait Win32ErrorExt: Copy {
         fn to_system_errno(self) -> Option<SystemErrno>;
+        /// Convenience: Win32 error → `E`, falling back to `E::UNKNOWN` for
+        /// codes not in the Win32→errno table.
+        ///
+        /// **Spec note:** Zig's `Win32Error` has `toSystemErrno()` only — no
+        /// `toE()`. This helper ports the *call-site* idiom from
+        /// `bun.windows.getLastErrno()` (windows.zig:3010), which spells out
+        /// `Win32Error.get().toSystemErrno() orelse SystemErrno.EUNKNOWN`.
+        /// It is NOT appropriate where Zig spec falls through to `.SUCCESS`
+        /// on unmapped codes (e.g. the WSA path of `getErrno`); those callers
+        /// must use `to_system_errno()` and choose their own fallback.
         #[inline]
         fn to_e(self) -> E {
             self.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::UNKNOWN)
@@ -1501,12 +1537,16 @@ pub mod windows {
         }
     }
 
-    /// `bun.windows.WSAGetLastError()` wrapped to `Option<Win32Error>` —
-    /// `None` when no error pending (`0`).
+    /// Port of `bun.windows.WSAGetLastError() ?SystemErrno` (windows.zig:3303).
+    ///
+    /// Zig: `return SystemErrno.init(@intFromEnum(ws2_32.WSAGetLastError()));`
+    /// — feeds the raw WSA code (`c_int`) through the Win32→errno switch.
+    /// Returns `Some(SUCCESS)` for `0` and `None` for any non-zero code with
+    /// no mapping (e.g. `WSANOTINITIALISED`/`WSAEDISCON`); callers that need
+    /// a success-on-unmapped fallthrough (`getErrno`) rely on that `None`.
     #[inline]
-    pub fn wsa_get_last_error() -> Option<Win32Error> {
-        let e = WSAGetLastError();
-        if e == 0 { None } else { Some(Win32Error(e as u16)) }
+    pub fn wsa_get_last_error() -> Option<SystemErrno> {
+        SystemErrno::init_c_int(WSAGetLastError())
     }
 
     /// `bun.windows.translateNTStatusToErrno` (windows.zig) — moved DOWN so

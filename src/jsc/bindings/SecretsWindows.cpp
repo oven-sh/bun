@@ -111,6 +111,12 @@ static String getWindowsErrorMessage(DWORD errorCode)
 
     String errorMessage;
     if (errorBuffer) {
+        // FormatMessageW appends a trailing CRLF; strip it so the JS-level
+        // error.message stays single-line (matches Darwin/Linux backends).
+        size_t len = wcslen(errorBuffer);
+        while (len > 0 && (errorBuffer[len - 1] == L'\r' || errorBuffer[len - 1] == L'\n')) {
+            errorBuffer[--len] = L'\0';
+        }
         errorMessage = wideCharToString(errorBuffer);
         LocalFree(errorBuffer);
     }

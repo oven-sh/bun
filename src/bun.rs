@@ -278,7 +278,17 @@ pub fn platform_iovec_const_create(input: &[u8]) -> PlatformIOVecConst {
 pub fn platform_iovec_to_slice(iovec: &PlatformIOVec) -> &mut [u8] {
     #[cfg(windows)]
     {
-        bun_sys::windows::libuv::uv_buf_t::slice(iovec)
+        // Mirror the POSIX arm: build the mut slice from raw parts. We cannot
+        // call `uv_buf_t::slice` (returns `&[u8]`) nor `slice_mut` (needs
+        // `&mut self`); Zig's `uv_buf_t.slice` returned a mutable `[]u8`.
+        // Guard `(null, 0)` — `from_raw_parts_mut` requires a non-null, aligned
+        // pointer even for zero-length slices, and libuv routinely hands back
+        // `{len:0, base:NULL}`.
+        if iovec.len == 0 || iovec.base.is_null() {
+            return &mut [];
+        }
+        // SAFETY: iovec.base/len describe a valid mutable buffer owned by caller
+        unsafe { core::slice::from_raw_parts_mut(iovec.base, iovec.len as usize) }
     }
     #[cfg(not(windows))]
     unsafe {
@@ -634,7 +644,7 @@ pub fn open_dir(dir: bun_sys::Dir, path_: &bun_str::ZStr) -> Result<bun_sys::Dir
         let res = sys::open_dir_at_windows_a(
             FD::from_std_dir(dir),
             path_.as_bytes(),
-            sys::OpenDirOptions { iterable: true, can_rename_or_delete: true, read_only: true },
+            sys::WindowsOpenDirOptions { iterable: true, can_rename_or_delete: true, read_only: true, ..Default::default() },
         )
         .unwrap()?;
         Ok(res.std_dir())
@@ -660,7 +670,7 @@ pub fn open_dir_no_renaming_or_deleting_windows(
     let res = sys::open_dir_at_windows_a(
         dir,
         path_.as_bytes(),
-        sys::OpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true },
+        sys::WindowsOpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true, ..Default::default() },
     )
     .unwrap()?;
     Ok(res.std_dir())
@@ -672,7 +682,7 @@ pub fn open_dir_a(dir: bun_sys::Dir, path_: &[u8]) -> Result<bun_sys::Dir, bun_c
         let res = sys::open_dir_at_windows_a(
             FD::from_std_dir(dir),
             path_,
-            sys::OpenDirOptions { iterable: true, can_rename_or_delete: true, read_only: true },
+            sys::WindowsOpenDirOptions { iterable: true, can_rename_or_delete: true, read_only: true, ..Default::default() },
         )
         .unwrap()?;
         Ok(res.std_dir())
@@ -696,7 +706,7 @@ pub fn open_dir_for_iteration(dir: FD, path_: &[u8]) -> bun_sys::Result<FD> {
         sys::open_dir_at_windows_a(
             dir,
             path_,
-            sys::OpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true },
+            sys::WindowsOpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true, ..Default::default() },
         )
     }
     #[cfg(not(windows))]
@@ -711,7 +721,7 @@ pub fn open_dir_for_iteration_os_path(dir: FD, path_: &[OSPathChar]) -> bun_sys:
         sys::open_dir_at_windows(
             dir,
             path_,
-            sys::OpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true },
+            sys::WindowsOpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true, ..Default::default() },
         )
     }
     #[cfg(not(windows))]
@@ -725,7 +735,7 @@ pub fn open_dir_absolute(path_: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> 
     let fd = sys::open_dir_at_windows_a(
         invalid_fd,
         path_,
-        sys::OpenDirOptions { iterable: true, can_rename_or_delete: true, read_only: true },
+        sys::WindowsOpenDirOptions { iterable: true, can_rename_or_delete: true, read_only: true, ..Default::default() },
     )
     .unwrap()?;
     #[cfg(not(windows))]
@@ -740,7 +750,7 @@ pub fn open_dir_absolute_not_for_deleting_or_renaming(
     let fd = sys::open_dir_at_windows_a(
         invalid_fd,
         path_,
-        sys::OpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true },
+        sys::WindowsOpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true, ..Default::default() },
     )
     .unwrap()?;
     #[cfg(not(windows))]
@@ -959,7 +969,11 @@ pub fn get_fd_path_z<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut bun_
 /// TODO: move to bun.sys and add a method onto FD
 #[cfg(windows)]
 pub fn get_fd_path_w<'a>(fd: FD, buf: &'a mut WPathBuffer) -> Result<&'a mut [u16], bun_core::Error> {
-    bun_sys::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), buf)
+    // `GetFinalPathNameByHandle` yields `GetFinalPathNameByHandleError`; map to
+    // the interned tag set so the declared `bun_core::Error` return type holds
+    // (Zig propagated via `try`, where the error-set is structural).
+    bun_sys::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), &mut buf[..])
+        .map_err(|e| bun_core::Error::from_name(<&'static str>::from(e)))
 }
 #[cfg(not(windows))]
 pub fn get_fd_path_w<'a>(_fd: FD, _buf: &'a mut WPathBuffer) -> Result<&'a mut [u16], bun_core::Error> {
@@ -1770,7 +1784,15 @@ pub fn errno_to_zig_err(err: i32) -> bun_core::Error {
             debug_assert!(num > 0);
         }
     }
-    if let Some(e) = bun_sys::SystemErrno::from_raw(num) {
+    // Direct discriminant lookup (Zig: `if (num > 0 and num < errno_map.len)
+    // return errno_map[num]`). `num` is a SystemErrno discriminant on every
+    // target — Windows callers (e.g. `get_last_error()`) pass `get_last_errno()
+    // as i32`, NOT a Win32 error code. The `i64` dispatch hits the
+    // direct-discriminant path on both targets; routing Windows through the
+    // `i32` impl (`init_c_int` → Win32-error table) would mis-map e.g. `13`
+    // (EACCES) → ERROR_INVALID_DATA → EINVAL.
+    let mapped = bun_sys::SystemErrno::init(num as i64);
+    if let Some(e) = mapped {
         return bun_core::Error::intern(e.name());
     }
     bun_core::err!("Unexpected")

@@ -574,7 +574,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // passed to libuv) and take SOLE ownership from
         // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
         // block below and `filter_run.rs` for the canonical pattern.
-        let spawn_options = SpawnOptions {
+        // `mut` only for the Windows error-path `.deinit()` below.
+        #[allow(unused_mut)]
+        let mut spawn_options = SpawnOptions {
             stdin: if (*this).foreground {
                 bun_spawn::Stdio::Inherit
             } else {
@@ -638,15 +640,37 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         (*manager)
             .active_lifecycle_scripts
             .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-        let mut spawned = bun_spawn::spawn_process(
+        let mut spawned = match bun_spawn::spawn_process(
             &spawn_options,
             // argv is `[*const c_char; 4]` with trailing null — exactly the
             // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
             argv.as_mut_ptr().cast(),
             (*this).envp.as_ptr().cast::<*const c_char>(),
-        )??;
-        // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer `!Maybe(Spawned)`.
-        // Modeled here as `Result<bun_sys::Result<Spawned>, _>`, hence `??`. Verify in Phase B.
+        ) {
+            Ok(Ok(s)) => s,
+            res => {
+                // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer
+                // `!Maybe(Spawned)`. Modeled here as `Result<bun_sys::Result<Spawned>, _>`.
+                #[cfg(windows)]
+                {
+                    // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
+                    // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
+                    // error return (uv_pipe_init failure, uv_spawn failure) ownership
+                    // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
+                    // and `uv_close`+free them explicitly here — otherwise the heap
+                    // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
+                    // linked in the libuv loop's handle queue forever). Zig avoided
+                    // this by stashing the pipes in `this.{stdout,stderr}.source`
+                    // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
+                    // the Rust ordering moved allocation inline (see PORT NOTE above)
+                    // and must therefore handle the error path explicitly.
+                    spawn_options.stdout.deinit();
+                    spawn_options.stderr.deinit();
+                }
+                res??;
+                unreachable!();
+            }
+        };
 
         #[cfg(unix)]
         {
@@ -1070,6 +1094,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 break 'try_delete_dir;
             };
             let _ = dir.delete_tree(basename);
+            // PORT NOTE: Zig (lifecycle_script_runner.zig:533-534) leaks this fd
+            // too — fixed here since this path returns to the install loop without
+            // exiting, so the HANDLE/fd would otherwise persist for the rest of
+            // the install on every failed optional-dependency lifecycle script.
+            dir.close();
         }
 
         // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.

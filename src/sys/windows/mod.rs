@@ -310,6 +310,13 @@ pub const FILE_ACTION_RENAMED_NEW_NAME: DWORD = 0x0000_0005;
 bitflags::bitflags! {
     /// `std.os.windows.FileNotifyChangeFilter` — `dwNotifyFilter` for
     /// `ReadDirectoryChangesW` (`winnt.h` `FILE_NOTIFY_CHANGE_*`).
+    ///
+    /// `#[repr(transparent)]` is required: this newtype is passed by value
+    /// across the `extern "system"` boundary as the `dwNotifyFilter: DWORD`
+    /// parameter of `ReadDirectoryChangesW`. bitflags 2.x does NOT add a repr
+    /// automatically; without it the struct has Rust's default (unspecified)
+    /// layout and is improper_ctypes / UB at the FFI boundary.
+    #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct FileNotifyChangeFilter: DWORD {
         const FILE_NAME   = 0x0000_0001;
@@ -3675,9 +3682,10 @@ pub fn exe_path_w() -> &'static bun_str::WStr {
     // `peb()` lives in `bun_core::windows_sys` (tier-0; needs inline asm),
     // not `bun_windows_sys`.
     unsafe {
-        let image_path = &bun_core::windows_sys::peb().ProcessParameters.ImagePathName;
-        let len = (image_path.Length as usize) / 2;
-        bun_str::WStr::from_raw(image_path.Buffer, len)
+        let pp = (*bun_core::windows_sys::peb()).ProcessParameters;
+        let image_path = core::ptr::addr_of!((*pp).ImagePathName);
+        let len = ((*image_path).Length as usize) / 2;
+        bun_str::WStr::from_raw((*image_path).Buffer, len)
     }
 }
 
@@ -3877,7 +3885,13 @@ pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(
 }
 
 pub fn WSAGetLastError() -> Option<E> {
-    SystemErrno::init(u32::try_from(win32::ws2_32::WSAGetLastError()).expect("int cast"))
+    // Spec note (windows.zig:3303): Zig returns `?SystemErrno`; this port
+    // intentionally re-types to `Option<E>` because all Rust callers consume
+    // `E`. The `as u32` cast mirrors Zig's infallible `@intFromEnum` —
+    // `WSAGetLastError()` is documented to return non-negative values, so a
+    // checked `try_from().expect()` would only add a panic path the spec
+    // never had.
+    SystemErrno::init(win32::ws2_32::WSAGetLastError() as u32)
         .map(SystemErrno::to_e)
 }
 
@@ -3941,6 +3955,7 @@ pub fn GetFinalPathNameByHandle(
     Ok(ret)
 }
 
+const GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT: DWORD = 0x00000002;
 const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: DWORD = 0x00000004;
 
 pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
@@ -3948,7 +3963,13 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
     // SAFETY: addr cast to LPCWSTR per Win32 docs when FROM_ADDRESS flag set
     let rc = unsafe {
         externs::GetModuleHandleExW(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            // UNCHANGED_REFCOUNT: per MSDN, GetModuleHandleExW increments the
+            // module's reference count unless this flag is set. Callers only
+            // inspect the returned HMODULE (crash-handler symbolication) and
+            // never FreeLibrary it, so omitting the flag leaks one refcount
+            // per call. (The Zig spec at windows.zig:3355 has the same
+            // omission — fixed here intentionally.)
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             // Docs: when FROM_ADDRESS is set, lpModuleName is "an address in
             // the module" — typed as LPCWSTR but really an opaque pointer.
             addr as *mut c_void,
@@ -4007,7 +4028,15 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         windows::FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT // would we ever want to delete the target instead?
     };
 
-    let path_len_bytes = u16::try_from(sub_path_w.len() * 2).expect("int cast");
+    // UNICODE_STRING.Length is `u16` (bytes). Zig's `@intCast` here
+    // (windows.zig:3402) is unchecked-in-release; in Rust the equivalent
+    // `try_from().expect()` would panic on any path ≥ 32768 wide chars.
+    // Surface NAMETOOLONG instead so NtCreateFile's caller gets a recoverable
+    // error rather than an abort.
+    let path_len_bytes = match u16::try_from(sub_path_w.len() * 2) {
+        Ok(n) => n,
+        Err(_) => return bun_sys::Result::errno(E::NAMETOOLONG, bun_sys::Tag::open),
+    };
     let mut nt_name = UNICODE_STRING {
         Length: path_len_bytes,
         MaximumLength: path_len_bytes,
@@ -4015,7 +4044,12 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         Buffer: sub_path_w.as_ptr().cast_mut().cast::<u16>(),
     };
 
-    if sub_path_w[0] == b'.' as u16 && sub_path_w[1] == 0 {
+    // Guard len ≥ 2: Zig's `sub_path_w[0] == '.' and sub_path_w[1] == 0`
+    // (windows.zig:3410) is unguarded and reads garbage in ReleaseFast for
+    // len < 2; Rust would hard-panic on the bounds check instead. In practice
+    // callers pass converted NT paths (always ≥ 2 elems), but make the
+    // contract explicit so release-build behavior matches.
+    if sub_path_w.len() >= 2 && sub_path_w[0] == b'.' as u16 && sub_path_w[1] == 0 {
         // Windows does not recognize this, but it does work with empty string.
         nt_name.Length = 0;
     }
@@ -4211,19 +4245,24 @@ pub fn edit_win32_binary_subsystem(fd: bun_sys::File, subsystem: Subsystem) -> R
     if unsafe { externs::SetFilePointerEx(fd.handle.cast(), PE_HEADER_OFFSET_LOCATION, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
-    // Zig: `fd.reader().readInt(u32, .little)` — read exactly 4 bytes.
+    // Zig: `fd.reader().readInt(u32, .little)` — std.io.Reader loops until
+    // exactly 4 bytes are read (read-exact semantics). Use `read_all` (which
+    // retries on short reads) rather than a single `read()` syscall, so a
+    // short read isn't mis-reported as EndOfStream.
     let mut off_bytes = [0u8; 4];
-    let n = fd.read(&mut off_bytes).map_err(bun_core::Error::from)?;
+    let n = fd.read_all(&mut off_bytes).map_err(bun_core::Error::from)?;
     if n != 4 { return Err(bun_core::err!("EndOfStream")); }
     let offset: u32 = u32::from_le_bytes(off_bytes);
     // SAFETY: fd.handle is a valid Windows HANDLE
     if unsafe { externs::SetFilePointerEx(fd.handle.cast(), offset as i64 + SUBSYSTEM_OFFSET, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
-    // Zig: `fd.writer().writeInt(u16, ..., .little)` — write exactly 2 bytes.
+    // Zig: `fd.writer().writeInt(u16, ..., .little)` — std.io.Writer loops
+    // until all bytes are written (write-all semantics). Use `write_all`
+    // rather than a single `write()` + length check so a short write is
+    // retried instead of failing.
     let sub_bytes = (subsystem as u16).to_le_bytes();
-    let n = fd.write(&sub_bytes).map_err(bun_core::Error::from)?;
-    if n != 2 { return Err(bun_core::err!("ShortWrite")); }
+    fd.write_all(&sub_bytes).map_err(bun_core::Error::from)?;
     Ok(())
 }
 
@@ -4489,9 +4528,11 @@ pub fn become_watcher_manager() -> ! {
     // SAFETY: null args allowed
     let job = unsafe { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
     if job.is_null() {
-        let err = kernel32::GetLastError();
+        // Zig (windows.zig:3696): `@tagName(GetLastError())` — print the
+        // Win32 error name, not the raw DWORD.
+        let err = Win32Error(kernel32::GetLastError() as u16);
         bun_core::Output::panic(format_args!(
-            "Could not create watcher Job Object: {}",
+            "Could not create watcher Job Object: {:?}",
             err
         ));
     }
@@ -4511,9 +4552,9 @@ pub fn become_watcher_manager() -> ! {
         )
     } == 0
     {
-        let err = kernel32::GetLastError();
+        let err = Win32Error(kernel32::GetLastError() as u16);
         bun_core::Output::panic(format_args!(
-            "Could not configure watcher Job Object: {}",
+            "Could not configure watcher Job Object: {:?}",
             err
         ));
     }
@@ -4522,8 +4563,16 @@ pub fn become_watcher_manager() -> ! {
         if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
             bun_core::handle_error_return_trace(err);
             if err == bun_core::err!("Win32Error") {
-                let last = GetLastError();
-                bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", last));
+                // Zig (windows.zig:3721): `@tagName(GetLastError())`. Note:
+                // this read is best-effort — Drop guards inside
+                // `spawn_watcher_child` (FreeEnvironmentStringsW, Vec drops
+                // via HeapFree) may have clobbered the thread's last-error
+                // before we get here. The Zig spec has the same ordering
+                // hazard (`defer` runs before `catch`); a proper fix would
+                // thread the captured Win32 code through the error payload,
+                // which requires changing `spawn_watcher_child`'s return type.
+                let last = Win32Error(GetLastError() as u16);
+                bun_core::Output::panic(format_args!("Failed to spawn process: {:?}\n", last));
             }
             bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err.name()));
         }
@@ -4534,10 +4583,12 @@ pub fn become_watcher_manager() -> ! {
         let mut exit_code: DWORD = 0;
         // SAFETY: hProcess valid, exit_code is out-param
         if unsafe { externs::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) } == 0 {
-            let err = GetLastError();
+            // Capture before NtClose — closing the handle may overwrite the
+            // thread's last-error.
+            let err = Win32Error(GetLastError() as u16);
             // SAFETY: hProcess owned by this fn; closing on error path
             unsafe { let _ = externs::NtClose(procinfo.hProcess); }
-            bun_core::Output::panic(format_args!("Failed to get exit code of child process: {}\n", err));
+            bun_core::Output::panic(format_args!("Failed to get exit code of child process: {:?}\n", err));
         }
         // SAFETY: hProcess owned by this fn
         unsafe { let _ = externs::NtClose(procinfo.hProcess); }
@@ -4779,7 +4830,15 @@ pub fn move_opened_file_at(
         debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
     }
 
-    const STRUCT_BUF_LEN: usize = size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::MAX_PATH_BYTES - 1);
+    // Zig (windows.zig:3933) sizes this against `bun.MAX_PATH_BYTES`
+    // (≈98 KB on Windows: PATH_MAX_WIDE*3+1, the UTF-8 worst case). The
+    // FileName tail here is UTF-16, so the correct cap is `PATH_MAX_WIDE * 2`
+    // bytes — using the UTF-8 multiplier just wastes ~32 KB of stack on a
+    // function called from already-deep install/bundler call chains. This
+    // intentionally diverges from the Zig constant (which has the same
+    // over-allocation) without shrinking the accepted path length: any
+    // `new_file_name.len() <= PATH_MAX_WIDE` still fits.
+    const STRUCT_BUF_LEN: usize = size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::PATH_MAX_WIDE * 2 - 1);
     #[repr(align(8))] // align_of FILE_RENAME_INFORMATION_EX
     struct AlignedBuf([u8; STRUCT_BUF_LEN]);
     let mut rename_info_buf = MaybeUninit::<AlignedBuf>::uninit();
@@ -4867,8 +4926,14 @@ pub fn move_opened_file_at_loose(
         new_path
     };
 
-    if let Some(last_slash) = new_path.iter().rposition(|&c| c == b'\\' as u16) {
-        let dirname = &new_path[0..last_slash];
+    // Search the *stripped* path for the directory separator. The Zig spec
+    // (windows.zig:3987) searches `new_path` here, which for input ".\\foo"
+    // finds the leading-dot-slash backslash and yields dirname="." → rejected
+    // by NtCreateFile. Searching `without_leading_dot_slash` lets ".\\foo"
+    // fall through to the easy-mode branch below as intended. (Upstream Zig
+    // has the same latent bug; fixed here intentionally.)
+    if let Some(last_slash) = without_leading_dot_slash.iter().rposition(|&c| c == b'\\' as u16) {
+        let dirname = &without_leading_dot_slash[0..last_slash];
         let fd = match bun_sys::open_dir_at_windows(new_dir_fd, dirname, bun_sys::WindowsOpenDirOptions { can_rename_or_delete: true, iterable: false, ..Default::default() }) {
             bun_sys::Result::Err(e) => return bun_sys::Result::Err(e),
             bun_sys::Result::Ok(fd) => fd,
@@ -4876,7 +4941,7 @@ pub fn move_opened_file_at_loose(
         // RAII close
         let _close = bun_sys::CloseOnDrop::new(fd);
 
-        let basename = &new_path[last_slash + 1..];
+        let basename = &without_leading_dot_slash[last_slash + 1..];
         return move_opened_file_at(src_fd, fd, basename, replace_if_exists);
     }
 
@@ -4998,7 +5063,17 @@ pub fn translate_ntstatus_to_errno(status: NTSTATUS) -> E {
 }
 
 /// `bun.windows.getenvW` — read a UTF-16 env var into an owned `Vec<u16>`.
+///
+/// SAFETY CONTRACT: `name` MUST be NUL-terminated (last element == `0`).
+/// `GetEnvironmentVariableW` takes `LPCWSTR` and reads until it hits a NUL
+/// WCHAR; the Zig spec this ports (`std.process.getenvW`) encodes that in the
+/// type system as `[:0]const u16`, which Rust's `&[u16]` does not. Passing a
+/// non-terminated slice causes Win32 to read past the buffer.
 pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
+    debug_assert!(
+        name.last() == Some(&0),
+        "getenv_w: `name` must be NUL-terminated (Zig: `[:0]const u16`)"
+    );
     let mut buf = vec![0u16; 256];
     loop {
         // SAFETY: name and buf are valid for the call's duration.

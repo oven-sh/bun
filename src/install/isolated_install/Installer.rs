@@ -906,8 +906,8 @@ impl Task {
 
                                         let mut hardlinker = Hardlinker::init(
                                             folder_dir,
-                                            src.into_sep::<{ PathSeparators::ANY }>(),
-                                            dest.into_sep::<{ PathSeparators::ANY }>(),
+                                            src,
+                                            dest,
                                             &[bun_paths::os_path_literal!("node_modules")],
                                         )?;
 
@@ -1266,8 +1266,8 @@ impl Task {
 
                                 let mut hardlinker = Hardlinker::init(
                                     cached_package_dir.unwrap(),
-                                    src.into_sep::<{ PathSeparators::ANY }>(),
-                                    dest_subpath.into_sep::<{ PathSeparators::ANY }>(),
+                                    src,
+                                    dest_subpath,
                                     &[],
                                 )?;
 

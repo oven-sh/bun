@@ -6380,7 +6380,14 @@ pub trait FileOpener: Sized {
             self.set_open_callback(callback);
             let loop_ = self.loop_();
             let self_ptr: *mut Self = core::ptr::from_mut(self);
-            let req = self.req();
+            // Derive `req` THROUGH `self_ptr` rather than via a fresh `self.req()`
+            // reborrow. Under Stacked Borrows, a direct `self.req()` here would
+            // create a sibling `&mut` that pops `self_ptr`'s tag, making the
+            // later deref in `wrapped_callback` (via `req.data`) UB. Going
+            // through the raw pointer keeps the reborrow as a child of
+            // `self_ptr`, so its provenance survives until the callback fires.
+            // SAFETY: `self_ptr` was just derived from a live `&mut self`.
+            let req = unsafe { (*self_ptr).req() };
             // Stash `self` on the request BEFORE dispatch. libuv never touches
             // `req.data`, so pre-setting is safe; doing it after `uv_fs_open`
             // is a UAF when the call fails synchronously and `callback` frees

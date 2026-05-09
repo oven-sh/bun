@@ -2993,7 +2993,11 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                             CHAR_COLON as u16,
                             0,
                         ];
-                        break 'brk &fast_key[..3];
+                        // Slice the WHOLE 4-element array (not `..3`): `getenv_w`
+                        // forwards `.as_ptr()` to `GetEnvironmentVariableW`, which
+                        // reads index 3 (the NUL). A `..3` slice would not carry
+                        // provenance over that byte under Stacked/Tree Borrows.
+                        break 'brk &fast_key[..];
                     }
                     buf_size = 1;
                     // Reuse buf2 for the env key because it's used to get the path.
@@ -3002,17 +3006,29 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                     buf_size += resolved_device_len;
                     memmove(&mut buf2[buf_offset..buf_size], &tmp_buf[0..resolved_device_len]);
                     if T::IS_U16 {
+                        // `getenv_w` requires the NUL be addressable via the slice's
+                        // pointer (it forwards `.as_ptr()` as LPCWSTR). `buf2` is a
+                        // reused arena buffer with arbitrary prior contents past
+                        // `buf_size`, so write the terminator explicitly. Zig spec:
+                        // path.zig declares `key_w: [*:0]const u16` and the sentinel
+                        // is part of the object.
+                        buf2[buf_size] = T::from_u8(0);
                         // SAFETY: T == u16 when IS_U16; same layout as &[u16].
                         break 'brk unsafe {
-                            core::slice::from_raw_parts(buf2.as_ptr().cast::<u16>(), buf_size)
+                            core::slice::from_raw_parts(buf2.as_ptr().cast::<u16>(), buf_size + 1)
                         };
                     }
                     // SAFETY: T == u8 when !IS_U16; same layout as &[u8].
                     let key8 = unsafe {
                         core::slice::from_raw_parts(buf2.as_ptr().cast::<u8>(), buf_size)
                     };
-                    let widened = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8);
-                    &*widened
+                    // Zig spec (path.zig:2480-2482) writes `u16Buf[bufSize] = 0;`
+                    // after widening so the LPCWSTR is properly terminated regardless
+                    // of `WPathBuffer::uninit()`'s init state. Do the same here —
+                    // don't rely on `uninit()` happening to zero-fill today.
+                    let n = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8).len();
+                    u16_buf[n] = 0;
+                    &u16_buf[..=n]
                 };
                 // Zig's std.posix.getenvW has logic to support keys like `=${resolvedDevice}`:
                 // https://github.com/ziglang/zig/blob/7bd8b35a3dfe61e59ffea39d464e84fbcdead29a/lib/std/os.zig#L2126-L2130

@@ -25,6 +25,8 @@ use crate::api::bun_process::{self as spawn_process, Process, Rusage, Status};
 use crate::api::bun_process::ExtraPipe;
 #[cfg(windows)]
 use crate::api::bun_process::WindowsStdioResult;
+#[cfg(windows)]
+use bun_libuv_sys::UvHandle as _;
 use crate::api::bun::Terminal;
 use crate::api::js_bun_spawn_bindings;
 use crate::jsc::ipc as IPC;

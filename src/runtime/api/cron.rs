@@ -387,6 +387,7 @@ impl CronRegisterJob {
     // -- Linux --
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(not(windows))]
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -991,11 +992,16 @@ impl CronRemoveJob {
                     // removal of a non-existent job should resolve without error.
                     || (cfg!(windows) && s.state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
+                    // Owned copy: `final_buffer()` is `&mut self` and would
+                    // alias `s.set_err` below. Copy the trimmed bytes out.
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = bun_string::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_string::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
-                    );
+                    )
+                    .to_vec();
+                    #[cfg(windows)]
+                    let stderr_output: &[u8] = stderr_owned.as_slice();
                     #[cfg(not(windows))]
                     let stderr_output: &[u8] = b"";
                     if !stderr_output.is_empty() {
@@ -1110,6 +1116,7 @@ impl CronRemoveJob {
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(not(windows))]
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };

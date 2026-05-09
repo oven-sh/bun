@@ -203,8 +203,11 @@ impl WindowsNamedPipe {
             WriteStatus::Drained => {
                 // unref after sending all data
                 #[cfg(windows)]
-                if let Some(source) = self.writer.source.as_ref() {
-                    source.pipe.unref();
+                if let Some(source) = self.writer.source.as_mut() {
+                    // Zig: `source.pipe.unref()` — Rust `Source` is an enum;
+                    // `unref()` matches the active variant (always `Pipe` here
+                    // via `start_with_pipe`).
+                    source.unref();
                 }
             }
             WriteStatus::EndOfFile => {
@@ -293,8 +296,10 @@ impl WindowsNamedPipe {
             if !bytes.is_empty() {
                 // ref because we have pending data
                 #[cfg(windows)]
-                if let Some(source) = self.writer.source.as_ref() {
-                    source.pipe.r#ref();
+                if let Some(source) = self.writer.source.as_mut() {
+                    // Zig: `source.pipe.ref()` — see `on_write` for the
+                    // enum-vs-union note.
+                    source.ref_();
                 }
                 if self.flags.disconnected() {
                     // enqueue to be sent after connecting
@@ -332,12 +337,11 @@ impl WindowsNamedPipe {
             let Some(stream) = self.writer.get_stream() else {
                 return false;
             };
-            let read_start_result = stream.read_start(
-                self,
-                Self::on_read_alloc,
-                Self::on_read_error,
-                Self::on_read,
-            );
+            // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
+            // (returned by `writer.get_stream()`); the `StreamReader` impl
+            // below routes the trampolines back to `self`.
+            let read_start_result = unsafe { (*stream).read_start_ctx::<Self>(self) }
+                .to_result(bun_sys::Tag::listen);
             if read_start_result.is_err() {
                 return false;
             }

@@ -275,7 +275,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
     /// returning, so the extra ref never holds the process open.
     #[cfg(windows)]
-    pub fn adopt_pipe(&mut self, _vm: &mut VirtualMachine, mut pipe: Box<uv::Pipe>) -> bool {
+    pub fn adopt_pipe(&mut self, _vm: *const VirtualMachine, mut pipe: Box<uv::Pipe>) -> bool {
         if let Err(e) = pipe
             .read_start(
                 core::ptr::from_mut(self),

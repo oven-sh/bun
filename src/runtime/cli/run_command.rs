@@ -1737,7 +1737,8 @@ impl RunCommand {
             let converted = strings::convert_utf16_to_utf8_in_buffer(
                 &mut target_path_buffer,
                 &temp_path_buffer[..len as usize],
-            )?;
+            )
+            .map_err(|_| bun_core::err!("InvalidUtf16"))?;
 
             const FILE_NAME: &str = const_format::concatcp!(
                 "bun-node",
@@ -1873,10 +1874,10 @@ impl RunCommand {
                 unsafe { target_path_buffer.as_mut_ptr().add(prefix.len()) },
             );
             if len == 0 {
-                Output::debug(
+                Output::debug(format_args!(
                     "Failed to create temporary node dir: {}",
-                    (sys::windows::get_last_error_tag(),),
-                );
+                    sys::windows::get_last_error_tag(),
+                ));
                 return Ok(());
             }
             let len = len as usize;
@@ -1933,7 +1934,7 @@ impl RunCommand {
                 if sys::windows::CreateHardLinkW(
                     file_slice.as_ptr(),
                     image_path.as_ptr(),
-                    std::ptr::null_mut(),
+                    None,
                 ) == 0
                 {
                     match sys::windows::get_last_win32_error() {
@@ -1942,14 +1943,23 @@ impl RunCommand {
                             {
                                 debug_assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);
                                 target_path_buffer[dir_slice_len] = 0;
-                                let _ = sys::mkdir_w(&target_path_buffer[..dir_slice_len], 0);
+                                // SAFETY: we just wrote a NUL terminator at
+                                // `dir_slice_len`; `target_path_buffer[..dir_slice_len]`
+                                // is initialised wide-string data → valid `WStr`.
+                                let dir_w = unsafe {
+                                    bun_core::WStr::from_raw(
+                                        target_path_buffer.as_ptr(),
+                                        dir_slice_len,
+                                    )
+                                };
+                                let _ = sys::mkdir_w(dir_w);
                                 target_path_buffer[dir_slice_len] = b'\\' as u16;
                             }
 
                             if sys::windows::CreateHardLinkW(
                                 file_slice.as_ptr(),
                                 image_path.as_ptr(),
-                                std::ptr::null_mut(),
+                                None,
                             ) == 0
                             {
                                 return Ok(());

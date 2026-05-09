@@ -187,8 +187,7 @@ impl Worker {
             // own [u32 len][u8 kind] frames ride inside it unchanged.
             use bun_sys::windows::libuv as uv;
 
-            // SAFETY: all-zero is a valid uv::Pipe (matches Zig std.mem.zeroes).
-            let ipc_pipe = bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+            let ipc_pipe = bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
             // Zig spec: `errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();`
             // The guard owns the raw Box ptr; `close_and_destroy` handles both
             // never-initialized (loop_ null → free directly) and initialized
@@ -206,10 +205,8 @@ impl Worker {
             this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                // SAFETY: all-zero is a valid uv::Pipe.
-                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
-                // SAFETY: all-zero is a valid uv::Pipe.
-                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
+                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))),
+                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))),
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {

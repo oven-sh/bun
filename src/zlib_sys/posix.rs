@@ -59,6 +59,11 @@ pub struct zStream_struct {
 pub type z_stream = zStream_struct;
 pub type z_streamp = *mut z_stream;
 
+// SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
+// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
+// is the documented pre-`inflateInit`/`deflateInit` state (S021).
+unsafe impl bun_core::ffi::Zeroable for zStream_struct {}
+
 pub use crate::shared::DataType;
 pub use crate::shared::FlushValue;
 pub use crate::shared::ReturnCode;

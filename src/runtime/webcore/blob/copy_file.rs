@@ -1259,7 +1259,7 @@ impl<'a> CopyFileWindows<'a> {
             source_file_store,
             promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
-            io_request: unsafe { core::mem::zeroed::<libuv::fs_t>() },
+            io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
@@ -1561,7 +1561,7 @@ impl<'a> CopyFileWindows<'a> {
                 let loop_ = self.event_loop.uv_loop();
                 self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
-                self.io_request = unsafe { core::mem::zeroed::<libuv::fs_t>() };
+                self.io_request = bun_core::ffi::zeroed::<libuv::fs_t>();
                 self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
                 // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` was just zeroed,

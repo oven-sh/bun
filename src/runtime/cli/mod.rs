@@ -948,12 +948,11 @@ pub mod command {
                     )),
                 };
                 unsafe extern "C" {
+                    // By-value `i32` only; noreturn entry point — no preconditions.
                     #[link_name = "Bun__WebView__hostMain"]
-                    fn host_main(fd: i32) -> !;
+                    safe fn host_main(fd: i32) -> !;
                 }
-                // SAFETY: Bun__WebView__hostMain is a noreturn extern that takes
-                // ownership of the IPC fd; `fd` validated above to fit i32.
-                unsafe { host_main(fd as i32) };
+                host_main(fd as i32);
             }
         }
 
@@ -1552,10 +1551,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             }
         }
 
-        // SAFETY: `PackageManager::init` returns a heap singleton (`*mut`) that
-        // outlives this command; reborrow as `&mut` to match the rest of the
-        // CLI command surface (see `publish_command`, `unlink_command`, etc.).
-        super::pm_view_command::view(unsafe { &mut *pm }, package_name, property_path, json_output)
+        super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
     /// Per-tag clap param table. Runtime dispatch (was const-generic in Zig;

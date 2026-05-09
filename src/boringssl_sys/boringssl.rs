@@ -163,6 +163,9 @@ pub struct EVP_MD_CTX {
     pub pctx: *mut EVP_PKEY_CTX,
     pub pctx_ops: *const evp_md_pctx_ops,
 }
+// SAFETY: `#[repr(C)]` POD — a byte-array union plus three raw pointers.
+// All-zero is exactly the state `EVP_MD_CTX_init` writes (S021).
+unsafe impl bun_core::ffi::Zeroable for EVP_MD_CTX {}
 
 /// `struct hmac_ctx_st`.
 #[repr(C)]

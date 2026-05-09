@@ -750,13 +750,10 @@ pub mod abort_handler {
         }
         #[cfg(windows)]
         {
-            // SAFETY: Win32 FFI.
-            unsafe {
-                let _ = bun_sys::c::SetConsoleCtrlHandler(
-                    Some(windows_ctrl_handler),
-                    bun_sys::windows::TRUE,
-                );
-            }
+            let _ = bun_sys::c::SetConsoleCtrlHandler(
+                Some(windows_ctrl_handler),
+                bun_sys::windows::TRUE,
+            );
         }
         Guard(())
     }
@@ -781,13 +778,10 @@ pub mod abort_handler {
         }
         #[cfg(windows)]
         {
-            // SAFETY: Win32 FFI.
-            unsafe {
-                let _ = bun_sys::c::SetConsoleCtrlHandler(
-                    Some(windows_ctrl_handler),
-                    bun_sys::windows::FALSE,
-                );
-            }
+            let _ = bun_sys::c::SetConsoleCtrlHandler(
+                Some(windows_ctrl_handler),
+                bun_sys::windows::FALSE,
+            );
         }
     }
 }

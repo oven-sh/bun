@@ -104,13 +104,26 @@ impl ZigStackTrace {
         unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
     }
 
+    /// Mutable view of the populated source-line strings (`[0..source_lines_len]`).
+    #[inline]
+    pub fn source_lines_mut(&mut self) -> &mut [BunString] {
+        // SAFETY: `source_lines_ptr` points to a caller-owned buffer of at least
+        // `source_lines_len` initialized elements (populated by C++ via FFI;
+        // see ZigException.zig:108). The borrow is tied to `&mut self`.
+        unsafe { bun_core::ffi::slice_mut(self.source_lines_ptr, self.source_lines_len as usize) }
+    }
+
+    /// Immutable view of the populated source-line numbers (`[0..source_lines_len]`).
+    #[inline]
+    pub fn source_line_numbers(&self) -> &[i32] {
+        // SAFETY: `source_lines_numbers` points to a caller-owned buffer of at
+        // least `source_lines_len` initialized elements (see ZigException.zig:108).
+        unsafe { bun_core::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize) }
+    }
+
     pub fn source_line_iterator(&self) -> SourceLineIterator<'_> {
         let mut i: i32 = -1;
-        // SAFETY: source_lines_numbers points to a caller-owned buffer of at least
-        // source_lines_len elements (see ZigException.zig:108).
-        let nums = unsafe {
-            bun_core::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize)
-        };
+        let nums = self.source_line_numbers();
         for (j, &num) in nums.iter().enumerate() {
             if num >= 0 {
                 i = i32::try_from(j).expect("int cast").max(i);

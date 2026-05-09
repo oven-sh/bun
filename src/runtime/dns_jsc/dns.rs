@@ -171,24 +171,24 @@ pub mod lib_info {
     pub type GetaddrinfoAsyncCancel = unsafe extern "C" fn(*mut mach_port);
 
     // PORTING.md §Global mutable state: lazy dlopen, JS-thread-only.
-    // bool→AtomicBool, ptr-option→RacyCell (Option<*mut> has no AtomicPtr niche).
-    static HANDLE: bun_core::RacyCell<Option<*mut c_void>> = bun_core::RacyCell::new(None);
+    // null = "tried and failed / not yet loaded"; LOADED disambiguates.
+    static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
     static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
     pub fn get_handle() -> Option<*mut c_void> {
-        // SAFETY: single-threaded init on JS thread; matches Zig's unguarded statics.
-        unsafe {
-            if LOADED.load(core::sync::atomic::Ordering::Relaxed) {
-                return HANDLE.read();
-            }
-            LOADED.store(true, core::sync::atomic::Ordering::Relaxed);
-            let handle = sys::dlopen(bun_core::zstr!("libinfo.dylib"), sys::RTLD::LAZY | sys::RTLD::LOCAL);
-            if handle.is_none() {
-                Output::debug("libinfo.dylib not found");
-            }
-            HANDLE.write(handle);
-            handle
+        use core::sync::atomic::Ordering::Relaxed;
+        if LOADED.load(Relaxed) {
+            let h = HANDLE.load(Relaxed);
+            return if h.is_null() { None } else { Some(h) };
         }
+        LOADED.store(true, Relaxed);
+        let handle = sys::dlopen(bun_core::zstr!("libinfo.dylib"), sys::RTLD::LAZY | sys::RTLD::LOCAL);
+        if handle.is_none() {
+            Output::debug("libinfo.dylib not found");
+        }
+        HANDLE.store(handle.unwrap_or(core::ptr::null_mut()), Relaxed);
+        handle
     }
 
     pub fn getaddrinfo_async_start() -> Option<GetaddrinfoAsyncStart> {
@@ -1248,8 +1248,7 @@ pub mod get_addr_info_request {
     #[cfg(windows)]
     impl LibcBackend {
         pub fn uv_uninit() -> Self {
-            // SAFETY: uv_getaddrinfo_t is C-POD initialized by uv_getaddrinfo
-            Self { uv: unsafe { bun_core::ffi::zeroed_unchecked() } }
+            Self { uv: bun_core::ffi::zeroed() }
         }
         pub fn run(&mut self) {
             unreachable!("This path should never be reached on Windows");
@@ -2264,8 +2263,7 @@ pub mod internal {
     const DEFAULT_HINTS_ADDRCONFIG: bool = false;
 
     fn default_hints() -> AddrInfo {
-        // SAFETY: POD, zero-valid — addrinfo with null ptrs / 0 ints is a valid hints struct.
-        let mut h: AddrInfo = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut h: AddrInfo = bun_core::ffi::zeroed();
         h.ai_family = netc::AF_UNSPEC;
         // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
         // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
@@ -2397,8 +2395,7 @@ pub mod internal {
                         *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in6>();
                     }
                 } else {
-                    // SAFETY: POD, zero-valid — sockaddr_storage is all-integers.
-                    (*entry).addr = bun_core::ffi::zeroed_unchecked();
+                    (*entry).addr = bun_core::ffi::zeroed();
                 }
                 i += 1;
                 info_ = (*info_).ai_next;
@@ -2496,8 +2493,7 @@ pub mod internal {
         #[cfg(windows)]
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
-            // SAFETY: POD, zero-valid — Win32 addrinfo with null ptrs / 0 ints.
-            let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed_unchecked();
+            let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed();
             wsa_hints.ai_family = wsa::AF_UNSPEC;
             wsa_hints.ai_socktype = wsa::SOCK_STREAM;
 
@@ -3216,8 +3212,7 @@ impl UvDnsPoll {
         bun_core::heap::into_raw(Box::new(Self {
             parent,
             socket,
-            // SAFETY: POD, zero-valid — uv_poll_t is C POD; uv_poll_init writes it before use.
-            poll: unsafe { bun_core::ffi::zeroed_unchecked() },
+            poll: bun_core::ffi::zeroed(),
         }))
     }
 
@@ -4888,10 +4883,7 @@ impl Resolver {
 
             let af: c_int = if family == 4 { netc::AF_INET } else { netc::AF_INET6 };
 
-            // SAFETY: all-zero is a valid `struct_ares_addr_port_node` (POD: ptr, ints,
-            // and the in_addr/in6_addr union). Public fields written below; the private
-            // `addr` union stays zeroed until `ares_inet_pton` fills it.
-            let mut node: c_ares::struct_ares_addr_port_node = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut node: c_ares::struct_ares_addr_port_node = bun_core::ffi::zeroed();
             node.next = ptr::null_mut();
             node.family = af;
             node.udp_port = port;
@@ -4993,8 +4985,7 @@ impl Resolver {
         let port_value = arguments.ptr[1];
         let port: u16 = port_value.to_port_number(global_this)?;
 
-        // SAFETY: all-zero is a valid sockaddr_storage
-        let mut sa: SockaddrStorage = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut sa: SockaddrStorage = bun_core::ffi::zeroed();
         // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
         // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
         // `&mut sockaddr` view into that storage.

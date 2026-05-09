@@ -69,7 +69,7 @@ impl OutdatedCommand {
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
         let silent = cli.silent;
 
-        let (pm_ptr, original_cwd) =
+        let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, cli, Subcommand::Outdated) {
                 Ok(v) => v,
                 Err(err) => {
@@ -85,10 +85,6 @@ impl OutdatedCommand {
                     Global::crash();
                 }
             };
-        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
-        // non-null and exclusively owned by this thread for the command's
-        // duration (mirrors Zig's `*PackageManager`).
-        let manager = unsafe { &mut *pm_ptr };
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)` is
         // implicit via Drop at scope exit.
 

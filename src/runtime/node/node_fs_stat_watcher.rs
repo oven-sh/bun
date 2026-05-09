@@ -470,6 +470,15 @@ mod js {
 }
 
 impl StatWatcher {
+    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this` back-pointer.
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        // SAFETY: JSC_BORROW per LIFETIMES.tsv — `global_this` is the live
+        // per-thread global stored at construction; the VM (and thus its
+        // global) outlives every `StatWatcher`.
+        unsafe { &*self.global_this }
+    }
+
     /// Spec `RareData.nodeFSStatWatcherScheduler`. Body lives here (high tier)
     /// because `StatWatcherScheduler` cannot be named from `bun_jsc::rare_data`
     /// without a crate cycle; the slot in `RareData` is an erased
@@ -643,8 +652,7 @@ impl StatWatcher {
         let Some(js_this) = this_ref.this_value.try_get() else {
             return Ok(());
         };
-        // SAFETY: JSC_BORROW; live for the watcher's lifetime.
-        let global_this = unsafe { &*this_ref.global_this };
+        let global_this = this_ref.global_this();
 
         let jsvalue = match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
             Ok(v) => v,
@@ -673,8 +681,7 @@ impl StatWatcher {
         let Some(js_this) = this_ref.this_value.try_get() else {
             return Ok(());
         };
-        // SAFETY: JSC_BORROW; live for the watcher's lifetime.
-        let global_this = unsafe { &*this_ref.global_this };
+        let global_this = this_ref.global_this();
         let jsvalue = match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
             Ok(v) => v,
             Err(err) => {
@@ -757,8 +764,7 @@ impl StatWatcher {
         let Some(js_this) = this_ref.this_value.try_get() else {
             return Ok(());
         };
-        // SAFETY: JSC_BORROW; live for the watcher's lifetime.
-        let global_this = unsafe { &*this_ref.global_this };
+        let global_this = this_ref.global_this();
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
             match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {

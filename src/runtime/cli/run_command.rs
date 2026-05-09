@@ -1549,8 +1549,7 @@ impl Run {
                                 }
                                 break 'brk result;
                             }
-                            // SAFETY: `vm.jsc_vm` set in `init`.
-                            _ => break 'brk promise.result(unsafe { &*vm.jsc_vm }),
+                            _ => break 'brk promise.result(vm.jsc_vm()),
                         }
                     }
                     result

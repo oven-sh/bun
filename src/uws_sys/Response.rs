@@ -747,14 +747,12 @@ impl AnyResponse {
         match self {
             AnyResponse::SSL(ptr) => {
                 // TODO(port): crate::us_socket_t::close signature / CloseCode::Failure
-                // SAFETY: live FFI socket handle (us_socket_t deref; not an
-                // OpaqueHandle impl yet — out of S019 scope).
-                unsafe { &mut *TLSResponse::as_handle(ptr).downcast_socket() }
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                us_socket_t::opaque_mut(TLSResponse::as_handle(ptr).downcast_socket())
                     .close(crate::us_socket::CloseCode::failure);
             }
             AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *TCPResponse::as_handle(ptr).downcast_socket() }
+                us_socket_t::opaque_mut(TCPResponse::as_handle(ptr).downcast_socket())
                     .close(crate::us_socket::CloseCode::failure);
             }
             AnyResponse::H3(ptr) => H3Response::as_handle(ptr).force_close(),

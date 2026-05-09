@@ -452,6 +452,111 @@ impl<T: core::fmt::Debug> core::fmt::Debug for RawSlice<T> {
 unsafe impl<T: Sync> Send for RawSlice<T> {}
 unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ThisPtr<T> — callback-dispatch self-pointer
+//
+// uSockets / C++ FFI dispatch hands every socket-event handler a raw
+// `*mut Self` recovered from the userdata slot. The Phase-A port open-coded
+// `unsafe { (*this).field }` / `unsafe { (&*this).ref_() }` /
+// `scopeguard::guard(this, |p| unsafe { Self::deref(p) })` at ~90 call sites
+// across the websocket-client family. `ThisPtr` centralises that pattern under
+// ONE constructor SAFETY contract: wrap the raw pointer once at fn entry, then
+// read fields via `Deref` and bracket the body with `ref_guard()` (RAII
+// `ScopedRef`) instead of hand-paired `ref_()`/`deref()` at every early-exit.
+//
+// Unlike [`BackRef`] (owner-outlives-holder back-reference), a `ThisPtr` is for
+// the *callee-is-the-allocation* case: the pointee is an intrusively-refcounted
+// heap object that may be **freed during the call** (a reentrant `deref()`
+// reaching zero). `ThisPtr` therefore:
+//   • is `Copy` and holds no ref of its own — it is purely a typed view of the
+//     incoming `*mut Self`;
+//   • only ever vends fresh short-lived `&T` (no `DerefMut`): handlers that
+//     re-enter via the same userdata pointer would alias a held `&mut T`.
+//     Mutation goes through `as_ptr()` with a per-site `unsafe { (*p).… }`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Non-owning, `Copy` self-pointer for uSockets / FFI callback dispatch.
+///
+/// See the module comment above for the full rationale. Construct once per
+/// handler entry with [`ThisPtr::new`], then use `Deref` for field reads and
+/// [`ThisPtr::ref_guard`] for the keep-alive bracket.
+#[repr(transparent)]
+pub struct ThisPtr<T>(core::ptr::NonNull<T>);
+
+impl<T> ThisPtr<T> {
+    /// Wrap the raw `*mut Self` arriving from a uWS / FFI callback.
+    ///
+    /// # Safety
+    /// `p` must be non-null and point to a live `T` (heap-allocated via
+    /// `heap::alloc`, intrusively refcounted) that remains live for every
+    /// subsequent access through this `ThisPtr` and its copies — i.e. either
+    /// the caller already holds a ref, or the first thing it does is take a
+    /// [`ref_guard`](Self::ref_guard). No `&mut T` to `*p` may be live across
+    /// any `Deref` borrow produced from this `ThisPtr`.
+    #[inline]
+    pub unsafe fn new(p: *mut T) -> Self {
+        debug_assert!(!p.is_null(), "ThisPtr::new: null callback self-pointer");
+        // SAFETY: caller contract — `p` is non-null.
+        ThisPtr(unsafe { core::ptr::NonNull::new_unchecked(p) })
+    }
+
+    /// Recover the raw pointer (root provenance) for mutation or for forwarding
+    /// to another raw-ptr handler. Mutation still requires a per-site `unsafe`.
+    #[inline]
+    pub fn as_ptr(self) -> *mut T {
+        self.0.as_ptr()
+    }
+
+    /// Fresh shared borrow of the pointee.
+    ///
+    /// Sound under the [`new`](Self::new) invariant: the pointee is live and
+    /// no `&mut T` overlaps the returned `&T`. Each call materialises a NEW
+    /// short-lived `&T` (autoref scope only); do not hold the result across a
+    /// call that may form `&mut T` to the same allocation.
+    #[inline]
+    pub fn get(&self) -> &T {
+        // SAFETY: `ThisPtr::new` invariant — pointee is live, non-null,
+        // aligned, and no exclusive borrow overlaps this shared one.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> Copy for ThisPtr<T> {}
+impl<T> Clone for ThisPtr<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> core::ops::Deref for ThisPtr<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        self.get()
+    }
+}
+
+impl<T: AnyRefCounted> ThisPtr<T>
+where
+    T::DestructorCtx: Default,
+{
+    /// Bump the intrusive refcount and return an RAII guard that derefs on
+    /// `Drop`. Replaces the hand-rolled
+    /// `this.ref_(); scopeguard::guard(this_ptr, |p| Self::deref(p))` /
+    /// `this.ref_(); … defer this.deref()` bracket: the guard runs the paired
+    /// `deref()` on every exit path, so manual `Self::deref(this)` at each
+    /// early return goes away.
+    ///
+    /// Safe: the [`new`](Self::new) invariant already established that the
+    /// pointee is live, which is exactly [`ScopedRef::new`]'s precondition.
+    #[inline]
+    pub fn ref_guard(self) -> ScopedRef<T> {
+        // SAFETY: `ThisPtr::new` invariant — `self.0` points to a live `T`.
+        unsafe { ScopedRef::new(self.0.as_ptr()) }
+    }
+}
+
 // SAFETY: `BackRef<T>` is morally `&T` (Deref/get) with an unsafe `get_mut`
 // escape hatch whose exclusivity is the caller's per-site obligation. Match
 // `&T` auto-trait bounds: `&T: Send ⇔ T: Sync`, `&T: Sync ⇔ T: Sync`. Holders

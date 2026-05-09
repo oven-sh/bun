@@ -43,6 +43,49 @@ impl Default for us_bun_verify_error_t {
         Self { error_no: 0, code: core::ptr::null(), reason: core::ptr::null() }
     }
 }
+impl us_bun_verify_error_t {
+    /// Borrow the BoringSSL verify-error `code` as a `CStr`, or `None` if null.
+    ///
+    /// uSockets populates `code`/`reason` from BoringSSL's static error-string
+    /// table (`X509_verify_cert_error_string` and friends), so the pointee is
+    /// `'static` in practice; the borrow is conservatively tied to `&self` so
+    /// the accessor is sound even if a future caller heap-allocates the struct.
+    #[inline]
+    pub fn code(&self) -> Option<&core::ffi::CStr> {
+        if self.code.is_null() {
+            return None;
+        }
+        // SAFETY: uSockets guarantees a non-null `code` is a valid
+        // NUL-terminated C string that outlives this struct (it points into
+        // BoringSSL's static error table). Lifetime narrowed to `&self`.
+        Some(unsafe { core::ffi::CStr::from_ptr(self.code) })
+    }
+
+    /// Borrow the BoringSSL verify-error `reason` as a `CStr`, or `None` if null.
+    /// See [`Self::code`] for the safety argument.
+    #[inline]
+    pub fn reason(&self) -> Option<&core::ffi::CStr> {
+        if self.reason.is_null() {
+            return None;
+        }
+        // SAFETY: same invariant as `code()` — non-null `reason` is a valid
+        // NUL-terminated C string from BoringSSL's static error table.
+        Some(unsafe { core::ffi::CStr::from_ptr(self.reason) })
+    }
+
+    /// `code` as a byte slice (no NUL), or `b""` if null. Convenience for the
+    /// dominant `BunString::clone_utf8(..)` / `ZigString::from_utf8(..)` shape.
+    #[inline]
+    pub fn code_bytes(&self) -> &[u8] {
+        self.code().map_or(b"", core::ffi::CStr::to_bytes)
+    }
+
+    /// `reason` as a byte slice (no NUL), or `b""` if null.
+    #[inline]
+    pub fn reason_bytes(&self) -> &[u8] {
+        self.reason().map_or(b"", core::ffi::CStr::to_bytes)
+    }
+}
 
 /// `enum create_bun_socket_error_t` — out-param from `us_ssl_ctx_from_options`.
 #[repr(C)]

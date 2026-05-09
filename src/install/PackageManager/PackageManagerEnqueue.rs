@@ -1903,7 +1903,7 @@ fn enqueue_local_tarball(
             request: crate::package_manager_task::Request {
                 local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
                     tarball: ExtractTarball {
-                        package_manager: std::ptr::from_ref::<PackageManager>(this),
+                        package_manager: bun_ptr::BackRef::new(this),
                         name: StringOrTinyString::init_append_if_needed(
                             name,
                             &mut crate::network_task::filename_store_appender(),

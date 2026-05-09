@@ -828,16 +828,13 @@ pub extern "C" fn ByteRangeMapping__find(path: bun_str::String) -> Option<NonNul
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ByteRangeMapping__findExecutedLines(
-    global_this: *mut JSGlobalObject,
+    global_this: &JSGlobalObject,
     source_url: bun_str::String,
     blocks_ptr: *const BasicBlockRange,
     blocks_len: usize,
     function_start_offset: usize,
     ignore_sourcemap: bool,
 ) -> JSValue {
-    // SAFETY: global_this is a valid JSGlobalObject* from JSC.
-    let global_this = unsafe { &*global_this };
-
     let Some(this_ptr) = ByteRangeMapping__find(source_url.clone()) else {
         return JSValue::NULL;
     };

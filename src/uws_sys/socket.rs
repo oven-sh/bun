@@ -47,16 +47,16 @@ pub type SocketTls<'a> = NewSocketHandler<'a, true>;
 /// `unsafe { (**s) }` at ~50 match arms.
 #[inline(always)]
 fn sock<'b>(p: *mut us_socket_t) -> &'b mut us_socket_t {
-    debug_assert!(!p.is_null());
-    // SAFETY: see fn doc — opaque ZST + UnsafeCell, uSockets-guaranteed non-null.
-    unsafe { &mut *p }
+    // S008: route through the const-asserted ZST helper (also upgrades the
+    // former `debug_assert!` null-check to a release `assert!` — a safe fn
+    // reachable from safe code with raw pointers must panic, not UB, on null).
+    bun_opaque::opaque_deref_mut(p)
 }
 /// As [`sock`] but for the `Connecting` payload.
 #[inline(always)]
 fn conn<'b>(p: *mut ConnectingSocket) -> &'b mut ConnectingSocket {
-    debug_assert!(!p.is_null());
-    // SAFETY: see [`sock`] doc — `ConnectingSocket` is the same opaque-ZST shape.
-    unsafe { &mut *p }
+    // S008: see [`sock`] — `ConnectingSocket` is the same `opaque_ffi!` ZST shape.
+    bun_opaque::opaque_deref_mut(p)
 }
 
 impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {

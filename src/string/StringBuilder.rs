@@ -270,6 +270,19 @@ impl StringBuilder {
         unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.cap) }
     }
 
+    /// Immutable view of the bytes appended so far (`ptr[0..len]`). Safe wrapper
+    /// for the recurring `unsafe { ffi::slice(self.ptr.unwrap().as_ptr(), self.len) }`
+    /// pattern at call sites.
+    #[inline]
+    pub fn written_slice(&self) -> &[u8] {
+        let Some(ptr) = self.ptr else { return &[] };
+        // SAFETY: `ptr` came from `Box::<[u8]>::new_uninit_slice(self.cap)` in
+        // `allocate()`/`init_capacity()`; `self.len <= self.cap` is upheld by
+        // every `append*` (debug-asserted there), and bytes `[0, len)` were
+        // initialized by those appends. The borrow is tied to `&self`.
+        unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) }
+    }
+
     pub fn writable(&mut self) -> &mut [u8] {
         let Some(ptr) = self.ptr else { return &mut [] };
         debug_assert!(self.cap > 0);

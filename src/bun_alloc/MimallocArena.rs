@@ -209,8 +209,7 @@ impl MimallocArena {
         #[cfg(debug_assertions)]
         {
             self.gc();
-            // SAFETY: FFI call with no preconditions.
-            unsafe { mimalloc::mi_collect(false) };
+            mimalloc::mi_collect(false);
         }
     }
 

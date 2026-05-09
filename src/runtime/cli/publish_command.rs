@@ -561,8 +561,6 @@ impl PublishCommand {
             }
         };
         drop(original_cwd);
-        // SAFETY: `init` returns a process-lifetime singleton; reborrow `&mut`.
-        let manager: &mut PackageManager = unsafe { &mut *manager };
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
@@ -806,8 +804,7 @@ impl PublishCommand {
             http::Method::GET,
             package_url,
             headers.entries,
-            // SAFETY: headers.content was allocated above
-            unsafe { bun_core::ffi::slice(headers.content.ptr.unwrap().as_ptr(), headers.content.len) },
+            headers.content.written_slice(),
             &raw mut response_buf,
             b"",
             None,
@@ -930,8 +927,7 @@ impl PublishCommand {
             http::Method::PUT,
             publish_url.clone(),
             publish_headers.entries,
-            // SAFETY: publish_headers.content was allocated by construct_publish_headers
-            unsafe { bun_core::ffi::slice(publish_headers.content.ptr.unwrap().as_ptr(), publish_headers.content.len) },
+            publish_headers.content.written_slice(),
             &raw mut response_buf,
             publish_req_body,
             None,
@@ -1017,8 +1013,7 @@ impl PublishCommand {
                     http::Method::PUT,
                     publish_url,
                     otp_headers.entries,
-                    // SAFETY: otp_headers.content was allocated by construct_publish_headers
-                    unsafe { bun_core::ffi::slice(otp_headers.content.ptr.unwrap().as_ptr(), otp_headers.content.len) },
+                    otp_headers.content.written_slice(),
                     &raw mut response_buf,
                     publish_req_body,
                     None,
@@ -1204,8 +1199,7 @@ impl PublishCommand {
                         http::Method::GET,
                         done_url.clone(),
                         auth_headers.entries.clone()?,
-                        // SAFETY: auth_headers.content was allocated by construct_publish_headers
-                        unsafe { bun_core::ffi::slice(auth_headers.content.ptr.unwrap().as_ptr(), auth_headers.content.len) },
+                        auth_headers.content.written_slice(),
                         response_buf,
                         b"",
                         None,

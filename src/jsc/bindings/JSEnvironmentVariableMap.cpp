@@ -20,9 +20,9 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
-extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, BunString* name, BunString* value);
-extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, BunString* name, BunString* value);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
+extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
+extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 
 namespace Bun {
 

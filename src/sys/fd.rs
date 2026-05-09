@@ -139,8 +139,7 @@ impl FdExt for Fd {
             #[cfg(target_os = "macos")]
             {
                 debug_assert!(self.native() >= 0);
-                // SAFETY: close$NOCANCEL is the non-cancellable variant of close(2).
-                match sys::get_errno(unsafe { close_nocancel(self.native()) }) {
+                match sys::get_errno(close_nocancel(self.native())) {
                     sys::E::EBADF => Some(sys::Error {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::close,
@@ -414,8 +413,9 @@ impl fmt::Display for MovableIfWindowsFd {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     // Darwin libc: close that doesn't get interrupted by pthread cancellation.
+    // By-value `c_int` only; bad fd → `EBADF`, no UB.
     #[link_name = "close$NOCANCEL"]
-    fn close_nocancel(fd: c_int) -> c_int;
+    safe fn close_nocancel(fd: c_int) -> c_int;
 }
 
 #[cfg(windows)]

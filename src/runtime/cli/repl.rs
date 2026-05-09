@@ -1139,8 +1139,7 @@ impl<'a> Repl<'a> {
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
 
             // If execution was forbidden by SIGINT, clear it and report
-            // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
-            if unsafe { (*vm.jsc_vm).execution_forbidden() } {
+            if vm.jsc_vm().execution_forbidden() {
                 vm_set_execution_forbidden(vm.jsc_vm, false);
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
@@ -1149,7 +1148,7 @@ impl<'a> Repl<'a> {
             }
 
             // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
-            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
+            let jsc_vm_ref = vm.jsc_vm();
             // Check promise status after waiting
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {
@@ -1293,7 +1292,7 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
-            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
+            let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref),
                 PromiseStatus::Rejected => {
@@ -1423,14 +1422,14 @@ impl<'a> Repl<'a> {
             self.enable_signals_during_wait();
             // PORT NOTE: reshaped for borrowck — disable_signals_during_wait called on each path
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
-            if unsafe { (*vm.jsc_vm).execution_forbidden() } {
+            if vm.jsc_vm().execution_forbidden() {
                 vm_set_execution_forbidden(vm.jsc_vm, false);
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
             }
-            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
+            let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref),
                 PromiseStatus::Rejected => {
@@ -1767,10 +1766,7 @@ impl<'a> Repl<'a> {
         // TODO(port): narrow error set
         self.vm = vm;
         if let Some(v) = vm {
-            // SAFETY: `v.global` is the live `*mut JSGlobalObject` for this VM
-            // (never null once initialized); reborrowed for `'a` to mirror Zig's
-            // freely-aliasing `*JSGlobalObject` field.
-            self.global = Some(unsafe { &*v.global });
+            self.global = Some(v.global());
         }
 
         self.setup_terminal();

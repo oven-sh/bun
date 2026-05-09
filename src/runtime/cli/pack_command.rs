@@ -302,9 +302,7 @@ impl PackCommand {
         };
         drop(original_cwd);
 
-        // SAFETY: `PackageManager::init` returns the freshly populated process-global
-        // singleton; no other `&mut` exists yet on this single-threaded CLI path.
-        Self::exec_with_manager(ctx, unsafe { &mut *manager })
+        Self::exec_with_manager(ctx, manager)
     }
 }
 

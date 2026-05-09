@@ -108,16 +108,19 @@ pub struct Queue {
 }
 
 impl Queue {
-    /// Intrusive backref: recover the owning VM.
+    /// Recover the owning VM.
     ///
-    /// SAFETY: `self` must point to `VirtualMachine.modules`; Queue is only
-    /// ever constructed in place as that field. Gated until
-    /// `VirtualMachine.modules` widens from `()` → `Queue`.
-
+    /// S017: dropped `container_of` recovery — provenance of `&mut self`
+    /// (which only covers `vm.modules`) cannot soundly widen to the whole
+    /// `VirtualMachine` under Stacked Borrows (see the analogous note on
+    /// `ExitHandler::dispatch_on_exit`). Route through the per-thread
+    /// singleton instead: same pointer, full-allocation provenance via
+    /// [`VirtualMachine::get_mut_ptr`], and no `unsafe` at the call site.
+    /// `&mut self` is kept as a receiver so existing callers
+    /// (`self.vm().package_manager()`) don't change shape.
+    #[inline]
     pub fn vm(&mut self) -> &mut VirtualMachine {
-        unsafe {
-            &mut *(bun_core::from_field_ptr!(VirtualMachine, modules, std::ptr::from_mut::<Self>(self)))
-        }
+        VirtualMachine::get().as_mut()
     }
 
     pub fn on_resolve(_: &mut Queue) {
@@ -347,7 +350,6 @@ impl Queue {
         // PORT NOTE: reshaped for borrowck — Zig iterated copies and
         // compacted in place; Rust uses retain_mut and lets Drop free
         // removed modules.
-        let vm_ptr: *mut VirtualMachine = this.vm();
         this.map.retain_mut(|module| {
             // PORT NOTE: Zig `MultiArrayList.items(.root_dependency_id)` →
             // `Vec<PendingResolution>` field walk.
@@ -356,8 +358,10 @@ impl Queue {
                     continue;
                 }
                 let import_record_id = pending.import_record_id;
-                // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
-                let vm = unsafe { &mut *vm_ptr };
+                // S017: per-thread VM singleton (safe accessor) instead of
+                // `container_of`-derived `*mut`; provenance is the original
+                // allocation, disjoint from the `&mut module` borrow above.
+                let vm = VirtualMachine::get().as_mut();
                 // PORT NOTE: reshaped for borrowck — `lockfile.str()` ties the
                 // returned slice to `&vm`, which conflicts with passing
                 // `&mut vm` to `resolve_error`. The lockfile string buffer is
@@ -384,14 +388,11 @@ impl Queue {
 
     pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
         bun_core::scoped_log!(AsyncModule, "onWake");
-        // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { &mut *ctx.cast::<Queue>() };
-        // PORT NOTE: reshaped for borrowck — `vm()` derives a `&mut
-        // VirtualMachine` from `&mut *this` via `container_of`, which
-        // overlaps the `*mut Queue` payload of the concurrent task. Build the
-        // task first (it stores only the raw pointer), then enqueue.
-        let task = ConcurrentTaskItem::create_from(std::ptr::from_mut::<Queue>(this));
-        this.vm().enqueue_task_concurrent(task);
+        // PORT NOTE: reshaped for borrowck — build the task first (it stores
+        // only the raw `*mut Queue`), then enqueue via the per-thread VM
+        // singleton (S017: no `container_of` widening from `&mut Queue`).
+        let task = ConcurrentTaskItem::create_from(ctx.cast::<Queue>());
+        VirtualMachine::get().as_mut().enqueue_task_concurrent(task);
     }
 
     pub fn on_poll(&mut self) {
@@ -404,12 +405,12 @@ impl Queue {
         // PORT NOTE: reshaped for borrowck — Zig held `pm` across the call
         // while passing `this` (which can recover `pm` via
         // `@fieldParentPtr`). The Rust `run_tasks` free fn takes both
-        // `&mut PackageManager` and `&mut Queue`; recover the disjoint
-        // package-manager borrow via raw ptr so neither aliases the other.
-        let vm: *mut VirtualMachine = self.vm();
-        // SAFETY: `vm` derived via `container_of`; `package_manager()`
-        // returns a borrow disjoint from `vm.modules` (= `self`).
-        let pm = unsafe { (*vm).package_manager() };
+        // `&mut PackageManager` and `&mut Queue`; the package manager is a
+        // separate heap allocation (`NonNull<dyn AutoInstaller>` on the
+        // resolver), so the two borrows are disjoint.
+        // S017: per-thread VM singleton (safe accessor) instead of
+        // `container_of`-derived `*mut` reborrow.
+        let pm = VirtualMachine::get().as_mut().package_manager();
 
         if bun_core::output::enable_ansi_colors_stderr() {
             pm.start_progress_bar_if_none();
@@ -434,7 +435,6 @@ impl Queue {
         );
 
         // PORT NOTE: reshaped for borrowck — compaction loop → retain_mut.
-        let vm_ptr: *mut VirtualMachine = self.vm();
         self.map.retain_mut(|module| {
             // PORT NOTE: Zig `MultiArrayList.items(.tag)` etc. →
             // `Vec<PendingResolution>` field walk.
@@ -447,8 +447,8 @@ impl Queue {
                     let version = pending.dependency.clone();
                     let import_record_id = pending.import_record_id;
 
-                    // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
-                    let vm = unsafe { &mut *vm_ptr };
+                    // S017: per-thread VM singleton (safe accessor).
+                    let vm = VirtualMachine::get().as_mut();
                     module
                         .resolve_error(
                             vm,
@@ -482,16 +482,20 @@ impl Queue {
             bstr::BStr::new(name)
         );
 
-        let vm_ptr: *mut VirtualMachine = self.vm();
-        // SAFETY: vm_ptr valid; we only read lockfile buffers here.
-        let resolution_ids: &[PackageID] = unsafe {
-            (*vm_ptr)
+        // S017: per-thread VM singleton (safe accessor) instead of
+        // `container_of`-derived `*mut` reborrow. `resolution_ids` borrows the
+        // lockfile (separate heap allocation, never reallocated on the
+        // download-error path); detach via `RawSlice` so the closure can fetch
+        // a fresh `&mut VirtualMachine` without borrowck tying it to this read.
+        let resolution_ids = bun_ptr::RawSlice::new(
+            VirtualMachine::get()
+                .as_mut()
                 .package_manager()
                 .lockfile
                 .buffers
                 .resolutions
-                .as_slice()
-        };
+                .as_slice(),
+        );
 
         // PORT NOTE: reshaped for borrowck — compaction loop → retain_mut.
         self.map.retain_mut(|module| {
@@ -499,12 +503,12 @@ impl Queue {
             // `.items(.root_dependency_id)` → `Vec<PendingResolution>` field
             // walk.
             for pending in module.parse_result.pending_imports.iter() {
-                if resolution_ids[pending.root_dependency_id as usize] != package_id {
+                if resolution_ids.slice()[pending.root_dependency_id as usize] != package_id {
                     continue;
                 }
                 let import_record_id = pending.import_record_id;
-                // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
-                let vm = unsafe { &mut *vm_ptr };
+                // S017: per-thread VM singleton (safe accessor).
+                let vm = VirtualMachine::get().as_mut();
                 module
                     .download_error(
                         vm,
@@ -524,9 +528,10 @@ impl Queue {
     }
 
     pub fn poll_modules(&mut self) {
-        let vm_ptr: *mut VirtualMachine = self.vm();
-        // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
-        let pm = unsafe { (*vm_ptr).package_manager() };
+        // S017: per-thread VM singleton (safe accessor) instead of
+        // `container_of`-derived `*mut` reborrow. The package manager is a
+        // separate heap allocation, disjoint from `self` (= `vm.modules`).
+        let pm = VirtualMachine::get().as_mut().package_manager();
         if pm.pending_tasks.load(Ordering::Relaxed) > 0 {
             return;
         }
@@ -620,8 +625,8 @@ impl Queue {
 
             if done_count == tags_len {
                 let module = self.map.remove(i);
-                // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
-                module.done(unsafe { &mut *vm_ptr });
+                // S017: per-thread VM singleton (safe accessor).
+                module.done(VirtualMachine::get().as_mut());
             } else {
                 i += 1;
             }

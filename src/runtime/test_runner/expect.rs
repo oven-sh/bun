@@ -513,13 +513,11 @@ impl Expect {
     #[unsafe(no_mangle)]
     pub extern "C" fn Expect_readFlagsAndProcessPromise(
         instance_value: JSValue,
-        global_this: *const JSGlobalObject,
+        global_this: &JSGlobalObject,
         out_flags: *mut FlagsCppType,
         value: *mut JSValue,
         any_constructor_type: *mut u8,
     ) -> bool {
-        // SAFETY: called from C++ with valid pointers
-        let global_this = unsafe { &*global_this };
         // SAFETY: `from_js` returns the live `m_ctx` payload owned by `instance_value`.
         let flags: Flags = 'flags: { unsafe {
             if let Some(instance) = ExpectCustomAsymmetricMatcher::from_js(instance_value) {
@@ -2611,9 +2609,7 @@ pub struct ExpectMatcherUtils {}
 
 impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
-    pub extern "C" fn ExpectMatcherUtils_createSigleton(global_this: *const JSGlobalObject) -> JSValue {
-        // SAFETY: called from C++ with valid global
-        let global_this = unsafe { &*global_this };
+    pub extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
         ExpectMatcherUtils {}.to_js(global_this)
     }
 

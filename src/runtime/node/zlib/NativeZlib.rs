@@ -237,8 +237,7 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             mode: c::NodeMode::NONE,
-            // SAFETY: all-zero is a valid z_stream (C struct, std.mem.zeroes in Zig).
-            state: unsafe { mem::zeroed::<c::z_stream>() },
+            state: bun_core::ffi::zeroed::<c::z_stream>(),
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
             dictionary: bun_ptr::RawSlice::EMPTY,

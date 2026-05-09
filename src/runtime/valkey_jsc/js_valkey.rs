@@ -1804,18 +1804,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
             "onHandshake: {} error={} reason={} code={}",
             success,
             ssl_error.error_no,
-            if !ssl_error.reason.is_null() {
-                // SAFETY: NUL-terminated C string from BoringSSL
-                bstr::BStr::new(unsafe { bun_core::ffi::cstr(ssl_error.reason) }.to_bytes())
-            } else {
-                bstr::BStr::new(b"no reason")
-            },
-            if !ssl_error.code.is_null() {
-                // SAFETY: NUL-terminated C string from BoringSSL
-                bstr::BStr::new(unsafe { bun_core::ffi::cstr(ssl_error.code) }.to_bytes())
-            } else {
-                bstr::BStr::new(b"no code")
-            },
+            bstr::BStr::new(ssl_error.reason().map_or(b"no reason" as &[u8], |c| c.to_bytes())),
+            bstr::BStr::new(ssl_error.code().map_or(b"no code" as &[u8], |c| c.to_bytes())),
         );
         let handshake_success = success == 1;
         this.ref_();

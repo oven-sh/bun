@@ -20,33 +20,31 @@ pub enum AnyRequest {
 }
 
 impl AnyRequest {
+    // S008: variant payloads are `opaque_ffi!` ZST handles (`Request` /
+    // `h3::Request`); route the per-arm `*mut → &mut` deref through the
+    // const-asserted `bun_opaque::opaque_deref_mut` so dispatch is `unsafe`-free.
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
-        // SAFETY: variant pointers are non-null FFI handles owned by uWS/lsquic for the
-        // duration of the request callback; returned slice borrows request-internal storage.
         match self {
-            Self::H1(r) => unsafe { (**r).header(name) },
-            Self::H3(r) => unsafe { (**r).header(name) },
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).header(name),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header(name),
         }
     }
     pub fn method(&self) -> &[u8] {
-        // SAFETY: see header()
         match self {
-            Self::H1(r) => unsafe { (**r).method() },
-            Self::H3(r) => unsafe { (**r).method() },
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).method(),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).method(),
         }
     }
     pub fn url(&self) -> &[u8] {
-        // SAFETY: see header()
         match self {
-            Self::H1(r) => unsafe { (**r).url() },
-            Self::H3(r) => unsafe { (**r).url() },
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).url(),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).url(),
         }
     }
     pub fn set_yield(&mut self, y: bool) {
-        // SAFETY: see header(); set_yield mutates the underlying uWS/lsquic request state
         match self {
-            Self::H1(r) => unsafe { (&mut **r).set_yield(y) },
-            Self::H3(r) => unsafe { (&mut **r).set_yield(y) },
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
         }
     }
 }

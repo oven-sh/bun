@@ -162,9 +162,7 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn watcher_top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: `transpiler.fs` is the process-global `FileSystem::instance()`
-        // pointer, set at startup and live for the process.
-        unsafe { (*self.transpiler.fs).top_level_dir }
+        self.top_level_dir()
     }
 
     fn install_bun_watcher(

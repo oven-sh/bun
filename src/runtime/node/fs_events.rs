@@ -139,9 +139,9 @@ pub const K_FS_EVENTS_SYSTEM: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_USER_DROPPED
 
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 // PORTING.md §Global mutable state: written under FSEVENTS_DEFAULT_LOOP_MUTEX,
-// read with double-checked-locking. RacyCell — the mutex is the synchronizer.
-static FSEVENTS_DEFAULT_LOOP: bun_core::RacyCell<Option<NonNull<FSEventsLoop>>> =
-    bun_core::RacyCell::new(None);
+// read with double-checked-locking. AtomicPtr gives safe load/store; the mutex
+// serialises the init/teardown writes (Acquire/Release publishes the pointee).
+static FSEVENTS_DEFAULT_LOOP: AtomicPtr<FSEventsLoop> = AtomicPtr::new(ptr::null_mut());
 
 #[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
@@ -942,36 +942,26 @@ pub fn watch(
     ctx: *mut c_void,
 ) -> Result<Box<FSEventsWatcher>, bun_core::Error> {
     // TODO(port): narrow error set
-    // SAFETY: FSEVENTS_DEFAULT_LOOP is only mutated under FSEVENTS_DEFAULT_LOOP_MUTEX
-    unsafe {
-        if let Some(loop_) = FSEVENTS_DEFAULT_LOOP.read() {
-            return Ok(FSEventsWatcher::init(
-                loop_.as_ptr(),
-                path,
-                recursive,
-                callback,
-                update_end,
-                ctx,
-            ));
-        }
-        let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
-        if FSEVENTS_DEFAULT_LOOP.read().is_none() {
-            FSEVENTS_DEFAULT_LOOP.write(NonNull::new(FSEventsLoop::init()?));
-            // First loop ever created → arrange `close_and_wait` to run from
-            // `Bun__onExit`. Spec `Global.zig:220` runs it BEFORE
-            // `runExitCallbacks()`, so push to the pre-exit list rather than
-            // the generic atexit list (storage lives in bun_core; forward dep).
-            bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
-        }
-        Ok(FSEventsWatcher::init(
-            FSEVENTS_DEFAULT_LOOP.read().unwrap().as_ptr(),
-            path,
-            recursive,
-            callback,
-            update_end,
-            ctx,
-        ))
+    let loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
+    if !loop_.is_null() {
+        return Ok(FSEventsWatcher::init(
+            loop_, path, recursive, callback, update_end, ctx,
+        ));
     }
+    let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
+    let mut loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
+    if loop_.is_null() {
+        loop_ = FSEventsLoop::init()?;
+        FSEVENTS_DEFAULT_LOOP.store(loop_, Ordering::Release);
+        // First loop ever created → arrange `close_and_wait` to run from
+        // `Bun__onExit`. Spec `Global.zig:220` runs it BEFORE
+        // `runExitCallbacks()`, so push to the pre-exit list rather than
+        // the generic atexit list (storage lives in bun_core; forward dep).
+        bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
+    }
+    Ok(FSEventsWatcher::init(
+        loop_, path, recursive, callback, update_end, ctx,
+    ))
 }
 
 /// `extern "C"` thunk so this fits `bun_core::Global::ExitFn`.
@@ -984,13 +974,13 @@ pub fn close_and_wait() {
     }
 
     #[cfg(target_os = "macos")]
-    // SAFETY: FSEVENTS_DEFAULT_LOOP is only mutated under FSEVENTS_DEFAULT_LOOP_MUTEX
-    unsafe {
-        if let Some(loop_) = FSEVENTS_DEFAULT_LOOP.read() {
+    {
+        let loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
+        if !loop_.is_null() {
             let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
             // SAFETY: loop_ was heap-allocated in FSEventsLoop::init(); reconstitute to run Drop
-            drop(bun_core::heap::take(loop_.as_ptr()));
-            FSEVENTS_DEFAULT_LOOP.write(None);
+            unsafe { drop(bun_core::heap::take(loop_)) };
+            FSEVENTS_DEFAULT_LOOP.store(ptr::null_mut(), Ordering::Release);
         }
     }
 }

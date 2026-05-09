@@ -1258,9 +1258,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             #[cfg(not(unix))]
             {
+                use bun_libuv_sys::UvHandle as _;
                 for r in [spawned_stdout, spawned_stderr] {
                     match r {
-                        spawn::WindowsStdioResult::Buffer(pipe) => {
+                        spawn::WindowsStdioResult::Buffer(mut pipe) => {
                             pipe.close(Subprocess::on_pipe_close)
                         }
                         spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),

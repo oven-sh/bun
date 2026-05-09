@@ -1234,22 +1234,26 @@ impl Subprocess<'_> {
         self.close_io(StdioKind::Stdout);
         self.close_io(StdioKind::Stderr);
 
-        for item in self.stdio_pipes.iter() {
-            #[cfg(windows)]
-            {
-                if let StdioResult::Buffer(buffer) = item {
-                    buffer.close(on_pipe_close);
-                }
+        #[cfg(windows)]
+        for item in core::mem::take(&mut self.stdio_pipes) {
+            if let StdioResult::Buffer(buffer) = item {
+                // `uv_close` is async — the pipe must outlive this scope until
+                // `on_pipe_close` runs and reclaims the allocation. Hand the
+                // `Box` back to libuv as a raw pointer (Zig keeps `*uv.Pipe`
+                // and `clearAndFree` only frees the slice of pointers).
+                Box::leak(buffer).close(on_pipe_close);
             }
-            #[cfg(not(windows))]
-            {
+        }
+        #[cfg(not(windows))]
+        {
+            for item in self.stdio_pipes.iter() {
                 match item {
                     ExtraPipe::OwnedFd(fd) => fd.close(),
                     ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
                 }
             }
+            self.stdio_pipes.clear();
         }
-        self.stdio_pipes.clear();
         self.stdio_pipes.shrink_to_fit();
     }
 

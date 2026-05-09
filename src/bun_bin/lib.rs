@@ -138,13 +138,22 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// Process entry point. `extern "C"` so the linker resolves crt1.o's
 /// undefined `main` against this symbol — same role as Zig's `pub fn main`.
 ///
-/// `argc`/`argv` are accepted for signature compatibility but unused:
-/// `std::env::args_os()` (which `bun_core::argv()` wraps) captures them
-/// independently via the `.init_array` hook on Linux / `_NSGetArgv` on
-/// macOS / `GetCommandLineW` on Windows, so a Rust `lang_start` is not
-/// required.
+/// `argc`/`argv` are forwarded to `bun_core::init_argv` immediately: on
+/// glibc/macOS/Windows libstd also captures them via a `.init_array` hook /
+/// `_NSGetArgv` / `GetCommandLineW`, but on **musl** static builds that hook
+/// receives no arguments (musl's `__libc_start_main` does not pass
+/// `(argc,argv,envp)` to constructors), so `std::env::args_os()` returns
+/// empty and the binary would see argc=0. Capturing the C-runtime-provided
+/// pair here is the only portable source — same contract as Zig's
+/// `bun.initArgv` wrapping `std.os.argv`.
 #[unsafe(no_mangle)]
-pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
+pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // 0. Capture argv FIRST — before the crash handler, whose panic path
+    //    dumps the command line via `bun_core::argv()`.
+    //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
+    //    for the entire process.
+    unsafe { bun_core::init_argv(argc, argv) };
+
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
@@ -155,9 +164,8 @@ pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
-    // 2/3. Allocator is static above; argv/start_time are lazy in bun_core.
-    //      (Zig's `initArgv`/`start_time` are folded into `bun_core::argv()`
-    //      and `bun_core::start_time()` — no eager call needed.)
+    // 2/3. Allocator is static above; argv was captured at step 0; start_time
+    //      is lazy in `bun_core::start_time()`.
 
     // 4. Stdio + Output sink. `bun_core::OutputSink[Sys]` is link-time provided
     //    by `bun_sys`; `stdio::init()` calls C's `bun_initialize_process()` and

@@ -1,13 +1,10 @@
 use core::ptr::NonNull;
 
-pub use crate::{MaxBufOwner, MaxBufOwnerKind};
-
 /// Tracks remaining byte budget for a subprocess stdout/stderr pipe.
 /// Dual-owned by the `Subprocess` and the pipe reader; freed when both disown it.
 pub struct MaxBuf {
-    /// `None` after subprocess finalize.
-    // TODO(port): lifetime — raw backref to the owning Subprocess (BACKREF); not in LIFETIMES.tsv
-    pub owned_by_subprocess: Option<MaxBufOwner>,
+    /// `false` after subprocess finalize.
+    pub owned_by_subprocess: bool,
     /// `false` after pipereader finalize.
     pub owned_by_reader: bool,
     /// If this goes negative, `on_max_buffer` is called on the subprocess.
@@ -23,7 +20,6 @@ pub struct MaxBuf {
 // ownership flags) and dropping destroy()/disowned().
 impl MaxBuf {
     pub fn create_for_subprocess(
-        owner: MaxBufOwner,
         ptr: &mut Option<NonNull<MaxBuf>>,
         initial: Option<i64>,
     ) {
@@ -31,10 +27,8 @@ impl MaxBuf {
             *ptr = None;
             return;
         };
-        // `owner` outlives this MaxBuf's `owned_by_subprocess` slot — the Subprocess
-        // clears it via `remove_from_subprocess` in its finalize path before being dropped.
         let maxbuf = bun_core::heap::into_raw(Box::new(MaxBuf {
-            owned_by_subprocess: Some(owner),
+            owned_by_subprocess: true,
             owned_by_reader: false,
             remaining_bytes: initial,
         }));
@@ -43,7 +37,7 @@ impl MaxBuf {
     }
 
     fn disowned(&self) -> bool {
-        self.owned_by_subprocess.is_none() && !self.owned_by_reader
+        !self.owned_by_subprocess && !self.owned_by_reader
     }
 
     /// # Safety
@@ -64,8 +58,8 @@ impl MaxBuf {
         // allocation, so no `&mut MaxBuf` may exist on this re-entrancy path (Zig's `*T`
         // permits aliasing; Rust does not).
         unsafe {
-            debug_assert!((*p).owned_by_subprocess.is_some());
-            (*p).owned_by_subprocess = None;
+            debug_assert!((*p).owned_by_subprocess);
+            (*p).owned_by_subprocess = false;
         }
         *ptr = None;
         // SAFETY: same live allocation; `owned_by_subprocess` was just cleared, so disowned()
@@ -110,29 +104,29 @@ impl MaxBuf {
         *prev = None;
     }
 
+    /// Returns `true` if this read pushed the budget negative *and* the
+    /// subprocess still owns it (i.e. the caller should fire
+    /// `BufferedReaderParentLink::on_max_buffer_overflow`).
+    ///
     /// # Safety
     /// `this` must point to a live `MaxBuf` allocated by `create_for_subprocess`.
     ///
-    /// Takes `NonNull` instead of `&mut self` because the `on_overflow` vtable is contractually
-    /// required to call `remove_from_subprocess`, which writes `owned_by_subprocess = None`
+    /// Takes `NonNull` instead of `&mut self` because the overflow callback is contractually
+    /// required to call `remove_from_subprocess`, which writes `owned_by_subprocess = false`
     /// through a sibling raw pointer to this same allocation. Under Stacked Borrows a `&mut self`
     /// argument carries a protector, so that foreign-provenance write would pop a protected
     /// Unique tag (UB). Raw place access keeps the whole overflow → callback →
     /// `remove_from_subprocess` re-entrancy path free of `&mut MaxBuf`. Zig's `*T` has no
     /// uniqueness guarantee, so the original `.zig` could re-enter freely; Rust cannot.
-    pub unsafe fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) {
+    pub unsafe fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
         let p = this.as_ptr();
         let delta = i64::try_from(bytes).unwrap_or(0);
         // SAFETY: caller guarantees `this` is live; raw place access only (no `&mut`).
         let remaining = unsafe { (*p).remaining_bytes }.checked_sub(delta).unwrap_or(-1);
         // SAFETY: same live allocation; raw place write.
         unsafe { (*p).remaining_bytes = remaining };
-        if remaining < 0 {
-            // SAFETY: same live allocation; raw place read (copies the Option out).
-            if let Some(owner) = unsafe { (*p).owned_by_subprocess } {
-                owner.on_overflow(this);
-            }
-        }
+        // SAFETY: same live allocation; raw place read.
+        remaining < 0 && unsafe { (*p).owned_by_subprocess }
     }
 }
 

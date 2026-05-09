@@ -172,14 +172,6 @@ pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]
 pub use max_buf as MaxBuf;
 
-// The owning subprocess lives in `bun_runtime::api::Subprocess` (T6); io (T2)
-// stores it opaquely and calls back when the byte budget overflows.
-bun_dispatch::link_interface! {
-    pub MaxBufOwner[Subprocess] {
-        fn on_overflow(this: core::ptr::NonNull<max_buf::MaxBuf>);
-    }
-}
-
 // `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
 // `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
 // trait impl — see `buffered_reader_parent_link!` below.
@@ -205,6 +197,9 @@ bun_dispatch::link_interface! {
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
+        // Only the `SubprocessPipeReader` arm acts on this; everything else
+        // no-ops (no other parent type wires a `MaxBuf`).
+        fn on_max_buffer_overflow(maxbuf: core::ptr::NonNull<max_buf::MaxBuf>);
     }
 }
 
@@ -228,6 +223,8 @@ macro_rules! buffered_reader_parent_link {
                     <$T as $crate::pipe_reader::BufferedReaderParent>::loop_(this),
                 event_loop() =>
                     <$T as $crate::pipe_reader::BufferedReaderParent>::event_loop(this),
+                on_max_buffer_overflow(maxbuf) =>
+                    <$T as $crate::pipe_reader::BufferedReaderParent>::on_max_buffer_overflow(this, maxbuf),
             }
         }
     };

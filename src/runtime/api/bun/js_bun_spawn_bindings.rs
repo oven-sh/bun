@@ -6,7 +6,7 @@ use bun_collections::VecExt;
 use bun_core::{fmt as bun_fmt, Output, StackCheck, Timespec, TimespecMockMode, ZBox};
 use bun_sys::UV_E;
 use bun_event_loop::SpawnSyncEventLoop::TickState;
-use bun_io::max_buf::{MaxBuf, MaxBufOwner, MaxBufOwnerKind};
+use bun_io::max_buf::MaxBuf;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject,
     JSPropertyIterator, JSValue, JsError, JsResult, SystemError,
@@ -160,24 +160,6 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwn
 unsafe fn process_mut<'a>(p: *mut Process) -> &'a mut Process {
     // SAFETY: see fn doc; Process has interior single-thread ownership.
     unsafe { &mut *p }
-}
-
-// `MaxBufOwner[Subprocess]` arm — routes max-buffer-exceeded notifications
-// back to `Subprocess::on_max_buffer`.
-bun_io::link_impl_MaxBufOwner! {
-    Subprocess for SubprocessT<'static> => |sp| {
-        on_overflow(this) => {
-            let sp = &mut *sp;
-            let kind = if sp.stdout_maxbuf == Some(this) {
-                MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
-                bun_io::max_buf::Kind::Stdout
-            } else {
-                MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
-                bun_io::max_buf::Kind::Stderr
-            };
-            sp.on_max_buffer(kind);
-        },
-    }
 }
 
 bun_output::declare_scope!(Subprocess, hidden);
@@ -1232,15 +1214,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         unsafe { NonNull::new_unchecked(subprocess_ptr.cast()) };
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
-    // PORT NOTE: pass the raw `*mut SubprocessT` captured above instead of the
-    // live `&mut subprocess` alongside a `&mut subprocess.<field>` borrow
-    // (PORTING.md §Forbidden aliased-&mut).
-    // SAFETY: `subprocess_nn` is the just-allocated stable address; the
-    // subprocess clears its maxbuf slots in finalize before being dropped.
-    let maxbuf_owner =
-        unsafe { MaxBufOwner::new(MaxBufOwnerKind::Subprocess, subprocess_nn.as_ptr()) };
-    MaxBuf::create_for_subprocess(maxbuf_owner, &mut subprocess.stderr_maxbuf, max_buffer);
-    MaxBuf::create_for_subprocess(maxbuf_owner, &mut subprocess.stdout_maxbuf, max_buffer);
+    MaxBuf::create_for_subprocess(&mut subprocess.stderr_maxbuf, max_buffer);
+    MaxBuf::create_for_subprocess(&mut subprocess.stdout_maxbuf, max_buffer);
 
     #[cfg(windows)]
     if !IS_SYNC {

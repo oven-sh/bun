@@ -449,6 +449,26 @@ impl BufferedReaderParent for PipeReader {
         // SAFETY: `this` is non-null/live per trait contract.
         unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
+    unsafe fn on_max_buffer_overflow(
+        this: *mut Self,
+        maxbuf: NonNull<bun_io::max_buf::MaxBuf>,
+    ) {
+        // SAFETY: `this` is live per trait contract; raw place read of the
+        // `process` backref (the embedded reader may hold `&mut self` higher
+        // on the stack, so no `&Self` is materialized).
+        let Some(mut process) = (unsafe { (*this).process }) else { return };
+        // SAFETY: `process` is the owning Subprocess back-pointer; live until
+        // `detach()`/finalize, both of which clear `(*this).process` first.
+        let sp = unsafe { process.as_mut() };
+        let kind = if sp.stdout_maxbuf == Some(maxbuf) {
+            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
+            bun_io::max_buf::Kind::Stdout
+        } else {
+            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
+            bun_io::max_buf::Kind::Stderr
+        };
+        sp.on_max_buffer(kind);
+    }
 }
 
 // ported from: src/runtime/api/bun/subprocess/SubprocessPipeReader.zig

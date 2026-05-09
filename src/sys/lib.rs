@@ -3236,6 +3236,37 @@ impl File {
         lseek(self.handle, 0, libc::SEEK_CUR).map(|p| p as u64)
     }
     pub fn stat(&self) -> Maybe<Stat> { fstat(self.handle) }
+    /// Port of `bun.sys.File.kind` (File.zig:220).
+    ///
+    /// Be careful about using this on Linux or macOS — calls `fstat()`
+    /// internally there. On Windows it routes through `GetFileType`.
+    pub fn kind(&self) -> Maybe<FileKind> {
+        #[cfg(windows)]
+        {
+            let rt = windows::GetFileType(self.handle.cast());
+            if rt == windows::FILE_TYPE_UNKNOWN {
+                let err = windows::get_last_win32_error();
+                if err != windows::Win32Error::SUCCESS {
+                    return Err(Error::from_code(
+                        err.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::EUNKNOWN),
+                        Tag::fstat,
+                    ));
+                }
+            }
+            Ok(match rt {
+                windows::FILE_TYPE_CHAR => FileKind::CharacterDevice,
+                windows::FILE_TYPE_REMOTE | windows::FILE_TYPE_DISK => FileKind::File,
+                windows::FILE_TYPE_PIPE => FileKind::NamedPipe,
+                windows::FILE_TYPE_UNKNOWN => FileKind::Unknown,
+                _ => FileKind::File,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            let st = self.stat()?;
+            Ok(kind_from_mode(st.st_mode as Mode))
+        }
+    }
     pub fn close(self) -> Maybe<()> { close(self.handle) }
     /// Port of `bun.sys.File.openatOSPath` (File.zig:65) — `openat` accepting
     /// the platform-native NUL-terminated path type (`ZStr` POSIX / `WStr`

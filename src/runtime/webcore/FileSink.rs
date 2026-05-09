@@ -533,7 +533,13 @@ impl FileSink {
             ref_count: Cell::new(1),
             event_loop_handle: evtloop,
             // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
-            fd: unsafe { (*pipe).fd() },
+            // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
+            // Zig's `HandleMixin.fd` maps INVALID_HANDLE_VALUE → `bun.invalid_fd`
+            // and otherwise tags kind=system via `.fromNative`.
+            fd: match unsafe { (*pipe).fd() } {
+                h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
+                h => Fd::from_system(h),
+            },
             ..FileSink::default_fields()
         }));
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);

@@ -60,6 +60,10 @@ pub fn init(allocator: std.mem.Allocator, proxy: URL) !SocksProxy {
         .kind = Kind.fromURL(proxy),
     };
 
+    if (proxy.password.len > 0 and proxy.username.len == 0) {
+        return error.SocksCredentialsIncomplete;
+    }
+
     if (proxy.username.len > 0) {
         this.username = try PercentEncoding.decodeAlloc(allocator, proxy.username);
         errdefer allocator.free(this.username);
@@ -80,6 +84,9 @@ pub fn initWithCredentials(allocator: std.mem.Allocator, kind: Kind, username: [
         .allocator = allocator,
         .kind = kind,
     };
+    if (password.len > 0 and username.len == 0) {
+        return error.SocksCredentialsIncomplete;
+    }
     if (username.len > 0) {
         this.username = try allocator.dupe(u8, username);
         errdefer allocator.free(this.username);

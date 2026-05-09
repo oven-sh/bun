@@ -1717,7 +1717,7 @@ pub fn freeSSLConfig(config: *SSLConfig) callconv(.c) void {
 
 fn socksErrorCode(err: anyerror) ErrorCode {
     return switch (err) {
-        error.SocksAuthenticationFailed, error.SocksNoAcceptableAuthMethod => .proxy_authentication_required,
+        error.SocksAuthenticationFailed, error.SocksNoAcceptableAuthMethod, error.SocksCredentialsIncomplete => .proxy_authentication_required,
         error.SocksConnectionRefused => .proxy_connection_refused,
         else => .proxy_connect_failed,
     };

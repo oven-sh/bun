@@ -174,11 +174,7 @@ pub fn onOpen(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) !void {
     if (comptime Environment.allow_assert) {
-        if (client.http_proxy) |proxy| {
-            assert(is_ssl == (SocksProxy.Kind.fromURL(proxy) == .https));
-        } else {
-            assert(is_ssl == client.url.isHTTPS());
-        }
+        assert(is_ssl == client.usesTransportTLS());
     }
     client.registerAbortTracker(is_ssl, socket);
     log("Connected {s} \n", .{client.url.href});
@@ -437,7 +433,7 @@ const max_tls_record_size = 16 * 1024;
 /// On https://, we are limited to a 16 KB TLS record size.
 inline fn getRequestBodySendBuffer(this: *@This()) HTTPThread.RequestBodyBuffer {
     const actual_estimated_size = this.state.request_body.len + this.estimatedRequestHeaderByteLength();
-    const estimated_size = if (this.isHTTPS()) @min(actual_estimated_size, max_tls_record_size) else actual_estimated_size * 2;
+    const estimated_size = if (this.usesTransportTLS()) @min(actual_estimated_size, max_tls_record_size) else actual_estimated_size * 2;
     return http_thread.getRequestBodySendBuffer(estimated_size);
 }
 
@@ -1192,13 +1188,15 @@ pub fn doRedirect(
 
 /// **Not thread safe while request is in-flight**
 pub fn isHTTPS(this: *HTTPClient) bool {
+    return this.url.isHTTPS();
+}
+
+/// **Not thread safe while request is in-flight**
+pub fn usesTransportTLS(this: *HTTPClient) bool {
     if (this.http_proxy) |proxy| {
         return SocksProxy.Kind.fromURL(proxy) == .https;
     }
-    if (this.url.isHTTPS()) {
-        return true;
-    }
-    return false;
+    return this.url.isHTTPS();
 }
 
 pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableString) void {
@@ -1207,7 +1205,7 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
     assert(this.state.response_message_buffer.list.capacity == 0);
     this.state = InternalState.init(body, body_out_str);
 
-    if (this.isHTTPS()) {
+    if (this.usesTransportTLS()) {
         this.start_(true);
     } else {
         this.start_(false);
@@ -3102,7 +3100,7 @@ pub fn handleResponseMetadata(
                 // Record regardless of *this* request's shape — a future
                 // request to the same origin may be h3-eligible even if this
                 // one was pinned/proxied/sendfile.
-                if (this.isHTTPS() and this.unix_socket_path.length() == 0 and h3AltSvcEnabled()) {
+                if (this.url.isHTTPS() and this.unix_socket_path.length() == 0 and h3AltSvcEnabled()) {
                     H3.AltSvc.record(this.url.hostname, this.url.getPortAuto(), header.value);
                 }
             },

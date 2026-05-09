@@ -214,6 +214,7 @@ pub fn init(
 
     if (options.http_proxy) |proxy| {
         const is_socks = strings.eqlComptime(proxy.protocol, "socks5") or strings.eqlComptime(proxy.protocol, "socks5h");
+        this.client.flags.disable_keepalive = this.url.isHTTPS() or is_socks;
         if (!is_socks and proxy.username.len > 0) {
             // Use stack fallback allocator - stack for small credentials, heap for large ones
             var username_sfb = std.heap.stackFallback(4096, allocator);

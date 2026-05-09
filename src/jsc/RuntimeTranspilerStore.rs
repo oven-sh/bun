@@ -417,6 +417,13 @@ impl Fetcher {
 }
 
 thread_local! {
+    /// Per-worker parse arena (Zig: `var arena = bun.ArenaAllocator.init(...)`
+    /// stack-local per call). Hoisted to a thread-local leaked `Box` so the
+    /// `&'static Arena` handed to `Transpiler::set_arena` is genuinely
+    /// `'static` instead of a stack-lifetime erasure. `run()` `reset()`s it on
+    /// reuse to bulk-free the previous iteration's parse/print allocations.
+    static PARSE_ARENA: Cell<Option<NonNull<Arena>>> =
+        const { Cell::new(None) };
     static AST_MEMORY_STORE: Cell<Option<NonNull<ASTMemoryAllocator>>> =
         const { Cell::new(None) };
     static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> =
@@ -539,20 +546,48 @@ impl TranspilerJob {
         // Rust `Arena = MimallocArena`, so this is one `mi_heap_new()` +
         // `mi_heap_destroy()` per dynamic `import()`; both are paired (verified
         // via `bun_alloc::live_arena_heaps()` — stable at +0 across iterations).
-        let arena = Arena::new();
+        // Hoisted to the `PARSE_ARENA` thread-local so the `&'static Arena`
+        // handed to `Transpiler::set_arena` below is genuinely `'static` (the
+        // `Box<Arena>` is leaked for the worker thread's lifetime), matching
+        // the `AST_MEMORY_STORE`/`SOURCE_CODE_PRINTER` pattern. Note:
+        // `MimallocArena::reset()` is `mi_heap_destroy` + `mi_heap_new`, so the
+        // per-iteration `mi_heap_new` count is unchanged vs. a stack-local
+        // `Arena::new()`+`Drop` — the hoist is for lifetime soundness, not to
+        // reduce heap churn (only a non-mimalloc arena type could do that).
+        let arena_ptr: NonNull<Arena> = PARSE_ARENA.with(|cell| match cell.get() {
+            Some(p) => {
+                // SAFETY: thread-local owns the leaked Box; only this thread
+                // touches it, and no `&Arena` from a prior `run()` survives
+                // (every borrow taken below is scoped to that call's stack
+                // frame). `reset()` re-stamps the debug owning-thread id, so a
+                // pool worker that picked this up after a different worker
+                // first populated the slot would still pass the thread-lock
+                // assert — though `thread_local!` already guarantees same-
+                // thread here.
+                unsafe { (*p.as_ptr()).reset() };
+                p
+            }
+            None => {
+                // SAFETY: heap::alloc never null.
+                let p = unsafe {
+                    NonNull::new_unchecked(bun_core::heap::into_raw(Box::new(Arena::new())))
+                };
+                cell.set(Some(p));
+                p
+            }
+        });
         // SAFETY: `Transpiler<'static>` (the `vm.transpiler` value-copy below)
-        // requires `&'static Arena` for `set_arena`. The arena outlives
-        // every use of `transpiler` (it's the first local, so drops last; the
-        // `ManuallyDrop` copy never drops; every `parse_result`/`printer`
-        // borrowing it is consumed before fn return). Erase the lifetime via
-        // raw pointer round-trip — Stacked-Borrows-safe (Shared tag).
-        let arena_ref: &'static Arena = unsafe { &*(&raw const arena) };
+        // requires `&'static Arena` for `set_arena`. The leaked `Box<Arena>`
+        // backing `PARSE_ARENA` lives for the worker thread's lifetime, so this
+        // reference is genuinely `'static`. Stacked-Borrows: Shared tag from a
+        // raw pointer; no `&mut Arena` is formed for the rest of this call.
+        let arena_ref: &'static Arena = unsafe { &*arena_ptr.as_ptr() };
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
         scopeguard::defer! {
-            // SAFETY: `self` outlives this guard (guard drops before `arena` and before fn
-            // return); no other &mut alias is live at drop time.
+            // SAFETY: `self` outlives this guard (guard drops before fn return);
+            // no other &mut alias is live at drop time.
             unsafe { (*this_ptr).dispatch_to_main_thread() };
         }
 
@@ -636,9 +671,10 @@ impl TranspilerJob {
         });
         // SAFETY (lifetime erasure): `Transpiler<'a>`'s `'a` only constrains the
         // `allocator` field (and resolver opts that share it), which we
-        // immediately overwrite below via `set_arena(&arena)`. The bytewise
-        // copy is never dropped (ManuallyDrop), so no borrow tied to the
-        // shortened `'a` outlives `arena`.
+        // immediately overwrite below via `set_arena(arena_ref)` to the
+        // thread-local `PARSE_ARENA` (`'static`). The bytewise copy is never
+        // dropped (ManuallyDrop), so no borrow tied to the shortened `'a`
+        // outlives the arena.
         let transpiler: &mut Transpiler<'_> = unsafe {
             &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>()
         };
@@ -1131,7 +1167,8 @@ impl TranspilerJob {
             ..Default::default()
         };
 
-        // arena drops here (bulk-free) via Drop on `arena`
+        // PARSE_ARENA allocations stay live until the next `run()`'s `reset()`
+        // (worker-thread-local; nothing references them past this point).
     }
 }
 

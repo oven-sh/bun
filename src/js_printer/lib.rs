@@ -5568,8 +5568,8 @@ where
                 self.print_semicolon_after_statement();
             }
             other => {
-                // TODO(port): @tagName(stmt.data) — StmtData lacks IntoStaticStr.
-                Output::panic(format_args!("Unexpected tag in printStmt: {:?}", core::mem::discriminant(other)));
+                let name: &'static str = other.tag().into();
+                Output::panic(format_args!("Unexpected tag in printStmt: .{}", name));
             }
         }
         self.prev_stmt_tag = new_tag;

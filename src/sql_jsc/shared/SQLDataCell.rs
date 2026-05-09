@@ -179,9 +179,14 @@ impl TypedArray {
         if self.head_ptr.is_null() {
             return &mut [];
         }
-        // SAFETY: head_ptr is non-null and valid for `len` bytes.
-        // PORT NOTE: Zig uses `self.len` here (not `byte_len`) — preserved verbatim.
-        unsafe { slice::from_raw_parts_mut(self.head_ptr, self.len as usize) }
+        // SAFETY: head_ptr is non-null and valid for `byte_len` bytes when
+        // `free_value != 0` (the only path that reaches this via `deinit`).
+        // Zig's spec uses `self.len`, but `len` is the *element* count
+        // (consumed by SQLClient.cpp as the typed-array length); for any
+        // element wider than u8 that under-reports the allocation size.
+        // Mimalloc's `free` ignores size so Zig got away with it; Rust's
+        // `Box::<[u8]>::from_raw` layout must match the allocation.
+        unsafe { slice::from_raw_parts_mut(self.head_ptr, self.byte_len as usize) }
     }
 }
 
@@ -295,9 +300,14 @@ impl SQLDataCell {
     ) -> JsResult<JSValue> {
         let names_ptr: *mut ExternColumnIdentifier =
             names_ptr.into().unwrap_or(ptr::null_mut());
-        // TODO(port): bun.Environment.ci_assert — when set, wrap this call in
-        // `ExceptionValidationScope` and `assert_exception_presence_matches`.
-        // TODO(b2-blocked): bun_jsc::ExceptionValidationScope (ci_assert path)
+        // Zig spec gates this on `bun.Environment.ci_assert`: open an
+        // `ExceptionValidationScope` so the C++ `DECLARE_THROW_SCOPE` inside
+        // SQLClient.cpp's `toJS` (depth 0 → depth 1) has its post-call
+        // `m_needExceptionCheck` satisfied here instead of tripping the next
+        // `DECLARE_TOP_EXCEPTION_SCOPE` constructor's verifier. The macro is a
+        // no-op in release (matches the Zig non-ci_assert branch) and a real
+        // C++ scope under debug/ASAN.
+        bun_jsc::validation_scope!(scope, global_object);
 
         // SAFETY: forwarding to C++ with caller-provided buffers.
         let value = unsafe {
@@ -313,6 +323,7 @@ impl SQLDataCell {
                 names_count,
             )
         };
+        scope.assert_exception_presence_matches(value.is_empty());
         if value.is_empty() {
             return Err(JsError::Thrown);
         }

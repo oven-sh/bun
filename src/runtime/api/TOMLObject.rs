@@ -2,7 +2,7 @@ use bun_alloc::Arena;
 use bun_interchange::toml::TOML;
 use bun_js_parser::ASTMemoryAllocator;
 use bun_js_printer as js_printer;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, LogJsc, StringJsc};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, LogJsc, StringJsc};
 use bun_logger as logger;
 use bun_str::String as BunString;
 
@@ -21,23 +21,6 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
     );
 
     object
-}
-
-// Local shim: `JSGlobalObject::throw_stack_overflow` lives in the still-gated
-// `src/jsc/JSGlobalObject.rs`. Re-declare the FFI symbol and wrap it here so
-// the StackOverflow branch can throw without depending on the gated module.
-unsafe extern "C" {
-    safe fn JSGlobalObject__throwStackOverflow(this: &JSGlobalObject);
-}
-trait JSGlobalObjectStackOverflowExt {
-    fn throw_stack_overflow(&self) -> JsError;
-}
-impl JSGlobalObjectStackOverflowExt for JSGlobalObject {
-    #[inline]
-    fn throw_stack_overflow(&self) -> JsError {
-        JSGlobalObject__throwStackOverflow(self);
-        JsError::Thrown
-    }
 }
 
 #[bun_jsc::host_fn]

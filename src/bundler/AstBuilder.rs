@@ -293,10 +293,17 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let module_scope = self.current_scope;
 
         let mut parts = PartList::init_capacity(2)?;
-        unsafe { parts.set_len((2) as usize) };
-        *parts.mut_(0) = Part::default();
-        *parts.mut_(1) = Part {
-            stmts: js_ast::StoreSlice::new_mut(self.stmts.as_mut_slice()),
+        // PORT NOTE: Zig grew len then wrote `parts.mut(i).* = ...`, which is a
+        // bitwise store on the SoA slot. In Rust `*parts.mut_(i) = ...` first
+        // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop
+        // fields (`Vec`/`HashMap`), so that drop frees garbage and corrupts the
+        // heap (observed downstream as `printStmt` reading a junk `Stmt`
+        // discriminant from an arena allocation that was clobbered). Append
+        // into the reserved capacity instead so no drop runs.
+        parts.append_assume_capacity(Part::default());
+        parts.append_assume_capacity(Part {
+            // overwritten below with the arena-backed copy (`stmts_in_bump`)
+            stmts: js_ast::StoreSlice::EMPTY,
             can_be_removed_if_unused: false,
 
             // pretend that every symbol was used
@@ -316,7 +323,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 break 'uses map;
             },
             ..Default::default()
-        };
+        });
 
         let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();
         // SAFETY: module_scope is a live arena allocation (set in init, scopes stack is empty)
@@ -344,17 +351,28 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // duck-typing; Rust needs a `ParserLike` trait first. Until that lands,
         // bypass the scan and use `self.stmts` directly — matches the
         // "TODO: missing import scanner" intent above.
+        //
+        // PORT NOTE: Zig assigned `p.stmts.items` directly — its
+        // `ArrayListUnmanaged` storage is owned by `worker.allocator` and
+        // outlives the `AstBuilder` stack value. Rust's `Vec<Stmt>` would
+        // drop with `self`, leaving `parts[1].stmts` dangling once the
+        // builder goes out of scope (UAF in the printer). Copy the `Copy`
+        // `Stmt`s/`*mut Scope`s into the bump arena so the returned
+        // `BundledAst` owns them with parser-arena lifetime.
+        let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(self.stmts.as_slice());
         if self.hot_reloading {
             // get a estimate on how many statements there are going to be
-            let _prealloc_count = self.stmts.len() + 2;
+            let _prealloc_count = stmts_in_bump.len() + 2;
             // PORT NOTE: HMR transform deferred until ImportScanner accepts AstBuilder.
-            parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(self.stmts.as_mut_slice());
+            parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(stmts_in_bump);
         } else {
-            parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(self.stmts.as_mut_slice());
+            parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(stmts_in_bump);
         }
 
         parts.mut_(1).declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts.mut_(1).scopes = js_ast::StoreSlice::new_mut(self.scopes.as_mut_slice());
+        parts.mut_(1).scopes = js_ast::StoreSlice::new_mut(
+            self.bump.alloc_slice_copy(self.scopes.as_slice()),
+        );
         parts.mut_(1).import_record_indices = Vec::<u32>::move_from_list(
             core::mem::take(&mut self.import_records_for_current_part),
         );

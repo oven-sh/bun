@@ -101,12 +101,25 @@ impl JSGlobalObject {
     }
 
     pub fn throw_stack_overflow(&self) -> JsError {
+        // Wrap the raw FFI throw in a validation scope (mirrors `VM::throw_error`).
+        // The Rust `#[bun_jsc::host_fn]` thunk inserts an `ExceptionValidationScope`
+        // one frame above us that the Zig `toJSHostFn` does not; with that scope
+        // present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
+        // longer sees its previous scope as above `topEntryFrame`, so it
+        // `simulateThrow()`s and leaves `m_needExceptionCheck` set. Observe the
+        // exception here so the caller's scope dtor doesn't assert "unchecked
+        // exception" under `BUN_JSC_validateExceptionChecks=1`.
+        crate::validation_scope!(scope, self);
         JSGlobalObject__throwStackOverflow(self);
+        scope.assert_exception_presence_matches(true);
         JsError::Thrown
     }
 
     pub fn throw_out_of_memory(&self) -> JsError {
+        // See `throw_stack_overflow` for the validation-scope rationale.
+        crate::validation_scope!(scope, self);
         JSGlobalObject__throwOutOfMemoryError(self);
+        scope.assert_exception_presence_matches(true);
         JsError::Thrown
     }
 

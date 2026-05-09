@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{JSGlobalObject, JSValue, VM};
+use crate::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_string::ZigString;
 
 /// Opaque FFI handle to WebCore::DOMFormData (C++ side).
@@ -56,8 +56,14 @@ impl DOMFormData {
         WebCore__DOMFormData__create(global)
     }
 
-    pub fn create_from_url_query(global: &JSGlobalObject, query: &ZigString) -> JSValue {
-        WebCore__DOMFormData__createFromURLQuery(global, query)
+    /// C++ side declares a `THROW_SCOPE` and may throw `ERR_STRING_TOO_LONG`
+    /// (returns encoded `JSValue::ZERO` on throw) — wrap in a validation scope
+    /// so JSC's `validateExceptionChecks` sees the check before the next scope.
+    #[track_caller]
+    pub fn create_from_url_query(global: &JSGlobalObject, query: &ZigString) -> JsResult<JSValue> {
+        crate::from_js_host_call(global, || {
+            WebCore__DOMFormData__createFromURLQuery(global, query)
+        })
     }
 
     // PORT NOTE: Zig's `comptime Ctx: type, ctx: Ctx, comptime callback: fn(Ctx, ZigString)`

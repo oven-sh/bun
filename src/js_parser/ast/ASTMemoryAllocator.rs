@@ -54,8 +54,15 @@ impl ASTMemoryAllocator {
     pub fn enter(&mut self) -> Scope<'_> {
         // Zig: this.stack_allocator = SFA{ .fallback_allocator = arena, .. };
         //      this.bump_allocator = this.stack_allocator.get();
-        // The arena was already created fresh in `new()`/`default()`; Zig's
-        // SFA init here is zero-alloc, so don't allocate another mi_heap.
+        // The Zig spec OVERWRITES the entire SFA on every `enter()` (fresh
+        // 8 KB stack buffer + rewired fallback to the per-call arena), so any
+        // bytes bump-allocated by the previous `enter()` are released. The
+        // Rust port collapsed SFA+fallback into a single internal `Arena`
+        // owned by `self`, so the equivalent re-init is `arena.reset()` —
+        // otherwise a thread-local `ASTMemoryAllocator` reused across
+        // `RuntimeTranspilerStore::run()` calls grows unboundedly (one full
+        // AST worth of nodes per import).
+        self.arena.reset();
         self.previous = ptr::null_mut();
         let mut ast_scope = Scope {
             current: Some(self),

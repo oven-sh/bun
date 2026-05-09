@@ -2536,6 +2536,22 @@ impl<'a> BundleV2<'a> {
         // `Path<'static>` alias so `path` doesn't keep `self` borrowed.
         path = unsafe { self.path_with_pretty_initialized(path, target)?.into_static() };
         path.assert_pretty_is_valid();
+        // PORT NOTE: intern via `dupe_alloc` BEFORE writing back into `result` /
+        // the path-to-source-index map. Zig didn't need this — its dev-server
+        // `EntryPointList` keys borrow `dev.server_graph.bundled_files.keys()`
+        // (DevServer-owned), and `genericPathWithPrettyInitialized` returns the
+        // input `Path` unchanged for `node`-namespace built-ins (e.g.
+        // `bun-framework-react/server.tsx`), so `path.text` stayed a borrow of
+        // long-lived storage. The Rust port rebuilds a fresh
+        // `bake_types::EntryPointList` with `Box<[u8]>` keys (DevServer.rs:3027)
+        // that drops as soon as `enqueue_entry_points_dev_server` returns;
+        // `resolve_with_framework` then lifetime-erases that key into the
+        // returned `Path`, so without interning here `ParseTask.path.text` (and
+        // the map key) would dangle once the entry-point list is freed —
+        // surfacing as "Failed to load bundled module
+        // 'bun-framework-react/server.tsx'" when the worker can no longer match
+        // `built_in_modules`.
+        path = path.dupe_alloc().expect("oom");
         // PORT NOTE: Zig's `var path = result.path()` is a `*Fs.Path` *into*
         // `result.path_pair`, so the `path.* = pathWithPrettyInitialized(...)`
         // assignment mutates the resolver result in place. The borrowck-reshape
@@ -2552,7 +2568,7 @@ impl<'a> BundleV2<'a> {
         let side_effects = result.primary_side_effects_data;
         self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
-                path: fs_path_to_logger(path.dupe_alloc().expect("oom")),
+                path: fs_path_to_logger(path.clone()),
                 contents: std::borrow::Cow::Borrowed(&b""[..]),
                 index: bun_logger::Index(source_index.get()),
                 ..Default::default()

@@ -449,10 +449,12 @@ mod stdarg {
     #[cfg(target_os = "macos")]
     mod mac {
         use super::*;
-        use core::sync::atomic::{AtomicPtr, Ordering};
+        use core::sync::atomic::AtomicPtr;
         // libc declares these as `FILE *__stdinp;` — `AtomicPtr<c_void>` is
         // `#[repr(C)]` over a single `*mut c_void`, so the extern layout is
-        // identical and we only ever do a Relaxed word load.
+        // identical. We never read them; we hand TinyCC the *address* of the
+        // global (matching Zig's `@extern(*anyopaque, .{ .name = "__stdinp" })`)
+        // so JIT'd code that references `__stdoutp` loads the FILE* from there.
         unsafe extern "C" {
             #[link_name = "__stdinp"]
             static FFI_STDINP: AtomicPtr<c_void>;
@@ -463,13 +465,15 @@ mod stdarg {
         }
 
         pub fn inject(state: &mut TCC::State) {
-            // SAFETY: reading addresses of process-global FILE* pointers
+            // SAFETY: taking addresses of process-global FILE* pointers; the
+            // statics live for the process and we never form a Rust reference
+            // to them (only a raw `*const c_void` for tcc_add_symbol).
             unsafe {
                 state
                     .add_symbols(&[
-                        ("__stdinp", FFI_STDINP.load(Ordering::Relaxed)),
-                        ("__stdoutp", FFI_STDOUTP.load(Ordering::Relaxed)),
-                        ("__stderrp", FFI_STDERRP.load(Ordering::Relaxed)),
+                        ("__stdinp", core::ptr::addr_of!(FFI_STDINP).cast::<c_void>()),
+                        ("__stdoutp", core::ptr::addr_of!(FFI_STDOUTP).cast::<c_void>()),
+                        ("__stderrp", core::ptr::addr_of!(FFI_STDERRP).cast::<c_void>()),
                     ])
                     .expect("Failed to add macos symbols");
             }

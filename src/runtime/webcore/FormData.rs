@@ -127,12 +127,9 @@ impl FormData {
         match encoding {
             Encoding::URLEncoded => {
                 let str = ZigString::from_utf8(strings::without_utf8_bom(input));
-                let result = DOMFormData::create_from_url_query(global, &str);
-                // Check if an exception was thrown (e.g., string too long)
-                if result.is_empty() {
-                    return Err(err!("JSError"));
-                }
-                Ok(result)
+                // C++ may throw (e.g. string too long) — `create_from_url_query`
+                // wraps the FFI in a validation scope and maps zero → JsError.
+                DOMFormData::create_from_url_query(global, &str).map_err(|_| err!("JSError"))
             }
             Encoding::Multipart(boundary) => to_js_from_multipart_data(global, input, boundary),
         }

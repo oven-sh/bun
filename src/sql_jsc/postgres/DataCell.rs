@@ -785,24 +785,51 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         return Err(AnyPostgresError::InvalidBinaryData);
     }
 
-    // Zig: `tag.pgArrayType().init(bytes).slice()` — generic single-dimension
-    // binary-array view that byte-swaps elements in place.
-    // SAFETY: header length and element count validated against `bytes.len()` above.
-    let elements: &[Elem] = unsafe {
-        (*bun_sql::postgres::types::tag::PostgresBinarySingleDimensionArray::<Elem>::init(bytes)).slice()
+    // Zig: `tag.pgArrayType().init(bytes).slice()` byte-swaps the wire
+    // header and elements in place inside the recv buffer. The Rust port
+    // cannot soundly mutate through a pointer derived from `bytes: &[u8]`
+    // — the `readonly` LLVM parameter attribute lets the optimizer elide
+    // those writes, which in the release-asan build left the header `len`
+    // un-byte-swapped (3 → 0x03000000) and produced a 192MB OOB memcpy in
+    // SQLClient.cpp. Parse into an owned buffer instead; freed via
+    // `free_value = 1` after C++ has copied it into the JS typed array.
+    let array_len = array_len as usize;
+    let elem_size = size_of::<Elem>();
+    let out_bytes = array_len * elem_size;
+    let (head_ptr, free_value) = if array_len == 0 {
+        (core::ptr::null_mut::<u8>(), 0u8)
+    } else {
+        let mut out: Box<[u8]> = vec![0u8; out_bytes].into_boxed_slice();
+        for i in 0..array_len {
+            // Wire layout per element for the 4-byte types this path
+            // supports (int4/float4): [elem_size length prefix][elem_size value]
+            // — same stride `slice()` walks in the Zig spec.
+            let src_off = 20 + i * element_stride + (element_stride - elem_size);
+            // SAFETY: `bytes.len() >= 20 + array_len*element_stride` was
+            // validated above; `out` has `array_len*elem_size` bytes.
+            let val: Elem = unsafe {
+                core::ptr::read_unaligned(bytes.as_ptr().add(src_off).cast::<Elem>())
+            }
+            .wire_byte_swap();
+            unsafe {
+                core::ptr::write_unaligned(out.as_mut_ptr().add(i * elem_size).cast::<Elem>(), val);
+            }
+        }
+        (Box::into_raw(out).cast::<u8>(), 1u8)
     };
 
     Ok(SQLDataCell {
         tag: Tag::TypedArray,
         value: Value {
             typed_array: TypedArray {
-                head_ptr: if !bytes.is_empty() { bytes.as_ptr().cast_mut() } else { core::ptr::null_mut() },
-                ptr: if !elements.is_empty() { elements.as_ptr().cast_mut().cast::<u8>() } else { core::ptr::null_mut() },
-                len: elements.len() as u32,
-                byte_len: bytes.len() as u32,
+                head_ptr,
+                ptr: head_ptr,
+                len: array_len as u32,
+                byte_len: out_bytes as u32,
                 type_: js_typed_array_type,
             },
         },
+        free_value,
         ..Default::default()
     })
 }

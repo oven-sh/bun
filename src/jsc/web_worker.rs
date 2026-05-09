@@ -1395,15 +1395,33 @@ fn on_unhandled_rejection(
     // PORT NOTE: Zig's `writer.flush()` — `Vec<u8>` writer is unbuffered, so
     // there is nothing to flush; the `bun.outOfMemory()` arm is unreachable.
     jsc::mark_binding();
-    // SAFETY: cpp_worker valid; global_object is a live opaque FFI handle
-    // (`&JSGlobalObject` coerces to `*const JSGlobalObject`).
-    unsafe {
-        WebWorker__dispatchError(
-            global_object,
-            worker.cpp_worker,
-            BunString::clone_utf8(&array),
-            error_instance,
-        );
+    // PORT NOTE: Zig calls `WebWorker__dispatchError` bare here because the
+    // very next statement is `worker.shutdown()` (noreturn — `bun.exitThread`
+    // longjmps), so the C++ `DECLARE_THROW_SCOPE` inside
+    // `SerializedScriptValue::create` (reached via `dispatchErrorWithValue`)
+    // never has its simulated-throw bookkeeping validated. Rust RETURNS through
+    // the live C++ frames (see PORT NOTE below), so that simulated throw must
+    // be checked before unwinding, or the next `TopExceptionScope` ctor on the
+    // stack — `performMicrotaskCheckpoint` / NodeTimerObject `call()` — trips
+    // `verifyExceptionCheckNeedIsSatisfied`. Wrap in `from_js_host_call_generic`
+    // (declares + checks a TopExceptionScope around the FFI call, same as
+    // `flush_logs` above) and discard any actual exception: we are already the
+    // last-resort error handler and about to arm termination.
+    if jsc::host_fn::from_js_host_call_generic(global_object, || {
+        // SAFETY: cpp_worker valid; global_object is a live opaque FFI handle
+        // (`&JSGlobalObject` coerces to `*const JSGlobalObject`).
+        unsafe {
+            WebWorker__dispatchError(
+                global_object,
+                worker.cpp_worker,
+                BunString::clone_utf8(&array),
+                error_instance,
+            );
+        }
+    })
+    .is_err()
+    {
+        let _ = global_object.try_take_exception();
     }
     let _ = worker.set_requested_terminate();
     // PORT NOTE: Zig calls `worker.shutdown()` here, which is `noreturn`

@@ -198,7 +198,7 @@ impl CoreFoundation {
                 return cf;
             }
         }
-        let _guard = FSEVENTS_MUTEX.lock();
+        let _guard = FSEVENTS_MUTEX.lock_guard();
         unsafe {
             if let Some(cf) = FSEVENTS_CF.read() {
                 return cf;
@@ -252,7 +252,7 @@ impl CoreServices {
                 return cs;
             }
         }
-        let _guard = FSEVENTS_MUTEX.lock();
+        let _guard = FSEVENTS_MUTEX.lock_guard();
         unsafe {
             if let Some(cs) = FSEVENTS_CS.read() {
                 return cs;
@@ -578,7 +578,7 @@ impl FSEventsLoop {
         // so without this lock we can read `handle.path` / call `handle.emit`
         // on freed memory. Holding the lock also prevents `registerWatcher`
         // from reallocating the `watchers` buffer mid-iteration.
-        let _guard = loop_.mutex.lock();
+        let _guard = loop_.mutex.lock_guard();
 
         for watcher in loop_.watchers.slice() {
             let Some(handle) = *watcher else { continue };
@@ -648,7 +648,7 @@ impl FSEventsLoop {
 
     // Runs on CF Thread
     pub fn _schedule(&mut self) {
-        let _guard = self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
         self.has_scheduled_watchers = false;
         let watcher_count = self.watcher_count;
 
@@ -784,7 +784,7 @@ impl FSEventsLoop {
 
     fn register_watcher(&mut self, watcher: *mut FSEventsWatcher) {
         {
-            let _guard = self.mutex.lock();
+            let _guard = self.mutex.lock_guard();
             if self.watcher_count as usize == self.watchers.len() {
                 self.watcher_count += 1;
                 self.watchers.push(NonNull::new(watcher));
@@ -807,15 +807,16 @@ impl FSEventsLoop {
             }
         }
         // PORT NOTE: reshaped for borrowck — enqueue after dropping the guard so we
-        // can take &mut self twice. Zig held the lock through enqueueTaskConcurrent.
-        // TODO(port): verify dropping mutex before enqueue is safe (it only signals CF loop)
+        // can take &mut self twice. Zig held the lock through enqueueTaskConcurrent;
+        // safe to release first since enqueue only pushes to a lock-free queue and
+        // signals CF, and `_schedule` re-acquires the mutex on the CF thread.
         let task = Task::new(self, FSEventsLoop::_schedule);
         self.enqueue_task_concurrent(task);
     }
 
     fn unregister_watcher(&mut self, watcher: *mut FSEventsWatcher) {
         {
-            let _guard = self.mutex.lock();
+            let _guard = self.mutex.lock_guard();
             // PORT NOTE: reshaped for borrowck — capture len before mutable iteration
             let len = self.watchers.len() as usize;
             let watchers = self.watchers.slice_mut();
@@ -979,7 +980,7 @@ pub fn watch(
                 ctx,
             ));
         }
-        let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
+        let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
         if FSEVENTS_DEFAULT_LOOP.read().is_none() {
             FSEVENTS_DEFAULT_LOOP.write(NonNull::new(FSEventsLoop::init()?));
             // First loop ever created → arrange `close_and_wait` to run from
@@ -1012,7 +1013,7 @@ pub fn close_and_wait() {
     // SAFETY: FSEVENTS_DEFAULT_LOOP is only mutated under FSEVENTS_DEFAULT_LOOP_MUTEX
     unsafe {
         if let Some(loop_) = FSEVENTS_DEFAULT_LOOP.read() {
-            let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
+            let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
             // SAFETY: loop_ was heap-allocated in FSEventsLoop::init(); reconstitute to run Drop
             drop(bun_core::heap::take(loop_.as_ptr()));
             FSEVENTS_DEFAULT_LOOP.write(None);

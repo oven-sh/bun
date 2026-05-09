@@ -2409,9 +2409,11 @@ where
     #[bun_jsc::host_fn(getter)]
     pub fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let mut url = self.get_url_as_string().map_err(|_| global.throw_out_of_memory())?;
+        // `to_jsdomurl` may throw (invalid URL → JS TypeError); deref the
+        // backing string on both Ok/Err paths, then propagate.
         let r = bun_string_jsc::to_jsdomurl(&mut url, global);
         url.deref();
-        Ok(r)
+        r
     }
 
     #[bun_jsc::host_fn(getter)]

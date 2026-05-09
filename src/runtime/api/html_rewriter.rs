@@ -1249,14 +1249,16 @@ where
     // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
     let vm = || -> &mut VirtualMachine { global.bun_vm().as_mut() };
 
-    // PORT NOTE: Zig used a stack-pinned `TopExceptionScope` (in-place init).
-    // The Rust `TopExceptionScope::init` is `&mut self`-based with a Pin
-    // requirement that isn't yet wrapped in an RAII guard. For Phase A we
-    // capture the pending exception via `try_take_exception` (which both reads
-    // and clears it) — semantically equivalent for the two checks below.
-    let capture_pending_exception = |g: &JSGlobalObject| -> Option<JSValue> {
-        g.try_take_exception()
-    };
+    // Use a TopExceptionScope to properly handle exceptions from the JavaScript
+    // callback (html_rewriter.zig:920-922). The Phase-A draft replaced this with
+    // a post-hoc `try_take_exception()`, but that is *not* equivalent under
+    // `BUN_JSC_validateExceptionChecks=1`: `JSGlobalObject__tryTakeException`
+    // constructs a fresh `TopExceptionScope` whose ctor calls
+    // `verifyExceptionCheckNeedIsSatisfied`, asserting if the preceding
+    // `Bun__JSValue__call` ThrowScope's `simulateThrow()` was not yet observed
+    // by an enclosing scope. Mirror the spec exactly: open the scope here, read
+    // the pending exception through it, and clear it explicitly.
+    bun_jsc::top_scope!(scope, global);
 
     let cb = get_callback(this).expect("callback must be set if handler registered");
     let result = match cb.call(
@@ -1268,8 +1270,9 @@ where
     ) {
         Ok(v) => v,
         Err(_) => {
-            // If there's an exception, capture it for later retrieval
-            if let Some(exc_value) = capture_pending_exception(global) {
+            // If there's an exception in the scope, capture it for later retrieval
+            if let Some(exc) = scope.exception() {
+                let exc_value = JSValue::from_cell(exc.as_ptr());
                 // Store the exception in the VM's unhandled rejection capture
                 // mechanism if it's available (this is the same mechanism used
                 // by BufferOutputSink)
@@ -1279,6 +1282,8 @@ where
                     exc_value.protect();
                 }
             }
+            // Clear the exception from the scope to prevent assertion failures
+            scope.clear_exception();
             // Return true to indicate failure to LOLHTML, which will cause the
             // write operation to fail and the error handling logic to take over.
             return true;
@@ -1286,13 +1291,16 @@ where
     };
 
     // Check if there's an exception that was thrown but not caught by the error union
-    if let Some(exc_value) = capture_pending_exception(global) {
+    if let Some(exc) = scope.exception() {
+        let exc_value = JSValue::from_cell(exc.as_ptr());
         // Store the exception in the VM's unhandled rejection capture mechanism
         if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
             // SAFETY: VM-owned pointer set by BufferOutputSink::init.
             unsafe { *err_ptr = exc_value };
             exc_value.protect();
         }
+        // Clear the exception to prevent assertion failures
+        scope.clear_exception();
         return true;
     }
 

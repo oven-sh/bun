@@ -95,8 +95,21 @@ pub fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue>
     crate::from_js_host_call(global_object, || BunString__toJS(global_object, this))
 }
 
-pub fn to_jsdomurl(this: &mut String, global_object: &JSGlobalObject) -> JSValue {
-    BunString__toJSDOMURL(global_object, this)
+/// `BunString__toJSDOMURL` opens a `DECLARE_THROW_SCOPE` and throws (returning
+/// encoded `0`) when the string is not a valid URL, so wrap it in a validation
+/// scope exactly like `to_js`/`transfer_to_js` above. Without this, under
+/// `BUN_JSC_validateExceptionChecks=1` the C++ ThrowScope's destructor
+/// `simulateThrow()` leaves `m_needExceptionCheck` set and the caller's
+/// `to_js_host_call` scope dtor asserts "unchecked exception".
+///
+/// PORT NOTE: Zig's `toJSDOMURL` returns bare `JSValue` (no `JSError!`), which
+/// is a latent spec gap — it relies on the generated `toJSHostCall` thunk's
+/// `assertExceptionPresenceMatches(normal == .zero)` to satisfy the check. The
+/// Rust port routes the FFI through `from_js_host_call` so the exception is
+/// observed at the call site and surfaced as `Err(JsError::Thrown)`.
+#[track_caller]
+pub fn to_jsdomurl(this: &mut String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    crate::from_js_host_call(global_object, || BunString__toJSDOMURL(global_object, this))
 }
 
 /// calls toJS on all elements of `array`.

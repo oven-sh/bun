@@ -1341,8 +1341,7 @@ config:
       for (let i = 0; i < 10000; i++) {
         expect(YAML.stringify(config)).toBeString();
       }
-    }, // 10k iterations of a nested-object stringify — debug+ASAN CI hits the default 5s.
-    60_000);
+    }, 60_000); // 10k iterations of a nested-object stringify — debug+ASAN CI hits the default 5s.
 
     // Anchor and alias tests (reference handling)
     describe("reference handling", () => {

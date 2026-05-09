@@ -968,8 +968,9 @@ pub const H2FrameParser = struct {
                                                 client.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
                                                 // Do not `removeStreamByID` here; we are inside a
                                                 // StreamResumableIterator walk in flushStreamQueue.
-                                                // The outer loop sweeps closed streams after each
-                                                // pass via removeAllClosedStreams.
+                                                // Closed streams are reclaimed via the
+                                                // `defer removeAllClosedStreams()` in flushStreamQueue
+                                                // itself, which runs once when that function returns.
                                             }
                                         }
                                     }
@@ -2256,8 +2257,13 @@ pub const H2FrameParser = struct {
     }
 
     pub fn handleGoAwayFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+        _ = stream_;
         log("handleGoAwayFrame {} {s}", .{ frame.streamIdentifier, data });
-        if (stream_ != null) {
+        // RFC 7540 §6.8: GOAWAY MUST have streamIdentifier == 0. Check the
+        // wire field directly rather than `stream_ != null` — on the client
+        // side handleReceivedStreamID now returns null for stale nonzero
+        // ids, which would otherwise sneak an RFC-violating GOAWAY past us.
+        if (frame.streamIdentifier != 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "GoAway frame on stream", this.lastStreamID, true);
             return data.len;
         }
@@ -2420,7 +2426,12 @@ pub const H2FrameParser = struct {
     }
 
     pub fn handlePingFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
-        if (stream_ != null) {
+        _ = stream_;
+        // RFC 7540 §6.7: PING MUST have streamIdentifier == 0. Check the
+        // wire field directly rather than `stream_ != null` — on the client
+        // side handleReceivedStreamID now returns null for stale nonzero
+        // ids, which would otherwise sneak an RFC-violating PING past us.
+        if (frame.streamIdentifier != 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Ping frame on stream", this.lastStreamID, true);
             return data.len;
         }

@@ -10,23 +10,11 @@ pub struct JSMap {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
-// TODO(port): move to jsc_sys
-// TODO(port): verify extern signatures against generated C++ bindings (bun.cpp.JSC__JSMap__*)
 // `JSMap` and `JSGlobalObject` are opaque ZST FFI handles (Nomicon pattern);
 // `&JSMap` / `&JSGlobalObject` cover zero Rust-visible bytes, so passing them
 // to C++ that mutates the underlying GC cell does not violate Rust aliasing.
-// `&T` is ABI-identical to non-null `*const T`, so declaring the params as
-// references and the shims as `safe fn` moves the validity proof into the type
-// signature.
 unsafe extern "C" {
     safe fn JSC__JSMap__create(global: &JSGlobalObject) -> JSValue;
-    safe fn JSC__JSMap__set(this: &mut JSMap, global: &JSGlobalObject, key: JSValue, value: JSValue);
-    safe fn JSC__JSMap__get(this: &mut JSMap, global: &JSGlobalObject, key: JSValue) -> JSValue;
-    safe fn JSC__JSMap__has(this: &mut JSMap, global: &JSGlobalObject, key: JSValue) -> bool;
-    safe fn JSC__JSMap__remove(this: &mut JSMap, global: &JSGlobalObject, key: JSValue) -> bool;
-    safe fn JSC__JSMap__clear(this: &mut JSMap, global: &JSGlobalObject);
-    // C++: uint32_t JSC__JSMap__size(JSC::JSMap*, JSC::JSGlobalObject*) (bindings/headers.h:199)
-    safe fn JSC__JSMap__size(this: &mut JSMap, global: &JSGlobalObject) -> u32;
 }
 
 impl JSMap {
@@ -35,48 +23,48 @@ impl JSMap {
         JSC__JSMap__create(global)
     }
 
+    #[track_caller]
     pub fn set(&mut self, global: &JSGlobalObject, key: JSValue, value: JSValue) -> JsResult<()> {
-        JSC__JSMap__set(self, global, key, value);
-        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
-        if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
+        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
+        unsafe { crate::cpp::JSC__JSMap__set(self, global, key, value) }
     }
 
     /// Retrieve a value from this JS Map object.
     ///
     /// Note this shares semantics with the JS `Map.prototype.get` method, and
     /// will return `JSValue::UNDEFINED` if a value is not found.
+    #[track_caller]
     pub fn get(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<JSValue> {
-        let value = JSC__JSMap__get(self, global, key);
-        // Mirrors cpp.zig wrapper: `value == .zero` ⇔ exception thrown.
-        if value == JSValue::ZERO { Err(JsError::Thrown) } else { Ok(value) }
+        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
+        unsafe { crate::cpp::JSC__JSMap__get(self, global, key) }
     }
 
     /// Test whether this JS Map object has a given key.
+    #[track_caller]
     pub fn has(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
-        let result = JSC__JSMap__has(self, global, key);
-        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
-        if global.has_exception() { Err(JsError::Thrown) } else { Ok(result) }
+        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
+        unsafe { crate::cpp::JSC__JSMap__has(self, global, key) }
     }
 
     /// Attempt to remove a key from this JS Map object.
+    #[track_caller]
     pub fn remove(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
-        let result = JSC__JSMap__remove(self, global, key);
-        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
-        if global.has_exception() { Err(JsError::Thrown) } else { Ok(result) }
+        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
+        unsafe { crate::cpp::JSC__JSMap__remove(self, global, key) }
     }
 
     /// Clear all entries from this JS Map object.
+    #[track_caller]
     pub fn clear(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        JSC__JSMap__clear(self, global);
-        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
-        if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
+        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
+        unsafe { crate::cpp::JSC__JSMap__clear(self, global) }
     }
 
     /// Retrieve the number of entries in this JS Map object.
+    #[track_caller]
     pub fn size(&mut self, global: &JSGlobalObject) -> JsResult<u32> {
-        let result = JSC__JSMap__size(self, global);
-        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION` after the raw call.
-        if global.has_exception() { Err(JsError::Thrown) } else { Ok(result) }
+        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
+        unsafe { crate::cpp::JSC__JSMap__size(self, global) }
     }
 
     /// Attempt to convert a `JSValue` to a `*JSMap`.

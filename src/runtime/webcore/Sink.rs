@@ -573,7 +573,14 @@ impl<T: JsSinkAbi> SinkSignal<T> {
         fn close<T: JsSinkAbi>(this: *mut c_void, _err: Option<SysError>) {
             // `this` is the JSValue bits stashed by `init`; bitcast back.
             let cpp = JSValue::from_encoded(this as usize);
-            T::on_close_extern(cpp, JSValue::UNDEFINED);
+            // Zig (Sink.zig:265-268): `onClose` wraps the extern in
+            // `fromJSHostCallGeneric` so the C++ ThrowScope's `simulateThrow()`
+            // is satisfied; route through the same path here.
+            // TODO: this should be got from a parameter / properly propagate exception upwards.
+            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
+            let _ = ::bun_jsc::call_check_slow(global, || {
+                T::on_close_extern(cpp, JSValue::UNDEFINED)
+            });
         }
         fn ready<T: JsSinkAbi>(
             this: *mut c_void,

@@ -238,24 +238,20 @@ impl SocketConfigHandlers {
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-        // PORT NOTE: Zig wraps this in an `ExceptionValidationScope` purely for
-        // the `assertExceptionPresenceMatches(!success)` debug check; that
-        // scope is a no-op outside `ci_assert` builds. The `success` bool is
-        // the actual error signal (C++ left an exception pending iff !success).
+        // Zig wraps this in an `ExceptionValidationScope` for the
+        // `assertExceptionPresenceMatches(!success)` check; the scope must exist
+        // *before* the FFI call so the C++ ThrowScope's `simulateThrow()` is
+        // satisfied under `validateExceptionChecks=1`.
         let mut ext = MaybeUninit::<ExternSocketConfigHandlers>::uninit();
         // SAFETY: `global` is an opaque ZST FFI handle (see
         // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI only,
         // never written through on the Rust side; `ext` is a valid out-param;
         // C++ fully initializes `*result` iff it returns true.
-        let success = unsafe {
+        crate::call_false_is_throw(global, || unsafe {
             bindgenConvertJSToSocketConfigHandlers(global.as_ptr(), value, ext.as_mut_ptr())
-        };
-        if success {
-            // SAFETY: success ⇒ C++ initialized `ext`.
-            Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
-        } else {
-            Err(JsError::Thrown)
-        }
+        })?;
+        // SAFETY: success ⇒ C++ initialized `ext`.
+        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
     }
 }
 
@@ -555,14 +551,11 @@ impl SSLConfig {
         // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI only,
         // never written through on the Rust side; C++ fully initializes
         // `*result` iff true.
-        let success =
-            unsafe { bindgenConvertJSToSSLConfig(global.as_ptr(), value, ext.as_mut_ptr()) };
-        if success {
-            // SAFETY: success ⇒ C++ initialized `ext`.
-            Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
-        } else {
-            Err(JsError::Thrown)
-        }
+        crate::call_false_is_throw(global, || unsafe {
+            bindgenConvertJSToSSLConfig(global.as_ptr(), value, ext.as_mut_ptr())
+        })?;
+        // SAFETY: success ⇒ C++ initialized `ext`.
+        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
     }
 }
 
@@ -676,14 +669,11 @@ impl SocketConfig {
         // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI only,
         // never written through on the Rust side; C++ fully initializes
         // `*result` iff true.
-        let success =
-            unsafe { bindgenConvertJSToSocketConfig(global.as_ptr(), value, ext.as_mut_ptr()) };
-        if success {
-            // SAFETY: success ⇒ C++ initialized `ext`.
-            Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
-        } else {
-            Err(JsError::Thrown)
-        }
+        crate::call_false_is_throw(global, || unsafe {
+            bindgenConvertJSToSocketConfig(global.as_ptr(), value, ext.as_mut_ptr())
+        })?;
+        // SAFETY: success ⇒ C++ initialized `ext`.
+        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
     }
 }
 

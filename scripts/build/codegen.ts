@@ -638,6 +638,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "cppbind.ts");
 
   const output = resolve(cfg.codegenDir, "cpp.zig");
+  const outputRs = resolve(cfg.codegenDir, "cpp.rs");
 
   // Write the .cpp file list for cppbind to scan. Build system owns the
   // glob (glob-sources.ts); we hand the result to cppbind
@@ -654,7 +655,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   writeIfChanged(cxxSourcesFile, cxxSourcesLines.join("\n") + "\n");
 
   n.build({
-    outputs: [output],
+    outputs: [output, outputRs],
     rule: "codegen",
     inputs: [script],
     // cppbind scans ALL .cpp files for [[ZIG_EXPORT]] annotations. Every
@@ -674,15 +675,16 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "cpp.zig (cppbind)",
+      desc: "cpp.{zig,rs} (cppbind)",
       // cppbind.ts takes: <srcdir> <codegendir> <cxx-sources>. No `run` —
       // direct script invocation (`${BUN_EXECUTABLE} ${script} ...`).
       args: shJoin(cfg, [script, resolve(cfg.cwd, "src"), cfg.codegenDir, cxxSourcesFile]),
     },
   });
 
-  o.all.push(output);
-  o.rustInputs.push(output);
+  o.all.push(output, outputRs);
+  // bun_jsc `include!`s cpp.rs — the cargo edge must order after this.
+  o.rustInputs.push(output, outputRs);
 }
 
 function emitCiInfo({ n, cfg, o, dirStamp }: Ctx): void {

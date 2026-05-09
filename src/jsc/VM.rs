@@ -198,15 +198,10 @@ impl VM {
 
     #[track_caller]
     pub fn throw_error(&self, global_object: &JSGlobalObject, value: JSValue) -> JsError {
-        let mut scope_storage = core::mem::MaybeUninit::uninit();
-        let scope =
-            ExceptionValidationScope::new(&mut scope_storage, global_object, core::panic::Location::caller());
+        crate::validation_scope!(scope, global_object);
         scope.assert_no_exception();
         JSC__VM__throwError(self, global_object, value);
         scope.assert_exception_presence_matches(true);
-        // Zig: `defer scope.deinit()` — `ExceptionValidationScope` has no `Drop`, destroy explicitly.
-        // SAFETY: scope was initialized via `ExceptionValidationScope::new` above and not yet destroyed.
-        unsafe { ExceptionValidationScope::destroy(scope) };
         JsError::Thrown
     }
 

@@ -335,34 +335,8 @@ impl JSPromise {
             crate::to_js_host_call(g, move || f(g))
         }
 
-        // TODO(port): @src() source-location plumbing — provide a `src!()` macro in Phase B.
         // Zig: `var scope: jsc.TopExceptionScope = undefined; scope.init(global, @src()); defer scope.deinit();`
-        // `TopExceptionScope::init` is in-place (placement-constructs into `bytes`), so we
-        // stack-allocate via `MaybeUninit` and must not move it after `init`.
-        //
-        // Stacked Borrows: derive a single raw `*mut TopExceptionScope` from the
-        // `MaybeUninit` and route every access (init, assert, destroy) through it. We
-        // never materialize a long-lived `&mut TopExceptionScope` whose Unique tag
-        // could be popped by the guard's parked raw pointer (or vice versa).
-        let mut scope = core::mem::MaybeUninit::<TopExceptionScope>::uninit();
-        let scope_ptr: *mut TopExceptionScope = scope.as_mut_ptr();
-        // SAFETY: `init` writes into `bytes` via FFI without reading prior contents; the
-        // `ci_assert`-gated `location` field is set inside `init` itself, so calling `init`
-        // on uninit storage is sound (matches the Zig `= undefined; .init()` pattern).
-        unsafe {
-            (*scope_ptr).init_in_place(
-                global,
-                SourceLocation {
-                    fn_name: c"JSPromise::wrap".as_ptr(),
-                    file: c"src/jsc/JSPromise.rs".as_ptr(),
-                    line: line!(),
-                },
-            );
-        }
-        let _scope_guard = scopeguard::guard(scope_ptr, |s| {
-            // SAFETY: `s` was initialized by `init()` above and has not been destroyed.
-            unsafe { TopExceptionScope::destroy(s) }
-        });
+        crate::top_scope!(scope, global);
 
         let mut ctx = Wrapper { f: Some(f) };
         // SAFETY: `ctx` outlives the synchronous FFI call; `call::<F>` matches the
@@ -379,10 +353,7 @@ impl JSPromise {
         // JSC__JSPromise__wrap converts any thrown exception into a rejected promise,
         // so a pending non-termination exception here indicates a bug; assert and
         // surface termination as JsTerminated (matching JSPromise.zig:202-207).
-        // SAFETY: `scope_ptr` was initialized above and `_scope_guard` has not yet
-        // dropped; the short-lived `&mut` reborrow here is derived from the same
-        // raw root provenance as the guard and ends before the guard runs.
-        unsafe { (*scope_ptr).assert_no_exception_except_termination() }
+        scope.assert_no_exception_except_termination()
             .map_err(|_| JsTerminated::JSTerminated)?;
         Ok(promise)
     }
@@ -488,12 +459,10 @@ impl JSPromise {
             }
         }
 
-        JSC__JSPromise__resolve(self, global, value);
-        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION(global)` after the void call.
-        if global.has_exception() {
-            return Err(JsTerminated::JSTerminated);
-        }
-        Ok(())
+        // `[[ZIG_EXPORT(check_slow)]]` — `bun.cpp.JSC__JSPromise__resolve(...) catch return error.JSTerminated`.
+        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
+        unsafe { crate::cpp::JSC__JSPromise__resolve(self, global, value) }
+            .map_err(|_| JsTerminated::JSTerminated)
     }
 
     pub fn reject(&mut self, global: &JSGlobalObject, value: JsResult<JSValue>) -> Result<(), JsTerminated> {
@@ -525,21 +494,16 @@ impl JSPromise {
             }
         };
 
-        JSC__JSPromise__reject(self, global, err);
-        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION(global)` after the void call.
-        if global.has_exception() {
-            return Err(JsTerminated::JSTerminated);
-        }
-        Ok(())
+        // `[[ZIG_EXPORT(check_slow)]]` — `bun.cpp.JSC__JSPromise__reject(...) catch return error.JSTerminated`.
+        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
+        unsafe { crate::cpp::JSC__JSPromise__reject(self, global, err) }
+            .map_err(|_| JsTerminated::JSTerminated)
     }
 
     pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
-        JSC__JSPromise__rejectAsHandled(self, global, value);
-        // Mirrors cpp.zig wrapper: `Bun__RETURN_IF_EXCEPTION(global)` after the void call.
-        if global.has_exception() {
-            return Err(JsTerminated::JSTerminated);
-        }
-        Ok(())
+        // `[[ZIG_EXPORT(check_slow)]]` — SAFETY: `self` is a live GC cell.
+        unsafe { crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value) }
+            .map_err(|_| JsTerminated::JSTerminated)
     }
 
     /// Like `reject` but first attaches async stack frames from this promise's

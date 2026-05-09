@@ -192,44 +192,25 @@ impl JSObject {
         }
     }
 
+    #[track_caller]
     pub fn get_index(this: JSValue, global_this: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
-        // we don't use fromJSHostCall, because it will assert that if there is an exception
-        // then the JSValue is zero. the function this ends up calling can return undefined
-        // with an exception:
+        // we don't use `call_zero_is_throw`, because it would assert that if there is an
+        // exception then the JSValue is zero. the function this ends up calling can return
+        // undefined with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
-        // TODO(b2-blocked): TopExceptionScope::init is in-place (Pin); skipped in stub path.
+        crate::top_scope!(scope, global_this);
         let value = JSC__JSObject__getIndex(this, global_this, i);
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
+        scope.return_if_exception()?;
         debug_assert!(!value.is_empty());
         Ok(value)
     }
 
+    #[track_caller]
     pub fn put_record(&mut self, global: &JSGlobalObject, key: &mut ZigString, values: &mut [ZigString]) -> JsResult<()> {
-        // Zig calls `bun.cpp.JSC__JSObject__putRecord`, whose generated wrapper
-        // (build/debug/codegen/cpp.zig) does `Bun__RETURN_IF_EXCEPTION(global)`
-        // after the raw call and yields `error.JSError` if a JS exception is
-        // pending (a setter / defineOwnProperty inside putRecord can throw).
-        // Mirror that here so callers don't observe a silent success.
-        // TODO(port): replace with the host-call wrapper once `fromJSHostCall`
-        // is ported; raw C++ return type still unverified (see extern decl above).
+        // Zig calls `bun.cpp.JSC__JSObject__putRecord` (`[[ZIG_EXPORT(check_slow)]]`).
         // SAFETY: pointers are valid for the duration of the call; C++ does not
-        // retain them. `global.as_ptr()` is the centralized opaque-handle FFI
-        // conversion (interior mutability — C++ may throw through it).
-        unsafe {
-            JSC__JSObject__putRecord(
-                self,
-                global.as_ptr(),
-                key,
-                values.as_mut_ptr(),
-                values.len(),
-            );
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Ok(())
+        // retain them.
+        unsafe { crate::cpp::JSC__JSObject__putRecord(self, global, key, values.as_mut_ptr(), values.len()) }
     }
 
     /// This will not call getters or be observable from JavaScript.

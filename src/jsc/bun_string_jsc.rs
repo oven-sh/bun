@@ -74,8 +74,7 @@ pub fn to_range_error_instance(this: &String, global_object: &JSGlobalObject) ->
 
 #[track_caller]
 pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<String> {
-    let mut scope_storage = core::mem::MaybeUninit::uninit();
-    let scope = ExceptionValidationScope::init(&mut scope_storage, global_object);
+    crate::validation_scope!(scope, global_object);
     let mut out: String = String::DEAD;
     let ok = BunString__fromJS(global_object, value, &mut out);
 
@@ -87,11 +86,6 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     } else {
         debug_assert!(has_exception);
     }
-
-    // Zig: `defer scope.deinit()`. `ExceptionValidationScope` has no `Drop` impl
-    // (placement-constructed C++ TopExceptionScope), so destroy explicitly.
-    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { ExceptionValidationScope::destroy(scope) };
 
     if ok { Ok(out) } else { Err(JsError::Thrown) }
 }

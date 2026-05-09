@@ -838,10 +838,18 @@ impl RunCommand {
                 // Debug builds wipe and recreate the bun-node temp dir so the
                 // ALREADY_EXISTS short-circuit below never reuses a stale
                 // hardlink at a previous debug binary.
+                //
+                // PORT NOTE: Zig's `@panic("huh?")` assumes the wipe always
+                // leaves the path absent. `bun-run.test.ts` now uses
+                // `describe.concurrent`, so multiple debug processes race on
+                // this shared dir and `make_dir` can legitimately observe
+                // `PathAlreadyExists` after a sibling re-created it. Swallow
+                // the error — the `CreateHardLinkW` retry below already
+                // re-mkdirs on failure, so a lost race here is harmless.
                 let dir_slice_u8 =
                     bun_str::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
-                let _ = bun_sys::Dir::cwd().delete_tree(&dir_slice_u8);
-                bun_sys::Dir::cwd().make_dir(&dir_slice_u8).expect("huh?");
+                let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);
+                let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
             }
 
             let image_path = win::exe_path_w();

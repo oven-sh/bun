@@ -2480,12 +2480,14 @@ pub fn ftruncate(fd: Fd, size: isize) -> Result<()> {
                 w::FILE_INFORMATION_CLASS::FileEndOfFileInformation,
             )
         };
-        // `rc` is an NTSTATUS — route through the NTSTATUS→Win32Error→errno
-        // mapping (Zig `errnoSysFd` special-cases `@TypeOf(rc) == NTSTATUS`).
-        return match windows::Win32Error::from_nt_status(rc) {
-            windows::Win32Error::SUCCESS => Result::Ok(()),
-            code => Result::Err(Error {
-                errno: code.to_system_errno().map(|e| e as _).unwrap_or(E::UNKNOWN as _),
+        // `rc` is an NTSTATUS — Zig `errnoSysFd` special-cases
+        // `@TypeOf(rc) == NTSTATUS` and dispatches to
+        // `bun.windows.translateNTStatusToErrno` (the hand-curated table), NOT
+        // `RtlNtStatusToDosError` → Win32Error → SystemErrno.
+        return match windows::translate_nt_status_to_errno(rc) {
+            E::SUCCESS => Result::Ok(()),
+            e => Result::Err(Error {
+                errno: e as _,
                 syscall: Tag::ftruncate,
                 fd,
                 ..Default::default()
@@ -3861,13 +3863,15 @@ pub fn exists_at_type(fd: Fd, subpath: impl AsRef<[u8]>) -> Result<ExistsAtType>
         let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         let rc = unsafe { ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
-        // `rc` is an NTSTATUS — route through the NTSTATUS→Win32Error→errno
-        // mapping (Zig `errnoSys` special-cases `@TypeOf(rc) == NTSTATUS`).
-        match windows::Win32Error::from_nt_status(rc) {
-            windows::Win32Error::SUCCESS => {}
-            code => {
+        // `rc` is an NTSTATUS — Zig `errnoSys` special-cases
+        // `@TypeOf(rc) == NTSTATUS` and dispatches to
+        // `bun.windows.translateNTStatusToErrno` (the hand-curated table), NOT
+        // `RtlNtStatusToDosError` → Win32Error → SystemErrno.
+        match windows::translate_nt_status_to_errno(rc) {
+            E::SUCCESS => {}
+            e => {
                 let err = Error {
-                    errno: code.to_system_errno().map(|e| e as _).unwrap_or(E::UNKNOWN as _),
+                    errno: e as _,
                     syscall: Tag::access,
                     ..Default::default()
                 };
@@ -4792,7 +4796,9 @@ pub mod node {
         ///   convention) — `if (rc != 0) return null;` then `getErrno(rc)`
         ///   reads `GetLastError()`.
         /// NTSTATUS callers must NOT route through this helper; they map via
-        /// `Win32Error::from_nt_status` at the call site (no Rust `@TypeOf`).
+        /// `windows::translate_nt_status_to_errno` at the call site (no Rust
+        /// `@TypeOf`) — the hand-curated NTSTATUS→E table, NOT
+        /// `Win32Error::from_nt_status` (`RtlNtStatusToDosError`).
         #[inline]
         fn errno_sys(rc: impl Into<i64>, syscall: Tag) -> Option<Self> {
             let rc: i64 = rc.into();

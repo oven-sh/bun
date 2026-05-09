@@ -137,15 +137,24 @@ mod k32 {
 
 macro_rules! debug {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-        const _: () = assert!(cfg!(debug_assertions));
-        #[cfg(not(feature = "shim_standalone"))]
-        { bun_output::scoped_log!(bun_shim_impl, $fmt $(, $arg)*); }
-        #[cfg(feature = "shim_standalone")]
+        // Zig spec (`bun_shim_impl.zig`): `const dbg = builtin.mode == .Debug;`
+        // and every call site is `if (dbg) debug(...)`. The Rust port omits the
+        // per-call-site `if`, so gate the body here instead — release builds
+        // see an empty block (no `cfg!` const-assert, which fails E0080 in
+        // const-eval when `debug_assertions` is off).
+        #[cfg(debug_assertions)]
         {
-            // TODO(port): standalone build has no std logger; this was `std.log.debug`.
-            // Left as no-op to keep the binary tiny; revisit if standalone debug logging is needed.
-            let _ = ($($arg,)*);
+            #[cfg(not(feature = "shim_standalone"))]
+            { bun_output::scoped_log!(bun_shim_impl, $fmt $(, $arg)*); }
+            #[cfg(feature = "shim_standalone")]
+            {
+                // TODO(port): standalone build has no std logger; this was `std.log.debug`.
+                // Left as no-op to keep the binary tiny; revisit if standalone debug logging is needed.
+                let _ = ($($arg,)*);
+            }
         }
+        #[cfg(not(debug_assertions))]
+        { let _ = ($(&$arg,)*); }
     }};
 }
 

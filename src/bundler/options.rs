@@ -1468,11 +1468,9 @@ pub fn defines_from_transform_options(
             break 'load_env;
         }
 
-        // PORT NOTE: `copy_for_define` was vtable-ified (T2 dotenv may not name
-        // bundler/js_parser types — PORTING.md §Dispatch). Build the two
-        // `DefineStoreRef` adapters here and flatten `api::StringMap` into
-        // parallel borrowed slices, mapping `api::DotEnvBehavior` → the local
-        // dotenv mirror enum (same wire values, see env_loader.rs:33).
+        // PORT NOTE: flatten `api::StringMap` into parallel borrowed slices,
+        // mapping `api::DotEnvBehavior` → the local dotenv mirror enum (same
+        // wire values, see env_loader.rs:33).
         let api_defaults = framework.to_api().defaults;
         let default_keys: Vec<&[u8]> =
             api_defaults.keys.iter().map(|k| k.as_ref()).collect();
@@ -1488,9 +1486,10 @@ pub fn defines_from_transform_options(
                 DotEnv::DotEnvBehavior::LoadAllWithoutInlining
             }
         };
-        env.copy_for_define(
-            defines::env_define_json_store_ref(&mut user_defines),
-            defines::env_define_string_store_ref(&mut environment_defines),
+        defines::copy_env_for_define(
+            env,
+            &mut user_defines,
+            &mut environment_defines,
             &default_keys,
             &default_values,
             dotenv_behavior,

@@ -95,32 +95,100 @@ fn env_string_store_put(store: &mut UserDefinesArray, key: &[u8], value: &[u8]) 
     Ok(())
 }
 
-bun_dotenv::link_impl_DefineStore! {
-    String for UserDefinesArray => |this| {
-        contains(key)                 => (*this).contains_key(key),
-        put_string_define(key, value) => env_string_store_put(&mut *this, key, value),
-        put_raw(key, value)           => env_string_store_put(&mut *this, key, value),
+/// Port of `Loader.copyForDefine` (env_loader.zig:399). Moved up from
+/// `bun_dotenv` so it can name `DefineData` / `E::String` directly instead of
+/// dispatching through a vtable — it only reads `loader.map.map.{keys,values}()`,
+/// all of which are public.
+///
+/// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
+/// per-env `UserDefinesArray`.
+pub fn copy_env_for_define(
+    env: &bun_dotenv::Loader<'_>,
+    to_json: &mut RawDefines,
+    to_string: &mut UserDefinesArray,
+    framework_defaults_keys: &[&[u8]],
+    framework_defaults_values: &[&[u8]],
+    behavior: bun_dotenv::DotEnvBehavior,
+    prefix: &[u8],
+) -> Result<(), bun_core::Error> {
+    use bun_dotenv::DotEnvBehavior;
+    const INVALID_HASH: u64 = u64::MAX - 1;
+    let mut string_map_hashes: Vec<u64> = vec![INVALID_HASH; framework_defaults_keys.len()];
+
+    // Frameworks determine an allowlist of values
+    const PROCESS_ENV: &[u8] = b"process.env.";
+    for (i, &key) in framework_defaults_keys.iter().enumerate() {
+        if key.len() > PROCESS_ENV.len() && &key[..PROCESS_ENV.len()] == PROCESS_ENV {
+            let hashable_segment = &key[PROCESS_ENV.len()..];
+            string_map_hashes[i] = bun_wyhash::hash(hashable_segment);
+        }
     }
-}
 
-bun_dotenv::link_impl_DefineStore! {
-    Json for RawDefines => |this| {
-        contains(key)                 => (*this).contains_key(key),
-        put_string_define(key, value) => { (*this).get_or_put_value(key, Box::<[u8]>::from(value))?; Ok(()) },
-        put_raw(key, value)           => { (*this).get_or_put_value(key, Box::<[u8]>::from(value))?; Ok(()) },
+    // PORT NOTE: Zig pre-counted `key_buf_len`/`e_strings_to_allocate` to size two bump
+    // allocations, then `iter.reset()` and re-walked. With per-entry copies the pre-sizing
+    // pass is dead — emit directly. PERF(port): was single-buffer key arena; now per-entry Vec reuse.
+    if behavior != DotEnvBehavior::Disable && behavior != DotEnvBehavior::LoadAllWithoutInlining {
+        if behavior == DotEnvBehavior::Prefix {
+            debug_assert!(!prefix.is_empty());
+        }
+
+        // PORT NOTE: Zig's `if (key_buf_len > 0)` gate (env_loader.zig:455) is behavioral,
+        // not just a sizing optimization — when `behavior == .prefix` and NO env key starts
+        // with `prefix`, the entire second walk (including the framework-hash `else` arm)
+        // is skipped. Mirror that by pre-scanning for a prefix match before emitting.
+        let any_prefix_match = if behavior == DotEnvBehavior::Prefix {
+            env.map
+                .map
+                .keys()
+                .iter()
+                .any(|k| bun_string::strings::starts_with(k, prefix))
+        } else {
+            true
+        };
+
+        if any_prefix_match {
+            let mut key_buf: Vec<u8> = Vec::new();
+            // PORT NOTE: borrowck — iterate parallel slices instead of `iterator()` so the
+            // map borrow stays shared while we write into the define stores.
+            let keys = env.map.map.keys();
+            let values = env.map.map.values();
+            for (k, v) in keys.iter().zip(values.iter()) {
+                if k.is_empty() {
+                    continue;
+                }
+                let value: &[u8] = &v.value;
+
+                if behavior == DotEnvBehavior::Prefix {
+                    if bun_string::strings::starts_with(k, prefix) {
+                        key_buf.clear();
+                        key_buf.extend_from_slice(PROCESS_ENV);
+                        key_buf.extend_from_slice(k);
+                        env_string_store_put(to_string, &key_buf, value)?;
+                    } else {
+                        let hash = bun_wyhash::hash(k);
+                        debug_assert!(hash != INVALID_HASH);
+                        if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
+                            env_string_store_put(to_string, framework_defaults_keys[key_i], value)?;
+                        }
+                    }
+                } else {
+                    key_buf.clear();
+                    key_buf.extend_from_slice(PROCESS_ENV);
+                    key_buf.extend_from_slice(k);
+                    env_string_store_put(to_string, &key_buf, value)?;
+                }
+            }
+        }
     }
-}
 
-#[inline]
-pub fn env_define_string_store_ref(store: &mut UserDefinesArray) -> bun_dotenv::DefineStore {
-    // SAFETY: `store` outlives the `copy_for_define` call that consumes this handle.
-    unsafe { bun_dotenv::DefineStore::new(bun_dotenv::DefineStoreKind::String, store) }
-}
+    for (i, &key) in framework_defaults_keys.iter().enumerate() {
+        let value = framework_defaults_values[i];
+        if !to_string.contains_key(key) && !to_json.contains_key(key) {
+            to_json.get_or_put_value(key, Box::<[u8]>::from(value))?;
+        }
+    }
 
-#[inline]
-pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineStore {
-    // SAFETY: `store` outlives the `copy_for_define` call that consumes this handle.
-    unsafe { bun_dotenv::DefineStore::new(bun_dotenv::DefineStoreKind::Json, store) }
+    Ok(())
 }
 
 // ══════════════════════════════════════════════════════════════════════════

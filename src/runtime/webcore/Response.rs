@@ -6,7 +6,7 @@ use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
     JsResult, StringJsc as _,
 };
-use bun_str::{OwnedString, String as BunString, ZigString, ZigStringSlice};
+use bun_str::{OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice};
 use bun_core::Output;
 use bun_jsc::StringJsc as _;
 use bun_http_types::Method::Method;

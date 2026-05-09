@@ -20,12 +20,6 @@ use crate as css;
 // `PropertyId::set_prefixes_for_targets` / `from_name_and_prefix` and the
 // `Property` payloads that name `css_values::*` resolve directly.
 
-macro_rules! gated_prop {
-    ($name:ident) => {
-        pub mod $name;
-    };
-}
-
 /// Declares a property-handler ZST with the `handle_property` / `finalize`
 /// surface that `DeclarationHandler` (declaration.rs) composes over. The
 /// real handler bodies live in the gated leaf .rs files; until those
@@ -62,6 +56,58 @@ macro_rules! handler_stub {
     )+};
 }
 
+// ─── Rect / Size shorthand parse+to_css impl macros ────────────────────────
+// Shared by `border.rs` and `margin_padding.rs`. These are the Rust port of
+// Zig's `css.DefineRectShorthand` / `css.DefineSizeShorthand` comptime mixins
+// (src/css/css_parser.zig:502 / :532) — they stamp out the inherent
+// `parse`/`to_css` pair (and the `generic::{Parse,ToCss}` forwarders) for a
+// pre-existing struct. Rust has no field reflection, so the size-shorthand
+// field names are passed in (`start`/`end` for border, `block_start`/… for
+// margin_padding). Struct definitions, `PROPERTY_FIELD_MAP`, `deep_clone`,
+// `eql` stay in the per-file wrapper macros / hand-written impls.
+//
+// Declared here (textually before `pub mod border;` / `pub mod
+// margin_padding;`) so macro_rules! scoping makes them visible in both
+// submodules without `#[macro_export]`.
+macro_rules! impl_rect_shorthand {
+    ($T:ident, $V:ty) => {
+        impl $T {
+            pub fn parse(input: &mut $crate::css_parser::Parser) -> $crate::Result<Self> {
+                let r = $crate::css_values::rect::Rect::<$V>::parse(input)?;
+                Ok(Self { top: r.top, right: r.right, bottom: r.bottom, left: r.left })
+            }
+            pub fn to_css(&self, dest: &mut $crate::printer::Printer) -> ::core::result::Result<(), $crate::PrintErr> {
+                $crate::css_values::rect::Rect::<&$V> {
+                    top: &self.top, right: &self.right, bottom: &self.bottom, left: &self.left,
+                }
+                .to_css(dest)
+            }
+        }
+        $crate::impl_parse_tocss_via_inherent!($T);
+    };
+}
+
+macro_rules! impl_size_shorthand {
+    ($T:ident, $V:ty, $start:ident, $end:ident) => {
+        impl $T {
+            pub fn parse(input: &mut $crate::css_parser::Parser) -> $crate::Result<Self> {
+                let s = $crate::css_values::size::Size2D::<$V>::parse(input)?;
+                Ok(Self { $start: s.a, $end: s.b })
+            }
+            pub fn to_css(&self, dest: &mut $crate::printer::Printer) -> ::core::result::Result<(), $crate::PrintErr> {
+                use $crate::generic::ToCss as _;
+                self.$start.to_css(dest)?;
+                if self.$start != self.$end {
+                    dest.write_str(b" ")?;
+                    self.$end.to_css(dest)?;
+                }
+                Ok(())
+            }
+        }
+        $crate::impl_parse_tocss_via_inherent!($T);
+    };
+}
+
 // ─── Submodule declarations ────────────────────────────────────────────────
 // (Zig: `pub const X = @import("./X.zig");`)
 //
@@ -91,9 +137,9 @@ pub mod border_radius;
 // `box_shadow`: un-gated — real BoxShadow + BoxShadowHandler live in
 // `box_shadow.rs`.
 pub mod box_shadow;
-gated_prop!(contain);
+pub mod contain;
 pub mod display;
-gated_prop!(effects);
+pub mod effects;
 pub mod flex;
 // `font`: un-gated — real data types (FontWeight / FontSize / FontStretch /
 // FontFamily / FontStyle / FontVariantCaps / LineHeight / Font / FontHandler)
@@ -101,7 +147,7 @@ pub mod flex;
 // ``-gated there until DeriveParse/DeriveToCss proc-macros +
 // EnumProperty derive land.
 pub mod font;
-gated_prop!(grid);
+pub mod grid;
 // `list`: un-gated — real ListStyleType / CounterStyle / Symbols / Symbol
 // live in `list.rs`. PredefinedCounterStyle / SymbolsType / ListStylePosition /
 // ListStyle / MarkerSide are uninhabited (Zig source is `@compileError`).
@@ -114,9 +160,9 @@ pub mod position;
 // `prefix_handler`: un-gated — real FallbackHandler (handle_property/finalize
 // bodies) lives in `prefix_handler.rs`.
 pub mod prefix_handler;
-gated_prop!(shape);
+pub mod shape;
 pub mod size;
-gated_prop!(svg);
+pub mod svg;
 pub mod text;
 pub mod transform;
 pub mod transition;
@@ -168,19 +214,19 @@ pub enum CSSWideKeyword {
 // every payload type to implement the protocol traits in `crate::generics`.
 // Each leaf already has inherent `parse` / `to_css` (hand-written or via
 // `#[derive(Parse, ToCss)]` / `#[derive(DefineEnumProperty)]`); the
-// `impl_generic_parse_tocss!` macro forwards to those. Shorthand families that
+// `impl_parse_tocss_via_inherent!` macro forwards to those. Shorthand families that
 // generate their own impls inside their declaring macro (border rect/size,
 // margin_padding rect/size) are not re-listed here.
 mod generic_registrations {
     use super::*;
     use crate::css_values;
-    use crate::impl_generic_parse_tocss;
+    use crate::impl_parse_tocss_via_inherent;
     use crate::properties::border::GenericBorder;
 
     // ── crate::values::* leaves ──
     // None of these derive `Parse`/`ToCss`/`DefineEnumProperty`; they have
     // hand-written inherent `parse`/`to_css`, so forward via the macro.
-    impl_generic_parse_tocss!(
+    impl_parse_tocss_via_inherent!(
         css_values::alpha::AlphaValue,
         css_values::image::Image,
         css_values::length::LengthPercentageOrAuto,
@@ -218,7 +264,7 @@ mod generic_registrations {
     // get `generics::{Parse,ParseWithOptions,ToCss}` from the derive — listing
     // them here would conflict (E0119). Only payloads with hand-written
     // inherent `parse`/`to_css` (no derive) need the forwarding shim.
-    impl_generic_parse_tocss!(
+    impl_parse_tocss_via_inherent!(
         // align
         align::Gap,
         align::JustifyContent,

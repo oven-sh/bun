@@ -21,11 +21,11 @@ use bun_collections::VecExt;
 
 use crate as css;
 use crate::css_parser::{
-    self, CssResult, Delimiters, EnumProperty, Parser, ParserOptions, ParserState,
+    self, Delimiters, EnumProperty, Parser, ParserOptions, ParserState,
 };
 use crate::error::{BasicParseErrorKind, ParseError, ParserError, ParserErrorKind};
 use crate::printer::Printer;
-use crate::PrintErr;
+use crate::PrintResult;
 use crate::Token;
 
 use crate::values as css_values;
@@ -308,8 +308,7 @@ impl<'bump> DeepClone<'bump> for Token {
 // to thread `&'bump Bump` if profiling shows it.
 
 /// Zig: `pub fn Result(comptime T: type) type` → `Maybe(T, ParseError(ParserError))`.
-pub type Result<T> = CssResult<T>;
-type PrintResult<T> = core::result::Result<T, PrintErr>;
+pub use css_parser::CssResult as Result;
 
 /// PERF: nullable optimization
 #[derive(Default, CssEql, CssHash, DeepClone)]

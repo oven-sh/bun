@@ -1036,43 +1036,18 @@ pub type Stat = bun_libuv_sys::uv_stat_t;
 use bun_core::ZStr;
 
 /// Read thread-local libc errno (set by the failing syscall).
-#[cfg(unix)]
+/// Zig: `std.c._errno().*` (sys.zig). On Windows this reads the CRT's
+/// thread-local `_errno()`; libuv-backed paths that need Win32
+/// `GetLastError()` go through `bun_sys::windows::get_last_errno` instead.
 #[inline]
-pub fn last_errno() -> i32 {
-    // SAFETY: __errno_location()/__error() return a valid thread-local int*.
-    unsafe { *errno_ptr() }
-}
-#[cfg(target_os = "linux")]
-#[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno_location() } }
-// Bionic spells the TLS errno accessor `__errno()` (no `_location` suffix),
-// and `libc` follows suit — same contract, different symbol name.
-#[cfg(target_os = "android")]
-#[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno() } }
-#[cfg(target_os = "macos")]
-#[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__error() } }
-#[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
-#[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__error() } }
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd", target_os = "dragonfly"))))]
-#[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno_location() } }
-#[cfg(windows)]
-#[inline] pub fn last_errno() -> i32 {
-    // Zig: `std.c._errno().*` (sys.zig). The Windows CRT exposes the
-    // thread-local errno via `_errno()`; libuv-backed paths that need the
-    // Win32 `GetLastError()` go through `bun_sys::windows::get_last_errno`
-    // (which translates DWORD → uv errno) instead.
-    // SAFETY: `_errno()` returns a valid pointer to the calling thread's errno.
-    unsafe {
-        unsafe extern "C" { fn _errno() -> *mut core::ffi::c_int; }
-        *_errno()
-    }
-}
+pub fn last_errno() -> i32 { bun_core::ffi::errno() }
 
 /// `std.c._errno()` — pointer to thread-local errno. Prefer `last_errno()`
 /// for the value; this exists for callers that match the Zig `*_errno()` API
 /// shape (`unsafe { *bun_sys::errno() }`).
 #[cfg(unix)]
 #[inline]
-pub unsafe fn errno() -> *mut i32 { unsafe { errno_ptr() } }
+pub unsafe fn errno() -> *mut i32 { unsafe { bun_core::ffi::errno_ptr() } }
 
 /// `std.posix.toPosixPath` — copy `path` into a NUL-terminated buffer.
 /// Returns `NameTooLong` if `path` contains an interior NUL.
@@ -1979,9 +1954,6 @@ mod posix_impl {
         if p.is_null() { return Err(err_with(Tag::getcwd)); }
         Ok(unsafe { libc::strlen(p) })
     }
-    pub fn page_size() -> usize {
-        unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
-    }
 
     // ── B-2 round 9: link/perm/time/access group (sys.zig:406-3973 posix arms) ──
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
@@ -2550,6 +2522,10 @@ mod posix_impl {
 #[cfg(unix)]
 pub use posix_impl::*;
 
+// D034: canonical lives in the leaf crate (cached via OnceLock); the per-platform
+// impls in posix_impl/windows_impl were uncached duplicates.
+pub use bun_alloc::page_size;
+
 /// `bun.jsc.Node.TimeLike` — `timespec` shape, decoupled from JSC (T6).
 /// sys.zig takes this for futimens/utimens; the JSC binding constructs it from
 /// JS Date/number. T1 owns the data shape.
@@ -2705,11 +2681,6 @@ mod windows_impl {
         }
         let utf8 = bun_str::strings::paths::from_w_path(buf, &wbuf[..len as usize]);
         Ok(utf8.len())
-    }
-    pub fn page_size() -> usize {
-        let mut info = core::mem::MaybeUninit::<bun_windows_sys::SYSTEM_INFO>::uninit();
-        unsafe { bun_windows_sys::GetSystemInfo(info.as_mut_ptr()) };
-        unsafe { info.assume_init() }.dwPageSize as usize
     }
     pub fn mkdirat(dir: Fd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         // sys.zig:829 mkdiratW — `openDirAtWindowsNtPath(dir, path,
@@ -3809,16 +3780,10 @@ pub mod c {
     }
     #[cfg(unix)]
     pub use libc::memmem;
-    /// libc `__errno_location()` / `__error()` — pointer to thread-local errno.
-    #[cfg(unix)]
+    /// libc `__errno_location()` / `__error()` / CRT `_errno()` — pointer to
+    /// thread-local errno. Canonical cfg-ladder lives in `bun_core::ffi`.
     #[inline]
-    pub unsafe fn errno_location() -> *mut c_int { unsafe { super::errno_ptr() } }
-    #[cfg(windows)]
-    #[inline]
-    pub unsafe fn errno_location() -> *mut c_int {
-        unsafe extern "C" { fn _errno() -> *mut c_int; }
-        unsafe { _errno() }
-    }
+    pub unsafe fn errno_location() -> *mut c_int { unsafe { bun_core::ffi::errno_ptr() } }
     // Win32 file APIs frequently spelled `bun.C.*` in Zig (windows.zig flattens
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
     // reaches via `sys::c::*` so the call sites stay target-neutral.
@@ -4275,11 +4240,9 @@ pub mod darwin {
     use core::ffi::{c_char, c_void};
     use core::marker::{PhantomData, PhantomPinned};
 
-    /// Opaque `os_log_t` handle (`<os/log.h>`).
-    #[repr(C)]
-    pub struct OSLog {
-        _p: core::cell::UnsafeCell<[u8; 0]>,
-        _m: PhantomData<(*mut u8, PhantomPinned)>,
+    bun_opaque::opaque_ffi! {
+        /// Opaque `os_log_t` handle (`<os/log.h>`).
+        pub struct OSLog;
     }
     impl OSLog {
         /// `os_log_create("com.bun.bun", "PointsOfInterest")` — null on failure.
@@ -5889,10 +5852,12 @@ pub mod posix {
     // Darwin/BSD, 23 on Windows) — keep the `libc` symbol on POSIX.
     pub mod AF {
         use core::ffi::c_int;
-        #[cfg(windows)] pub const UNSPEC: c_int = 0;
-        #[cfg(windows)] pub const UNIX:   c_int = 1;
-        #[cfg(windows)] pub const INET:   c_int = 2;
-        #[cfg(windows)] pub const INET6:  c_int = 23;
+        // Windows literals live in `bun_windows_sys::ws2_32` (leaf tier-0); route
+        // through it so the hardcoded `2/23` exists in exactly one place.
+        #[cfg(windows)] pub const UNSPEC: c_int = bun_windows_sys::ws2_32::AF_UNSPEC;
+        #[cfg(windows)] pub const UNIX:   c_int = bun_windows_sys::ws2_32::AF_UNIX;
+        #[cfg(windows)] pub const INET:   c_int = bun_windows_sys::ws2_32::AF_INET;
+        #[cfg(windows)] pub const INET6:  c_int = bun_windows_sys::ws2_32::AF_INET6;
         #[cfg(unix)]    pub const UNSPEC: c_int = libc::AF_UNSPEC;
         #[cfg(unix)]    pub const UNIX:   c_int = libc::AF_UNIX;
         #[cfg(unix)]    pub const INET:   c_int = libc::AF_INET;

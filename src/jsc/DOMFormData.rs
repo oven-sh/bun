@@ -4,11 +4,9 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_string::ZigString;
 
-/// Opaque FFI handle to WebCore::DOMFormData (C++ side).
-#[repr(C)]
-pub struct DOMFormData {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle to WebCore::DOMFormData (C++ side).
+    pub struct DOMFormData;
 }
 
 // TODO(port): move to jsc_sys

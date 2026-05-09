@@ -1,0 +1,12 @@
+[package]
+name = "bun_opaque"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+# Intentionally zero `[dependencies]` — this crate is the lowest-tier leaf so
+# every `*_sys` crate (and anything else with C-side opaque handles) can depend
+# on it without pulling a single transitive crate into its build graph.
+[dependencies]

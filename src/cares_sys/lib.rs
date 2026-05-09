@@ -24,58 +24,13 @@ pub(crate) mod winsock {
     pub struct iovec { pub iov_len: u32, pub iov_base: *mut u8 }
 }
 
-#[repr(C)] pub struct Opaque { _p: core::cell::UnsafeCell<[u8; 0]>, _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
-
-/// Minimal un-gated surface of the c-ares FFI needed by downstream crates while
-/// the full Phase-A draft (`c_ares.rs`) remains gated. Once `c_ares_draft` is
-/// un-gated in B-2, this inline module is replaced by a `pub use` of the real
-/// module.
-pub mod c_ares {
-    use core::ffi::{c_char, c_int, c_void};
-
-    /// `ares_socklen_t` — alias of the platform `socklen_t` (see
-    /// `vendor/cares/include/ares.h` / `c_ares.zig: pub const socklen_t = c.socklen_t`).
-    #[cfg(not(windows))]
-    pub type ares_socklen_t = libc::socklen_t;
-    #[cfg(windows)]
-    pub type ares_socklen_t = core::ffi::c_int; // ws2tcpip.h: `typedef int socklen_t;`
-    pub type socklen_t = ares_socklen_t;
-
-    /// `struct ares_addrinfo_hints` — POD hints passed to `ares_getaddrinfo`.
-    /// Mirrors `AddrInfo_hints` in `c_ares.zig` (extern struct, all `c_int`).
-    #[repr(C)]
-    #[derive(Copy, Clone, Default)]
-    pub struct AddrInfo_hints {
-        pub ai_flags: c_int,
-        pub ai_family: c_int,
-        pub ai_socktype: c_int,
-        pub ai_protocol: c_int,
-    }
-
-    impl AddrInfo_hints {
-        pub fn is_empty(&self) -> bool {
-            self.ai_flags == 0 && self.ai_family == 0 && self.ai_socktype == 0 && self.ai_protocol == 0
-        }
-    }
-
-    pub type ares_addrinfo_hints = AddrInfo_hints;
-
-    unsafe extern "C" {
-        /// https://c-ares.org/docs/ares_inet_ntop.html
-        ///
-        /// Converts a numeric address into a text string suitable for presentation.
-        /// Returns `dst` on success, `NULL` on failure (with `errno` set).
-        pub fn ares_inet_ntop(af: c_int, src: *const c_void, dst: *mut u8, size: ares_socklen_t) -> *const c_char;
-
-        /// https://c-ares.org/docs/ares_inet_pton.html
-        ///
-        /// ## Returns
-        /// - `1` if `src` was valid for the specified address family
-        /// - `0` if `src` was not parseable in the specified address family
-        /// - `-1` if some system error occurred. `errno` will have been set.
-        pub fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
-    }
-}
+/// The full c-ares FFI module. The temporary inline scaffold that previously
+/// duplicated `ares_socklen_t` / `AddrInfo_hints` / `ares_inet_*` here has been
+/// collapsed to a re-export of the canonical `c_ares.rs` module now that it is
+/// un-gated. `c_ares` and `c_ares_draft` resolve to the SAME module, so the two
+/// `AddrInfo_hints` definitions are now nominally identical (previously a latent
+/// type-mismatch footgun for callers mixing the two paths).
+pub use c_ares_draft as c_ares;
 
 // Crate-root re-exports for callers that reference `bun_cares_sys::ares_inet_*`
 // directly (e.g. `bun_boringssl`).

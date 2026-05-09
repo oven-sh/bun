@@ -232,21 +232,18 @@ struct CreateOptions {
 }
 
 impl CreateOptions {
-    // TODO(port): clap.parseParam at comptime — represent as static array initialized via clap macros in Phase B
     fn params() -> &'static [clap::Param<clap::Help>] {
-        static PARAMS: std::sync::LazyLock<[clap::Param<clap::Help>; 8]> = std::sync::LazyLock::new(|| {
-            [
-                clap::parse_param(b"-h, --help                     Print this menu").expect("unreachable"),
-                clap::parse_param(b"--force                        Overwrite existing files").expect("unreachable"),
-                clap::parse_param(b"--no-install                   Don't install node_modules").expect("unreachable"),
-                clap::parse_param(b"--no-git                       Don't create a git repository").expect("unreachable"),
-                clap::parse_param(b"--verbose                      Too many logs").expect("unreachable"),
-                clap::parse_param(b"--no-package-json              Disable package.json transforms").expect("unreachable"),
-                clap::parse_param(b"--open                         On finish, start bun & open in-browser").expect("unreachable"),
-                clap::parse_param(b"<POS>...                       ").expect("unreachable"),
-            ]
-        });
-        &*PARAMS
+        static PARAMS: &[clap::Param<clap::Help>] = &[
+            clap::param!("-h, --help                     Print this menu"),
+            clap::param!("--force                        Overwrite existing files"),
+            clap::param!("--no-install                   Don't install node_modules"),
+            clap::param!("--no-git                       Don't create a git repository"),
+            clap::param!("--verbose                      Too many logs"),
+            clap::param!("--no-package-json              Disable package.json transforms"),
+            clap::param!("--open                         On finish, start bun & open in-browser"),
+            clap::param!("<POS>...                       "),
+        ];
+        PARAMS
     }
 
     pub fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {

@@ -2548,57 +2548,11 @@ impl<'a> LinkerContext<'a> {
 use bun_js_parser::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 use bun_js_parser::ast::symbol::Use as SymbolUse;
 
-/// `bundle_v2.zig:ImportTracker.Status`. Mirrors the still-gated
-/// `bundle_v2::ImportTrackerStatus` (inside the Phase-A `` draft);
-/// collapses to a re-export once `bundle_v2` un-gates it.
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum ImportTrackerStatus {
-    /// The imported file has no matching export
-    #[default]
-    NoMatch,
-    /// The imported file has a matching export
-    Found,
-    /// The imported file is CommonJS and has unknown exports
-    Cjs,
-    /// The import is missing but there is a dynamic fallback object
-    DynamicFallback,
-    /// The import is missing but there is a dynamic fallback object
-    /// and the file was originally CommonJS.
-    DynamicFallbackInteropDefault,
-    /// The import was treated as a CommonJS import but the file is known to have no exports
-    CjsWithoutExports,
-    /// The imported file was disabled by mapping it to false in the "browser"
-    /// field of package.json
-    Disabled,
-    /// The imported file is external and has unknown exports
-    External,
-    /// This is a missing re-export in a TypeScript file, so it's probably a type
-    ProbablyTypescriptType,
-}
-
-/// `bundle_v2.zig:ImportTracker.Iterator`. See `ImportTrackerStatus` above.
-///
-/// `import_data` is a raw slice into
-/// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`
-/// (Zig returned `Vec.slice()` directly). The graph SoA is never
-/// reallocated during `match_import_with_export`, so the pointer stays valid
-/// for the iterator's lifetime; the caller only reads `.data` from each entry.
-pub struct ImportTrackerIterator {
-    pub status: ImportTrackerStatus,
-    pub value: ImportTracker,
-    pub import_data: *const [crate::ImportData],
-}
-
-impl Default for ImportTrackerIterator {
-    fn default() -> Self {
-        Self {
-            status: ImportTrackerStatus::default(),
-            value: ImportTracker::default(),
-            import_data: std::ptr::from_ref::<[crate::ImportData]>(&[]),
-        }
-    }
-}
+// `bundle_v2.zig:ImportTracker.{Status,Iterator}` — canonical definition lives
+// in `bundle_v2.rs` (matches Zig spec location). Re-exported here so the 30+
+// unqualified uses in `advance_import_tracker` / `match_import_with_export`
+// below resolve unchanged.
+pub use crate::bundle_v2::{ImportTrackerStatus, ImportTrackerIterator};
 
 /// Field-wise eq for `ImportTracker` — `crate::ImportTracker` (the
 /// `ungate_support` flavour) intentionally does not derive `PartialEq` so the

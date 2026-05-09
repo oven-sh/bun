@@ -38,7 +38,7 @@ pub use static_hash_map::StaticHashMap;
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]
 pub use paste::paste as __mal_paste;
-pub use vec_ext::{ByteVecExt, DeepClone, OffsetByteList, VecExt};
+pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt};
 pub use hive_array::{HiveArray, HiveRef, Fallback as HiveArrayFallback};
 pub use bounded_array::BoundedArray;
 pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
@@ -125,7 +125,8 @@ pub use identity_context::{ArrayIdentityContext, IdentityContext, IdentityHash};
 
 pub mod array_hash_map;
 pub use array_hash_map::{
-    string_hash_map, ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiStringArrayHashMap, Entry,
+    string_hash_map, ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiPrehashed,
+    CaseInsensitiveAsciiStringArrayHashMap, CaseInsensitiveAsciiStringContext, Entry,
     GetOrPutResult, MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap,
     StringHashMapContext, StringHashMapUnownedKey, StringSet, VacantEntry,
 };
@@ -179,11 +180,9 @@ pub mod hash_map {
     }
 
     /// Zig `std.HashMap.KV` — owned `{key, value}` pair returned from
-    /// `fetchRemove` / `fetchPut`.
-    pub struct KV<K, V> {
-        pub key: K,
-        pub value: V,
-    }
+    /// `fetchRemove` / `fetchPut`. Identical to `std.ArrayHashMap.KV`; re-exported
+    /// from `array_hash_map` rather than duplicated.
+    pub use crate::array_hash_map::KV;
 }
 
 pub mod array_list;

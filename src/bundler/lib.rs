@@ -240,8 +240,10 @@ pub mod options {
     /// `IntoStaticStr` provides the JS-facing tag (`"entry-point"` etc.) so
     /// `bun_runtime::api::BuildArtifact` can spell `<&str>::from(kind)` without
     /// a duplicate enum.
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
     pub enum OutputKind {
+        #[default]
         #[strum(serialize = "chunk")]
         Chunk,
         #[strum(serialize = "asset")]
@@ -275,12 +277,8 @@ pub mod options {
     }
 
     /// `bun.bake.Side` (bake.zig:874) — which graph an output belongs to.
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum Side {
-        Client = 0,
-        Server = 1,
-    }
+    /// Re-export of the canonical def in `crate::bake_types` (bundle_v2.rs).
+    pub use crate::bake_types::Side;
 
     /// Name used by `resolver/package_json.rs::load_define_defaults` —
     /// alias of the canonical `options_impl::EnvEntry` brought in via the glob.

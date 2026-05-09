@@ -1661,33 +1661,18 @@ pub fn clear_to_end() {
 // <r> - reset
 const CSI: &str = "\x1b[";
 
-/// Lowercase lookup wrapper (Zig: `Output.color_map.get(name)`). The static
-/// table itself is `COLOR_MAP` below; this fn-module mirrors the Zig
+/// Lowercase lookup wrapper (Zig: `Output.color_map.get(name)`). The table
+/// itself lives in `bun_output_tags` (shared with the `pretty_fmt!` proc-macro
+/// so there is exactly one copy); this fn-module mirrors the Zig
 /// `ComptimeStringMap` `.get()` surface.
 pub mod color_map {
     #[inline]
     pub fn get(name: &[u8]) -> Option<&'static str> {
-        super::COLOR_MAP.get(name).copied()
+        bun_output_tags::color_for_bytes(name)
     }
 }
 
-pub static COLOR_MAP: phf::Map<&'static [u8], &'static str> = phf::phf_map! {
-    b"b" => "\x1b[1m",
-    b"d" => "\x1b[2m",
-    b"i" => "\x1b[3m",
-    b"u" => "\x1b[4m",
-    b"black" => "\x1b[30m",
-    b"red" => "\x1b[31m",
-    b"green" => "\x1b[32m",
-    b"yellow" => "\x1b[33m",
-    b"blue" => "\x1b[34m",
-    b"magenta" => "\x1b[35m",
-    b"cyan" => "\x1b[36m",
-    b"white" => "\x1b[37m",
-    b"bgred" => "\x1b[41m",
-    b"bggreen" => "\x1b[42m",
-};
-pub const RESET: &str = "\x1b[0m";
+pub use bun_output_tags::RESET;
 pub const BOLD: &str = "\x1b[1m";
 pub const DIM: &str = "\x1b[2m";
 
@@ -1937,6 +1922,11 @@ pub type PrettyFmtArgs<'a> = TemplateDisplay<'a, fmt::Arguments<'a>>;
 
 /// Runtime mirror of Zig `prettyFmt` for testing the proc-macro and for the rare
 /// dynamic case. Produces the same byte sequence the Zig comptime version would.
+///
+/// Colour table lives in `bun_output_tags`; the state machine is kept duplicated
+/// vs `bun_core_macros::rewrite` because the two intentionally diverge in the
+/// `{` arm (proc-macro rewrites Zig specs `{s}`→`{}`; this side copies braces
+/// verbatim) and on unknown tags (proc-macro errors; this side emits `""`).
 pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(fmt.len() * 4);
     let mut i = 0usize;
@@ -1979,7 +1969,7 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                 }
                 let color_name = &fmt[start..i];
                 let color_str: &str = 'picker: {
-                    if let Some(lit) = COLOR_MAP.get(color_name) {
+                    if let Some(lit) = color_map::get(color_name) {
                         break 'picker lit;
                     } else if color_name == b"r" {
                         is_reset = true;

@@ -90,14 +90,10 @@ impl StoredTrace {
     /// Capture the current call stack starting at `begin` (or the caller's return addr).
     pub fn capture(begin: Option<usize>) -> StoredTrace {
         let mut stored = StoredTrace::EMPTY;
-        // TODO(port): Zig used std.debug.captureStackTrace. Use the C++ helper
-        // (also used by the WTF fallback path) so we don't pull in `backtrace` crate.
-        unsafe extern "C" {
-            fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize;
-        }
-        let n = unsafe {
-            Bun__captureStackTrace(begin.unwrap_or(0), stored.data.as_mut_ptr(), stored.data.len())
-        };
+        let n = crate::capture_stack_trace(
+            begin.unwrap_or_else(crate::return_address),
+            &mut stored.data,
+        );
         stored.index = n;
         // Trim trailing nulls (matches Zig loop).
         for (i, &addr) in stored.data[..n].iter().enumerate() {
@@ -140,6 +136,8 @@ impl Default for DumpStackTraceOptions {
     }
 }
 pub type DumpOptions = DumpStackTraceOptions;
+/// Zig-spec name (`crash_handler.WriteStackTraceLimits`); also re-exported from `bun_crash_handler`.
+pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
 /// Zig: `crash_handler.dumpStackTrace`. T0 fallback prints raw return
 /// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,

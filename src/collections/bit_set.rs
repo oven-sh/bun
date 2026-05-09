@@ -51,6 +51,67 @@ const fn bool_mask_usize(value: bool) -> usize {
     if value { usize::MAX } else { 0 }
 }
 
+/// `1 << (index % usize::BITS)` — selects the bit within a `usize` word.
+/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged` (Zig: `maskBit`).
+#[inline(always)]
+const fn word_mask_bit(index: usize) -> usize {
+    1usize << ((index as u32) & (usize::BITS - 1)) // @truncate
+}
+
+/// `index / usize::BITS` — selects which `usize` word holds the bit.
+/// Shared by `ArrayBitSet` and `DynamicBitSetUnmanaged` (Zig: `maskIndex`).
+#[inline(always)]
+const fn word_mask_index(index: usize) -> usize {
+    index >> usize::BITS.trailing_zeros()
+}
+
+/// Shared multi-mask implementation of `set_range_value` over `&mut [usize]`
+/// storage. Used by both `ArrayBitSet` and `DynamicBitSetUnmanaged` so the
+/// per-word range masking logic lives in one place (Zig: `setRangeValue`).
+#[inline]
+fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
+    const MASK_LEN: u32 = usize::BITS;
+    if range.start == range.end {
+        return;
+    }
+
+    let start_mask_index = word_mask_index(range.start);
+    let start_bit = (range.start as u32) & (MASK_LEN - 1); // @truncate
+
+    let end_mask_index = word_mask_index(range.end);
+    let end_bit = (range.end as u32) & (MASK_LEN - 1); // @truncate
+
+    if start_mask_index == end_mask_index {
+        let mut mask1 = bool_mask_usize(true) << start_bit;
+        let mut mask2 = bool_mask_usize(true) >> ((MASK_LEN - 1) - (end_bit - 1));
+        masks[start_mask_index] &= !(mask1 & mask2);
+
+        mask1 = bool_mask_usize(value) << start_bit;
+        mask2 = bool_mask_usize(value) >> ((MASK_LEN - 1) - (end_bit - 1));
+        masks[start_mask_index] |= mask1 & mask2;
+    } else {
+        let bulk_mask_index: usize;
+        if start_bit > 0 {
+            masks[start_mask_index] = (masks[start_mask_index]
+                & !(bool_mask_usize(true) << start_bit))
+                | (bool_mask_usize(value) << start_bit);
+            bulk_mask_index = start_mask_index + 1;
+        } else {
+            bulk_mask_index = start_mask_index;
+        }
+
+        for mask in &mut masks[bulk_mask_index..end_mask_index] {
+            *mask = bool_mask_usize(value);
+        }
+
+        if end_bit > 0 {
+            masks[end_mask_index] = (masks[end_mask_index]
+                & (bool_mask_usize(true) << end_bit))
+                | (bool_mask_usize(value) >> ((MASK_LEN - 1) - (end_bit - 1)));
+        }
+    }
+}
+
 // ───────────────────────────── StaticBitSet ─────────────────────────────
 
 /// Returns the optimal static bit set type for the specified number
@@ -346,15 +407,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         }
         1usize << index
     }
-
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn bool_mask_bit(index: usize, value: bool) -> usize {
-        if SIZE == 0 {
-            return 0;
-        }
-        (value as usize) << index
-    }
 }
 
 /// Iterator over a single-word `IntegerBitSet`.
@@ -504,49 +556,10 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
     pub fn set_range_value(&mut self, range: Range, value: bool) {
         debug_assert!(range.end <= Self::BIT_LENGTH);
         debug_assert!(range.start <= range.end);
-        if range.start == range.end {
-            return;
-        }
         if NUM_MASKS == 0 {
             return;
         }
-
-        let start_mask_index = Self::mask_index(range.start);
-        let start_bit = (range.start as u32) & (Self::MASK_LEN - 1); // @truncate
-
-        let end_mask_index = Self::mask_index(range.end);
-        let end_bit = (range.end as u32) & (Self::MASK_LEN - 1); // @truncate
-
-        if start_mask_index == end_mask_index {
-            let mut mask1 = bool_mask_usize(true) << start_bit;
-            let mut mask2 = bool_mask_usize(true) >> ((Self::MASK_LEN - 1) - (end_bit - 1));
-            self.masks[start_mask_index] &= !(mask1 & mask2);
-
-            mask1 = bool_mask_usize(value) << start_bit;
-            mask2 = bool_mask_usize(value) >> ((Self::MASK_LEN - 1) - (end_bit - 1));
-            self.masks[start_mask_index] |= mask1 & mask2;
-        } else {
-            let mut bulk_mask_index: usize;
-            if start_bit > 0 {
-                self.masks[start_mask_index] = (self.masks[start_mask_index]
-                    & !(bool_mask_usize(true) << start_bit))
-                    | (bool_mask_usize(value) << start_bit);
-                bulk_mask_index = start_mask_index + 1;
-            } else {
-                bulk_mask_index = start_mask_index;
-            }
-
-            while bulk_mask_index < end_mask_index {
-                self.masks[bulk_mask_index] = bool_mask_usize(value);
-                bulk_mask_index += 1;
-            }
-
-            if end_bit > 0 {
-                self.masks[end_mask_index] = (self.masks[end_mask_index]
-                    & (bool_mask_usize(true) << end_bit))
-                    | (bool_mask_usize(value) >> ((Self::MASK_LEN - 1) - (end_bit - 1)));
-            }
-        }
+        set_range_value_masks(&mut self.masks, range, value);
     }
 
     /// Removes a specific bit from the bit set
@@ -749,18 +762,11 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
 
     #[inline(always)]
     fn mask_bit(index: usize) -> usize {
-        1usize << ((index as u32) & (Self::MASK_LEN - 1)) // @truncate
+        word_mask_bit(index)
     }
     #[inline(always)]
     fn mask_index(index: usize) -> usize {
-        // Zig: `index >> @bitSizeOf(ShiftInt)`. ShiftInt = Log2Int(usize) = u6
-        // on 64-bit, so this is `index >> 6` == `index / 64`.
-        index >> Self::MASK_LEN.trailing_zeros()
-    }
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn bool_mask_bit(index: usize, value: bool) -> usize {
-        (value as usize) << index
+        word_mask_index(index)
     }
 }
 
@@ -1073,47 +1079,7 @@ impl DynamicBitSetUnmanaged {
     pub fn set_range_value(&mut self, range: Range, value: bool) {
         debug_assert!(range.end <= self.bit_length);
         debug_assert!(range.start <= range.end);
-        if range.start == range.end {
-            return;
-        }
-
-        let start_mask_index = Self::mask_index(range.start);
-        let start_bit = (range.start as u32) & (DYN_MASK_BITS - 1); // @truncate
-
-        let end_mask_index = Self::mask_index(range.end);
-        let end_bit = (range.end as u32) & (DYN_MASK_BITS - 1); // @truncate
-
-        let masks = self.masks_slice_mut();
-
-        if start_mask_index == end_mask_index {
-            let mut mask1 = bool_mask_usize(true) << start_bit;
-            let mut mask2 = bool_mask_usize(true) >> ((DYN_MASK_BITS - 1) - (end_bit - 1));
-            masks[start_mask_index] &= !(mask1 & mask2);
-
-            mask1 = bool_mask_usize(value) << start_bit;
-            mask2 = bool_mask_usize(value) >> ((DYN_MASK_BITS - 1) - (end_bit - 1));
-            masks[start_mask_index] |= mask1 & mask2;
-        } else {
-            let bulk_mask_index: usize;
-            if start_bit > 0 {
-                masks[start_mask_index] = (masks[start_mask_index]
-                    & !(bool_mask_usize(true) << start_bit))
-                    | (bool_mask_usize(value) << start_bit);
-                bulk_mask_index = start_mask_index + 1;
-            } else {
-                bulk_mask_index = start_mask_index;
-            }
-
-            for mask in &mut masks[bulk_mask_index..end_mask_index] {
-                *mask = bool_mask_usize(value);
-            }
-
-            if end_bit > 0 {
-                masks[end_mask_index] = (masks[end_mask_index]
-                    & (bool_mask_usize(true) << end_bit))
-                    | (bool_mask_usize(value) >> ((DYN_MASK_BITS - 1) - (end_bit - 1)));
-            }
-        }
+        set_range_value_masks(self.masks_slice_mut(), range, value);
     }
 
     /// Removes a specific bit from the bit set
@@ -1311,16 +1277,11 @@ impl DynamicBitSetUnmanaged {
 
     #[inline(always)]
     fn mask_bit(index: usize) -> usize {
-        1usize << ((index as u32) & (DYN_MASK_BITS - 1)) // @truncate
+        word_mask_bit(index)
     }
     #[inline(always)]
     fn mask_index(index: usize) -> usize {
-        index >> DYN_MASK_BITS.trailing_zeros()
-    }
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn bool_mask_bit(index: usize, value: bool) -> usize {
-        (value as usize) << index
+        word_mask_index(index)
     }
     #[inline(always)]
     pub const fn num_masks(bit_length: usize) -> usize {

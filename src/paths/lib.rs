@@ -21,7 +21,7 @@ pub mod w_path_buffer_pool {
 
 // std.fs.path equivalents (PORTING.md §Crate map: never std::path).
 pub const SEP: u8 = if cfg!(windows) { b'\\' } else { b'/' };
-pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
+pub use bun_alloc::SEP_STR;
 pub const SEP_POSIX: u8 = b'/';
 pub const SEP_WINDOWS: u8 = b'\\';
 
@@ -548,9 +548,9 @@ pub mod fs {
     /// Port of `PathName` in `src/resolver/fs.zig:1582` — parsed (dir, base, ext,
     /// filename) view over a borrowed path slice. All four fields point into the
     /// same backing allocation.
-    // `#[repr(C)]`: field-identical mirror of `bun_logger::fs::PathName` /
-    // `bun_resolver::fs::PathName`; `bun_bundler::bundle_v2` bit-casts between
-    // them pending unification, so layout must be pinned.
+    ///
+    /// CANONICAL: `bun_logger::fs::PathName` / `bun_resolver::fs::PathName` are
+    /// re-exports of this type (D090).
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     pub struct PathName<'a> {
@@ -603,6 +603,12 @@ pub mod fs {
         #[inline]
         pub fn dir_or_dot(&self) -> &'a [u8] {
             if self.dir.is_empty() { b"." } else { self.dir }
+        }
+
+        /// Zig: `PathName.fmtIdentifier`.
+        #[inline]
+        pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'a> {
+            bun_core::fmt::fmt_identifier(self.non_unique_name_string_base())
         }
 
         /// Zig: `PathName.dirWithTrailingSlash`.
@@ -691,8 +697,10 @@ pub mod fs {
     ///
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
-    // `#[repr(C)]`: see note on `PathName` — bit-cast target across the three
-    // `fs::Path` mirrors until they unify.
+    ///
+    /// CANONICAL: `bun_logger::fs::Path` / `bun_resolver::fs::Path` are re-exports
+    /// of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
+    /// …) live on `bun_resolver::fs::PathResolverExt`.
     #[repr(C)]
     #[derive(Debug, Clone)]
     pub struct Path<'a> {
@@ -799,6 +807,66 @@ pub mod fs {
                 name: PathName::init(text),
                 is_disabled: false,
                 is_symlink: false,
+            }
+        }
+
+        /// Zig: `Path.initWithNamespaceVirtual(comptime text, namespace, package)`.
+        /// PORT NOTE: Zig formed `pretty = namespace ++ ":" ++ package` at comptime;
+        /// `const_format::concatcp!` can't accept fn-param `&str`, so callers pass
+        /// the precomputed `concatcp!` result as `pretty`.
+        #[inline]
+        pub fn init_with_namespace_virtual(
+            text: &'static [u8],
+            namespace: &'static [u8],
+            pretty: &'static [u8],
+        ) -> Path<'static> {
+            Path {
+                pretty,
+                is_symlink: true,
+                text,
+                namespace,
+                name: PathName::init(text),
+                is_disabled: false,
+            }
+        }
+
+        /// Zig: `Path.initForKitBuiltIn`.
+        /// PORT NOTE: same comptime-concat caveat as `init_with_namespace_virtual`.
+        #[inline]
+        pub fn init_for_kit_built_in(
+            namespace: &'static [u8],
+            package: &'static [u8],
+            pretty: &'static [u8],
+            text: &'static [u8],
+        ) -> Path<'static> {
+            Path {
+                pretty,
+                is_symlink: true,
+                text,
+                namespace,
+                name: PathName::init(package),
+                is_disabled: false,
+            }
+        }
+
+        /// Zig: `Path.assertPrettyIsValid` — debug-only check that `pretty`
+        /// contains no backslashes (Windows). No-op on POSIX.
+        #[inline]
+        pub fn assert_pretty_is_valid(&self) {
+            #[cfg(all(windows, debug_assertions))]
+            if self.pretty.contains(&b'\\') {
+                panic!(
+                    "Expected pretty file path to have only forward slashes, got '{}'",
+                    bstr::BStr::new(self.pretty)
+                );
+            }
+        }
+
+        /// Zig: `Path.assertFilePathIsAbsolute` — CI-assert only.
+        #[inline]
+        pub fn assert_file_path_is_absolute(&self) {
+            if bun_core::Environment::CI_ASSERT && self.is_file() {
+                debug_assert!(crate::is_absolute(self.text));
             }
         }
 

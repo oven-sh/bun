@@ -12,11 +12,9 @@ pub enum WeakRefType {
     PostgreSQLQueryClient = 2,
 }
 
-/// Opaque FFI handle (C++ `Bun::WeakRef`).
-#[repr(C)]
-pub struct WeakImpl {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle (C++ `Bun::WeakRef`).
+    pub struct WeakImpl;
 }
 
 impl WeakImpl {

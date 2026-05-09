@@ -31,30 +31,7 @@ pub const EOF: Error = Error::TODO; // TODO(b2): Error::from_name("EOF") once na
 /// Primitive integers encodable in the peechy wire format (native-endian raw
 /// bytes). Zig handled this via `comptime T` + `std.mem.readIntSliceNative` /
 /// `std.mem.asBytes`; Rust needs an explicit trait bound.
-pub trait SchemaInt: Copy + 'static {
-    const SIZE: usize;
-    fn from_ne_slice(b: &[u8]) -> Self;
-    fn encode_ne(self, out: &mut [u8]);
-}
-
-macro_rules! impl_schema_int {
-    ($($t:ty),* $(,)?) => {$(
-        impl SchemaInt for $t {
-            const SIZE: usize = core::mem::size_of::<$t>();
-            #[inline]
-            fn from_ne_slice(b: &[u8]) -> Self {
-                let mut a = [0u8; core::mem::size_of::<$t>()];
-                a.copy_from_slice(&b[..core::mem::size_of::<$t>()]);
-                <$t>::from_ne_bytes(a)
-            }
-            #[inline]
-            fn encode_ne(self, out: &mut [u8]) {
-                out[..core::mem::size_of::<$t>()].copy_from_slice(&self.to_ne_bytes());
-            }
-        }
-    )*};
-}
-impl_schema_int!(u8, i8, u16, i16, u32, i32, u64, i64);
+pub use bun_core::NativeEndianInt as SchemaInt;
 
 /// Duck-typed reader protocol for peechy `decode` impls.
 ///
@@ -103,56 +80,10 @@ pub trait Reader {
     }
 }
 
-/// Duck-typed writer protocol for peechy `encode` impls.
-///
-/// Zig: `fn Writer(comptime WritableStream: type) type` — the comptime stream
-/// parameter becomes the trait implementor; `encode(writer: anytype)` becomes
-/// a `W: Writer` bound.
-pub trait Writer {
-    /// Zig: `fn write(this, bytes) !void` — append all bytes or error.
-    fn write(&mut self, bytes: &[u8]) -> Result<(), Error>;
-
-    /// Zig: `writeByte`
-    #[inline]
-    fn write_byte(&mut self, byte: u8) -> Result<(), Error> {
-        self.write(&[byte])
-    }
-
-    /// Zig: `writeInt(int: anytype)` — `std.mem.asBytes(&int)`.
-    #[inline]
-    fn write_int<T: SchemaInt>(&mut self, v: T) -> Result<(), Error> {
-        // Max SchemaInt width is 8 bytes (u64/i64).
-        let mut buf = [0u8; 8];
-        v.encode_ne(&mut buf);
-        self.write(&buf[..T::SIZE])
-    }
-
-    /// Zig: `writeFieldID(comptime id: comptime_int)`
-    #[inline]
-    fn write_field_id(&mut self, id: u8) -> Result<(), Error> {
-        self.write_byte(id)
-    }
-
-    /// Zig: `writeEnum(val: anytype)` — `writeInt(@intFromEnum(val))`. Callers
-    /// pass the discriminant explicitly (`e as u8` / `e as u32`).
-    #[inline]
-    fn write_enum<T: SchemaInt>(&mut self, discriminant: T) -> Result<(), Error> {
-        self.write_int(discriminant)
-    }
-
-    /// Zig: `writeArray(u8, slice)` — `u32` length prefix + raw bytes.
-    #[inline]
-    fn write_byte_array(&mut self, slice: &[u8]) -> Result<(), Error> {
-        self.write_int(slice.len() as u32)?;
-        self.write(slice)
-    }
-
-    /// Zig: `endMessage`
-    #[inline]
-    fn end_message(&mut self) -> Result<(), Error> {
-        self.write_byte(0)
-    }
-}
+// peechy `Writer` lives in `bun_options_types::schema::Writer` (the canonical
+// `Vec<u8>`-backed struct port of `schema.zig:169 fn Writer(WritableStream)`).
+// This crate keeps only the read side; encode users depend on options_types
+// directly.
 
 /// Concrete buffer-backed reader — direct port of Zig's `pub const Reader = struct`.
 ///
@@ -183,11 +114,6 @@ impl<'a> Reader for BufReader<'a> {
         Ok(slice)
     }
 }
-
-// Zig: `pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8))`
-// The natural Rust equivalent is `impl Writer for Vec<u8>`; held back to avoid
-// method-resolution ambiguity with `std::io::Write::write` at call sites.
-// Downstream `encode` users supply their own `W: Writer` impl.
 
 // ──────────────────────────────────────────────────────────────────────────
 

@@ -29,7 +29,7 @@ pub enum BoxSizing {
 }
 // PORT NOTE: css::DefineEnumProperty(@This()) — provided eql/hash/parse/toCss/deepClone via
 // comptime reflection over @tagName. Hand-written here (only two variants) so the inherent
-// `parse`/`to_css` participate in `impl_generic_parse_tocss!` without a derive-coherence clash.
+// `parse`/`to_css` participate in `impl_parse_tocss_via_inherent!` without a derive-coherence clash.
 impl BoxSizing {
     pub fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
         let location = input.current_source_location();

@@ -18,7 +18,9 @@ use bun_alloc::AllocError;
 #[allow(unused_imports)]
 use bun_core::Output;
 
-// TODO(b1): bun_core::StringBuilder missing — local stub surface until B-2.
+// TODO(b1): swap to `bun_string::StringBuilder` once `clone_with_builder` is
+// reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
+// breaks the `'static` slice pass-through this stub fakes).
 #[derive(Default)]
 pub struct StringBuilder;
 #[allow(unused_variables)]
@@ -28,244 +30,14 @@ impl StringBuilder {
     pub fn allocate(&mut self) -> Result<(), AllocError> { Ok(()) }
 }
 
-// TODO(b1): bun_paths crate not yet linked — local stub of fs::Path so `Source`
-// stays structurally intact. Real impl: bun_paths (MOVE_DOWN from bun_resolver::fs).
-#[allow(dead_code)]
+/// `fs::Path` / `fs::PathName` — re-exports of the canonical
+/// `bun_paths::fs::{Path, PathName}` (D090). `Source.path` is pinned to
+/// `'static` (Phase-A lifetime erasure; see crate-level OWNERSHIP note), so
+/// these are `'static`-monomorphized type aliases. Struct literals / inherent
+/// methods resolve through the alias to the canonical impl.
 pub mod fs {
-    // Minimal real port of `src/resolver/fs.zig` PathName/Path — just enough for
-    // `Path::source_dir()` so dependents (resolver/bundler/js_parser) unblock.
-    // TODO(port): lifetimes — Phase A keeps `'static [u8]` like the rest of this
-    // crate; Phase B threads a `'source` lifetime once bun_paths lands.
-
-    #[inline]
-    fn is_sep_any(c: u8) -> bool {
-        // Spec `bun.path.isSepAny` (resolve_path.zig) matches BOTH separators on every platform.
-        c == b'/' || c == b'\\'
-    }
-
-    #[inline]
-    fn last_index_of_sep(path: &[u8]) -> Option<usize> {
-        // Spec `bun.path.lastIndexOfSep` (resolve_path.zig) IS platform-gated, unlike isSepAny.
-        path.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
-    }
-
-    // `#[repr(C)]`: this type is one of three field-identical mirrors of
-    // `fs.zig:PathName` (`bun_logger::fs`, `bun_resolver::fs`, `bun_paths::fs`)
-    // pending unification. `bun_bundler::bundle_v2` bit-casts between them;
-    // pinning layout makes that defined.
-    #[repr(C)]
-    #[derive(Clone, Default)]
-    pub struct PathName {
-        pub base: &'static [u8],
-        pub dir: &'static [u8],
-        /// includes the leading .
-        /// extensionless files report ""
-        pub ext: &'static [u8],
-        pub filename: &'static [u8],
-    }
-
-    impl PathName {
-        pub fn init(path_: &'static [u8]) -> PathName {
-            let mut path = path_;
-            let mut base = path;
-            let ext: &[u8];
-            let mut dir = path;
-            let mut is_absolute = true;
-            let has_disk_designator = path.len() > 2
-                && path[1] == b':'
-                && matches!(path[0], b'a'..=b'z' | b'A'..=b'Z')
-                && is_sep_any(path[2]);
-            if has_disk_designator {
-                path = &path[2..];
-            }
-
-            while let Some(i) = last_index_of_sep(path) {
-                // Stop if we found a non-trailing slash
-                if i + 1 != path.len() && path.len() > i + 1 {
-                    base = &path[i + 1..];
-                    dir = &path[0..i];
-                    is_absolute = false;
-                    break;
-                }
-
-                // Ignore trailing slashes
-                path = &path[0..i];
-            }
-
-            // Strip off the extension
-            if let Some(dot) = base.iter().rposition(|&c| c == b'.') {
-                ext = &base[dot..];
-                base = &base[0..dot];
-            } else {
-                ext = b"";
-            }
-
-            if is_absolute {
-                dir = b"";
-            }
-
-            if base.len() > 1 && is_sep_any(base[base.len() - 1]) {
-                base = &base[0..base.len() - 1];
-            }
-
-            if !is_absolute && has_disk_designator {
-                dir = &path_[0..dir.len() + 2];
-            }
-
-            let filename = if !dir.is_empty() { &path_[dir.len() + 1..] } else { path_ };
-
-            PathName { dir, base, ext, filename }
-        }
-
-        /// Port of `src/resolver/fs.zig` PathName.nonUniqueNameStringBase.
-        /// `/bar/foo/index.js` → `foo`; `/bar/foo.js` → `foo`.
-        pub fn non_unique_name_string_base(&self) -> &'static [u8] {
-            // /bar/foo/index.js -> foo
-            if !self.dir.is_empty() && self.base == b"index" {
-                // "/index" -> "index"
-                return PathName::init(self.dir).base;
-            }
-            debug_assert!(!self.base.contains(&b'/'));
-            // /bar/foo.js -> foo
-            self.base
-        }
-
-        /// Port of `src/resolver/fs.zig` PathName.fmtIdentifier.
-        pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'static> {
-            bun_core::fmt::fmt_identifier(self.non_unique_name_string_base())
-        }
-
-        #[inline]
-        pub fn dir_with_trailing_slash(&self) -> &[u8] {
-            // The three strings basically always point to the same underlying ptr
-            // so if dir does not have a trailing slash, but is spaced one apart from the basename
-            // we can assume there is a trailing slash there
-            // so we extend the original slice's length by one
-            if self.dir.is_empty() {
-                return b"./";
-            }
-            let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
-                && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
-                as usize;
-            // SAFETY: when extend==1, dir.ptr[dir.len] is the separator byte preceding
-            // base — both slices borrow the same underlying allocation (see init()).
-            unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
-        }
-    }
-
-    // `#[repr(C)]`: see note on `PathName` — bit-cast target across the three
-    // `fs::Path` mirrors until they unify.
-    #[repr(C)]
-    #[derive(Clone, Default)]
-    pub struct Path {
-        /// Display path — relative to cwd in the bundler; forward-slash on Windows.
-        pub pretty: &'static [u8],
-        /// Canonical location. For `file` namespace, usually absolute with native seps.
-        pub text: &'static [u8],
-        pub namespace: &'static [u8],
-        pub name: PathName,
-        pub is_disabled: bool,
-        pub is_symlink: bool,
-    }
-    impl Path {
-        pub fn init(text: &'static [u8]) -> Path {
-            Path {
-                pretty: text,
-                text,
-                namespace: b"file",
-                name: PathName::init(text),
-                is_disabled: false,
-                is_symlink: false,
-            }
-        }
-
-        /// Zig: `Path.initWithPretty`.
-        pub fn init_with_pretty(text: &'static [u8], pretty: &'static [u8]) -> Path {
-            Path {
-                pretty,
-                text,
-                namespace: b"file",
-                name: PathName::init(text),
-                is_disabled: false,
-                is_symlink: false,
-            }
-        }
-
-        /// Zig: `Path.initWithNamespace`.
-        pub fn init_with_namespace(text: &'static [u8], namespace: &'static [u8]) -> Path {
-            Path {
-                pretty: text,
-                text,
-                namespace,
-                name: PathName::init(text),
-                is_disabled: false,
-                is_symlink: false,
-            }
-        }
-
-        #[inline] pub fn text(&self) -> &'static [u8] { self.text }
-        #[inline] pub fn pretty(&self) -> &'static [u8] { self.pretty }
-        #[inline] pub fn namespace(&self) -> &'static [u8] { self.namespace }
-
-        #[inline]
-        pub fn is_file(&self) -> bool {
-            self.namespace.is_empty() || self.namespace == b"file"
-        }
-
-        #[inline]
-        pub fn is_data_url(&self) -> bool { self.namespace == b"dataurl" }
-
-        #[inline]
-        pub fn is_bun(&self) -> bool { self.namespace == b"bun" }
-
-        #[inline]
-        pub fn is_macro(&self) -> bool { self.namespace == b"macro" }
-
-        // Zig: `pub inline fn sourceDir(this: *const Path) string`
-        #[inline]
-        pub fn source_dir(&self) -> &[u8] {
-            self.name.dir_with_trailing_slash()
-        }
-
-        /// Zig: `pub inline fn prettyDir(this: *const Path) string`
-        #[inline]
-        pub fn pretty_dir(&self) -> &[u8] {
-            self.name.dir_with_trailing_slash()
-        }
-
-        /// Zig: `Path.isNodeModule` — checks for `<sep>node_modules<sep>` in the
-        /// parsed dir component (`name.dir`, NOT `text`).
-        pub fn is_node_module(&self) -> bool {
-            // PORT NOTE: bun_paths is not a dep of bun_logger (T1 sibling); inline
-            // `std.fs.path.sep_str` here so the needle stays a compile-time const.
-            const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
-            const NEEDLE: &[u8] =
-                const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
-            bun_string::strings::last_index_of(self.name.dir, NEEDLE).is_some()
-        }
-
-        /// Zig: `Path.isJSXFile`.
-        #[inline]
-        pub fn is_jsx_file(&self) -> bool {
-            let f = self.name.filename;
-            f.ends_with(b".jsx") || f.ends_with(b".tsx")
-        }
-
-        /// Zig: `Path.keyForIncrementalGraph`.
-        #[inline]
-        pub fn key_for_incremental_graph(&self) -> &'static [u8] {
-            if self.is_file() { self.text } else { self.pretty }
-        }
-
-        /// Zig: `Path.setRealpath`.
-        pub fn set_realpath(&mut self, to: &'static [u8]) {
-            let old_path = self.text;
-            self.text = to;
-            self.name = PathName::init(to);
-            self.pretty = old_path;
-            self.is_symlink = true;
-        }
-    }
+    pub type PathName = bun_paths::fs::PathName<'static>;
+    pub type Path = bun_paths::fs::Path<'static>;
 }
 
 // Canonical Index — moved-in locally.
@@ -1614,7 +1386,7 @@ impl Data {
 
         // Zig: `comptime Output.color_map.get("...")` — inline the ANSI
         // sequences as `const` so the `else` arm can concat at compile time.
-        // Kept in lockstep with `bun_core::output::COLOR_MAP`.
+        // Kept in lockstep with `bun_output_tags::COLOR_TABLE`.
         const B: &str = "\x1b[1m"; // bold
         const D: &str = "\x1b[2m"; // dim
         const RED: &str = "\x1b[31m";

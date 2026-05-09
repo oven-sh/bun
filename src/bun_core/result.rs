@@ -465,6 +465,29 @@ impl From<core::fmt::Error> for Error {
     fn from(_: core::fmt::Error) -> Self { Self::WRITE_FAILED }
 }
 
+/// Stamp out `impl From<$t> for bun_core::Error` for one or more
+/// `strum::IntoStaticStr`-deriving error enums, routing each variant through
+/// [`Error::from_name`]. Expansion is byte-identical to the hand-written
+/// 5-line impl this replaces, so codegen is unchanged.
+///
+/// A blanket `impl<E: Into<&'static str>> From<E> for Error` is intentionally
+/// NOT provided: it would over-match (`&'static str` itself) and risk future
+/// coherence overlap with the bespoke `From<io::Error>` / `From<AllocError>` /
+/// `From<fmt::Error>` impls above.
+#[macro_export]
+macro_rules! named_error_set {
+    ($($t:ty),+ $(,)?) => {
+        $(
+            impl ::core::convert::From<$t> for $crate::Error {
+                #[inline]
+                fn from(e: $t) -> Self {
+                    $crate::Error::from_name(<&'static str>::from(e))
+                }
+            }
+        )+
+    };
+}
+
 // ─── coreutils_error_map ─────────────────────────────────────────────────
 // Zig builds a comptime `EnumMap<SystemErrno, []const u8>` with a per-OS
 // `switch (Environment.os)` body (src/sys/coreutils_error_map.zig). The full

@@ -867,47 +867,12 @@ pub fn valid_selector_parser<T>() {
 }
 
 /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-#[strum(serialize_all = "lowercase")]
-pub enum Direction {
-    /// Left to right
-    Ltr,
-    /// Right to left
-    Rtl,
-}
-
-impl Direction {
-    pub fn eql(&self, rhs: &Self) -> bool {
-        *self == *rhs
-    }
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        hasher.update(&(*self as u32).to_ne_bytes());
-    }
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-    // PORT NOTE: `enum_property_util::parse` bounds on `EnumProperty` (a
-    // strum-driven case-insensitive `from_name`). Two variants — hand-roll.
-    pub fn parse(input: &mut CssParser) -> CResult<Self> {
-        let location = input.current_source_location();
-        // PORT NOTE: clone the token so the `&mut *input` borrow is released
-        // before we may need `input` again to construct the error.
-        let tok = input.next()?.clone();
-        let Token::Ident(ident) = tok else {
-            return Err(location.new_unexpected_token_error(tok));
-        };
-        if strings::eql_case_insensitive_ascii_check_length(ident, b"ltr") {
-            Ok(Direction::Ltr)
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"rtl") {
-            Ok(Direction::Rtl)
-        } else {
-            Err(location.new_unexpected_token_error(Token::Ident(ident)))
-        }
-    }
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-}
+// Re-export of the canonical `{ltr, rtl}` enum from `properties::text` — both Zig
+// specs (selectors/parser.zig:700, properties/text.zig:251) define the same
+// `DefineEnumProperty` shape, so the Rust port shares one definition. The
+// `#[derive(DefineEnumProperty)]` on the canonical provides `parse`/`to_css`/
+// `as_str`; `CssEql`/`CssHash`/`DeepClone` come from `generics::inherent_bridge`.
+pub use css::css_properties::text::Direction;
 
 /// A pseudo class.
 // PORT NOTE: `PartialEq` derive dropped — `Local`/`Global` carry

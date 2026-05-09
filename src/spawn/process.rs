@@ -92,11 +92,9 @@ pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
 #[cfg(windows)]
 type SyncProcess = sync::SyncWindowsProcess;
-#[cfg(not(windows))]
-#[repr(C)]
-pub struct SyncProcessPosix {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    #[cfg(not(windows))]
+    pub struct SyncProcessPosix;
 }
 #[cfg(not(windows))]
 type SyncProcess = SyncProcessPosix;

@@ -624,14 +624,14 @@ impl JSValkeyClient {
             || !password_utf8.slice().is_empty()
             || !hostname_slice.is_empty()
         {
-            let mut b = bun_core::StringBuilder::default();
+            let mut b = bun_string::StringBuilder::default();
             b.count(username_utf8.slice());
             b.count(password_utf8.slice());
             b.count(hostname_slice);
             b.allocate()?;
-            let user_sp = b.append(username_utf8.slice());
-            let pass_sp = b.append(password_utf8.slice());
-            let host_sp = b.append(hostname_slice);
+            let user_sp = b.append_count(username_utf8.slice());
+            let pass_sp = b.append_count(password_utf8.slice());
+            let host_sp = b.append_count(hostname_slice);
             connection_strings = b.move_to_slice();
             // PORT NOTE: in Zig these were `&[u8]` slices into
             // `connection_strings` (self-referential). The Rust `ValkeyClient`

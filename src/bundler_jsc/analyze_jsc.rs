@@ -191,11 +191,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 // ─── opaque FFI types ─────────────────────────────────────────────────────────
 // TODO(port): move to bundler_jsc_sys
 
-#[repr(C)]
-pub struct VariableEnvironment {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct VariableEnvironment; }
 unsafe extern "C" {
     fn JSC__VariableEnvironment__add(
         environment: *mut VariableEnvironment,
@@ -212,11 +208,7 @@ impl VariableEnvironment {
     }
 }
 
-#[repr(C)]
-pub struct IdentifierArray {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
     fn JSC__IdentifierArray__create(len: usize) -> *mut IdentifierArray;
     fn JSC__IdentifierArray__destroy(identifier_array: *mut IdentifierArray);
@@ -248,16 +240,9 @@ impl IdentifierArray {
     }
 }
 
-#[repr(C)]
-pub struct SourceCode {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
-
-#[repr(C)]
-pub struct JSModuleRecord {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    pub struct SourceCode;
+    pub struct JSModuleRecord;
 }
 unsafe extern "C" {
     fn JSC_JSModuleRecord__create(

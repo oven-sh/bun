@@ -68,10 +68,13 @@ pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump A
     this.deep_clone(bump)
 }
 
-#[inline]
-pub fn deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump Arena) -> T {
-    this.deep_clone(bump)
-}
+// Alias: in Zig `deepClone` (structural type-dispatch entry) and
+// `implementDeepClone` (field-reflection body) are distinct, but in Rust both
+// collapse to `T::deep_clone` because the structural dispatch lives in the
+// blanket impls below and the field-reflection lives in `#[derive(DeepClone)]`.
+// Kept as a re-export so generated code (`properties_generated.rs`) and
+// hand-written callers can use either name.
+pub use implement_deep_clone as deep_clone;
 
 pub fn can_transitively_implement_deep_clone<T>() -> bool {
     // TODO(port): Zig checks `@typeInfo(T) == .struct | .union`. In Rust this
@@ -453,10 +456,11 @@ mod inherent_bridge {
     bridge_hash!(UAEnvironmentVariable);
     bridge_deep_clone!(UAEnvironmentVariable);
 
-    use crate::selectors::parser::{Direction, ViewTransitionPartName, WebKitScrollbarPseudoElement};
-    bridge_eql!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
-    bridge_hash!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
-    bridge_deep_clone_copy!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
+    use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
+    bridge_eql!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    bridge_hash!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
 
     // ───────────────────────────────────────────────────────────────────────
     // Property value-type bridges — `Property::deep_clone`/`eql` dispatch via
@@ -709,6 +713,14 @@ mod inherent_bridge {
     // ── properties/text ──
     use crate::properties::text::{Direction as TextDirection, TextShadow};
     bridge_clone_partialeq!(TextDirection);
+    // `Direction` is also the `:dir()` pseudo-class payload (re-exported from
+    // `selectors::parser`), so `#[derive(CssHash)]` on `PseudoClass` needs it.
+    impl CssHash for TextDirection {
+        #[inline]
+        fn hash(&self, hasher: &mut Wyhash) {
+            hasher.update(&(*self as u32).to_ne_bytes());
+        }
+    }
     bridge_deep_clone!(TextShadow);
     bridge_eql_partialeq!(TextShadow);
 
@@ -1413,16 +1425,13 @@ impl ToCss for Ident {
 // them.
 //
 // Two sources of the trait impl:
-//   1. `#[derive(ToCss/Parse/DeriveToCss/DeriveParse/DefineEnumProperty)]`
+//   1. `#[derive(ToCss/Parse/DefineEnumProperty)]`
 //      (bun_css_derive) — emits the trait impl directly.
 //   2. Hand-written leaves — list them under `impl_parse_tocss_via_inherent!`
 //      to forward the trait to the inherent.
 //
 // A type must use exactly one of the two; listing a derive-carrying type in
-// the macro is an E0119 coherence conflict. The legacy batch name
-// `impl_generic_parse_tocss!` is kept as an alias of the via-inherent macro
-// (plain arm) plus the unchanged `@stub` arm so existing call sites continue
-// to compile while the registration lists are pruned of derive-carrying types.
+// the macro is an E0119 coherence conflict.
 #[macro_export]
 macro_rules! impl_parse_tocss_via_inherent {
     ($($ty:ty),+ $(,)?) => {$(
@@ -1451,22 +1460,6 @@ macro_rules! impl_parse_tocss_via_inherent {
             }
         }
     )+};
-}
-
-#[macro_export]
-macro_rules! impl_generic_parse_tocss {
-    // Plain arm — alias of `impl_parse_tocss_via_inherent!`. Do NOT list
-    // derive-carrying types here (E0119); list hand-written leaves only.
-    ($($ty:ty),+ $(,)?) => {
-        $crate::impl_parse_tocss_via_inherent!($($ty),+);
-    };
-    // `@stub` arm — legacy spelling kept for source compatibility. All leaf
-    // inherents have been ported, so this now forwards to the inherent
-    // `parse`/`to_css` exactly like the plain arm (Zig: `else => T.parse(input)`
-    // / `T.toCss(...)` in `generics.zig`). Prefer the plain arm in new code.
-    (@stub $($ty:ty),+ $(,)?) => {
-        $crate::impl_parse_tocss_via_inherent!($($ty),+);
-    };
 }
 
 /// `ParseWithOptions` for primitives — same fallthrough as the macro, but

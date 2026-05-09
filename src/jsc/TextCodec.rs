@@ -24,11 +24,9 @@ unsafe extern "C" {
     ) -> Option<NonNull<u8>>;
 }
 
-/// Opaque FFI handle to a C++ PAL::TextCodec.
-#[repr(C)]
-pub struct TextCodec {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle to a C++ PAL::TextCodec.
+    pub struct TextCodec;
 }
 
 pub struct DecodeResult {

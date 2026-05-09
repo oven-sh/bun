@@ -1179,7 +1179,7 @@ fn configure_env_for_scripts_run(
             let node_path_owned: Box<[u8]> = Box::<[u8]>::from(node_path_z.as_ref());
             let _ = this
                 .env_mut()
-                .load_nodejs_config(paths_fs, &node_path_owned)?;
+                .load_node_js_config(paths_fs, &node_path_owned)?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1194,7 +1194,7 @@ fn configure_env_for_scripts_run(
                 this.env_mut().map.put(b"PATH", &path_var)?;
                 let _ = this
                     .env_mut()
-                    .load_nodejs_config(paths_fs, bun_path)?;
+                    .load_node_js_config(paths_fs, bun_path)?;
             }
         }
     }

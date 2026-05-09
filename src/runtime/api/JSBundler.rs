@@ -1500,16 +1500,6 @@ pub mod js_bundler {
             global: &JSGlobalObject,
             target: jsc::BunPluginTarget,
         ) -> *mut Plugin;
-        fn JSBundlerPlugin__callOnBeforeParsePlugins(
-            plugin: *mut Plugin,
-            bun_context: *mut c_void,
-            namespace: *const BunString,
-            path: *const BunString,
-            on_before_parse_args: *mut c_void,
-            on_before_parse_result: *mut c_void,
-            should_continue: *mut i32,
-        ) -> i32;
-        fn JSBundlerPlugin__hasOnBeforeParsePlugins(plugin: *mut Plugin) -> i32;
         fn JSBundlerPlugin__tombstone(plugin: *mut Plugin);
         fn JSBundlerPlugin__runOnEndCallbacks(
             plugin: *mut Plugin,
@@ -1518,7 +1508,6 @@ pub mod js_bundler {
             rejection: JSValue,
         ) -> JSValue;
         fn JSBundlerPlugin__globalObject(plugin: *mut Plugin) -> *mut JSGlobalObject;
-        fn JSBundlerPlugin__drainDeferred(plugin: *mut Plugin, rejected: bool);
         fn JSBundlerPlugin__appendDeferPromise(plugin: *mut Plugin) -> JSValue;
         fn JSBundlerPlugin__setConfig(plugin: *mut Plugin, config: *mut c_void);
         fn JSBundlerPlugin__runSetupFunction(
@@ -1541,16 +1530,6 @@ pub mod js_bundler {
     /// added as an extension trait rather than an inherent `impl`.
     pub trait PluginJscExt {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
-        fn call_on_before_parse_plugins(
-            &mut self,
-            ctx: *mut c_void,
-            namespace: &BunString,
-            path: &BunString,
-            on_before_parse_args: Option<*mut c_void>,
-            on_before_parse_result: Option<*mut c_void>,
-            should_continue: *mut i32,
-        ) -> i32;
-        fn has_on_before_parse_plugins(&mut self) -> bool;
         fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
@@ -1570,7 +1549,6 @@ pub mod js_bundler {
             is_last: bool,
             is_bake: bool,
         ) -> JsResult<JSValue>;
-        fn drain_deferred(&mut self, rejected: bool) -> JsResult<()>;
         fn set_config(&mut self, config: *mut c_void);
         /// Thin FFI forward; the host-call wrapper / exception check is the
         /// caller's responsibility (`jsc::host_fn::from_js_host_call`).
@@ -1587,38 +1565,6 @@ pub mod js_bundler {
             let plugin = JSBundlerPlugin__create(global, target);
             JSValue::from_cell(plugin).protect();
             plugin
-        }
-
-        fn call_on_before_parse_plugins(
-            &mut self,
-            ctx: *mut c_void,
-            namespace: &BunString,
-            path: &BunString,
-            on_before_parse_args: Option<*mut c_void>,
-            on_before_parse_result: Option<*mut c_void>,
-            // Raw `*mut i32` (Zig: `*i32`) — the caller hands C++ a pointer
-            // it will read in a loop while re-entering Rust callbacks that
-            // also write through the same address; a `&mut i32` here would
-            // alias those re-entrant accesses.
-            should_continue: *mut i32,
-        ) -> i32 {
-            // SAFETY: self is valid opaque FFI handle
-            unsafe {
-                JSBundlerPlugin__callOnBeforeParsePlugins(
-                    self,
-                    ctx,
-                    namespace,
-                    path,
-                    on_before_parse_args.unwrap_or(core::ptr::null_mut()),
-                    on_before_parse_result.unwrap_or(core::ptr::null_mut()),
-                    should_continue,
-                )
-            }
-        }
-
-        fn has_on_before_parse_plugins(&mut self) -> bool {
-            // SAFETY: self is valid opaque FFI handle
-            unsafe { JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0 }
         }
 
         fn run_on_end_callbacks(
@@ -1695,15 +1641,6 @@ pub mod js_bundler {
                     JSValue::from(is_last),
                     JSValue::from(is_bake),
                 )
-            })
-        }
-
-        fn drain_deferred(&mut self, rejected: bool) -> JsResult<()> {
-            // SAFETY: self is valid opaque FFI handle; raw ptr avoids the
-            // closure-vs-`self.global_object()` aliasing borrow conflict.
-            let this: *mut Plugin = self;
-            jsc::from_js_host_call_generic(self.global_object(), || unsafe {
-                JSBundlerPlugin__drainDeferred(this, rejected)
             })
         }
 

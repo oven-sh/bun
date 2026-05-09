@@ -26,7 +26,7 @@ use crate::css_parser as css;
 use crate::compat::Feature;
 use crate::error::ParserError;
 use crate::printer::Printer;
-use crate::PrintErr;
+use crate::PrintResult;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
@@ -37,8 +37,7 @@ use css_values::percentage::{DimensionPercentage, Percentage};
 use bun_collections::VecExt;
 use bun_string::strings;
 
-type CssResult<T> = css::CssResult<T>;
-type PrintResult<T> = core::result::Result<T, PrintErr>;
+use css::CssResult;
 
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
 #[derive(Clone, PartialEq)]

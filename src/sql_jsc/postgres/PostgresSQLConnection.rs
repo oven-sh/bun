@@ -2550,15 +2550,7 @@ impl PostgresSQLConnection {
                         let comparison_signature = final_data.slice();
 
                         if comparison_signature.len() < 2
-                            || server_signature.len() != comparison_signature.len() - 2
-                            // SAFETY: pointers are valid; lengths checked above.
-                            || unsafe {
-                                BoringSSL::c::CRYPTO_memcmp(
-                                    server_signature.as_ptr().cast(),
-                                    comparison_signature[2..].as_ptr().cast(),
-                                    server_signature.len(),
-                                )
-                            } != 0
+                            || !BoringSSL::c::constant_time_eq(server_signature, &comparison_signature[2..])
                         {
                             debug!(
                                 "SASLFinal - SASL Server signature mismatch\nExpected: {}\nActual: {}",

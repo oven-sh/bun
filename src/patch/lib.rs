@@ -1642,18 +1642,8 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
     }
 
     let a_path = &rest[a_path_start_index..a_path_end_index];
-    let b_path = trim_end_any(&rest[b_path_start_index..], b" \n\r\t");
+    let b_path = bun_string::strings::trim_right(&rest[b_path_start_index..], b" \n\r\t");
     Some((a_path, b_path))
-}
-
-// TODO(b2-blocked): bun_string::strings::trim_right — local stand-in until
-// `immutable.rs` exports it. (std.mem.trimRight)
-fn trim_end_any<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
-    let mut end = slice.len();
-    while end > 0 && values_to_strip.contains(&slice[end - 1]) {
-        end -= 1;
-    }
-    &slice[..end]
 }
 
 // `pub const TestingAPIs = @import("../patch_jsc/testing.zig").TestingAPIs;`

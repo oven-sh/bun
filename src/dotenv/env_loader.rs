@@ -46,23 +46,36 @@ pub trait DirEntryProbe {
 // is provided there — see src/resolver/lib.rs. No impl here; that would be a
 // dep-cycle.
 
-/// Mirrors `bun_api::DotEnvBehavior` (schema.peechy enum, values 1..=4). Defined locally so
-/// this T2 crate names no `bun_api` types — see PORTING.md §Dispatch. The high-tier caller
-/// maps its `api::DotEnvBehavior` into this at the call site.
-// TODO(port): once bun_api lands the schema types, re-export that enum here instead.
-#[derive(Copy, Clone, PartialEq, Eq)]
+/// schema.peechy / schema.zig:1172 — `enum(u32)`. Canonical definition; re-exported as
+/// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[allow(non_camel_case_types)]
 pub enum DotEnvBehavior {
-    Disable = 1,
-    Prefix = 2,
-    LoadAll = 3,
-    LoadAllWithoutInlining = 4,
+    #[default]
+    _none = 0,
+    disable = 1,
+    prefix = 2,
+    load_all = 3,
+    load_all_without_inlining = 4,
+}
+
+#[allow(non_upper_case_globals)]
+impl DotEnvBehavior {
+    // PascalCase aliases — downstream callers (bundler/options.rs, bundler/defines.rs,
+    // runtime/api/JSBundler.rs) name the variants both ways while the snake_case enum
+    // body above stays the schema ground truth.
+    pub const None: Self = Self::_none;
+    pub const Disable: Self = Self::disable;
+    pub const Prefix: Self = Self::prefix;
+    pub const LoadAll: Self = Self::load_all;
+    pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
 }
 
 /// Mirrors the value fields of `bun_s3_signing::S3Credentials` (T5). Defined locally so
 /// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
 /// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
-/// this POD at the call site (same pattern as `DotEnvBehavior` above).
+/// this POD at the call site.
 // TODO(port): once bun_s3_signing TYPE_ONLY move-down lands ≤T2, re-export that struct here.
 #[derive(Clone, Default)]
 pub struct S3Credentials {
@@ -165,36 +178,6 @@ impl<'a> Loader<'a> {
         }
 
         None
-    }
-
-    /// Port of `loadNodeJSConfig` (env_loader.zig:332). Populates `NODE` /
-    /// `npm_node_execpath` with the resolved node binary path. Returns `false`
-    /// only when no node could be discovered and no override was supplied.
-    pub fn load_nodejs_config(
-        &mut self,
-        fs: &bun_paths::fs::FileSystem,
-        override_node: &[u8],
-    ) -> Result<bool, AllocError> {
-        let mut buf = PathBuffer::ZEROED;
-
-        // PORT NOTE: Zig stores the borrowed slice into `node_path_to_use_set_once` and then
-        // into `Map.put` (which dupes). We dupe up-front into `Box<[u8]>` so the cached value
-        // is owned (matches `Map::put`'s ownership model).
-        let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
-            Box::from(override_node)
-        } else if let Some(cached) = NODE_PATH_TO_USE_SET_ONCE.read().as_ref() {
-            cached.clone()
-        } else {
-            let Some(node) = self.get_node_path(fs, &mut buf) else {
-                return Ok(false);
-            };
-            // Zig: `fs.dirname_store.append(..)` — process-static interning. Own a copy here.
-            Box::from(node.as_ref())
-        };
-        *NODE_PATH_TO_USE_SET_ONCE.write() = Some(node_path_to_use.clone());
-        self.map.put(b"NODE", &node_path_to_use)?;
-        self.map.put(b"npm_node_execpath", &node_path_to_use)?;
-        Ok(true)
     }
 
     pub fn is_ci(&self) -> bool {
@@ -503,6 +486,9 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 
+    /// Port of `loadNodeJSConfig` (env_loader.zig:332). Populates `NODE` /
+    /// `npm_node_execpath` with the resolved node binary path. Returns `false`
+    /// only when no node could be discovered and no override was supplied.
     pub fn load_node_js_config(
         &mut self,
         fs: &bun_paths::fs::FileSystem,
@@ -526,11 +512,11 @@ impl<'a> Loader<'a> {
                 Box::from(node.as_bytes())
             }
         };
-        // map.put copies the value (Box::from), so write the *current* path
-        // before caching — this is what Zig does (env_loader.zig:344-346).
+        // Zig order (env_loader.zig:344-346): cache to `node_path_to_use_set_once`
+        // first, then `map.put` (which dupes the bytes).
+        *NODE_PATH_TO_USE_SET_ONCE.write() = Some(node_path_to_use.clone());
         self.map.put(b"NODE", &node_path_to_use)?;
         self.map.put(b"npm_node_execpath", &node_path_to_use)?;
-        *NODE_PATH_TO_USE_SET_ONCE.write() = Some(node_path_to_use);
         Ok(true)
     }
 
@@ -913,60 +899,25 @@ impl<'a> Loader<'a> {
             let _ = f.close();
         });
 
-        #[cfg(windows)]
-        let end: usize = {
-            let pos = file.get_end_pos()?;
-            if pos == 0 {
-                *self.default_file_slot(base) =
-                    Some(logger::Source::init_path_string(base, b""));
-                return Ok(());
-            }
-            pos
-        };
-        #[cfg(not(windows))]
-        let end: usize = {
-            let stat = file.stat()?;
-            if stat.st_size == 0 || !bun_sys::S::ISREG(stat.st_mode as _) {
-                *self.default_file_slot(base) =
-                    Some(logger::Source::init_path_string(base, b""));
-                return Ok(());
-            }
-            stat.st_size as usize
-        };
-
-        let mut buf: Vec<u8> = vec![0u8; end + 1];
-        // errdefer free(buf) — Vec drops automatically.
-        let amount_read = match file.read_all(&mut buf[0..end]) {
-            Ok(n) => n,
-            Err(err) => {
-                use bun_sys::E;
-                match err.get_errno() {
-                    E::ENOMEM | E::EPIPE | E::EACCES | E::EISDIR => {
-                        if !self.quiet {
-                            bun_core::pretty_errorln!(
-                                "<r><red>{}<r> error loading {} file",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(base)
-                            );
-                        }
-                        // prevent retrying
-                        *self.default_file_slot(base) =
-                            Some(logger::Source::init_path_string(base, b""));
-                        return Ok(());
-                    }
-                    _ => return Err(err.into()),
+        match read_env_file_contents(&file)? {
+            ReadEnvFile::Empty => {}
+            ReadEnvFile::ReadErr(err) => {
+                if !self.quiet {
+                    bun_core::pretty_errorln!(
+                        "<r><red>{}<r> error loading {} file",
+                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(base)
+                    );
                 }
             }
-        };
-
-        // The null byte here is mostly for debugging purposes.
-        buf[end] = 0;
-
-        Parser::parse_bytes::<OVERRIDE, false, true>(
-            &buf[0..amount_read],
-            &mut *self.map,
-            value_buffer,
-        )?;
+            ReadEnvFile::Bytes(buf, amount_read) => {
+                Parser::parse_bytes::<OVERRIDE, false, true>(
+                    &buf[0..amount_read],
+                    &mut *self.map,
+                    value_buffer,
+                )?;
+            }
+        }
 
         // TODO(port): Zig retained the file buffer in `Source.contents`; here we
         // drop it after parsing because `bun_logger::Source.contents` is
@@ -1003,63 +954,82 @@ impl<'a> Loader<'a> {
             let _ = f.close();
         });
 
-        #[cfg(windows)]
-        let end: usize = {
-            let pos = file.get_end_pos()?;
-            if pos == 0 {
-                self.custom_files_loaded.put(file_path, logger::Source::default())?;
-                return Ok(());
-            }
-            pos
-        };
-        #[cfg(not(windows))]
-        let end: usize = {
-            let stat = file.stat()?;
-            if stat.st_size == 0 || !bun_sys::S::ISREG(stat.st_mode as _) {
-                self.custom_files_loaded.put(file_path, logger::Source::default())?;
-                return Ok(());
-            }
-            stat.st_size as usize
-        };
-
-        let mut buf: Vec<u8> = vec![0u8; end + 1];
-        // errdefer free(buf) — Vec drops automatically.
-        let amount_read = match file.read_all(&mut buf[0..end]) {
-            Ok(n) => n,
-            Err(err) => {
-                use bun_sys::E;
-                match err.get_errno() {
-                    E::ENOMEM | E::EPIPE | E::EACCES | E::EISDIR => {
-                        if !self.quiet {
-                            bun_core::pretty_errorln!(
-                                "<r><red>{}<r> error loading {} file",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(file_path)
-                            );
-                        }
-                        // prevent retrying
-                        self.custom_files_loaded.put(file_path, logger::Source::default())?;
-                        return Ok(());
-                    }
-                    _ => return Err(err.into()),
+        match read_env_file_contents(&file)? {
+            ReadEnvFile::Empty => {}
+            ReadEnvFile::ReadErr(err) => {
+                if !self.quiet {
+                    bun_core::pretty_errorln!(
+                        "<r><red>{}<r> error loading {} file",
+                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(file_path)
+                    );
                 }
             }
-        };
-
-        // The null byte here is mostly for debugging purposes.
-        buf[end] = 0;
-
-        Parser::parse_bytes::<OVERRIDE, false, true>(
-            &buf[0..amount_read],
-            &mut *self.map,
-            value_buffer,
-        )?;
+            ReadEnvFile::Bytes(buf, amount_read) => {
+                Parser::parse_bytes::<OVERRIDE, false, true>(
+                    &buf[0..amount_read],
+                    &mut *self.map,
+                    value_buffer,
+                )?;
+            }
+        }
 
         // TODO(port): see `load_env_file` — `Source.contents` not retained
         // pending the `bun_logger` owning-`Str` rework.
         self.custom_files_loaded.put(file_path, logger::Source::default())?;
         Ok(())
     }
+}
+
+/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
+/// stat (or `get_end_pos` on Windows), allocate, `read_all`, NUL-terminate.
+/// The two callers differ in their open path, open-error handling, and the
+/// memo slot they write — those stay in the callers (see env_loader.zig
+/// :784 vs :874). Only the byte-identical read tail is factored here.
+enum ReadEnvFile {
+    /// Zero-length or not a regular file — caller marks the slot and returns.
+    Empty,
+    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
+    /// (unless `quiet`), marks the slot, and returns.
+    ReadErr(bun_sys::Error),
+    /// `(buf, amount_read)`; `buf[amount_read..]` is slack incl. trailing NUL.
+    Bytes(Vec<u8>, usize),
+}
+
+fn read_env_file_contents(file: &bun_sys::File) -> Result<ReadEnvFile, bun_core::Error> {
+    #[cfg(windows)]
+    let end: usize = {
+        let pos = file.get_end_pos()?;
+        if pos == 0 {
+            return Ok(ReadEnvFile::Empty);
+        }
+        pos
+    };
+    #[cfg(not(windows))]
+    let end: usize = {
+        let stat = file.stat()?;
+        if stat.st_size == 0 || !bun_sys::S::ISREG(stat.st_mode as _) {
+            return Ok(ReadEnvFile::Empty);
+        }
+        stat.st_size as usize
+    };
+
+    let mut buf: Vec<u8> = vec![0u8; end + 1];
+    // errdefer free(buf) — Vec drops automatically.
+    let amount_read = match file.read_all(&mut buf[0..end]) {
+        Ok(n) => n,
+        Err(err) => {
+            use bun_sys::E;
+            return match err.get_errno() {
+                E::ENOMEM | E::EPIPE | E::EACCES | E::EISDIR => Ok(ReadEnvFile::ReadErr(err)),
+                _ => Err(err.into()),
+            };
+        }
+    };
+
+    // The null byte here is mostly for debugging purposes.
+    buf[end] = 0;
+    Ok(ReadEnvFile::Bytes(buf, amount_read))
 }
 
 struct Parser<'a> {
@@ -1570,24 +1540,19 @@ impl Map {
 
     #[inline]
     pub fn put_alloc_key(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let gop = self.map.get_or_put(key)?;
-        *gop.value_ptr = HashTableValue {
-            // TODO(port): Zig stored borrowed `value` here without dupe; Box<[u8]> forces a copy
-            value: Box::from(value),
-            conditional: false,
-        };
-        if !gop.found_existing {
-            *gop.key_ptr = Box::from(key);
-        }
-        Ok(())
+        // TODO(port): Zig stored borrowed `value` here without dupe; Box<[u8]> forces a copy.
+        // If `HashTableValue.value` ever becomes `Cow`/borrowed storage, re-diverge from
+        // `put_alloc_key_and_value` (which dupes both key and value).
+        self.put_alloc_key_and_value(key, value)
     }
 
     #[inline]
     pub fn put_alloc_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        self.map.put(
-            key,
-            HashTableValue { value: Box::from(value), conditional: false },
-        )
+        // Zig diverged from `put` only by `allocator.dupe(value)` vs borrowed; the Rust
+        // `HashTableValue { value: Box<[u8]> }` storage forces a copy either way, so this is
+        // equivalent to `put`. Kept as a thin wrapper to preserve call-site alloc intent
+        // should storage ever change to `Cow`/borrowed.
+        self.put(key, value)
     }
 
     #[inline]
@@ -1630,11 +1595,8 @@ impl Map {
 
     #[inline]
     pub fn get_or_put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let _ = self.map.get_or_put_value(
-            key,
-            HashTableValue { value: Box::from(value), conditional: false },
-        )?;
-        Ok(())
+        // Spec-level alias of `put_default` (env_loader.zig:1393/1400 both call `getOrPutValue`).
+        self.put_default(key, value)
     }
 
     pub fn remove(&mut self, key: &[u8]) {

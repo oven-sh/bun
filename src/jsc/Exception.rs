@@ -1,10 +1,8 @@
 use crate::{JSGlobalObject, JSValue, ZigStackTrace};
 
-/// Opaque representation of a JavaScript exception
-#[repr(C)]
-pub struct Exception {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque representation of a JavaScript exception
+    pub struct Exception;
 }
 
 // TODO(port): move to jsc_sys

@@ -1,10 +1,6 @@
 use core::marker::{PhantomData, PhantomPinned};
 
-#[repr(C)]
-pub struct GetterSetter {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct GetterSetter; }
 
 impl GetterSetter {
     pub fn is_getter_null(&self) -> bool {

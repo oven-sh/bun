@@ -316,39 +316,13 @@ pub trait DefineShorthand: Sized {
     fn set_longhand(&mut self, property: &Property) -> bool;
 }
 
-/// Marker trait — Zig's `DefineListShorthand` does nothing.
-pub trait DefineListShorthand {}
-
-/// Rect shorthand: `top right bottom left` parsed via `Rect<V>`.
-/// TODO(port): becomes `#[derive(RectShorthand)]` over a 4-field struct.
-pub trait DefineRectShorthand<V>: Sized {
-    fn parse(input: &mut Parser) -> CssResult<Self>;
-    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>;
-}
-
-/// Size shorthand: 2-field struct parsed via `Size2D<V>`.
-/// TODO(port): becomes `#[derive(SizeShorthand)]`.
-pub trait DefineSizeShorthand<V>: Sized {
-    fn parse(input: &mut Parser) -> CssResult<Self>;
-    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>;
-}
-
-/// `DeriveParse` — comptime-generated `parse()` for enums and `union(enum)`s.
-/// TODO(port): proc-macro `#[derive(Parse)]`. The Zig body branches on
-/// `@typeInfo` to interleave void-variant ident matching with payload-variant
-/// `tryParse` calls in declaration order. The full algorithm is documented in
-/// the Zig source comments (lines 562–798).
-pub trait DeriveParse: Sized {
-    fn parse(input: &mut Parser) -> CssResult<Self>;
-}
-
-/// `DeriveToCss` — comptime-generated `toCss()` for enums and `union(enum)`s.
-/// TODO(port): proc-macro `#[derive(ToCss)]`. Handles void variants (writes
-/// the variant name), payload variants with `.toCss()`, and anonymous-struct
-/// payloads with `__generateToCss` markers.
-pub trait DeriveToCss {
-    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>;
-}
+// PORT NOTE: Zig's `DefineListShorthand` / `DefineRectShorthand` /
+// `DefineSizeShorthand` / `DeriveParse` / `DeriveToCss` comptime fns became
+// proc-macros (`bun_css_derive::*`, re-exported below) plus the
+// `impl_rect_shorthand!` / `impl_size_shorthand!` macros in
+// `properties/margin_padding.rs`. The placeholder trait stubs that previously
+// mirrored their `parse`/`to_css` signatures were dead (zero impls/bounds) and
+// duplicated `generics::{Parse, ToCss}`, so they were removed.
 
 /// `enum_property_util` — generic `parse`/`toCss`/`asStr` for plain enums.
 pub mod enum_property_util {
@@ -383,7 +357,7 @@ pub mod enum_property_util {
 // Derive macros for the comptime helpers above. Re-exported here as well as
 // at crate root because some leaf modules alias `crate::css_parser as css`
 // (Zig's `css.DefineEnumProperty(...)` lived in this file).
-pub use bun_css_derive::{DefineEnumProperty, DeriveParse, DeriveToCss, Parse, ToCss};
+pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
 
 /// Replaces Zig's `DefineEnumProperty` comptime fn.
 pub trait EnumProperty: Sized + Copy + Into<&'static str> {
@@ -1104,7 +1078,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
     pub fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
         // SAFETY: same `'static` erasure used by `DeclarationBlock::parse` —
         // the arena outlives every `DeclarationList` produced here.
-        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(self.arena) };
+        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
         NestedRuleParser {
             arena: self.arena,
             options: self.options,
@@ -1524,7 +1498,7 @@ impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
         };
         // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
         // parser arena.
-        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(self.arena) };
+        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
         let mut nested_parser = NestedRuleParser::<T> {
             arena: self.arena,
             options: self.options,
@@ -2207,7 +2181,7 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
         // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
         // detach that borrow so `input` can be re-borrowed mutably below. The
         // arena outlives the parser (it owns all parsed allocations).
-        let arena: &Bump = unsafe { &*std::ptr::from_ref::<Bump>(input.arena()) };
+        let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
         let mut ctx = NestedComposesCtx {
             state: this.composes_state,
             arena,
@@ -6516,15 +6490,6 @@ pub fn copysign(self_: f32, sign: f32) -> f32 {
     let sign_bits = sign.to_bits();
     let result_bits = (self_bits & 0x7FFFFFFF) | (sign_bits & 0x80000000);
     f32::from_bits(result_bits)
-}
-
-pub fn deep_clone<'b, V: generic::DeepClone<'b>>(bump: &'b Bump, list: &Vec<V>) -> Vec<V> {
-    let mut newlist = Vec::with_capacity(list.len());
-    for item in list {
-        newlist.push(item.deep_clone(bump));
-        // PERF(port): was appendAssumeCapacity
-    }
-    newlist
 }
 
 pub fn deep_deinit<V>(_list: &mut Vec<V>) {

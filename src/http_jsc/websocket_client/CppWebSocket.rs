@@ -17,11 +17,9 @@ use bun_uws_sys::{Socket, SslCtx};
 use super::websocket_deflate;
 use super::ErrorCode;
 
-/// Opaque handle to the C++ `WebCore::WebSocket` object.
-#[repr(C)]
-pub struct CppWebSocket {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque handle to the C++ `WebCore::WebSocket` object.
+    pub struct CppWebSocket;
 }
 
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).

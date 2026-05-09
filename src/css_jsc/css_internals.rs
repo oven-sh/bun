@@ -79,9 +79,8 @@ pub fn testing_impl(
     // SAFETY: `StyleSheet::parse` requires `&'static Bump` / `ParserOptions<'static>`
     // because the rule tree stores lifetime-erased refs (see css_parser.rs PORT
     // NOTE on `'bump` threading). The arena strictly outlives every value parsed
-    // out of it below, so erasing `&arena -> &'static Bump` here matches the
-    // crate-wide `unsafe { &*(allocator as *const Bump) }` pattern.
-    let alloc: &'static Arena = unsafe { &*(&raw const arena) };
+    // out of it below.
+    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
     let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
@@ -255,67 +254,26 @@ fn parser_options_from_js(
 fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers> {
     let mut targets = Browsers::default();
 
-    if let Some(val) = jsobj.get_truthy(global, b"android")? {
+    // Zig spec (css_internals.zig:188-256) unrolls this 9×; collapse to a
+    // table-driven loop. Key order preserved so JS getter/exception ordering
+    // matches the spec exactly.
+    for (key, slot) in [
+        ("android", &mut targets.android),
+        ("chrome", &mut targets.chrome),
+        ("edge", &mut targets.edge),
+        ("firefox", &mut targets.firefox),
+        ("ie", &mut targets.ie),
+        ("ios_saf", &mut targets.ios_saf),
+        ("opera", &mut targets.opera),
+        ("safari", &mut targets.safari),
+        ("samsung", &mut targets.samsung),
+    ] {
+        if let Some(val) = jsobj.get_truthy(global, key)? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
                     // note: Rust `as` saturates on overflow/NaN where Zig is UB
-                    targets.android = Some(value as u32);
+                    *slot = Some(value as u32);
                 }
-            }
-        }
-    if let Some(val) = jsobj.get_truthy(global, b"chrome")? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    targets.chrome = Some(value as u32);
-                }
-            }
-        }
-    if let Some(val) = jsobj.get_truthy(global, b"edge")? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    targets.edge = Some(value as u32);
-                }
-            }
-        }
-    if let Some(val) = jsobj.get_truthy(global, b"firefox")? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    targets.firefox = Some(value as u32);
-                }
-            }
-        }
-    if let Some(val) = jsobj.get_truthy(global, b"ie")? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    targets.ie = Some(value as u32);
-                }
-            }
-        }
-    if let Some(val) = jsobj.get_truthy(global, b"ios_saf")? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    targets.ios_saf = Some(value as u32);
-                }
-            }
-        }
-    if let Some(val) = jsobj.get_truthy(global, b"opera")? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    targets.opera = Some(value as u32);
-                }
-            }
-        }
-    if let Some(val) = jsobj.get_truthy(global, b"safari")? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    targets.safari = Some(value as u32);
-                }
-            }
-        }
-    if let Some(val) = jsobj.get_truthy(global, b"samsung")? {
-        if val.is_int32() {
-            if let Some(value) = val.get_number() {
-                targets.samsung = Some(value as u32);
             }
         }
     }
@@ -337,10 +295,8 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // SAFETY: `StyleAttribute` stores `DeclarationBlock<'static>` (lifetime
     // erased crate-wide until 'bump threads through the rule tree — see
     // css_parser.rs PORT NOTE). The arena strictly outlives the parsed
-    // `stylesheet` below, so erasing `&arena -> &'static Bump` here matches
-    // the existing `unsafe { &*(allocator as *const Bump) }` pattern in
-    // bun_css (declaration.rs / context.rs / css_parser.rs).
-    let alloc: &'static Arena = unsafe { &*(&raw const arena) };
+    // `stylesheet` below.
+    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
     let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.

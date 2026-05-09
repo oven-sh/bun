@@ -13,10 +13,6 @@ unsafe extern "C" {
 
     safe fn WTF__numberOfProcessorCores() -> c_int;
 
-    safe fn WTF__releaseFastMallocFreeMemoryForThisThread();
-
-    fn WTF__parseES5Date(bytes: *const u8, length: usize) -> f64;
-
     fn Bun__writeHTTPDate(buffer: *mut [u8; 32], length: usize, timestamp_ms: u64) -> c_int;
 }
 
@@ -27,9 +23,9 @@ pub fn number_of_processor_cores() -> u32 {
     u32::try_from(n.max(1)).expect("int cast")
 }
 
-pub fn release_fast_malloc_free_memory_for_this_thread() {
-    WTF__releaseFastMallocFreeMemoryForThisThread();
-}
+// MOVE_DOWN(b0): canonical lives in bun_alloc so bun_threading (T2) can call it
+// without a T6 dep. Re-exported here to keep the original Zig namespace shape.
+pub use bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum ParseDoubleError {
@@ -57,31 +53,10 @@ pub fn parse_double(buf: &[u8]) -> Result<f64, ParseDoubleError> {
     Ok(res)
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum ParseDateError {
-    #[error("InvalidDate")]
-    InvalidDate,
-}
-impl From<ParseDateError> for bun_core::Error {
-    fn from(e: ParseDateError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
-
-// 2000-01-01T00:00:00.000Z -> 946684800000 (ms)
-pub fn parse_es5_date(buf: &[u8]) -> Result<f64, ParseDateError> {
-    if buf.is_empty() {
-        return Err(ParseDateError::InvalidDate);
-    }
-
-    // SAFETY: buf.as_ptr() is valid for buf.len() bytes.
-    let ms = unsafe { WTF__parseES5Date(buf.as_ptr(), buf.len()) };
-    if ms.is_finite() {
-        return Ok(ms);
-    }
-
-    Err(ParseDateError::InvalidDate)
-}
+// Canonical lives in bun_core (tier-0) so install/ can call it without bun_jsc.
+pub use bun_core::wtf::{parse_es5_date, parse_es5_date_raw, InvalidDate};
+/// Back-compat alias for the Zig namespace shape.
+pub type ParseDateError = bun_core::wtf::InvalidDate;
 
 pub fn write_http_date(buffer: &mut [u8; 32], timestamp_ms: u64) -> &mut [u8] {
     if timestamp_ms == 0 {

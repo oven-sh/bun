@@ -14,11 +14,9 @@ unsafe extern "C" {
     ) -> *mut VirtualMachine;
 }
 
-/// A task created from C++ code, usually via ScriptExecutionContext.
-#[repr(C)]
-pub struct CppTask {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// A task created from C++ code, usually via ScriptExecutionContext.
+    pub struct CppTask;
 }
 
 impl Taskable for CppTask {
@@ -42,11 +40,7 @@ impl CppTask {
     }
 }
 
-#[repr(C)]
-pub struct EventLoopTaskNoContext {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct EventLoopTaskNoContext; }
 
 impl EventLoopTaskNoContext {
     /// Deallocates `this`

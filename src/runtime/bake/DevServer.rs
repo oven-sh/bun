@@ -713,7 +713,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // box (Zig had no lifetime). Widen `'a → 'static` here once.
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
-    let arena: &'static Arena = unsafe { &*std::ptr::from_ref::<Arena>(options.arena) };
+    let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
     unsafe {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
@@ -5879,11 +5879,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
             "incremental-graph-crash-dump.{}.html\0",
             bun_core::time::timestamp()
         );
-        // TODO(port): bufPrintZ; falls back to literal on failure
-        match filepath_buf.iter().position(|&b| b == 0) {
-            Some(nul) => &filepath_buf[..nul],
-            None => b"incremental-graph-crash-dump.html".as_slice(),
-        }
+        bun_str::slice_to_nul(&filepath_buf)
     };
     // TODO(port): std.fs.cwd().createFileZ — use bun_sys
     let file = match sys::File::create(sys::Fd::cwd(), filepath, true) {

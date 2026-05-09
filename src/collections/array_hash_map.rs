@@ -100,10 +100,20 @@ impl ArrayHashContext<[u8]> for StringContext {
 pub struct CaseInsensitiveAsciiStringContext;
 
 impl CaseInsensitiveAsciiStringContext {
-    fn hash_bytes(mut s: &[u8]) -> u32 {
+    pub fn hash_bytes(mut s: &[u8]) -> u32 {
         // Mirrors the Zig: lowercase into a 1024-byte scratch buffer in chunks
         // and feed wyhash incrementally. Zig uses std.hash.Wyhash (NOT Wyhash11).
         let mut buf = [0u8; 1024];
+        if s.len() < buf.len() {
+            // Fast path (src/bun.zig:1015): one-shot wyhash on the lowered copy.
+            // Output equals the incremental loop below (init(0)+update+finish ≡
+            // one-shot) — kept only as the perf shortcut the spec spells out.
+            let n = s.len();
+            for (dst, &src) in buf[..n].iter_mut().zip(s) {
+                *dst = src.to_ascii_lowercase();
+            }
+            return bun_wyhash::hash(&buf[..n]) as u32; // @truncate
+        }
         let mut h = bun_wyhash::Wyhash::init(0);
         while !s.is_empty() {
             let n = s.len().min(buf.len());
@@ -114,6 +124,34 @@ impl CaseInsensitiveAsciiStringContext {
             s = &s[n..];
         }
         h.finish() as u32 // @truncate
+    }
+
+    /// `bun.CaseInsensitiveASCIIStringContext.pre` (src/bun.zig:1031).
+    #[inline]
+    pub fn pre(input: &[u8]) -> CaseInsensitiveAsciiPrehashed<'_> {
+        CaseInsensitiveAsciiPrehashed { value: Self::hash_bytes(input), input }
+    }
+}
+
+/// `bun.CaseInsensitiveASCIIStringContext.Prehashed` (src/bun.zig:1035) —
+/// caches the case-folded hash for `input` so repeated probes against the same
+/// key skip the lowercasing pass.
+pub struct CaseInsensitiveAsciiPrehashed<'a> {
+    pub value: u32,
+    pub input: &'a [u8],
+}
+
+impl<'a> CaseInsensitiveAsciiPrehashed<'a> {
+    #[inline]
+    pub fn hash(&self, s: &[u8]) -> u32 {
+        if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
+            return self.value;
+        }
+        CaseInsensitiveAsciiStringContext::hash_bytes(s)
+    }
+    #[inline]
+    pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
     }
 }
 
@@ -1408,10 +1446,7 @@ impl<V> StringHashMap<V> {
 /// `&mut K`, so this result omits `key_ptr` (unlike `GetOrPutResult` for the
 /// array-backed maps). Callers that need to overwrite the stored key must use
 /// `StringArrayHashMap` instead.
-pub struct StringHashMapGetOrPut<'a, V> {
-    pub found_existing: bool,
-    pub value_ptr: &'a mut V,
-}
+pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
 impl<V: Default> StringHashMap<V> {
     /// PERF(port): the previous shape (`contains_key` + `entry(Box::from(key))`)

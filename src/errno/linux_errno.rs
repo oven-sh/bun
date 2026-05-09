@@ -24,64 +24,14 @@ pub mod posix {
     pub type E = super::SystemErrno;
 
     /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
-    /// Values are POSIX-standard octal; identical across linux/darwin/freebsd.
-    pub mod S {
-        use super::mode_t;
-
-        pub const IFMT:   mode_t = 0o170000;
-        pub const IFSOCK: mode_t = 0o140000;
-        pub const IFLNK:  mode_t = 0o120000;
-        pub const IFREG:  mode_t = 0o100000;
-        pub const IFBLK:  mode_t = 0o060000;
-        pub const IFDIR:  mode_t = 0o040000;
-        pub const IFCHR:  mode_t = 0o020000;
-        pub const IFIFO:  mode_t = 0o010000;
-
-        pub const ISUID: mode_t = 0o4000;
-        pub const ISGID: mode_t = 0o2000;
-        pub const ISVTX: mode_t = 0o1000;
-        pub const IRWXU: mode_t = 0o0700;
-        pub const IRUSR: mode_t = 0o0400;
-        pub const IWUSR: mode_t = 0o0200;
-        pub const IXUSR: mode_t = 0o0100;
-        pub const IRWXG: mode_t = 0o0070;
-        pub const IRGRP: mode_t = 0o0040;
-        pub const IWGRP: mode_t = 0o0020;
-        pub const IXGRP: mode_t = 0o0010;
-        pub const IRWXO: mode_t = 0o0007;
-        pub const IROTH: mode_t = 0o0004;
-        pub const IWOTH: mode_t = 0o0002;
-        pub const IXOTH: mode_t = 0o0001;
-
-        #[inline] pub const fn ISREG(m: mode_t)  -> bool { m & IFMT == IFREG }
-        #[inline] pub const fn ISDIR(m: mode_t)  -> bool { m & IFMT == IFDIR }
-        #[inline] pub const fn ISCHR(m: mode_t)  -> bool { m & IFMT == IFCHR }
-        #[inline] pub const fn ISBLK(m: mode_t)  -> bool { m & IFMT == IFBLK }
-        #[inline] pub const fn ISFIFO(m: mode_t) -> bool { m & IFMT == IFIFO }
-        #[inline] pub const fn ISLNK(m: mode_t)  -> bool { m & IFMT == IFLNK }
-        #[inline] pub const fn ISSOCK(m: mode_t) -> bool { m & IFMT == IFSOCK }
-    }
-
-    // glibc/musl spell the TLS errno accessor `__errno_location()`; bionic
-    // (Android) spells it `__errno()` — same contract, different symbol name.
-    // This file is compiled for both `target_os = "linux"` and `"android"`.
-    #[cfg(not(target_os = "android"))]
-    unsafe extern "C" {
-        fn __errno_location() -> *mut c_int;
-    }
-    #[cfg(target_os = "android")]
-    unsafe extern "C" {
-        #[link_name = "__errno"]
-        fn __errno_location() -> *mut c_int;
-    }
+    /// Linux `mode_t` == `u32` == `bun_core::Mode`, so the canonical module is
+    /// a drop-in re-export (constant types and predicate signatures unchanged).
+    pub use bun_core::S;
 
     /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
-    #[inline]
-    pub fn errno() -> c_int {
-        // SAFETY: __errno_location/__errno is guaranteed by libc to return a
-        // valid thread-local pointer for the calling thread's lifetime.
-        unsafe { *__errno_location() }
-    }
+    /// Canonical impl lives in `bun_core::ffi` (single target_os→symbol ladder).
+    pub use bun_core::ffi::errno;
+    #[allow(unused_imports)] use c_int as _;
 }
 
 #[repr(u16)]
@@ -233,29 +183,6 @@ impl SystemErrno {
     /// only `ENOTSUP`. Provide this alias so cross-platform call sites that
     /// match Zig's `.OPNOTSUPP` (npm.zig, copy_file) compile against one name.
     pub const EOPNOTSUPP: SystemErrno = SystemErrno::ENOTSUP;
-
-    #[inline]
-    pub const fn from_raw(n: u16) -> SystemErrno {
-        debug_assert!(n < Self::MAX);
-        // SAFETY: caller guarantees n < MAX; #[repr(u16)] with contiguous discriminants 0..134
-        unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
-    }
-
-    // TODO(port): Zig `anytype` accepted any integer width (signed or unsigned).
-    // i64 covers every concrete call site (errno-range values); revisit if a
-    // caller passes u64/usize directly.
-    pub fn init(code: i64) -> Option<SystemErrno> {
-        if code < 0 {
-            if code <= -(Self::MAX as i64) {
-                return None;
-            }
-            return Some(Self::from_raw((-code) as u16));
-        }
-        if code >= Self::MAX as i64 {
-            return None;
-        }
-        Some(Self::from_raw(code as u16))
-    }
 }
 
 #[allow(non_upper_case_globals)]
@@ -274,7 +201,7 @@ pub mod uv_e {
     pub const BUSY: i32 = SystemErrno::EBUSY as i32;
     pub const CANCELED: i32 = SystemErrno::ECANCELED as i32;
     // Linux lacks ECHARSET; libuv uses synthetic UV_ECHARSET = -4080.
-    pub const CHARSET: i32 = 4080;
+    pub const CHARSET: i32 = -bun_libuv_sys::UV_ECHARSET;
     pub const CONNABORTED: i32 = SystemErrno::ECONNABORTED as i32;
     pub const CONNREFUSED: i32 = SystemErrno::ECONNREFUSED as i32;
     pub const CONNRESET: i32 = SystemErrno::ECONNRESET as i32;
@@ -327,7 +254,7 @@ pub mod uv_e {
     pub const REMOTEIO: i32 = SystemErrno::EREMOTEIO as i32;
     pub const NOTTY: i32 = SystemErrno::ENOTTY as i32;
     // Linux lacks EFTYPE; libuv uses synthetic UV_EFTYPE = -4028.
-    pub const FTYPE: i32 = 4028;
+    pub const FTYPE: i32 = -bun_libuv_sys::UV_EFTYPE;
     pub const ILSEQ: i32 = SystemErrno::EILSEQ as i32;
     pub const OVERFLOW: i32 = SystemErrno::EOVERFLOW as i32;
     pub const SOCKTNOSUPPORT: i32 = SystemErrno::ESOCKTNOSUPPORT as i32;
@@ -336,12 +263,7 @@ pub mod uv_e {
     pub const NOEXEC: i32 = SystemErrno::ENOEXEC as i32;
 }
 
-/// Zig's `getErrno(rc: anytype)` switches on `@TypeOf(rc)` to pick the errno
-/// extraction strategy. Rust has no type-switch, so we model it as a trait with
-/// per-type impls — call as `rc.get_errno()` or `get_errno(rc)`.
-pub trait GetErrno: Copy {
-    fn get_errno(self) -> E;
-}
+use super::GetErrno;
 
 #[inline]
 pub fn get_errno<T: GetErrno>(rc: T) -> E {

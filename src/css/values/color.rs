@@ -2654,16 +2654,7 @@ pub fn write_predefined(
     dest.write_char(b')')
 }
 
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    fn powf(a: f32, b: f32) -> f32;
-}
-
-#[inline]
-fn bun_powf(a: f32, b: f32) -> f32 {
-    // SAFETY: libm powf is safe for all f32 inputs
-    unsafe { powf(a, b) }
-}
+use bun_core::powf as bun_powf;
 
 pub fn gam_srgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L31

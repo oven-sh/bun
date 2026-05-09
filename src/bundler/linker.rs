@@ -137,15 +137,6 @@ mod hardcoded_module {
     }
 }
 
-// ── ExternalModules::is_node_builtin ────────────────────────────────────
-// Spec (linker.zig:229) routes the browser-target diagnostic through
-// `Options.ExternalModules.isNodeBuiltin`; that lives in `options.rs` and
-// bottoms out in the same `bun_resolve_builtins::Alias` table.
-#[inline]
-fn is_node_builtin(path: &[u8]) -> bool {
-    options::ExternalModules::is_node_builtin(path)
-}
-
 #[inline]
 fn without_leading_slash(s: &[u8]) -> &[u8] {
     // PORT NOTE: `strings.withoutLeadingSlash` is not yet ported into
@@ -598,7 +589,7 @@ impl Linker {
             && resolver::is_package_path(import_record.path.text)
         {
             if target == BundleTarget::Browser
-                && is_node_builtin(import_record.path.text)
+                && options::is_node_builtin(import_record.path.text)
             {
                 log.add_resolve_error(
                     Some(source),

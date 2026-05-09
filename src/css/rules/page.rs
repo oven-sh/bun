@@ -2,10 +2,7 @@ use crate as css;
 use crate::css_rules::Location;
 use crate::{DeclarationBlock, PrintErr, Printer};
 
-// PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` fed by
-// `input.arena()`. Phase B threads `'bump` and switches to
-// `bun_alloc::ArenaVec<'bump, T>` crate-wide; until then `Vec<T>`.
-type ArrayList<T> = Vec<T>;
+use super::ArrayList;
 
 /// A [page selector](https://www.w3.org/TR/css-page-3/#typedef-page-selector)
 /// within a `@page` rule.

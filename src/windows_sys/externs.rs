@@ -113,6 +113,7 @@ pub const GetFileExMaxInfoLevel: GET_FILEEX_INFO_LEVELS = 1;
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct UNICODE_STRING {
     pub Length: u16,
     pub MaximumLength: u16,
@@ -463,6 +464,7 @@ pub mod kernel32 {
     unsafe extern "system" {
         pub fn GetLastError() -> DWORD;
         pub fn ExitProcess(exit_code: u32) -> !;
+        pub fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
         pub fn GetCurrentProcess() -> HANDLE;
         pub fn DuplicateHandle(
             hSourceProcessHandle: HANDLE,

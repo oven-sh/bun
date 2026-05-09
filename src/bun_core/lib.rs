@@ -63,6 +63,31 @@ pub fn os_environ_ptr() -> *const *mut core::ffi::c_char {
 pub mod feature_flags;
 pub mod env_var;
 pub mod deprecated;
+
+// ─── libm shims ───────────────────────────────────────────────────────────────
+// Canonical extern for libm's `powf`/`pow` (Zig: `bun.zig` `pub extern "c" fn
+// powf`). Hot CSS color-space conversion paths (gam_srgb, lab, prophoto) call
+// the safe wrapper below; keep `#[inline]` so cross-crate use stays a direct
+// libm call.
+unsafe extern "C" {
+    #[link_name = "powf"]
+    fn libm_powf(x: f32, y: f32) -> f32;
+    #[link_name = "pow"]
+    fn libm_pow(x: f64, y: f64) -> f64;
+}
+
+#[inline]
+pub fn powf(x: f32, y: f32) -> f32 {
+    // SAFETY: libm `powf` is defined for all f32 inputs.
+    unsafe { libm_powf(x, y) }
+}
+
+#[inline]
+pub fn pow(x: f64, y: f64) -> f64 {
+    // SAFETY: libm `pow` is defined for all f64 inputs.
+    unsafe { libm_pow(x, y) }
+}
+
 // ── B-2 gate ── remaining heavy modules ────────────────────────────────────
 #[path = "Progress.rs"] pub mod Progress;
 pub mod fmt;
@@ -404,11 +429,7 @@ pub mod strings {
     #[inline] pub fn starts_with(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
     #[inline] pub fn ends_with(h: &[u8], p: &[u8]) -> bool { h.ends_with(p) }
     #[inline] pub fn eql(a: &[u8], b: &[u8]) -> bool { a == b }
-    #[inline] pub fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-        let mut e = s.len();
-        while e > 0 && chars.contains(&s[e - 1]) { e -= 1; }
-        &s[..e]
-    }
+    pub use ::bun_alloc::trim_right;
     /// Allocating replace-all (cold debug-log path). Not the SIMD `bun.strings`
     /// version — that lives in `bun_str`.
     pub fn replace_owned(haystack: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
@@ -740,27 +761,156 @@ pub mod strings {
     }
 
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
+    #[inline]
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
-        let mut read = 0usize;
-        let mut written = 0usize;
-        while read < latin1.len() {
-            let c = latin1[read];
-            if c < 0x80 {
-                if written >= buf.len() { break; }
-                buf[written] = c;
-                written += 1;
-                read += 1;
-            } else {
-                if written + 2 > buf.len() { break; }
-                let [a, b] = latin1_to_codepoint_bytes_assume_not_ascii(c);
-                buf[written] = a;
-                buf[written + 1] = b;
-                written += 2;
-                read += 1;
+        copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
+    }
+
+    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`. SWAR fast-path for ASCII spans
+    /// (moved down from `bun_string::immutable::unicode` so the canonical T0 copy
+    /// is the spec-faithful one — TextEncoder.encodeInto / WebSocket frame encode
+    /// hit this in tight loops).
+    pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
+        buf_: &mut [u8],
+        latin1_: &[u8],
+    ) -> EncodeIntoResult {
+        const ASCII_VECTOR_SIZE: usize = 16;
+        let buf_total = buf_.len();
+        let latin1_total = latin1_.len();
+        let mut buf: &mut [u8] = buf_;
+        let mut latin1: &[u8] = latin1_;
+
+        while !buf.is_empty() && !latin1.is_empty() {
+            'inner: {
+                // PERF(port): Zig used @Vector(ascii_vector_size, u8) + @reduce(.Max). We emulate
+                // with a scalar high-bit scan over 16-byte chunks, then SWAR via u64 mask below.
+                let mut remaining_runs = buf.len().min(latin1.len()) / ASCII_VECTOR_SIZE;
+                while remaining_runs > 0 {
+                    remaining_runs -= 1;
+                    let chunk = &latin1[..ASCII_VECTOR_SIZE];
+                    let mut has_high = false;
+                    for &b in chunk {
+                        if b > 127 {
+                            has_high = true;
+                            break;
+                        }
+                    }
+
+                    if has_high {
+                        if STOP {
+                            return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
+                        }
+
+                        // zig or LLVM doesn't do @ctz nicely with SIMD
+                        if ASCII_VECTOR_SIZE >= 8 {
+                            const SIZE: usize = core::mem::size_of::<u64>();
+
+                            {
+                                let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
+                                // https://dotat.at/@/2022-06-27-tolower-swar.html
+                                let mask = bytes & 0x8080808080808080;
+
+                                buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
+
+                                if mask > 0 {
+                                    let first_set_byte = (mask.trailing_zeros() / 8) as usize;
+                                    debug_assert!(latin1[first_set_byte] >= 127);
+
+                                    buf = &mut buf[first_set_byte..];
+                                    latin1 = &latin1[first_set_byte..];
+                                    break 'inner;
+                                }
+
+                                latin1 = &latin1[SIZE..];
+                                buf = &mut buf[SIZE..];
+                            }
+
+                            if ASCII_VECTOR_SIZE >= 16 {
+                                let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
+                                // https://dotat.at/@/2022-06-27-tolower-swar.html
+                                let mask = bytes & 0x8080808080808080;
+
+                                buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
+
+                                debug_assert!(mask > 0);
+                                let first_set_byte = (mask.trailing_zeros() / 8) as usize;
+                                debug_assert!(latin1[first_set_byte] >= 127);
+
+                                buf = &mut buf[first_set_byte..];
+                                latin1 = &latin1[first_set_byte..];
+                                break 'inner;
+                            }
+                        }
+                        unreachable!();
+                    }
+
+                    buf[..ASCII_VECTOR_SIZE].copy_from_slice(chunk);
+                    latin1 = &latin1[ASCII_VECTOR_SIZE..];
+                    buf = &mut buf[ASCII_VECTOR_SIZE..];
+                }
+
+                {
+                    const SIZE: usize = core::mem::size_of::<u64>();
+                    while buf.len().min(latin1.len()) >= SIZE {
+                        let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
+                        buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
+
+                        // https://dotat.at/@/2022-06-27-tolower-swar.html
+
+                        let mask = bytes & 0x8080808080808080;
+
+                        if mask > 0 {
+                            let first_set_byte = (mask.trailing_zeros() / 8) as usize;
+                            if STOP {
+                                return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
+                            }
+                            debug_assert!(latin1[first_set_byte] >= 127);
+
+                            buf = &mut buf[first_set_byte..];
+                            latin1 = &latin1[first_set_byte..];
+
+                            break 'inner;
+                        }
+
+                        latin1 = &latin1[SIZE..];
+                        buf = &mut buf[SIZE..];
+                    }
+                }
+
+                {
+                    // PORT NOTE: reshaped for borrowck — Zig advanced raw `.ptr`/`.len` independently.
+                    let limit = buf.len().min(latin1.len());
+                    debug_assert!(limit < 8);
+                    let mut k = 0usize;
+                    while k < limit && latin1[k] <= 127 {
+                        buf[k] = latin1[k];
+                        k += 1;
+                    }
+                    buf = &mut buf[k..];
+                    latin1 = &latin1[k..];
+                }
+            }
+
+            if !latin1.is_empty() {
+                if buf.len() >= 2 {
+                    if STOP {
+                        return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
+                    }
+
+                    let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[0]);
+                    buf[..2].copy_from_slice(&two);
+                    latin1 = &latin1[1..];
+                    buf = &mut buf[2..];
+                } else {
+                    break;
+                }
             }
         }
-        // PERF(port): Zig fast-paths ASCII spans via SWAR; could re-add via first_non_ascii.
-        EncodeIntoResult { read: read as u32, written: written as u32 }
+
+        EncodeIntoResult {
+            written: u32::try_from(buf_total - buf.len()).unwrap(),
+            read: u32::try_from(latin1_total - latin1.len()).unwrap(),
+        }
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so
@@ -1115,6 +1265,59 @@ pub mod ffi {
         }
     }
 
+    /// Pointer to the calling thread's libc `errno` (Zig: `std.c._errno()`).
+    ///
+    /// Single audited cfg-ladder over the per-libc TLS accessor symbol so the
+    /// tree has ONE place that knows glibc/musl spell it `__errno_location()`,
+    /// bionic spells it `__errno()`, Darwin/BSD spell it `__error()`, and the
+    /// Windows CRT spells it `_errno()`. Every higher-tier crate routes through
+    /// this — `bun_errno::posix::errno`, `bun_sys::last_errno`,
+    /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
+    /// re-deriving the same target_os→symbol mapping.
+    ///
+    /// # Safety
+    /// The returned pointer is valid for the calling thread's lifetime; reads
+    /// and writes are sound but the caller must not send it across threads.
+    #[inline(always)]
+    pub unsafe fn errno_ptr() -> *mut core::ffi::c_int {
+        #[cfg(target_os = "linux")]
+        return unsafe { libc::__errno_location() };
+        #[cfg(target_os = "android")]
+        return unsafe { libc::__errno() };
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        return unsafe { libc::__error() };
+        #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+        return unsafe { libc::__error() };
+        #[cfg(all(
+            unix,
+            not(any(
+                target_os = "linux",
+                target_os = "android",
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "freebsd",
+                target_os = "dragonfly"
+            ))
+        ))]
+        return unsafe { libc::__errno_location() };
+        #[cfg(windows)]
+        {
+            // Windows CRT: `int *_errno(void)` — thread-local errno for the
+            // C runtime (distinct from Win32 `GetLastError()`).
+            unsafe extern "C" { fn _errno() -> *mut core::ffi::c_int; }
+            return unsafe { _errno() };
+        }
+    }
+
+    /// Read the calling thread's libc `errno` (Zig: `std.c._errno().*`).
+    /// Safe wrapper over `*errno_ptr()`.
+    #[inline(always)]
+    pub fn errno() -> core::ffi::c_int {
+        // SAFETY: `errno_ptr()` returns a valid thread-local int* for the
+        // calling thread's lifetime on every supported target.
+        unsafe { *errno_ptr() }
+    }
+
     #[inline]
     pub fn catch_unwind_ffi<R>(f: impl FnOnce() -> R) -> R {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
@@ -1315,3 +1518,21 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     let _ = (begin, out, cap);
     0
 }
+
+/// Safe wrapper over the cfg-gated `Bun__captureStackTrace` definitions above.
+/// Single canonical entry point — `StoredTrace::capture` and
+/// `bun_crash_handler::debug::capture_stack_trace` both route through this so
+/// no caller re-declares the `extern "C"` import.
+#[inline]
+pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
+    // Direct Rust call into the same-crate `extern "C" fn` above (not an FFI
+    // import), so no `unsafe` needed; the impl writes at most `addrs.len()` words.
+    Bun__captureStackTrace(begin, addrs.as_mut_ptr(), addrs.len())
+}
+
+/// Zig `@returnAddress()` placeholder. Rust has no stable equivalent; `0` tells
+/// `capture_stack_trace` "start from here". Lives in bun_core so the canonical
+/// `StoredTrace::capture` can call it; once wired to a real intrinsic, every
+/// caller (incl. `bun_crash_handler::debug::return_address`) picks it up.
+#[inline(always)]
+pub fn return_address() -> usize { 0 }

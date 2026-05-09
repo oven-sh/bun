@@ -22,7 +22,7 @@ use crate::webcore::sink::{self, ArrayBufferSink};
 use crate::jsc::HTTPHeaderName;
 use bun_jsc::StringJsc as _;
 use bun_str::{self as strings, MutableString, String as BunString, ZigString};
-use bun_str::WTFStringImpl;
+use bun_str::{WTFStringImpl, WTFStringImplExt as _};
 use bun_jsc::ZigStringJsc as _;
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -59,7 +59,13 @@ pub fn live_arena_heaps() -> usize {
 
 #[cfg(debug_assertions)]
 #[inline]
-fn current_thread_id() -> u64 {
+fn debug_thread_stamp() -> u64 {
+    // Intentionally NOT `bun_threading::current_thread_id()` /
+    // `bun_safety::thread_id::current()`: `bun_alloc` is tier-0 and sits below
+    // both in the crate graph (they depend on us), so routing there would
+    // create a cycle. The contract here is only "any nonzero per-thread-unique
+    // u64 for an ownership debug-assert", which a counter satisfies.
+    //
     // Portable thread-unique id without `ThreadId::as_u64` (unstable) or
     // platform syscalls: each thread takes a fresh nonzero counter value the
     // first time it asks.
@@ -118,7 +124,7 @@ impl MimallocArena {
         Self {
             heap,
             #[cfg(debug_assertions)]
-            owning_thread: AtomicU64::new(current_thread_id()),
+            owning_thread: AtomicU64::new(debug_thread_stamp()),
         }
     }
 
@@ -131,7 +137,7 @@ impl MimallocArena {
         #[cfg(debug_assertions)]
         {
             let owner = self.owning_thread.load(Ordering::Relaxed);
-            let cur = current_thread_id();
+            let cur = debug_thread_stamp();
             debug_assert_eq!(
                 owner, cur,
                 "MimallocArena: mi_heap_* allocation on thread {cur}, \
@@ -186,7 +192,7 @@ impl MimallocArena {
         // allocate on that worker (Zig has no equivalent because its
         // `MimallocArena` is not moved post-init).
         #[cfg(debug_assertions)]
-        self.owning_thread.store(current_thread_id(), Ordering::Relaxed);
+        self.owning_thread.store(debug_thread_stamp(), Ordering::Relaxed);
     }
 
     /// Zig: `MimallocArena.gc()` → `mi_heap_collect(heap, false)`.
@@ -426,11 +432,20 @@ impl MimallocArena {
     }
 
     /// Zig: `MimallocArena.isInstance` — does `alloc` dispatch through one of
-    /// this module's vtables?
+    /// this module's vtables (per-heap or process-global mimalloc)?
     #[inline]
     pub fn is_instance(alloc: &crate::StdAllocator) -> bool {
         core::ptr::eq(alloc.vtable, &raw const HEAP_ALLOCATOR_VTABLE)
-            || core::ptr::eq(alloc.vtable, crate::basic::C_ALLOCATOR.vtable)
+            || core::ptr::eq(alloc.vtable, &raw const GLOBAL_MIMALLOC_VTABLE)
+    }
+
+    /// Zig: `MimallocArena.getThreadLocalDefault()` — a `StdAllocator` that
+    /// routes through the process-wide `mi_malloc`/`mi_free` (no per-heap ctx).
+    /// In mimalloc v3 these are already thread-local-fast, so there is no
+    /// separate per-thread default heap to cache.
+    #[inline]
+    pub fn get_thread_local_default() -> crate::StdAllocator {
+        crate::StdAllocator { ptr: core::ptr::null_mut(), vtable: &GLOBAL_MIMALLOC_VTABLE }
     }
 }
 
@@ -624,17 +639,94 @@ unsafe fn vtable_remap(
 }
 
 unsafe fn vtable_free(_ctx: *mut c_void, buf: &mut [u8], _a: crate::Alignment, _ra: usize) {
-    // SAFETY: `buf` was allocated by mimalloc (caller contract).
-    unsafe { mimalloc::mi_free(buf.as_mut_ptr().cast()) };
+    // Zig: `vtable_free` — `mi_free_size` internally just asserts the size, so
+    // it's faster in release if we don't pass it through, but the assertion is
+    // worth having in debug.
+    // SAFETY: `buf` was allocated by mimalloc with the recorded len/alignment
+    // (Allocator vtable invariant); `mi_is_in_heap_region` accepts any pointer.
+    #[cfg(debug_assertions)]
+    unsafe {
+        debug_assert!(mimalloc::mi_is_in_heap_region(buf.as_ptr().cast()));
+        if mimalloc::must_use_aligned_alloc(_a.to_byte_units()) {
+            mimalloc::mi_free_size_aligned(buf.as_mut_ptr().cast(), buf.len(), _a.to_byte_units());
+        } else {
+            mimalloc::mi_free_size(buf.as_mut_ptr().cast(), buf.len());
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    unsafe {
+        mimalloc::mi_free(buf.as_mut_ptr().cast());
+    }
 }
 
-/// Zig: `heap_allocator_vtable`.
+/// Zig: `heap_allocator_vtable` — per-heap (`mi_heap_*`) thunks; ctx is the
+/// `mi_heap_t*` stashed by `std_allocator()`.
 pub static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: vtable_alloc,
     resize: vtable_resize,
     remap: vtable_remap,
     free: vtable_free,
 };
+
+// ── Global-mimalloc vtable (Zig: `global_mimalloc_vtable`) ───────────────
+// Process-wide `mi_malloc`/`mi_free` — no heap ctx. Used by
+// `get_thread_local_default()` / `Default::allocator()`.
+
+unsafe fn global_vtable_alloc(
+    _ctx: *mut c_void,
+    len: usize,
+    a: crate::Alignment,
+    _ra: usize,
+) -> *mut u8 {
+    // SAFETY: FFI — len/alignment passed by value; mimalloc returns null on OOM.
+    unsafe {
+        if mimalloc::must_use_aligned_alloc(a.to_byte_units()) {
+            mimalloc::mi_malloc_aligned(len, a.to_byte_units()).cast()
+        } else {
+            mimalloc::mi_malloc(len).cast()
+        }
+    }
+}
+
+unsafe fn global_vtable_resize(
+    _ctx: *mut c_void,
+    buf: &mut [u8],
+    _a: crate::Alignment,
+    new_len: usize,
+    _ra: usize,
+) -> bool {
+    // SAFETY: `buf` was allocated by mimalloc (caller contract).
+    unsafe { !mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len).is_null() }
+}
+
+unsafe fn global_vtable_remap(
+    _ctx: *mut c_void,
+    buf: &mut [u8],
+    a: crate::Alignment,
+    new_len: usize,
+    _ra: usize,
+) -> *mut u8 {
+    // SAFETY: `buf` was allocated by mimalloc (caller contract).
+    unsafe {
+        mimalloc::mi_realloc_aligned(buf.as_mut_ptr().cast(), new_len, a.to_byte_units()).cast()
+    }
+}
+
+/// Zig: `global_mimalloc_vtable`.
+pub static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
+    alloc: global_vtable_alloc,
+    resize: global_vtable_resize,
+    remap: global_vtable_remap,
+    free: vtable_free,
+};
+
+/// Both vtable addresses this module hands out, for
+/// `bun_safety::register_alloc_vtable` (so `has_ptr` recognises either form;
+/// see `is_instance` above which checks both).
+#[inline]
+pub fn std_vtables() -> [&'static crate::AllocatorVTable; 2] {
+    [&HEAP_ALLOCATOR_VTABLE, &GLOBAL_MIMALLOC_VTABLE]
+}
 
 // ── ArenaVec helpers ─────────────────────────────────────────────────────
 // `std::vec::Vec<T, A>` lacks `from_iter_in` / `into_bump_slice*`; provide

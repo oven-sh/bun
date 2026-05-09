@@ -6,10 +6,7 @@ use crate::css_values::ident::CustomIdent;
 use crate::css_values::percentage::Percentage;
 use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
 
-// PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` fed by
-// `input.arena()`. Phase B threads `'bump` and switches to
-// `bun_alloc::ArenaVec<'bump, T>` crate-wide; until then `Vec<T>`.
-type ArrayList<T> = Vec<T>;
+use super::ArrayList;
 
 // ──────────────────────────────────────────────────────────────────────────
 // KeyframesName

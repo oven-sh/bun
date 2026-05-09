@@ -1,4 +1,5 @@
 use core::cell::UnsafeCell;
+#[allow(unused_imports)] // c_int / c_uint only used in the macOS-gated extern block
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use std::sync::OnceLock;
@@ -55,7 +56,7 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
     let mut prefixed = String::with_capacity(5 + name.len());
     prefixed.push_str("Bun__");
     prefixed.push_str(name);
-    get_zone_runtime(&prefixed).allocator()
+    get_zone(prefixed.as_bytes()).allocator()
 }
 
 // Comptime-literal form of `named_allocator` lives at crate root as `get_zone!`
@@ -65,7 +66,7 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
 
 /// Zig: `pub fn getZoneT(comptime T: type) *Zone`
 pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
-    get_zone_runtime(heap_label::<T>())
+    get_zone(heap_label::<T>().as_bytes())
 }
 
 /// Zig: `pub fn getZone(comptime name: [:0]const u8) *Zone`
@@ -75,27 +76,34 @@ pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
 /// that expands a fresh `OnceLock` per call site (per literal name). Not
 /// duplicated here to avoid path-export collisions on macOS.
 
-/// Runtime fallback for `getZone` when the name is not a literal at the Rust call site.
-// TODO(port): Zig had no runtime path here (every `name` was comptime). This exists
-// only because `allocator<T>()`/`get_zone_t<T>()` can't expand a per-T static on
-// stable Rust without a proc-macro. Phase B may replace with a `#[heap_label]`
-// derive that expands `get_zone!` directly.
-fn get_zone_runtime(name: &str) -> &'static Zone {
-    debug_assert!(ENABLED, "heap_breakdown::get_zone_runtime called with ENABLED=false");
+/// Runtime `getZone(name)` — looks up (or creates) the per-name zone.
+///
+/// Zig used a comptime-monomorphized `static` per literal; the crate-root
+/// `get_zone!` macro is the zero-cost form. This runtime path keys a
+/// process-global map for callers that pass a non-literal name (or for
+/// `allocator<T>()`/`get_zone_t<T>()`, which cannot expand a per-T static on
+/// stable Rust without a proc-macro).
+// TODO(port): Phase B may replace with a `#[heap_label]` derive that expands
+// `get_zone!` directly.
+#[allow(clippy::assertions_on_constants)]
+pub fn get_zone(name: &[u8]) -> &'static Zone {
+    debug_assert!(ENABLED, "heap_breakdown::get_zone called with ENABLED=false");
 
     use std::collections::HashMap;
     use std::sync::Mutex;
-    // Map value carries the owning `Vec<u8>` for the NUL-terminated label so it
-    // lives for process lifetime (PORTING.md §Forbidden: never `Box::leak`).
+    // Map key = `name` (no NUL) so lookups match inserts. The NUL-terminated
+    // label handed to `malloc_set_zone_name` is stored as the map *value*
+    // (alongside the zone) to keep its allocation alive for 'static
+    // (PORTING.md §Forbidden: never `Box::leak`).
     static ZONES: OnceLock<Mutex<HashMap<Vec<u8>, (Vec<u8>, &'static Zone)>>> = OnceLock::new();
     let map = ZONES.get_or_init(|| Mutex::new(HashMap::default()));
     let mut map = map.lock().unwrap();
-    if let Some((_, z)) = map.get(name.as_bytes()) {
+    if let Some((_, z)) = map.get(name) {
         return *z;
     }
     // `name` verbatim (no prefix — matches Zig `getZone`), NUL-terminated.
     let mut owned = Vec::with_capacity(name.len() + 1);
-    owned.extend_from_slice(name.as_bytes());
+    owned.extend_from_slice(name);
     owned.push(0);
     // The Vec's heap buffer address is stable across the move into the map
     // (only the {ptr,len,cap} header moves), and the entry is never removed.
@@ -104,7 +112,7 @@ fn get_zone_runtime(name: &str) -> &'static Zone {
     // 'static `ZONES` map immediately below and never freed — valid for process
     // lifetime per `Zone::init` contract.
     let zone = unsafe { Zone::init(raw) };
-    map.insert(name.as_bytes().to_vec(), (owned, zone));
+    map.insert(name.to_vec(), (owned, zone));
     zone
 }
 
@@ -118,11 +126,7 @@ fn get_zone_runtime(name: &str) -> &'static Zone {
 /// internal state, and Zig models the handle as a freely-aliasing `*Zone`.
 /// Without `UnsafeCell`, casting `&Zone as *const _ as *mut _` and writing
 /// through it (via FFI) is UB under Stacked Borrows.
-#[repr(C)]
-pub struct Zone {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Zone; }
 
 // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing
 // `&Zone` across threads is the documented usage (matches Zig `*Zone` via `std.once`).
@@ -148,12 +152,19 @@ impl Zone {
         self._p.get().cast::<Zone>()
     }
 
+    /// Raw `*mut malloc_zone_t` for the FFI surface (public alias of `as_ptr`).
+    #[inline]
+    pub fn as_mut_ptr(&self) -> *mut Zone {
+        self.as_ptr()
+    }
+
     /// Zig: `pub fn init(comptime name: [:0]const u8) *Zone`
     ///
     /// # Safety
     /// `name` must point to a NUL-terminated C string that remains valid for
     /// the entire process lifetime — `malloc_set_zone_name` stores the pointer
     /// (does not copy).
+    #[cfg(target_os = "macos")]
     pub unsafe fn init(name: *const c_char) -> &'static Zone {
         // SAFETY: malloc_create_zone is safe to call with (0, 0); returns a
         // process-lifetime zone pointer. Caller guarantees `name` outlives the
@@ -163,6 +174,36 @@ impl Zone {
             malloc_set_zone_name(zone, name);
             &*zone
         }
+    }
+    #[cfg(not(target_os = "macos"))]
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn init(_name: *const c_char) -> &'static Zone {
+        unreachable!("heap_breakdown is macOS-only; guard call sites on ENABLED")
+    }
+
+    #[inline]
+    pub fn malloc_zone_malloc(&self, size: usize) -> Option<*mut c_void> {
+        // SAFETY: `self` is a live `malloc_zone_t`; `as_ptr` derives a
+        // write-capable pointer through `UnsafeCell`.
+        let p = unsafe { malloc_zone_malloc(self.as_ptr(), size) };
+        if p.is_null() { None } else { Some(p) }
+    }
+
+    #[inline]
+    pub fn malloc_zone_calloc(&self, num_items: usize, size: usize) -> Option<*mut c_void> {
+        // SAFETY: `self` is a live `malloc_zone_t`; `as_ptr` derives a
+        // write-capable pointer through `UnsafeCell`.
+        let p = unsafe { malloc_zone_calloc(self.as_ptr(), num_items, size) };
+        if p.is_null() { None } else { Some(p) }
+    }
+
+    /// # Safety
+    /// `ptr` must have been allocated by this zone (via `malloc_zone_malloc`
+    /// / `malloc_zone_calloc`) and not already freed.
+    #[inline]
+    pub unsafe fn malloc_zone_free(&self, ptr: *mut c_void) {
+        // SAFETY: caller contract above; `self` is a live `malloc_zone_t`.
+        unsafe { malloc_zone_free(self.as_ptr(), ptr) }
     }
 
     fn aligned_alloc(zone: &Zone, len: usize, alignment: usize) -> Option<*mut u8> {
@@ -263,7 +304,7 @@ impl Zone {
     /// Zig: `return allocator_.vtable == &vtable;` — implemented as a `TypeId`
     /// identity check via the `Allocator::type_id()` hook.
     pub fn is_instance(allocator_: &dyn crate::Allocator) -> bool {
-        crate::Allocator::type_id(allocator_) == core::any::TypeId::of::<Zone>()
+        allocator_.is::<Self>()
     }
 }
 
@@ -301,5 +342,22 @@ unsafe extern "C" {
     // std.c.malloc_size
     fn malloc_size(ptr: *const c_void) -> usize;
 }
+
+// Non-macOS stubs so cross-platform call sites guarded by `if ENABLED { … }`
+// (where `ENABLED` is a `const false`) still type-check. Never executed.
+#[cfg(not(target_os = "macos"))]
+#[allow(clippy::missing_safety_doc)]
+mod stubs {
+    use super::*;
+    pub unsafe fn malloc_zone_malloc(_: *mut Zone, _: usize) -> *mut c_void { unreachable!() }
+    pub unsafe fn malloc_zone_calloc(_: *mut Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
+    pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) { unreachable!() }
+    pub unsafe fn malloc_zone_memalign(_: *mut Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
+    pub unsafe fn malloc_size(_: *const c_void) -> usize { unreachable!() }
+}
+#[cfg(not(target_os = "macos"))]
+pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
+#[cfg(not(target_os = "macos"))]
+use stubs::{malloc_size, malloc_zone_memalign};
 
 // ported from: src/bun_alloc/heap_breakdown.zig

@@ -842,7 +842,7 @@ impl sockaddr {
             unsafe { (&raw const self.sin6.addr).cast::<c_void>() }
         };
         // SAFETY: buf is INET6_ADDRSTRLEN bytes; ares_inet_ntop writes NUL-terminated string
-        let result = unsafe { ares::ares_inet_ntop(self.family().int() as c_int, addr_src, buf.as_mut_ptr(), buf.len() as ares::socklen_t) };
+        let result = unsafe { ares::ares_inet_ntop(self.family().int() as c_int, addr_src, buf.as_mut_ptr(), buf.len() as ares::ares_socklen_t) };
         let Some(ptr) = (unsafe { result.as_ref() }) else {
             panic!("Invariant violation: SocketAddress created with invalid IPv6 address");
         };
@@ -938,7 +938,7 @@ pub mod inet {
     /// `ws2def.h`: `typedef USHORT ADDRESS_FAMILY;`
     pub type sa_family_t = u16;
     pub type in_port_t = u16;
-    pub type socklen_t = super::ares::socklen_t;
+    pub type socklen_t = super::ares::ares_socklen_t;
 
     // Zig `std.posix.sockaddr.in`/`.in6` shape (un-prefixed field names).
     // Layout-identical to ws2def.h `SOCKADDR_IN`/`SOCKADDR_IN6` (no leading
@@ -983,11 +983,10 @@ pub mod inet {
     pub const INET6_ADDRSTRLEN: usize = 46;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
-    pub const AF_INET: core::ffi::c_int = libc::AF_INET;
-    pub const AF_INET6: core::ffi::c_int = libc::AF_INET6;
+    pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
     pub type sa_family_t = libc::sa_family_t;
     pub type in_port_t = libc::in_port_t;
-    pub type socklen_t = super::ares::socklen_t;
+    pub type socklen_t = super::ares::ares_socklen_t;
 
     // Zig `std.posix.sockaddr.in`/`.in6` shape (field names without `sin_`
     // prefix). Layout matches the platform C struct; on BSD a leading `len: u8`

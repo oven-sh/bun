@@ -2090,17 +2090,10 @@ enum ReverseKind {
     Prefix,
 }
 
-// ── Local string helpers (TODO(b2-blocked): bun_string::strings::{trim_right, replacement_size, replace}) ──
+// ── Local string helpers (TODO(b2-blocked): bun_string::strings::{replacement_size, replace}) ──
 // Minimal local impls so the ESModule resolution algorithm compiles; replace with the
 // canonical bun_string versions once they land. Recorded in blocked_on.
-#[inline]
-fn trim_right<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
-    let mut end = slice.len();
-    while end > 0 && values_to_strip.contains(&slice[end - 1]) {
-        end -= 1;
-    }
-    &slice[..end]
-}
+use bun_string::strings::trim_right;
 
 /// Port of `std.mem.replacementSize` — total bytes after replacing every `needle` in
 /// `input` with `replacement`.

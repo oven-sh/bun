@@ -199,8 +199,6 @@ pub mod package_manifest_map;
 pub mod resolution;
 // Legacy alias kept while callers migrate from the stub/real split.
 pub use resolution as resolution_real;
-#[path = "PnpmMatcher.rs"]
-pub mod pnpm_matcher;
 pub mod postinstall_optimizer;
 #[path = "ExternalSlice.rs"]
 pub mod external_slice;
@@ -398,7 +396,9 @@ pub mod resolvers {
 
 pub use npm as Npm;
 pub use resolution::Resolution;
-pub use pnpm_matcher::PnpmMatcher;
+// D024: PnpmMatcher canonical lives in `bun_install_types::NodeLinker`; the
+// local PnpmMatcher.rs duplicate (4-arg `from_expr`, dead) was deleted.
+pub use bun_install_types::NodeLinker::PnpmMatcher;
 
 pub use bun_collections::identity_context::ArrayIdentityContext;
 pub use bun_collections::identity_context::IdentityContext;
@@ -1286,10 +1286,6 @@ impl core::fmt::Display for PackageManifestError {
     }
 }
 
-impl From<PackageManifestError> for bun_core::Error {
-    fn from(e: PackageManifestError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(PackageManifestError);
 
 // ported from: src/install/install.zig

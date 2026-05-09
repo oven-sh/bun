@@ -4966,95 +4966,13 @@ impl core::fmt::Display for SystemError {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `generate_header` — MOVE_DOWN from `bun_analytics::GenerateHeader`.
-// Only the `GeneratePlatform` kernel-probe surface is needed here (used by
-// `copy_file.rs` for `kernelVersion()` gating and by udp `sendmsg_x` checks).
-// The `analytics::Platform` reporting payload stays in `bun_analytics`.
+// `generate_header` — REMOVED (D006). The MOVE_DOWN draft duplicated
+// `bun_analytics::generate_header::generate_platform::{LINUX_OS_NAME,
+// kernel_version}` and the two #[no_mangle] FFI shims. The sys→analytics
+// layering problem it was solving is now handled by
+// `bun_core::linux_kernel_version()` (see sys/lib.rs + sys/copy_file.rs); the
+// canonical full-semver impl + FFI shims live in `src/analytics/lib.rs`.
 // ──────────────────────────────────────────────────────────────────────────
-pub mod generate_header {
-    pub use self::generate_platform as GeneratePlatform;
-
-    pub mod generate_platform {
-        use std::sync::OnceLock;
-
-        #[cfg(target_os = "linux")]
-        pub static LINUX_OS_NAME: OnceLock<libc::utsname> = OnceLock::new();
-
-        static LINUX_KERNEL_VERSION: OnceLock<bun_semver::Version> = OnceLock::new();
-
-        #[cfg(target_os = "linux")]
-        fn compute_kernel_version() -> bun_semver::Version {
-            let uts = LINUX_OS_NAME.get_or_init(|| {
-                // SAFETY: `uname(2)` fills the struct on success; zero-init beforehand
-                // so a (theoretical) failure leaves a valid all-zero utsname.
-                let mut name: libc::utsname = unsafe { bun_core::ffi::zeroed() };
-                unsafe { libc::uname(&mut name) };
-                name
-            });
-            // Confusingly, the "release" tends to contain the kernel version much
-            // more frequently than the "version" field.
-            // SAFETY: utsname.release is a NUL-terminated C buffer.
-            let release = unsafe {
-                bun_core::ffi::cstr(uts.release.as_ptr())
-            }.to_bytes();
-            let sliced = bun_semver::SlicedString::init(release, release);
-            bun_semver::Version::parse(sliced).version.min()
-        }
-
-        /// Linux kernel version (parsed from `uname -r`). Panics on non-Linux to
-        /// match the Zig `@compileError` — callers are `cfg(linux)`-guarded.
-        pub fn kernel_version() -> bun_semver::Version {
-            #[cfg(target_os = "linux")]
-            { *LINUX_KERNEL_VERSION.get_or_init(compute_kernel_version) }
-            #[cfg(not(target_os = "linux"))]
-            { unreachable!("kernel_version() is only implemented on Linux") }
-        }
-
-        // On macOS 13, tests that use sendmsg_x or recvmsg_x hang.
-        static USE_MSGX_ON_MACOS_14_OR_LATER: OnceLock<bool> = OnceLock::new();
-
-        #[unsafe(no_mangle)]
-        pub extern "C" fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> i32 {
-            #[cfg(not(target_os = "macos"))]
-            { return 0; } // this should not be used on non-mac platforms.
-            #[cfg(target_os = "macos")]
-            {
-                *USE_MSGX_ON_MACOS_14_OR_LATER.get_or_init(|| {
-                    let mut buf = [0u8; 32];
-                    let mut len = buf.len() - 1;
-                    // SAFETY: FFI call; buf/len are valid for the duration.
-                    let rc = unsafe {
-                        libc::sysctlbyname(
-                            c"kern.osproductversion".as_ptr(),
-                            buf.as_mut_ptr().cast(),
-                            &mut len,
-                            core::ptr::null_mut(),
-                            0,
-                        )
-                    };
-                    if rc == -1 { return false; }
-                    let version = bun_semver::Version::parse_utf8(&buf[..len]);
-                    version.valid && version.version.max().major >= 14
-                }) as i32
-            }
-        }
-
-        #[unsafe(no_mangle)]
-        pub extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
-            #[cfg(not(target_os = "linux"))]
-            { return 0; }
-            #[cfg(target_os = "linux")]
-            {
-                // https://man.archlinux.org/man/epoll_pwait2.2.en#HISTORY
-                let min = bun_semver::Version { major: 5, minor: 11, patch: 0, ..Default::default() };
-                match kernel_version().order(&min, b"", b"") {
-                    core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => 1,
-                    core::cmp::Ordering::Less => 0,
-                }
-            }
-        }
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // `os` — MOVE_DOWN `bun_runtime::node::os::{totalmem,freemem}` → sys.

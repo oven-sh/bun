@@ -209,54 +209,20 @@ pub mod strings {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Encoding { Ascii, Latin1, Utf8, Utf16 }
 
-    #[derive(Clone, Copy, Default)]
-    pub struct EncodeResult { pub read: usize, pub written: usize }
-
-    /// Zig: `copyUTF16IntoUTF8`. Scalar fallback; bun_str overrides with SIMD.
-    pub fn copy_utf16_into_utf8(dst: &mut [u8], src: &[u16]) -> EncodeResult {
-        let mut r = 0usize; let mut w = 0usize;
-        let mut tmp = [0u8; 4];
-        while r < src.len() {
-            let unit = src[r] as u32;
-            let (cp, adv) = if (0xD800..=0xDBFF).contains(&unit) && r + 1 < src.len() {
-                let lo = src[r + 1] as u32;
-                if (0xDC00..=0xDFFF).contains(&lo) {
-                    (0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00), 2)
-                } else { (unit, 1) }
-            } else { (unit, 1) };
-            let n = encode_wtf8_rune(&mut tmp, cp);
-            if w + n > dst.len() { break; }
-            dst[w..w + n].copy_from_slice(&tmp[..n]);
-            w += n;
-            r += adv;
-        }
-        EncodeResult { read: r, written: w }
-    }
-    /// Zig: `copyLatin1IntoUTF8`.
-    pub fn copy_latin1_into_utf8(dst: &mut [u8], src: &[u8]) -> EncodeResult {
-        let mut r = 0usize; let mut w = 0usize;
-        while r < src.len() {
-            let c = src[r];
-            if c < 0x80 {
-                if w >= dst.len() { break; }
-                dst[w] = c; w += 1;
-            } else {
-                if w + 2 > dst.len() { break; }
-                dst[w] = 0xC0 | (c >> 6);
-                dst[w+1] = 0x80 | (c & 0x3F); w += 2;
-            }
-            r += 1;
-        }
-        EncodeResult { read: r, written: w }
-    }
-
-    // ─── scanners fmt.rs needs that aren't in lib.rs::strings ─────────────
-    // Re-export the simdutf-backed ones from lib.rs::strings
-    pub use crate::strings::{is_all_ascii, trim_right, encode_wtf8_rune};
+    // ─── scanners fmt.rs needs that aren't defined locally ────────────────
+    // Re-export the simdutf-backed ones from lib.rs::strings. The encode-into
+    // helpers (`copy_utf16_into_utf8`, `copy_latin1_into_utf8`) used to be
+    // duplicated here with a divergent WTF-8-passthrough scalar; the canonical
+    // FFFD-replacing simdutf-backed impls live in `crate::strings` and are
+    // re-exported so `fmt.rs`'s local `strings::` path keeps resolving.
+    pub use crate::strings::{
+        is_all_ascii, trim_right, encode_wtf8_rune,
+        copy_utf16_into_utf8, copy_latin1_into_utf8, EncodeIntoResult,
+    };
 
     /// Port of `bun.strings.wtf8ByteSequenceLength`.
     #[inline]
-    pub fn wtf8_byte_sequence_length(b: u8) -> u8 {
+    pub const fn wtf8_byte_sequence_length(b: u8) -> u8 {
         if b < 0x80 { 1 }
         else if b & 0xE0 == 0xC0 { 2 }
         else if b & 0xF0 == 0xE0 { 3 }
@@ -817,8 +783,8 @@ pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::R
         if result.read == 0 || result.written == 0 {
             break;
         }
-        write_bytes(writer, &chunk[..result.written])?;
-        slice = &slice[result.read..];
+        write_bytes(writer, &chunk[..result.written as usize])?;
+        slice = &slice[result.read as usize..];
     }
     Ok(())
 }
@@ -839,7 +805,7 @@ pub fn format_utf16_type_with_path_options(
             break;
         }
 
-        let to_write = &chunk[..result.written];
+        let to_write = &chunk[..result.written as usize];
         if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
             write_bytes(writer, to_write)?;
         } else {
@@ -861,7 +827,7 @@ pub fn format_utf16_type_with_path_options(
             }
             write_bytes(writer, ptr)?;
         }
-        slice = &slice[result.read..];
+        slice = &slice[result.read as usize..];
     }
     Ok(())
 }
@@ -1045,8 +1011,8 @@ pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result
         if result.read == 0 || result.written == 0 {
             break;
         }
-        write_bytes(writer, &chunk[..result.written])?;
-        slice = &slice[result.read..];
+        write_bytes(writer, &chunk[..result.written as usize])?;
+        slice = &slice[result.read as usize..];
     }
 
     if !slice.is_empty() {

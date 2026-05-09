@@ -18,11 +18,7 @@ use bun_event_loop::EventLoopTimer::{
 /// lowered to `*mut AbortSignal` for FFI. A real `UnsafeCell` (not just
 /// `PhantomData<UnsafeCell<_>>`, which is still `Freeze`) is required so that
 /// `as_mut_ptr` can soundly derive a write-capable pointer from `&self`.
-#[repr(C)]
-pub struct AbortSignal {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct AbortSignal; }
 
 // TODO(port): move to jsc_sys
 //

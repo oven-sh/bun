@@ -1,112 +1,30 @@
-use core::ffi::{c_int, c_uint, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boringssl_sys;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local BoringSSL FFI surface.
+// BoringSSL FFI surface — thin re-export shim over `bun_boringssl_sys`.
 //
-// `bun_boringssl_sys` is a bindgen target that has not been generated yet, so
-// the handful of EVP/HMAC symbols this crate needs are declared here directly
-// against the vendored headers (`vendor/boringssl/include/openssl/digest.h`,
-// `hmac.h`). Once the sys crate is populated these can be replaced with
-// `pub use bun_boringssl_sys::*` and this module deleted.
+// Kept as a `pub mod ffi` (rather than deleted outright) so existing path
+// consumers — `s3_signing::credentials`, `runtime::crypto::{PBKDF2,CryptoHasher}`,
+// `crate::hmac` — need no `use`-path edits. All symbols now resolve to the
+// canonical sys-crate definitions, which unifies `EVP_MD`/`EVP_MD_CTX` type
+// identity across crates (eliminating the cross-crate opaque-pointer casts).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
-    use core::ffi::{c_int, c_uint, c_void};
-    use core::marker::{PhantomData, PhantomPinned};
+    pub use bun_boringssl_sys::{
+        ENGINE, EVP_MD, EVP_MD_CTX, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate,
+        EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
+        EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha3_224,
+        EVP_sha3_256, EVP_sha3_384, EVP_sha3_512, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
+    };
 
-    /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest.
-    pub const EVP_MAX_MD_SIZE: usize = 64;
-
-    /// `#define EVP_MAX_MD_DATA_SIZE 240` — size of the largest digest state
-    /// (SHA-512 / BLAKE2b). Private in BoringSSL; needed only to size
-    /// `EVP_MD_CTX::md_data` correctly.
-    const EVP_MAX_MD_DATA_SIZE: usize = 240;
-
-    /// Opaque `struct env_md_st` (`typedef ... EVP_MD`).
-    #[repr(C)]
-    pub struct EVP_MD {
-        _p: core::cell::UnsafeCell<[u8; 0]>,
-        _m: PhantomData<(*mut u8, PhantomPinned)>,
-    }
-
-    /// Opaque `struct engine_st` (`typedef ... ENGINE`). Re-exported from
-    /// `bun_boringssl_sys` so callers in higher crates that already hold a
-    /// `*mut bun_boringssl_sys::ENGINE` (e.g. `RareData::boring_engine()`) can
-    /// pass it to `evp::*::hash` without a cross-crate opaque-type mismatch.
-    pub use bun_boringssl_sys::ENGINE;
-
-    /// `struct env_md_ctx_st` — laid out to match
-    /// `vendor/boringssl/include/openssl/digest.h` so it can live by-value on
-    /// the Rust side (the Zig port stores it inline, not behind a heap
-    /// `EVP_MD_CTX_new`).
-    #[repr(C)]
-    pub struct EVP_MD_CTX {
-        /// `union { uint8_t md_data[240]; uint64_t alignment; }` — modelled as
-        /// a `[u64; 30]` to get both the 240-byte size and the 8-byte
-        /// alignment the C union guarantees.
-        md_data: [u64; EVP_MAX_MD_DATA_SIZE / core::mem::size_of::<u64>()],
-        digest: *const EVP_MD,
-        pctx: *mut c_void,
-        pctx_ops: *const c_void,
-    }
-
-    unsafe extern "C" {
-        // const EVP_MD *EVP_xxx(void);
-        pub fn EVP_md4() -> *const EVP_MD;
-        pub fn EVP_md5() -> *const EVP_MD;
-        pub fn EVP_sha1() -> *const EVP_MD;
-        pub fn EVP_sha224() -> *const EVP_MD;
-        pub fn EVP_sha256() -> *const EVP_MD;
-        pub fn EVP_sha384() -> *const EVP_MD;
-        pub fn EVP_sha512() -> *const EVP_MD;
-        pub fn EVP_sha512_224() -> *const EVP_MD;
-        pub fn EVP_sha512_256() -> *const EVP_MD;
-        pub fn EVP_sha3_224() -> *const EVP_MD;
-        pub fn EVP_sha3_256() -> *const EVP_MD;
-        pub fn EVP_sha3_384() -> *const EVP_MD;
-        pub fn EVP_sha3_512() -> *const EVP_MD;
-        pub fn EVP_blake2b256() -> *const EVP_MD;
-        pub fn EVP_blake2b512() -> *const EVP_MD;
-        pub fn EVP_md5_sha1() -> *const EVP_MD;
-        pub fn EVP_ripemd160() -> *const EVP_MD;
-
-        // void EVP_MD_CTX_init(EVP_MD_CTX *ctx);
-        pub fn EVP_MD_CTX_init(ctx: *mut EVP_MD_CTX);
-        // int EVP_MD_CTX_cleanup(EVP_MD_CTX *ctx);
-        pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
-        // int EVP_DigestInit(EVP_MD_CTX *ctx, const EVP_MD *type);
-        pub fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int;
-        // int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *data, size_t len);
-        pub fn EVP_DigestUpdate(ctx: *mut EVP_MD_CTX, data: *const c_void, len: usize) -> c_int;
-        // int EVP_DigestFinal(EVP_MD_CTX *ctx, uint8_t *md_out, unsigned int *out_size);
-        pub fn EVP_DigestFinal(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
-        // int EVP_Digest(const void *data, size_t len, uint8_t *md_out,
-        //                unsigned int *out_size, const EVP_MD *type, ENGINE *impl);
-        pub fn EVP_Digest(
-            data: *const c_void,
-            len: usize,
-            md_out: *mut u8,
-            out_size: *mut c_uint,
-            type_: *const EVP_MD,
-            impl_: *mut ENGINE,
-        ) -> c_int;
-
-        // uint8_t *HMAC(const EVP_MD *evp_md, const void *key, size_t key_len,
-        //               const uint8_t *data, size_t data_len, uint8_t *out,
-        //               unsigned int *out_len);
-        pub fn HMAC(
-            evp_md: *const EVP_MD,
-            key: *const c_void,
-            key_len: usize,
-            data: *const u8,
-            data_len: usize,
-            out: *mut u8,
-            out_len: *mut c_uint,
-        ) -> *mut u8;
-    }
+    /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
+    /// as `usize` (sys crate exposes `c_int`) so `[u8; EVP_MAX_MD_SIZE]` array
+    /// lengths in `hmac` / `SASL` / `s3_signing` keep compiling unchanged.
+    pub const EVP_MAX_MD_SIZE: usize = bun_boringssl_sys::EVP_MAX_MD_SIZE as usize;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -199,13 +117,13 @@ macro_rules! new_evp {
             pub fn init() -> Self {
                 boringssl::load();
 
-                // SAFETY: EVP md getters are infallible and take no arguments.
-                let md = unsafe { ffi::$md_fn() };
+                // EVP md getters are infallible `safe fn` returning static singletons.
+                let md = ffi::$md_fn();
                 // SAFETY: EVP_MD_CTX_init zero-initialises; reading zeroed POD is fine.
                 let mut this: Self = unsafe { bun_core::ffi::zeroed() };
 
-                // SAFETY: ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
-                unsafe { ffi::EVP_MD_CTX_init(&mut this.ctx) };
+                // ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
+                ffi::EVP_MD_CTX_init(&mut this.ctx);
 
                 // SAFETY: ctx initialised by EVP_MD_CTX_init above; md is non-null.
                 let rc: c_int = unsafe { ffi::EVP_DigestInit(&mut this.ctx, md) };
@@ -219,8 +137,7 @@ macro_rules! new_evp {
                 out: &mut [u8; $digest_size],
                 engine: *mut ffi::ENGINE,
             ) {
-                // SAFETY: see `init()` re: md getter.
-                let md = unsafe { ffi::$md_fn() };
+                let md = ffi::$md_fn();
 
                 // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
                 let rc: c_int = unsafe {
@@ -335,28 +252,26 @@ pub mod evp {
 
     impl Algorithm {
         pub fn md(self) -> Option<*const ffi::EVP_MD> {
-            // SAFETY: BoringSSL EVP_* md getters take no arguments and return a
-            // static const singleton (never NULL for the ones listed here).
-            unsafe {
-                match self {
-                    Algorithm::Blake2b256 => Some(ffi::EVP_blake2b256()),
-                    Algorithm::Blake2b512 => Some(ffi::EVP_blake2b512()),
-                    Algorithm::Md4 => Some(ffi::EVP_md4()),
-                    Algorithm::Md5 => Some(ffi::EVP_md5()),
-                    Algorithm::Ripemd160 => Some(ffi::EVP_ripemd160()),
-                    Algorithm::Sha1 => Some(ffi::EVP_sha1()),
-                    Algorithm::Sha224 => Some(ffi::EVP_sha224()),
-                    Algorithm::Sha256 => Some(ffi::EVP_sha256()),
-                    Algorithm::Sha384 => Some(ffi::EVP_sha384()),
-                    Algorithm::Sha512 => Some(ffi::EVP_sha512()),
-                    Algorithm::Sha512_224 => Some(ffi::EVP_sha512_224()),
-                    Algorithm::Sha512_256 => Some(ffi::EVP_sha512_256()),
-                    Algorithm::Sha3_224 => Some(ffi::EVP_sha3_224()),
-                    Algorithm::Sha3_256 => Some(ffi::EVP_sha3_256()),
-                    Algorithm::Sha3_384 => Some(ffi::EVP_sha3_384()),
-                    Algorithm::Sha3_512 => Some(ffi::EVP_sha3_512()),
-                    _ => None,
-                }
+            // BoringSSL EVP_* md getters are `safe fn` returning a static const
+            // singleton (never NULL for the ones listed here).
+            match self {
+                Algorithm::Blake2b256 => Some(ffi::EVP_blake2b256()),
+                Algorithm::Blake2b512 => Some(ffi::EVP_blake2b512()),
+                Algorithm::Md4 => Some(ffi::EVP_md4()),
+                Algorithm::Md5 => Some(ffi::EVP_md5()),
+                Algorithm::Ripemd160 => Some(ffi::EVP_ripemd160()),
+                Algorithm::Sha1 => Some(ffi::EVP_sha1()),
+                Algorithm::Sha224 => Some(ffi::EVP_sha224()),
+                Algorithm::Sha256 => Some(ffi::EVP_sha256()),
+                Algorithm::Sha384 => Some(ffi::EVP_sha384()),
+                Algorithm::Sha512 => Some(ffi::EVP_sha512()),
+                Algorithm::Sha512_224 => Some(ffi::EVP_sha512_224()),
+                Algorithm::Sha512_256 => Some(ffi::EVP_sha512_256()),
+                Algorithm::Sha3_224 => Some(ffi::EVP_sha3_224()),
+                Algorithm::Sha3_256 => Some(ffi::EVP_sha3_256()),
+                Algorithm::Sha3_384 => Some(ffi::EVP_sha3_384()),
+                Algorithm::Sha3_512 => Some(ffi::EVP_sha3_512()),
+                _ => None,
             }
         }
     }

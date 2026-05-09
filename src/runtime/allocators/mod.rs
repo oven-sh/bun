@@ -5,7 +5,6 @@
 #![warn(unused_must_use)]
 
 #[path = "LinuxMemFdAllocator.rs"] pub mod linux_mem_fd_allocator;
-#[path = "MimallocArena.rs"]       pub mod mimalloc_arena;
 
 pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
 
@@ -27,7 +26,7 @@ pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
 ///    omitted (safe under-approximation — `has_ptr` may return `false`).
 pub fn register_safety_vtables() {
     bun_safety::register_alloc_vtable(linux_mem_fd_allocator::std_vtable());
-    for vt in mimalloc_arena::std_vtables() {
+    for vt in bun_alloc::mimalloc_arena::std_vtables() {
         bun_safety::register_alloc_vtable(vt);
     }
     bun_safety::register_alloc_vtable(&bun_bundler::bundle_v2::EXTERNAL_FREE_VTABLE);

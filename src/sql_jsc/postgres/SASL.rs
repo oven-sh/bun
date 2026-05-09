@@ -3,12 +3,10 @@ use bun_base64;
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
 
 const NONCE_BYTE_LEN: usize = 18;
-// PORT NOTE: `bun_base64::encode_len_from_size` is not `const fn` yet; inlined
-// the standard base64 ceil-div formula. Matches Zig `bun.base64.encodeLenFromSize(18)`.
-const NONCE_BASE64_LEN: usize = (NONCE_BYTE_LEN + 2) / 3 * 4;
+const NONCE_BASE64_LEN: usize = bun_base64::encode_len_from_size(NONCE_BYTE_LEN);
 
 const SERVER_SIGNATURE_BYTE_LEN: usize = 32;
-const SERVER_SIGNATURE_BASE64_LEN: usize = (SERVER_SIGNATURE_BYTE_LEN + 2) / 3 * 4;
+const SERVER_SIGNATURE_BASE64_LEN: usize = bun_base64::encode_len_from_size(SERVER_SIGNATURE_BYTE_LEN);
 
 const SALTED_PASSWORD_BYTE_LEN: usize = 32;
 

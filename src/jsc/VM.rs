@@ -49,11 +49,9 @@ unsafe extern "C" {
     safe fn JSC__VM__performOpportunisticallyScheduledTasks(vm: &VM, until: f64);
 }
 
-/// Opaque handle to a `JSC::VM`.
-#[repr(C)]
-pub struct VM {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque handle to a `JSC::VM`.
+    pub struct VM;
 }
 
 #[repr(u8)]

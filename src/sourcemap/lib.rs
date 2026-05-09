@@ -25,8 +25,7 @@ use bun_logger as logger;
 #[path = "Mapping.rs"]         pub mod mapping;
 #[path = "ParsedSourceMap.rs"] pub mod parsed_source_map;
 
-#[path = "VLQ.rs"]
-pub mod vlq;
+pub use bun_base64::vlq;
 pub use vlq::{VLQ, encode as encode_vlq};
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
@@ -44,11 +43,7 @@ pub use internal_source_map::InternalSourceMap;
 
 /// Opaque FFI handle. The real type lives in `bun_jsc` (tier 6); this crate
 /// only ever sees it as a pointer.
-#[repr(C)]
-pub struct BakeSourceProvider {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct BakeSourceProvider; }
 impl BakeSourceProvider {
     pub fn get_source_map(
         &self,
@@ -360,11 +355,7 @@ impl core::fmt::Display for DebugIDFormatter {
 /// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
 ///
 /// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
-#[repr(C)]
-pub struct SourceProviderMap {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct SourceProviderMap; }
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
@@ -404,11 +395,7 @@ impl SourceProvider for SourceProviderMap {
     }
 }
 
-#[repr(C)]
-pub struct DevServerSourceProvider {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct DevServerSourceProvider; }
 
 #[repr(C)]
 pub struct DevServerSourceMapData {

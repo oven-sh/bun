@@ -24,11 +24,7 @@ use bun_string::{strings, OwnedString, String as BunString};
 // sound under Stacked Borrows. Rust never reads or writes these bytes
 // directly; all access is via FFI.
 // ──────────────────────────────────────────────────────────────────────────────
-#[repr(C)]
-pub struct JSGlobalObject {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
 
 /// VM-lifetime handle to a `JSGlobalObject`, stored as a raw pointer.
 ///
@@ -403,11 +399,11 @@ impl JSGlobalObject {
                 bun_boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast::<c_char>(), buf.len())
             };
             // Slice up to the NUL terminator (matches Zig's `[:0]u8` slice semantics).
-            let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            let msg = bun_string::slice_to_nul(&buf);
             return self
                 .err(
                     JscError::CRYPTO_INVALID_SCRYPT_PARAMS,
-                    format_args!("Invalid scrypt params: {}", bstr::BStr::new(&buf[..nul])),
+                    format_args!("Invalid scrypt params: {}", bstr::BStr::new(msg)),
                 )
                 .throw();
         }

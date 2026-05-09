@@ -581,7 +581,7 @@ impl TranspilerJob {
         // backing `PARSE_ARENA` lives for the worker thread's lifetime, so this
         // reference is genuinely `'static`. Stacked-Borrows: Shared tag from a
         // raw pointer; no `&mut Arena` is formed for the rest of this call.
-        let arena_ref: &'static Arena = unsafe { &*arena_ptr.as_ptr() };
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(arena_ptr.as_ref()) };
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;

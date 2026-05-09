@@ -183,90 +183,21 @@ pub mod ssl_wrapper {
     use core::ffi::{c_int, c_void};
     use core::ptr::NonNull;
 
-    // Local FFI shim — `bun_boringssl_sys` only exports `SSL`/`SSL_CTX` opaques
-    // today, so the SSLWrapper-specific surface is declared here against the
-    // same C symbols (verified vs `vendor/boringssl/include/openssl/{ssl,bio}.h`
-    // and `src/boringssl_sys/boringssl.zig`). When the lower tier grows these,
-    // collapse this mod to a `pub use bun_boringssl::c::*;`.
-    // TODO(b2-blocked): bun_boringssl_sys::{SSL_new, SSL_free, SSL_CTX_free,
-    //   SSL_read, SSL_write, SSL_shutdown, SSL_get_error, SSL_do_handshake,
-    //   SSL_is_init_finished, SSL_get_shutdown, SSL_get_rbio, SSL_get_wbio,
-    //   SSL_set_bio, SSL_set_renegotiate_mode, SSL_set_connect_state,
-    //   SSL_set_accept_state, SSL_set_verify, SSL_CTX_get_verify_mode,
-    //   SSL_set0_verify_cert_store, SSL_renegotiate, BIO_new, BIO_free,
-    //   BIO_s_mem, BIO_read, BIO_write, BIO_ctrl_pending,
-    //   BIO_set_mem_eof_return, ERR_clear_error, X509_STORE, X509_STORE_CTX,
-    //   ssl_renegotiate_explicit, ssl_renegotiate_never, SSL_ERROR_*,
-    //   SSL_VERIFY_*, SSL_RECEIVED_SHUTDOWN}
+    // Re-export the canonical BoringSSL FFI surface; the lower-tier crate now
+    // declares every symbol SSLWrapper needs, so the old local shim is gone.
     mod boring_sys {
-        use core::ffi::{c_int, c_void};
-        use core::marker::{PhantomData, PhantomPinned};
-
-        pub(super) use bun_boringssl::c::{SSL, SSL_CTX};
-
-        // ── opaque handles not yet in bun_boringssl_sys ────────────────
-        macro_rules! opaque {
-            ($($name:ident),+ $(,)?) => {$(
-                #[repr(C)] pub(super) struct $name { _p: core::cell::UnsafeCell<[u8; 0]>, _m: PhantomData<(*mut u8, PhantomPinned)> }
-            )+};
-        }
-        opaque!(BIO, BIO_METHOD, X509_STORE, X509_STORE_CTX);
-
-        // ── constants (values from vendor/boringssl/include/openssl/ssl.h) ──
-        pub(super) const SSL_ERROR_SSL: c_int = 1;
-        pub(super) const SSL_ERROR_WANT_READ: c_int = 2;
-        pub(super) const SSL_ERROR_WANT_WRITE: c_int = 3;
-        pub(super) const SSL_ERROR_SYSCALL: c_int = 5;
-        pub(super) const SSL_ERROR_ZERO_RETURN: c_int = 6;
-        pub(super) const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
-
-        pub(super) const SSL_VERIFY_NONE: c_int = 0x00;
-        pub(super) const SSL_VERIFY_PEER: c_int = 0x01;
-
-        pub(super) const SSL_RECEIVED_SHUTDOWN: c_int = 2;
-
-        // `enum ssl_renegotiate_mode_t` is `BORINGSSL_ENUM_INT` (= c_int).
-        pub(super) type ssl_renegotiate_mode_t = c_int;
-        pub(super) const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
-        pub(super) const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
-
-        pub(super) type SSL_verify_cb =
-            Option<unsafe extern "C" fn(preverify_ok: c_int, ctx: *mut X509_STORE_CTX) -> c_int>;
-
-        // ── extern fns ─────────────────────────────────────────────────
-        unsafe extern "C" {
-            // ssl.h
-            pub(super) fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;
-            pub(super) fn SSL_free(ssl: *mut SSL);
-            pub(super) fn SSL_CTX_free(ctx: *mut SSL_CTX);
-            pub(super) fn SSL_set_connect_state(ssl: *mut SSL);
-            pub(super) fn SSL_set_accept_state(ssl: *mut SSL);
-            pub(super) fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
-            pub(super) fn SSL_get_rbio(ssl: *const SSL) -> *mut BIO;
-            pub(super) fn SSL_get_wbio(ssl: *const SSL) -> *mut BIO;
-            pub(super) fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
-            pub(super) fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
-            pub(super) fn SSL_write(ssl: *mut SSL, buf: *const c_void, num: c_int) -> c_int;
-            pub(super) fn SSL_shutdown(ssl: *mut SSL) -> c_int;
-            pub(super) fn SSL_get_error(ssl: *const SSL, ret_code: c_int) -> c_int;
-            pub(super) fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
-            pub(super) fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
-            pub(super) fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
-            pub(super) fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
-            pub(super) fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
-            pub(super) fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
-            pub(super) fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
-            // bio.h
-            pub(super) fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
-            pub(super) fn BIO_free(bio: *mut BIO) -> c_int;
-            pub(super) fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
-            pub(super) fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
-            pub(super) fn BIO_ctrl_pending(bio: *const BIO) -> usize;
-            pub(super) fn BIO_s_mem() -> *const BIO_METHOD;
-            pub(super) fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
-            // err.h — thread-local queue, no preconditions.
-            pub(super) safe fn ERR_clear_error();
-        }
+        pub(super) use bun_boringssl::c::{
+            SSL, SSL_CTX, BIO, BIO_METHOD, X509_STORE, X509_STORE_CTX, SSL_verify_cb,
+            ssl_renegotiate_mode_t, ssl_renegotiate_never, ssl_renegotiate_explicit,
+            SSL_ERROR_SSL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE, SSL_ERROR_SYSCALL,
+            SSL_ERROR_ZERO_RETURN, SSL_ERROR_WANT_RENEGOTIATE, SSL_VERIFY_NONE, SSL_VERIFY_PEER,
+            SSL_RECEIVED_SHUTDOWN, SSL_new, SSL_free, SSL_CTX_free, SSL_set_connect_state,
+            SSL_set_accept_state, SSL_set_bio, SSL_get_rbio, SSL_get_wbio, SSL_do_handshake,
+            SSL_read, SSL_write, SSL_shutdown, SSL_get_error, SSL_is_init_finished,
+            SSL_get_shutdown, SSL_set_verify, SSL_CTX_get_verify_mode, SSL_set0_verify_cert_store,
+            SSL_set_renegotiate_mode, SSL_renegotiate, BIO_new, BIO_free, BIO_read, BIO_write,
+            BIO_ctrl_pending, BIO_s_mem, BIO_set_mem_eof_return, ERR_clear_error,
+        };
     }
 
     use crate::{create_bun_socket_error_t, us_bun_verify_error_t};

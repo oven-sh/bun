@@ -431,8 +431,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             if p.is_null() {
                 return Ok(BunString::EMPTY);
             }
-            let len = buf.iter().position(|&b| b == 0).unwrap_or(0);
-            Ok(BunString::clone_latin1(&buf[..len]))
+            Ok(BunString::clone_latin1(bun_string::slice_to_nul(&buf)))
         }
         #[cfg(unix)]
         sock::AF_UNIX => {

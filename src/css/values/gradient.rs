@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_parser::{CssResult as Result, EnumProperty, Parser, Token};
+use crate::css_parser::{src_str, CssResult as Result, EnumProperty, Parser, Token};
 use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
 use crate::values::length::{Length, LengthPercentage};
@@ -56,16 +56,6 @@ macro_rules! impl_gradient_position {
 }
 impl_gradient_position!(LengthPercentage);
 impl_gradient_position!(AnglePercentage);
-
-/// Detach a parser-arena-borrowed slice to the Phase-A `'static` placeholder
-/// (same trick as `css_parser::src_str` — Token payloads are arena-static).
-/// SAFETY: caller must guarantee `s` borrows `Parser::input.tokenizer.src`
-/// (true for all `expect_function`/`expect_ident` returns); the returned
-/// `'static` is a Phase-A lie that becomes `&'bump [u8]` once `'bump` threads.
-#[inline]
-unsafe fn src_str(s: &[u8]) -> &'static [u8] {
-    unsafe { &*std::ptr::from_ref::<[u8]>(s) }
-}
 
 /// Side-keyword protocol for `WebKitGradientPointComponent<S>` (instantiated
 /// at `HorizontalPositionKeyword` / `VerticalPositionKeyword`). Replaces the

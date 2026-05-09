@@ -35,11 +35,7 @@ impl core::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 
-impl From<Error> for bun_core::Error {
-    fn from(e: Error) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(Error);
 
 /// Options for generating CSRF tokens
 // TODO(port): Zig has per-field defaults; Rust callers must specify all fields
@@ -241,20 +237,8 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
         None => return false,
     };
 
-    // Compare signatures in constant time
-    if received_signature.len() != signature.len() {
-        return false;
-    }
-
-    // Use BoringSSL's constant-time comparison to prevent timing attacks
-    // SAFETY: both pointers are valid for `signature.len()` bytes (checked above)
-    unsafe {
-        boring::CRYPTO_memcmp(
-            received_signature.as_ptr().cast(),
-            signature.as_ptr().cast(),
-            signature.len(),
-        ) == 0
-    }
+    // Compare signatures in constant time (BoringSSL CRYPTO_memcmp).
+    boring::constant_time_eq(received_signature, signature)
 }
 
 // NOTE: the Zig file re-exports csrf__generate / csrf__verify from

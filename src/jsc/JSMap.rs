@@ -3,11 +3,9 @@ use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JSValue, JsError, JsResult};
 
-/// Opaque type for working with JavaScript `Map` objects.
-#[repr(C)]
-pub struct JSMap {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque type for working with JavaScript `Map` objects.
+    pub struct JSMap;
 }
 
 // `JSMap` and `JSGlobalObject` are opaque ZST FFI handles (Nomicon pattern);

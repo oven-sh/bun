@@ -31,6 +31,7 @@ use bun_wyhash::hash as wyhash;
 
 use bun_cares_sys::c_ares_draft as c_ares;
 use super::cares_jsc::error_to_deferred;
+use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -41,21 +42,19 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTim
 pub mod netc {
     pub use libc::{
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
-        AF_INET, AF_INET6, AF_UNSPEC, AI_ADDRCONFIG, EAI_NONAME, SOCK_STREAM,
+        AF_INET, AF_INET6, AF_UNSPEC, EAI_NONAME, SOCK_STREAM,
     };
+    pub use bun_dns::AI_ADDRCONFIG;
 }
 #[cfg(windows)]
 pub mod netc {
     use core::ffi::c_int;
     pub use bun_libuv_sys::{addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
-    pub const AF_UNSPEC: c_int = 0;
-    pub const AF_INET: c_int = 2;
-    pub const AF_INET6: c_int = 23;
-    pub const SOCK_STREAM: c_int = 1;
+    pub use bun_sys::windows::ws2_32::{AF_UNSPEC, AF_INET, AF_INET6, SOCK_STREAM};
     /// `AI_ADDRCONFIG` (`ws2def.h`). Only consulted when
     /// `BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG` is set; default hints on Windows
     /// leave `ai_flags = 0` (matches dns.zig — `addrconfig = is_posix`).
-    pub const AI_ADDRCONFIG: c_int = 0x0000_0400;
+    pub use bun_dns::AI_ADDRCONFIG;
     /// `WSAHOST_NOT_FOUND` — value `getaddrinfo` returns on Windows for
     /// EAI_NONAME (Zig: `std.os.windows.ws2_32.EAI_NONAME`).
     pub const EAI_NONAME: c_int = 11001;
@@ -144,11 +143,6 @@ bun_output::declare_scope!(DNSResolver, visible);
 
 pub type GetAddrInfoAsyncCallback =
     unsafe extern "C" fn(i32, *mut AddrInfo, *mut c_void);
-
-#[cfg(windows)]
-const INET6_ADDRSTRLEN: usize = 65;
-#[cfg(not(windows))]
-const INET6_ADDRSTRLEN: usize = 46;
 
 const IANA_DNS_PORT: i32 = 53;
 
@@ -2975,8 +2969,7 @@ pub enum PendingCacheField {
 macro_rules! impl_cares_record_type {
     (
         $ty:ty, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident,
-        $handler_trait:path, $handler_method:ident,
-        $to_js:path, $destroy:expr
+        $to_js:path
     ) => {
         impl CAresRecordType for $ty {
             const TYPE_NAME: &'static str = $tag;
@@ -2984,20 +2977,21 @@ macro_rules! impl_cares_record_type {
             const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
             const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
-                <$ty>::callback_wrapper::<ResolveInfoRequest<$ty>>;
+                c_ares::ares_reply_callback::<$ty, ResolveInfoRequest<$ty>>;
             fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
                 $to_js(self, global, type_name.as_bytes())
             }
             unsafe fn destroy(this: *mut Self) {
                 // SAFETY: caller contract — `this` is the c-ares-allocated reply pointer
-                // handed to the completion callback; not aliased.
-                unsafe { ($destroy)(this) }
+                // handed to the completion callback; not aliased. All six reply structs
+                // are freed identically via `ares_free_data`.
+                unsafe { c_ares::ares_free_data(this.cast::<core::ffi::c_void>()) }
             }
         }
-        // Per-reply-type handler trait — forwards to `on_cares_complete`. Zig
+        // Generic reply handler — forwards to `on_cares_complete`. Zig
         // monomorphized this via `cares_type.Callback(ResolveInfoRequest(..))`.
-        impl $handler_trait for ResolveInfoRequest<$ty> {
-            fn $handler_method(
+        impl c_ares::ReplyHandler<$ty> for ResolveInfoRequest<$ty> {
+            fn on_reply(
                 &mut self,
                 status: Option<c_ares::Error>,
                 timeouts: i32,
@@ -3011,23 +3005,17 @@ macro_rules! impl_cares_record_type {
 }
 
 impl_cares_record_type!(c_ares::struct_ares_srv_reply, "srv", "querySrv", PendingSrvCacheCares, ns_t_srv,
-    c_ares::SrvHandler, on_srv,
-    super::cares_jsc::srv_reply_to_js_response, c_ares::struct_ares_srv_reply::destroy);
+    super::cares_jsc::srv_reply_to_js_response);
 impl_cares_record_type!(c_ares::struct_ares_soa_reply, "soa", "querySoa", PendingSoaCacheCares, ns_t_soa,
-    c_ares::SoaHandler, on_soa,
-    super::cares_jsc::soa_reply_to_js_response, c_ares::struct_ares_soa_reply::destroy);
+    super::cares_jsc::soa_reply_to_js_response);
 impl_cares_record_type!(c_ares::struct_ares_txt_reply, "txt", "queryTxt", PendingTxtCacheCares, ns_t_txt,
-    c_ares::TxtHandler, on_txt,
-    super::cares_jsc::txt_reply_to_js_response, c_ares::struct_ares_txt_reply::destroy);
+    super::cares_jsc::txt_reply_to_js_response);
 impl_cares_record_type!(c_ares::struct_ares_naptr_reply, "naptr", "queryNaptr", PendingNaptrCacheCares, ns_t_naptr,
-    c_ares::NaptrHandler, on_naptr,
-    super::cares_jsc::naptr_reply_to_js_response, c_ares::struct_ares_naptr_reply::destroy);
+    super::cares_jsc::naptr_reply_to_js_response);
 impl_cares_record_type!(c_ares::struct_ares_mx_reply, "mx", "queryMx", PendingMxCacheCares, ns_t_mx,
-    c_ares::MxHandler, on_mx,
-    super::cares_jsc::mx_reply_to_js_response, c_ares::struct_ares_mx_reply::destroy);
+    super::cares_jsc::mx_reply_to_js_response);
 impl_cares_record_type!(c_ares::struct_ares_caa_reply, "caa", "queryCaa", PendingCaaCacheCares, ns_t_caa,
-    c_ares::CaaHandler, on_caa,
-    super::cares_jsc::caa_reply_to_js_response, c_ares::struct_ares_caa_reply::destroy);
+    super::cares_jsc::caa_reply_to_js_response);
 
 // `any` — handler receives `Option<Box<struct_any_reply>>` (parser allocates the
 // aggregate); convert via `heap::alloc` so the rest of the pipeline sees a
@@ -3365,42 +3353,19 @@ pub enum ChannelResult<'a> {
     Result(&'a mut c_ares::Channel), // BORROW_FIELD — returns this.channel.?
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum Order {
-    #[strum(serialize = "verbatim")]
-    Verbatim = 0,
-    #[strum(serialize = "ipv4first")]
-    Ipv4first = 4,
-    #[strum(serialize = "ipv6first")]
-    Ipv6first = 6,
+// Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
+// `--dns-result-order` without depending on the runtime). Re-export for
+// existing `crate::dns_jsc::Order` callers; `to_js` stays here as a tier-6
+// extension since it needs JSC.
+pub use bun_dns::{Order, ORDER_MAP};
+
+pub trait OrderJscExt {
+    fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
 }
 
-pub static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
-    b"verbatim" => Order::Verbatim,
-    b"ipv4first" => Order::Ipv4first,
-    b"ipv6first" => Order::Ipv6first,
-    b"0" => Order::Verbatim,
-    b"4" => Order::Ipv4first,
-    b"6" => Order::Ipv6first,
-};
-
-impl Order {
-    pub const DEFAULT: Self = Order::Verbatim;
-
-    pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+impl OrderJscExt for Order {
+    fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, <&'static str>::from(self).as_bytes())
-    }
-
-    pub fn from_string(order: &[u8]) -> Option<Order> {
-        ORDER_MAP.get(order).copied()
-    }
-
-    pub fn from_string_or_die(order: &[u8]) -> Order {
-        Self::from_string(order).unwrap_or_else(|| {
-            Output::pretty_errorln("<r><red>error<r><d>:<r> Invalid DNS result order.");
-            Global::exit(1);
-        })
     }
 }
 

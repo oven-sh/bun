@@ -324,8 +324,5 @@ impl LoadCommandIterator {
 
 #[inline]
 fn parse_name(name: &[u8; 16]) -> &[u8] {
-    match name.iter().position(|&b| b == 0) {
-        Some(i) => &name[..i],
-        None => &name[..],
-    }
+    bun_string::slice_to_nul(name)
 }

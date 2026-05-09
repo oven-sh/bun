@@ -25,11 +25,9 @@ unsafe extern "C" {
     fn BakeSourceProvider__getSourceSlice(this: *mut BakeSourceProvider) -> BunString;
 }
 
-/// Opaque FFI handle; the C++ side owns the storage.
-#[repr(C)]
-pub struct BakeSourceProvider {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle; the C++ side owns the storage.
+    pub struct BakeSourceProvider;
 }
 
 impl BakeSourceProvider {

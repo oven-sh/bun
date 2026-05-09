@@ -499,16 +499,27 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     }
 }
 
+/// Read the C `environ` global (`*const *const c_char`, NUL-terminated array of
+/// NUL-terminated `KEY=VALUE` entries). Single decl for all POSIX call sites.
+/// `#[inline]` and allocation-free so it stays async-signal-safe for the
+/// post-fork crash-handler child path.
+#[cfg(unix)]
+#[inline]
+pub fn c_environ() -> *const *const core::ffi::c_char {
+    unsafe extern "C" {
+        static environ: *const *const core::ffi::c_char;
+    }
+    // SAFETY: `environ` is the libc-managed process env block.
+    unsafe { environ }
+}
+
 /// `bun.getenvZAnyCase` — case-insensitive env lookup (used on POSIX for
 /// CI-detection vars where casing varies across providers).
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(unix)]
     unsafe {
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
-        unsafe extern "C" {
-            static environ: *const *const core::ffi::c_char;
-        }
-        let mut p = environ;
+        let mut p = c_environ();
         while !(*p).is_null() {
             let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
             let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
@@ -598,6 +609,26 @@ macro_rules! zstr {
         // SAFETY: literal is NUL-terminated; len excludes the NUL.
         unsafe { $crate::ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
     }};
+}
+
+/// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
+/// struct whose address is the only thing Rust ever observes.
+///
+/// `_p: UnsafeCell<[u8; 0]>` makes the type `!Freeze`, so a `&T` does **not**
+/// carry `readonly`/`noalias` at the ABI boundary — the C side mutates through
+/// these handles regardless of whether Rust holds `&` or `&mut`, and a
+/// `readonly` attribute would license LLVM to cache loads across the FFI call.
+/// `PhantomData<(*mut u8, PhantomPinned)>` makes the type `!Send + !Sync +
+/// !Unpin`, matching the conservative defaults for foreign-owned state.
+///
+/// Thin re-export of [`bun_opaque::opaque_ffi!`] under the legacy name. The
+/// canonical macro lives in the zero-dep `bun_opaque` crate so tier-0 `*_sys`
+/// leaves (`mimalloc_sys`, `brotli_sys`, …) can reach it without pulling
+/// `bun_core` into their build graph; this alias just keeps existing
+/// `bun_core::opaque_extern!(...)` callers compiling.
+#[macro_export]
+macro_rules! opaque_extern {
+    ($($t:tt)*) => { ::bun_opaque::opaque_ffi!($($t)*); };
 }
 
 // ─── Mutex / Guarded (from bun_threading) ─────────────────────────────────
@@ -1192,12 +1223,9 @@ pub mod fd {
         pub fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
     }
     #[cfg(windows)]
-    unsafe extern "system" {
-        fn GetStdHandle(n: u32) -> *mut c_void;
-    }
-    #[cfg(windows)] pub const STD_INPUT_HANDLE:  u32 = (-10i32) as u32;
-    #[cfg(windows)] pub const STD_OUTPUT_HANDLE: u32 = (-11i32) as u32;
-    #[cfg(windows)] pub const STD_ERROR_HANDLE:  u32 = (-12i32) as u32;
+    use crate::windows_sys::kernel32::GetStdHandle;
+    #[cfg(windows)]
+    pub use crate::windows_sys::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
     #[cfg(windows)]
     pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
         // SAFETY: GetStdHandle is always safe to call.
@@ -1240,6 +1268,56 @@ pub mod fd {
 // Zig: src/sys/sys.zig — pure S_IFMT arithmetic, no syscalls (libarchive_sys req).
 pub type Mode = u32; // std.posix.mode_t
 
+/// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
+///
+/// Values are POSIX-standard octal — frozen since 1988 and identical across
+/// linux/darwin/freebsd. Typed against the cross-platform `Mode` (= `u32`)
+/// rather than each platform's native `mode_t`, so `Mode`-typed expressions
+/// like `S::IRUSR | S::IWUSR` and `(st_mode as u32) & S::IFMT` compile
+/// uniformly; the libc-boundary cast to native `mode_t` happens in `bun_sys`.
+///
+/// Canonical home for the per-OS `bun_errno::posix::S` re-exports (errno
+/// depends on bun_core, not vice-versa). Darwin/Windows keep local `mode_t`-
+/// typed constant copies for integer-type inference at existing call sites.
+#[allow(non_snake_case)]
+pub mod S {
+    use super::Mode;
+
+    pub const IFMT:   Mode = 0o170000;
+    pub const IFSOCK: Mode = 0o140000;
+    pub const IFLNK:  Mode = 0o120000;
+    pub const IFREG:  Mode = 0o100000;
+    pub const IFBLK:  Mode = 0o060000;
+    pub const IFDIR:  Mode = 0o040000;
+    pub const IFCHR:  Mode = 0o020000;
+    pub const IFIFO:  Mode = 0o010000;
+    pub const IFWHT:  Mode = 0o160000; // BSD/Darwin whiteout
+
+    pub const ISUID: Mode = 0o4000;
+    pub const ISGID: Mode = 0o2000;
+    pub const ISVTX: Mode = 0o1000;
+    pub const IRWXU: Mode = 0o0700;
+    pub const IRUSR: Mode = 0o0400;
+    pub const IWUSR: Mode = 0o0200;
+    pub const IXUSR: Mode = 0o0100;
+    pub const IRWXG: Mode = 0o0070;
+    pub const IRGRP: Mode = 0o0040;
+    pub const IWGRP: Mode = 0o0020;
+    pub const IXGRP: Mode = 0o0010;
+    pub const IRWXO: Mode = 0o0007;
+    pub const IROTH: Mode = 0o0004;
+    pub const IWOTH: Mode = 0o0002;
+    pub const IXOTH: Mode = 0o0001;
+
+    #[inline] pub const fn ISREG(m: Mode)  -> bool { m & IFMT == IFREG }
+    #[inline] pub const fn ISDIR(m: Mode)  -> bool { m & IFMT == IFDIR }
+    #[inline] pub const fn ISCHR(m: Mode)  -> bool { m & IFMT == IFCHR }
+    #[inline] pub const fn ISBLK(m: Mode)  -> bool { m & IFMT == IFBLK }
+    #[inline] pub const fn ISFIFO(m: Mode) -> bool { m & IFMT == IFIFO }
+    #[inline] pub const fn ISLNK(m: Mode)  -> bool { m & IFMT == IFLNK }
+    #[inline] pub const fn ISSOCK(m: Mode) -> bool { m & IFMT == IFSOCK }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FileKind {
@@ -1258,22 +1336,14 @@ pub enum FileKind {
 
 #[inline]
 pub fn kind_from_mode(mode: Mode) -> FileKind {
-    const IFMT:  u32 = 0o170000;
-    const IFBLK: u32 = 0o060000;
-    const IFCHR: u32 = 0o020000;
-    const IFDIR: u32 = 0o040000;
-    const IFIFO: u32 = 0o010000;
-    const IFLNK: u32 = 0o120000;
-    const IFREG: u32 = 0o100000;
-    const IFSOCK: u32 = 0o140000;
-    match mode & IFMT {
-        IFBLK => FileKind::BlockDevice,
-        IFCHR => FileKind::CharacterDevice,
-        IFDIR => FileKind::Directory,
-        IFIFO => FileKind::NamedPipe,
-        IFLNK => FileKind::SymLink,
-        IFREG => FileKind::File,
-        IFSOCK => FileKind::UnixDomainSocket,
+    match mode & S::IFMT {
+        S::IFBLK => FileKind::BlockDevice,
+        S::IFCHR => FileKind::CharacterDevice,
+        S::IFDIR => FileKind::Directory,
+        S::IFIFO => FileKind::NamedPipe,
+        S::IFLNK => FileKind::SymLink,
+        S::IFREG => FileKind::File,
+        S::IFSOCK => FileKind::UnixDomainSocket,
         _ => FileKind::Unknown,
     }
 }
@@ -1732,7 +1802,7 @@ pub fn csprng(bytes: &mut [u8]) {
                 )
             };
             if rc < 0 {
-                let err = unsafe { *libc::__errno_location() };
+                let err = crate::ffi::errno();
                 if err == libc::EINTR { continue; }
                 panic!("getrandom failed: errno {err}");
             }
@@ -2013,14 +2083,13 @@ macro_rules! __runtime_embed_impl {
 // PORT NOTE: returned sub-slices borrow `*self`, but in Zig they alias the
 // final `allocated_slice()` and outlive the builder. To keep that pattern
 // without self-referential lifetimes, callers stash `(offset, len)` via
-// `StringPointer` (see install/hosted_git_info.rs). The append methods here
-// therefore return `StringPointer`, not `&[u8]`.
-#[derive(Default)]
-pub struct StringBuilder {
-    pub len: usize,
-    pub cap: usize,
-    pub ptr: Option<Box<[u8]>>,
-}
+// `StringPointer` (see install/hosted_git_info.rs).
+//
+// Canonical `StringBuilder` lives in `bun_string::StringBuilder`
+// (src/string/StringBuilder.rs). Cannot re-export here (`bun_string` depends
+// on `bun_core` → cycle); callers import `bun_string::StringBuilder` directly.
+// `StringPointer` stays here as the layered #[repr(C)] ABI type re-exported by
+// `bun_string` et al.
 
 /// `bun.schema.api.StringPointer` — `(offset, length)` span into an external
 /// buffer. Canonical definition; re-exported by `bun_string`, `bun_http_types`,
@@ -2035,86 +2104,6 @@ impl StringPointer {
         &buf[self.offset as usize..(self.offset + self.length) as usize]
     }
     #[inline] pub fn is_empty(self) -> bool { self.length == 0 }
-}
-
-impl StringBuilder {
-    pub fn init_capacity(cap: usize) -> Result<Self, AllocError> {
-        Ok(Self { len: 0, cap, ptr: Some(vec![0u8; cap].into_boxed_slice()) })
-    }
-    #[inline] pub fn count(&mut self, slice: &[u8]) { self.cap += slice.len(); }
-    #[inline] pub fn count_z(&mut self, slice: &[u8]) { self.cap += slice.len() + 1; }
-    #[inline]
-    pub fn count16(&mut self, slice: &[u16]) {
-        self.cap += crate::strings::element_length_utf16_into_utf8(slice);
-    }
-    /// `std.fmt.count` — measures the formatted byte length.
-    #[inline]
-    pub fn fmt_count(&mut self, args: core::fmt::Arguments<'_>) {
-        struct Counter(usize);
-        impl core::fmt::Write for Counter {
-            fn write_str(&mut self, s: &str) -> core::fmt::Result { self.0 += s.len(); Ok(()) }
-        }
-        let mut c = Counter(0);
-        let _ = core::fmt::write(&mut c, args);
-        self.cap += c.0;
-    }
-    pub fn allocate(&mut self) -> Result<(), AllocError> {
-        self.ptr = Some(vec![0u8; self.cap].into_boxed_slice());
-        self.len = 0;
-        Ok(())
-    }
-    pub fn deinit(&mut self) { self.ptr = None; self.len = 0; self.cap = 0; }
-    #[inline]
-    pub fn allocated_slice(&mut self) -> &mut [u8] {
-        match &mut self.ptr { Some(p) => &mut p[..], None => &mut [] }
-    }
-    #[inline]
-    pub fn writable(&mut self) -> &mut [u8] {
-        let len = self.len;
-        match &mut self.ptr { Some(p) => &mut p[len..], None => &mut [] }
-    }
-    pub fn append(&mut self, slice: &[u8]) -> StringPointer {
-        debug_assert!(self.ptr.is_some(), "StringBuilder::append: must allocate() first");
-        debug_assert!(self.len + slice.len() <= self.cap, "StringBuilder::append: didn't count() everything");
-        let off = self.len;
-        self.writable()[..slice.len()].copy_from_slice(slice);
-        self.len += slice.len();
-        StringPointer { offset: off as u32, length: slice.len() as u32 }
-    }
-    pub fn append_z(&mut self, slice: &[u8]) -> StringPointer {
-        let sp = self.append(slice);
-        self.writable()[0] = 0;
-        self.len += 1;
-        sp
-    }
-    pub fn add(&mut self, len: usize) -> StringPointer {
-        debug_assert!(self.len + len <= self.cap);
-        let off = self.len;
-        self.len += len;
-        StringPointer { offset: off as u32, length: len as u32 }
-    }
-    /// `std.fmt.bufPrint` into the writable region.
-    pub fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> StringPointer {
-        struct Cursor<'a> { buf: &'a mut [u8], pos: usize }
-        impl core::fmt::Write for Cursor<'_> {
-            fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                let b = s.as_bytes();
-                self.buf[self.pos..self.pos + b.len()].copy_from_slice(b);
-                self.pos += b.len();
-                Ok(())
-            }
-        }
-        let off = self.len;
-        let mut c = Cursor { buf: self.writable(), pos: 0 };
-        let _ = core::fmt::write(&mut c, args);
-        let written = c.pos;
-        self.len += written;
-        StringPointer { offset: off as u32, length: written as u32 }
-    }
-    /// Transfer ownership of the underlying buffer; resets self.
-    pub fn move_to_slice(&mut self) -> Box<[u8]> {
-        core::mem::take(&mut self.ptr).unwrap_or_default()
-    }
 }
 
 // ── ZStr trait sugar (downstream ergonomics) ──────────────────────────────
@@ -2273,6 +2262,40 @@ impl_integer!(
     u8: false, u16: false, u32: false, u64: false, usize: false,
 );
 
+/// Primitive integers transcodable as native-endian raw bytes.
+///
+/// Replaces Zig's `comptime T: type` + `std.mem.readIntSliceNative` /
+/// `std.mem.asBytes` / `@bitCast` reflection pattern with an explicit trait
+/// bound. Shared by the peechy wire codec (`bun_analytics::SchemaInt`) and the
+/// MySQL protocol reader (`bun_sql::ReadableInt`), which re-export this under
+/// their local names.
+pub trait NativeEndianInt: Copy + 'static {
+    const SIZE: usize;
+    /// Reinterpret `b[..SIZE]` as `Self` (native endian).
+    fn from_ne_slice(b: &[u8]) -> Self;
+    /// Write `self.to_ne_bytes()` into `out[..SIZE]`.
+    fn encode_ne(self, out: &mut [u8]);
+}
+
+macro_rules! impl_native_endian_int {
+    ($($t:ty),* $(,)?) => {$(
+        impl NativeEndianInt for $t {
+            const SIZE: usize = core::mem::size_of::<$t>();
+            #[inline]
+            fn from_ne_slice(b: &[u8]) -> Self {
+                let mut a = [0u8; core::mem::size_of::<$t>()];
+                a.copy_from_slice(&b[..core::mem::size_of::<$t>()]);
+                <$t>::from_ne_bytes(a)
+            }
+            #[inline]
+            fn encode_ne(self, out: &mut [u8]) {
+                out[..core::mem::size_of::<$t>()].copy_from_slice(&self.to_ne_bytes());
+            }
+        }
+    )*};
+}
+impl_native_endian_int!(u8, i8, u16, i16, u32, i32, u64, i64);
+
 // ── mach_port ─────────────────────────────────────────────────────────────
 // Zig: `if (Environment.isMac) std.c.mach_port_t else u32`.
 #[cfg(target_os = "macos")]
@@ -2328,12 +2351,13 @@ pub fn fast_random() -> u64 {
     fn random_seed() -> u64 {
         let mut v = SEED.load(O::Relaxed);
         while v == 0 {
+            // Spec (bun.zig:575) gates on `Environment.isDebug or Environment.is_canary`;
+            // bun_core has no `canary` cargo feature yet, so debug-only for now (no
+            // regression vs. either pre-dedup copy — tracked separately).
             #[cfg(debug_assertions)]
-            if let Some(s) = crate::getenv_z(crate::zstr!("BUN_DEBUG_HASH_RANDOM_SEED")) {
-                if let Ok(n) = core::str::from_utf8(s).unwrap_or("").parse::<u64>() {
-                    SEED.store(n, O::Relaxed);
-                    return n;
-                }
+            if let Some(n) = crate::env_var::BUN_DEBUG_HASH_RANDOM_SEED.get() {
+                SEED.store(n, O::Relaxed);
+                return n;
             }
             let mut buf = [0u8; 8];
             csprng(&mut buf);
@@ -2383,9 +2407,9 @@ pub mod base64 {
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
     /// padded). Port of `bun.base64.encodeLen`.
     #[inline]
-    pub fn encode_len(source: &[u8]) -> usize {
+    pub const fn encode_len(source: &[u8]) -> usize {
         // simdutf::base64_length_from_binary(len, default)
-        ((source.len() + 2) / 3) * 4
+        standard_encoder_calc_size(source.len())
     }
 
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
@@ -2396,7 +2420,7 @@ pub mod base64 {
 
     /// `std.base64.standard.Encoder.calcSize` — alias of `encode_len` taking a length.
     #[inline]
-    pub fn standard_encoder_calc_size(source_len: usize) -> usize {
+    pub const fn standard_encoder_calc_size(source_len: usize) -> usize {
         ((source_len + 2) / 3) * 4
     }
 
@@ -3088,9 +3112,8 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
         // We clone envp so that the memory address of environment variables isn't
         // the same as the libc one (mirrors Zig `allocSentinel` + `dupeZ` loop).
-        unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
         let mut dupe_env: Vec<ZBox> = Vec::new();
-        let mut p = environ;
+        let mut p = c_environ();
         while !p.is_null() && !(*p).is_null() {
             let s = crate::ffi::cstr(*p);
             dupe_env.push(ZBox::from_vec_with_nul(s.to_bytes().to_vec()));
@@ -3196,7 +3219,7 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
         let mut ptrs: Vec<*const core::ffi::c_char> = cargs.iter().map(|z| z.as_ptr()).collect();
         ptrs.push(core::ptr::null());
 
-        unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
+        let environ = c_environ();
 
         // Linux/FreeBSD: route through Bun's vfork-based posix_spawn_bun.
         // It uses execve (no PATH search), so resolve argv[0] via $PATH first

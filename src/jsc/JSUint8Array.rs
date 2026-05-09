@@ -4,11 +4,9 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::sizes;
 use crate::{JSGlobalObject, JSValue};
 
-/// Opaque FFI handle for a JSC `JSUint8Array` cell.
-#[repr(C)]
-pub struct JSUint8Array {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for a JSC `JSUint8Array` cell.
+    pub struct JSUint8Array;
 }
 
 impl JSUint8Array {

@@ -58,29 +58,8 @@ impl<'a> Writer<'a> {
 }
 
 pub mod api {
-    /// schema.zig:1172 — `enum(u32)`
-    #[repr(u32)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum DotEnvBehavior {
-        #[default]
-        _none,
-        disable,
-        prefix,
-        load_all,
-        load_all_without_inlining,
-    }
-
-    impl DotEnvBehavior {
-        // PascalCase aliases — downstream callers (bundler/options.rs,
-        // dotenv/env_loader.rs, runtime/api/JSBundler.rs) name the variants
-        // both ways while the snake_case enum body above stays the schema
-        // ground truth.
-        pub const None: Self = Self::_none;
-        pub const Disable: Self = Self::disable;
-        pub const Prefix: Self = Self::prefix;
-        pub const LoadAll: Self = Self::load_all;
-        pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
-    }
+    /// schema.zig:1172 — canonical definition lives in bun_dotenv (lower tier).
+    pub use bun_dotenv::DotEnvBehavior;
 
     /// schema.zig:711 — `enum(u8)` (open). Kept closed.
     /// Variants PascalCased to match the only downstream writers

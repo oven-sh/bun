@@ -5,11 +5,9 @@ use core::ptr::NonNull;
 use crate::{JSGlobalObject, JSValue};
 use bun_string::ZigString;
 
-/// Opaque FFI handle to WebCore::URLSearchParams (lives on the C++ side).
-#[repr(C)]
-pub struct URLSearchParams {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle to WebCore::URLSearchParams (lives on the C++ side).
+    pub struct URLSearchParams;
 }
 
 // TODO(port): move to jsc_sys

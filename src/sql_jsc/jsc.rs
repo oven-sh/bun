@@ -421,21 +421,17 @@ pub use bun_event_loop::EventLoopTimer::{
 /// `bun_runtime::timer::All` — heap of `EventLoopTimer`. Opaque on this side
 /// (the layout is high-tier); insert/remove forward to `bun_runtime` via the
 /// [`SqlRuntimeHooks`] vtable.
-#[repr(C)]
-pub struct TimerHeap {
-    _opaque: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct TimerHeap; }
 impl TimerHeap {
     pub fn insert(&mut self, t: &mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
         // intrusive heap node owned by the caller.
-        unsafe { (hooks().timer_insert)(self._opaque.get().cast::<c_void>(), t) }
+        unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
     }
     pub fn remove(&mut self, t: &mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` was previously
         // inserted by the caller.
-        unsafe { (hooks().timer_remove)(self._opaque.get().cast::<c_void>(), t) }
+        unsafe { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
     }
 }
 
@@ -595,23 +591,19 @@ pub mod webcore {
     /// wrapper's `m_ctx` via `value.as_::<Blob>()`. Field accessors route
     /// through [`SqlRuntimeHooks`]; the `from_js`/`from_js_direct` codegen
     /// externs are real C++ symbols (generate-classes.ts), not Rust shims.
-    #[repr(C)]
-    pub struct Blob {
-        _opaque: core::cell::UnsafeCell<[u8; 0]>,
-        _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-    }
+    bun_opaque::opaque_ffi! { pub struct Blob; }
     impl Blob {
         pub fn needs_to_read_file(&self) -> bool {
             // SAFETY: `self` is a live `*const bun_runtime::webcore::Blob`
             // (codegen m_ctx payload).
-            unsafe { (hooks().blob_needs_to_read_file)(self._opaque.get() as *const c_void) }
+            unsafe { (hooks().blob_needs_to_read_file)(self._p.get() as *const c_void) }
         }
         pub fn shared_view(&self) -> &[u8] {
             let mut len: usize = 0;
             // SAFETY: `self` is a live `*const Blob`; the returned ptr/len
             // borrow the Blob's store, which is immutable for its lifetime.
             let ptr = unsafe {
-                (hooks().blob_shared_view)(self._opaque.get() as *const c_void, &raw mut len)
+                (hooks().blob_shared_view)(self._p.get() as *const c_void, &raw mut len)
             };
             if ptr.is_null() || len == 0 { return &[]; }
             // SAFETY: hook guarantees `ptr[..len]` valid while the Blob lives.
@@ -1036,11 +1028,7 @@ pub fn marked_argument_buffer_run<Ctx>(
 /// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
 /// `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
 /// by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
-#[repr(C)]
-pub struct SslCtxCache {
-    _opaque: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
 impl SslCtxCache {
     pub fn get_or_create_opts(
         &mut self,
@@ -1050,7 +1038,7 @@ impl SslCtxCache {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.
         let p = unsafe {
-            (hooks().ssl_ctx_get_or_create)(self._opaque.get().cast::<c_void>(), &opts, err)
+            (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), &opts, err)
         };
         if p.is_null() { None } else { Some(p) }
     }

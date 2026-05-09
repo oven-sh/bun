@@ -1,10 +1,8 @@
 use core::marker::{PhantomData, PhantomPinned};
 
-/// Opaque FFI handle for `JSC::CustomGetterSetter`.
-#[repr(C)]
-pub struct CustomGetterSetter {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for `JSC::CustomGetterSetter`.
+    pub struct CustomGetterSetter;
 }
 
 impl CustomGetterSetter {

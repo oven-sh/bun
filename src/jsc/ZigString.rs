@@ -47,11 +47,7 @@ unsafe extern "C" {
 // the JSC C API surface; the `to_js_string_ref` constructor wrappers were dead
 // code (no C++ body for `JSStringCreateStatic` in Bun's link image — Zig's
 // `toJSStringRef` is unreachable behind `@hasDecl(bun, "bindgen")`).
-#[repr(C)]
-pub struct OpaqueJSString {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct OpaqueJSString; }
 pub type JSStringRef = *mut OpaqueJSString;
 
 /// Prefer using `bun_string::String` instead of `ZigString` in new code.

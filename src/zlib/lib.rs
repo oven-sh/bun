@@ -362,12 +362,7 @@ impl core::fmt::Display for ZlibError {
 }
 impl core::error::Error for ZlibError {}
 
-impl From<ZlibError> for bun_core::Error {
-    fn from(e: ZlibError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-        // TODO(port): exact bun_core::Error construction API
-    }
-}
+bun_core::named_error_set!(ZlibError);
 
 struct ZlibAllocator;
 

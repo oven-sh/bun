@@ -51,11 +51,9 @@ impl AnyRequest {
     }
 }
 
-/// uWS::Request C++ -> Rust bindings.
-#[repr(C)]
-pub struct Request {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// uWS::Request C++ -> Rust bindings.
+    pub struct Request;
 }
 
 impl Request {

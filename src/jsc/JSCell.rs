@@ -4,11 +4,9 @@ use crate::custom_getter_setter::CustomGetterSetter;
 use crate::getter_setter::GetterSetter;
 use crate::{JSGlobalObject, JSObject, JSValue};
 
-/// Opaque FFI handle for `JSC::JSCell`.
-#[repr(C)]
-pub struct JSCell {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for `JSC::JSCell`.
+    pub struct JSCell;
 }
 
 impl JSCell {

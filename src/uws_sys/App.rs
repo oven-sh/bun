@@ -656,11 +656,7 @@ impl From<AddServerNameError> for bun_core::Error {
     }
 }
 
-#[repr(C)]
-pub struct uws_app_s {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct uws_app_s; }
 pub type uws_app_t = uws_app_s;
 
 #[allow(non_camel_case_types)]

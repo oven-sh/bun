@@ -248,7 +248,7 @@ impl Default for LineStyle {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
-#[derive(Clone, PartialEq, css::DeriveParse, css::DeriveToCss)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum BorderSideWidth {
     /// A UA defined `thin` value.
     Thin,
@@ -368,22 +368,6 @@ macro_rules! define_rect_shorthand {
                 ("left", PropertyIdTag::$left_id),
             ];
 
-            // Zig `css.DefineRectShorthand(@This(), V)` — parse/serialize via `Rect<V>`.
-            pub fn parse(input: &mut Parser) -> CssResult<Self> {
-                let rect = css::css_values::rect::Rect::<$inner>::parse(input)?;
-                Ok(Self { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left })
-            }
-
-            pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-                css::css_values::rect::Rect::<&$inner> {
-                    top: &self.top,
-                    right: &self.right,
-                    bottom: &self.bottom,
-                    left: &self.left,
-                }
-                .to_css(dest)
-            }
-
             pub fn deep_clone(&self, _arena: &Bump) -> Self {
                 self.clone()
             }
@@ -392,7 +376,9 @@ macro_rules! define_rect_shorthand {
                 self == rhs
             }
         }
-        crate::impl_generic_parse_tocss!($name);
+        // Zig `css.DefineRectShorthand(@This(), V)` — parse/to_css via `Rect<V>`.
+        // Shared impl macro lives in `properties/mod.rs`.
+        impl_rect_shorthand!($name, $inner);
     };
 }
 
@@ -454,22 +440,6 @@ macro_rules! define_size_shorthand {
                 ("end", PropertyIdTag::$end_id),
             ];
 
-            // Zig `css.DefineSizeShorthand(@This(), V)` — parse/serialize via `Size2D<V>`.
-            pub fn parse(input: &mut Parser) -> CssResult<Self> {
-                let size = css::css_values::size::Size2D::<$inner>::parse(input)?;
-                Ok(Self { start: size.a, end: size.b })
-            }
-
-            pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-                use css::generic::ToCss as _;
-                self.start.to_css(dest)?;
-                if self.start != self.end {
-                    dest.write_str(b" ")?;
-                    self.end.to_css(dest)?;
-                }
-                Ok(())
-            }
-
             pub fn deep_clone(&self, _arena: &Bump) -> Self {
                 self.clone()
             }
@@ -478,7 +448,9 @@ macro_rules! define_size_shorthand {
                 self == rhs
             }
         }
-        crate::impl_generic_parse_tocss!($name);
+        // Zig `css.DefineSizeShorthand(@This(), V)` — parse/to_css via `Size2D<V>`.
+        // Shared impl macro lives in `properties/mod.rs`.
+        impl_size_shorthand!($name, $inner, start, end);
     };
 }
 

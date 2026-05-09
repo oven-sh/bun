@@ -8,7 +8,7 @@ use crate::{Location, SourceLocation, Token};
 // Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
 // slices point into the parser arena / source text and are never individually freed.
 // TODO(port): arena slice lifetime — Phase B may thread <'bump> or switch to StoreRef.
-type Str = *const [u8];
+use crate::Str;
 
 #[inline(always)]
 fn bs(p: Str) -> &'static BStr {
@@ -483,11 +483,7 @@ impl fmt::Display for MinifyErr {
     }
 }
 impl std::error::Error for MinifyErr {}
-impl From<MinifyErr> for bun_core::Error {
-    fn from(e: MinifyErr) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(MinifyErr);
 
 pub type MinifyError = ErrorWithLocation<MinifyErrorKind>;
 

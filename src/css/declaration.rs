@@ -243,7 +243,7 @@ impl DeclarationBlock<'static> {
         // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see note above), not a real static borrow.
-        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(input.arena()) };
+        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
         let mut important_declarations = DeclarationList::new_in(bump);
         let mut declarations = DeclarationList::new_in(bump);
         let mut decl_parser = PropertyDeclarationParser {

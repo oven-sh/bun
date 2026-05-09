@@ -368,15 +368,11 @@ pub mod posix {
 /// (POSIX builds export `S` from libc; Windows defines the bits locally as `s`).
 pub use self::s as S;
 
-/// Cross-platform shim for the trait callers `use bun_errno::GetErrno`. On
-/// POSIX this is implemented per integer type and reads `errno`/the syscall
-/// return; Windows errno comes from `GetLastError()` regardless of `rc`, so
-/// every impl ignores `self`. Kept to the same concrete-type set as POSIX —
-/// a blanket impl would shadow `bun_sys::Error::get_errno` (inherent method)
-/// via autoref and cause moves.
-pub trait GetErrno: Copy {
-    fn get_errno(self) -> E;
-}
+use super::GetErrno;
+
+// Windows errno comes from `GetLastError()` regardless of `rc`, so every impl
+// ignores `self`. Kept to the same concrete-type set as POSIX — a blanket impl
+// would shadow `bun_sys::Error::get_errno` (inherent method) via autoref.
 macro_rules! impl_win_get_errno {
     ($($t:ty),*) => {$(
         impl GetErrno for $t {
@@ -421,13 +417,7 @@ pub mod s {
     // cross-platform call sites don't need cfg arms. Take `u32` (== `Mode`)
     // because POSIX callers feed `st_mode as u32`; the i32 versions below stay
     // for windows-local code that already cast.
-    #[inline] pub const fn ISREG (m: u32) -> bool { (m as i32) & IFMT == IFREG  }
-    #[inline] pub const fn ISDIR (m: u32) -> bool { (m as i32) & IFMT == IFDIR  }
-    #[inline] pub const fn ISCHR (m: u32) -> bool { (m as i32) & IFMT == IFCHR  }
-    #[inline] pub const fn ISBLK (m: u32) -> bool { (m as i32) & IFMT == IFBLK  }
-    #[inline] pub const fn ISFIFO(m: u32) -> bool { (m as i32) & IFMT == IFIFO  }
-    #[inline] pub const fn ISLNK (m: u32) -> bool { (m as i32) & IFMT == IFLNK  }
-    #[inline] pub const fn ISSOCK(m: u32) -> bool { (m as i32) & IFMT == IFSOCK }
+    pub use bun_core::S::{ISREG, ISDIR, ISCHR, ISBLK, ISFIFO, ISLNK, ISSOCK};
 
     #[inline]
     pub const fn is_reg(m: i32) -> bool {
@@ -921,12 +911,6 @@ impl SystemErrno {
     pub const fn to_e(self) -> E {
         // SystemErrno and E share identical #[repr(u16)] discriminant sets.
         E::from_raw(self as u16)
-    }
-
-    #[inline]
-    const fn from_raw(n: u16) -> Self {
-        // SAFETY: caller-guaranteed valid discriminant (matches Zig @enumFromInt).
-        unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
     }
 
     /// Cross-platform `SystemErrno::init` — POSIX targets define a single

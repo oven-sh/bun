@@ -6,11 +6,9 @@ use bun_core::Fd;
 
 use crate::{us_socket_t, SocketGroup, SslCtx, LIBUS_SOCKET_DESCRIPTOR};
 
-/// Opaque FFI handle for a uSockets listen socket.
-#[repr(C)]
-pub struct ListenSocket {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for a uSockets listen socket.
+    pub struct ListenSocket;
 }
 
 impl ListenSocket {

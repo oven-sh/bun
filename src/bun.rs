@@ -9,7 +9,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::cell::Cell;
 
 // ─── crate re-exports (replaces the @import block) ────────────────────────────
@@ -23,6 +23,7 @@ pub use bun_core::tty;
 pub use bun_core::FeatureFlags;
 pub use bun_core::Progress;
 pub use bun_core::deprecated;
+pub use bun_core::{GenericIndex, GenericIndexOptional, GenericIndexInt};
 
 pub use bun_sys as sys;
 /// Deprecated: use bun::sys::S
@@ -190,10 +191,7 @@ pub use bun_jsc::Node::Maybe;
 // callmod_inline / callconv_inline have no Rust equivalent — `#[inline]` is per-fn.
 // TODO(port): callmod_inline / callconv_inline — use #[inline(always)] gated on cfg(debug_assertions)
 
-unsafe extern "C" {
-    pub fn powf(x: f32, y: f32) -> f32;
-    pub fn pow(x: f64, y: f64) -> f64;
-}
+pub use bun_core::{powf, pow};
 
 /// Restrict a value to a certain interval unless it is a float and NaN.
 #[inline]
@@ -515,45 +513,17 @@ pub fn hash32(content: &[u8]) -> u32 {
     hash(content) as u32
 }
 
-pub fn csprng(bytes: &mut [u8]) {
-    // SAFETY: RAND_bytes writes exactly bytes.len() bytes into bytes.ptr
-    unsafe {
-        bun_boringssl_sys::RAND_bytes(bytes.as_mut_ptr(), bytes.len());
-    }
-}
+// Dedup D087: canonical impl lives in bun_core::util::csprng (OS CSPRNG;
+// bun_core sits below boringssl_sys). PERF(port): if a hot path needs the
+// BoringSSL DRBG, install a vtable hook from bun_runtime at startup — see
+// the comment block at bun_core/util.rs csprng.
+pub use bun_core::csprng;
 
-/// Get a random-ish value
-pub fn fast_random() -> u64 {
-    static SEED_VALUE: AtomicU64 = AtomicU64::new(0);
-
-    fn random_seed() -> u64 {
-        let mut value = SEED_VALUE.load(Ordering::Relaxed);
-        while value == 0 {
-            #[cfg(any(debug_assertions, feature = "canary"))]
-            if let Some(v) = bun_core::env_var::BUN_DEBUG_HASH_RANDOM_SEED.get() {
-                SEED_VALUE.store(v, Ordering::Relaxed);
-                return v;
-            }
-            let mut buf = [0u8; 8];
-            csprng(&mut buf);
-            value = u64::from_ne_bytes(buf);
-            SEED_VALUE.store(value, Ordering::Relaxed);
-            value = SEED_VALUE.load(Ordering::Relaxed);
-        }
-        value
-    }
-
-    // TODO(port): std.Random.DefaultPrng — use a simple xorshift/PCG here.
-    thread_local! {
-        static PRNG: Cell<Option<bun_core::rand::DefaultPrng>> = const { Cell::new(None) };
-    }
-    PRNG.with(|p| {
-        let mut prng = p.take().unwrap_or_else(|| bun_core::rand::DefaultPrng::init(random_seed()));
-        let v = prng.next_u64();
-        p.set(Some(prng));
-        v
-    })
-}
+// Dedup D084: canonical impl lives in bun_core::util::fast_random (re-exported
+// at bun_core root via `pub use util::*`). Collapsing the two SEED statics +
+// thread-local PRNG cells into one is more spec-correct — bun.zig has a single
+// process-wide seed.
+pub use bun_core::fast_random;
 
 // ─── poll helpers ─────────────────────────────────────────────────────────────
 pub fn assert_non_blocking(fd: FD) {
@@ -680,7 +650,7 @@ pub fn is_heap_memory<T>(mem: *const T) -> bool {
 
 #[inline]
 pub fn slice_in_buffer<'a>(stable: &'a [u8], value: &'a [u8]) -> &'a [u8] {
-    if bun_alloc::slice_range(stable, value).is_some() {
+    if bun_alloc::is_slice_in_buffer(stable, value) {
         return value;
     }
     if let Some(index) = bun_str::strings::index_of(stable, value) {
@@ -689,23 +659,7 @@ pub fn slice_in_buffer<'a>(stable: &'a [u8], value: &'a [u8]) -> &'a [u8] {
     value
 }
 
-pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]> {
-    if !isSliceInBuffer(slice, buffer) {
-        return None;
-    }
-    let r = [
-        ((slice.as_ptr() as usize).saturating_sub(buffer.as_ptr() as usize)) as u32,
-        slice.len() as u32,
-    ];
-    if cfg!(debug_assertions) {
-        debug_assert!(bun_str::strings::eql_long(
-            slice,
-            &buffer[r[0] as usize..][..r[1] as usize],
-            false
-        ));
-    }
-    Some(r)
-}
+pub use bun_core::range_of_slice_in_buffer;
 
 // TODO: prefer .invalid decl literal over this
 // Please prefer `bun::FD::Optional::none` over this
@@ -974,102 +928,18 @@ impl<'a> StringArrayPrehashed<'a> {
     }
 }
 
-pub struct CaseInsensitiveASCIIStringContext;
-impl CaseInsensitiveASCIIStringContext {
-    pub fn hash(&self, str_: &[u8]) -> u32 {
-        let mut buf = [0u8; 1024];
-        if str_.len() < buf.len() {
-            return bun_wyhash::hash(bun_str::strings::copy_lowercase(str_, &mut buf)) as u32;
-        }
-        let mut s = str_;
-        let mut wyhash = bun_wyhash::Wyhash::init(0);
-        while !s.is_empty() {
-            let length = s.len().min(buf.len());
-            wyhash.update(bun_str::strings::copy_lowercase(&s[..length], &mut buf));
-            s = &s[length..];
-        }
-        wyhash.finish() as u32
-    }
-    pub fn eql(&self, a: &[u8], b: &[u8], _: usize) -> bool {
-        bun_str::strings::eql_case_insensitive_ascii_check_length(a, b)
-    }
-    pub fn pre(input: &[u8]) -> CaseInsensitivePrehashed<'_> {
-        CaseInsensitivePrehashed { value: Self.hash(input), input }
-    }
-}
-pub struct CaseInsensitivePrehashed<'a> {
-    pub value: u32,
-    pub input: &'a [u8],
-}
-impl<'a> CaseInsensitivePrehashed<'a> {
-    pub fn hash(&self, s: &[u8]) -> u32 {
-        if s.as_ptr() == self.input.as_ptr() && s.len() == self.input.len() {
-            return self.value;
-        }
-        CaseInsensitiveASCIIStringContext.hash(s)
-    }
-    pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-        bun_str::strings::eql_case_insensitive_ascii_check_length(a, b)
-    }
-}
+pub use bun_collections::{
+    CaseInsensitiveAsciiPrehashed as CaseInsensitivePrehashed,
+    CaseInsensitiveAsciiStringContext as CaseInsensitiveASCIIStringContext,
+};
 
-pub struct StringHashMapContext;
-impl StringHashMapContext {
-    pub fn hash(&self, s: &[u8]) -> u64 {
-        bun_wyhash::hash(s)
-    }
-    pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-        bun_str::strings::eql_long(a, b, true)
-    }
-    pub fn pre(input: &[u8]) -> StringPrehashed<'_> {
-        StringPrehashed { value: Self.hash(input), input }
-    }
-}
-pub struct StringPrehashed<'a> {
-    pub value: u64,
-    pub input: &'a [u8],
-}
-impl<'a> StringPrehashed<'a> {
-    pub fn hash(&self, s: &[u8]) -> u64 {
-        if s.as_ptr() == self.input.as_ptr() && s.len() == self.input.len() {
-            return self.value;
-        }
-        StringHashMapContext.hash(s)
-    }
-    pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-        bun_str::strings::eql_long(a, b, true)
-    }
-}
-
-pub struct PrehashedCaseInsensitive {
-    pub value: u64,
-    pub input: Box<[u8]>,
-}
-impl PrehashedCaseInsensitive {
-    pub fn init(input: &[u8]) -> PrehashedCaseInsensitive {
-        let mut out = vec![0u8; input.len()].into_boxed_slice();
-        let _ = bun_str::strings::copy_lowercase(input, &mut out);
-        PrehashedCaseInsensitive {
-            value: StringHashMapContext.hash(&out),
-            input: out,
-        }
-    }
-    pub fn hash(&self, s: &[u8]) -> u64 {
-        if s.as_ptr() == self.input.as_ptr() && s.len() == self.input.len() {
-            return self.value;
-        }
-        StringHashMapContext.hash(s)
-    }
-    pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-        bun_str::strings::eql_case_insensitive_ascii_check_length(a, b)
-    }
-}
-// Drop impl frees `input` automatically.
+pub use bun_collections::StringHashMapContext;
+pub use bun_collections::string_hash_map::{Prehashed as StringPrehashed, PrehashedCaseInsensitive};
 
 // Hash-map type aliases — wired to bun_collections wrappers (wyhash, not SipHash).
 pub type StringArrayHashMap<V> = bun_collections::ArrayHashMap<Box<[u8]>, V>;
 pub type CaseInsensitiveASCIIStringArrayHashMap<V> =
-    bun_collections::ArrayHashMapWithContext<Box<[u8]>, V, CaseInsensitiveASCIIStringContext>;
+    bun_collections::CaseInsensitiveAsciiStringArrayHashMap<V>;
 pub type CaseInsensitiveASCIIStringArrayHashMapUnmanaged<V> =
     CaseInsensitiveASCIIStringArrayHashMap<V>;
 pub type StringArrayHashMapUnmanaged<V> = StringArrayHashMap<V>;
@@ -2077,138 +1947,18 @@ pub mod MakePath {
     // makePath<T> / componentIterator<T> — Windows-specific NT API wrappers
 }
 
-pub mod Dirname {
-    /// copy/paste of `std.fs.path.dirname` modified to support u16 slices.
-    pub fn dirname<T: Copy + PartialEq + From<u8>>(path_: &[T]) -> Option<&[T]> {
-        #[cfg(windows)]
-        {
-            dirname_windows(path_)
-        }
-        #[cfg(not(windows))]
-        {
-            bun_paths::dirname_posix(path_)
-        }
-    }
+/// Zig-API parity re-export. The body that lived here was a verbatim duplicate
+/// of `bun_paths::Dirname` (its non-Windows arm even called the *private*
+/// `bun_paths::dirname_posix`, so it could not compile if instantiated).
+/// Canonical impl: `bun_paths::Dirname::dirname` → `path::dirname_generic`.
+pub use bun_paths::Dirname;
 
-    #[cfg(windows)]
-    fn dirname_windows<T: Copy + PartialEq + From<u8>>(path_: &[T]) -> Option<&[T]> {
-        if path_.is_empty() {
-            return None;
-        }
-        let root_slice = disk_designator_windows(path_);
-        if path_.len() == root_slice.len() {
-            return None;
-        }
-        let slash: T = T::from(b'/');
-        let backslash: T = T::from(b'\\');
-        let have_root_slash = path_.len() > root_slice.len()
-            && (path_[root_slice.len()] == slash || path_[root_slice.len()] == backslash);
-
-        let mut end_index = path_.len() - 1;
-        while path_[end_index] == slash || path_[end_index] == backslash {
-            if end_index == 0 {
-                return None;
-            }
-            end_index -= 1;
-        }
-        while path_[end_index] != slash && path_[end_index] != backslash {
-            if end_index == 0 {
-                return None;
-            }
-            end_index -= 1;
-        }
-        if have_root_slash && end_index == root_slice.len() {
-            end_index += 1;
-        }
-        if end_index == 0 {
-            return None;
-        }
-        Some(&path_[..end_index])
-    }
-
-    #[cfg(windows)]
-    fn disk_designator_windows<T: Copy + PartialEq + From<u8>>(path_: &[T]) -> &[T] {
-        windows_parse_path(path_).disk_designator
-    }
-
-    #[cfg(windows)]
-    pub struct WindowsPath<'a, T> {
-        pub is_abs: bool,
-        pub kind: WindowsPathKind,
-        pub disk_designator: &'a [T],
-    }
-
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum WindowsPathKind {
-        None,
-        Drive,
-        NetworkShare,
-    }
-
-    #[cfg(windows)]
-    fn windows_parse_path<T: Copy + PartialEq + From<u8>>(path_: &[T]) -> WindowsPath<'_, T> {
-        let colon: T = T::from(b':');
-        let slash: T = T::from(b'/');
-        let backslash: T = T::from(b'\\');
-        if path_.len() >= 2 && path_[1] == colon {
-            return WindowsPath {
-                is_abs: bun_paths::is_absolute_windows(path_),
-                kind: WindowsPathKind::Drive,
-                disk_designator: &path_[..2],
-            };
-        }
-        if path_.len() >= 1
-            && (path_[0] == slash || path_[0] == backslash)
-            && (path_.len() == 1 || (path_[1] != slash && path_[1] != backslash))
-        {
-            return WindowsPath {
-                is_abs: true,
-                kind: WindowsPathKind::None,
-                disk_designator: &path_[..0],
-            };
-        }
-        let relative_path = WindowsPath {
-            kind: WindowsPathKind::None,
-            disk_designator: &[],
-            is_abs: false,
-        };
-        if path_.len() < b"//a/b".len() {
-            return relative_path;
-        }
-
-        for &this_sep in &[slash, backslash] {
-            if path_[0] == this_sep && path_[1] == this_sep {
-                if path_[2] == this_sep {
-                    return relative_path;
-                }
-                let mut it = path_.split(|&c| c == this_sep).filter(|s| !s.is_empty());
-                if it.next().is_none() {
-                    return relative_path;
-                }
-                if it.next().is_none() {
-                    return relative_path;
-                }
-                // TODO(port): compute it.index for disk_designator slice
-                return WindowsPath {
-                    is_abs: bun_paths::is_absolute_windows(path_),
-                    kind: WindowsPathKind::NetworkShare,
-                    disk_designator: path_, // TODO(port): correct slice end
-                };
-            }
-        }
-        relative_path
-    }
-}
-
-#[cold]
-#[inline(never)]
-pub fn out_of_memory() -> ! {
-    bun_crash_handler::crash_handler(
-        bun_crash_handler::CrashKind::OutOfMemory,
-        None,
-        bun_crash_handler::return_address(),
-    );
-}
+// Canonical impl lives in `bun_alloc` (T0); it dispatches through the
+// `OUT_OF_MEMORY_HANDLER` hook installed by `bun_crash_handler::install_hooks()`,
+// which routes to `crashHandler(.out_of_memory, ..)` — matching
+// `src/bun.zig:2632 outOfMemory()`. Re-export so `bun::out_of_memory()` callers
+// (zlib, test_command) keep working without taking a direct crash_handler dep.
+pub use bun_alloc::out_of_memory;
 
 // ─── StackFallbackAllocator ───────────────────────────────────────────────────
 // PERF(port): was stack-fallback — Rust port deletes this; callers use heap.
@@ -2378,34 +2128,7 @@ pub fn linux_kernel_version() -> bun_semver::Version {
 }
 
 // ─── selfExePath ──────────────────────────────────────────────────────────────
-pub fn self_exe_path() -> Result<&'static bun_str::ZStr, bun_core::Error> {
-    struct Memo {
-        value: [u8; 4096 + 1],
-        len: usize,
-    }
-    static MEMO: bun_core::RacyCell<Memo> = bun_core::RacyCell::new(Memo { value: [0; 4097], len: 0 });
-    static SET: AtomicBool = AtomicBool::new(false);
-    static LOCK: Mutex = Mutex::new();
-
-    // Double-checked init: `SET` (acquire/release) + `LOCK` guard the `RacyCell`.
-    if SET.load(Ordering::Acquire) {
-        // SAFETY: `SET` acquire pairs with the release below; payload is frozen.
-        let memo = unsafe { &*MEMO.get() };
-        return Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) });
-    }
-    let _guard = LOCK.lock_guard();
-    if SET.load(Ordering::Acquire) {
-        let memo = unsafe { &*MEMO.get() };
-        return Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) });
-    }
-    // SAFETY: exclusive access under `LOCK` while `SET` is false.
-    let memo = unsafe { &mut *MEMO.get() };
-    let init = bun_sys::self_exe_path(&mut memo.value)?;
-    memo.len = init.len();
-    memo.value[memo.len] = 0;
-    SET.store(true, Ordering::Release);
-    Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) })
-}
+pub use bun_core::self_exe_path;
 
 #[cfg(windows)]
 pub const exe_suffix: &str = ".exe";
@@ -2811,67 +2534,6 @@ pub fn get_total_memory_size() -> usize {
 
 pub const bytecode_extension: &str = ".jsc";
 
-// ─── GenericIndex ─────────────────────────────────────────────────────────────
-/// A typed index into an array or other structure. maxInt is reserved for null.
-// PORT NOTE: Zig used `opaque {}` as a uid type-tag; Rust newtypes are already
-// distinct, so callers should declare `pub struct FooIndex(u32);` directly. This
-// generic is kept for the `.Optional` API.
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct GenericIndex<I, Tag>(I, core::marker::PhantomData<Tag>);
-
-macro_rules! impl_generic_index {
-    ($($t:ty),*) => {$(
-        impl<Tag> GenericIndex<$t, Tag> {
-            const NULL_VALUE: $t = <$t>::MAX;
-            #[inline] pub fn init(int: $t) -> Self {
-                debug_assert!(int != Self::NULL_VALUE);
-                Self(int, core::marker::PhantomData)
-            }
-            #[inline] pub fn get(self) -> $t {
-                debug_assert!(self.0 != Self::NULL_VALUE);
-                self.0
-            }
-            #[inline] pub fn to_optional(self) -> GenericIndexOptional<$t, Tag> {
-                GenericIndexOptional(self.get(), core::marker::PhantomData)
-            }
-            pub fn sort_fn_asc(_: (), a: Self, b: Self) -> bool { a.get() < b.get() }
-            pub fn sort_fn_desc(_: (), a: Self, b: Self) -> bool { a.get() < b.get() }
-        }
-        impl<Tag> core::fmt::Display for GenericIndex<$t, Tag> {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                write!(f, "{}", self.0)
-            }
-        }
-    )*};
-}
-impl_generic_index!(u32, u16, u64, usize);
-
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct GenericIndexOptional<I, Tag>(I, core::marker::PhantomData<Tag>);
-
-macro_rules! impl_generic_index_opt {
-    ($($t:ty),*) => {$(
-        impl<Tag> GenericIndexOptional<$t, Tag> {
-            pub const NONE: Self = Self(<$t>::MAX, core::marker::PhantomData);
-            #[inline] pub fn init(maybe: Option<$t>) -> Self {
-                match maybe {
-                    Some(i) => GenericIndex::<$t, Tag>::init(i).to_optional(),
-                    None => Self::NONE,
-                }
-            }
-            #[inline] pub fn unwrap(self) -> Option<GenericIndex<$t, Tag>> {
-                if self.0 == <$t>::MAX { None } else { Some(GenericIndex(self.0, core::marker::PhantomData)) }
-            }
-            #[inline] pub fn unwrap_get(self) -> Option<$t> {
-                if self.0 == <$t>::MAX { None } else { Some(self.0) }
-            }
-        }
-    )*};
-}
-impl_generic_index_opt!(u32, u16, u64, usize);
-
 #[inline]
 pub fn split_at_mut<T>(slice: &mut [T], mid: usize) -> (&mut [T], &mut [T]) {
     debug_assert!(mid <= slice.len());
@@ -2885,46 +2547,7 @@ pub fn index_of_pointer_in_slice<T>(slice: &[T], item: &T) -> usize {
     offset / core::mem::size_of::<T>()
 }
 
-pub fn get_thread_count() -> u16 {
-    const MAX_THREADS: u16 = 1024;
-    const MIN_THREADS: u16 = 2;
-    static CACHED: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-
-    fn get_thread_count_from_user() -> Option<u16> {
-        for envname in [bun_str::zstr!("UV_THREADPOOL_SIZE"), bun_str::zstr!("GOMAXPROCS")] {
-            if let Some(env) = getenv_z(envname) {
-                if let Ok(parsed) = core::str::from_utf8(env)
-                    .ok()
-                    .and_then(|s| s.parse::<u16>().ok())
-                    .ok_or(())
-                {
-                    if parsed >= MIN_THREADS {
-                        if bun_logger::Log::default_log_level().at_least(bun_logger::Level::Debug) {
-                            Output::note(format_args!(
-                                "Using {} threads from {}={}",
-                                parsed,
-                                bstr::BStr::new(envname.as_bytes()),
-                                parsed
-                            ));
-                            Output::flush();
-                        }
-                        return Some(parsed.min(MAX_THREADS));
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    *CACHED.get_or_init(|| {
-        MAX_THREADS.min(
-            MIN_THREADS.max(
-                get_thread_count_from_user()
-                    .unwrap_or_else(|| bun_jsc::wtf::number_of_processor_cores()),
-            ),
-        )
-    })
-}
+pub use bun_core::get_thread_count;
 
 // ─── Once ─────────────────────────────────────────────────────────────────────
 /// An object that executes the function `f` just once.
@@ -3084,12 +2707,7 @@ pub fn throw_stack_overflow() -> Result<(), StackOverflow> {
 }
 
 /// Zero memory before freeing sensitive data.
-pub fn free_sensitive<T: Copy>(slice: Box<[T]>) {
-    let mut s = slice;
-    // SAFETY: secureZero writes zeros to the slice bytes
-    bun_boringssl::secure_zero(&mut s);
-    drop(s);
-}
+pub use bun_alloc::free_sensitive;
 
 #[cfg(target_os = "macos")]
 pub type mach_port = libc::mach_port_t;

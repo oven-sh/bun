@@ -2,9 +2,9 @@
 //! so `Chunk.rs` / `LinkerContext.rs` / `ParseTask.rs` / `Graph.rs` can
 //! compile against real surfaces.
 //!
-//! These are pure value types with no T6 deps. Once `bundle_v2.rs` un-gates
-//! its draft body it re-exports from here; nothing here owns behavior that
-//! belongs elsewhere.
+//! These are pure value types with no T6 deps. `bundle_v2.rs` re-exports the
+//! whole set from here (its draft duplicates were collapsed in DEDUP D059);
+//! nothing here owns behavior that belongs elsewhere.
 
 #![allow(unused)]
 #![warn(unused_must_use)]
@@ -25,21 +25,6 @@ use crate::{options, Index, IndexInt};
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_string as bun_str;
 pub use bun_resolver::fs as bun_fs;
-
-// Compile-time guard: the three `fs::Path` / `fs::PathName` mirrors
-// (`bun_logger`, `bun_resolver`, `bun_paths`) are field-identical ports of
-// `fs.zig:Path` pending unification. `bundle_v2::fs_path_to_logger` /
-// `logger_path_to_paths` bit-cast between them; all three carry `#[repr(C)]`
-// so layout is pinned, and this assert trips if any mirror's field set drifts.
-const _: () = {
-    use core::mem::{align_of, size_of};
-    assert!(size_of::<bun_logger::fs::Path>() == size_of::<bun_fs::Path<'static>>());
-    assert!(align_of::<bun_logger::fs::Path>() == align_of::<bun_fs::Path<'static>>());
-    assert!(size_of::<bun_logger::fs::PathName>() == size_of::<bun_fs::PathName<'static>>());
-    assert!(align_of::<bun_logger::fs::PathName>() == align_of::<bun_fs::PathName<'static>>());
-    assert!(size_of::<bun_logger::fs::Path>() == size_of::<bun_paths::fs::Path<'static>>());
-    assert!(size_of::<bun_logger::fs::PathName>() == size_of::<bun_paths::fs::PathName<'static>>());
-};
 pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 /// `bun_output` is a thin re-export crate over `bun_core` that isn't a
 /// workspace member yet; alias `bun_core` (which exports `declare_scope!` /
@@ -312,69 +297,21 @@ impl Default for CompileResult {
     }
 }
 
-/// `bundle_v2.zig:genericPathWithPrettyInitialized` — public copy of the body
-/// in `bundle_v2.rs` (gated draft module). This assigns a concise, predictable,
-/// and unique `.pretty` attribute to a Path. DevServer relies on pretty paths
-/// for identifying modules, so they must be unique.
+/// `bundle_v2.zig:genericPathWithPrettyInitialized`. This assigns a concise,
+/// predictable, and unique `.pretty` attribute to a Path. DevServer relies on
+/// pretty paths for identifying modules, so they must be unique.
 ///
-/// PORT NOTE: duplicated here so `LinkerContext::path_with_pretty_initialized`
-/// resolves; collapses to a re-export once `bundle_v2.rs` un-gates.
-///
-/// PORT NOTE: signature uses `bun_logger::fs::Path` (the type stored on
-/// `Logger::Source.path`, which is what every caller passes) rather than
-/// `bun_resolver::fs::Path<'a>`. `dupeAllocFixPretty` lives on the
-/// resolver-side `Path<'a>` only, so the body round-trips through that type
-/// via a field-by-field move (both mirrors of `fs.zig:Path` with all-`Copy`
-/// fields, so this is zero-alloc). The interned result borrows
-/// `FilenameStore` (process-static), so the `'static` bound on the logger
-/// `Path` fields is satisfied.
+/// PORT NOTE: signature uses `bun_logger::fs::Path` (= `bun_paths::fs::Path<'static>`,
+/// the type stored on `Logger::Source.path`). `dupe_alloc_fix_pretty` interns into
+/// `FilenameStore` (process-static), so the `'static` return is satisfied.
 pub fn generic_path_with_pretty_initialized(
     path: bun_logger::fs::Path,
     target: options::Target,
     top_level_dir: &[u8],
     _bump: &bun_alloc::Arena,
 ) -> Result<bun_logger::fs::Path, bun_core::Error> {
-    use std::io::Write as _;
-
-    // PORT NOTE: `bun_logger::fs::Path` and `bun_resolver::fs::Path<'static>`
-    // are field-identical mirrors of `fs.zig:Path` that haven't been unified
-    // yet (TYPE_ONLY split). Convert by field — every field is `Copy`
-    // (`&'static [u8]` / `bool`), so this is a plain move, no `unsafe`.
-    // (Both mirrors now carry `#[repr(C)]` for the bit-cast sites in
-    // `bundle_v2.rs`, but the safe field-copy is preferred where lifetimes
-    // already line up.)
-    #[inline]
-    fn to_resolver(p: bun_logger::fs::Path) -> bun_fs::Path<'static> {
-        bun_fs::Path {
-            pretty: p.pretty,
-            text: p.text,
-            namespace: p.namespace,
-            name: bun_fs::PathName {
-                base: p.name.base,
-                dir: p.name.dir,
-                ext: p.name.ext,
-                filename: p.name.filename,
-            },
-            is_disabled: p.is_disabled,
-            is_symlink: p.is_symlink,
-        }
-    }
-    #[inline]
-    fn to_logger(p: bun_fs::Path<'static>) -> bun_logger::fs::Path {
-        bun_logger::fs::Path {
-            pretty: p.pretty,
-            text: p.text,
-            namespace: p.namespace,
-            name: bun_logger::fs::PathName {
-                base: p.name.base,
-                dir: p.name.dir,
-                ext: p.name.ext,
-                filename: p.name.filename,
-            },
-            is_disabled: p.is_disabled,
-            is_symlink: p.is_symlink,
-        }
-    }
+    use bun_io::Write as _;
+    use bun_fs::PathResolverExt as _;
 
     let mut buf = bun_paths::path_buffer_pool::get();
 
@@ -396,37 +333,37 @@ pub fn generic_path_with_pretty_initialized(
             bun_paths::resolve_path::platform::Loose,
             false,
         >(&mut **buf2, top_level_dir, path.text);
-        let mut path_clone = to_resolver(path);
+        // D090: `bun_logger::fs::Path` and `bun_fs::Path` are the same type;
+        // covariance lets `path_clone` widen to `Path<'_>` for the temp `pretty`.
+        let mut path_clone: bun_fs::Path<'_> = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
         // move .pretty into the heap. that function also fixes some slash issues.
         if target == options::Target::BakeServerComponentsSsr {
             // the SSR graph needs different pretty names or else HMR mode will
             // confuse the two modules.
-            let buf_len = buf.0.len();
-            let mut cursor = &mut buf.0[..];
-            let _ = write!(cursor, "ssr:{}", bstr::BStr::new(rel));
-            let written = buf_len - cursor.len();
+            let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
+            let _ = write!(fbs, "ssr:{}", bstr::BStr::new(rel));
+            let written = fbs.pos;
             path_clone.pretty = &buf.0[..written];
         } else {
             path_clone.pretty = rel;
         }
-        Ok(to_logger(path_clone.dupe_alloc_fix_pretty()?))
+        path_clone.dupe_alloc_fix_pretty()
     } else {
         // in non-file namespaces, standard filesystem rules do not apply.
-        let mut path_clone = to_resolver(path);
-        let buf_len = buf.0.len();
-        let mut cursor = &mut buf.0[..];
+        let mut path_clone: bun_fs::Path<'_> = path;
+        let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
         let _ = write!(
-            cursor,
+            fbs,
             "{}{}:{}",
             if target == options::Target::BakeServerComponentsSsr { "ssr:" } else { "" },
             // make sure that a namespace including a colon wont collide with anything
             EscapedNamespace(path_clone.namespace),
             bstr::BStr::new(path_clone.text),
         );
-        let written = buf_len - cursor.len();
+        let written = fbs.pos;
         path_clone.pretty = &buf.0[..written];
-        Ok(to_logger(path_clone.dupe_alloc_fix_pretty()?))
+        path_clone.dupe_alloc_fix_pretty()
     }
 }
 
@@ -465,8 +402,13 @@ bun_collections::multi_array_columns! {
 pub struct ContentHasher {
     pub hasher: bun_hash::XxHash64Streaming,
 }
+// `bun.Output.scoped(.ContentHasher, .hidden)` (bundle_v2.zig:4258). The static
+// (value namespace) deliberately puns the struct name (type namespace) — brace
+// structs only occupy the type namespace, so the two coexist.
+bun_core::declare_scope!(ContentHasher, hidden);
 impl ContentHasher {
     pub fn write(&mut self, bytes: &[u8]) {
+        bun_core::scoped_log!(ContentHasher, "HASH_UPDATE {}:\n{}\n----------\n", bytes.len(), bstr::BStr::new(bytes));
         self.hasher.update(&(bytes.len() as u64).to_ne_bytes());
         self.hasher.update(bytes);
     }
@@ -477,6 +419,7 @@ impl ContentHasher {
     }
     /// `bundle_v2.zig:ContentHasher.writeInts` — `std.mem.sliceAsBytes(i)`.
     pub fn write_ints(&mut self, i: &[u32]) {
+        bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
         // SAFETY: [u32] is POD; reinterpret as bytes (std.mem.sliceAsBytes).
         let bytes = unsafe {
             core::slice::from_raw_parts(i.as_ptr().cast::<u8>(), core::mem::size_of_val(i))
@@ -593,8 +536,8 @@ pub mod html_import_manifest {
 
     /// HTMLImportManifest.zig:98 `writeEscapedJSON` — fixed-buffer variant.
     /// `Chunk.rs` passes a `&mut &mut [u8]` cursor (Zig `fixedBufferStream`);
-    /// this adapter implements `fmt::Write` over that cursor and forwards to
-    /// the generic [`real::write_escaped_json`].
+    /// route through [`bun_io::FixedBufferStream`] and advance the caller's
+    /// slice in place so it can recover `pos = before_len - cursor.len()`.
     pub fn write_escaped_json(
         index: u32,
         graph: &Graph,
@@ -602,25 +545,13 @@ pub mod html_import_manifest {
         chunks: &[Chunk],
         w: &mut &mut [u8],
     ) -> Result<(), core::fmt::Error> {
-        // PORT NOTE: Zig's `std.io.fixedBufferStream(remain).writer()` advances
-        // the slice in place; mirror that with a `bun_io::Write` adapter so the
-        // caller can recover `pos = before_len - cursor.len()`.
-        struct FixedBufWriter<'a, 'b>(&'a mut &'b mut [u8]);
-        impl bun_io::Write for FixedBufWriter<'_, '_> {
-            fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-                if bytes.len() > self.0.len() {
-                    // Zig: error.NoSpaceLeft => unreachable (buffer was sized
-                    // by the counting pass).
-                    return Err(bun_core::err!("NoSpaceLeft"));
-                }
-                let (head, tail) = core::mem::take(self.0).split_at_mut(bytes.len());
-                head.copy_from_slice(bytes);
-                *self.0 = tail;
-                Ok(())
-            }
-        }
-        real::write_escaped_json(index, graph, linker_graph, chunks, &mut FixedBufWriter(w))
-            .map_err(|_| core::fmt::Error)
+        let taken = core::mem::take(w);
+        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
+        real::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
+            .map_err(|_| core::fmt::Error)?;
+        let bun_io::FixedBufferStream { buffer, pos } = fbs;
+        *w = &mut buffer[pos..];
+        Ok(())
     }
 }
 

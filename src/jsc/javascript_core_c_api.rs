@@ -13,11 +13,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 /// Opaque FFI handle backing every `*Ref` typedef in the JavaScriptCore C API.
 /// In Zig this is a single `opaque {}` aliased under many names; we mirror that.
-#[repr(C)]
-pub struct Generic {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Generic; }
 
 impl Generic {
     pub fn value(&self) -> JSValue {

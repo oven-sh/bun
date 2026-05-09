@@ -1571,11 +1571,9 @@ macro_rules! js_sink {
 // DestructorPtr / Bun__onSinkDestroyed
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `const Detached = opaque {};` used only as a TaggedPointerUnion type-tag.
-#[repr(C)]
-pub struct Detached {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Zig: `const Detached = opaque {};` used only as a TaggedPointerUnion type-tag.
+    pub struct Detached;
 }
 
 // PORT NOTE: `bun_ptr::impl_tagged_ptr_union!` would impl the foreign

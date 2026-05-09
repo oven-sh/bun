@@ -23,14 +23,7 @@ use bun_core::Fd;
 #[inline(always)]
 fn encode_raw_errno(rc: c_long) -> isize {
     if rc == -1 {
-        // SAFETY: the TLS errno accessor is guaranteed by libc to return a valid
-        // thread-local pointer for the calling thread's lifetime. glibc/musl
-        // spell it `__errno_location()`; bionic (Android) spells it `__errno()`.
-        #[cfg(not(target_os = "android"))]
-        let err = unsafe { *libc::__errno_location() } as isize;
-        #[cfg(target_os = "android")]
-        let err = unsafe { *libc::__errno() } as isize;
-        -err
+        -(bun_core::ffi::errno() as isize)
     } else {
         rc as isize
     }

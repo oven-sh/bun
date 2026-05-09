@@ -50,7 +50,7 @@ fn js_err(_: bun_jsc::JsError) -> bun_core::Error {
 }
 
 /// `bun_bundler::options::Side` (the type carried on `OutputFile.side`) is a
-/// distinct nominal copy of `bake_types::Side`; no upstream `From`/`Display`.
+/// re-export of `bake_types::Side`; no upstream `Display` impl.
 /// Local stringifier for the debug log line below.
 #[inline(always)]
 fn side_name(s: bun_bundler::options::Side) -> &'static str {

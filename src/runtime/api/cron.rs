@@ -2019,13 +2019,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
 
     // PERF(port): was arena bulk-free for envp on Windows
     #[cfg(unix)]
-    let envp: *const *const c_char = {
-        // SAFETY: std.c.environ is a process-global NUL-terminated array.
-        unsafe extern "C" {
-            static environ: *const *const c_char;
-        }
-        unsafe { environ }
-    };
+    let envp: *const *const c_char = bun_core::c_environ();
     #[cfg(windows)]
     let envp_owned;
     #[cfg(windows)]

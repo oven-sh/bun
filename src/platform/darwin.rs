@@ -106,11 +106,9 @@ pub mod nocancel {
     }
 }
 
-/// Opaque `os_log_t` handle.
-#[repr(C)]
-pub struct OSLog {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque `os_log_t` handle.
+    pub struct OSLog;
 }
 
 #[repr(u8)]

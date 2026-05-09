@@ -321,13 +321,13 @@ impl ParsedSourceMap {
             } else if i != 0 {
                 writer.write_byte(b',')?;
             }
-            VLQ::encode(gn.columns.zero_based() - last_col).write_to(writer)?;
+            writer.write_all(VLQ::encode(gn.columns.zero_based() - last_col).slice())?;
             last_col = gn.columns.zero_based();
-            VLQ::encode(*source_index - last_src).write_to(writer)?;
+            writer.write_all(VLQ::encode(*source_index - last_src).slice())?;
             last_src = *source_index;
-            VLQ::encode(orig.lines.zero_based() - last_ol).write_to(writer)?;
+            writer.write_all(VLQ::encode(orig.lines.zero_based() - last_ol).slice())?;
             last_ol = orig.lines.zero_based();
-            VLQ::encode(orig.columns.zero_based() - last_oc).write_to(writer)?;
+            writer.write_all(VLQ::encode(orig.columns.zero_based() - last_oc).slice())?;
             last_oc = orig.columns.zero_based();
         }
         Ok(())

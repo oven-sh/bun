@@ -38,29 +38,15 @@ pub use unbounded_queue::UnboundedQueue;
 
 /// Port of `std.Thread.getCurrentId()` — returns a non-zero OS thread id.
 /// Used by `Mutex` debug deadlock detection and `Condition` (Windows).
+///
+/// Delegates to the spec-faithful tier-0 implementation in
+/// [`bun_safety::thread_id::current`] (which uses `pthread_threadid_np` on
+/// Darwin / `pthread_getthreadid_np` on FreeBSD / `gettid` on Linux, matching
+/// Zig `std.Thread.getCurrentId()`), widened to `u64` so callers can store it
+/// in an `AtomicU64` regardless of the platform's native `ThreadId` width.
 #[inline]
 pub fn current_thread_id() -> u64 {
-    // PORT NOTE: stable Rust has no `std::thread::ThreadId::as_u64()`; use the
-    // platform tid directly. 0 is reserved as "not locked" sentinel in DebugImpl.
-    #[cfg(target_os = "linux")]
-    // SAFETY: gettid has no preconditions.
-    unsafe {
-        libc::gettid() as u64
-    }
-    #[cfg(all(unix, not(target_os = "linux")))]
-    // SAFETY: pthread_self has no preconditions.
-    unsafe {
-        libc::pthread_self() as u64
-    }
-    #[cfg(windows)]
-    // SAFETY: GetCurrentThreadId has no preconditions.
-    unsafe {
-        bun_sys::windows::kernel32::GetCurrentThreadId() as u64
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        0
-    }
+    bun_safety::thread_id::current() as u64
 }
 
 // ported from: src/threading/threading.zig

@@ -1,58 +1,30 @@
 //! Minimal Win32 ABI surface for `bun_core`'s `#[cfg(windows)]` paths.
 //!
-//! `bun_core` is tier-0 and may not depend on `bun_sys` (cycle), so the
-//! handful of kernel32/ntdll types and externs it needs are mirrored here
-//! from `vendor/nodejs/` headers / MSDN. All declarations are zero-cost FFI
-//! (`extern "system"` = `__stdcall`, which on x64 is the same as `extern "C"`).
+//! `bun_core` is tier-0 and may not depend on `bun_sys` (cycle). Shared Win32
+//! POD typedefs/structs are re-exported from the tier-0 leaf `bun_windows_sys`
+//! (which has zero `bun_*` deps, so no cycle); only the `bun_core`-specific
+//! console consts, PEB view, and kernel32 externs live here. All declarations
+//! are zero-cost FFI (`extern "system"` = `__stdcall`, which on x64 is the
+//! same as `extern "C"`).
 #![cfg(windows)]
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
-pub type HANDLE = *mut c_void;
-pub type HRESULT = i32;
-pub type DWORD = u32;
-pub type BOOL = c_int;
+pub use bun_windows_sys::{
+    BOOL, COORD, CONSOLE_SCREEN_BUFFER_INFO, DWORD, FALSE, HANDLE, HRESULT, INVALID_HANDLE_VALUE,
+    SMALL_RECT, TRUE, WCHAR, WORD,
+};
 pub type SHORT = i16;
-pub type WORD = u16;
-pub type WCHAR = u16;
 
-pub const TRUE: BOOL = 1;
-pub const FALSE: BOOL = 0;
-pub const INVALID_HANDLE_VALUE: HANDLE = usize::MAX as HANDLE;
-
-pub const STD_INPUT_HANDLE: DWORD = -10i32 as u32;
-pub const STD_OUTPUT_HANDLE: DWORD = -11i32 as u32;
-pub const STD_ERROR_HANDLE: DWORD = -12i32 as u32;
+pub const STD_INPUT_HANDLE: DWORD = (-10i32) as DWORD;
+pub const STD_OUTPUT_HANDLE: DWORD = (-11i32) as DWORD;
+pub const STD_ERROR_HANDLE: DWORD = (-12i32) as DWORD;
 
 // Console mode flags (consoleapi.h).
 pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
 pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct COORD {
-    pub X: SHORT,
-    pub Y: SHORT,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct SMALL_RECT {
-    pub Left: SHORT,
-    pub Top: SHORT,
-    pub Right: SHORT,
-    pub Bottom: SHORT,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct CONSOLE_SCREEN_BUFFER_INFO {
-    pub dwSize: COORD,
-    pub dwCursorPosition: COORD,
-    pub wAttributes: WORD,
-    pub srWindow: SMALL_RECT,
-    pub dwMaximumWindowSize: COORD,
-}
 
 /// Wrapper that returns `None` on `INVALID_HANDLE_VALUE` (matches
 /// `std.os.windows.GetStdHandle` error-union semantics).
@@ -68,15 +40,8 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // reads `ProcessParameters.hStd{Input,Output,Error}` to snapshot the console
 // handles before libuv touches them.
 // ──────────────────────────────────────────────────────────────────────────
-/// `UNICODE_STRING` (`ntdef.h`). Mirrors `bun_windows_sys::UNICODE_STRING`;
-/// duplicated here so `bun_core` stays leaf.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct UnicodeString {
-    pub Length: u16,
-    pub MaximumLength: u16,
-    pub Buffer: *mut u16,
-}
+/// `UNICODE_STRING` (`ntdef.h`).
+pub use bun_windows_sys::UNICODE_STRING as UnicodeString;
 
 #[repr(C)]
 pub struct ProcessParameters {

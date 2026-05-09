@@ -2,11 +2,9 @@ use core::marker::{PhantomData, PhantomPinned};
 
 use bun_string::String as BunString;
 
-/// Opaque FFI handle for `JSC::Yarr::RegularExpression`.
-#[repr(C)]
-pub struct RegularExpression {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for `JSC::Yarr::RegularExpression`.
+    pub struct RegularExpression;
 }
 
 #[repr(u16)]

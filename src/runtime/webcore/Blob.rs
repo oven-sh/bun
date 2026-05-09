@@ -12,7 +12,7 @@ use bun_core::{self as bun, Output};
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_str::{self, strings, OwnedString, String as BunString, ZigString, ZigStringSlice};
+use bun_str::{self, strings, OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice};
 use bun_sys::{self, Fd, FdExt as _};
 use bun_jsc::StringJsc as _;
 use bun_http_types::MimeType::MimeType;
@@ -1964,6 +1964,7 @@ impl BlobExt for Blob {
     }
 
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_bundler::options::Loader> {
+        use bun_resolver::fs::PathResolverExt as _;
         if let Some(filename) = self.get_file_name() {
             let current_path = bun_resolver::fs::Path::init(filename);
             return Some(

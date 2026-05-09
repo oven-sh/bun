@@ -15,7 +15,7 @@ use core::ptr;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{Output, ZStr};
 use bun_paths::{self as path, OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
-use bun_string::{self as bun_str, strings, MutableString};
+use bun_string::{self as bun_str, slice_to_nul, strings, MutableString};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -39,19 +39,12 @@ pub mod lib {
     /// Contains `UnsafeCell` so that `&Archive` does not assert immutability
     /// (libarchive mutates through every call), making `&self -> *mut Self`
     /// sound under Stacked Borrows.
-    #[repr(C)]
-    pub struct Archive {
-        _p: core::cell::UnsafeCell<[u8; 0]>,
-        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-    }
-
-    /// Opaque libarchive `struct archive_entry`. Always used behind `*mut Entry`.
-    /// Contains `UnsafeCell` for the same reason as `Archive` — the C side
-    /// mutates through getter/setter calls that take `&self` here.
-    #[repr(C)]
-    pub struct Entry {
-        _p: core::cell::UnsafeCell<[u8; 0]>,
-        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    bun_opaque::opaque_ffi! {
+        pub struct Archive;
+        /// Opaque libarchive `struct archive_entry`. Always used behind `*mut Entry`.
+        /// Contains `UnsafeCell` for the same reason as `Archive` — the C side
+        /// mutates through getter/setter calls that take `&self` here.
+        pub struct Entry;
     }
 
     #[repr(i32)]
@@ -2058,16 +2051,6 @@ fn slice_as_bytes(s: &[OSPathChar]) -> &[u8] {
     // SAFETY: OSPathChar is u8 on posix / u16 on windows; both are POD with no padding.
     unsafe {
         core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), core::mem::size_of_val(s))
-    }
-}
-
-// Helper: std.mem.sliceTo(slice, 0) — return prefix up to (excluding) the
-// first NUL, or the whole slice if no NUL is present.
-#[inline]
-fn slice_to_nul(s: &[u8]) -> &[u8] {
-    match s.iter().position(|&b| b == 0) {
-        Some(i) => &s[..i],
-        None => s,
     }
 }
 

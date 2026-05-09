@@ -24,3 +24,26 @@ pub const UV_DIRENT_FIFO: core::ffi::c_int = 4;
 pub const UV_DIRENT_SOCKET: core::ffi::c_int = 5;
 pub const UV_DIRENT_CHAR: core::ffi::c_int = 6;
 pub const UV_DIRENT_BLOCK: core::ffi::c_int = 7;
+
+// ──────────────────────────────────────────────────────────────────────────
+// libuv synthetic errno literals (uv/errno.h `UV__E*` fallbacks). These are
+// platform-invariant ABI constants libuv assigns when the host OS lacks a
+// native errno for the condition. On Windows the full `UV_E*` table is
+// re-exported from `libuv::*` above; on posix we surface only the synthetic
+// subset so `bun_errno`'s per-OS `uv_e` modules can reference a single source
+// of truth instead of inlining the magic numbers.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(not(windows))]
+pub const UV_ECHARSET: core::ffi::c_int = -4080;
+#[cfg(not(windows))]
+pub const UV_ENONET: core::ffi::c_int = -4056;
+#[cfg(not(windows))]
+pub const UV_ENOTSUP: core::ffi::c_int = -4049;
+#[cfg(not(windows))]
+pub const UV_EREMOTEIO: core::ffi::c_int = -4030;
+#[cfg(not(windows))]
+pub const UV_EFTYPE: core::ffi::c_int = -4028;
+#[cfg(not(windows))]
+pub const UV_ENODATA: core::ffi::c_int = -4024;
+#[cfg(not(windows))]
+pub const UV_EUNATCH: core::ffi::c_int = -4023;

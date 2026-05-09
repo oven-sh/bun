@@ -31,6 +31,7 @@
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
 use bun_collections::{VecExt, ByteVecExt};
+use crate::bun_str::WTFStringImplExt as _;
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 

@@ -9,15 +9,8 @@ use bun_semver as semver;
 
 use crate::schema::analytics;
 
-/// Zig: `bun.sliceTo(buf, 0)` — slice up to (excluding) the first NUL byte.
-// PORT NOTE: lower-tier `bun_string` has no direct equivalent; this is a tiny
-// local helper rather than a cross-crate dep.
-#[inline]
-#[allow(dead_code)]
-fn slice_to_nul(buf: &[u8]) -> &[u8] {
-    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    &buf[..end]
-}
+#[allow(unused_imports)]
+use bun_string::slice_to_nul;
 
 /// Reinterpret a `[c_char; N]` field (e.g. from `libc::utsname`) as `&[u8]`.
 #[inline]
@@ -453,9 +446,6 @@ pub mod generate_header {
             })
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        static LINUX_KERNEL_VERSION: OnceLock<semver::Version> = OnceLock::new();
-
         // ──────────────────────────────────────────────────────────────────
         // Platform OnceLock
         // ──────────────────────────────────────────────────────────────────
@@ -527,13 +517,19 @@ pub mod generate_header {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub fn kernel_version() -> semver::Version {
-            *LINUX_KERNEL_VERSION.get_or_init(|| {
-                let release =
-                    slice_to_nul(c_chars_as_bytes(&linux_os_name().release));
-                let sliced_string = semver::SlicedString::init(release, release);
-                let result = semver::Version::parse(sliced_string);
-                result.version.min()
-            })
+            // Route through the T1 canonical probe so the whole binary issues
+            // a single `uname(2)` for kernel-version detection. The full
+            // semver `tag` (pre/build) is irrelevant here — `.min()` on the
+            // old parse path already zeroed it — so a {major,minor,patch}
+            // lift is behavior-identical for all callers (crash_handler
+            // formatting, epoll_pwait2 >=5.11 gate, `bun.linuxKernelVersion`).
+            let v = bun_core::linux_kernel_version();
+            semver::Version {
+                major: u64::from(v.major),
+                minor: u64::from(v.minor),
+                patch: u64::from(v.patch),
+                ..Default::default()
+            }
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn kernel_version() -> semver::Version {
@@ -630,6 +626,6 @@ pub mod generate_header {
 pub use generate_header as GenerateHeader;
 
 pub mod schema;
-pub use schema::{BufReader, Reader, SchemaInt, Writer};
+pub use schema::{BufReader, Reader, SchemaInt};
 
 // ported from: src/analytics/analytics.zig

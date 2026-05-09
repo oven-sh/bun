@@ -4,13 +4,7 @@ use crate::css_values::color::CssColor;
 use crate::css_values::ident::DashedIdent;
 use crate::{PrintErr, Printer};
 
-// PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` via `input.arena()`.
-// Phase B: thread `bump: &'bump Bump` and switch to `bun_alloc::ArenaVec<'bump, T>`
-// across the css crate in one pass (cascades lifetimes through every rule type).
-// Same pass must also restore the dropped `std.mem.Allocator` param on `deep_clone(&self)`
-// and `ParserOptions::default()` as `bump: &'bump Bump` — css is an AST crate, so the
-// arena param is the arena, not deletable.
-type ArrayList<T> = Vec<T>;
+use super::ArrayList;
 
 /// A [@font-palette-values](https://drafts.csswg.org/css-fonts-4/#font-palette-values) rule.
 pub struct FontPaletteValuesRule {

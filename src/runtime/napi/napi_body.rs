@@ -262,11 +262,9 @@ fn env_is_null() -> napi_status {
 /// a Rust API that uses a never-null napi_env, use `&NapiEnv`.
 pub type napi_env = *mut NapiEnv;
 
-/// Contents are not used by any Rust code
-#[repr(C)]
-pub struct Ref {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Contents are not used by any Rust code
+    pub struct Ref;
 }
 
 pub type napi_ref = *mut Ref;
@@ -1771,11 +1769,7 @@ pub static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
     release: b"node\0".as_ptr().cast::<c_char>(),
 };
 
-#[repr(C)]
-pub struct struct_napi_async_cleanup_hook_handle__ {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
 pub type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
 pub type napi_async_cleanup_hook =
     Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;

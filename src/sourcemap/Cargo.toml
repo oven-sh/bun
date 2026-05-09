@@ -10,6 +10,7 @@ workspace = true
 path = "lib.rs"
 
 [dependencies]
+bun_opaque.workspace = true
 parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true

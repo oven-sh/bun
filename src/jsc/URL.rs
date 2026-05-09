@@ -8,11 +8,9 @@ use bun_string::strings;
 // PORT NOTE: `jsc.markBinding(@src())` calls were dropped — debug-only binding-trace
 // helper with no Rust equivalent; Phase B can add a `mark_binding!()` macro if wanted.
 
-/// Opaque handle to a WebKit `WTF::URL` allocated on the C++ side.
-#[repr(C)]
-pub struct URL {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque handle to a WebKit `WTF::URL` allocated on the C++ side.
+    pub struct URL;
 }
 
 // TODO(port): move to jsc_sys

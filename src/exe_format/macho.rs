@@ -28,11 +28,7 @@ pub enum MachoError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-impl From<MachoError> for bun_core::Error {
-    fn from(e: MachoError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(MachoError);
 impl From<bun_alloc::AllocError> for MachoError {
     fn from(_: bun_alloc::AllocError) -> Self {
         MachoError::OutOfMemory

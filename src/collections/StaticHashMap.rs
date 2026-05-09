@@ -11,49 +11,20 @@ use bun_alloc::AllocError;
 // Context trait — models Zig's `Context: type` with `.hash(k)` / `.eql(a, b)`
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Mirrors Zig's `std.hash_map` context protocol: a (usually zero-sized) value
-/// providing `hash` and `eql` for `K`.
-pub trait HashContext<K>: Default {
-    fn hash(&self, key: &K) -> u64;
-    fn eql(&self, a: &K, b: &K) -> bool;
-}
-
-/// Mirrors Zig's `std.hash_map.AutoContext(K)`.
-#[derive(Clone, Copy)]
-pub struct AutoContext<K>(PhantomData<fn(&K)>);
-
-// Hand-roll Default to avoid the derive's spurious `K: Default` bound.
-impl<K> Default for AutoContext<K> {
-    #[inline]
-    fn default() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<K: core::hash::Hash + Eq> HashContext<K> for AutoContext<K> {
-    #[inline]
-    fn hash(&self, key: &K) -> u64 {
-        // Zig's AutoContext (std.hash_map.getAutoHashFn) uses std.hash.Wyhash,
-        // NOT Wyhash11 — see vendor/zig/lib/std/hash_map.zig.
-        let mut h = bun_wyhash::Wyhash::init(0);
-        core::hash::Hash::hash(key, &mut h);
-        core::hash::Hasher::finish(&h)
-    }
-    #[inline]
-    fn eql(&self, a: &K, b: &K) -> bool {
-        a == b
-    }
-}
+// Canonical definitions live in `crate::zig_hash_map`; re-exported here so the
+// path `bun_collections::static_hash_map::{HashContext, AutoContext}` keeps
+// resolving for downstream callers.
+pub use crate::zig_hash_map::{AutoHashContext as AutoContext, HashContext};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Type aliases (Zig: AutoHashMap / AutoStaticHashMap)
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type AutoHashMap<K, V, const MAX_LOAD_PERCENTAGE: u64> =
-    HashMap<K, V, AutoContext<K>, MAX_LOAD_PERCENTAGE>;
+    HashMap<K, V, AutoContext, MAX_LOAD_PERCENTAGE>;
 
 pub type AutoStaticHashMap<K, V, const CAPACITY: usize, const SLOTS: usize> =
-    StaticHashMap<K, V, AutoContext<K>, CAPACITY, SLOTS>;
+    StaticHashMap<K, V, AutoContext, CAPACITY, SLOTS>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shared Entry / GetOrPutResult / constants
@@ -96,10 +67,7 @@ impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for Entry<K, V> {
     }
 }
 
-pub struct GetOrPutResult<'a, V> {
-    pub value_ptr: &'a mut V,
-    pub found_existing: bool,
-}
+pub use crate::hash_map::GetOrPutResult;
 
 // ──────────────────────────────────────────────────────────────────────────
 // comptime helpers (Zig top-of-fn const expressions)
@@ -306,26 +274,26 @@ impl<
     }
 
     pub fn put(&mut self, key: K, value: V) -> Result<(), AllocError> {
-        self.put_context(key, value, Ctx::default())
-    }
-
-    pub fn put_context(&mut self, key: K, value: V, ctx: Ctx) -> Result<(), AllocError> {
         self.ensure_unused_capacity(1)?;
-        self.put_assume_capacity_context(key, value, ctx);
+        self.put_assume_capacity(key, value);
         Ok(())
     }
 
+    pub fn put_context(&mut self, key: K, value: V, _ctx: Ctx) -> Result<(), AllocError> {
+        self.put(key, value)
+    }
+
     pub fn get_or_put(&mut self, key: K) -> Result<GetOrPutResult<'_, V>, AllocError> {
-        self.get_or_put_context(key, Ctx::default())
+        self.ensure_unused_capacity(1)?;
+        Ok(self.get_or_put_assume_capacity(key))
     }
 
     pub fn get_or_put_context(
         &mut self,
         key: K,
-        ctx: Ctx,
+        _ctx: Ctx,
     ) -> Result<GetOrPutResult<'_, V>, AllocError> {
-        self.ensure_unused_capacity(1)?;
-        Ok(self.get_or_put_assume_capacity_context(key, ctx))
+        self.get_or_put(key)
     }
 }
 
@@ -370,31 +338,31 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         V: Copy + Default,
         Ctx: HashContext<K>,
     {
-        self.put_assume_capacity_context(key, value, Ctx::default());
-    }
-
-    fn put_assume_capacity_context(&mut self, key: K, value: V, ctx: Ctx)
-    where
-        K: Copy,
-        V: Copy + Default,
-        Ctx: HashContext<K>,
-    {
-        let result = self.get_or_put_assume_capacity_context(key, ctx);
+        let result = self.get_or_put_assume_capacity(key);
         if !result.found_existing {
             *result.value_ptr = value;
         }
     }
 
-    fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, V>
+    fn put_assume_capacity_context(&mut self, key: K, value: V, _ctx: Ctx)
     where
         K: Copy,
         V: Copy + Default,
         Ctx: HashContext<K>,
     {
-        self.get_or_put_assume_capacity_context(key, Ctx::default())
+        self.put_assume_capacity(key, value);
     }
 
-    fn get_or_put_assume_capacity_context(&mut self, key: K, ctx: Ctx) -> GetOrPutResult<'_, V>
+    fn get_or_put_assume_capacity_context(&mut self, key: K, _ctx: Ctx) -> GetOrPutResult<'_, V>
+    where
+        K: Copy,
+        V: Copy + Default,
+        Ctx: HashContext<K>,
+    {
+        self.get_or_put_assume_capacity(key)
+    }
+
+    fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, V>
     where
         K: Copy,
         V: Copy + Default,
@@ -404,7 +372,7 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         // writes via `value_ptr`). Use `Default` for the placeholder — V may
         // not be zero-valid.
         let mut it: Entry<K, V> =
-            Entry { hash: ctx.hash(&key), key, value: V::default() };
+            Entry { hash: Ctx::ctx_hash(&key), key, value: V::default() };
         let shift = self.shift();
         let mut i = to_idx(it.hash >> shift);
 
@@ -416,7 +384,7 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
             // re-borrow mutably for write/return.
             let entry = self.storage()[i];
             if entry.hash >= it.hash {
-                if ctx.eql(&entry.key, &key) {
+                if Ctx::ctx_eql(&entry.key, &key) {
                     return GetOrPutResult {
                         found_existing: true,
                         value_ptr: &mut self.storage_mut()[i].value,
@@ -441,27 +409,27 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         }
     }
 
+    fn get_context(&self, key: K, _ctx: Ctx) -> Option<V>
+    where
+        K: Copy,
+        V: Copy,
+        Ctx: HashContext<K>,
+    {
+        self.get(key)
+    }
+
     fn get(&self, key: K) -> Option<V>
     where
         K: Copy,
         V: Copy,
         Ctx: HashContext<K>,
     {
-        self.get_context(key, Ctx::default())
-    }
-
-    fn get_context(&self, key: K, ctx: Ctx) -> Option<V>
-    where
-        K: Copy,
-        V: Copy,
-        Ctx: HashContext<K>,
-    {
-        let hash = ctx.hash(&key);
+        let hash = Ctx::ctx_hash(&key);
         debug_assert!(hash != EMPTY_HASH);
 
         for entry in &self.storage()[to_idx(hash >> self.shift())..] {
             if entry.hash >= hash {
-                if !ctx.eql(&entry.key, &key) {
+                if !Ctx::ctx_eql(&entry.key, &key) {
                     return None;
                 }
                 return Some(entry.value);
@@ -471,12 +439,12 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         unreachable!()
     }
 
-    fn has(&self, key: K) -> bool
+    fn has_context(&self, key: K, _ctx: Ctx) -> bool
     where
         K: Copy,
         Ctx: HashContext<K>,
     {
-        self.has_context(key, Ctx::default())
+        self.has(key)
     }
 
     fn has_with_hash(&self, key_hash: u64) -> bool {
@@ -491,17 +459,17 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         false
     }
 
-    fn has_context(&self, key: K, ctx: Ctx) -> bool
+    fn has(&self, key: K) -> bool
     where
         K: Copy,
         Ctx: HashContext<K>,
     {
-        let hash = ctx.hash(&key);
+        let hash = Ctx::ctx_hash(&key);
         debug_assert!(hash != EMPTY_HASH);
 
         for entry in &self.storage()[to_idx(hash >> self.shift())..] {
             if entry.hash >= hash {
-                if !ctx.eql(&entry.key, &key) {
+                if !Ctx::ctx_eql(&entry.key, &key) {
                     return false;
                 }
                 return true;
@@ -511,22 +479,22 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         unreachable!()
     }
 
+    fn delete_context(&mut self, key: K, _ctx: Ctx) -> Option<V>
+    where
+        K: Copy + Default,
+        V: Copy + Default,
+        Ctx: HashContext<K>,
+    {
+        self.delete(key)
+    }
+
     fn delete(&mut self, key: K) -> Option<V>
     where
         K: Copy + Default,
         V: Copy + Default,
         Ctx: HashContext<K>,
     {
-        self.delete_context(key, Ctx::default())
-    }
-
-    fn delete_context(&mut self, key: K, ctx: Ctx) -> Option<V>
-    where
-        K: Copy + Default,
-        V: Copy + Default,
-        Ctx: HashContext<K>,
-    {
-        let hash = ctx.hash(&key);
+        let hash = Ctx::ctx_hash(&key);
         debug_assert!(hash != EMPTY_HASH);
 
         let shift = self.shift();
@@ -534,7 +502,7 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         loop {
             let entry = self.storage()[i];
             if entry.hash >= hash {
-                if !ctx.eql(&entry.key, &key) {
+                if !Ctx::ctx_eql(&entry.key, &key) {
                     return None;
                 }
                 break;

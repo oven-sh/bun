@@ -655,8 +655,7 @@ pub enum BackfaceVisibility {
 }
 
 /// A value for the perspective property.
-// TODO(port): css.DeriveParse / css.DeriveToCss reflection → crate-wide derives.
-#[derive(Clone, PartialEq, crate::DeriveParse, crate::DeriveToCss)]
+#[derive(Clone, PartialEq, crate::Parse, crate::ToCss)]
 pub enum Perspective {
     /// No perspective transform is applied.
     None,

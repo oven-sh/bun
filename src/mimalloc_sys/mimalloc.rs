@@ -84,11 +84,9 @@ unsafe extern "C" {
     ) -> *mut c_void;
 }
 
-/// Opaque mimalloc heap handle (`mi_heap_t`).
-#[repr(C)]
-pub struct Heap {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque mimalloc heap handle (`mi_heap_t`).
+    pub struct Heap;
 }
 
 impl Heap {

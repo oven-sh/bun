@@ -1,4 +1,4 @@
-use core::ffi::c_void;
+use core::slice;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsError, JsResult, JsClass, StringJsc};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
@@ -230,8 +230,11 @@ impl Crypto {
             return JSValue::ZERO;
         }
 
-        // SAFETY: a_ptr/b_ptr are valid for `len` bytes (just obtained from JSUint8Array).
-        JSValue::from(unsafe { bun_boringssl_sys::CRYPTO_memcmp(a_ptr.cast::<c_void>(), b_ptr.cast::<c_void>(), len) } == 0)
+        // SAFETY: a_ptr/b_ptr are valid for `len` bytes (just obtained from JSUint8Array;
+        // `JSUint8Array::slice()` needs `&mut self`, so reconstruct the slices here).
+        let a = unsafe { slice::from_raw_parts(a_ptr, len) };
+        let b = unsafe { slice::from_raw_parts(b_ptr, len) };
+        JSValue::from(bun_boringssl_sys::constant_time_eq(a, b))
     }
 
     #[bun_jsc::host_fn(method)]

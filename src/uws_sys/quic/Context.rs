@@ -7,11 +7,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void, CStr};
 use crate::Loop;
 use crate::quic::{PendingConnect, Socket, Stream};
 
-#[repr(C)]
-pub struct Context {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Context; }
 
 unsafe extern "C" {
     fn us_create_quic_client_context(

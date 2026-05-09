@@ -5,6 +5,11 @@ use css::PrintErr;
 use css::Printer;
 use css::error::MinifyErr;
 
+// PERF(port): Phase-A shim — Zig used arena-backed `std.ArrayListUnmanaged`.
+// Phase B threads `'bump` and replaces this with `crate::generics::ArrayList<'bump, T>`
+// (= `bun_alloc::ArenaVec`) crate-wide in one pass.
+pub(super) type ArrayList<T> = Vec<T>;
+
 // ─── B-2 round 6 status ────────────────────────────────────────────────────
 // Hub un-gated. `CssRule` / `CssRuleList` / `MinifyContext` are real and
 // `CssRuleList::{to_css,minify}` now compile so `StyleSheet::{minify,to_css}`
@@ -13,15 +18,6 @@ use css::error::MinifyErr;
 // `merge_style_rules` body stay `` internally on
 // `StyleRule::{minify,is_compatible,update_prefix,hash_key,is_duplicate}` +
 // selector helpers.
-
-macro_rules! gated_rule {
-    ($name:ident) => {
-         pub mod $name;
-    };
-    ($name:ident, { $($body:tt)* }) => {
-         pub mod $name;
-    };
-}
 
 pub mod import;
 pub mod layer;
@@ -43,24 +39,7 @@ pub mod container;
 pub mod scope;
 pub mod media;
 pub mod starting_style;
-gated_rule!(tailwind, {
-    /// `@tailwind base|components|utilities|variants;`
-    // PORT NOTE: spec `TailwindAtRule` is a struct `{ style_name, loc }`; the
-    // four-variant enum is `TailwindStyleName`. Stub mirrors that shape so
-    // `css_parser::AtRulePrelude` carries source-location info when un-gated.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum TailwindStyleName {
-        Base,
-        Components,
-        Utilities,
-        Variants,
-    }
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct TailwindAtRule {
-        pub style_name: TailwindStyleName,
-        pub loc: super::Location,
-    }
-});
+pub mod tailwind;
 
 // ─── CssRule / CssRuleList ─────────────────────────────────────────────────
 // Zig: pub fn CssRule(comptime Rule: type) type { return union(enum) { ... } }
@@ -1041,24 +1020,10 @@ pub fn merge_style_rules<R>(
 
 // ─── Location / StyleContext / MinifyContext ──────────────────────────────
 
-/// Cross-source location (carries a source-map source index). Same layout as
-/// `crate::Location` — kept as a distinct type here to match the Zig surface
-/// (`css_rules.Location` vs `css.Location`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, css::DeepClone)]
-pub struct Location {
-    /// The index of the source file within the source map.
-    pub source_index: u32,
-    /// The line number, starting at 0.
-    pub line: u32,
-    /// The column number within a line, starting at 1. Counted in UTF-16 code units.
-    pub column: u32,
-}
-
-impl Location {
-    pub fn dummy() -> Location {
-        Location { source_index: u32::MAX, line: u32::MAX, column: u32::MAX }
-    }
-}
+// Zig spec: `css.Location = css_rules.Location` is a TYPE ALIAS (one nominal
+// type). Re-export the crate-root struct so `css_rules::Location` and
+// `crate::Location` are interchangeable.
+pub use crate::Location;
 
 /// Printer's nesting cursor — linked list of parent selector lists used to
 /// resolve `&` during serialization.

@@ -70,10 +70,9 @@ pub trait QueryCondition: Sized {
     ) -> bool;
 }
 
-/// Local `to_css` protocol used by the generic query-condition serializers.
-pub trait ToCss {
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
-}
+/// `to_css` protocol used by the generic query-condition serializers.
+/// Re-exported from `generics` — the local trait was byte-identical.
+pub use crate::generics::ToCss;
 
 // ───────────────────────── MediaList / MediaQuery ─────────────────────────
 

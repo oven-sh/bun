@@ -10,7 +10,7 @@ use core::mem::size_of;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::env_var;
-use bun_string::strings;
+use bun_string::{slice_to_nul, strings};
 
 bun_core::declare_scope!(elf, visible);
 
@@ -30,11 +30,7 @@ pub enum ElfError {
     NewVaddrCollides,
 }
 
-impl From<ElfError> for bun_core::Error {
-    fn from(e: ElfError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ElfError);
 
 pub struct ElfFile {
     pub data: Vec<u8>,
@@ -770,14 +766,6 @@ fn write_struct<T: Copy>(bytes: &mut [u8], value: &T) {
 #[inline]
 fn write_u64_le(bytes: &mut [u8], value: u64) {
     bytes[..8].copy_from_slice(&value.to_le_bytes());
-}
-
-#[inline]
-fn slice_to_nul(buf: &[u8]) -> &[u8] {
-    match buf.iter().position(|&b| b == 0) {
-        Some(i) => &buf[..i],
-        None => buf,
-    }
 }
 
 // ported from: src/exe_format/elf.zig

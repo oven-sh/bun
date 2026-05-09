@@ -8,11 +8,7 @@ use bun_uws::ResponseKind;
 
 /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).
 // TODO(port): consider an RAII wrapper that calls `deref` on Drop instead of returning `NonNull<FetchHeaders>` from constructors.
-#[repr(C)]
-pub struct FetchHeaders {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct FetchHeaders; }
 
 // TODO(port): move to jsc_sys
 //

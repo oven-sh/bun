@@ -19,12 +19,6 @@ use core::mem::ManuallyDrop;
 use bun_alloc::AllocError;
 use bun_core::strings;
 
-/// Trait for `deep_clone_fallible`.
-// TODO(port): unify with whatever trait the CSS/AST crates define for `deepClone`.
-pub trait DeepClone: Sized {
-    fn deep_clone(&self) -> Result<Self, bun_core::Error>;
-}
-
 pub trait VecExt<T>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
     fn init_capacity(n: usize) -> Result<Self, AllocError>;
@@ -129,12 +123,6 @@ pub trait VecExt<T>: Sized {
     where
         F: FnMut(&T) -> Result<T, E>,
         E: From<AllocError>;
-    fn deep_clone_fallible(&self) -> Result<Self, bun_core::Error>
-    where
-        T: DeepClone;
-    fn deep_clone_infallible(&self) -> Self
-    where
-        T: DeepClone;
 }
 
 impl<T> VecExt<T> for Vec<T> {
@@ -389,18 +377,6 @@ impl<T> VecExt<T> for Vec<T> {
         E: From<AllocError>,
     {
         self.iter().map(clone_one).collect()
-    }
-    fn deep_clone_fallible(&self) -> Result<Self, bun_core::Error>
-    where
-        T: DeepClone,
-    {
-        self.iter().map(|x| x.deep_clone()).collect()
-    }
-    fn deep_clone_infallible(&self) -> Self
-    where
-        T: DeepClone,
-    {
-        self.deep_clone_fallible().expect("OutOfMemory")
     }
 }
 

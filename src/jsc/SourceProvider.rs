@@ -1,10 +1,8 @@
 use core::marker::{PhantomData, PhantomPinned};
 
-/// Opaque representation of a JavaScript source provider
-#[repr(C)]
-pub struct SourceProvider {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque representation of a JavaScript source provider
+    pub struct SourceProvider;
 }
 
 impl SourceProvider {

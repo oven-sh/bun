@@ -103,14 +103,12 @@ pub mod protocol {
     pub trait TryAdd: Sized {
         fn try_add(&self, rhs: &Self) -> Option<Self>;
     }
-    /// `D::try_from_angle(a)` — convert an angle into `D`, if representable.
-    pub trait TryFromAngle: Sized {
-        fn try_from_angle(angle: Angle) -> Option<Self>;
-    }
-    // `Parse`/`ToCss` and the numeric helpers now live in `crate::generics`;
-    // re-export so `values::protocol::*` stays a one-stop bound set.
+    // `Parse`/`ToCss`/`TryFromAngle` and the numeric helpers live in
+    // `crate::generics`; re-export so `values::protocol::*` stays a one-stop
+    // bound set.
     pub use crate::generics::{
-        IsCompatible, Parse, ParseWithOptions, PartialCmp, ToCss, TryMap, TryOp, TryOpTo, TrySign,
+        IsCompatible, Parse, ParseWithOptions, PartialCmp, ToCss, TryFromAngle, TryMap, TryOp,
+        TryOpTo, TrySign,
     };
     #[allow(unused_imports)]
     use {css as _, Angle as _};

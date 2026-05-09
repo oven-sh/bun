@@ -1572,14 +1572,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 )?,
                 global_this,
             )? {
-                let old = core::mem::replace(
+                let mut old = core::mem::replace(
                     &mut body,
                     HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
                         stream,
                         global_this,
                     )),
                 );
-                drop(old); // PORT NOTE: `defer old.detach()` → Drop.
+                // PORT NOTE: Zig `defer old.detach()`. HTTPRequestBody has no Drop
+                // impl, so a bare `drop(old)` would leak the S3 Blob.Store ref.
+                old.detach();
                 break 'prepare_body;
             }
             let rejected_value =

@@ -220,3 +220,21 @@ Ordered by leverage × inverse risk. "Adoption sweeps" (the abstraction already 
 ---
 
 _Total distinct refactors in this plan: **42** (8 cross-cutting + 34 per-crate). Estimated `unsafe` blocks retired if all land: **~520**._
+
+## CC-9: `impl Drop for bun_string::String` (DEFERRED until after port-branch merge)
+
+`bun_string::String` is `#[derive(Copy)]` for FFI by-value parity (Zig passes
+`bun.String` by value across `extern` boundaries; the Rust port matched that
+ABI). With no `Drop`, every owning site must explicitly `.deref()` — easy to
+miss (T026: `PostgresSQLQuery`/`MySQLQuery` leaked `query`/`cursor`).
+
+**Recipe:** remove `Copy`, add `impl Drop { fn drop(&mut self) { self.deref() } }`,
+add `#[repr(transparent)]` wrapper `BorrowedStr` (Copy, no Drop) for the FFI
+by-value sites that DON'T transfer ownership. Audit ~180 `String` fields/locals
+for which need `BorrowedStr` vs owned `String`.
+
+**Effort:** L (cross-crate; ~180 sites). **Unsafe removed:** ~0. **Risk:** double-deref if
+both explicit `.deref()` and Drop fire — sweep all explicit derefs first.
+
+**Status:** Deferred per Jarred 2026-05-09 — too invasive before port-branch merge.
+Use explicit `.deref()` until then.

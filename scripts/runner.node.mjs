@@ -358,7 +358,10 @@ const skipsForLeaksan = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+  // Skip-list entries use `/`; on Windows callers pass `\`-separated paths
+  // (path.relative) which never match. Normalize before lookup.
+  const t = test.replaceAll(sep, "/");
+  return !(skipsForExceptionValidation.includes(t) || skipsForExceptionValidation.includes("test/" + t));
 };
 
 /**

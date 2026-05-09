@@ -2717,8 +2717,8 @@ pub const Resolver = struct {
         // field can legitimately be empty (e.g. when the path has no
         // separator). Every caller already tolerates a null return or a
         // thrown error, so bail here rather than walking into the cache with
-        // an empty key — or on Windows ReleaseSafe, panicking at the
-        // `isAbsolute` assert below. https://github.com/oven-sh/bun/issues/30429
+        // an empty key or falling through to the `isAbsolute` check below.
+        // https://github.com/oven-sh/bun/issues/30429
         if (input_path.len == 0) return null;
 
         if (comptime Environment.isWindows) {

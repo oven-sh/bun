@@ -18,7 +18,12 @@ import { writeIfNotChanged } from "./helpers.ts";
 export interface StringMapSpec<V = unknown> {
   /** Rust ident for the lookup fn: emits `pub fn <name>(key: &[u8]) -> Option<$valueTy>`. */
   name: string;
-  /** Rust type of the value (e.g. `u8`, `crate::Method`, `&'static [&'static [u8]]`). */
+  /**
+   * Rust type of the value (e.g. `u8`, `crate::Method`, `&'static [&'static [u8]]`).
+   * Must be `Copy` — the bsearch arm reads it out of a `static [(_, V); K]` by
+   * value. For non-`Copy` payloads, store an index/tag and look the payload up
+   * separately.
+   */
   valueTy: string;
   /**
    * Map a JS value to its Rust literal. Default: `JSON.stringify` for strings,
@@ -149,9 +154,7 @@ function buildOne<V>(spec: StringMapSpec<V>): string {
       }
       out.push(`            ];`);
       out.push(`            let key: &[u8; ${len}] = unsafe { &*key.as_ptr().cast() };`);
-      out.push(
-        `            ${tableName}.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| ${tableName}[i].1.clone())`,
-      );
+      out.push(`            ${tableName}.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| ${tableName}[i].1)`);
       out.push(`        }`);
     }
   }

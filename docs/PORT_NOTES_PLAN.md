@@ -1,0 +1,214 @@
+# PORT NOTES — Architectural Refactor Plan
+
+This plan synthesizes the per-crate `// PORT NOTE` / `// TODO(port)` survey into a deduplicated, prioritized refactor backlog. Every proposal below has been cross-checked against reviewer feedback; where the original survey proposed a new abstraction that **already exists in-tree**, the entry is reframed as an *adoption sweep* rather than new code.
+
+Effort scale: `XS < S < M < L < XL`. Leverage score = `unsafe_removed_est × affected_count / effort_weight` (XS=1, S=2, M=4, L=8, XL=16) — used only for relative ordering, not as a hard metric.
+
+---
+
+## 1. Summary — PORT NOTEs by category, all crates
+
+| Category              | runtime | jsc | css | install | sql | bundler | js_parser | **Total** |
+|-----------------------|--------:|----:|----:|--------:|----:|--------:|----------:|----------:|
+| explanatory           |   1278  | 361 | 176 |    314  |  52 |    319  |      176  |  **2676** |
+| known_todo            |   1059  | 182 | 156 |    296  |  84 |    152  |      146  |  **2075** |
+| borrowck_workaround   |    664  |  53 |  52 |    206  |   5 |    111  |       60  |  **1151** |
+| missing_idiom         |    194  |   5 | 306 |     53  |   0 |     47  |       37  |   **642** |
+| lifetime_erasure      |    213  |  33 |  90 |     30  |   4 |     43  |       30  |   **443** |
+| bitwise_copy_hazard   |     19  |  10 |   5 |     11  |   0 |     11  |        7  |    **63** |
+| other                 |     51  |   0 |   0 |      0  |   0 |     19  |        0  |    **70** |
+| **Total**             | **3478**|**644**|**785**|**910**|**145**|**702**| **456**  |  **7120** |
+
+`explanatory` notes are documentation-only and require no action; they are excluded from the refactor backlog below.
+
+---
+
+## 2. Cross-cutting refactors
+
+These patterns recur across ≥3 crates. Each is listed once; the per-crate surveys that proposed the same thing are collapsed here.
+
+### CC-1 · Adopt `bun_ptr::BackRef<T>` for all parent/back-pointer raw fields
+| | |
+|---|---|
+| **Crates** | runtime, jsc, install, bundler |
+| **Sites** | ~100 (`*mut Self` C-callback thunks ~45; jsc backrefs 12; install `*mut PackageManager`/`*mut Log`/`NonNull<DotEnv>` 25; bundler `LinkerContext.resolver`/`Worker.ctx` ~18) |
+| **Effort** | M |
+| **Unsafe removed** | ~50 deref sites (the deref itself stays `unsafe`; win is one documented invariant instead of N ad-hoc SAFETY comments) |
+| **Recipe** | Retype every `*mut Parent` / `Option<NonNull<Parent>>` field that encodes "child outlived by pinned singleton parent" as `BackRef<Parent>` (already `#[repr(transparent)] NonNull<T>` + `Deref<Target=T>` + `Copy` + `unsafe get_mut()` at `src/ptr/lib.rs:96`). Callers change `unsafe { &*self.pm }` → `&*self.pm` / `self.pm.get()`. |
+| **Feedback applied** | jsc proposal "introduce `Backref<T>`" was a duplicate — type exists. install proposal "thread `'pm` lifetime" **rejected**: `&'pm mut` is aliased-mut UB across HTTPThread/thread-pool; `Pin<Box>+Weak` adds Arc refcounting on the resolve hot path. bundler proposal split in two — stored fields use `BackRef`, transient params use `TranspilerCtx<'a>` (see B-2). runtime `JsCell` proposal split — C-callback user-data thunks (uWS/libuv) go here; JS-re-entrant receivers are R-2. |
+
+### CC-2 · Adopt `MultiArrayList::split_mut()` for SoA disjoint-column borrows
+| | |
+|---|---|
+| **Crates** | install, bundler |
+| **Sites** | ~42 (install 14: `yarn.rs`, `migration.rs`, `PackageInstaller.rs`, `lockfile/Tree.rs`, `isolated_install.rs`; bundler ~28: `LinkerGraph.rs:491-682`, `LinkerContext.rs:467-1363`, `bundle_v2.rs:1960-4523`) |
+| **Effort** | S |
+| **Unsafe removed** | ~41 |
+| **Recipe** | `multi_array_columns!` already generates `split_mut() -> XxxMut<'_>` and `split_raw()` (`src/collections/multi_array_list.rs:70-200`); `Graph.rs:120` / `LinkerGraph.rs:927` already declare them. Replace remaining `unsafe { from_raw_parts_mut(slice.items_raw::<"field",T>(), len) }` and per-iteration re-borrow chains with the generated accessor. |
+| **Feedback applied** | Both crates' surveys proposed *building* this — it exists. Downgraded M→S, scope is caller migration only. |
+
+### CC-3 · Replace `scopeguard` defer-transliterations with typed owning Drop guards
+| | |
+|---|---|
+| **Crates** | runtime, jsc, install, bundler |
+| **Sites** | ~90 (runtime 73; jsc 8; bundler ~8 realistically convertible; install 1 + the `\|d\| d.close()` sites that fold into I-3) |
+| **Effort** | M |
+| **Unsafe removed** | ~20 |
+| **Recipe** | For each defer site, classify: (a) cleanup tied to a resource → give the resource `impl Drop` (lcov file, terminal mode, abort_signal ref, `WorkerLease`, `TempLog`); (b) cleanup needs `&mut self` that the body also borrows → use the **FlushOnDrop pattern** (`ConsoleObject.rs`): move `self` into a guard, body reborrows *through* `guard.0`, `Drop` runs cleanup. Do **not** stash `*mut T` alongside a live `&mut T` (Stacked Borrows UB). Do **not** blanket-recommend `scopeguard::defer!` — the in-tree PORT NOTEs at `ParseTask.rs:840/1132/2060` document why it can't capture there. |
+| **Feedback applied** | jsc `defer_mut!(*mut T, F)` design **rejected** as unsound. install count corrected 12→1 actual scopeguard-with-raw-ptr; the rest are `\|d\| d.close()` and merge into I-3. bundler count corrected ~20→~8. |
+
+### CC-4 · Narrow `anyhow`/`bun_core::Error` returns to per-module typed enums
+| | |
+|---|---|
+| **Crates** | runtime, jsc, install, sql, bundler, js_parser |
+| **Sites** | ~351 (runtime 132; install 96; sql 52; js_parser 29; bundler 26; jsc 16) |
+| **Effort** | L |
+| **Unsafe removed** | 0 |
+| **Recipe** | One `#[derive(thiserror::Error)]` enum per logical module (`InstallError`, `BundlerError`, `LinkerError`, `ParseError`, `BtjsError`, …) with variants matching the Zig error sets. **Exception — sql**: do NOT introduce new enums or `thiserror`; `AnyPostgresError`/`AnyMySQLError` already exist and must round-trip variant names through `IntoStaticStr` for JS `error.code` / snapshot stability. There the work is signature-narrowing only: change `Result<_, bun_core::Error>` → `Result<_, AnyPostgresError>` and **delete** the lossy `From<bun_core::Error>` round-trip at `AnyPostgresError.rs:66-69`. |
+| **Feedback applied** | sql recipe corrected per `AnyPostgresError.rs` header comment. |
+
+### CC-5 · Relocate inline `extern "C"` blocks into `*_sys` crates
+| | |
+|---|---|
+| **Crates** | runtime, jsc |
+| **Sites** | ~156 explicit-TODO (runtime 97; jsc 59 — true population closer to 280 jsc files) |
+| **Effort** | L |
+| **Unsafe removed** | 0 (the `unsafe extern` stays; it just moves) |
+| **Recipe** | Mechanically relocate existing hand-written `extern "C"` blocks **verbatim** into hand-curated `bun_jsc_sys` / `runtime_sys` / `bun_cares_sys` / `spng_sys` crates, grouped by upstream header. Do **not** use bindgen — JSC/WebCore C++ headers (templates, namespaces, inline methods) are not bindgen-consumable; the existing decls are already stable C-ABI shims. First pass: only the ~156 with explicit `TODO(port): move to *_sys` markers. |
+| **Feedback applied** | "bindgen-generated" suggestion dropped. |
+
+### CC-6 · Replace manual `.deref()`/`.deinit()` with `RefPtr<T>` / `CppOwned<T>` / `impl Drop`
+| | |
+|---|---|
+| **Crates** | runtime, jsc |
+| **Sites** | ~97 (runtime 92 "Zig defer x.deref() → Drop"; jsc 5 ref-counted C++ ctors) |
+| **Effort** | M |
+| **Unsafe removed** | ~13 |
+| **Recipe** | Audit each site: where the field type already has `Drop`, delete the comment and any redundant manual call. Where it doesn't, add `impl Drop` (Rust-owned) or wrap in `CppOwned<T>(NonNull<T>)` whose `Drop` calls the FFI `deref`/`destroy` (FetchHeaders, RegularExpression, URL, TextCodec, JSCArrayBuffer). Note: FetchHeaders/AbortSignal/DOMFormData/URLSearchParams are WTF::RefCounted, **not** GC cells — they belong here, not in J-2 `GcPtr`. |
+| **Feedback applied** | Ref-counted types moved out of the `GcPtr` bucket. |
+
+### CC-7 · Lifetime threading for `&'static` / `*const` placeholder fields — **gated by heap-ownership classification**
+| | |
+|---|---|
+| **Crates** | runtime, css, sql, js_parser (bundler explicitly **excluded** — see B-1) |
+| **Sites** | ~183 (runtime 81; css 85; js_parser 13; sql 4) |
+| **Effort** | XL |
+| **Unsafe removed** | ~150 |
+| **Recipe** | **Mandatory step 1**: classify every flagged struct as (a) stack-/arena-scoped → add `<'bump>`/`<'i>`/`<'a>` param; or (b) JS-heap-owned (`#[bun_jsc::JsClass]`, stored in a GC cell) → must stay `'static`; wrap raw field in `JsBuffer`/`BackRef` newtype with documented invariant instead. ~25 of the runtime candidates (FileReader, FormData, ByteStream, blob CopyFile) are JsClass-backed and **cannot** take a lifetime param. css: thread `Parser`'s existing `'a` into AST nodes as `'i`; bundler boundary keeps `StyleSheet<'static, _>` (the bump arena IS the source owner there). sql: `Data<'a>` with `Temporary(&'a [u8])`; redesign self-referential `Data::slice_z()` to return `&[u8]` borrowing `&self`; ~15 packet structs gain `<'a>`. No monomorphization concern — lifetime params erase before codegen. |
+| **Feedback applied** | runtime JsClass constraint added. css "add `'i` to Parser" corrected (it's already there). bundler `'arena` threading **rejected entirely** (heterogeneous per-worker bumps; see B-1). sql `slice_z` self-ref + ~15-struct blast radius noted. |
+
+### CC-8 · Adopt existing `pretty_fmt!` / `pretty_errorln!` macros
+| | |
+|---|---|
+| **Crates** | install (and any other `Output.prettyFmt` TODO sites) |
+| **Sites** | ~18 |
+| **Effort** | S |
+| **Unsafe removed** | 0 |
+| **Recipe** | `pretty_fmt!` is already a proc-macro in `src/bun_core_macros/lib.rs`, wrapped at `bun_core/output.rs:1160-1176`. Replace `// TODO(port): Output.prettyFmt` sites in `install/lockfile/printer/tree_printer.rs` etc. with the existing macro. Do **not** write a new `macro_rules!` — that would be a third implementation. |
+| **Feedback applied** | Downgraded M→S; reframed as adoption. |
+
+---
+
+## 3. Per-crate refactors
+
+### runtime
+
+| ID | Title | Sites | Effort | Unsafe− | Recipe / feedback |
+|----|---|--:|:-:|--:|---|
+| R-1 | Migrate `expect/to*.rs` to existing `PostMatchGuard` | 53 | XS | 0 | `PostMatchGuard<'a>` + `post_match_guard()` already exist in `test_runner/expect.rs`. Mechanical sed: `scopeguard::guard(this, \|t\| t.post_match(global))` → `this.post_match_guard(global)`. |
+| R-2 | JS-re-entrant receivers: `&Self` + per-field `Cell`/`RefCell` (NOT whole-struct `&mut`) | ~45 | XL | ~60 | Timer/server/napi/socket fns that re-enter JS. **Reject** the originally-proposed `JsCell::with(\|&mut T\|)` — re-entrant inner frame would alias `&mut T` (same noalias UB it claims to fix). Receivers become `&Self`; fields that mutate across the callback boundary become `Cell<T>`/`RefCell<T>`. If a wrapper is wanted, `JsCell<T>(UnsafeCell<T>)` may expose `&T` + field projections only, never `&mut T`. C-callback user-data thunks are **not** this bucket — they go to CC-1. |
+| R-3 | Split `DevServer` into disjoint sub-structs (`Bundles`/`Graph`/`Assets`/`Io`) | 45 | L | ~40 | ~72 `dev_ptr`-related lines in `bake/DevServer.rs` do `let dev: *mut DevServer = self; unsafe{&mut *dev}`. **Drop** the `DevPtr(NonNull<_>)` alternative — it just hides the same aliased `&mut` UB inside an accessor. Only the sub-struct split lets borrowck prove non-overlap. |
+| R-4 | Fold `expect/to*.rs` host fns into `impl Expect` for `#[host_fn(method)]` | 50 | M | 0 | Move every matcher body into one `impl Expect { #[host_fn(method)] fn to_x(...) }` block; delete the per-file shim wiring. |
+| R-5 | `JSValue::to_fmt` formatter sharing — **rescope or drop** | 39 | S | 0 | Two-formatter clone is arguably **correct**: `Formatter` carries a circular-ref seen-set; sharing one across `expected`/`received` would render `[Circular]` falsely. If pursued, rescope to "reset `map`/`depth` at `to_fmt()` entry so a single `&mut` can be reused sequentially" — no `RefCell`, no `bun_jsc` API break. Verify against `ConsoleObject.zig` first. |
+
+### jsc
+
+| ID | Title | Sites | Effort | Unsafe− | Recipe / feedback |
+|----|---|--:|:-:|--:|---|
+| J-1 | Implement `#[bun_jsc::host_fn]` / `#[derive(PojoFields)]` proc-macro family | 17 | L | ~25 | Build `bun_jsc_macros` exporting `#[host_fn]` (replaces hand-written `wrap1..5`/`DOMCall` trampolines) and `#[derive(PojoFields)]` (replaces `JSObject.create(struct)` reflection). |
+| J-2 | `GcPtr<T>` for true `JSCell` subclasses only, with `NoGc<'_>` token | ~7 | M | ~10 | **Reject** tying `&'gc T` to `&JSGlobalObject` — that ref is live for the whole host-fn body while GC may run at any inner JS call, so the borrow can dangle mid-scope. Either keep `as_ref` `unsafe`, or introduce a zero-sized `NoGc<'gc>` token created by the host-fn macro and consumed/invalidated by any allocating call. Scope to true GC cells (JSBigInt, JSString, JSPromise); RefCounted types moved to CC-6. |
+| J-3 | `VirtualMachine` split-borrow: stop materializing `&mut VirtualMachine` | 18 | L | ~40 | EventLoop/AsyncModule/RuntimeTranspilerStore/ipc need `(&mut vm.field, &vm)`. Factor hot fields into sub-structs or add projection methods that hand out disjoint `&mut field` without ever forming `&mut VirtualMachine`. |
+| J-4 | `SavedSourceMap` RAII `SourceMapGuard<'_>` | 4 | S | 2 | Do **not** move `map` into a `Mutex` (it's a sibling-field backref into VM, and `lock()/unlock()` also toggle `map.{un,}lock_pointers()`). Add `fn lock(&mut self) -> SourceMapGuard<'_>` whose ctor does `mutex.lock(); map.unlock_pointers()` and whose `Drop` reverses both; `DerefMut<Target=HashTable>`. Use `bun_threading::Mutex`, not `parking_lot`. |
+| J-5 | `impl Clone for ConsoleObject::Formatter` | 4 | S | 4 | Replace `ManuallyDrop` + field-by-field moves at 4 E0509 sites with a hand-written `Clone`. |
+
+### css
+
+| ID | Title | Sites | Effort | Unsafe− | Recipe / feedback |
+|----|---|--:|:-:|--:|---|
+| C-1 | Apply existing `#[derive(DeepClone, CssEql, CssHash)]` to remaining hand-expansions | 106 | M | 0 | `bun_css_derive` already exports all three (`src/css_derive/lib.rs`, 1242 LOC, 137 derive sites already use it). Delete `implement_deep_clone`/`implement_eql` free-fn shims once zero callers remain. **Not** "create the crate". |
+| C-2 | Apply existing `#[derive(DefineEnumProperty)]` to remaining keyword enums | 64 | S | 0 | Derive exists at `css_derive/lib.rs:671` (kebab-case + `#[css(keyword="…")]` override). Apply to `text.rs`/`svg.rs`/`ui.rs`/`list.rs` to clear `todo_stuff.depth` stubs. Drop the `strum` alternative. |
+| C-3 | Apply existing `#[derive(Parse, ToCss)]` to remaining sum types | 25 | S | 0 | Derive exists at `css_derive/lib.rs:791-815`. Apply to `font.rs`, `image.rs`, `gradient.rs`, `grid.rs`, `easing.rs`, `percentage.rs`, `border_image.rs`. If any need `#[css(skip)]`/ordering control, that attribute is the actual work item. |
+| C-4 | Crate-local `match_ignore_ascii_case!` (stack-buffer lowercase + byte `match`) | ~18 | S | 0 | Do **not** pull in `cssparser` (competing tokenizer) or `phf` (no built-in ASCII-CI hasher; lowercase-into-stack-buffer + plain `match` is equivalent and dep-free). ~30 LOC `macro_rules!`. |
+| C-5 | `trait Shorthand` + `#[derive(Shorthand)]` for `PropertyFieldMap` | 19 | M | 0 | `const FIELDS: &[(PropertyIdTag, bool)]` + `longhand()` generated from `#[shorthand(...)]` attrs. |
+| C-6 | Handler `Pending` sub-struct for `flush()` split-borrows | 30 | M | 0 | Group per-longhand `Option<T>` fields into nested `Pending`; `let pending = mem::take(&mut self.pending)` yields all at once. |
+| C-7 | `Parser::{next_cloned, expect_ident_cloned, expect_string_cloned}` | 12 | S | 0 | Owned-return variants; become zero-cost once `'i` lands (`Token<'i>: Copy`). |
+| C-8 | `SmallList<T,N>`: real `Drop` + `IntoIterator` + by-value `append` | 9 | S | 8 | Drop must drop elements (not just free heap buffer); `append`/`Extend` move elements instead of bitwise copy. |
+| C-9 | Thread `'i` into CSS AST nodes (subset of CC-7) | 85 | XL | ~120 | See CC-7. Bundler boundary keeps `StyleSheet<'static, _>` at `ParseTask.rs:657` `bump.alloc`. |
+
+### install
+
+| ID | Title | Sites | Effort | Unsafe− | Recipe / feedback |
+|----|---|--:|:-:|--:|---|
+| I-1 | `Lockfile::split()` → `(StringBuf<'_>, &mut Buffers, &mut PackageList)` | 35 | L | 8 | Disjoint-field projection so callers stop reconstructing `&mut Lockfile` for string-buf access. |
+| I-2 | Migrate manual `len()/set_length()` save-restore to existing `Path::save()` guard | 8 | S | 0 | `Path::save() -> ResetScope<'_>` exists at `src/paths/Path.rs:1222` and `DerefMut`s to the path (premise that it "locks out append" was false). Migrate `bin.rs`, `Hardlinker.rs`, `FileCopier.rs`, `isolated_install.rs`. **Drop** the proposed `(*mut AbsPath, usize)` design. |
+| I-3 | Finalize `bun_sys::Dir`/`File`; absorb `\|d\| d.close()` scopeguards into `Drop` | ~35 | M | 2 | Replace `std.fs.Dir` placeholders + the ~20 `scopeguard::guard(dir, \|d\| d.close())` sites with `bun_sys::Dir` (RAII close). Merged with the orphaned half of the scopeguard proposal. |
+| I-4 | `Task::data` / `NetworkTask::http`: `MaybeUninit` → `Option<T>` | 10 | S | 4 | Zig `= undefined` then whole-struct-assign → `Option` + `.get_or_insert`. |
+| I-5 | `#[derive(ZeroPadding)]` for `bun.serializable()` / `assertNoUninitializedPadding` | 7 | M | 3 | Derive in `bun_macros`: const-assert `size_of == sum(field sizes)`, emit zero-init ctor for hash stability. |
+| I-6 | Single `DeferSuccess` guard at `PackageManagerEnqueue.rs:2076` | 1 | XS | 1 | Only one real `scopeguard::guard((this_ptr,…))` site. Guard holds `BackRef<PackageManager>`, not `&mut`. Low value; optional. |
+
+### sql
+
+| ID | Title | Sites | Effort | Unsafe− | Recipe / feedback |
+|----|---|--:|:-:|--:|---|
+| S-1 | `U24` newtype for MySQL 3-byte lengths | ~5 | S | 0 | `PacketHeader::length` + `packet_size` fields fed from it. **Exclude** `max_packet_size` in `SSLRequest`/`HandshakeResponse41` (4-byte wire format via `writer.int4()`). |
+| S-2 | Convert remaining 2 mysql `#[repr(u8)] enum` → transparent newtype + assoc consts | 2 | S | 6 | Only `CharacterSet` and mysql `FieldType` remain (`TransactionStatusIndicator`, postgres `FieldType`/`Tag`, `PacketType`, `Auth::*` are already newtypes). Derive `PartialEq, Eq` so consts stay structural-match in `match` arms. |
+| S-3 | Collapse `WriteWrap<_,F>` ZST → `trait Encode`; rename `DecoderWrap`→`Decode` | 9 | M | 0 | `DecoderWrap` is **already** the proposed trait. Handle the two signature shapes: define `Decode` (`&mut self` in-place, mysql) + `DecodeOwned` (`-> Self`, postgres ReadyForQuery), or normalize postgres to `&mut self` first. |
+| S-4 | `Data<'a>` lifetime + `slice_z` redesign (subset of CC-7) | ~15 structs | L | 8 | See CC-7 sql notes. |
+| S-5 | `StackReader::peek()` receiver `&mut self` → `&self` | 3 | S | 0 | Only reads `self.buffer[*self.offset..]`. |
+
+### bundler
+
+| ID | Title | Sites | Effort | Unsafe− | Recipe / feedback |
+|----|---|--:|:-:|--:|---|
+| B-1 | **Reject** `'arena` threading; instead own bumps in `Graph.heap: Vec<Pin<Box<Bump>>>` | 22 | M | 0 | N files = N distinct per-worker `ThreadLocalArena` bumps; no single `'arena` exists. `ouroboros`/`self_cell` don't compose with `MultiArrayList<BundledAst>` SoA. Move bump ownership into `Graph` so "bumps outlive ASTs" is enforced by drop order; document the `'static`-as-self-ref contract once on `JSAst`. Do **not** add `'arena` to `Graph`/`LinkerGraph`/`ParseTask`. |
+| B-2 | `TranspilerCtx<'a>` projector for transient `(&mut Transpiler, &mut Resolver)` params | ~10 | M | ~40 | Only the call-tree params (`ParseTask.rs:644/763/1291/1449/1510`). Stored fields (`LinkerContext.resolver`, `Worker.ctx`) use CC-1 `BackRef` instead. |
+| B-3 | Unify the three `fs::Path` / `Index` newtypes via `From`/`Into` + canonical re-export | 19 | M | 4 | `bun_logger::fs::Path` / `bun_resolver::fs::Path<'a>` / `bun_paths::fs::Path` and three `Index` types are structurally identical `repr(transparent)`. |
+| B-4 | `Clone` derive cleanup (`PrintResult`, `G::Property`, `CompileResult`) | ~10 | XS | 2 | `Logger::Source` is **already** `#[derive(Clone)]` (`src/logger/lib.rs:3199`); delete `dup_logger_source` and stale notes at `bundle_v2.rs:1563/3322`. Add derives to the genuinely-missing types. |
+| B-5 | `BundledAst::to_ast()` → borrowed `AstView<'_>` (kill `ptr::read`+`ManuallyDrop`) | 8 | L | 24 | Replace bitwise-copy of Drop-carrying struct with a borrowed view. |
+| B-6 | `ArrayHashMap::entry_mut` / `get_or_insert_with` | 7 | S | 3 | Replace `contains_key` + `insert` + re-lookup splits. |
+| B-7 | Runtime allocator routing via `&dyn Allocator` / generic `A` | 40 | L | 6 | ~40 dropped `arena`/`allocator` params (`allocatorForSize`, `worker.arena`, `j.done(alloc)`). |
+
+### js_parser
+
+| ID | Title | Sites | Effort | Unsafe− | Recipe / feedback |
+|----|---|--:|:-:|--:|---|
+| P-1 | Thread `'bump` through AST string/slice fields (`E::Dot::name`, `StoreStr`, `StoreSlice`) | 13 | L | ~10 | Subset of CC-7 — stack/arena-scoped, parameterizable. |
+
+(js_parser `ParseError` enum is folded into CC-4.)
+
+---
+
+## 4. Recommended order
+
+Ordered by leverage × inverse risk. "Adoption sweeps" (the abstraction already exists) come first — they are mechanical, low-risk, and unblock later work by removing noise.
+
+| # | Refactor | Why first |
+|--:|---|---|
+| 1 | **CC-2** MultiArrayList `split_mut()` adoption | S effort, ~41 `unsafe` removed, zero design risk — pure caller migration. |
+| 2 | **R-1** PostMatchGuard migration · **I-2** `Path::save()` migration · **CC-8** `pretty_fmt!` · **B-4** Clone cleanup | XS/S adoption sweeps; each <1 day; clears ~80 stale notes. |
+| 3 | **CC-1** `BackRef<T>` adoption | Highest leverage score; centralizes ~100 SAFETY comments onto one audited type; prerequisite for B-2/R-2 splits. |
+| 4 | **C-1/C-2/C-3** Apply existing `bun_css_derive` macros | Clears 195 css `missing_idiom` notes (largest single category bucket) with no new proc-macro work. |
+| 5 | **CC-3** Typed RAII Drop guards · **I-3** `bun_sys::Dir` finalize | Medium effort; removes the FlushOnDrop-pattern hazard sites before they multiply. |
+| 6 | **S-2** mysql enum→newtype · **C-8** `SmallList` Drop · **I-4** `MaybeUninit`→`Option` · **J-5** Formatter Clone | Small, isolated soundness fixes (`bitwise_copy_hazard` bucket). |
+| 7 | **R-3** DevServer split · **J-3** VirtualMachine split · **I-1** Lockfile split · **C-6** Pending sub-struct | The four big "split self into disjoint sub-structs" refactors. Do after CC-1 so backref fields are already typed. |
+| 8 | **CC-4** Error-set narrowing | Large but mechanical; no `unsafe` payoff so deprioritized below soundness work. |
+| 9 | **B-5** `AstView<'_>` · **B-2** `TranspilerCtx<'a>` · **B-1** Graph bump ownership | Bundler memory-model cluster; B-1 must land before any attempt at js_parser P-1. |
+| 10 | **J-1** `#[host_fn]` macros · **R-4** fold expect into `impl Expect` | J-1 unblocks R-4; both unblock J-2. |
+| 11 | **CC-7** Lifetime threading (css `'i`, sql `Data<'a>`, runtime stack-scoped subset, js_parser `'bump`) | XL, highest churn, highest review burden. Gate on the heap-ownership classification step — do **not** start without it. |
+| 12 | **R-2** JS-re-entrant `&Self` + field `Cell` | XL, most invasive runtime change; last because it touches hot-path timer/server/socket code and the design must avoid the rejected `with(&mut T)` trap. |
+| — | **CC-5** `*_sys` extraction · **B-7** allocator routing · **B-3** Path/Index unify | Background / parallelizable; no ordering dependency. |
+| — | **R-5** `to_fmt` formatter | Verify-then-likely-drop. |
+
+---
+
+*Total distinct refactors in this plan: **42** (8 cross-cutting + 34 per-crate). Estimated `unsafe` blocks retired if all land: **~520**.*

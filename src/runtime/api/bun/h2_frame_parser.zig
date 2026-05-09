@@ -3565,6 +3565,13 @@ pub const H2FrameParser = struct {
                 return globalObject.ERR(.INVALID_ARG_TYPE, "options.silent must be a boolean", .{}).throw();
             }
         }
+        // Any of the `options.get(...)` calls above can invoke a user
+        // getter / Proxy trap that synchronously aborts the stream's
+        // AbortSignal — SignalRef.abortListener runs inline → abortStream
+        // → removeStreamByID → bun.destroy(stream). Re-resolve before
+        // touching `stream.*` again so the subsequent writes/reads don't
+        // land on freed heap.
+        stream = this.streams.get(stream_id) orelse return .false;
         if (parent_id == stream.id) {
             this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Stream with self dependency", this.lastStreamID, true);
             return .false;
@@ -4030,6 +4037,15 @@ pub const H2FrameParser = struct {
         log("trailers encoded_size {}", .{encoded_size});
 
         const writer = this.toWriter();
+
+        // The header-iteration loop above called `item.toJSString()` and
+        // `sensitive_arg.getTruthyPropertyValue(...)` on user-supplied
+        // values, either of which can invoke a Proxy trap / Symbol.toPrimitive
+        // that synchronously aborts the stream's AbortSignal →
+        // SignalRef.abortListener → abortStream → removeStreamByID →
+        // bun.destroy(stream). Re-resolve before any further `stream.*`
+        // access so the subsequent writes/reads don't land on freed heap.
+        stream = this.streams.get(stream_id) orelse return .js_undefined;
 
         // RFC 7540 Section 6.2 & 6.10: Check if we need CONTINUATION frames
         if (encoded_size <= actual_max_frame_size) {

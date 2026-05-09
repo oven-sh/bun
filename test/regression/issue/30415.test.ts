@@ -159,3 +159,84 @@ test("http2 write callback aborting the signal does not UAF the stream", async (
     exitCode: 0,
   });
 });
+
+// Same UAF class, different entry point. `stream.priority({...})` and
+// `stream.sendTrailers({...})` hand a user-controlled object straight to
+// native code, which reads `options.get("weight")` / `options.get("parent")`
+// etc. A property getter / Proxy trap on that object can synchronously
+// `AbortController.abort()`, which fires `SignalRef.abortListener` inline
+// → `abortStream` → `removeStreamByID` → `bun.destroy(stream)`. The native
+// code then continues reading and writing `stream.*` on the freed
+// allocation. Before the fix a release build would silently corrupt the
+// heap; an ASAN build crashes.
+test("http2 priority options getter aborting the signal does not UAF", async () => {
+  const script = /* js */ `
+    const http2 = require("node:http2");
+
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      // Don't end immediately — keep the stream open long enough for the
+      // client to call priority() on it.
+      setImmediate(() => {
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+    });
+
+    server.listen(0, "127.0.0.1", async () => {
+      const port = server.address().port;
+      const client = http2.connect("http://127.0.0.1:" + port);
+      client.on("error", () => {});
+      await new Promise(r => client.on("connect", r));
+
+      const ITERATIONS = 10;
+      for (let i = 0; i < ITERATIONS; i++) {
+        const ac = new AbortController();
+        await new Promise(resolve => {
+          const req = client.request(
+            { ":path": "/", ":method": "GET" },
+            { signal: ac.signal },
+          );
+          req.on("error", () => {});
+          req.on("close", resolve);
+          req.on("response", () => {
+            // Call priority() with an options object whose "weight" getter
+            // synchronously aborts the AbortSignal. The native
+            // setStreamPriority reads options.get("weight") first, then
+            // proceeds to write stream.streamDependency / stream.exclusive
+            // / stream.weight — on freed memory before this fix.
+            try {
+              req.priority({
+                get weight() {
+                  ac.abort();
+                  return 16;
+                },
+                parent: 3,
+                exclusive: false,
+                silent: false,
+              });
+            } catch {}
+          });
+          req.resume();
+          req.end();
+        });
+      }
+
+      for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+      console.log("ok");
+      client.close(() => server.close(() => process.exit(0)));
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, stdout: stdout.trim().split("\n").pop(), exitCode }).toMatchObject({
+    stdout: "ok",
+    exitCode: 0,
+  });
+});

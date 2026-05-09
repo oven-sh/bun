@@ -3448,16 +3448,6 @@ where
     }
 }
 
-#[cfg(windows)]
-impl<C, F> read_file::ReadFileUvHandler for NewInternalReadFileHandler<C, F>
-where
-    F: InternalReadFileFn<C>,
-{
-    fn run(ctx: *mut c_void, bytes: read_file::ReadFileResultType) {
-        Self::run(ctx, bytes);
-    }
-}
-
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1504,9 +1504,10 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub fn throw(&mut self, err: bun_sys::Error) {
-        let global_this = self.event_loop.global;
+        // SAFETY: `event_loop.global` is the VM's `JSGlobalObject` (process lifetime).
+        let global_this = unsafe { self.event_loop.global.unwrap().as_ref() };
         let promise = self.promise.swap();
-        let err_instance = err.to_js_with_async_stack(global_this, &promise);
+        let err_instance = err.to_js_with_async_stack(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
@@ -1546,13 +1547,18 @@ impl<'a> CopyFileWindows<'a> {
                 self.io_request = unsafe { core::mem::zeroed::<libuv::fs_t>() };
                 self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
-                let rc = libuv::uv_fs_chmod(
-                    loop_,
-                    &mut self.io_request,
-                    path,
-                    i32::try_from(mode).expect("int cast"),
-                    Some(on_chmod),
-                );
+                // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` was just zeroed,
+                // `path` is NUL-terminated (from `slice_z`), and `on_chmod` is a valid
+                // `uv_fs_cb`.
+                let rc = unsafe {
+                    libuv::uv_fs_chmod(
+                        loop_,
+                        &mut self.io_request,
+                        path.as_ptr(),
+                        i32::try_from(mode).expect("int cast"),
+                        Some(on_chmod),
+                    )
+                };
 
                 // chmod failed to start - reject the promise to report the error.
                 // PORT NOTE: previously `transmute::<c_int, SystemErrno>(errno)` — wrong on
@@ -1577,7 +1583,8 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn resolve_promise(&mut self, written: usize) {
-        let global_this = self.event_loop.global;
+        // SAFETY: `event_loop.global` is the VM's `JSGlobalObject` (process lifetime).
+        let global_this = unsafe { self.event_loop.global.unwrap().as_ref() };
         let promise = self.promise.swap();
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
@@ -1610,7 +1617,7 @@ impl<'a> CopyFileWindows<'a> {
     pub unsafe fn destroy(this: *mut Self) {
         (*this).read_write_loop.close();
         // destination_file_store.deref() / source_file_store.deref() — Arc Drop on Box drop
-        (*this).promise.deinit();
+        // promise.deinit() — handled by JscStrong's Drop on Box drop
         (*this).io_request.deinit();
         drop(bun_core::heap::take(this));
     }
@@ -1624,7 +1631,7 @@ impl<'a> CopyFileWindows<'a> {
             PathOrFileDescriptor::Path(_)
         ) {
             self.throw(bun_sys::Error {
-                errno: bun_sys::SystemErrno::EINVAL as c_int,
+                errno: bun_sys::SystemErrno::EINVAL as u16,
                 syscall: bun_sys::Tag::mkdir,
                 ..Default::default()
             });
@@ -1632,14 +1639,17 @@ impl<'a> CopyFileWindows<'a> {
         }
 
         self.event_loop.ref_concurrently();
+        let path_slice = destination.pathlike.path().slice();
         node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
-            // TODO(port): callback ABI — Zig casts &onMkdirpCompleteConcurrent to a generic completion fn ptr
-            completion: on_mkdirp_complete_concurrent as *const c_void,
-            completion_ctx: core::ptr::from_mut(self).cast::<c_void>(),
-            path: bun_paths::dirname(destination.pathlike.path().slice())
+            completion: on_mkdirp_complete_concurrent,
+            completion_ctx: core::ptr::from_mut(self).cast::<()>(),
+            // BORROW: not owned — `destination_file_store` (and thus its path) is held in
+            // `self`, which outlives the workpool task (completion runs `copyfile`/`throw`
+            // on `self` before any `destroy`).
+            path: bun_paths::dirname(path_slice)
                 // this shouldn't happen
-                .unwrap_or(destination.pathlike.path().slice())
-                .into(),
+                .unwrap_or(path_slice) as *const [u8],
+            ..Default::default()
         })
         .schedule();
     }
@@ -1648,9 +1658,10 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.unref_concurrently();
 
         if let Some(err) = self.err.take() {
-            let mut err2 = err.clone();
+            // PORT NOTE: Zig `var err2 = err; err2.deinit();` freed the borrowed path; in
+            // Rust `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with `err`
+            // inside `throw`.
             self.throw(err);
-            err2.deinit();
             return;
         }
 

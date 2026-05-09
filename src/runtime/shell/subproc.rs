@@ -855,7 +855,7 @@ pub enum WritableInitError {
 }
 
 pub enum Writable {
-    Pipe(Arc<FileSink>),
+    Pipe(FileSinkPtr),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
     Memfd(Fd),
@@ -885,7 +885,7 @@ impl Writable {
         match self {
             Writable::Pipe(pipe) => {
                 // SAFETY: single-thread; raw mut access mirrors Zig.
-                unsafe { arc_mut(pipe) }.update_ref(add);
+                unsafe { pipe.as_mut() }.update_ref(add);
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
@@ -929,7 +929,7 @@ impl Writable {
         subprocess: *mut Subprocess,
         result: StdioResult,
     ) -> Result<Writable, WritableInitError> {
-        assert_stdio_result(result);
+        assert_stdio_result(&result);
 
         // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out via
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
@@ -939,13 +939,21 @@ impl Writable {
         {
             match &mut stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if matches!(result, StdioResult::Buffer(_)) {
-                        let pipe = FileSink::create_with_pipe(event_loop, result.buffer());
+                    if let StdioResult::Buffer(buf) = result {
+                        // Ownership of the `Box<uv::Pipe>` transfers into the
+                        // FileSink's writer (Zig: `result.buffer` is the same
+                        // heap pointer the sink takes over).
+                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buf);
+                        let pipe_ptr = FileSink::create_with_pipe(event_loop, uv_pipe);
 
-                        match pipe.writer.start_with_current_pipe() {
+                        // SAFETY: `create_with_pipe` returns a freshly-boxed
+                        // non-null FileSink with refcount 1; sole reference.
+                        match unsafe { (*pipe_ptr).writer.start_with_current_pipe() } {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
-                                drop(pipe); // deref
+                                // SAFETY: pipe_ptr is live with refcount 1;
+                                // deref frees it (Zig: `pipe.deref()`).
+                                unsafe { FileSink::deref(pipe_ptr) };
                                 return Err(WritableInitError::UnexpectedCreatingStdin);
                             }
                         }
@@ -954,7 +962,9 @@ impl Writable {
                         // subprocess.weak_file_sink_stdin_ptr = pipe;
                         // subprocess.flags.has_stdin_destructor_called = false;
 
-                        return Ok(Writable::Pipe(pipe));
+                        // SAFETY: `create_with_pipe` returns non-null with one
+                        // owned ref; `adopt` takes it over.
+                        return Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -1116,7 +1126,7 @@ impl Writable {
         match self {
             Writable::Pipe(pipe) => {
                 // SAFETY: single-thread; raw mut access mirrors Zig.
-                let _ = unsafe { (*Arc::as_ptr(pipe).cast_mut()).end(None) };
+                let _ = unsafe { pipe.as_mut() }.end(None);
             }
             Writable::Memfd(fd) | Writable::Fd(fd) => {
                 fd.close();
@@ -1172,13 +1182,17 @@ impl Readable {
 
     pub fn r#ref(&mut self) {
         if let Readable::Pipe(pipe) = self {
-            pipe.update_ref(true);
+            // SAFETY: see `arc_mut` — single-threaded shell; Windows
+            // `BufferedReader::update_ref` needs `&mut` to touch the libuv
+            // `Source` ref/unref.
+            unsafe { arc_mut(pipe) }.update_ref(true);
         }
     }
 
     pub fn unref(&mut self) {
         if let Readable::Pipe(pipe) = self {
-            pipe.update_ref(false);
+            // SAFETY: see `arc_mut` — single-threaded shell.
+            unsafe { arc_mut(pipe) }.update_ref(false);
         }
     }
 
@@ -1200,7 +1214,7 @@ impl Readable {
         _max_size: u32,
         _is_sync: bool,
     ) -> Readable {
-        assert_stdio_result(result);
+        assert_stdio_result(&result);
 
         // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
         // Default-able payloads instead of partial moves (E0509).

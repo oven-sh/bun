@@ -28,6 +28,8 @@ use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(windows)]
+use bun_libuv_sys::UvHandle as _;
 
 declare_scope!(Listener, visible);
 
@@ -240,7 +242,7 @@ impl Listener {
                 }));
                 // SAFETY: just allocated, non-null, exclusive
                 let this_ref = unsafe { &mut *this };
-                if !default_data.is_zero() {
+                if !default_data.is_empty() {
                     this_ref.strong_data = Strong::create(default_data, global);
                 }
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
@@ -999,7 +1001,7 @@ impl Listener {
                         let osfd: uv::uv_os_fd_t = uvfd as usize as uv::uv_os_fd_t;
                         if bun_sys::windows::GetFileType(osfd) == bun_sys::windows::FILE_TYPE_PIPE {
                             // yay its a named pipe lets make it a libuv fd
-                            *fd = Fd::from_native(osfd)
+                            *fd = Fd::from_system(osfd)
                                 .make_lib_uv_owned()
                                 .unwrap_or_else(|_| panic!("failed to allocate file descriptor"));
                             true
@@ -1509,7 +1511,7 @@ impl WindowsNamedPipeListeningContext {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
         };
 
-        let client = WindowsNamedPipeContext::create(this_ref.global_this, socket);
+        let client = WindowsNamedPipeContext::create(&this_ref.global_this, socket);
 
         // SAFETY: `client` was just heap-allocated by `create()`; exclusive here.
         let result = unsafe {

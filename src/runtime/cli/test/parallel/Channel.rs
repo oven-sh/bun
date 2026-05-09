@@ -28,6 +28,8 @@ use bun_uws as uws;
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
+use bun_libuv_sys::{UvHandle as _, UvStream as _};
 
 use super::frame;
 
@@ -208,7 +210,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             if let Some(e) = pipe.init(uv::Loop::get(), true).to_error(bun_sys::Tag::pipe) {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_init failed: {}",
-                    e.name(),
+                    e.name().escape_ascii(),
                 ));
                 drop(pipe);
                 return false;
@@ -217,16 +219,17 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_open({}) failed: {}",
                     fd.uv(),
-                    e.name(),
+                    e.name().escape_ascii(),
                 ));
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                 unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
                 return false;
             }
+            let pipe = bun_core::heap::into_raw(pipe);
             if !self.adopt_pipe(vm, pipe) {
-                // adopt_pipe consumed the Box on failure path itself.
-                // TODO(port): Zig caller still owned `pipe` on adoptPipe failure
-                // and called closeAndDestroy here; reconcile ownership in Phase B.
+                // Caller still owns `pipe` on adopt_pipe failure (Zig spec).
+                // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
+                unsafe { uv::Pipe::close_and_destroy(pipe) };
                 return false;
             }
             return true;

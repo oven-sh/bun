@@ -799,6 +799,10 @@ mod windows_impl {
             bun_output::scoped_log!(WriteFile, "mkdirp");
             self.mkdirp_if_not_exists = false;
 
+            // Compute the raw self pointer first so the immutable borrow of
+            // `path` (into `self.file_blob.store`) does not conflict with the
+            // `&mut self` reborrow needed by `from_mut`.
+            let ctx = core::ptr::from_mut(self).cast::<()>();
             let path = self
                 .file_blob
                 .store
@@ -811,7 +815,7 @@ mod windows_impl {
                 .slice();
             crate::node::fs::async_::AsyncMkdirp::new(crate::node::fs::async_::AsyncMkdirp {
                 completion: Self::on_mkdirp_complete_concurrent,
-                completion_ctx: (core::ptr::from_mut(self)).cast::<()>(),
+                completion_ctx: ctx,
                 // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
                 // points into `self.file_blob.store`, which outlives the mkdirp
                 // task (it's released only in `deinit()`).

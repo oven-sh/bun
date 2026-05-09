@@ -24,6 +24,8 @@ use crate::api::bun::process::{
 };
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_sys::{self, Fd, FdExt, SystemError};
 use enumset::{EnumSet, EnumSetType};
 use strum::IntoStaticStr;

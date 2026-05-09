@@ -257,6 +257,9 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, default_request_payer, globalObject);
     defer aws_options.deinit();
 
+    // initS3 transfers ownership of `path` to the store. Nothing below may
+    // return an error: the caller's `errdefer path.deinit()` still aliases
+    // the same string the store now owns.
     const store = brk: {
         if (aws_options.changed_credentials) {
             break :brk bun.handleOom(Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator));
@@ -264,38 +267,13 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
             break :brk bun.handleOom(Blob.Store.initS3WithReferencedCredentials(path, null, default_credentials, bun.default_allocator));
         }
     };
-    errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
     store.data.s3.request_payer = aws_options.request_payer;
 
     var blob = Blob.initWithStore(store, globalObject);
-    if (options) |opts| {
-        if (opts.isObject()) {
-            if (try opts.getTruthyComptime(globalObject, "type")) |file_type| {
-                inner: {
-                    if (file_type.isString()) {
-                        var allocator = bun.default_allocator;
-                        var str = try file_type.toSlice(globalObject, bun.default_allocator);
-                        defer str.deinit();
-                        const slice = str.slice();
-                        if (!strings.isAllASCII(slice)) {
-                            break :inner;
-                        }
-                        blob.content_type_was_set = true;
-                        if (globalObject.bunVM().mimeType(str.slice())) |entry| {
-                            blob.content_type = entry.value;
-                            break :inner;
-                        }
-                        const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
-                        blob.content_type = strings.copyLowercase(slice, content_type_buf);
-                        blob.content_type_allocated = true;
-                    }
-                }
-            }
-        }
-    }
+    setBlobContentType(&blob, aws_options.content_type, globalObject);
     return blob;
 }
 
@@ -307,41 +285,33 @@ pub fn constructS3FileWithS3Credentials(
 ) bun.JSError!Blob {
     var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject);
     defer aws_options.deinit();
+    // initS3 transfers ownership of `path` to the store. Nothing below may
+    // return an error: the caller's `errdefer path.deinit()` still aliases
+    // the same string the store now owns.
     const store = bun.handleOom(Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator));
-    errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
     store.data.s3.request_payer = aws_options.request_payer;
 
     var blob = Blob.initWithStore(store, globalObject);
-    if (options) |opts| {
-        if (opts.isObject()) {
-            if (try opts.getTruthyComptime(globalObject, "type")) |file_type| {
-                inner: {
-                    if (file_type.isString()) {
-                        var allocator = bun.default_allocator;
-                        var str = try file_type.toSlice(globalObject, bun.default_allocator);
-                        defer str.deinit();
-                        const slice = str.slice();
-                        if (!strings.isAllASCII(slice)) {
-                            break :inner;
-                        }
-                        blob.content_type_was_set = true;
-                        if (globalObject.bunVM().mimeType(str.slice())) |entry| {
-                            blob.content_type = entry.value;
-                            break :inner;
-                        }
-                        const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
-                        blob.content_type = strings.copyLowercase(slice, content_type_buf);
-                        blob.content_type_allocated = true;
-                    }
-                }
-            }
-        }
-    }
+    setBlobContentType(&blob, aws_options.content_type, globalObject);
     return blob;
 }
+
+fn setBlobContentType(blob: *Blob, content_type: ?[]const u8, globalObject: *jsc.JSGlobalObject) void {
+    const slice = content_type orelse return;
+    if (!strings.isAllASCII(slice)) return;
+    blob.content_type_was_set = true;
+    if (globalObject.bunVM().mimeType(slice)) |entry| {
+        blob.content_type = entry.value;
+        return;
+    }
+    const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
+    blob.content_type = strings.copyLowercase(slice, content_type_buf);
+    blob.content_type_allocated = true;
+}
+
 fn constructS3FileInternal(
     globalObject: *jsc.JSGlobalObject,
     path: jsc.Node.PathLike,

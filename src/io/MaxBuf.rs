@@ -1,24 +1,13 @@
 use core::ptr::NonNull;
 
-/// CYCLEBREAK(vtable): the owning subprocess lives in `bun_jsc::Subprocess`
-/// (T6); io (T2) stores it opaquely and calls back through this vtable when
-/// the byte budget overflows. `bun_runtime` provides the static instance.
-/// PERF(port): was inline switch (cold — fires once per maxBuffer overflow).
-pub struct MaxBufOwnerVTable {
-    /// Called when `remaining_bytes` drops below 0. `owner` is the erased
-    /// `*mut Subprocess`; `this` is the overflowing MaxBuf. Implementor must
-    /// determine which slot (`stderr_maxbuf` / `stdout_maxbuf`) `this` occupies,
-    /// call `MaxBuf::remove_from_subprocess` on it, then invoke
-    /// `Subprocess::on_max_buffer(kind)`.
-    pub on_overflow: unsafe fn(owner: NonNull<()>, this: NonNull<MaxBuf>),
-}
+pub use crate::{MaxBufOwner, MaxBufOwnerKind};
 
 /// Tracks remaining byte budget for a subprocess stdout/stderr pipe.
 /// Dual-owned by the `Subprocess` and the pipe reader; freed when both disown it.
 pub struct MaxBuf {
     /// `None` after subprocess finalize.
     // TODO(port): lifetime — raw backref to the owning Subprocess (BACKREF); not in LIFETIMES.tsv
-    pub owned_by_subprocess: Option<(NonNull<()>, &'static MaxBufOwnerVTable)>,
+    pub owned_by_subprocess: Option<MaxBufOwner>,
     /// `false` after pipereader finalize.
     pub owned_by_reader: bool,
     /// If this goes negative, `on_max_buffer` is called on the subprocess.
@@ -34,8 +23,7 @@ pub struct MaxBuf {
 // ownership flags) and dropping destroy()/disowned().
 impl MaxBuf {
     pub fn create_for_subprocess(
-        owner: NonNull<()>,
-        vtable: &'static MaxBufOwnerVTable,
+        owner: MaxBufOwner,
         ptr: &mut Option<NonNull<MaxBuf>>,
         initial: Option<i64>,
     ) {
@@ -43,10 +31,10 @@ impl MaxBuf {
             *ptr = None;
             return;
         };
-        // SAFETY: `owner` outlives this MaxBuf's `owned_by_subprocess` slot — the Subprocess
+        // `owner` outlives this MaxBuf's `owned_by_subprocess` slot — the Subprocess
         // clears it via `remove_from_subprocess` in its finalize path before being dropped.
         let maxbuf = bun_core::heap::into_raw(Box::new(MaxBuf {
-            owned_by_subprocess: Some((owner, vtable)),
+            owned_by_subprocess: Some(owner),
             owned_by_reader: false,
             remaining_bytes: initial,
         }));
@@ -141,12 +129,8 @@ impl MaxBuf {
         unsafe { (*p).remaining_bytes = remaining };
         if remaining < 0 {
             // SAFETY: same live allocation; raw place read (copies the Option out).
-            if let Some((owner_nn, vtable)) = unsafe { (*p).owned_by_subprocess } {
-                // SAFETY: `owned_by_subprocess` is cleared by the Subprocess before it is dropped
-                // (see `remove_from_subprocess`), so the pointer is valid while Some.
-                // The stderr/stdout slot lookup + on_max_buffer
-                // call moves to bun_runtime's `MaxBufOwnerVTable` impl.
-                unsafe { (vtable.on_overflow)(owner_nn, this) };
+            if let Some(owner) = unsafe { (*p).owned_by_subprocess } {
+                owner.on_overflow(this);
             }
         }
     }

@@ -171,6 +171,14 @@ pub use write::{BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntL
 pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]
 pub use max_buf as MaxBuf;
+
+// The owning subprocess lives in `bun_runtime::api::Subprocess` (T6); io (T2)
+// stores it opaquely and calls back when the byte budget overflows.
+bun_dispatch::link_interface! {
+    pub MaxBufOwner[Subprocess] {
+        fn on_overflow(this: core::ptr::NonNull<max_buf::MaxBuf>);
+    }
+}
 pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
 #[cfg(windows)]
 pub use source::Source;

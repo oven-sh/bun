@@ -822,6 +822,24 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
+    // Spec DevServer.zig:425 — Zig stores `transpiler.options.framework` as a
+    // `?*bake.Framework` aliasing `dev.framework`, so the post-`resolve`
+    // assignment retroactively gives every transpiler the resolved
+    // `server_runtime_import` / `react_fast_refresh.import_source`. The Rust
+    // port arena-snapshots that projection inside `init_transpiler`, breaking
+    // the alias; re-project after resolve so parser-generated imports (e.g.
+    // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
+    // absolute paths instead of the user's relative `"./framework/server.ts"`.
+    {
+        let resolved_view: &'static bun_bundler::bake_types::Framework =
+            &*arena.alloc(dev.framework.as_bundler_view());
+        dev.server_transpiler_mut().options.framework = Some(resolved_view);
+        dev.client_transpiler_mut().options.framework = Some(resolved_view);
+        if separate_ssr_graph {
+            dev.ssr_transpiler_mut().options.framework = Some(resolved_view);
+        }
+    }
+
     // errdefer dev.route_lookup.clearAndFree() / client_graph.deinit() / server_graph.deinit()
     // — handled by Drop
 
@@ -4450,6 +4468,19 @@ pub fn finalize_bundle(
             Handler::Aborted => continue,
             Handler::ServerHandler(saved) => {
                 let response = saved.response;
+                let ctx = saved.ctx;
+                // PORT NOTE: Zig copied `saved` by value into the call and let
+                // `defer req.deref()` → `__deinit` → `saved.deinit()` release
+                // the original (`js_request.deinit()` + `ctx.deref()`). The
+                // Rust port moves `saved` out (so `__deinit` sees `Aborted`);
+                // `js_request: StrongOptional` releases on Drop, but
+                // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
+                // `ctx.ref_()` from `defer_request` here so the request
+                // context's `on_request_complete` (and thus the server's
+                // `pending_requests--`) eventually fires. Without this the
+                // bake-harness graceful-exit deinit check ("Failed to trigger
+                // deinit") never sees DevServer Drop.
+                scopeguard::defer! { ctx.deref() };
                 dev.on_framework_request_with_bundle(
                     req.route_bundle_index,
                     SavedRequestUnion::Saved(saved),

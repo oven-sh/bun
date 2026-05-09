@@ -304,7 +304,13 @@ impl TopExceptionScope {
         #[cfg(any(debug_assertions, bun_asan))]
         {
             if should_have_exception {
-                debug_assert!(self.has_exception(), "Expected an exception to be thrown");
+                // Must call `has_exception()` unconditionally inside this cfg block
+                // (not via `debug_assert!`): release+ASAN builds enter here via
+                // `bun_asan` with `debug_assertions` off, and the C++ scope's
+                // destructor will fail `verifyExceptionCheckNeedIsSatisfied` unless
+                // the underlying `VM::exception()` was actually invoked. Zig spec
+                // uses `bun.assertf` (active under `ci_assert`, which includes ASAN).
+                assert!(self.has_exception(), "Expected an exception to be thrown");
             } else {
                 self.assert_no_exception();
             }

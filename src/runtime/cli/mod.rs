@@ -445,6 +445,12 @@ pub mod cli {
 
     pub fn start() {
         IS_MAIN_THREAD.with(|c| c.set(true));
+        // Mirror the threadlocal into the crash-handler crate's global so
+        // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
+        // `panic(main thread): …` header) returns true on this thread. The
+        // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
+        // directly, so it compares against a stored OS tid instead.
+        bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         // SAFETY: single-threaded process startup; no other reader yet
         unsafe { START_TIME.write(bun_core::time::nano_timestamp()) };
         bun_core::set_start_time(unsafe { START_TIME.read() });
@@ -910,9 +916,15 @@ pub mod command {
                 let mut offset_for_passthrough: usize = 0;
 
                 let ctx: &mut ContextData = 'brk: {
+                    // PORT NOTE: Zig calls `bun.initArgv()` eagerly in `main.zig`
+                    // before `Cli.start`, which populates `bun_options_argc` from
+                    // `BUN_OPTIONS`. The Rust entry (`bun_bin::main`) defers argv
+                    // init to `bun_core::argv()`'s lazy `Once`, so force that init
+                    // now — otherwise `bun_options_argc()` reads 0 here and the
+                    // standalone executable silently drops `BUN_OPTIONS` flags.
+                    let original_argv_len = bun::argv().len();
                     let bun_options_argc = bun::bun_options_argc();
                     if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
-                        let original_argv_len = bun::argv().len();
                         let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
                         if !graph.compile_exec_argv.is_empty() {
                             bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
@@ -975,23 +987,12 @@ pub mod command {
 
         let tag = which();
 
-        // Phase-C: `Arguments::parse` (which normally handles `--help`/`-v`
-        // for AutoCommand via clap) is still gated. Short-circuit the common
-        // global flags here so `bun --help` / `bun -v` work end-to-end.
-        // TODO(b2-blocked): remove once Arguments::parse is un-gated.
-        if matches!(tag, Tag::AutoCommand) {
-            for a in bun::argv().iter().skip(1) {
-                match a {
-                    b"--help" | b"-h" => {
-                        tag_print_help(Tag::AutoCommand, true);
-                        Global::exit(0);
-                    }
-                    b"-v" | b"--version" => super::print_version_and_exit(),
-                    b"--revision" => super::print_revision_and_exit(),
-                    _ => {}
-                }
-            }
-        }
+        // NOTE: a Phase-C shim used to scan all of `argv` here for
+        // `--version`/`--help`/`--revision` and short-circuit, because
+        // `Arguments::parse` was gated. That shim is removed now that
+        // `arguments::parse` (called via `init` → `create_context_data`) is
+        // live and honours `stop_after_positional_at = 1` — the shim broke
+        // `bun <bin> --version` by intercepting the flag meant for `<bin>`.
 
         match tag {
             Tag::HelpCommand => return HelpCommand::exec(),

@@ -6837,11 +6837,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // $RefreshReg$(component, "file.ts:Original Name")
         let loc = logger::Loc::EMPTY;
-        // TODO(port): Zig used `p.source.path.pretty`; logger::fs::Path currently
-        // has only `text` (Phase-A stub). Swap to `.pretty` once bun_paths' full
-        // Path lands.
         let label: &'a [u8] = self.arena.alloc_slice_copy(&strings::concat(&[
-            self.source.path.text,
+            self.source.path.pretty,
             b":",
             match export_kind {
                 ReactRefreshExportKind::Named => original_name,

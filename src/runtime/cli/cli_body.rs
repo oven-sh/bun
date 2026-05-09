@@ -741,9 +741,15 @@ pub mod command {
                 let mut offset_for_passthrough: usize = 0;
 
                 let ctx: &mut ContextData = 'brk: {
+                    // PORT NOTE: Zig calls `bun.initArgv()` eagerly in `main.zig`
+                    // before `Cli.start`, which populates `bun_options_argc` from
+                    // `BUN_OPTIONS`. The Rust entry (`bun_bin::main`) defers argv
+                    // init to `bun_core::argv()`'s lazy `Once`, so force that init
+                    // now — otherwise `bun_options_argc()` reads 0 here and the
+                    // standalone executable silently drops `BUN_OPTIONS` flags.
+                    let original_argv_len = bun::argv().len();
                     let bun_options_argc = bun::bun_options_argc();
                     if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
-                        let original_argv_len = bun::argv().len();
                         let mut argv_list: Vec<&'static ZStr> = bun::argv().to_vec();
                         if !graph.compile_exec_argv.is_empty() {
                             bun::append_options_env(graph.compile_exec_argv, &mut argv_list);

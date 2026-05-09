@@ -119,12 +119,15 @@ impl ArrayBuffer {
     pub fn to_js_buffer_from_fd(fd: Fd, size: usize, global: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
         // *const); fn accepts null ptr with explicit size.
-        let buffer_value = unsafe {
+        // Wrapped in `from_js_host_call` so the C++ throw scope opened by
+        // `Bun__createUint8ArrayForCopy` is checked before `as_array_buffer` below
+        // declares `ASSERT_NO_PENDING_EXCEPTION` (validateExceptionChecks).
+        let buffer_value = match crate::host_fn::from_js_host_call(global, || unsafe {
             Bun__createUint8ArrayForCopy(global, ptr::null(), size, true)
+        }) {
+            Ok(v) => v,
+            Err(_) => return JSValue::ZERO,
         };
-        if buffer_value.is_empty() {
-            return JSValue::ZERO;
-        }
 
         let mut array_buffer = buffer_value.as_array_buffer(global).expect("Unexpected");
         let mut bytes = array_buffer.byte_slice_mut();

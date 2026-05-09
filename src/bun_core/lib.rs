@@ -1145,17 +1145,98 @@ pub mod ffi {
 }
 
 pub mod asan {
-    #[inline] pub unsafe fn poison(_: *const u8, _: usize) {}
-    #[inline] pub unsafe fn unpoison(_: *const u8, _: usize) {}
-    #[inline] pub fn poison_slice<T>(_: &[T]) {}
-    #[inline] pub fn unpoison_slice<T>(_: &[T]) {}
-    #[inline] pub fn assert_unpoisoned<T>(_: *const T) {}
-    /// LSAN root-region registration. No-op stub until the sanitizer shim lands;
-    /// callers (e.g. `Listener.group`) register mimalloc-backed regions so LSAN
-    /// can trace into uSockets-owned `us_socket_t` chains.
-    #[inline] pub fn register_root_region(_: *const core::ffi::c_void, _: usize) {}
-    #[inline] pub fn unregister_root_region(_: *const core::ffi::c_void, _: usize) {}
-    pub const ENABLED: bool = false;
+    //! Low-tier mirror of `src/safety/asan.zig`. `bun_safety` depends on
+    //! `bun_core`, so the implementation lives here and `bun_safety::asan`
+    //! re-uses the same `cfg(bun_asan)` gate. Callers in `bun_jsc`,
+    //! `bun_runtime`, and `bun_collections` reach the real LSAN/ASAN runtime
+    //! through this module — it must NOT be a no-op stub or LSAN root-region
+    //! registration (`VirtualMachine::rare_data`, `Listener.group`) silently
+    //! does nothing and every malloc-backed `us_socket_t` reachable only via a
+    //! mimalloc page is reported as a leak.
+    use core::ffi::c_void;
+
+    pub const ENABLED: bool = cfg!(bun_asan);
+
+    #[cfg(bun_asan)]
+    unsafe extern "C" {
+        fn __asan_poison_memory_region(ptr: *const c_void, size: usize);
+        fn __asan_unpoison_memory_region(ptr: *const c_void, size: usize);
+        fn __asan_address_is_poisoned(ptr: *const c_void) -> bool;
+        fn __asan_describe_address(ptr: *const c_void);
+        fn __lsan_register_root_region(ptr: *const c_void, size: usize);
+        fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
+    }
+
+    #[inline]
+    pub unsafe fn poison(ptr: *const u8, size: usize) {
+        #[cfg(bun_asan)]
+        {
+            // SAFETY: ASAN runtime is linked when this cfg is active; ptr/size
+            // describe a region owned by the caller.
+            unsafe { __asan_poison_memory_region(ptr.cast(), size) };
+        }
+        #[cfg(not(bun_asan))]
+        let _ = (ptr, size);
+    }
+    #[inline]
+    pub unsafe fn unpoison(ptr: *const u8, size: usize) {
+        #[cfg(bun_asan)]
+        {
+            // SAFETY: see `poison`.
+            unsafe { __asan_unpoison_memory_region(ptr.cast(), size) };
+        }
+        #[cfg(not(bun_asan))]
+        let _ = (ptr, size);
+    }
+    #[inline]
+    pub fn poison_slice<T>(s: &[T]) {
+        // SAFETY: `s` describes a live region the caller owns.
+        unsafe { poison(s.as_ptr().cast(), core::mem::size_of_val(s)) }
+    }
+    #[inline]
+    pub fn unpoison_slice<T>(s: &[T]) {
+        // SAFETY: `s` describes a live region the caller owns.
+        unsafe { unpoison(s.as_ptr().cast(), core::mem::size_of_val(s)) }
+    }
+    #[inline]
+    pub fn assert_unpoisoned<T>(ptr: *const T) {
+        #[cfg(bun_asan)]
+        {
+            // SAFETY: ASAN runtime is linked; reads shadow memory only.
+            if unsafe { __asan_address_is_poisoned(ptr.cast()) } {
+                // SAFETY: diagnostic-only, prints to stderr.
+                unsafe { __asan_describe_address(ptr.cast()) };
+                panic!("Address is poisoned");
+            }
+        }
+        #[cfg(not(bun_asan))]
+        let _ = ptr;
+    }
+    /// Tell LSAN to scan `[ptr, ptr+size)` for live pointers during leak
+    /// checking. Needed when a malloc-backed object is reachable only through
+    /// a pointer that itself lives inside a mimalloc page (which LSAN does not
+    /// scan).
+    #[inline]
+    pub fn register_root_region(ptr: *const c_void, size: usize) {
+        #[cfg(bun_asan)]
+        {
+            // SAFETY: LSAN runtime is linked alongside ASAN.
+            unsafe { __lsan_register_root_region(ptr, size) };
+        }
+        #[cfg(not(bun_asan))]
+        let _ = (ptr, size);
+    }
+    /// Undo a prior `register_root_region(ptr, size)` with identical arguments.
+    #[inline]
+    pub fn unregister_root_region(ptr: *const c_void, size: usize) {
+        #[cfg(bun_asan)]
+        {
+            // SAFETY: must match a prior register_root_region (caller invariant).
+            unsafe { __lsan_unregister_root_region(ptr, size) };
+        }
+        #[cfg(not(bun_asan))]
+        let _ = (ptr, size);
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

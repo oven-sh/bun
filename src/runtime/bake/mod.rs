@@ -253,7 +253,7 @@ impl Framework {
         out.options.conditions = bun_bundler::options::ESMConditions::init(
             out.options.target.default_conditions(),
             out.options.target.is_server_side(),
-            &[],
+            bundler_options.conditions.keys(),
         )?;
         if renderer == Graph::Server && self.server_components.is_some() {
             out.options.conditions.append_slice(&[b"react-server"])?;
@@ -298,10 +298,10 @@ impl Framework {
                 bun_bundler::options::SourceMapOption::None
             }
         };
-        // PORT NOTE: spec bake.zig:784-787 also applies `bundler_options.env` /
-        // `env_prefix` here; the keystone `BuildConfigSubset` omits those fields
-        // until the schema types are const-constructible (see `_blocked_tail`),
-        // so the `env != ._none` branch is a no-op and elided.
+        if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
+            out.options.env.behavior = bundler_options.env;
+            out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
+        }
         // Spec bake.zig:788 `out.resolver.opts = out.options` (struct copy). The
         // resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
         // re-project via the dedicated helper rather than `Clone`.
@@ -319,6 +319,33 @@ impl Framework {
                 Graph::Server | Graph::Ssr => Side::Server,
             },
         )?;
+
+        if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
+            debug_assert_eq!(
+                bundler_options.define.keys.len(),
+                bundler_options.define.values.len()
+            );
+            use bun_bundler::{DefineDataExt, DefineExt};
+            for (k, v) in bundler_options
+                .define
+                .keys
+                .iter()
+                .zip(bundler_options.define.values.iter())
+            {
+                let parsed =
+                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
+                out.options.define.insert(k, parsed)?;
+            }
+
+            for drop_item in bundler_options.drop.keys() {
+                if !drop_item.is_empty() {
+                    let parsed = bun_bundler::defines::DefineData::parse(
+                        drop_item, b"", true, true, log, arena,
+                    )?;
+                    out.options.define.insert(drop_item, parsed)?;
+                }
+            }
+        }
 
         if mode != Mode::Development {
             // Hide information about the source repository, at the cost of debugging quality.
@@ -541,18 +568,19 @@ impl From<bake_body::Framework> for Framework {
 }
 impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
     fn from(src: bake_body::BuildConfigSubset) -> Self {
-        // PORT NOTE: keystone `BuildConfigSubset` is the field-subset
-        // `Framework::init_transpiler` actually reads today; the wider
-        // `bake_body` shape (loader/conditions/drop/env/define/source_map) is
-        // applied by `bake_body::Framework::init_transpiler_with_options` and
-        // is dropped here pending the schema-type un-gate (see TODO at the
-        // struct def below).
+        // PORT NOTE: keystone `BuildConfigSubset` mirrors the field-set
+        // `Framework::init_transpiler` reads (everything except `loader` /
+        // `source_map`, which only `init_transpiler_with_options` honours).
         Self {
             ignore_dce_annotations: src.ignore_dce_annotations,
+            conditions: src.conditions,
+            drop: src.drop,
+            env: src.env,
+            env_prefix: src.env_prefix,
+            define: src.define,
             minify_syntax: src.minify_syntax,
             minify_identifiers: src.minify_identifiers,
             minify_whitespace: src.minify_whitespace,
-            _blocked_tail: (),
         }
     }
 }
@@ -570,18 +598,23 @@ impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
 }
 
 /// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `from_js`)
-/// lives in the gated `bake_body.rs` draft; struct shape un-gated so
-/// `SplitBundlerOptions` is real.
+/// lives in `bake_body.rs`; this keystone mirror carries every field that
+/// `Framework::init_transpiler` (bake.zig:663→696) reads so DevServer's
+/// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.
 #[derive(Default)]
 pub struct BuildConfigSubset {
     pub ignore_dce_annotations: Option<bool>,
+    pub conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
+    pub drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
+    pub env: bun_options_types::schema::api::DotEnvBehavior,
+    pub env_prefix: Option<&'static [u8]>,
+    pub define: bun_options_types::schema::api::StringMap,
     pub minify_syntax: Option<bool>,
     pub minify_identifiers: Option<bool>,
     pub minify_whitespace: Option<bool>,
-    // TODO(b2-blocked): bun_schema::api::{LoaderMap,DotEnvBehavior,StringMap,SourceMapMode}
-    //   — remaining fields gated until `bun_interchange` schema types are
-    //   const-constructible. See `bake_body.rs` for the full set.
-    _blocked_tail: (),
+    // `loader`/`source_map` intentionally omitted — only
+    // `init_transpiler_with_options` (bake_body) honours those, and DevServer
+    // never calls that path.
 }
 
 /// `bake.HmrRuntime` — embedded HMR runtime code + precomputed line count.

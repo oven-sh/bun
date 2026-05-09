@@ -2065,12 +2065,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if needs_plugins && self.plugins.is_none() {
             // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
             // (non-null for the server's lifetime); single-threaded JS context.
+            // PORT NOTE: Zig reads `serve_plugins` by reference (server.zig:2917);
+            // cloning here (not `.take()`) so subsequent `Bun.serve()` calls in
+            // the same process — and `DevServer`'s tailwind-hack probe of the
+            // same field — still see the bunfig-configured plugin list.
             if let Some(serve_plugins_config) =
-                unsafe { &mut *self.vm_mut() }.transpiler.options.serve_plugins.take()
+                unsafe { &*self.vm_mut() }.transpiler.options.serve_plugins.as_ref()
             {
                 if !serve_plugins_config.is_empty() {
                     self.plugins =
-                        core::ptr::NonNull::new(ServePlugins::init(serve_plugins_config));
+                        core::ptr::NonNull::new(ServePlugins::init(serve_plugins_config.clone()));
                 }
             }
         }

@@ -2580,8 +2580,16 @@ static BUN_OPTIONS_ARGC: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
 /// Zig: `bun.bun_options_argc` — read accessor.
+///
+/// Forces the lazy `argv_view()` init before reading: in Zig `initArgv()`
+/// runs eagerly in `main()` so `bun.bun_options_argc` is always populated by
+/// the time `cli.zig` reads it; here `argv()` is lazy, so a caller that reads
+/// `bun_options_argc()` *before* `argv()` (e.g. the standalone-executable
+/// path in `Command::start`) would otherwise see 0 and miscount the
+/// BUN_OPTIONS-injected args when computing the passthrough offset.
 #[inline]
 pub fn bun_options_argc() -> usize {
+    let _ = argv_view();
     BUN_OPTIONS_ARGC.load(core::sync::atomic::Ordering::Relaxed)
 }
 /// Zig: `bun.bun_options_argc = n` — write accessor (single-threaded startup).

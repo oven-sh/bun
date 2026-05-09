@@ -41,20 +41,23 @@ const SLOT_NAMESPACES: [SlotNamespace; 4] = [
 pub struct NoOpRenamer<'a> {
     // PORT NOTE: Zig `Symbol.Map` is a non-owning `BabyList(BabyList(Symbol))`
     // slice header passed by value (renamer.zig:2,126,452 — no `deinit` ever
-    // frees it). The Rust `symbol::Map` is `Vec<Vec<Symbol>>` (owning), so the
-    // bundler's `renameSymbolsInChunk` builds a *borrowed* view over
-    // `LinkerGraph.symbols` and the renamer must not free it on drop —
-    // otherwise dropping `Chunk.renamer` double-frees the graph's symbol
-    // storage and the subsequent `BundleV2` drop reads `Vec<Symbol>` headers
-    // out of poisoned memory (ASAN use-after-poison). `ManuallyDrop` matches
-    // the Zig ownership: the renamer never owns `symbols`.
-    pub symbols: ManuallyDrop<symbol::Map>,
+    // frees it). In the Rust port `symbol::Map` is `Vec<Vec<Symbol>>` (owning).
+    // Unlike `MinifyRenamer`/`NumberRenamer` (which the bundler builds over a
+    // *borrowed* `LinkerGraph.symbols` and so wrap in `ManuallyDrop`),
+    // `NoOpRenamer` is only constructed by `print_ast`/`print_common_js`, whose
+    // callers always pass an *owned* Map freshly built by
+    // `Map::init_with_one_list(mem::take(&mut ast.symbols))`. Owning + dropping
+    // here is required: `ManuallyDrop` leaked the per-file `Vec<Symbol>` on
+    // every transpile (require-cache.test.ts "files transpiled and loaded don't
+    // leak the output source code" — `await import()` re-transpiles each
+    // iteration, so the leak compounds to OOM).
+    pub symbols: symbol::Map,
     pub source: &'a logger::Source,
 }
 
 impl<'a> NoOpRenamer<'a> {
     pub fn init(symbols: symbol::Map, source: &'a logger::Source) -> NoOpRenamer<'a> {
-        NoOpRenamer { symbols: ManuallyDrop::new(symbols), source }
+        NoOpRenamer { symbols, source }
     }
 
     #[inline]

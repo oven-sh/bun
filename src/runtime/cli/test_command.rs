@@ -1902,7 +1902,12 @@ impl TestCommand {
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
-                transform_options: core::mem::take(&mut ctx.args),
+                // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
+                // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
+                // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,
+                // allow_addons,disable_default_env_files,jsx} after this point to forward
+                // them to workers. Zig spec passes ctx.args by value-copy here.
+                transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(
@@ -1920,7 +1925,8 @@ impl TestCommand {
             })?
         };
         vm.argv = core::mem::take(&mut ctx.passthrough);
-        vm.preload = core::mem::take(&mut ctx.preloads);
+        // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
+        vm.preload = ctx.preloads.clone();
         vm.transpiler.options.rewrite_jest_for_tests = true;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI
             .store(ctx.runtime_options.experimental_http2_fetch, core::sync::atomic::Ordering::Relaxed);

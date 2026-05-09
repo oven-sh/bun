@@ -47,11 +47,14 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     //   JSC's conservative GC scan and `StackBounds::contains` see them.
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
     //   ASAN_OPTIONS with a suppressions file.
-    // symbolize=0 + fast_unwind_on_fatal=1: the debug binary is ~735MB and
-    //   ASAN's in-process symbolizer takes 10s+ per frame, which makes crashes
-    //   look like hangs during development. Re-enable via ASAN_OPTIONS env when
-    //   you actually want symbolized output.
-    c"detect_stack_use_after_return=0:detect_leaks=0:symbolize=0:fast_unwind_on_fatal=1".as_ptr()
+    //
+    // PORT NOTE: matches `src/safety/asan.zig` exactly. Do NOT add `symbolize=0`
+    // here — LSAN's function-name suppression matching (`test/leaksan.supp`)
+    // requires symbolized stacks; with symbolization disabled every entry like
+    // `leak:uws_create_app` silently stops matching and CI reports the
+    // suppressed allocations as leaks. If local debug crashes feel slow to
+    // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
+    c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
 }
 
 /// Process entry point. `extern "C"` so the linker resolves crt1.o's

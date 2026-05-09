@@ -534,9 +534,31 @@ where
                         needs_decode = true;
                     } else if self.opts.is_json && cp < 0x20 {
                         self.syntax_error()?;
+                    } else if (quote == '"' as CodePoint || quote == '\'' as CodePoint)
+                        && bun_core::env::IS_NATIVE
+                    {
+                        // Spec lexer.zig:730-740 — SIMD skip-ahead over plain
+                        // ASCII string content. Critical for inline-sourcemap
+                        // JSON where `sourcesContent` can be hundreds of KB.
+                        let remainder = &self.source.contents[self.current..];
+                        if remainder.len() >= 4096 {
+                            match bun_highway::index_of_interesting_character_in_string_literal(
+                                remainder,
+                                quote as u8,
+                            ) {
+                                Some(off) => {
+                                    self.current += off;
+                                    self.end = self.current.saturating_sub(1);
+                                    self.step();
+                                    continue;
+                                }
+                                None => {
+                                    self.step();
+                                    continue;
+                                }
+                            }
+                        }
                     }
-                    // PORT NOTE: SIMD fast-scan (`indexOfInterestingCharacterInStringLiteral`)
-                    // is omitted — `Environment.isNative` gates it in Zig.
                 }
             }
             self.step();

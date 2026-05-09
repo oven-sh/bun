@@ -1586,6 +1586,29 @@ pub trait InsertionHandler {
     ) -> Result<(), AllocError>;
 }
 
+/// Port of Zig `bun.StringHashMapContext` (`std.hash.Wyhash` final4, seed 0).
+///
+/// `scan_inner` walks `DirEntry.data` to discover routes; the resulting child
+/// order is the map's iteration order. In Zig that map is a
+/// `std.HashMapUnmanaged([]const u8, *Entry, StringHashMapContext, 80)`, whose
+/// linear-probe bucket walk is what `test/bake/framework-router.test.ts`
+/// snapshots. The Rust `EntryMap` is a `std::collections::HashMap`, which has
+/// a different layout, so we rebuild into a `zig_hash_map` keyed/hashed
+/// identically before iterating.
+struct ZigStringHashContext;
+impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashContext {
+    #[inline]
+    fn ctx_hash(key: &Box<[u8]>) -> u64 {
+        // Zig: `std.hash.Wyhash.hash(0, s)` — `bun_wyhash::hash` is the final4
+        // variant with seed 0 (NOT the legacy `Wyhash11` used by `OneShotHasher`).
+        bun_wyhash::hash(key)
+    }
+    #[inline]
+    fn ctx_eql(a: &Box<[u8]>, b: &Box<[u8]>) -> bool {
+        a[..] == b[..]
+    }
+}
+
 impl FrameworkRouter {
     pub fn scan(
         &mut self,
@@ -1623,7 +1646,24 @@ impl FrameworkRouter {
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         if let Some(entries) = dir_info.get_entries_const() {
-            let mut it = entries.data.iter();
+            // PORT NOTE: `entries.data` is backed by `std::collections::HashMap`,
+            // whose iteration order differs from Zig's `std.HashMapUnmanaged`.
+            // The route-tree child order is this iteration order (see `insert`),
+            // and `test/bake/framework-router.test.ts` snapshots it. Rebuild into
+            // a Zig-layout map (same wyhash/seed/probe) so the walk matches the
+            // spec. Absent hash collisions (the common case for small dirs) the
+            // bucket order is fully determined by the hash, so re-insertion order
+            // is irrelevant; with collisions it may diverge from Zig's readdir-
+            // order placement, but no test exercises that today.
+            let mut zig_order: bun_collections::zig_hash_map::HashMap<
+                Box<[u8]>,
+                *mut bun_resolver::fs::Entry,
+                ZigStringHashContext,
+            > = Default::default();
+            for (k, &v) in entries.data.iter() {
+                let _ = zig_order.put(k.clone(), v);
+            }
+            let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {
                 // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton; entries
                 // outlive this scan and are serialized via `RealFS.entries_mutex`.

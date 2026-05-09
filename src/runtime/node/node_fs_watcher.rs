@@ -411,7 +411,7 @@ impl FSWatchTaskWindows {
                 // TODO(port): Zig accesses `path.string` unconditionally here
                 unreachable!()
             };
-            let Ok(js) = s.transfer_to_js(ctx.global_this) else { return };
+            let Ok(js) = s.transfer_to_js(&ctx.global_this) else { return };
             ctx.emit_with_filename::<EVENT_TYPE>(js);
         } else {
             let StringOrBytesToDecode::BytesToFree(bytes_ref) = path else {

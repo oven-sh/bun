@@ -7166,7 +7166,10 @@ impl NodeFS {
     /// Tries `open(dest, flags, default_permission)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    fn _cp_open_dest_with_mkdir(&mut self, dest: &OSPathSliceZ, flags: i32) -> Maybe<FD> {
+    fn _cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32) -> Maybe<FD> {
+        // PORT: extracted from the mac/linux/freebsd arms of `_copySingleFileSync`
+        // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
+        // monomorphic (and lets it type-check on Windows where it's dead code).
         match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
             Ok(result) => Ok(result),
             Err(err) => {

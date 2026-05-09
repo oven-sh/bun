@@ -1720,16 +1720,15 @@ impl<'a> BundleV2<'a> {
         // Zig: `client_transpiler.resolver.env_loader = client_transpiler.env;`
         boxed.resolver.env_loader = NonNull::new(this_env.cast());
 
-        // Publish the borrow first (so the returned `&mut` and
-        // `client_transpiler` agree), then park the owning Box. Order matters:
-        // taking `NonNull::from` after the move into `self` would require
-        // re-borrowing through `self.owned_client_transpiler`.
-        self.client_transpiler = Some(NonNull::from(&mut *boxed));
+        // Park the owning Box first, then derive both the published `NonNull`
+        // and the returned `&mut` from its final resting place. Taking the
+        // pointer *before* moving `boxed` into `self` would give it stale
+        // provenance under Stacked Borrows (Box retags on move and asserts
+        // uniqueness, invalidating any previously-derived raw pointer).
         self.owned_client_transpiler = Some(boxed);
-        // SAFETY: just stored; `owned_client_transpiler` is not touched again
-        // until `deinit_without_freeing_arena`, so the `&mut` is unique for
-        // the caller's use.
-        Ok(unsafe { self.client_transpiler.unwrap_unchecked().as_mut() })
+        let ct: &mut Transpiler<'a> = self.owned_client_transpiler.as_deref_mut().unwrap();
+        self.client_transpiler = Some(NonNull::from(&mut *ct));
+        Ok(ct)
     }
 
     /// By calling this function, it implies that the returned log *will* be
@@ -4241,9 +4240,13 @@ impl<'a> BundleV2<'a> {
         // Drop the lazily-created client transpiler (if any) before tearing
         // down workers — matches the .zig spec ordering where the arena slot
         // is invalidated ahead of `pool.workers_assignments` so no worker can
-        // observe a half-torn-down transpiler. No-op when `client_transpiler`
-        // was borrowed from `BakeOptions` (DevServer-owned).
-        self.owned_client_transpiler = None;
+        // observe a half-torn-down transpiler. Clear the `client_transpiler`
+        // alias first so it never dangles past the Box drop; in the
+        // `BakeOptions`-borrowed path `owned_client_transpiler` is `None` and
+        // the DevServer-owned pointer is left untouched.
+        if self.owned_client_transpiler.take().is_some() {
+            self.client_transpiler = None;
+        }
 
         // bundle_v2.zig:1426-1437 — worker-assignment teardown.
         let pool = self.graph.pool_mut();

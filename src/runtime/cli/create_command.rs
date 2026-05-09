@@ -762,7 +762,7 @@ impl CreateCommand {
 
                 let source = logger::Source::init_path_string(b"package.json", package_json_contents.list.as_slice());
 
-                let log: &mut logger::Log = ctx.log_mut();
+                let log: &mut logger::Log = unsafe { ctx.log_mut() };
                 let bump = bun_alloc::Arena::new();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
@@ -2390,7 +2390,7 @@ impl Example {
         refresher.refresh();
         initialize_store();
         let source = logger::Source::init_path_string(b"package.json", mutable.list.as_slice());
-        let log = ctx.log_mut();
+        let log = unsafe { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
@@ -2557,7 +2557,7 @@ impl Example {
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        let log = ctx.log_mut();
+        let log = unsafe { ctx.log_mut() };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {

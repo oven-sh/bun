@@ -848,7 +848,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
         let mut root_buf = PathBuffer::uninit();
         let resolve_root = FilterArg::get_candidate_package_patterns(
-            ctx.log_mut(),
+            unsafe { ctx.log_mut() },
             &mut patterns,
             cwd,
             &mut root_buf,

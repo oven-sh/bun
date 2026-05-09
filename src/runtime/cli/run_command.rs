@@ -540,7 +540,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     if !log_errors {
                         return Err(bun_core::err!("CouldntReadCurrentDirectory"));
                     }
-                    let _ = ctx.log_mut()
+                    let _ = unsafe { ctx.log_mut() }
                         .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
@@ -551,7 +551,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     return Err(err);
                 }
                 Ok(None) => {
-                    let _ = ctx.log_mut()
+                    let _ = unsafe { ctx.log_mut() }
                         .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     pretty_errorln!("error loading current directory");
                     Output::flush();
@@ -1655,7 +1655,7 @@ impl RunCommand {
             // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
             // returns the process-global writer; cast to the raw pointer the
             // trait expects.
-            let _ = ctx.log_mut().print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
+            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
 
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -3007,7 +3007,7 @@ impl RunCommand {
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, owned, None) {
-            let _ = ctx.log_mut()
+            let _ = unsafe { ctx.log_mut() }
                 .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -3107,7 +3107,7 @@ impl RunCommand {
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, normalized, None) {
-            let _ = ctx.log_mut().print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
+            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
 
             Output::err(
                 err,
@@ -4155,7 +4155,7 @@ impl BunXFastPath {
             Err(_) => return,
         };
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
-            let _ = ctx.log_mut().print(std::ptr::from_mut(Output::error_writer()));
+            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

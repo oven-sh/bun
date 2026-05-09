@@ -564,7 +564,7 @@ impl TrustCommand {
         // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
         // `pack_command`).
         let mut package_json: bun_js_parser::Expr =
-            match bun_interchange::json::parse_utf8(&package_json_source, ctx.log_mut(), &bump) {
+            match bun_interchange::json::parse_utf8(&package_json_source, unsafe { ctx.log_mut() }, &bump) {
                 Ok(v) => v.into(),
                 Err(err) => {
                     let _ = ctx.log_ref().print(std::ptr::from_mut(Output::error_writer()));

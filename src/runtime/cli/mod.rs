@@ -1515,7 +1515,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
 
         let entry = ctx.args.entry_points[0].clone();
-        Printer::print(ctx.log_mut(), &entry, PrinterFormat::Yarn)
+        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
     }
 
     fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {

@@ -1451,7 +1451,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 
         let entry = ctx.args.entry_points[0].clone();
         bun_install::lockfile::Printer::print(
-            ctx.log_mut(),
+            unsafe { ctx.log_mut() },
             &entry,
             bun_install::lockfile::PrinterFormat::Yarn,
         )

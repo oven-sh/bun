@@ -505,7 +505,7 @@ impl BunxCommand {
         let mut opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
-        let ctx_log = ctx.log_mut();
+        let ctx_log = unsafe { ctx.log_mut() };
         let update_requests = UpdateRequest::parse(
             None,
             ctx_log,

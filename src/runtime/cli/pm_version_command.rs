@@ -120,7 +120,7 @@ impl PmVersionCommand {
             true,  // GUESS_INDENTATION
         >(
             &package_json_source,
-            ctx.log_mut(),
+            unsafe { ctx.log_mut() },
             &json_bump,
         ) {
             Ok(r) => r,
@@ -393,7 +393,7 @@ impl PmVersionCommand {
         let json_bump = Arena::new();
         let Ok(json) = JSON::parse_package_json_utf8(
             &package_json_source,
-            ctx.log_mut(),
+            unsafe { ctx.log_mut() },
             &json_bump,
         ) else {
             return None;

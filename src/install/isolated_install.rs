@@ -551,9 +551,8 @@ pub fn install_isolated_packages(
                                 if resolved == invalid_package_id {
                                     break 'dont_dedupe;
                                 }
-                                // SAFETY: u64/PackageID are POD ints, no padding.
-                                hasher.update(unsafe { bun_core::bytes_of(&peer_name_hash) });
-                                hasher.update(unsafe { bun_core::bytes_of(&resolved) });
+                                hasher.update(bun_core::bytes_of(&peer_name_hash));
+                                hasher.update(bun_core::bytes_of(&resolved));
                             }
                             break 'ctx hasher.final_();
                         }
@@ -1315,10 +1314,9 @@ pub fn install_isolated_packages(
                         // integrity so a cross-registry / cross-tarball collision
                         // gets a different global directory instead of reusing the
                         // first project's bytes.
-                        // SAFETY: Integrity is #[repr(C)] POD with no padding.
                         stack[top_idx]
                             .hasher
-                            .update(unsafe { bun_core::bytes_of(&pkg_metas[pkg_id as usize].integrity) });
+                            .update(bun_core::bytes_of(&pkg_metas[pkg_id as usize].integrity));
                     }
 
                     if states[idx] == State::Ineligible {
@@ -1334,9 +1332,8 @@ pub fn install_isolated_packages(
                         let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
                         match states[dep_idx] {
                             State::Done => {
-                                // SAFETY: u64 ints, no padding.
-                                stack[top_idx].hasher.update(unsafe { bun_core::bytes_of(&dep_name_hash) });
-                                stack[top_idx].hasher.update(unsafe { bun_core::bytes_of(&entry_hashes[dep_idx]) });
+                                stack[top_idx].hasher.update(bun_core::bytes_of(&dep_name_hash));
+                                stack[top_idx].hasher.update(bun_core::bytes_of(&entry_hashes[dep_idx]));
                             }
                             State::Ineligible => {
                                 // A dep that can't live in the global store poisons
@@ -1351,8 +1348,7 @@ pub fn install_isolated_packages(
                                 // every cycle member's hash with one that's
                                 // independent of which edge happened to be the
                                 // back-edge in this DFS.
-                                // SAFETY: u64 int, no padding.
-                                stack[top_idx].hasher.update(unsafe { bun_core::bytes_of(&dep_name_hash) });
+                                stack[top_idx].hasher.update(bun_core::bytes_of(&dep_name_hash));
                             }
                             State::Unvisited => {
                                 stack.push(StackFrame {
@@ -1492,10 +1488,9 @@ pub fn install_isolated_packages(
                                         )
                                         .expect("unreachable");
                                     }
-                                    // SAFETY: Integrity is #[repr(C)] POD with no padding.
-                                    sub.update(unsafe { bun_core::bytes_of(
+                                    sub.update(bun_core::bytes_of(
                                         &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get() as usize] as usize].integrity,
-                                    ) });
+                                    ));
                                     let mut poisoned = false;
                                     for dep in entry_dependencies[m as usize].slice() {
                                         let dh = entry_hashes[dep.entry_id.get() as usize];
@@ -1504,9 +1499,8 @@ pub fn install_isolated_packages(
                                             break;
                                         }
                                         let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
-                                        // SAFETY: u64 ints, no padding.
-                                        sub.update(unsafe { bun_core::bytes_of(&dep_name_hash) });
-                                        sub.update(unsafe { bun_core::bytes_of(&dh) });
+                                        sub.update(bun_core::bytes_of(&dep_name_hash));
+                                        sub.update(bun_core::bytes_of(&dh));
                                     }
                                     if poisoned {
                                         entry_hashes[m as usize] = 0;
@@ -1546,11 +1540,10 @@ pub fn install_isolated_packages(
                                         )
                                         .expect("unreachable");
                                     }
-                                    // SAFETY: Integrity is #[repr(C)] POD with no padding.
-                                    sub.update(unsafe { bun_core::bytes_of(
+                                    sub.update(bun_core::bytes_of(
                                         &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get() as usize] as usize]
                                             .integrity,
-                                    ) });
+                                    ));
                                     member_sub.push(sub.final_());
                                     for dep in entry_dependencies[m as usize].slice() {
                                         let di = dep.entry_id.get() as usize;
@@ -1567,9 +1560,8 @@ pub fn install_isolated_packages(
                                         // that reach the same external entry under
                                         // different aliases must hash differently.
                                         let mut ext = Wyhash::init(0);
-                                        // SAFETY: u64 ints, no padding.
-                                        ext.update(unsafe { bun_core::bytes_of(&dependencies[dep.dep_id as usize].name_hash) });
-                                        ext.update(unsafe { bun_core::bytes_of(&entry_hashes[di]) });
+                                        ext.update(bun_core::bytes_of(&dependencies[dep.dep_id as usize].name_hash));
+                                        ext.update(bun_core::bytes_of(&entry_hashes[di]));
                                         scc_ext.put(ext.final_(), ())?;
                                     }
                                 }
@@ -1578,12 +1570,10 @@ pub fn install_isolated_packages(
                                 ext_keys.sort_unstable();
                                 let mut hasher = Wyhash::init(0x42A7C15F9E3779B9);
                                 for k in &member_sub {
-                                    // SAFETY: u64 int, no padding.
-                                    hasher.update(unsafe { bun_core::bytes_of(k) });
+                                    hasher.update(bun_core::bytes_of(k));
                                 }
                                 for k in ext_keys.iter() {
-                                    // SAFETY: u64 int, no padding.
-                                    hasher.update(unsafe { bun_core::bytes_of(k) });
+                                    hasher.update(bun_core::bytes_of(k));
                                 }
                                 let mut h = hasher.final_();
                                 if h == 0 {
@@ -1688,8 +1678,7 @@ pub fn install_isolated_packages(
                     let rand = fast_random();
                     bun_core::handle_oom(rename_path.append_fmt(format_args!(
                         ".old_modules-{}",
-                        // SAFETY: u64 int, no padding.
-                        bun_fmt::hex_lower(unsafe { bun_core::bytes_of(&rand) })
+                        bun_fmt::hex_lower(bun_core::bytes_of(&rand))
                     )));
 
                     // 1
@@ -1809,8 +1798,7 @@ pub fn install_isolated_packages(
                     let rand = fast_random();
                     bun_core::handle_oom(rename_path.append_fmt(format_args!(
                         ".old_modules-{}",
-                        // SAFETY: u64 int, no padding.
-                        bun_fmt::hex_lower(unsafe { bun_core::bytes_of(&rand) })
+                        bun_fmt::hex_lower(bun_core::bytes_of(&rand))
                     )));
 
                     // 3

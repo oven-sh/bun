@@ -433,9 +433,9 @@ impl HTMLRewriterLoader {
             return;
         }
 
-        // SAFETY: `bytes` borrowed for the synchronous `output.write` call only;
+        // `bytes` borrowed for the synchronous `output.write` call only;
         // the `Temporary` variant signals the sink it must copy before returning.
-        let borrowed = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(bytes) };
+        let borrowed = bun_ptr::RawSlice::new(bytes);
         let write_result = self
             .output
             .write(webcore::sink::Data::Bytes(StreamResult::Temporary(borrowed)));
@@ -529,28 +529,19 @@ impl HTMLRewriterLoader {
         webcore::Sink::init(self)
     }
 
-    // PORT NOTE: takes `ManuallyDrop<Vec<u8>>` so the `DEINIT=false`
-    // (Temporary / TemporaryAndDone — borrowed) instantiation can NEVER drop
-    // caller-owned bytes, on either the error or success path. The Zig spec
-    // (html_rewriter.zig:346-356) does not deinit on the error path at all —
-    // matched here exactly: only `DEINIT && success` frees.
-    fn write_bytes<const DEINIT: bool>(
-        &mut self,
-        mut bytes: core::mem::ManuallyDrop<Vec<u8>>,
-    ) -> Option<bun_sys::Error> {
+    // PORT NOTE: The Zig spec (html_rewriter.zig:346-356) does not deinit on
+    // the error path at all — matched here exactly: only the Owned* arms free,
+    // and only on success (caller wraps owned bytes in `ManuallyDrop` and
+    // takes them back out on the success path).
+    fn write_bytes(&mut self, bytes: &[u8]) -> Option<bun_sys::Error> {
         // SAFETY: rewriter valid (setup() succeeded, not yet finalized).
-        if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes.slice()) }.is_err() {
+        if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes) }.is_err() {
             return Some(bun_sys::Error {
                 errno: 1,
                 // TODO: make this a union
                 path: Box::<[u8]>::from(lolhtml::HTMLString::last_error().slice()),
                 ..Default::default()
             });
-        }
-        if DEINIT {
-            // PERF(port): was comptime monomorphization — profile in Phase B
-            // SAFETY: `bytes` is not used again on this path.
-            unsafe { core::mem::ManuallyDrop::drop(&mut bytes) };
         }
         None
     }
@@ -559,28 +550,34 @@ impl HTMLRewriterLoader {
         match data {
             StreamResult::Owned(bytes) => {
                 let len = bytes.len() as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes::<true>(core::mem::ManuallyDrop::new(bytes)) {
+                // Spec: do NOT free on the error path.
+                let bytes = core::mem::ManuallyDrop::new(bytes);
+                if let Some(err) = self.write_bytes(bytes.slice()) {
                     return Writable::Err(err);
                 }
+                drop(core::mem::ManuallyDrop::into_inner(bytes));
                 Writable::Owned(len)
             }
             StreamResult::OwnedAndDone(bytes) => {
                 let len = bytes.len() as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes::<true>(core::mem::ManuallyDrop::new(bytes)) {
+                // Spec: do NOT free on the error path.
+                let bytes = core::mem::ManuallyDrop::new(bytes);
+                if let Some(err) = self.write_bytes(bytes.slice()) {
                     return Writable::Err(err);
                 }
+                drop(core::mem::ManuallyDrop::into_inner(bytes));
                 Writable::OwnedAndDone(len)
             }
             StreamResult::TemporaryAndDone(bytes) => {
                 let len = bytes.len() as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes::<false>(bytes) {
+                if let Some(err) = self.write_bytes(bytes.slice()) {
                     return Writable::Err(err);
                 }
                 Writable::TemporaryAndDone(len)
             }
             StreamResult::Temporary(bytes) => {
                 let len = bytes.len() as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes::<false>(bytes) {
+                if let Some(err) = self.write_bytes(bytes.slice()) {
                     return Writable::Err(err);
                 }
                 Writable::Temporary(len)

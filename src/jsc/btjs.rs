@@ -230,9 +230,47 @@ mod zig_std_debug {
         }
         #[cfg(windows)]
         {
-            // PORT NOTE: VirtualQuery path — fall back to "valid" on Windows; the
-            // fp-walker is not used there (RtlVirtualUnwind path is taken instead).
-            let _ = aligned_address;
+            // Port of vendor/zig/lib/std/debug/MemoryAccessor.zig:101-120.
+            // The fp-walker IS used on Windows (see `!cfg!(windows)` gate on
+            // `init_with_context` below), so we must validate the page via
+            // `VirtualQuery` before `copy_nonoverlapping` dereferences it —
+            // otherwise the first stale fp link reads unmapped memory and
+            // crashes the very debugger helper meant to inspect crashed state.
+            #[repr(C)]
+            struct MemoryBasicInformation {
+                base_address: *mut c_void,
+                allocation_base: *mut c_void,
+                allocation_protect: u32,
+                partition_id: u16,
+                region_size: usize,
+                state: u32,
+                protect: u32,
+                type_: u32,
+            }
+            const MEM_FREE: u32 = 0x10000;
+            unsafe extern "system" {
+                fn VirtualQuery(
+                    lpAddress: *const c_void,
+                    lpBuffer: *mut MemoryBasicInformation,
+                    dwLength: usize,
+                ) -> usize;
+            }
+            let mut mbi: MemoryBasicInformation = unsafe { core::mem::zeroed() };
+            // SAFETY: `mbi` is a valid out-param of the size we pass; VirtualQuery
+            // only inspects the address-space mapping at `aligned_address`.
+            let rc = unsafe {
+                VirtualQuery(
+                    aligned_address as *const c_void,
+                    &mut mbi,
+                    core::mem::size_of::<MemoryBasicInformation>(),
+                )
+            };
+            if rc == 0 {
+                return false;
+            }
+            if mbi.state == MEM_FREE {
+                return false;
+            }
             return true;
         }
         #[cfg(not(windows))]
@@ -400,10 +438,42 @@ mod tty {
 
     /// Port of `process.hasNonEmptyEnvVarConstant`.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {
-        // SAFETY: getenv only reads; name is a valid NUL-terminated C string.
-        let val = unsafe { libc::getenv(name.as_ptr()) };
-        // SAFETY: getenv returns either NULL or a valid NUL-terminated C string.
-        !val.is_null() && unsafe { *val } != 0
+        #[cfg(windows)]
+        {
+            // Zig spec (vendor/zig/lib/std/process.zig:435-446) reads the Win32
+            // environment via `getenvW`, NOT MSVCRT `getenv`. The CRT keeps its
+            // own narrow-string env cache that is not updated by
+            // `SetEnvironmentVariableW`, which is how Bun mutates env vars at
+            // runtime — so `libc::getenv` would silently miss those.
+            unsafe extern "system" {
+                fn GetEnvironmentVariableW(lpName: *const u16, lpBuffer: *mut u16, nSize: u32) -> u32;
+            }
+            // `name` is a compile-time ASCII C string (c"NO_COLOR" / c"CLICOLOR_FORCE");
+            // widen byte-by-byte into a NUL-terminated WCHAR buffer on the stack.
+            let bytes = name.to_bytes();
+            let mut name_w = [0u16; 32];
+            if bytes.len() >= name_w.len() {
+                return false;
+            }
+            for (i, &b) in bytes.iter().enumerate() {
+                name_w[i] = b as u16;
+            }
+            let mut buf = [0u16; 2];
+            // SAFETY: `name_w` is NUL-terminated; `buf` is a valid 2-WCHAR out-param.
+            // With nSize=2: empty value copies successfully and returns 0 (chars
+            // written, excluding NUL); not-found also returns 0; any non-empty
+            // value returns >=1 (either chars written, or required size if it
+            // didn't fit). So `rc != 0` ⇔ "exists and non-empty".
+            let rc = unsafe { GetEnvironmentVariableW(name_w.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+            return rc != 0;
+        }
+        #[cfg(not(windows))]
+        {
+            // SAFETY: getenv only reads; name is a valid NUL-terminated C string.
+            let val = unsafe { libc::getenv(name.as_ptr()) };
+            // SAFETY: getenv returns either NULL or a valid NUL-terminated C string.
+            !val.is_null() && unsafe { *val } != 0
+        }
     }
 
     /// Port of `std.io.tty.detectConfig(std.fs.File.stdout())`.

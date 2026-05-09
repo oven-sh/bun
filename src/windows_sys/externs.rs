@@ -1065,17 +1065,20 @@ impl Win32Error {
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
+#[link(name = "shell32")]
+unsafe extern "system" {
+    pub fn CommandLineToArgvW(
+        lpCmdLine: LPCWSTR,
+        pNumArgs: *mut c_int,
+    ) -> *mut LPWSTR;
+}
+
 #[link(name = "kernel32")]
 unsafe extern "system" {
     pub fn GetFileInformationByHandle(
         hFile: HANDLE,
         lpFileInformation: *mut BY_HANDLE_FILE_INFORMATION,
     ) -> BOOL;
-
-    pub fn CommandLineToArgvW(
-        lpCmdLine: LPCWSTR,
-        pNumArgs: *mut c_int,
-    ) -> *mut LPWSTR;
 
     pub fn GetBinaryTypeW(
         lpApplicationName: LPCWSTR,

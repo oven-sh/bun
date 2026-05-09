@@ -2593,12 +2593,111 @@ mod windows_impl {
     pub fn close(fd: Fd) -> Maybe<()> {
         match sys_uv::close(fd) { Some(e) => Err(e), None => Ok(()) }
     }
-    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> { sys_uv::read(fd, buf) }
-    pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> { sys_uv::write(fd, buf) }
-    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> { sys_uv::pread(fd, buf, off) }
-    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> { sys_uv::pwrite(fd, buf, off) }
+    // `kernel32.ReadFile`/`WriteFile` — declared locally because
+    // `bun_windows_sys::kernel32` does not (yet) export them.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn ReadFile(
+            hFile: w::HANDLE,
+            lpBuffer: *mut u8,
+            nNumberOfBytesToRead: w::DWORD,
+            lpNumberOfBytesRead: *mut w::DWORD,
+            lpOverlapped: *mut core::ffi::c_void,
+        ) -> w::BOOL;
+        fn WriteFile(
+            hFile: w::HANDLE,
+            lpBuffer: *const u8,
+            nNumberOfBytesToWrite: w::DWORD,
+            lpNumberOfBytesWritten: *mut w::DWORD,
+            lpOverlapped: *mut core::ffi::c_void,
+        ) -> w::BOOL;
+    }
+    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        // sys.zig:2161-2183 — `.windows => if (fd.kind == .uv) sys_uv.read(fd,
+        // buf) else { kernel32.ReadFile(fd.native(), …) }`. The libuv path
+        // requires a CRT fd via `fd.uv()`, which PANICS for HANDLE-backed
+        // (`FdKind::System`) Fds — i.e. anything from `openat()`/NtCreateFile.
+        if fd.kind() == FdKind::Uv {
+            return sys_uv::read(fd, buf);
+        }
+        let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
+        let mut amount_read: w::DWORD = 0;
+        // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
+        let rc = unsafe {
+            ReadFile(
+                fd.cast(),
+                buf.as_mut_ptr(),
+                adjusted_len,
+                &mut amount_read,
+                core::ptr::null_mut(),
+            )
+        };
+        if rc == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::read).with_fd(fd));
+        }
+        Ok(amount_read as usize)
+    }
+    pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
+        // sys.zig:1876-1909 — `.windows => { kernel32.WriteFile(fd.cast(), …) }`
+        // (NOT via libuv — sys_uv::write → fd.uv() panics for HANDLE-backed
+        // Fds). Spec also remaps `ERROR_ACCESS_DENIED → EBADF` (a write to a
+        // read-only-opened HANDLE yields ACCESS_DENIED, which POSIX surfaces
+        // as EBADF "fd not open for writing").
+        debug_assert!(!buf.is_empty()); // Zig: `bun.assert(bytes.len > 0)`
+        let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
+        let mut bytes_written: w::DWORD = 0;
+        // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
+        let rc = unsafe {
+            WriteFile(
+                fd.cast(),
+                buf.as_ptr(),
+                adjusted_len,
+                &mut bytes_written,
+                core::ptr::null_mut(),
+            )
+        };
+        if rc == 0 {
+            let er = w::Win32Error::get();
+            let errno = if er == w::Win32Error::ACCESS_DENIED {
+                E::EBADF
+            } else {
+                er.to_e()
+            };
+            return Err(Error::new(errno, Tag::write).with_fd(fd));
+        }
+        Ok(bytes_written as usize)
+    }
+    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
+        // sys.zig:2083 — `pread_sym = syscall.pread` where `syscall` is
+        // `@compileError("not implemented")` on Windows. Only the libuv path
+        // exists; route uv-backed fds through it and surface ENOTSUP for
+        // HANDLE-backed fds instead of panicking inside `fd.uv()`.
+        if fd.kind() == FdKind::Uv {
+            return sys_uv::pread(fd, buf, off);
+        }
+        Err(Error::new(E::ENOTSUP, Tag::pread).with_fd(fd))
+    }
+    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
+        // sys.zig:2108 — same `@compileError` story as `pread`.
+        if fd.kind() == FdKind::Uv {
+            return sys_uv::pwrite(fd, buf, off);
+        }
+        Err(Error::new(E::ENOTSUP, Tag::pwrite).with_fd(fd))
+    }
     pub fn stat(path: &ZStr) -> Maybe<Stat> { sys_uv::stat(path) }
-    pub fn fstat(fd: Fd) -> Maybe<Stat> { sys_uv::fstat(fd) }
+    pub fn fstat(fd: Fd) -> Maybe<Stat> {
+        // sys.zig:589-594 — `const uvfd = fd.makeLibUVOwned() catch return
+        // .err(.MFILE, .uv_open_osfhandle); return sys_uv.fstat(uvfd);`.
+        // sys_uv::fstat does `fd.uv()` which PANICS for HANDLE-backed
+        // (`FdKind::System`) Fds — i.e. the result of `openat()`. The spec
+        // converts via `_open_osfhandle` first (acknowledged CRT-fd leak; see
+        // the `// TODO: this is a bad usage of makeLibUVOwned` in sys.zig —
+        // a leak is strictly better than the previous guaranteed panic).
+        let uvfd = fd
+            .make_libuv_owned()
+            .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
+        sys_uv::fstat(uvfd)
+    }
     pub fn lstat(path: &ZStr) -> Maybe<Stat> { sys_uv::lstat(path) }
     pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()> { sys_uv::mkdir(path, mode) }
     pub fn unlink(path: &ZStr) -> Maybe<()> { sys_uv::unlink(path) }
@@ -2630,7 +2729,10 @@ mod windows_impl {
             )
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
-            let errno = w::Win32Error::from_nt_status(rc).to_e();
+            // sys.zig:2487 `Maybe(void).errnoSysFd(rc, .ftruncate, fd)` —
+            // `errnoSys` for `NTSTATUS` routes through the curated
+            // `translateNTStatusToErrno` table, NOT `RtlNtStatusToDosError`.
+            let errno = w::translate_nt_status_to_errno(rc);
             return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
         }
         Ok(())
@@ -2683,6 +2785,13 @@ mod windows_impl {
         let len = unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
         if len == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::getcwd));
+        }
+        // MSDN: when `nBufferLength` is too small `GetCurrentDirectoryW`
+        // returns the *required* size (incl. NUL), which can exceed
+        // `wbuf.len()` under long-path opt-in. Guard so the slice below
+        // surfaces ENAMETOOLONG instead of panicking on OOB.
+        if len as usize > wbuf.len() {
+            return Err(Error::new(E::ENAMETOOLONG, Tag::getcwd));
         }
         let utf8 = bun_str::strings::paths::from_w_path(buf, &wbuf[..len as usize]);
         Ok(utf8.len())
@@ -2850,11 +2959,18 @@ mod windows_impl {
         }
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        // sys.zig:3544 — `uv_fs_futime`.
+        // sys.zig:3612 has `@compileError("TODO: futimens")` on Windows; the
+        // libuv path here predates the spec port. `uv_fs_futime` takes a CRT
+        // fd, and `fd.uv()` PANICS for HANDLE-backed (`FdKind::System`) Fds.
+        // Convert via `make_libuv_owned()` first (passes uv-backed Fds through
+        // unchanged) so an `openat()` result no longer crashes.
+        let uvfd = fd
+            .make_libuv_owned()
+            .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
         let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
-        let rc = unsafe { uv::uv_fs_futime(core::ptr::null_mut(), &mut req, fd.uv(), a, m, None) };
+        let rc = unsafe { uv::uv_fs_futime(core::ptr::null_mut(), &mut req, uvfd.uv(), a, m, None) };
         // Zig: `defer req.deinit()` — fs_t has no Drop impl; uv_fs_req_cleanup
         // must run before any return (fd-based, so no path buffer is captured,
         // but keep the pattern uniform with utimens/lutimens below).
@@ -2938,8 +3054,15 @@ mod windows_impl {
         Ok([Fd::from_uv(fds[0]), Fd::from_uv(fds[1])])
     }
     pub fn isatty(fd: Fd) -> bool {
-        // sys.zig — windows: uv_guess_handle == UV_TTY.
-        uv::uv_guess_handle(fd.uv()) == uv::UV_TTY
+        // `uv_guess_handle` takes a `uv_file` (CRT int fd); `fd.uv()` PANICS
+        // for HANDLE-backed (`FdKind::System`) Fds that are not stdio. Branch
+        // on the fd kind: uv-backed → libuv probe, HANDLE-backed →
+        // `GetFileType == FILE_TYPE_CHAR` (the canonical Win32 tty test, what
+        // `_isatty()` ultimately calls).
+        match fd.kind() {
+            FdKind::Uv => uv::uv_guess_handle(fd.uv()) == uv::UV_TTY,
+            FdKind::System => w::GetFileType(fd.cast()) == w::FILE_TYPE_CHAR,
+        }
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         // sys.zig:2339 — windows: SetFilePointerEx.
@@ -4976,6 +5099,14 @@ pub fn normalize_path_windows_opts<'a>(
         if opts.add_nt_prefix {
             // Absolute → add `\??\` (idempotent if already present), normalize
             // separators/`..` and NUL-terminate.
+            // sys.zig:1001/1052 — `nt_prefix_headroom = 8`; `if (path.len >
+            // buf.len -| nt_prefix_headroom) return name_too_long;`.
+            // `to_nt_path16` (≡ `normalizeStringGenericTZ`) performs no bounds
+            // checking of its own, so reserve room for `\??\` + trailing-`\`
+            // growth + NUL before calling it.
+            if path.len() > buf.len().saturating_sub(8) {
+                return Err(too_long());
+            }
             let nt = bun_str::strings::paths::to_nt_path16(buf, path);
             return Ok(nt);
         }
@@ -5029,7 +5160,10 @@ pub fn normalize_path_windows_opts<'a>(
 
     let mut joined = bun_paths::w_path_buffer_pool::get();
     let joined_len = base.len() + 1 + rel.len();
-    if joined_len > joined.0.len() { return Err(too_long()); }
+    // sys.zig:1092 — `if (joined_len > buf1.len -| nt_prefix_headroom) return
+    // name_too_long;`. Reserve 8 u16 for the `\??\` prefix + NUL that
+    // `to_nt_path16` writes into `buf` (which is the same length as `joined`).
+    if joined_len > joined.0.len().saturating_sub(8) { return Err(too_long()); }
     joined.0[..base.len()].copy_from_slice(base);
     joined.0[base.len()] = b'\\' as u16;
     joined.0[base.len() + 1..joined_len].copy_from_slice(rel);
@@ -5495,8 +5629,14 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         // SAFETY: FFI; attr/basic_info valid for the call duration.
         let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
         if rc != w::NTSTATUS::SUCCESS {
-            let errno = windows::Win32Error::from_nt_status(rc).to_e();
-            return Err(Error::from_code(errno, Tag::access));
+            // sys.zig:3744 `Maybe(bool).errnoSys(rc, .access)` — `errnoSys` for
+            // `NTSTATUS` routes through the curated `translateNTStatusToErrno`
+            // table, NOT `RtlNtStatusToDosError`. `directory_exists_at()` then
+            // branches on `ENOENT`, so the mapping must match the spec table.
+            return Err(Error::from_code(
+                windows::translate_nt_status_to_errno(rc),
+                Tag::access,
+            ));
         }
         let attrs = basic_info.FileAttributes;
         // From libuv: directories cannot be read-only.
@@ -6388,7 +6528,7 @@ pub mod elf {
             data: *mut c_void,
         ) -> c_int {
             // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
-            let context = unsafe { &mut *data.cast::<Ctx>() };
+            let context = unsafe { bun_core::callback_ctx::<Ctx>(data) };
             // SAFETY: dl_iterate_phdr passes a valid info pointer.
             let info = unsafe { &*info };
             // The base address is too high
@@ -7615,6 +7755,20 @@ const _: () = {
         >= core::mem::align_of::<SysQuietWriterAdapter>());
 };
 
+impl SysQuietWriterAdapter {
+    /// View of the bytes buffered so far (`buf[0..pos]`). Centralises the
+    /// (ptr, len) → slice reconstruction; the buffer is owned by the adapter
+    /// and lives for `&self`.
+    #[inline]
+    fn buffered(&self) -> &[u8] {
+        // SAFETY: `buf` is a `cap`-byte allocation owned by this adapter (set
+        // at construction); `pos <= cap` is upheld by `adapter_write_all`
+        // (drains before writing past `cap`). Bytes `[0, pos)` were written by
+        // `copy_nonoverlapping` and are initialized. Borrow tied to `&self`.
+        unsafe { core::slice::from_raw_parts(self.buf, self.pos) }
+    }
+}
+
 unsafe fn adapter_write_all(w: *mut bun_core::io::Writer, bytes: &[u8])
     -> core::result::Result<(), bun_core::Error>
 {
@@ -7627,8 +7781,7 @@ unsafe fn adapter_write_all(w: *mut bun_core::io::Writer, bytes: &[u8])
     if this.pos + bytes.len() > this.cap {
         // Drain buffered bytes first.
         if this.pos > 0 {
-            let buffered = unsafe { core::slice::from_raw_parts(this.buf, this.pos) };
-            let _ = fd_write_all_quiet(this.fd, buffered);
+            let _ = fd_write_all_quiet(this.fd, this.buffered());
             this.pos = 0;
         }
         // Large writes bypass the buffer so the next small write still coalesces.
@@ -7649,8 +7802,7 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer)
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.pos > 0 {
-        let buffered = unsafe { core::slice::from_raw_parts(this.buf, this.pos) };
-        let _ = fd_write_all_quiet(this.fd, buffered);
+        let _ = fd_write_all_quiet(this.fd, this.buffered());
         this.pos = 0;
     }
     Ok(())

@@ -1322,7 +1322,7 @@ impl CommandLineReporter {
         }
         byte_ranges.sort_by(coverage::is_less_than_cmp);
 
-        let relative_dir = unsafe { (*vm.transpiler.fs).top_level_dir };
+        let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let file = match File::openat(Fd::cwd(), out_path, bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC, 0o644) {
             bun_sys::Result::Err(e) => {
                 Output::err(bun_core::err!("lcovCoverageError"), "failed to open coverage fragment {}\n{}", (bstr::BStr::new(out_path.as_bytes()), e));
@@ -1387,7 +1387,7 @@ impl CommandLineReporter {
             unreachable!("No reporters enabled");
         }
 
-        let relative_dir = unsafe { (*vm.transpiler.fs).top_level_dir };
+        let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
         // --- Text ---
         let max_filepath_length: usize = if REPORTERS_TEXT {

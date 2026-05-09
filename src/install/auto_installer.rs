@@ -426,7 +426,8 @@ pub unsafe fn __bun_resolver_init_package_manager(
         crate::package_manager::CommandLineArguments::default(),
         env_ref,
     );
-    // SAFETY: `init_with_runtime` returns the non-null `holder::RAW_PTR`
-    // singleton; upcast to the trait object the resolver stores.
-    unsafe { core::ptr::NonNull::new_unchecked(pm as *mut dyn hooks::AutoInstaller) }
+    // `init_with_runtime` returns the non-null `holder::RAW_PTR` singleton;
+    // upcast to the trait object the resolver stores.
+    core::ptr::NonNull::new(pm as *mut dyn hooks::AutoInstaller)
+        .expect("init_with_runtime returns the holder::RAW_PTR singleton")
 }

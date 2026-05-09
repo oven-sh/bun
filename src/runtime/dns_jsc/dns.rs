@@ -70,23 +70,18 @@ type Sockaddr = netc::sockaddr;
 /// and the cast back to `*mut GlobalData`.
 #[inline]
 pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver {
-    let vm_ptr = global_this.bun_vm().as_mut();
+    let vm = global_this.bun_vm();
     // PORT NOTE: reshaped for borrowck — `GlobalData::init` needs
     // `&VirtualMachine` while `rare_data()` needs `&mut VirtualMachine`. Read
     // the slot, drop the borrow, init if empty, then re-acquire the slot to
-    // store. The two `&mut *vm_ptr` derefs are sequenced (no overlap).
-    // SAFETY: `bun_vm()` returns the live VM back-ptr; RareData is owned by it
-    // and outlives this call.
-    let existing = *unsafe { &mut *vm_ptr }.rare_data().global_dns_data_slot();
+    // store. The two `as_mut()` borrows are sequenced (no overlap).
+    let existing = *vm.as_mut().rare_data().global_dns_data_slot();
     let data: *mut GlobalData = match existing {
         Some(nn) => nn.as_ptr().cast::<GlobalData>(),
         None => {
-            // SAFETY: `vm_ptr` is live; the prior `&mut` borrow ended above.
-            let gd = bun_core::heap::into_raw(GlobalData::init(unsafe { &*vm_ptr }));
-            // SAFETY: `vm_ptr` is live; re-acquire the slot to publish `gd`.
-            *unsafe { &mut *vm_ptr }.rare_data().global_dns_data_slot() =
-                // SAFETY: `gd` was just `heap::alloc`'d (non-null).
-                Some(unsafe { NonNull::new_unchecked(gd.cast::<c_void>()) });
+            let gd_nn = bun_core::heap::into_raw_nn(GlobalData::init(vm));
+            let gd = gd_nn.as_ptr();
+            *vm.as_mut().rare_data().global_dns_data_slot() = Some(gd_nn.cast::<c_void>());
             // SAFETY: `gd` points to a live, freshly-allocated GlobalData.
             unsafe { (*gd).resolver.ref_() }; // live forever
             gd
@@ -2400,14 +2395,17 @@ pub mod internal {
             unsafe {
                 let entry = results[i].as_mut_ptr();
                 (*entry).info = *info_;
-                if !(*info_).ai_addr.is_null() {
-                    if (*info_).ai_family == netc::AF_INET {
-                        let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in>();
-                        *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in>();
-                    } else if (*info_).ai_family == netc::AF_INET6 {
-                        let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in6>();
-                        *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in6>();
-                    }
+                // Always initialize `addr`: assume_init() below requires every byte written.
+                // Windows getaddrinfo may return non-null ai_addr with families other than
+                // AF_INET/AF_INET6; zero `addr` for those rather than leaving it uninit.
+                if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET {
+                    (*entry).addr = bun_core::ffi::zeroed();
+                    let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in>();
+                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in>();
+                } else if !(*info_).ai_addr.is_null() && (*info_).ai_family == netc::AF_INET6 {
+                    (*entry).addr = bun_core::ffi::zeroed();
+                    let addr_in = (&raw mut (*entry).addr).cast::<netc::sockaddr_in6>();
+                    *addr_in = *(*info_).ai_addr.cast::<netc::sockaddr_in6>();
                 } else {
                     (*entry).addr = bun_core::ffi::zeroed();
                 }

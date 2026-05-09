@@ -611,9 +611,8 @@ impl Subprocess<'_> {
         }
         this.observable_getters.insert(ObservableGetter::Stdin);
         // PORT NOTE: reshaped for borrowck — Zig passed `&stdin` and `*Subprocess`
-        // separately (aliasing). `Writable::to_js` now takes only the raw
-        // `*mut Subprocess` and projects `stdin` internally so no two `&mut`
-        // overlap here.
+        // separately (aliasing). `Writable::to_js` takes only the parent and
+        // projects `stdin` internally so no two `&mut` overlap here.
         Ok(Writable::to_js(this, global_this))
     }
 
@@ -1207,7 +1206,7 @@ impl Subprocess<'_> {
         match io {
             StdioKind::Stdin => {
                 if !called {
-                    Writable::finalize(std::ptr::from_mut::<Self>(self));
+                    Writable::finalize(self);
                 } else {
                     self.stdin.close();
                 }

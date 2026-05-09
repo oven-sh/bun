@@ -1135,7 +1135,7 @@ pub mod api {
             }
             fn run_on_js_thread_wrap(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
                 // SAFETY: ctx was stored from `*mut Resolve` in `dispatch`.
-                unsafe { &mut *ctx.cast::<Resolve>() }.run_on_js_thread();
+                unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) }.run_on_js_thread();
                 Ok(())
             }
         }
@@ -1274,7 +1274,7 @@ pub mod api {
             }
             fn run_on_js_thread_wrap(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
                 // SAFETY: ctx was stored from `*mut Load` in `dispatch`.
-                unsafe { &mut *ctx.cast::<Load>() }.run_on_js_thread();
+                unsafe { bun_ptr::callback_ctx::<Load>(ctx) }.run_on_js_thread();
                 Ok(())
             }
         }
@@ -1820,21 +1820,12 @@ impl<'a> BundleV2<'a> {
         // when `scb_bitset` is `None`).
         let scb_list = self.graph.server_component_boundaries.slice();
 
-        // PORT NOTE: reshaped for borrowck — SoA columns are physically
-        // disjoint slabs but rustc cannot see that through `&mut
-        // MultiArrayList`. Route the one mutable column through the raw
-        // pointer (`Slice::items_raw`); the rest stay as shared borrows.
-        let ast_slice = self.graph.ast.slice();
-        let ast_len = ast_slice.len();
-        // SAFETY: column type matches `BundledAst::import_records`; the slab
-        // does not resize for the duration of this function and no other
-        // `&mut` to this column exists.
-        let all_import_records: &mut [import_record::List] = unsafe {
-            core::slice::from_raw_parts_mut(
-                ast_slice.items_raw::<"import_records", import_record::List>(),
-                ast_len,
-            )
-        };
+        // PORT NOTE: reshaped for borrowck — `Slice<T>` is a value-type
+        // snapshot of column pointers (does not borrow `self.graph.ast`), so
+        // `split_mut()` on the local can coexist with the shared borrows
+        // below. The slab does not resize for the duration of this function.
+        let mut ast_slice = self.graph.ast.slice();
+        let all_import_records: &mut [import_record::List] = ast_slice.split_mut().import_records;
         let all_urls_for_css = self.graph.ast.items_url_for_css();
 
         let mut visitor = ReachableFileVisitor {
@@ -1889,31 +1880,12 @@ impl<'a> BundleV2<'a> {
         let ReachableFileVisitor { reachable, .. } = visitor;
 
         // PORT NOTE: reshaped for borrowck — three disjoint mutable SoA
-        // columns; route through `Slice::items_raw`.
-        let input_files_slice = self.graph.input_files.slice();
-        let input_files_len = input_files_slice.len();
-        // SAFETY: SoA columns are disjoint; the slab does not resize for the
-        // duration of this loop and no other `&mut` to these columns exists.
-        let additional_files: &mut [Vec<crate::AdditionalFile>] = unsafe {
-            core::slice::from_raw_parts_mut(
-                input_files_slice
-                    .items_raw::<"additional_files", Vec<crate::AdditionalFile>>(),
-                input_files_len,
-            )
-        };
-        let unique_keys: &mut [Box<[u8]>] = unsafe {
-            core::slice::from_raw_parts_mut(
-                input_files_slice
-                    .items_raw::<"unique_key_for_additional_file", Box<[u8]>>(),
-                input_files_len,
-            )
-        };
-        let content_hashes: &mut [u64] = unsafe {
-            core::slice::from_raw_parts_mut(
-                input_files_slice.items_raw::<"content_hash_for_additional_file", u64>(),
-                input_files_len,
-            )
-        };
+        // columns via `split_mut()` on a value-type `Slice` snapshot.
+        let mut input_files_slice = self.graph.input_files.slice();
+        let input_files_cols = input_files_slice.split_mut();
+        let additional_files: &mut [Vec<crate::AdditionalFile>] = input_files_cols.additional_files;
+        let unique_keys: &mut [Box<[u8]>] = input_files_cols.unique_key_for_additional_file;
+        let content_hashes: &mut [u64] = input_files_cols.content_hash_for_additional_file;
         for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
             if !url_for_css.is_empty() {
                 // We like to inline additional files in CSS if they fit a size threshold
@@ -2005,21 +1977,12 @@ impl<'a> BundleV2<'a> {
         // code expecting a function will crash.
         //
         // PORT NOTE: reshaped for borrowck — Zig pulled the mutable
-        // `import_records` column alongside shared columns. Route the one
-        // mutable column through `Slice::items_raw` and read the per-target
-        // map through the disjoint `build_graphs` field instead of the
-        // `&mut self` accessor.
-        let ast_slice = self.graph.ast.slice();
-        let ast_len = ast_slice.len();
-        // SAFETY: column type matches `BundledAst::import_records`; the slab
-        // does not resize for the duration of this loop and no other `&mut`
-        // to this column exists.
-        let ast_import_records: &mut [import_record::List] = unsafe {
-            core::slice::from_raw_parts_mut(
-                ast_slice.items_raw::<"import_records", import_record::List>(),
-                ast_len,
-            )
-        };
+        // `import_records` column alongside shared columns. `split_mut()` on a
+        // value-type `Slice` snapshot yields the one mutable column without
+        // borrowing `self.graph.ast`; read the per-target map through the
+        // disjoint `build_graphs` field instead of the `&mut self` accessor.
+        let mut ast_slice = self.graph.ast.slice();
+        let ast_import_records: &mut [import_record::List] = ast_slice.split_mut().import_records;
         let targets = self.graph.ast.items_target();
         let max_valid_source_index = Index::init(self.graph.input_files.len());
         let secondary_paths = self.graph.input_files.items_secondary_path();
@@ -2225,8 +2188,7 @@ impl<'a> BundleV2<'a> {
         if path.pretty.as_ptr() == path.text.as_ptr() {
             // TODO: outbase
             let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(
-                // SAFETY: `transpiler.fs` is a live `*mut FileSystem` for the bundle pass.
-                unsafe { (*(*transpiler).fs).top_level_dir }, &path.text);
+                bun_resolver::fs::FileSystem::get().top_level_dir, &path.text);
             // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
             // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
             path.pretty = unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(rel)) };
@@ -2624,8 +2586,7 @@ impl<'a> BundleV2<'a> {
         // SAFETY: arena slot is live for the bundle pass; the default value
         // written above has no Drop, so overwriting via `*pool = ...` is fine.
         unsafe { *pool = ThreadPool::init(&mut *this, thread_pool)?; }
-        // SAFETY: `pool` is a non-null arena allocation.
-        this.graph.pool = unsafe { NonNull::new_unchecked(pool) };
+        this.graph.pool = NonNull::new(pool).expect("arena allocation is non-null");
         // SAFETY: arena slot is live; reborrow for `start()`.
         unsafe { (*pool).start(); }
         Ok(this)
@@ -4409,18 +4370,15 @@ impl<'a> BundleV2<'a> {
             let css_asts = asts.items_css();
             // PORT NOTE: SoA columns are physically disjoint slabs but rustc cannot
             // see that through `&Slice`. Route the two columns we mutate (`parts`,
-            // `import_records`) through raw `items_raw` so the per-index `&mut`
-            // does not conflict with the `&asts` reads (`css`, `target`). Mirrors
-            // the pattern at `find_reachable_files` (~L1457).
-            // SAFETY: column types match `BundledAst::{parts,import_records}`; the
-            // slab does not resize for the duration of this loop and no other
-            // `&mut` to these columns exists.
-            let parts_col: *mut js_ast::PartList = unsafe {
-                asts.items_raw::<"parts", js_ast::PartList>()
-            };
-            let import_records_col: *mut import_record::List = unsafe {
-                asts.items_raw::<"import_records", import_record::List>()
-            };
+            // `import_records`) through `split_raw()` (root-provenance `*mut [T]`,
+            // no `&mut` intermediate) so the per-index `&mut` does not conflict
+            // with the `&asts` reads (`css`, `target`). Mirrors the pattern at
+            // `find_reachable_files` (~L1457). The slab does not resize for the
+            // duration of this loop and no other `&mut` to these columns exists.
+            let ast_raw = asts.split_raw();
+            let parts_col: *mut js_ast::PartList = ast_raw.parts as *mut js_ast::PartList;
+            let import_records_col: *mut import_record::List =
+                ast_raw.import_records as *mut import_record::List;
 
             let input_files = self.graph.input_files.slice();
             let loaders = input_files.items_loader();

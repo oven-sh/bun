@@ -1140,8 +1140,9 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
             // TODO(port): std.net.Address → bun_sys::net::Address
             let addr_str = bun_fmt::format_ip(
                 // bun_sys::net::Address will do ptrCast depending on the family so this is ok
-                // SAFETY: address4 is a valid sockaddr
-                &unsafe { bun_sys::net::Address::init_posix(core::ptr::from_ref(&iface.address.address4).cast::<bun_sys::posix::sockaddr>()) },
+                // SAFETY: the address union backs a valid sockaddr_in/sockaddr_in6; pointer derived
+                // from the whole union so provenance covers the full 28 bytes init_posix may copy.
+                &unsafe { bun_sys::net::Address::init_posix(core::ptr::from_ref(&iface.address).cast::<bun_sys::posix::sockaddr>()) },
                 &mut ip_buf,
             )
             .expect("unreachable");
@@ -1168,8 +1169,9 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
         {
             let str = bun_fmt::format_ip(
                 // bun_sys::net::Address will do ptrCast depending on the family so this is ok
-                // SAFETY: netmask4 is a valid sockaddr
-                &unsafe { bun_sys::net::Address::init_posix(core::ptr::from_ref(&iface.netmask.netmask4).cast::<bun_sys::posix::sockaddr>()) },
+                // SAFETY: the netmask union backs a valid sockaddr_in/sockaddr_in6; pointer derived
+                // from the whole union so provenance covers the full 28 bytes init_posix may copy.
+                &unsafe { bun_sys::net::Address::init_posix(core::ptr::from_ref(&iface.netmask).cast::<bun_sys::posix::sockaddr>()) },
                 &mut ip_buf,
             )
             .expect("unreachable");

@@ -803,9 +803,7 @@ pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
 }
 
 pub fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // SAFETY: VirtualMachine::get() returns the live per-thread singleton; `fs` is
-    // the process-lifetime resolver FileSystem singleton.
-    ZigString::init(unsafe { (*VirtualMachine::get().as_mut().transpiler.fs).top_level_dir })
+    ZigString::init(bun_resolver::fs::FileSystem::get().top_level_dir)
         .to_js(global_this)
 }
 

@@ -189,6 +189,16 @@ pub struct SuperBlob {
     pub count: u32,
 }
 
+// SAFETY: `CodeDirectory` is `#[repr(C)]` with 9×u32, 4×u8, 4×u32, 4×u64 in
+// that order → offsets 0..36, 36..40, 40..56, 56..88. Every field boundary is
+// naturally aligned with no inserted padding; size 88, align 8. `Copy + 'static`,
+// no interior mutability, every byte initialized.
+unsafe impl bytemuck::NoUninit for CodeDirectory {}
+// SAFETY: `#[repr(C)]` 2×u32 → size 8, align 4, no padding. `Copy + 'static`.
+unsafe impl bytemuck::NoUninit for BlobIndex {}
+// SAFETY: `#[repr(C)]` 3×u32 → size 12, align 4, no padding. `Copy + 'static`.
+unsafe impl bytemuck::NoUninit for SuperBlob {}
+
 // ── load-command iterator ─────────────────────────────────────────────────
 // Canonical impl lives in `bun_sys::macho` (raw-ptr storage; see module-level
 // SAFETY note above for why a borrowed `&[u8]` does not work for `macho.rs`).

@@ -1987,7 +1987,7 @@ impl PipeReader {
 
     pub fn on_read_chunk(ptr: *mut c_void, chunk: &[u8], has_more: ReadState) -> bool {
         // SAFETY: ptr was registered via reader.set_parent(self).
-        let this: &mut PipeReader = unsafe { &mut *ptr.cast::<PipeReader>() };
+        let this: &mut PipeReader = unsafe { bun_ptr::callback_ctx::<PipeReader>(ptr) };
         this.buffered_output.append(chunk);
         log!(
             "PipeReader(0x{:x}, {}) onReadChunk(chunk_len={}, has_more={})",

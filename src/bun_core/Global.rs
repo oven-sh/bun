@@ -664,11 +664,11 @@ pub fn exit(code: u32) -> ! {
                 libc::abort()
             };
         }
-        // SAFETY: quick_exit is noreturn.
         unsafe extern "C" {
-            fn quick_exit(code: c_int) -> !;
+            // safe: arg by-value; noreturn.
+            safe fn quick_exit(code: c_int) -> !;
         }
-        unsafe { quick_exit(code as c_int) };
+        quick_exit(code as c_int);
         // SAFETY: abort is noreturn; unreachable fallback if quick_exit returns.
         #[allow(unreachable_code)]
         unsafe {

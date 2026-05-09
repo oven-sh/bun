@@ -122,19 +122,22 @@ impl<T> Weak<T> {
         }
     }
 
-    /// SAFETY: returns `&mut JSPromise` derived from a GC-owned cell pointer;
-    /// two calls alias the same object. Caller must not hold another live
-    /// `&mut JSPromise` to it (resolver-style accessor).
-    pub unsafe fn get(&self) -> &mut JSPromise {
-        // SAFETY: `as_promise` returns a non-null `*mut JSPromise` for a live promise cell.
-        unsafe { &mut *self.weak.get().unwrap().as_promise().unwrap() }
+    /// Borrow the GC-rooted `JSPromise` cell. Panics if the weak slot is empty
+    /// or no longer a promise.
+    ///
+    /// Safe because `JSPromise` is an `opaque_ffi!` ZST handle: a `&mut` to it
+    /// covers zero bytes (see [`bun_opaque::opaque_deref_mut`] for the proof),
+    /// so two callers cannot alias any Rust-visible memory. The pointer comes
+    /// from the JSValue payload (not derived from `&self`) and the weak ref
+    /// keeps the cell observable while held.
+    pub fn get(&self) -> &mut JSPromise {
+        JSPromise::opaque_mut(self.weak.get().unwrap().as_promise().unwrap())
     }
 
-    /// SAFETY: see [`get`].
-    pub unsafe fn get_or_null(&self) -> Option<&mut JSPromise> {
+    /// See [`get`]; returns `None` instead of panicking when the slot is empty.
+    pub fn get_or_null(&self) -> Option<&mut JSPromise> {
         let promise_value = self.weak.get()?;
-        // SAFETY: see `get`.
-        promise_value.as_promise().map(|p| unsafe { &mut *p })
+        promise_value.as_promise().map(JSPromise::opaque_mut)
     }
 
     pub fn value(&self) -> JSValue {
@@ -198,8 +201,7 @@ impl Strong {
             Ok(v) => v,
             Err(_) => return self.reject(global, val),
         };
-        // SAFETY: `&mut self` held; sole `&mut JSPromise` borrow in this scope.
-        err.attach_async_stack_from_promise(global, unsafe { self.get() });
+        err.attach_async_stack_from_promise(global, self.get());
         self.swap().reject(global, Ok(err))
     }
 
@@ -256,12 +258,16 @@ impl Strong {
         Self { strong: JscStrong::create(value, global) }
     }
 
-    /// SAFETY: returns `&mut JSPromise` derived from a GC-owned cell pointer;
-    /// two calls alias the same object. Caller must not hold another live
-    /// `&mut JSPromise` to it (resolver-style accessor).
-    pub unsafe fn get(&self) -> &mut JSPromise {
-        // SAFETY: `as_promise` returns a non-null `*mut JSPromise` for a live promise cell.
-        unsafe { &mut *self.strong.get().unwrap().as_promise().unwrap() }
+    /// Borrow the GC-rooted `JSPromise` cell. Panics if the strong slot is
+    /// empty (use [`has_value`] to check first).
+    ///
+    /// Safe because `JSPromise` is an `opaque_ffi!` ZST handle: a `&mut` to it
+    /// covers zero bytes (see [`bun_opaque::opaque_deref_mut`] for the proof),
+    /// so the resolver-style accessor cannot alias any Rust-visible memory.
+    /// The pointer is the JSValue payload (not derived from `&self`) and the
+    /// `Strong` root keeps the cell alive for the borrow's lifetime.
+    pub fn get(&self) -> &mut JSPromise {
+        JSPromise::opaque_mut(self.strong.get().unwrap().as_promise().unwrap())
     }
 
     pub fn value(&self) -> JSValue {
@@ -323,7 +329,7 @@ impl JSPromise {
             F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
         {
             // SAFETY: `this` is `&mut Wrapper<F>` passed below; `g` is a live JSGlobalObject.
-            let this = unsafe { &mut *this.cast::<Wrapper<F>>() };
+            let this = unsafe { bun_ptr::callback_ctx::<Wrapper<F>>(this) };
             let g = unsafe { &*g };
             let f = this.f.take().unwrap();
             // Zig: `jsc.toJSHostCall(g, @src(), Fn, this.args)` — `@src()` mapped to

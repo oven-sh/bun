@@ -12,8 +12,9 @@ use bun_sys::File;
 
 bun_output::declare_scope!(CLI, hidden);
 
-// Zig `var start_time: i128 = undefined;` — written once in `Cli::start`.
-pub static START_TIME: bun_core::RacyCell<i128> = bun_core::RacyCell::new(0);
+// Zig `var start_time: i128 = undefined;` — written once in `Cli::start`
+// (S015: write-once → `OnceLock`).
+pub static START_TIME: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
 
 #[allow(non_upper_case_globals)]
 // Mutable static Option<&[u8]>; written from C++ side (process.title)
@@ -38,8 +39,8 @@ pub mod cli {
 
     pub fn start() {
         IS_MAIN_THREAD.with(|c| c.set(true));
-        // SAFETY: single-threaded process startup; no other reader yet
-        unsafe { START_TIME.write(bun_core::time::nano_timestamp()) };
+        // Single-threaded process startup; no other reader yet — write-once.
+        let _ = START_TIME.set(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(logger::Log::init()) };
 
@@ -54,8 +55,7 @@ pub mod cli {
         }
     }
 
-    pub static CMD: bun_core::RacyCell<Option<super::command::Tag>> =
-        bun_core::RacyCell::new(None);
+    pub static CMD: std::sync::OnceLock<super::command::Tag> = std::sync::OnceLock::new();
 
     thread_local! {
         pub static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
@@ -67,12 +67,13 @@ pub use cli as Cli;
 pub mod debug_flags {
     use super::*;
 
-    pub static RESOLVE_BREAKPOINTS: bun_core::RacyCell<&[&[u8]]> = bun_core::RacyCell::new(&[]);
-    pub static PRINT_BREAKPOINTS: bun_core::RacyCell<&[&[u8]]> = bun_core::RacyCell::new(&[]);
+    pub static RESOLVE_BREAKPOINTS: std::sync::OnceLock<&'static [&'static [u8]]> =
+        std::sync::OnceLock::new();
+    pub static PRINT_BREAKPOINTS: std::sync::OnceLock<&'static [&'static [u8]]> =
+        std::sync::OnceLock::new();
 
     pub fn has_resolve_breakpoint(str: &[u8]) -> bool {
-        // SAFETY: written once during arg parse before any concurrent reads
-        for bp in unsafe { RESOLVE_BREAKPOINTS.read() } {
+        for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
             if strings::contains(str, bp) {
                 return true;
             }
@@ -81,8 +82,7 @@ pub mod debug_flags {
     }
 
     pub fn has_print_breakpoint(path: &bun_resolver::fs::Path) -> bool {
-        // SAFETY: written once during arg parse before any concurrent reads
-        for bp in unsafe { PRINT_BREAKPOINTS.read() } {
+        for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
             if strings::contains(&path.pretty, bp) {
                 return true;
             }
@@ -427,13 +427,13 @@ pub mod command {
     pub fn create_context_data<const COMMAND: Tag>(
         log: &mut logger::Log,
     ) -> Result<Context<'_>, bun_core::Error> {
-        // SAFETY: single-threaded CLI startup
-        unsafe { cli::CMD.write(Some(COMMAND)) };
+        // Single-threaded CLI startup; write-once.
+        let _ = cli::CMD.set(COMMAND);
         // SAFETY: single-threaded CLI startup
         let ctx_ptr: *mut ContextData = unsafe {
             (*CONTEXT_DATA.get()).write(ContextData {
                 log,
-                start_time: START_TIME.read(),
+                start_time: START_TIME.get().copied().unwrap_or(0),
                 // allocator dropped — global mimalloc
                 // args left to Default — TransformOptions contains NonNull-backed
                 // collections, so the Zig zero-init does not translate.
@@ -777,7 +777,7 @@ pub mod command {
                     let ctx_ptr: *mut ContextData = unsafe {
                         (*CONTEXT_DATA.get()).write(ContextData {
                             log,
-                            start_time: START_TIME.read(),
+                            start_time: START_TIME.get().copied().unwrap_or(0),
                             // args left to Default — TransformOptions contains
                             // NonNull-backed collections, so the Zig zero-init
                             // does not translate.
@@ -1438,11 +1438,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
             }
         }
 
-        // SAFETY: `ctx.log` is set by `Command::init` and outlives this call.
-        let log = unsafe { &mut *ctx.log };
+        let entry = ctx.args.entry_points[0].clone();
         bun_install::lockfile::Printer::print(
-            log,
-            &ctx.args.entry_points[0],
+            unsafe { ctx.log_mut() },
+            &entry,
             bun_install::lockfile::PrinterFormat::Yarn,
         )
     }

@@ -785,7 +785,7 @@ pub unsafe trait UvStream: UvHandle {
         ) {
             // SAFETY: `req.data` was set to `context` above; libuv calls this
             // on the loop thread before `uv_readcb`.
-            let ctx: &mut T = unsafe { &mut *(*req).data.cast::<T>() };
+            let ctx: &mut T = unsafe { bun_core::callback_ctx::<T>((*req).data) };
             let buf = T::on_read_alloc(ctx, suggested_size);
             // SAFETY: `buffer` is libuv's out-param.
             unsafe { *buffer = uv_buf_t::init(buf) };
@@ -998,7 +998,7 @@ impl uv_write_t {
         stream: *mut uv_stream_t,
         input: &uv_buf_t,
         context: *mut T,
-        on_write: fn(&mut T, ReturnCode),
+        on_write: fn(*mut T, ReturnCode),
     ) -> ReturnCode {
         // Stash the Rust fn-pointer in `reserved[0]` (libuv never touches the
         // 6-slot `reserved` array on `uv_req_t`) as a `usize`, recovered in the
@@ -1010,10 +1010,15 @@ impl uv_write_t {
             // `uv_write` below; libuv invokes this exactly once with the same
             // `req` pointer. The `usize` → `fn` cast round-trips the address
             // written by `on_write as usize` above (Win64: same width).
+            // Pass the raw `*mut T` straight through (matches Zig's
+            // `uvWriteCb`: `callback(@ptrCast(@alignCast(handler.data)), status)`)
+            // — callers commonly free the `T` allocation inside the callback,
+            // so materialising `&mut T` here would leave that reference
+            // dangling across the dealloc (UB).
             unsafe {
-                let cb: fn(&mut T, ReturnCode) =
-                    mem::transmute::<usize, fn(&mut T, ReturnCode)>((*req).reserved[0] as usize);
-                cb(&mut *(*req).data.cast::<T>(), status);
+                let cb: fn(*mut T, ReturnCode) =
+                    mem::transmute::<usize, fn(*mut T, ReturnCode)>((*req).reserved[0] as usize);
+                cb((*req).data.cast::<T>(), status);
             }
         }
         // SAFETY: caller guarantees `self` lives until the cb fires and
@@ -2312,10 +2317,14 @@ impl ReturnCodeI64 {
     pub const fn errno(self) -> Option<u16> {
         if self.0 < 0 { Some(self.0.unsigned_abs() as u16) } else { None }
     }
-    /// Zig `errEnum()` — alias for [`errno`]; the `bun_sys::E` mapping lives in
-    /// `bun_sys::windows::translate_uv_error_to_e` (layering).
+    /// Zig `errEnum()` (libuv.zig:3022-3027) — translated `bun_sys::E`
+    /// discriminant via [`uv_err_to_e_discriminant`] (matching
+    /// [`ReturnCode::err_enum`]). For the typed `bun_sys::E` use
+    /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
     #[inline]
-    pub const fn err_enum(self) -> Option<u16> { self.errno() }
+    pub const fn err_enum(self) -> Option<u16> {
+        if self.0 < 0 { uv_err_to_e_discriminant(self.0 as c_int) } else { None }
+    }
     /// Zig: `toFD()` — `req.result` after a successful `uv_fs_open` is the
     /// CRT fd. Returns the raw `uv_file`; caller wraps with `Fd::from_uv`
     /// (`bun_core::Fd` is a higher-tier type).

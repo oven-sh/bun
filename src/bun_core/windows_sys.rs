@@ -75,24 +75,32 @@ pub struct PebView {
     _reserved2: [u8; 1],
     _reserved3: [*mut c_void; 2],
     pub Ldr: *mut c_void,
-    pub ProcessParameters: &'static ProcessParameters,
+    // Raw pointer, NOT `&'static`: the OS/CRT mutate `RTL_USER_PROCESS_PARAMETERS`
+    // out-of-band (e.g. `SetStdHandle()` writes `hStd*`), so a Rust shared
+    // reference would assert false immutability to the optimizer (UB).
+    pub ProcessParameters: *const ProcessParameters,
 }
 
 /// `std.os.windows.peb()` — reads `gs:[0x60]` (x64) / `__readgsqword(0x60)`.
+///
+/// Returns a raw pointer (NOT `&'static PebView`): the PEB is owned and mutated
+/// by the OS/CRT behind Rust's back (`SetStdHandle`, debugger toggling
+/// `BeingDebugged`, …). Materializing a `&'static` to it would be UB under
+/// Rust's aliasing rules. Callers must read fields through raw-pointer deref.
 #[inline]
-pub unsafe fn peb() -> &'static PebView {
+pub unsafe fn peb() -> *const PebView {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         let p: *const PebView;
         core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, pure, readonly));
-        &*p
+        p
     }
     #[cfg(target_arch = "aarch64")]
     unsafe {
         // TEB at x18; PEB at TEB+0x60.
         let teb: *const u8;
         core::arch::asm!("mov {}, x18", out(reg) teb, options(nostack, pure, readonly));
-        &*(*(teb.add(0x60) as *const *const PebView))
+        *(teb.add(0x60) as *const *const PebView)
     }
 }
 

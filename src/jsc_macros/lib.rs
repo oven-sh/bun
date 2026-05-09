@@ -122,6 +122,24 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(_)));
 
+    // R-2 (PORT_NOTES_PLAN): for `&self` receivers, materialise `&*__this`
+    // (NOT `&mut *__this`). A method that calls back into JS can be re-entered
+    // on the same `m_ctx`; holding a `noalias` `&mut Self` across that re-entry
+    // is Stacked-Borrows UB. Such methods take `&self` and route mutation
+    // through `Cell`/`JsCell` fields, so the shim must hand them a shared
+    // borrow. `&mut self` receivers (and typed `this: &mut Self` patterns)
+    // keep the `&mut *` reborrow.
+    let receiver_is_shared = func
+        .sig
+        .inputs
+        .first()
+        .is_some_and(|a| matches!(a, FnArg::Receiver(r) if r.mutability.is_none()));
+    let this_reborrow = if receiver_is_shared {
+        quote! { let __t = unsafe { &*__this }; }
+    } else {
+        quote! { let __t = unsafe { &mut *__this }; }
+    };
+
     // Shim symbol name. Only emitted when an explicit `export = "..."` is
     // supplied. In Zig, `@export(&toJSHostFn(f), .{ .name = ... })` always
     // received a caller-supplied unique name; defaulting to the bare Rust
@@ -179,7 +197,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
                 quote! {
                     // SAFETY: `__this` is the wrapper's `m_ctx`; JSC guarantees the
                     // remaining pointers are live for the call.
-                    let __t = unsafe { &mut *__this };
+                    #this_reborrow
                     let __g = unsafe { &*__global };
                     let __f = unsafe { &*__frame };
                     ::bun_jsc::__macro_support::host_fn_result(__g, || #call)
@@ -195,10 +213,9 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
             },
             quote! { ::bun_jsc::JSValue },
             quote! {
-                // SAFETY: see `Method`. Materialise `&mut Self` so getters that
-                // need to lazily mutate (cache, observe-flags) keep write
-                // provenance — `&mut T` reborrows to `&T` for read-only getters.
-                let __t = unsafe { &mut *__this };
+                // SAFETY: see `Method`. `&self` getters get `&*` (R-2); `&mut
+                // self` getters that lazily mutate keep `&mut *`.
+                #this_reborrow
                 let __g = unsafe { &*__global };
                 ::bun_jsc::__macro_support::host_fn_result(__g, || Self::#fn_name(__t, __g))
             },
@@ -214,7 +231,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
             quote! { bool },
             quote! {
                 // SAFETY: see `Method`.
-                let __t = unsafe { &mut *__this };
+                #this_reborrow
                 let __g = unsafe { &*__global };
                 ::bun_jsc::__macro_support::host_fn_setter_result(
                     __g,

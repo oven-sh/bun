@@ -507,8 +507,10 @@ impl Interpreter {
         // ── cwd / cwd_fd ───────────────────────────────────────────────────
         // Hoisted PathBuffer so the error's borrowed `.path` stays valid until
         // we've converted it to an owned `ShellErr` (Zig hoists for the same
-        // reason).
-        let mut pathbuf = bun_paths::PathBuffer::uninit();
+        // reason). Heap-pooled (not stack) per spec — on Windows
+        // `MAX_PATH_BYTES` is ~96 KiB and `init` runs from JS-triggered paths
+        // that may already be deep on the stack (interpreter.zig:913-914).
+        let mut pathbuf = bun_paths::path_buffer_pool::get();
         let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
             Ok(n) => n,
             Err(e) => return Err(ShellErr::new_sys(e)),
@@ -2730,7 +2732,11 @@ pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// Byte offset of the embedded `task: ShellTask` field within `Self`.
     /// Implementors define this as `core::mem::offset_of!(Self, task)`.
     const TASK_OFFSET: usize;
-    fn run_from_thread_pool(this: *mut Self);
+    /// Worker-thread body. Takes `&mut Self`: the trampoline recovers the
+    /// heap allocation from the intrusive task node and forms the unique
+    /// borrow once; no impl re-enters or frees `self` here (that happens in
+    /// `run_from_main_thread`).
+    fn run_from_thread_pool(this: &mut Self);
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter);
 }
 
@@ -2882,8 +2888,10 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     // embedded in `C` at `TASK_OFFSET` (Zig: two `container_of` hops). `ctx`
     // remains the live heap allocation handed to `schedule`.
     unsafe {
-        let ctx = task.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>();
-        C::run_from_thread_pool(ctx);
+        let ctx = bun_core::container_of::<C, _>(task, C::TASK_OFFSET);
+        // The worker thread is the sole accessor until `on_finish` publishes
+        // the task back; the `&mut` ends before that call.
+        C::run_from_thread_pool(&mut *ctx);
         ShellTask::on_finish::<C>(ctx);
     }
 }
@@ -2893,7 +2901,7 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
 fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
     // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
     // mini-loop dispatch runs on the main thread.
-    unsafe { ShellTask::run_from_main_thread::<C>(this.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>()) };
+    unsafe { ShellTask::run_from_main_thread::<C>(bun_core::container_of::<C, _>(this, C::TASK_OFFSET)) };
 }
 
 #[cold]

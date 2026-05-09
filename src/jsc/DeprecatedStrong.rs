@@ -63,17 +63,13 @@ impl DeprecatedStrong {
         value.protect();
         #[cfg(debug_assertions)]
         let safety: Safety = Some(SafetyData {
-            // SAFETY: heap::alloc never returns null. ManuallyDrop<T> is
-            // #[repr(transparent)], so the cast to *mut DeprecatedStrong is sound.
-            ptr: unsafe {
-                NonNull::new_unchecked(
-                    bun_core::heap::into_raw(Box::new(ManuallyDrop::new(DeprecatedStrong {
-                        raw: JSValue::from_encoded(0xAEBCFA),
-                        safety: None,
-                    })))
-                    .cast::<DeprecatedStrong>(),
-                )
-            },
+            // ManuallyDrop<T> is #[repr(transparent)], so the cast to
+            // NonNull<DeprecatedStrong> is sound.
+            ptr: bun_core::heap::into_raw_nn(Box::new(ManuallyDrop::new(DeprecatedStrong {
+                raw: JSValue::from_encoded(0xAEBCFA),
+                safety: None,
+            })))
+            .cast::<DeprecatedStrong>(),
             ref_count: 1,
         });
         #[cfg(not(debug_assertions))]

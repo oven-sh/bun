@@ -927,7 +927,7 @@ impl<'a> TablePrinter<'a> {
                     value: JSValue,
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { &mut *ctx.cast::<Ctx<'_, '_>>() };
+                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
                     if ctx
                         .this
                         .update_columns_for_row(ctx.columns, RowKey::Num(ctx.idx), value)
@@ -1032,7 +1032,7 @@ impl<'a> TablePrinter<'a> {
                     value: JSValue,
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { &mut *ctx.cast::<Ctx<'_, '_>>() };
+                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
                     if ctx
                         .this
                         .print_row::<C>(ctx.writer, ctx.columns, RowKey::Num(ctx.idx), value)
@@ -3274,11 +3274,9 @@ pub mod formatter {
             }
 
             if self.map_node.is_none() {
-                // SAFETY: `get_node()` always returns a valid heap node;
                 // `data` is initialized because `Map::INIT` is `Some`.
-                let mut node = unsafe {
-                    core::ptr::NonNull::new_unchecked(visited::Pool::get_node())
-                };
+                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
+                    .expect("ObjectPool::get_node always returns a valid heap node");
                 unsafe { node.as_mut().data.assume_init_mut().clear() };
                 self.map = core::mem::take(unsafe {
                     node.as_mut().data.assume_init_mut()

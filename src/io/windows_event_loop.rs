@@ -495,7 +495,7 @@ impl Store {
         // SAFETY: `ctx` was set to `self as *mut Store` in `put` above. The thunk fires
         // from the event loop's after-tick hook with no other `&mut Store` borrow live,
         // so this is the unique accessor (safe-single-owner).
-        let this = unsafe { &mut *ctx.cast::<Store>() };
+        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
     }
 }
@@ -543,13 +543,36 @@ impl Waker {
     }
 
     pub fn wait(&self) {
-        // SAFETY: process-global loop; single-threaded `wait()` caller.
-        unsafe { (*self.loop_).wait() };
+        // Do NOT go through `WindowsLoop::wait(&mut self)`: that would
+        // materialize a `&mut WindowsLoop` over the process-global singleton
+        // for the entire duration of `us_loop_run`/`uv_run`, and a concurrent
+        // `wake()` from a worker thread would alias it (two live `&mut T` to
+        // one allocation = UB under Stacked/Tree Borrows). The Zig spec uses
+        // a bare `*WindowsLoop` with no exclusivity; mirror that by calling
+        // the C entry point with the raw pointer directly.
+        // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton.
+        unsafe { waker_c::us_loop_run(self.loop_) };
     }
 
     pub fn wake(&self) {
-        // SAFETY: process-global loop; `wakeup()` is the cross-thread path.
-        unsafe { (*self.loop_).wakeup() };
+        // See `wait()` — call the thread-safe C wake path with the raw pointer
+        // instead of forming a `&mut WindowsLoop` that would alias the
+        // event-loop thread's borrow held across `us_loop_run`.
+        // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
+        // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
+        unsafe { waker_c::us_wakeup_loop(self.loop_) };
+    }
+}
+
+// Local extern shims for `Waker`: the canonical decls live in
+// `bun_uws_sys::loop_::c` but that module is crate-private. Re-declaring the
+// two symbols here lets `Waker::{wait,wake}` pass the raw `*mut WindowsLoop`
+// without round-tripping through a `&mut self` receiver (see comments above).
+mod waker_c {
+    use super::WindowsLoop;
+    unsafe extern "C" {
+        pub fn us_loop_run(loop_: *mut WindowsLoop);
+        pub fn us_wakeup_loop(loop_: *mut WindowsLoop);
     }
 }
 

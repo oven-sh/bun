@@ -259,7 +259,7 @@ impl FetchTasklet {
     #[inline]
     fn from_ctx<'a>(ctx: *mut c_void) -> &'a mut Self {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *ctx.cast::<FetchTasklet>() }
+        unsafe { bun_ptr::callback_ctx::<FetchTasklet>(ctx) }
     }
 
     /// Recover `&mut Self` from a `*mut FetchTasklet` callback arg.
@@ -292,8 +292,7 @@ impl FetchTasklet {
     /// and is thread-safe (lock-free MPSC push).
     #[inline]
     fn enqueue_concurrent(vm: &VirtualMachine, task: *mut ConcurrentTask) {
-        // SAFETY: see doc comment.
-        unsafe { (*vm.event_loop()).enqueue_task_concurrent(task) };
+        vm.event_loop_shared().enqueue_task_concurrent(task);
     }
 
     /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for
@@ -305,9 +304,9 @@ impl FetchTasklet {
     /// copies/consumes before returning and never retains the slice.
     #[inline]
     fn temporary_chunk(chunk: &[u8], done: bool) -> StreamResult {
-        // SAFETY: see INVARIANT above. `ManuallyDrop<Vec>` never frees the
-        // borrowed allocation.
-        let v = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(chunk) };
+        // See INVARIANT above. `RawSlice` is non-owning; backing buffer
+        // outlives the synchronous `on_data` call.
+        let v = bun_ptr::RawSlice::new(chunk);
         if done { StreamResult::TemporaryAndDone(v) } else { StreamResult::Temporary(v) }
     }
 

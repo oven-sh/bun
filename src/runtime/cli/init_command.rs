@@ -401,19 +401,10 @@ impl InitCommand {
             }
         }
 
-        let fs = Fs::FileSystem::init(None)?;
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        // PORT NOTE: `fs.topLevelDirWithoutTrailingSlash()` — the inline `bun_resolver::fs::FileSystem`
-        // surface doesn't expose this method yet (it lives in the gated `fs.rs` draft), so inline the
-        // trivial trim here per `src/resolver/fs.zig:27`.
-        let pathname = Fs::PathName::init({
-            let tld = unsafe { (*fs).top_level_dir };
-            if tld.len() > 1 && tld[tld.len() - 1] == bun_paths::SEP {
-                &tld[..tld.len() - 1]
-            } else {
-                tld
-            }
-        });
+        let _ = Fs::FileSystem::init(None)?;
+        let pathname = Fs::PathName::init(
+            Fs::FileSystem::get().top_level_dir_without_trailing_slash(),
+        );
         // TODO(port): std.fs.cwd() → bun_sys::Fd::cwd(); the Zig kept a std.fs.Dir handle
         let destination_dir = Fd::cwd();
 
@@ -1582,7 +1573,13 @@ impl Template {
 
         #[cfg(windows)]
         {
-            if let Some(user) = bun_core::getenv_z_any_case(bun_core::zstr!("USER")) {
+            // Zig: `bun.getenvZAnyCase("USER")` walks `std.os.environ` (bun.zig:913).
+            // `bun_core::getenv_z_any_case` is a TODO stub on Windows that always
+            // returns None (bun_core/util.rs), so calling it here makes the probe
+            // dead code. Use `std::env::var`, which on Windows goes through
+            // `GetEnvironmentVariableW` (inherently case-insensitive) — matching
+            // the Zig any-case semantics.
+            if let Ok(user) = std::env::var("USER") {
                 let mut pathbuf = path_buffer_pool::get();
                 // Zig: `std.fmt.bufPrintZ(..) catch { return false; }` —
                 // fallible on overflow, do not panic.
@@ -1593,7 +1590,7 @@ impl Template {
                     if cursor
                         .write_fmt(format_args!(
                             "C:\\Users\\{}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
-                            bstr::BStr::new(user)
+                            user
                         ))
                         .is_err()
                     {

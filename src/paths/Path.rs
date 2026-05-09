@@ -742,7 +742,14 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // SAFETY: wslice is valid for wslice.len() writable u16 units.
                 let n = unsafe { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
                 if n <= 0 {
-                    return Err(bun_core::Error::from_errno(9)); // EBADF
+                    // Zig `bun.windows.GetFinalPathNameByHandle` surfaces
+                    // `error.FileNotFound` (return_length==0) or
+                    // `error.NameTooLong` (return_length>=buf.len);
+                    // `fd_path_raw_w` collapses both to -1, so propagate the
+                    // dominant Zig error rather than inventing EBADF.
+                    // TODO(port): have `fd_path_raw_w` distinguish overflow
+                    // (e.g. -2) so callers can map ENAMETOOLONG separately.
+                    return Err(bun_core::Error::intern("FileNotFound"));
                 }
                 let wide = &wslice[..n as usize];
                 let written = match strings::convert_utf16_to_utf8_in_buffer(buf, wide) {
@@ -775,7 +782,11 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // SAFETY: buf is valid for buf.len() writable u16 units.
             let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
             if n <= 0 {
-                return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
+                // Zig `bun.windows.GetFinalPathNameByHandle` surfaces
+                // `error.FileNotFound` / `error.NameTooLong`; `fd_path_raw_w`
+                // collapses both to -1, so propagate the dominant Zig error
+                // rather than inventing EBADF.
+                return Err(bun_core::Error::intern("FileNotFound"));
             }
             let raw = &buf[..n as usize];
             let trimmed = trim_input(TrimInputKind::Abs, raw);

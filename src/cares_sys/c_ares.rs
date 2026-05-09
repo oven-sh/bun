@@ -332,7 +332,7 @@ impl struct_hostent {
         hostent: *mut struct_hostent,
     ) {
         // SAFETY: ctx was passed as `*mut T` to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
@@ -349,7 +349,7 @@ impl struct_hostent {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
@@ -376,7 +376,7 @@ impl struct_hostent {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
@@ -399,7 +399,7 @@ impl struct_hostent {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
@@ -460,7 +460,7 @@ impl hostent_with_ttls {
         // `?*hostent_with_ttls`) but that signature mismatches the C
         // `ares_host_callback` (`?*struct_hostent`). Appears unused; verify.
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
             return;
@@ -476,7 +476,7 @@ impl hostent_with_ttls {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
             return;
@@ -565,7 +565,7 @@ impl struct_nameinfo {
         service: *mut u8,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_nameinfo(Error::get(status), timeouts, None);
             return;
@@ -653,7 +653,7 @@ impl AddrInfo {
         addr_info: *mut AddrInfo,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         this.on_addr_info(Error::get(status), timeouts, addr_info);
     }
 
@@ -750,7 +750,7 @@ impl Channel {
             writable: c_int,
         ) {
             // SAFETY: ctx is the &mut C registered below.
-            let container = unsafe { &mut *ctx.cast::<C>() };
+            let container = unsafe { bun_core::callback_ctx::<C>(ctx) };
             container.on_dns_socket_state(socket, readable != 0, writable != 0);
         }
 
@@ -1119,7 +1119,7 @@ pub unsafe extern "C" fn ares_reply_callback<R: AresReply, T: ReplyHandler<R>>(
     buffer_length: c_int,
 ) {
     // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-    let this = unsafe { &mut *ctx.cast::<T>() };
+    let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
     if status != ARES_SUCCESS {
         this.on_reply(Error::get(status), timeouts, ptr::null_mut());
         return;
@@ -1342,7 +1342,7 @@ impl struct_any_reply {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_any(Error::get(status), timeouts, None);
             return;

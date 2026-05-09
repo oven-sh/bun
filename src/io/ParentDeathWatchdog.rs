@@ -142,10 +142,7 @@ pub fn kill_sync_script_tree() {
             }
         }
         #[cfg(target_os = "macos")]
-        // SAFETY: extern "C" fn with no preconditions.
-        unsafe {
-            Bun__noOrphans_killTracked();
-        }
+        Bun__noOrphans_killTracked();
         // Linux: subreaper-adopted setsid escapees are killed by
         // `kill_subreaper_adoptees()` in `spawnPosix`'s disarm defer (which can
         // tell them apart from `Bun.spawn` siblings via the pre-arm snapshot).
@@ -164,7 +161,8 @@ fn kill_sync_pgroups_and_descendants() {
 
 // TODO(port): move to <aio>_sys
 unsafe extern "C" {
-    fn Bun__noOrphans_killTracked();
+    // safe: no args; no preconditions.
+    safe fn Bun__noOrphans_killTracked();
 }
 
 // `should_default_spawn_pdeathsig` moved down to `bun_spawn_sys::pdeathsig::

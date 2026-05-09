@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use core::ffi::c_char;
 use core::ptr::NonNull;
-use std::cell::Cell;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
@@ -411,7 +410,9 @@ impl UpgradeCommand {
 
                 Output::pretty_errorln(format_args!(
                     "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
-                    bstr::BStr::new(version.buf.list.as_slice())
+                    // Zig spec prints `metadata_body.list.items` here; `version.buf`
+                    // is still empty at this point so using it loses the payload.
+                    bstr::BStr::new(metadata_body.list.as_slice())
                 ));
                 Global::exit(1);
             }
@@ -706,8 +707,9 @@ impl UpgradeCommand {
                 None,
                 HTTP::FetchRedirect::Follow,
             ));
-            // SAFETY: progress is leaked; AsyncHTTP holds a NonNull into it.
-            async_http.client.progress_node = Some(unsafe { NonNull::new_unchecked(progress) });
+            // `progress` is leaked; AsyncHTTP holds a NonNull into it.
+            async_http.client.progress_node =
+                Some(NonNull::new(progress).expect("leaked Box is non-null"));
             // TODO(port): lifetime — progress_node stores a borrow of progress
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
@@ -1415,9 +1417,12 @@ impl UpgradeCommand {
 pub mod upgrade_js_bindings {
     use super::*;
 
-    thread_local! {
-        static TEMPDIR_FD: Cell<Option<sys::Fd>> = const { Cell::new(None) };
-    }
+    // Zig spec: module-level `var tempdir_fd: ?bun.FD = null;` — process-global,
+    // not threadlocal. If open/close are invoked from different threads (main vs
+    // worker VM) a `thread_local!` would make the close see `None` and leak the
+    // HANDLE. Match the Zig global with a `RacyCell`; access is test-only and
+    // effectively single-threaded.
+    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         let obj = JSValue::create_empty_object(global, 2);
@@ -1523,7 +1528,8 @@ pub mod upgrade_js_bindings {
             match sys::windows::Win32Error::from_nt_status(rc) {
                 sys::windows::Win32Error::SUCCESS => {
                     // Zig: `bun.FD.fromNative(fd)` — system-kind handle on Windows.
-                    TEMPDIR_FD.with(|f| f.set(Some(sys::Fd::from_system(fd))));
+                    // SAFETY: test-only helper; access is single-threaded (JS thread).
+                    unsafe { TEMPDIR_FD.write(Some(sys::Fd::from_system(fd))); }
                 }
                 _ => {}
             }
@@ -1544,7 +1550,10 @@ pub mod upgrade_js_bindings {
         #[cfg(windows)]
         {
             use bun_sys::FdExt as _;
-            if let Some(fd) = TEMPDIR_FD.with(|f| f.get()) {
+            // SAFETY: test-only helper; access is single-threaded (JS thread).
+            // Consume (`take`) the stored fd so a repeat call cannot
+            // `CloseHandle` a stale, possibly-reissued HANDLE value.
+            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
                 fd.close();
             }
 

@@ -1,6 +1,7 @@
 use core::ffi::c_void;
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
+
+use bun_ptr::RawSlice;
 
 use bun_collections::{VecExt, ByteVecExt};
 use crate::webcore::jsc::{
@@ -326,11 +327,12 @@ pub enum StreamResult {
     Done,
     Owned(Vec<u8>),
     OwnedAndDone(Vec<u8>),
-    // PORT NOTE: `temporary*` payloads are borrowed slices wrapped via
-    // `Vec::<u8>::from_borrowed_slice_dangerous` (`ManuallyDrop<Vec<u8>>` so the
-    // borrowed allocation is never freed by `Drop`).
-    TemporaryAndDone(ManuallyDrop<Vec<u8>>),
-    Temporary(ManuallyDrop<Vec<u8>>),
+    // PORT NOTE: `temporary*` payloads are borrowed slices into caller-owned
+    // memory that strictly outlives the synchronous consumer call. Stored as
+    // `RawSlice<u8>` (raw fat pointer, no Drop) — the consumer must copy
+    // before returning and never retain the slice. See `RawSlice` invariant.
+    TemporaryAndDone(RawSlice<u8>),
+    Temporary(RawSlice<u8>),
     IntoArray(IntoArray),
     IntoArrayAndDone(IntoArray),
 }
@@ -464,14 +466,14 @@ impl WritablePending {
         self.state = PendingState::Pending;
 
         match &self.future {
-            WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>((unsafe { strong.get() })),
+            WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>(strong.get()),
             _ => {
                 self.future = WritableFuture::Promise {
                     strong: JSPromiseStrong::init(global_this),
                     global: std::ptr::from_ref(global_this),
                 };
                 match &self.future {
-                    WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>((unsafe { strong.get() })),
+                    WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>(strong.get()),
                     _ => unreachable!(),
                 }
             }
@@ -498,7 +500,7 @@ impl WritableHandler {
         self.handler = {
             fn on_handle<C: WritablePendingCallback>(ctx_: *mut c_void, result: Writable) {
                 // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { &mut *ctx_.cast::<C>() };
+                let ctx = unsafe { bun_ptr::callback_ctx::<C>(ctx_) };
                 ctx.on_handle(result);
             }
             on_handle::<C>
@@ -533,7 +535,7 @@ impl WritablePending {
                 let global = unsafe { &*global };
                 Writable::fulfill_promise(
                     core::mem::replace(&mut self.result, Writable::Done),
-                    std::ptr::from_mut::<JSPromise>(strong.swap()),
+                    strong.swap(),
                     global,
                 );
                 // TODO(port): Zig moved p out then reassigned future = .none; mem::replace mirrors this
@@ -564,9 +566,7 @@ impl Writable {
         )
     }
 
-    pub fn fulfill_promise(result: Writable, promise: *mut JSPromise, global_this: &JSGlobalObject) {
-        // SAFETY: promise is a valid GC-rooted JSPromise (protected by caller)
-        let promise = unsafe { &mut *promise };
+    pub fn fulfill_promise(result: Writable, promise: &mut JSPromise, global_this: &JSGlobalObject) {
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _guard = jsc::js_value::Protected::adopt(promise.to_js());
         match result {
@@ -740,7 +740,7 @@ impl PendingHandler {
         self.handler = {
             fn on_handle<C: PendingCallback>(ctx_: *mut c_void, result: StreamResult) {
                 // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { &mut *ctx_.cast::<C>() };
+                let ctx = unsafe { bun_ptr::callback_ctx::<C>(ctx_) };
                 ctx.on_handle(result);
             }
             on_handle::<C>
@@ -826,7 +826,7 @@ impl StreamResult {
                     }
                     break 'brk js_err;
                 };
-                *result = StreamResult::Temporary(ManuallyDrop::new(Vec::<u8>::default()));
+                *result = StreamResult::Temporary(RawSlice::EMPTY);
                 // SAFETY: promise GC-rooted; fresh temp `&mut` is sole borrow across
                 // this re-entrant call (no long-lived `&mut JSPromise` held).
                 let _ = unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(value));
@@ -841,7 +841,7 @@ impl StreamResult {
                 let value = match result.to_js(global_this) {
                     Ok(v) => v,
                     Err(err) => {
-                        *result = StreamResult::Temporary(ManuallyDrop::new(Vec::<u8>::default()));
+                        *result = StreamResult::Temporary(RawSlice::EMPTY);
                         // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
                         let _ = unsafe { &mut *promise }.reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
@@ -852,7 +852,7 @@ impl StreamResult {
                 };
                 value.ensure_still_alive();
 
-                *result = StreamResult::Temporary(ManuallyDrop::new(Vec::<u8>::default()));
+                *result = StreamResult::Temporary(RawSlice::EMPTY);
                 // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
                 let _ = unsafe { &mut *promise }.resolve(global_this, value);
                 // TODO: properly propagate exception upwards
@@ -1013,7 +1013,7 @@ impl SignalVTable {
     pub fn wrap<W: SignalHandler>() -> SignalVTable {
         fn on_close<W: SignalHandler>(this: *mut c_void, err: Option<SysError>) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { &mut *this.cast::<W>() }.on_close(err);
+            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_close(err);
         }
         fn on_ready<W: SignalHandler>(
             this: *mut c_void,
@@ -1021,11 +1021,11 @@ impl SignalVTable {
             offset: Option<BlobSizeType>,
         ) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { &mut *this.cast::<W>() }.on_ready(amount, offset);
+            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_ready(amount, offset);
         }
         fn on_start<W: SignalHandler>(this: *mut c_void) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { &mut *this.cast::<W>() }.on_start();
+            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_start();
         }
 
         // PORT NOTE: Zig used `comptime &VTable.wrap(Type)` for a static address.
@@ -1467,8 +1467,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             debug_assert!(self.pooled_buffer.is_none());
             if FeatureFlags::HTTP_BUFFER_POOLING {
                 if let Some(pooled_node) = ByteListPool::get_if_exists() {
-                    // SAFETY: `get_if_exists` returns a live heap node when Some.
-                    let pooled_node = unsafe { NonNull::new_unchecked(pooled_node) };
+                    let pooled_node = NonNull::new(pooled_node)
+                        .expect("ByteListPool::get_if_exists returns a live heap node when Some");
                     self.pooled_buffer = Some(pooled_node);
                     // SAFETY: pooled_node is a valid pool checkout; `data` was
                     // written by `ByteListPool::push` (or zero-initialized).
@@ -2583,7 +2583,7 @@ impl BufferAction {
             | BufferAction::ArrayBuffer(p)
             | BufferAction::Blob(p)
             | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => std::ptr::from_mut::<JSPromise>((unsafe { p.get() })),
+            | BufferAction::Json(p) => std::ptr::from_mut::<JSPromise>(p.get()),
         }
     }
 

@@ -298,7 +298,7 @@ impl PackageManager {
             bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
                 // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
                 // for the duration of `sleep`.
-                let this = unsafe { &mut *ctx.cast::<PackageManager>() };
+                let this = unsafe { bun_ptr::callback_ctx::<PackageManager>(ctx) };
                 this.has_no_more_pending_lifecycle_scripts()
             });
         }
@@ -482,12 +482,10 @@ impl PackageManager {
                     // `RunCommand::find_shell`); reinterpret as `&ZStr`.
                     if let Some(found) = crate::RunCommand::find_shell(env_path, cwd) {
                         debug_assert!(found.last() == Some(&0));
-                        // SAFETY: `find_shell` includes the trailing NUL in
-                        // its `'static` storage; slice off the sentinel for
-                        // the `ZStr` length.
-                        break 'shell_bin Some(unsafe {
-                            ZStr::from_raw(found.as_ptr(), found.len().saturating_sub(1))
-                        });
+                        // `find_shell` includes the trailing NUL in its
+                        // `'static` storage; slice off the sentinel for the
+                        // `ZStr` length.
+                        break 'shell_bin Some(ZStr::from_slice_with_nul(found));
                     }
                 }
 

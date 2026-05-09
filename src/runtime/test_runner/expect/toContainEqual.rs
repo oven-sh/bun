@@ -20,7 +20,7 @@ extern "C" fn deep_equals_iterator(
     item: JSValue,
 ) {
     // SAFETY: `entry_` is `&mut ExpectedEntry` passed through `for_each` below; non-null by contract.
-    let entry = unsafe { &mut *entry_.cast::<ExpectedEntry<'_>>() };
+    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
     let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
         return;
     };

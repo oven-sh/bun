@@ -163,8 +163,7 @@ impl WebSocketProxyTunnel {
         });
         // ref_count initialized to 1; caller owns the Box allocation via the
         // returned raw pointer (paired with `heap::take` in `deref()`).
-        // SAFETY: heap::alloc never returns null.
-        Ok(unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(boxed)) })
+        Ok(bun_core::heap::into_raw_nn(boxed))
     }
 
     /// Start TLS handshake inside the tunnel

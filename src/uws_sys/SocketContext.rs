@@ -34,10 +34,12 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
-    // Spec parity: `bun.sys.stat` on Windows goes through libuv → `_wstat64`-
-    // equivalent. For a cache-key digest we only need (mtime, size) to change
-    // when the file changes, so go straight to `GetFileAttributesExW` — same
-    // resolution as `uv_fs_stat`'s `ftLastWriteTime`, no event-loop dependency.
+    // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
+    // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
+    // follows symlinks to the target. `GetFileAttributesExW` does NOT follow
+    // reparse points — it would return the link's own mtime/size and miss an
+    // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
+    // libuv: open query-only, `GetFileInformationByHandle`, close.
     //
     // `bun_string::to_w_path_normalized` lives above this crate, so widen
     // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
@@ -50,11 +52,28 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
         if *w == u16::from(b'/') { *w = u16::from(b'\\'); }
     }
     wbuf[n] = 0;
-    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = bun_core::ffi::zeroed();
-    // SAFETY: `wbuf` is NUL-terminated at `[n]`; `data` is a valid out-ptr.
-    let ok = unsafe {
-        fs::GetFileAttributesExW(wbuf.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
+    // SAFETY: `wbuf` is NUL-terminated at `[n]`. dwDesiredAccess=0 is query-
+    // only (metadata). FILE_FLAG_BACKUP_SEMANTICS lets this succeed on dirs;
+    // omitting FILE_FLAG_OPEN_REPARSE_POINT makes CreateFileW follow symlinks.
+    let h = unsafe {
+        fs::CreateFileW(
+            wbuf.as_ptr(),
+            0,
+            fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE,
+            ptr::null_mut(),
+            fs::OPEN_EXISTING,
+            fs::FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        )
     };
+    if h == fs::INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let mut data: fs::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: `h` is a valid open handle; `data` is a valid out-ptr.
+    let ok = unsafe { fs::GetFileInformationByHandle(h, &raw mut data) };
+    // SAFETY: `h` is a valid open handle from CreateFileW above.
+    unsafe { fs::CloseHandle(h) };
     if ok == 0 {
         return None;
     }
@@ -158,8 +177,7 @@ impl BunSocketContextOptions {
 
         let feed_arr = |hp: &mut Sha256, arr: *const *const c_char, n: u32| {
             hp.update(&[(!arr.is_null()) as u8]);
-            // SAFETY: u32 is POD, no padding.
-            hp.update(unsafe { bun_core::bytes_of(&n) });
+            hp.update(bun_core::bytes_of(&n));
             if !arr.is_null() {
                 // SAFETY: `arr` points to `n` (possibly null) C strings.
                 let slice = unsafe { bun_core::ffi::slice(arr, n as usize) };
@@ -194,8 +212,7 @@ impl BunSocketContextOptions {
                         meta = m;
                     }
                 }
-                // SAFETY: [i64; 3] is POD, no padding.
-                hp.update(unsafe { bun_core::bytes_of(&meta) });
+                hp.update(bun_core::bytes_of(&meta));
             }
             hp.update(&[0]);
         };
@@ -206,16 +223,15 @@ impl BunSocketContextOptions {
         feed_path(&mut h, self.dh_params_file_name);
         feed_path(&mut h, self.ca_file_name);
         feed_z(&mut h, self.ssl_ciphers);
-        // SAFETY: all fed fields are POD integers, no padding.
-        h.update(unsafe { bun_core::bytes_of(&self.ssl_prefer_low_memory_usage) });
+        h.update(bun_core::bytes_of(&self.ssl_prefer_low_memory_usage));
         feed_arr(&mut h, self.key, self.key_count);
         feed_arr(&mut h, self.cert, self.cert_count);
         feed_arr(&mut h, self.ca, self.ca_count);
-        h.update(unsafe { bun_core::bytes_of(&self.secure_options) });
-        h.update(unsafe { bun_core::bytes_of(&self.reject_unauthorized) });
-        h.update(unsafe { bun_core::bytes_of(&self.request_cert) });
-        h.update(unsafe { bun_core::bytes_of(&self.client_renegotiation_limit) });
-        h.update(unsafe { bun_core::bytes_of(&self.client_renegotiation_window) });
+        h.update(bun_core::bytes_of(&self.secure_options));
+        h.update(bun_core::bytes_of(&self.reject_unauthorized));
+        h.update(bun_core::bytes_of(&self.request_cert));
+        h.update(bun_core::bytes_of(&self.client_renegotiation_limit));
+        h.update(bun_core::bytes_of(&self.client_renegotiation_window));
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out

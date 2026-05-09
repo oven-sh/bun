@@ -387,16 +387,28 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
             // PERF(port): was stack-fallback alloc — profile in Phase B
-            // PORT NOTE: Zig formatted via std.net.Address Display ("[addr]:port")
+            // PORT NOTE: Zig formatted via std.net.Address Display ("[addr%scope]:port")
             // then sliced the brackets/port off ("TODO: this is a hack"). Here we
-            // render the bare address directly via ares_inet_ntop — same result
-            // without the post-slice.
-            let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46)
+            // render the bare address directly via ares_inet_ntop, then re-append
+            // the `%scope_id` suffix that std.net.Ip6Address.format emits for
+            // nonzero scope (e.g. fe80:: link-local from getaddrinfo) — ntop
+            // only sees the 16 raw addr bytes and cannot emit it itself.
+            let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
             // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
-            match unsafe { bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf) } {
-                Some(s) => Ok(BunString::clone_latin1(s)),
-                None => Ok(BunString::EMPTY),
-            }
+            let n = match unsafe { bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf) } {
+                Some(s) => s.len(),
+                None => return Ok(BunString::EMPTY),
+            };
+            let len = if v6.sin6_scope_id != 0 {
+                let mut cursor = &mut buf[n..];
+                let before = cursor.len();
+                // 64 - 46 = 18 > len("%4294967295") = 11, cannot truncate.
+                let _ = write!(cursor, "%{}", v6.sin6_scope_id);
+                n + (before - cursor.len())
+            } else {
+                n
+            };
+            Ok(BunString::clone_latin1(&buf[..len]))
         }
         sock::AF_UNIX => {
             // Zig spec gates this on `comptime std.net.has_unix_sockets`, which is

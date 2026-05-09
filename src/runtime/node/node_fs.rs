@@ -138,11 +138,10 @@ type BlobSizeType = u64;
 const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
 
 /// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer. Zig
-/// stored this as `?*AbortSignal` and called `.ref()`/`.unref()` manually; the
-/// generic `bun_ptr::RefPtr<T>` requires `T: AnyRefCounted` which `AbortSignal`
-/// (an opaque FFI struct) does not implement, so model it as the raw pointer
-/// shape and keep the manual ref-counting at the call sites (matches the .zig).
-type AbortSignalRef = NonNull<AbortSignal>;
+/// stored this as `?*AbortSignal` and called `.ref()`/`.unref()` manually.
+/// Now backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
+/// from `bun_jsc`): `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → `&AbortSignal`.
+use bun_jsc::AbortSignalRef;
 
 // PORT NOTE: Zig referenced these via `bun.api.node.*`. The Phase-A draft
 // pulled them through `bun_jsc::node` (a re-export shim that no longer exists
@@ -255,6 +254,40 @@ use bun_sys::windows::{self, libuv as uv};
 use bun_sys::sys_uv as Syscall;
 #[cfg(not(windows))]
 use bun_sys as Syscall;
+
+/// In-place RAII wrapper for a libuv `fs_t` request (Zig: `var req: uv.fs_t =
+/// uv.fs_t.uninitialized; defer req.deinit();`).
+///
+/// `scopeguard::guard(fs_t, |mut r| r.deinit())` is *wrong* here: its `Drop`
+/// `ManuallyDrop::take`s the value into the closure parameter, relocating the
+/// ~440-byte request to a new stack address before `uv_fs_req_cleanup` runs.
+/// libuv stores self-referential pointers (`req->fs.info.bufs` may point at
+/// `req->fs.info.bufsml`), so the request must not move between init and
+/// cleanup. A real `Drop` impl runs in place at the original address.
+#[cfg(windows)]
+#[repr(transparent)]
+struct UvFsReq(uv::fs_t);
+#[cfg(windows)]
+impl UvFsReq {
+    #[inline]
+    fn new() -> Self { Self(uv::fs_t::uninitialized()) }
+}
+#[cfg(windows)]
+impl Drop for UvFsReq {
+    #[inline]
+    fn drop(&mut self) { self.0.deinit(); }
+}
+#[cfg(windows)]
+impl core::ops::Deref for UvFsReq {
+    type Target = uv::fs_t;
+    #[inline]
+    fn deref(&self) -> &uv::fs_t { &self.0 }
+}
+#[cfg(windows)]
+impl core::ops::DerefMut for UvFsReq {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut uv::fs_t { &mut self.0 }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local cross-crate shims
@@ -433,26 +466,10 @@ pub const DEFAULT_PERMISSION: Mode = sys::S::IRUSR as Mode
 // Windows does not have permissions
 pub const DEFAULT_PERMISSION: Mode = 0;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local extension shims for upstream methods not yet on `NonNull<AbortSignal>`.
-// Bodies mirror the `.zig` spec exactly so it stays the source of truth; swap
-// to direct upstream calls once `bun_jsc` grows them.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Forward `&self` AbortSignal methods through the `NonNull` wrapper used as
-/// [`AbortSignalRef`] so call sites keep the `signal.unref()` Zig spelling.
-trait AbortSignalRefExt {
-    fn pending_activity_ref(self);
-    fn pending_activity_unref(self);
-    fn unref(self);
-    fn aborted(self) -> bool;
-}
-impl AbortSignalRefExt for NonNull<AbortSignal> {
-    #[inline] fn pending_activity_ref(self) { unsafe { self.as_ref() }.pending_activity_ref() }
-    #[inline] fn pending_activity_unref(self) { unsafe { self.as_ref() }.pending_activity_unref() }
-    #[inline] fn unref(self) { unsafe { self.as_ref() }.unref() }
-    #[inline] fn aborted(self) -> bool { unsafe { self.as_ref() }.aborted() }
-}
+// `AbortSignalRef` (= `ExternalShared<AbortSignal>`) implements `Deref`, so
+// `signal.pending_activity_ref()` / `signal.aborted()` resolve directly to the
+// `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
+// per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
 
 /// All async FS functions are run in a thread pool, but some implementations may
 /// decide to do something slightly different. For example, reading a file has
@@ -777,7 +794,7 @@ where
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
         scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-        let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
+        let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
         let mut node_fs = NodeFS::default();
         // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
         // `this: &mut Self` is live, re-deriving through the raw `req` would create a
@@ -795,7 +812,7 @@ where
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
         scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-        let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
+        let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
         let mut node_fs = NodeFS::default();
         // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
         // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
@@ -817,8 +834,7 @@ where
         let global_object = self.global_object();
         let success = matches!(result, Ok(_));
         let promise_value = self.promise.value();
-        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
-        let promise = unsafe { self.promise.get() };
+        let promise = self.promise.get();
         let result = match &mut result {
             Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
@@ -932,8 +948,7 @@ impl FsArgument for args::ReadFile {
     #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { args::ReadFile::from_js(ctx, arguments) }
     #[inline] fn to_thread_safe(&mut self) { args::ReadFile::to_thread_safe(self) }
     #[inline] fn signal(&self) -> Option<&AbortSignal> {
-        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `Drop`.
-        self.signal.map(|s| unsafe { s.as_ref() })
+        self.signal.as_deref()
     }
 }
 impl FsArgument for args::WriteFile {
@@ -941,8 +956,7 @@ impl FsArgument for args::WriteFile {
     #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { args::WriteFile::from_js(ctx, arguments) }
     #[inline] fn to_thread_safe(&mut self) { args::WriteFile::to_thread_safe(self) }
     #[inline] fn signal(&self) -> Option<&AbortSignal> {
-        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `Drop`.
-        self.signal.map(|s| unsafe { s.as_ref() })
+        self.signal.as_deref()
     }
 }
 
@@ -1147,8 +1161,7 @@ where
 
         let success = matches!(result, Ok(_));
         let promise_value = self.promise.value();
-        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
-        let promise = unsafe { self.promise.get() };
+        let promise = self.promise.get();
         let result = match &mut result {
             Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
@@ -1508,11 +1521,10 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
         let success = matches!(*self.result.get_mut(), Ok(_));
         let promise_value = self.promise.value();
-        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
         // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
         // resolve/reject (matching Zig). The `JSPromise` itself lives on the JS heap
         // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
-        let promise: *mut bun_jsc::JSPromise = unsafe { self.promise.get() };
+        let promise: *mut bun_jsc::JSPromise = self.promise.get();
         let result = match self.result.get_mut() {
             // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
             Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
@@ -2258,11 +2270,10 @@ impl AsyncReaddirRecursiveTask {
         let global_object = global_object.get();
         let success = self.pending_err.is_none();
         let promise_value = self.promise.value();
-        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
         // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` for rationale —
         // `Self::destroy` must run before resolve/reject, and the `JSPromise` cell
         // outlives the `Strong` wrapper via `promise_value.ensure_still_alive()`.
-        let promise: *mut bun_jsc::JSPromise = unsafe { self.promise.get() };
+        let promise: *mut bun_jsc::JSPromise = self.promise.get();
         let result = if let Some(err) = &mut self.pending_err {
             // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
             match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
@@ -3365,7 +3376,7 @@ pub mod args {
             // `path: PathOrFileDescriptor` releases via its inner `PathLike` Drop.
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
-                signal.unref();
+                // `signal.unref()` — handled by `AbortSignalRef::Drop`.
             }
         }
     }
@@ -3384,7 +3395,7 @@ pub mod args {
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
-                if let Some(signal) = s { signal.pending_activity_unref(); signal.unref(); }
+                if let Some(signal) = s { signal.pending_activity_unref(); /* unref via Drop */ }
             });
             if let Some(arg) = arguments.next() {
                 arguments.eat();
@@ -3396,11 +3407,9 @@ pub mod args {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("Invalid flag")))?;
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal_ptr) = AbortSignal::from_js(value) {
-                            // SAFETY: from_js returns a live C++ AbortSignal*.
-                            let signal = unsafe { &*signal_ptr };
-                            *abort_signal = NonNull::new(signal.ref_());
+                        if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
+                            *abort_signal = Some(signal);
                         } else {
                             return Err(ctx.throw_invalid_argument_type_value(b"signal", b"AbortSignal", value));
                         }
@@ -3411,7 +3420,7 @@ pub mod args {
             Ok(ReadFile { path, encoding, flag, limit_size_for_javascript: true, signal: abort_signal, ..Default::default() })
         }
         pub fn aborted(&self) -> bool {
-            if let Some(signal) = self.signal { return signal.aborted(); }
+            if let Some(signal) = &self.signal { return signal.aborted(); }
             false
         }
     }
@@ -3433,7 +3442,7 @@ pub mod args {
             // `file`/`data` release via their own `Drop` (PathLike/StringOrBuffer).
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
-                signal.unref();
+                // `signal.unref()` — handled by `AbortSignalRef::Drop`.
             }
         }
     }
@@ -3457,7 +3466,7 @@ pub mod args {
             let mut flag = FileSystemFlags::W;
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
-                if let Some(signal) = s { signal.pending_activity_unref(); signal.unref(); }
+                if let Some(signal) = s { signal.pending_activity_unref(); /* unref via Drop */ }
             });
             let mut flush = false;
             if data_value.is_string() { encoding = Encoding::Utf8; }
@@ -3474,11 +3483,9 @@ pub mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal_ptr) = AbortSignal::from_js(value) {
-                            // SAFETY: from_js returns a live C++ AbortSignal*.
-                            let signal = unsafe { &*signal_ptr };
-                            *abort_signal = NonNull::new(signal.ref_());
+                        if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
+                            *abort_signal = Some(signal);
                         } else {
                             return Err(ctx.throw_invalid_argument_type_value(b"signal", b"AbortSignal", value));
                         }
@@ -3503,7 +3510,7 @@ pub mod args {
             Ok(WriteFile { file: path, encoding, flag, mode, data, dirfd: FD::cwd(), signal: abort_signal, flush })
         }
         pub fn aborted(&self) -> bool {
-            if let Some(signal) = self.signal { return signal.aborted(); }
+            if let Some(signal) = &self.signal { return signal.aborted(); }
             false
         }
     }
@@ -3898,13 +3905,21 @@ pub use ret as Return;
 // https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/node/fs.d.ts
 // ──────────────────────────────────────────────────────────────────────────
 
+// `#[repr(C)]` pins `sync_error_buf` (a `[u8; N]`, nominal align = 1) at
+// offset 0. The struct's overall alignment is ≥ `align_of::<*const ()>()`
+// (from the `vm` field), so the buffer's address inherits that alignment —
+// the Rust equivalent of Zig's `sync_error_buf: bun.PathBuffer align(@alignOf(u16))`.
+// This is load-bearing on Windows where `sync_error_buf` is reinterpreted as
+// `&mut [u16]` / `&mut WPathBuffer` (see `mkdir_recursive_os_path_impl` and
+// the `os_path_kernel32` callers); a misaligned `&mut [u16]` is instant UB.
+#[repr(C)]
 pub struct NodeFS {
     /// Buffer to store a temporary file path that might appear in a returned error message.
     ///
     /// We want to avoid allocating a new path buffer for every error message so that jsc can clone + GC it.
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodeFS struct
-    pub sync_error_buf: PathBuffer, // align(@alignOf(u16))
+    pub sync_error_buf: PathBuffer, // align(@alignOf(u16)) — enforced via #[repr(C)] + field order, see above
     pub vm: Option<NonNull<VirtualMachine>>,
 }
 
@@ -4521,9 +4536,8 @@ impl NodeFS {
     pub fn futimes(&mut self, args: &args::Futimes, _: Flavor) -> Maybe<ret::Futimes> {
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), req, args.fd.uv(), args.atime, args.mtime, None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), &mut *req, args.fd.uv(), args.atime, args.mtime, None) };
             return if let Some(e) = rc.errno() {
                 Err(sys::Error { errno: e, syscall: sys::Tag::futime, fd: args.fd, ..Default::default() })
             } else { Ok(()) };
@@ -4704,12 +4718,22 @@ impl NodeFS {
             }
         }
 
-        // SAFETY: sync_error_buf is align(u16); reinterpret as OSPathBuffer.
+        // SAFETY: `NodeFS` is `#[repr(C)]` with `sync_error_buf` at offset 0 and
+        // struct alignment ≥ pointer-align (from `vm`), so this address is
+        // ≥ `align_of::<OSPathChar>()`-aligned (the Rust spelling of Zig's
+        // `align(@alignOf(u16))` field annotation). On Windows
+        // `OSPathBuffer = [u16; PATH_MAX_WIDE]` (65 534 B) which fits inside
+        // `PathBuffer` (`MAX_PATH_BYTES` = 98 302 B); on POSIX it is the same
+        // type. The `assert!` below mirrors Zig's `@alignCast` safety check.
         // Keep the raw `*mut PathBuffer` so error-return paths can re-derive a fresh
         // `&mut PathBuffer` without reborrowing `&mut self` (which would alias
         // `working_mem` under stacked borrows). On every such path `working_mem` is
         // not used afterward, so the re-derive is sound.
         let sync_error_buf_ptr: *mut PathBuffer = &raw mut self.sync_error_buf;
+        assert!(
+            sync_error_buf_ptr.cast::<OSPathChar>().is_aligned(),
+            "NodeFS.sync_error_buf misaligned for OSPathChar",
+        );
         let working_mem: &mut OSPathBuffer = unsafe { &mut *sync_error_buf_ptr.cast::<OSPathBuffer>() };
         working_mem[..len as usize].copy_from_slice(&(&path[..])[..len as usize]);
 
@@ -4722,7 +4746,12 @@ impl NodeFS {
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
-                        working_mem[i as usize] = paths::SEP as OSPathChar;
+                        // PORT NOTE: Zig restores `working_mem[i] = SEP` here, *before*
+                        // the errno match, but Zig's `[:0]u16` sentinel is advisory.
+                        // Rust's `OSPathSliceZ` (`WStr`/`ZStr`) carries a hard
+                        // `ptr[len] == 0` invariant, and the EEXIST/`_` arms below still
+                        // read `parent`. Defer the SEP-restore into each arm so `parent`
+                        // is never observed with its terminator clobbered.
                         match err.get_errno() {
                             E::EEXIST => {
                                 // On Windows, this may happen if trying to mkdir replacing a file
@@ -4742,10 +4771,15 @@ impl NodeFS {
                                         }
                                     }
                                 }
+                                working_mem[i as usize] = paths::SEP as OSPathChar;
                                 // Handle race condition
                                 break;
                             }
-                            E::ENOENT => { i -= 1; continue; }
+                            E::ENOENT => {
+                                working_mem[i as usize] = paths::SEP as OSPathChar;
+                                i -= 1;
+                                continue;
+                            }
                             _ => {
                                 #[cfg(windows)]
                                 let p = {
@@ -4843,15 +4877,14 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_mkdtemp(bun_io::Loop::get(), req, prefix_buf.as_ptr().cast(), None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_mkdtemp(bun_io::Loop::get(), &mut *req, prefix_buf.as_ptr().cast(), None) };
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::mkdtemp, path: prefix_buf[..len + 6].into(), ..Default::default() });
             }
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
-            // UTF-8 string owned by the request; `req.deinit()` (the scopeguard)
-            // releases it after we've copied the bytes out.
+            // UTF-8 string owned by the request; `UvFsReq::drop` runs
+            // `uv_fs_req_cleanup` in place after we've copied the bytes out.
             return Ok(ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes()).expect("oom"));
         }
 
@@ -6019,9 +6052,8 @@ impl NodeFS {
     pub fn realpath_inner(&mut self, args: &args::Realpath, variant: RealpathVariant) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_realpath(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_realpath(bun_io::Loop::get(), &mut *req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), None) };
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
             }
@@ -6036,10 +6068,13 @@ impl NodeFS {
             let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
+                //
+                // PORT NOTE: Zig (`buf[buf.len-1] = 0; buf.len -= 1;`) writes the
+                // NUL back to keep its `[:0]u8` sentinel invariant. In Rust `buf`
+                // is an immutable view and every consumer below copies by length,
+                // so we just shrink the slice — writing through `ptr.cast_mut()`
+                // while `buf` is live would be Stacked-Borrows UB.
                 if buf.last() == Some(&b'\\') {
-                    // SAFETY: req.path is libuv-allocated mutable storage; `ptr` is
-                    // surfaced as `*const c_char` only because `ptr_as` reads it.
-                    unsafe { *ptr.cast_mut().cast::<u8>().add(buf.len() - 1) = 0; }
                     buf = &buf[..buf.len() - 1];
                 }
             }
@@ -6407,9 +6442,8 @@ impl NodeFS {
     pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_utime(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_utime(bun_io::Loop::get(), &mut *req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Ok(()) };
@@ -6428,9 +6462,8 @@ impl NodeFS {
     pub fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
         #[cfg(windows)]
         {
-            let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
-            let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_lutime(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
+            let mut req = UvFsReq::new();
+            let rc = unsafe { uv::uv_fs_lutime(bun_io::Loop::get(), &mut *req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Ok(()) };
@@ -7088,7 +7121,21 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            let _ = mode;
+            if mode.is_force_clone() {
+                // Windows has no copy-on-write `clonefile` equivalent surfaced
+                // here; `COPYFILE_FICLONE_FORCE` must fail rather than silently
+                // fall back to a non-CoW `CopyFileW`. NOTE: the Zig Windows
+                // block (node_fs.zig:6836+) has no such guard and falls through
+                // to `CopyFileW`; this is an intentional divergence to match
+                // Node.js' documented FICLONE_FORCE contract and the
+                // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
+                // than `Maybe::todo()` so debug builds do not panic.
+                return Err(sys::Error {
+                    errno: SystemErrno::ENOSYS as _,
+                    syscall: sys::Tag::copyfile,
+                    ..Default::default()
+                });
+            }
             // Spec (node_fs.zig:6837-6838) precomputes both ENOENT fallbacks once,
             // before any branch. Re-deriving them inline inside `unwrap_or_else`
             // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
@@ -7100,8 +7147,13 @@ impl NodeFS {
                 None => {
                     let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
+                        // `errno_sys_p(0, …)` re-reads `GetLastError()` after
+                        // `os_path_into_sync_error_buf` (a non-trivial transcode on
+                        // Windows). If anything in that path ever clears the
+                        // thread-local last-error, fall back to ENOENT instead of
+                        // panicking on `.unwrap()` (matches the neighbouring sites).
                         let p = self.os_path_into_sync_error_buf(src.as_slice());
-                        return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap();
+                        return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(src_enoent_maybe);
                     }
                     a
                 }

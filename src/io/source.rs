@@ -323,8 +323,7 @@ impl Source {
             return bun_sys::Result::Err(err);
         }
 
-        // SAFETY: heap::alloc never returns null.
-        bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(bun_core::heap::into_raw(tty)) })
+        bun_sys::Result::Ok(bun_core::heap::into_raw_nn(tty))
     }
 
     pub fn open_file(fd: Fd) -> Box<File> {
@@ -433,9 +432,10 @@ pub mod stdin_tty {
             }
         }
 
-        // SAFETY: value() is a process-global static, never null.
         // Destroy path must gate `heap::take` on `!is_stdin_tty(ptr)`.
-        bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(value()) })
+        bun_sys::Result::Ok(
+            core::ptr::NonNull::new(value()).expect("stdin_tty value() is a process-global static"),
+        )
     }
 }
 

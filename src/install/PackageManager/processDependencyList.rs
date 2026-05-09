@@ -1,3 +1,5 @@
+use core::cell::Cell;
+
 use bun_core::{Global, Output};
 use bun_logger as logger;
 use bun_paths::dirname;
@@ -181,14 +183,8 @@ impl PackageManager {
                     }
 
                     // package.json doesn't exist, no dependencies to worry about but we need to decide on a name for the dependency
-                    // SAFETY: tag is `.git` or `.github`; both store `Repository`.
-                    let repo = unsafe {
-                        match resolution.tag {
-                            ResolutionTag::Git => resolution.value.git,
-                            ResolutionTag::Github => resolution.value.github,
-                            _ => unreachable!(),
-                        }
-                    };
+                    // tag is `.git` or `.github`; both store `Repository`.
+                    let repo = *resolution.repository();
 
                     let new_name = Repository::create_dependency_name_from_version_literal(
                         &repo,
@@ -352,7 +348,7 @@ impl PackageManager {
     pub fn process_dependency_list_item(
         &mut self,
         item: TaskCallbackContext,
-        any_root: Option<&mut bool>,
+        any_root: Option<&Cell<bool>>,
         install_peer: bool,
     ) -> Result<(), bun_core::Error> {
         match item {
@@ -393,7 +389,7 @@ impl PackageManager {
                     let new_resolution_id =
                         self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
                     if new_resolution_id != resolution {
-                        *ptr = true;
+                        ptr.set(true);
                     }
                 }
             }
@@ -436,13 +432,13 @@ impl PackageManager {
     ) -> Result<(), bun_core::Error> {
         if !dep_list.is_empty() {
             let dependency_list = dep_list;
-            let mut any_root = false;
+            let any_root = Cell::new(false);
             for item in dependency_list.iter().cloned() {
-                self.process_dependency_list_item(item, Some(&mut any_root), install_peer)?;
+                self.process_dependency_list_item(item, Some(&any_root), install_peer)?;
             }
 
             if let Some(on_resolve) = on_resolve {
-                if any_root {
+                if any_root.get() {
                     on_resolve(ctx);
                 }
             }
@@ -477,7 +473,7 @@ pub fn process_extracted_tarball_package(
 pub fn process_dependency_list_item(
     this: &mut PackageManager,
     item: TaskCallbackContext,
-    any_root: Option<&mut bool>,
+    any_root: Option<&Cell<bool>>,
     install_peer: bool,
 ) -> Result<(), bun_core::Error> {
     this.process_dependency_list_item(item, any_root, install_peer)

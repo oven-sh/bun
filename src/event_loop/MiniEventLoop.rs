@@ -180,10 +180,8 @@ pub fn init_global(
         // Thread-lifetime singletons (matches Zig `bun.default_allocator.create`).
         let map: *mut dotenv::Map = bun_core::heap::into_raw(Box::new(dotenv::Map::init()));
         // SAFETY: `map` lives for the thread (singleton); never freed (Zig parity).
-        let loader: *mut DotEnvLoader<'static> =
-            bun_core::heap::into_raw(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
-        // SAFETY: `heap::alloc` never returns null.
-        global.env = Some(unsafe { NonNull::new_unchecked(loader) });
+        let loader = bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
+        global.env = Some(loader);
     }
 
     // Set top_level_dir from provided cwd or get current working directory

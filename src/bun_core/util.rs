@@ -855,9 +855,12 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
         }
     }
     // No separator AFTER root, but content past it (e.g. "/foo", "C:\foo"):
-    // Zig returns the root prefix. Root-only inputs ("/", "C:\") have
-    // `end == root_end` and fall through to None.
-    if root_end > 0 && end > root_end {
+    // Zig returns the root prefix iff the root itself ends in a separator
+    // (`"/foo"` → `"/"`, `"C:\\foo"` → `"C:\\"`). A bare drive prefix with no
+    // separator (`"C:foo"`, root_end==2) falls through to `None`, matching
+    // `std.fs.path.dirnameWindows`. Root-only inputs ("/", "C:\") have
+    // `end == root_end` and also fall through.
+    if root_end > 0 && end > root_end && is_sep(path[root_end - 1]) {
         return Some(&path[..root_end]);
     }
     None
@@ -967,12 +970,9 @@ impl Fd {
                 // the live `GetStdHandle` result panics if the process std
                 // handle was swapped after startup via `SetStdHandle`,
                 // `AllocConsole`, `AttachConsole`, etc.
-                // SAFETY: cached statics written once at startup.
-                unsafe {
-                    if self == fd::WINDOWS_CACHED_STDIN.read() { return 0; }
-                    if self == fd::WINDOWS_CACHED_STDOUT.read() { return 1; }
-                    if self == fd::WINDOWS_CACHED_STDERR.read() { return 2; }
-                }
+                if Some(self) == fd::WINDOWS_CACHED_STDIN.get().copied() { return 0; }
+                if Some(self) == fd::WINDOWS_CACHED_STDOUT.get().copied() { return 1; }
+                if Some(self) == fd::WINDOWS_CACHED_STDERR.get().copied() { return 2; }
                 if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) { return 0; }
                 if fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle) { return 1; }
                 if fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle) { return 2; }
@@ -991,10 +991,9 @@ impl Fd {
     #[cfg(not(windows))] #[inline] pub const fn stderr() -> Fd { Fd(2) }
     #[cfg(not(windows))] #[inline] pub fn cwd() -> Fd { Fd(libc::AT_FDCWD) }
 
-    // SAFETY: cached statics written once at startup before any reader.
-    #[cfg(windows)] #[inline] pub fn stdin()  -> Fd { unsafe { fd::WINDOWS_CACHED_STDIN.read() } }
-    #[cfg(windows)] #[inline] pub fn stdout() -> Fd { unsafe { fd::WINDOWS_CACHED_STDOUT.read() } }
-    #[cfg(windows)] #[inline] pub fn stderr() -> Fd { unsafe { fd::WINDOWS_CACHED_STDERR.read() } }
+    #[cfg(windows)] #[inline] pub fn stdin()  -> Fd { fd::WINDOWS_CACHED_STDIN.get().copied().unwrap_or(Fd::INVALID) }
+    #[cfg(windows)] #[inline] pub fn stdout() -> Fd { fd::WINDOWS_CACHED_STDOUT.get().copied().unwrap_or(Fd::INVALID) }
+    #[cfg(windows)] #[inline] pub fn stderr() -> Fd { fd::WINDOWS_CACHED_STDERR.get().copied().unwrap_or(Fd::INVALID) }
     #[cfg(windows)] #[inline] pub fn cwd() -> Fd {
         // SAFETY: PEB is process-global; only reading the cached cwd handle.
         Fd::from_system(unsafe { fd::windows_current_directory_handle() })
@@ -1240,7 +1239,11 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
         // SAFETY: buf has `cap` u16 units; handle from Fd::native().
         let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
-        if n == 0 || n > cap { return -1; }
+        // Zig `bun.windows.GetFinalPathNameByHandle`: `if (return_length >=
+        // out_buffer.len) return error.NameTooLong;` — `>=` because a return
+        // value equal to `cap` is the buffer-too-small sentinel (required size
+        // including NUL), not a successful write of `cap` chars.
+        if n == 0 || n >= cap { return -1; }
         // Strip the `\\?\` prefix if present so callers see a plain DOS path
         // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
         // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
@@ -1317,10 +1320,11 @@ pub mod fd {
     use super::Fd;
     use core::ffi::{c_int, c_void};
 
-    // Written once in windows_stdio::init() during single-threaded startup.
-    pub static WINDOWS_CACHED_STDIN: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
-    pub static WINDOWS_CACHED_STDOUT: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
-    pub static WINDOWS_CACHED_STDERR: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
+    // Written once in windows_stdio::init() during single-threaded startup
+    // (S015: write-once → `OnceLock`; readers fall back to `Fd::INVALID`).
+    pub static WINDOWS_CACHED_STDIN: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
+    pub static WINDOWS_CACHED_STDOUT: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
+    pub static WINDOWS_CACHED_STDERR: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
     #[cfg(debug_assertions)]
     pub static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
@@ -1335,15 +1339,20 @@ pub mod fd {
         pub fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
     }
     #[cfg(windows)]
-    use crate::windows_sys::kernel32::GetStdHandle;
-    #[cfg(windows)]
     pub use crate::windows_sys::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
     #[cfg(windows)]
     pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
-        let h = GetStdHandle(id);
-        // Zig: `getStdHandle catch return false; handle == h`. INVALID_HANDLE_VALUE
-        // (failure) won't equal a valid handle, so the equality check suffices.
-        !h.is_null() && handle == h
+        // Zig: `const h = std.os.windows.GetStdHandle(id) catch return false;
+        // return handle == h;` — the Zig wrapper maps both NULL and
+        // INVALID_HANDLE_VALUE to an error, so use the Option-returning
+        // wrapper here. Without the INVALID_HANDLE_VALUE filter, a detached
+        // console (GetStdHandle → INVALID_HANDLE_VALUE) compared against
+        // `Fd::INVALID.native()` (= INVALID_HANDLE_VALUE) would spuriously
+        // report a stdio match.
+        match crate::windows_sys::GetStdHandle(id) {
+            Some(h) => handle == h,
+            None => false,
+        }
     }
 
     /// PEB ProcessParameters subset for stdio/cwd handle lookup.
@@ -1364,14 +1373,27 @@ pub mod fd {
         // cast is sound.
         // SAFETY: PEB is process-lifetime; handle fields are at fixed offsets.
         unsafe {
-            let pp = crate::windows_sys::peb().ProcessParameters;
-            &*(core::ptr::addr_of!(pp.hStdInput) as *const ProcessParametersStdio)
+            let pp = (*crate::windows_sys::peb()).ProcessParameters;
+            &*(core::ptr::addr_of!((*pp).hStdInput) as *const ProcessParametersStdio)
         }
     }
     #[cfg(windows)]
     pub unsafe fn windows_current_directory_handle() -> *mut c_void {
-        // TODO(b2-windows): PEB().ProcessParameters.CurrentDirectory.Handle
-        core::ptr::null_mut()
+        // Zig `std.fs.cwd().fd` on Windows reads
+        // `peb().ProcessParameters.CurrentDirectory.Handle`. The
+        // `ProcessParameters` view in `crate::windows_sys` keeps the CURDIR
+        // block as opaque padding (`_current_directory: [u8; 24]` at offset
+        // 0x38 = `UNICODE_STRING DosPath` (16) + `HANDLE Handle` (8)), so
+        // read the handle at fixed offset 0x48. The two `offset_of!` asserts
+        // in `windows_sys` (`hStdInput == 0x20`, `ImagePathName == 0x60`) pin
+        // the surrounding layout, so 0x48 is stable.
+        // SAFETY: PEB and ProcessParameters are process-lifetime; reading a
+        // pointer-sized field at a fixed, layout-asserted offset.
+        unsafe {
+            let pp = (*crate::windows_sys::peb()).ProcessParameters;
+            let base = pp as *const u8;
+            core::ptr::read(base.add(0x48) as *const *mut c_void)
+        }
     }
 }
 
@@ -2111,6 +2133,19 @@ pub fn get_thread_count() -> u16 {
                         }
                     }
                 }
+                // Windows: `getenv_z` is currently a no-op (no narrow C
+                // environ to borrow from); honour the override via
+                // `std::env::var` so behaviour matches Zig `bun.getThreadCount`
+                // on all platforms. POSIX keeps the borrow path above.
+                #[cfg(windows)]
+                if let Ok(s) = std::env::var(
+                    // SAFETY: keys above are ASCII literals.
+                    unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
+                ) {
+                    if let Ok(n) = s.trim().parse::<u16>() {
+                        if n >= MIN { return Some(n.min(MAX)); }
+                    }
+                }
             }
             None
         };
@@ -2349,19 +2384,19 @@ impl<H: core::hash::Hasher> Hasher for H {
     #[inline] fn update(&mut self, bytes: &[u8]) { self.write(bytes) }
 }
 
+/// Re-export so downstream crates can write `T: bun_core::NoUninit` without a
+/// direct `bytemuck` dep.
+pub use bytemuck::NoUninit;
+
 /// Port of Zig `std.mem.asBytes(&v)`: reinterpret a value's storage as a
 /// borrowed byte slice.
 ///
-/// # Safety
-/// Caller must guarantee `T` is plain-old-data with no uninitialized padding
-/// bytes (or that the returned bytes are never *read* through a path that
-/// observes padding). Serializing/hashing the result for a type with padding
-/// is UB.
+/// Safe: the [`bytemuck::NoUninit`] bound statically guarantees `T` is `Copy`,
+/// `'static`, and contains no uninitialized (padding) bytes, so every byte of
+/// the returned slice is initialized and reading it is defined behaviour.
 #[inline]
-pub unsafe fn bytes_of<T>(v: &T) -> &[u8] {
-    // SAFETY: `&T` is valid for `size_of::<T>()` readable bytes; caller upholds
-    // the no-uninit-padding contract above.
-    unsafe { core::slice::from_raw_parts(core::ptr::from_ref(v).cast::<u8>(), core::mem::size_of::<T>()) }
+pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
+    bytemuck::bytes_of(v)
 }
 
 /// Port of `bun.writeAnyToHasher`. Zig fed `std.mem.asBytes(&thing)`; Rust
@@ -3105,13 +3140,54 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
             return Err(std::io::Error::last_os_error().into());
         }
         let len = libc::strlen(p);
-        Ok(ZStr::from_raw(buf.0.as_ptr(), len))
+        Ok(ZStr::from_buf(&buf.0, len))
     }
     #[cfg(windows)]
     {
-        // TODO(port): GetCurrentDirectoryW → WTF-8. Phase B via bun_sys.
-        let _ = buf;
-        Err(crate::err!(Unexpected))
+        // Zig `bun.getcwd` → `std.posix.getcwd`, which on Windows wraps
+        // `kernel32.GetCurrentDirectoryW` and transcodes WTF-16 → WTF-8.
+        unsafe extern "system" {
+            fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
+        }
+        let mut wbuf = WPathBuffer::ZEROED;
+        // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
+        let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
+        if n == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if n >= wbuf.0.len() {
+            return Err(crate::err!(NameTooLong));
+        }
+        // WTF-16 → WTF-8 into the caller's `PathBuffer`. Surrogate pairs are
+        // combined; unpaired surrogates are encoded as 3-byte WTF-8 (matches
+        // Zig's `std.unicode.wtf16LeToWtf8`).
+        let src = &wbuf.0[..n];
+        let out = &mut buf.0;
+        let mut wi = 0usize;
+        let mut bi = 0usize;
+        while wi < src.len() {
+            let u = src[wi];
+            wi += 1;
+            let cp: u32 = if (0xD800..0xDC00).contains(&u)
+                && wi < src.len()
+                && (0xDC00..0xE000).contains(&src[wi])
+            {
+                let lo = src[wi];
+                wi += 1;
+                0x10000 + (((u as u32 - 0xD800) << 10) | (lo as u32 - 0xDC00))
+            } else {
+                u as u32
+            };
+            let mut tmp = [0u8; 4];
+            let nb = crate::strings::encode_wtf8_rune(&mut tmp, cp);
+            if bi + nb >= out.len() {
+                return Err(crate::err!(NameTooLong));
+            }
+            out[bi..bi + nb].copy_from_slice(&tmp[..nb]);
+            bi += nb;
+        }
+        out[bi] = 0;
+        Ok(ZStr::from_buf(&buf.0[..], bi))
     }
     #[cfg(not(any(unix, windows)))]
     { let _ = buf; Err(crate::err!(Unexpected)) }
@@ -3611,6 +3687,9 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
 pub struct Timespec { pub sec: i64, pub nsec: i64 }
 // SAFETY: two `i64` fields; all-zero is the epoch.
 unsafe impl crate::ffi::Zeroable for Timespec {}
+// SAFETY: `#[repr(C)]` with two `i64` fields → size 16, align 8, no padding,
+// no interior mutability, `Copy + 'static`. Every byte is initialized.
+unsafe impl bytemuck::NoUninit for Timespec {}
 
 /// Lowercase alias (Zig spells it `bun.timespec`).
 #[allow(non_camel_case_types)]

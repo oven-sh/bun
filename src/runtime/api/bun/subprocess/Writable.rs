@@ -84,33 +84,25 @@ impl<'a> Writable<'a> {
     // PORT NOTE: reshaped for borrowck — Zig `@fieldParentPtr("stdin", this)`
     // recovers `*Subprocess` from `*Writable` and freely interleaves access to
     // both. In Rust, deriving the parent from `&mut self` is out-of-provenance
-    // (the `&mut` only covers the `stdin` field) and yields two overlapping
-    // unique borrows. Instead the `SignalHandler` impl is on `Subprocess` and
-    // hands us the parent pointer directly; we raw-project `stdin` and never
-    // hold `&mut Subprocess` and `&mut Writable` at the same time.
-    pub fn on_close(process: *mut Subprocess<'a>, _: Option<bun_sys::Error>) {
-        // SAFETY: `process` is the live boxed `Subprocess`; raw place
-        // projection forms no intermediate reference.
-        let stdin: *mut Writable<'a> = unsafe { core::ptr::addr_of_mut!((*process).stdin) };
-
-        // SAFETY: `this_value` and `stdin` are disjoint fields; this short-lived
-        // borrow ends before any whole-struct reborrow.
-        if let Some(this_jsvalue) = unsafe { (*process).this_value.try_get() } {
+    // (the `&mut` only covers the `stdin` field). Instead the `SignalHandler`
+    // impl is on `Subprocess` and hands us the parent directly; field accesses
+    // here are disjoint and sequential so a plain `&mut Subprocess` suffices.
+    pub fn on_close(process: &mut Subprocess<'a>, _: Option<bun_sys::Error>) {
+        if let Some(this_jsvalue) = process.this_value.try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }
         }
 
-        // SAFETY: `stdin` is a valid `*mut Writable`; the `&mut` lives only for
-        // the duration of `replace`. Moving the payload out and writing `.Ignore`
-        // here hoists Zig's trailing `this.* = .{.ignore}` ahead of
-        // `on_stdin_destroyed` — in Zig that write follows a `deref()` that may
-        // free `process`, which would be a write-after-free. The only observable
-        // difference is `has_pending_activity_stdio()` seeing `Ignore` (== false)
-        // instead of a just-deref'd `Buffer` (== true) inside
+        // Moving the payload out and writing `.Ignore` here hoists Zig's
+        // trailing `this.* = .{.ignore}` ahead of `on_stdin_destroyed` — in
+        // Zig that write follows a `deref()` that may free `process`, which
+        // would be a write-after-free. The only observable difference is
+        // `has_pending_activity_stdio()` seeing `Ignore` (== false) instead of
+        // a just-deref'd `Buffer` (== true) inside
         // `update_has_pending_activity`, which is the state it converges to
         // immediately after anyway.
-        match core::mem::replace(unsafe { &mut *stdin }, Writable::Ignore) {
+        match core::mem::replace(&mut process.stdin, Writable::Ignore) {
             Writable::Buffer(buffer) => {
                 buffer.deref();
             }
@@ -121,10 +113,9 @@ impl<'a> Writable<'a> {
             _ => {}
         }
 
-        // SAFETY: `process` is live and no borrow of `*process` is outstanding;
-        // `on_stdin_destroyed` may `deref()` and free it as its last act, so
-        // this must be the final access.
-        unsafe { (*process).on_stdin_destroyed() };
+        // `on_stdin_destroyed` may `deref()` and free `process` as its last
+        // act, so this must be the final access.
+        process.on_stdin_destroyed();
     }
     pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
     pub fn on_start(&mut self) {}
@@ -193,8 +184,9 @@ impl<'a> Writable<'a> {
                             *promise_for_stream = assign_result;
                         }
 
-                        // SAFETY: `create_with_pipe` returns non-null.
-                        return Ok(Writable::Pipe(unsafe { NonNull::new_unchecked(pipe_ptr) }));
+                        return Ok(Writable::Pipe(
+                            NonNull::new(pipe_ptr).expect("FileSink::create_with_pipe returns non-null"),
+                        ));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -296,8 +288,9 @@ impl<'a> Writable<'a> {
                     *promise_for_stream = assign_result;
                 }
 
-                // SAFETY: `create` returns non-null.
-                Ok(Writable::Pipe(unsafe { NonNull::new_unchecked(pipe_ptr) }))
+                Ok(Writable::Pipe(
+                    NonNull::new(pipe_ptr).expect("FileSink::create returns non-null"),
+                ))
             }
 
             Stdio::Blob(_) => {
@@ -344,43 +337,33 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn to_js(subprocess: *mut Subprocess, global_this: &JSGlobalObject) -> JSValue {
+    pub fn to_js(subprocess: &mut Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
         // PORT NOTE: reshaped for borrowck — Zig passed `*Writable` (== `&stdin`)
-        // and `*Subprocess` separately, which alias. Take only the parent raw
-        // pointer and project `stdin` here so no two `&mut` overlap at any point.
-        // SAFETY: caller passes a live `*mut Subprocess`; raw projection of `stdin`.
-        let stdin = unsafe { core::ptr::addr_of_mut!((*subprocess).stdin) };
-        // SAFETY: `stdin` is a valid `*mut Writable`; the `&mut` is dropped at the
-        // end of `replace`, before `*subprocess` is reborrowed below.
-        match core::mem::replace(unsafe { &mut *stdin }, Writable::Ignore) {
+        // and `*Subprocess` separately, which alias. Take only the parent and
+        // project `stdin` here so no two `&mut` overlap at any point.
+        match core::mem::replace(&mut subprocess.stdin, Writable::Ignore) {
             Writable::Fd(fd) => {
-                // SAFETY: see above; sole live borrow.
-                unsafe { *stdin = Writable::Fd(fd) };
+                subprocess.stdin = Writable::Fd(fd);
                 fd.to_js(global_this)
             }
             Writable::Memfd(fd) => {
-                // SAFETY: see above; sole live borrow.
-                unsafe { *stdin = Writable::Memfd(fd) };
+                subprocess.stdin = Writable::Memfd(fd);
                 JSValue::UNDEFINED
             }
             Writable::Ignore => JSValue::UNDEFINED,
             Writable::Buffer(buffer) => {
-                // SAFETY: see above; sole live borrow.
-                unsafe { *stdin = Writable::Buffer(buffer) };
+                subprocess.stdin = Writable::Buffer(buffer);
                 JSValue::UNDEFINED
             }
             Writable::Inherit => {
-                // SAFETY: see above; sole live borrow.
-                unsafe { *stdin = Writable::Inherit };
+                subprocess.stdin = Writable::Inherit;
                 JSValue::UNDEFINED
             }
             Writable::Pipe(pipe_nn) => {
                 // stdin already replaced with Ignore above (mirrors Zig `this.* = .{ .ignore = {} }`)
-                // SAFETY: pipe is live (held a +1 in this enum).
+                // SAFETY: pipe is live (held a +1 in this enum); separate
+                // allocation from `*subprocess` so the borrows are disjoint.
                 let pipe = unsafe { &mut *pipe_nn.as_ptr() };
-                // SAFETY: caller passes a live `*mut Subprocess`; the `&mut *stdin`
-                // borrow above has ended, so this whole-struct reborrow is unique.
-                let subprocess = unsafe { &mut *subprocess };
                 if subprocess.has_exited()
                     && !subprocess.flags.contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
@@ -422,15 +405,10 @@ impl<'a> Writable<'a> {
 
     // PORT NOTE: reshaped for borrowck — see `on_close`. Zig
     // `@fieldParentPtr("stdin", this)` is replaced by the caller passing the
-    // parent pointer; deriving it from `&mut self` would be out-of-provenance.
-    pub fn finalize(subprocess: *mut Subprocess<'a>) {
-        // SAFETY: `subprocess` is live; raw place projection.
-        let stdin: *mut Writable<'a> =
-            unsafe { core::ptr::addr_of_mut!((*subprocess).stdin) };
-
-        // SAFETY: `this_value` and `stdin` are disjoint fields; short-lived
-        // borrow ends before `stdin` is touched.
-        if let Some(this_jsvalue) = unsafe { (*subprocess).this_value.try_get() } {
+    // parent; deriving it from `&mut self` on `Writable` would be
+    // out-of-provenance.
+    pub fn finalize(subprocess: &mut Subprocess<'a>) {
+        if let Some(this_jsvalue) = subprocess.this_value.try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }
@@ -438,13 +416,10 @@ impl<'a> Writable<'a> {
 
         // The signal back-pointer is the `*mut Subprocess` (see SignalHandler
         // impl below / `to_js`); compare against that, not the `stdin` address.
-        let parent_ptr = NonNull::new(subprocess.cast::<c_void>());
-        // SAFETY: sole live borrow of `stdin`.
-        match unsafe { &mut *stdin } {
+        let parent_ptr =
+            NonNull::new(std::ptr::from_mut::<Subprocess<'a>>(subprocess).cast::<c_void>());
+        match core::mem::replace(&mut subprocess.stdin, Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
-                // Copy the NonNull out so the match binding's borrow of `*stdin`
-                // ends, allowing `*stdin = Ignore` below.
-                let pipe_nn = *pipe_nn;
                 // SAFETY: pipe is live for the duration of the variant.
                 let pipe = unsafe { &mut *pipe_nn.as_ptr() };
                 if pipe.signal.ptr == parent_ptr {
@@ -453,9 +428,6 @@ impl<'a> Writable<'a> {
 
                 // SAFETY: pipe is live; deref may free it.
                 unsafe { FileSink::deref(pipe_nn.as_ptr()) };
-
-                // SAFETY: sole live borrow of `stdin`.
-                unsafe { *stdin = Writable::Ignore };
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr holds a live ref.
@@ -463,16 +435,17 @@ impl<'a> Writable<'a> {
                 // PORT NOTE: Zig calls `buffer.deref()` without reassigning to `.ignore`;
                 // RefPtr::deref drops the held ref.
                 buffer.deref();
-                // SAFETY: sole live borrow of `stdin`.
-                unsafe { *stdin = Writable::Ignore };
             }
             Writable::Memfd(fd) => {
                 fd.close();
-                // SAFETY: sole live borrow of `stdin`.
-                unsafe { *stdin = Writable::Ignore };
             }
             Writable::Ignore => {}
-            Writable::Fd(_) | Writable::Inherit => {}
+            Writable::Fd(fd) => {
+                subprocess.stdin = Writable::Fd(fd);
+            }
+            Writable::Inherit => {
+                subprocess.stdin = Writable::Inherit;
+            }
         }
     }
 
@@ -508,9 +481,7 @@ impl<'a> Writable<'a> {
 // `on_close`/`finalize`/`to_js` raw-project `stdin` from it.
 impl<'a> SignalHandler for Subprocess<'a> {
     fn on_close(&mut self, err: Option<bun_sys::Error>) {
-        // Decay to a raw pointer immediately; `on_close` reborrows disjoint
-        // fields and the whole struct in sequence, never overlapping.
-        Writable::on_close(std::ptr::from_mut::<Self>(self), err)
+        Writable::on_close(self, err)
     }
     fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
     fn on_start(&mut self) {}

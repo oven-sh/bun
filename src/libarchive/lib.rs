@@ -821,7 +821,7 @@ pub mod lib {
 
         pub unsafe extern "C" fn open_callback(_a: *mut Archive, client_data: *mut c_void) -> c_int {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { &mut *client_data.cast::<GrowingBuffer>() };
+            let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
             this.list.clear();
             this.had_error = false;
             0
@@ -834,7 +834,7 @@ pub mod lib {
             length: usize,
         ) -> la_ssize_t {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { &mut *client_data.cast::<GrowingBuffer>() };
+            let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
             if buff.is_null() || length == 0 {
                 return 0;
             }
@@ -1134,7 +1134,7 @@ impl BufferReadStream {
         buffer: *mut *const c_void,
     ) -> lib::la_ssize_t {
         // SAFETY: libarchive passes back the ctx we registered (a *mut BufferReadStream)
-        let this = unsafe { &mut *Self::from_ctx(ctx_) };
+        let this = unsafe { bun_core::callback_ctx::<Self>(ctx_) };
         let remaining = this.buf_left();
         if remaining.is_empty() {
             return 0;
@@ -1153,7 +1153,7 @@ impl BufferReadStream {
         offset: lib::la_int64_t,
     ) -> lib::la_int64_t {
         // SAFETY: ctx is the *mut BufferReadStream we registered
-        let this = unsafe { &mut *Self::from_ctx(ctx_) };
+        let this = unsafe { bun_core::callback_ctx::<Self>(ctx_) };
 
         let buflen = isize::try_from(this.buf().len()).expect("int cast");
         let pos = isize::try_from(this.pos).expect("int cast");
@@ -1171,7 +1171,7 @@ impl BufferReadStream {
         whence: c_int,
     ) -> lib::la_int64_t {
         // SAFETY: ctx is the *mut BufferReadStream we registered
-        let this = unsafe { &mut *Self::from_ctx(ctx_) };
+        let this = unsafe { bun_core::callback_ctx::<Self>(ctx_) };
 
         let buflen = isize::try_from(this.buf().len()).expect("int cast");
         let pos = isize::try_from(this.pos).expect("int cast");
@@ -1481,6 +1481,10 @@ impl Archiver {
                 break 'brk d;
             }
         };
+        // PORT NOTE: Zig spec also lacks `defer dir.close()` here (pre-existing leak).
+        // Fd has no Drop impl; close explicitly on every return path to avoid leaking
+        // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
+        let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime

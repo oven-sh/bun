@@ -2666,19 +2666,25 @@ pub struct Payload {
 }
 
 impl Payload {
-    /// # Safety
+    /// Re-borrow the payload bytes as `&[u8]`, tied to `&self`.
+    ///
+    /// # Safety (encapsulated)
     /// `data_ptr`/`data_len` describe a slice into either the caller-supplied `data` (alive for
-    /// the handler body) or `H2FrameParser.read_buffer.list`'s backing allocation. Callers must
-    /// not grow or free `read_buffer` between obtaining the `Payload` and the last use of the
-    /// returned slice. `read_buffer.reset()` is permitted: `data_ptr` is derived via
-    /// `Vec::as_mut_ptr()` (raw-ptr method, no intermediate `&[u8]` borrow), which is documented
-    /// to remain valid across non-reallocating mutation, so under Stacked Borrows the
-    /// `Vec::clear()` inside `reset()` does not invalidate it and the bytes remain readable
-    /// (matches the Zig ordering where several handlers reset before consuming `payload`).
+    /// the handler body) or `H2FrameParser.read_buffer.list`'s backing allocation. Both outlive
+    /// the local `Payload` returned by `handle_incomming_payload`: the caller's `data` lives for
+    /// the entire handler body, and `read_buffer` is never grown/freed between obtaining the
+    /// `Payload` and the last use of the returned slice. `read_buffer.reset()` is permitted:
+    /// `data_ptr` is derived via `Vec::as_mut_ptr()` (raw-ptr method, no intermediate `&[u8]`
+    /// borrow), which is documented to remain valid across non-reallocating mutation, so under
+    /// Stacked Borrows the `Vec::clear()` inside `reset()` does not invalidate it and the bytes
+    /// remain readable (matches the Zig ordering where several handlers reset before consuming
+    /// `payload`). The returned borrow is tied to the local `Payload` (not `self: H2FrameParser`),
+    /// so `&mut self` operations on the parser do not conflict with it under borrowck.
     #[inline]
-    unsafe fn data<'a>(&self) -> &'a [u8] {
-        // SAFETY: caller contract — see doc comment above. `ffi::slice` tolerates
-        // the (null, 0) shape used for empty payloads.
+    fn data(&self) -> &[u8] {
+        // SAFETY: see doc comment above — `data_ptr` is valid for `data_len` bytes for the
+        // full lifetime of this `Payload` local. `ffi::slice` tolerates the (null, 0) shape
+        // used for empty payloads.
         unsafe { bun_core::ffi::slice(self.data_ptr, self.data_len) }
     }
 }
@@ -2774,9 +2780,7 @@ impl H2FrameParser {
         }
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
-            // not freed/grown before `payload` is consumed; reset() below only clears len.
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             let window_size_increment = UInt31WithReserved::from_bytes(payload);
             let end = content.end;
             self.read_buffer.reset();
@@ -3024,9 +3028,7 @@ impl H2FrameParser {
         }
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
-            // not freed/grown before `payload` is consumed; reset() below only clears len.
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             let error_code = u32_from_bytes(&payload[4..8]);
             let global = self.handlers.global();
             let chunk = self.handlers.binary_type.to_js(&payload[8..], &global).unwrap_or(JSValue::ZERO);
@@ -3058,9 +3060,7 @@ impl H2FrameParser {
             return Ok(data.len());
         }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
-            // not freed/grown before `payload` is consumed; reset() below only clears len.
-            let mut payload = unsafe { content.data() };
+            let mut payload = content.data();
             let mut origin_value: JSValue = JSValue::UNDEFINED;
             let mut count: usize = 0;
             let end = content.end;
@@ -3113,9 +3113,7 @@ impl H2FrameParser {
             return Ok(data.len());
         }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
-            // not freed/grown before `payload` is consumed; reset() below only clears len.
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             let end = content.end;
             self.read_buffer.reset();
 
@@ -3166,9 +3164,7 @@ impl H2FrameParser {
         }
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
-            // not freed/grown before `payload` is consumed; reset() below only clears len.
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             let rst_code = u32_from_bytes(payload);
             stream.rst_code = rst_code;
             let end = content.end;
@@ -3199,9 +3195,7 @@ impl H2FrameParser {
         }
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
-            // not freed/grown before `payload` is consumed; reset() below only clears len.
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             let is_not_ack = frame.flags & PingFrameFlags::ACK as u8 == 0;
             let end = content.end;
             // PORT NOTE: Zig resets readBuffer before send_ping(payload); reset() only clears len
@@ -3239,9 +3233,7 @@ impl H2FrameParser {
         }
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
-            // not freed/grown before `payload` is consumed; reset() below only clears len.
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             let end = content.end;
 
             let mut priority = StreamPriority::default();
@@ -3277,10 +3269,7 @@ impl H2FrameParser {
             return Ok(data.len());
         }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — points into caller `data` or read_buffer's allocation;
-            // reset() only clears len so the bytes stay readable through decode_header_block below
-            // (matches Zig handleContinuationFrame ordering).
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             let end = content.end;
             self.read_buffer.reset();
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
@@ -3332,10 +3321,7 @@ impl H2FrameParser {
         }
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
-            // SAFETY: see Payload::data — points into caller `data` or read_buffer's allocation;
-            // reset() only clears len so the bytes stay readable through decode_header_block below
-            // (matches Zig handleHeadersFrame ordering).
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             let mut offset: usize = 0;
             let mut padding: usize = 0;
             let end_ = content.end;
@@ -3476,9 +3462,7 @@ impl H2FrameParser {
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
             let mut remote_settings: FullSettingsPayload = self.remote_settings.unwrap_or_default();
             let mut i: usize = 0;
-            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
-            // not freed/grown before `payload` is consumed; reset() below only clears len.
-            let payload = unsafe { content.data() };
+            let payload = content.data();
             while i < payload.len() {
                 let mut unit = SettingsPayloadUnit::default();
                 SettingsPayloadUnit::from::<true>(&mut unit, &payload[i..i + setting_byte_size], 0);
@@ -4918,7 +4902,7 @@ impl H2FrameParser {
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let Some(value) = (unsafe { (*stream).js_context.get() }) else { continue };
-            unsafe { &mut *this.handlers.vm.event_loop() }.run_callback(callback, global_object, this_value, &[value]);
+            this.handlers.vm.event_loop_mut().run_callback(callback, global_object, this_value, &[value]);
             _count += 1;
         }
         Ok(JSValue::UNDEFINED)

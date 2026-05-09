@@ -795,15 +795,14 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     }
 
     // Set up the transpiler/environment
-    let fsinstance = bun_resolver::fs::FileSystem::init(None)?;
+    let _ = bun_resolver::fs::FileSystem::init(None)?;
     // Out-param init pattern — Zig writes into `var this_transpiler: Transpiler = undefined;`
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
     let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
-    // SAFETY: `FileSystem::init` returns the live process-lifetime singleton.
-    let cwd: &[u8] = unsafe { (*fsinstance).top_level_dir };
+    let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
@@ -849,8 +848,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
         let mut root_buf = PathBuffer::uninit();
         let resolve_root = FilterArg::get_candidate_package_patterns(
-            // SAFETY: `ctx.log` is the process-global Log; non-null and live for 'static.
-            unsafe { &mut *ctx.log },
+            unsafe { ctx.log_mut() },
             &mut patterns,
             cwd,
             &mut root_buf,

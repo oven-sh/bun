@@ -2066,7 +2066,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // the same process — and `DevServer`'s tailwind-hack probe of the
             // same field — still see the bunfig-configured plugin list.
             if let Some(serve_plugins_config) =
-                unsafe { &*self.vm_mut() }.transpiler.options.serve_plugins.as_ref()
+                jsc::VirtualMachine::get().transpiler.options.serve_plugins.as_ref()
             {
                 if !serve_plugins_config.is_empty() {
                     self.plugins =
@@ -2557,7 +2557,7 @@ mod trampoline {
         user_data: *mut c_void,
     ) {
         // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
-        let server = unsafe { &mut *user_data.cast::<NewServer<SSL, DEBUG>>() };
+        let server = unsafe { bun_ptr::callback_ctx::<NewServer<SSL, DEBUG>>(user_data) };
         let socket = if socket.is_null() {
             None
         } else {

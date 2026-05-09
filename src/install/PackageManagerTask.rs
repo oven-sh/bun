@@ -201,6 +201,85 @@ impl Id {
     }
 }
 
+/// Tag-checked projectors for the untagged [`Request`] / [`Data`] unions.
+///
+/// `Task.tag` is the single discriminant for both unions; every variant payload
+/// is either POD or `ManuallyDrop`-wrapped (no drop on overwrite), so reading
+/// the wrong arm is well-defined garbage rather than UB. `debug_assert_eq!`
+/// catches tag mismatches in debug builds; release matches Zig's unchecked
+/// bare-union field read. Centralizing the `unsafe` here removes ~20
+/// per-call-site `unsafe` blocks across `runTasks` / `Task::callback`.
+macro_rules! task_request_accessors {
+    ($( $tag:ident => $field:ident / $get:ident / $get_mut:ident : $ty:ty ),* $(,)?) => {
+        $(
+            #[inline]
+            pub fn $get(&self) -> &$ty {
+                debug_assert!(self.tag == Tag::$tag);
+                // SAFETY: `self.tag` selects the active `Request` arm; payload
+                // is `ManuallyDrop<_>`, deref yields `&$ty`.
+                unsafe { &*self.request.$field }
+            }
+            #[inline]
+            pub fn $get_mut(&mut self) -> &mut $ty {
+                debug_assert!(self.tag == Tag::$tag);
+                // SAFETY: `self.tag` selects the active `Request` arm; `&mut
+                // self` guarantees exclusive access to the union storage.
+                unsafe { &mut *self.request.$field }
+            }
+        )*
+    };
+}
+
+impl<'a> Task<'a> {
+    task_request_accessors! {
+        PackageManifest => package_manifest / request_package_manifest / request_package_manifest_mut: PackageManifestRequest<'a>,
+        Extract         => extract          / request_extract          / request_extract_mut:          ExtractRequest<'a>,
+        GitClone        => git_clone        / request_git_clone        / request_git_clone_mut:        GitCloneRequest,
+        GitCheckout     => git_checkout     / request_git_checkout     / request_git_checkout_mut:     GitCheckoutRequest,
+        LocalTarball    => local_tarball    / request_local_tarball    / request_local_tarball_mut:    LocalTarballRequest,
+    }
+
+    // ── Data projectors ────────────────────────────────────────────────────
+    // `Tag::LocalTarball` writes its result into `data.extract` (same payload
+    // type as `Tag::Extract`), so `data_extract*` accepts both tags.
+    #[inline]
+    pub fn data_package_manifest(&self) -> &npm::PackageManifest {
+        debug_assert!(self.tag == Tag::PackageManifest);
+        // SAFETY: tag-guarded; `ManuallyDrop` deref.
+        unsafe { &*self.data.package_manifest }
+    }
+    #[inline]
+    pub fn data_extract(&self) -> &ExtractData {
+        debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
+        // SAFETY: tag-guarded; `ManuallyDrop` deref.
+        unsafe { &*self.data.extract }
+    }
+    #[inline]
+    pub fn data_extract_mut(&mut self) -> &mut ExtractData {
+        debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
+        // SAFETY: tag-guarded; `&mut self` exclusive.
+        unsafe { &mut *self.data.extract }
+    }
+    #[inline]
+    pub fn data_git_clone(&self) -> Fd {
+        debug_assert!(self.tag == Tag::GitClone);
+        // SAFETY: tag-guarded; `Fd` is `Copy`.
+        unsafe { *self.data.git_clone }
+    }
+    #[inline]
+    pub fn data_git_checkout(&self) -> &ExtractData {
+        debug_assert!(self.tag == Tag::GitCheckout);
+        // SAFETY: tag-guarded; `ManuallyDrop` deref.
+        unsafe { &*self.data.git_checkout }
+    }
+    #[inline]
+    pub fn data_git_checkout_mut(&mut self) -> &mut ExtractData {
+        debug_assert!(self.tag == Tag::GitCheckout);
+        // SAFETY: tag-guarded; `&mut self` exclusive.
+        unsafe { &mut *self.data.git_checkout }
+    }
+}
+
 impl<'a> Task<'a> {
     pub fn callback(task: *mut thread_pool::Task) {
         Output::Source::configure_thread();

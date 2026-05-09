@@ -1288,12 +1288,10 @@ impl<'a> Formatter<'a> {
                 // PORT NOTE: `visited::Pool::get()` returns an RAII `PoolGuard` that
                 // would release on scope exit; the Zig spec stashes the raw node on
                 // `self` and releases it from `JestPrettyFormat::format`'s defer, so
-                // take the raw node directly.
-                // SAFETY: `get_node()` never returns null; `data` is initialized by
+                // take the raw node directly. `data` is initialized by
                 // `Map::INIT` (see `visited::Map: ObjectPoolType`).
-                let node = unsafe {
-                    core::ptr::NonNull::new_unchecked(visited::Pool::get_node())
-                };
+                let node = core::ptr::NonNull::new(visited::Pool::get_node())
+                    .expect("ObjectPool::get_node never returns null");
                 self.map_node = Some(node);
                 // PORT NOTE: Zig (.zig:878-880) does a struct copy aliasing the same
                 // backing buffer. Rust takes the map here and swaps it back into

@@ -92,6 +92,19 @@ const HUNT_BRIEF = `
 8. **Spec divergence**: ANY behavior difference vs .zig spec at same path (different error code, different fallback, missing case).
 9. **TOCTOU**: stat-then-open without share-mode handling.
 10. **CRT/libc on Windows**: any \`libc::*\` call in Windows code that should be a Win32 call (MSVCRT semantics differ from POSIX).
+11. **NTSTATUS→errno mapping**: must use \`translate_ntstatus_to_errno\`/\`get_errno_ntstatus\` (Zig's table), NOT \`RtlNtStatusToDosError→Win32Error→SystemErrno\` chain (different errno values).
+12. **Self-referential structs after move**: \`uv_fs_t\` after \`uv_fs_read/write\` has \`bufs→bufsml\` self-ptr — moving (e.g. via \`scopeguard::guard(value, …)\`) before \`uv_fs_req_cleanup\` makes cleanup free a stack ptr. Never move libuv req structs between init and cleanup.
+13. **cfg-arm sync**: changes to fn signatures must be applied to ALL cfg arms (e.g. \`cfg(windows)\` sysv64 vs C-ABI macro arms).
+`;
+
+const FIX_TRAPS = `
+**Known fix-agent traps from r1 (DO NOT repeat):**
+- DON'T wrap \`fs_t\`/req structs in \`scopeguard::guard(value, |v| v.deinit())\` — it MOVES the struct. Use \`FsReq\` newtype with \`Drop\`, or guard a raw pointer.
+- DON'T change NTSTATUS error mapping to \`Win32Error::from_nt_status\` chain — use \`get_errno_ntstatus\` directly.
+- DON'T add \`.to_e()\` to a value that's already \`E\` (Rust \`WSAGetLastError()\` already returns \`Option<E>\`, not \`Option<SystemErrno>\`).
+- DON'T add \`?\` to fns that return \`()\`.
+- When changing a fn signature, update ALL cfg arms (sysv64 + C-ABI).
+- VERIFY trait methods are in scope before using them (e.g. \`Win32ErrorUnwrap\`).
 `;
 
 phase("Hunt");
@@ -137,7 +150,9 @@ Return {file:"${f.file}", bugs:[{line,what,why_wrong,zig_spec,fix,severity}]}.`,
 **${vr.blocking.length} BLOCKING:**
 ${vr.blocking.map((b, i) => `${i + 1}. [${b.severity}] L${b.line || "?"}: ${b.what}\n   WHY: ${b.why_wrong}\n   ZIG: ${b.zig_spec || ""}\n   FIX: ${b.fix}`).join("\n")}
 
-Edit ${f.file}. Match .zig spec exactly. ${NO_TOOLS} (Edit OK)
+${FIX_TRAPS}
+
+Edit ${f.file}. Match .zig spec exactly. **Be conservative** — if a fix requires changes to other files/signatures or you can't verify correctness, document it in notes and SKIP rather than guess. ${NO_TOOLS} (Edit OK)
 
 Return {file:"${f.file}", applied:N, notes}.`,
           { label: `fix:${f.file.split("/").pop()}`, phase: "Fix", schema: FIX_S },
@@ -152,12 +167,14 @@ phase("Compile");
 const compile = await agent(
   `FINAL: compile + commit Windows bughunt fixes. Repo ${WT}. **You may use cargo/git.**
 
-${hunted.filter(r => r && r.fix).length} files fixed.
+${hunted.filter(r => r && r.fix).length} files fixed. **r1 compile-agent never finished — be efficient: max 10 rounds, revert hunks you can't fix.**
 
-1. \`cd ${WT} && cargo check --workspace --keep-going 2>&1 | grep -cE '^error\\['\` → fix loop ≤6.
-2. 5-target clean-leaf (esp. Windows): \`for t in x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-unknown-linux-gnu; do cargo clean -p bun_runtime -p bun_bin --target $t 2>/dev/null; cargo check -p bun_bin --target $t 2>&1 | grep -cE '^error\\['; done\`.
-3. \`bun bd --version\` exit 0 + inspect 72/0.
-4. \`git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-h: Windows bughunt (${allBlocking.length} fixes)"\`. NO push.
+**SETUP FIRST**: \`ln -sf /root/bun-5/vendor ${WT}/vendor 2>/dev/null; mkdir -p ${WT}/build/debug && cp -r /root/bun-5/build/debug/codegen ${WT}/build/debug/ 2>/dev/null\`
+
+1. \`cd ${WT} && cargo check --workspace --keep-going 2>&1 | tee /tmp/wbh-check.log | grep -cE '^error\\['\` → fix loop ≤10. If a fix is uncompilable and you can't see how to make it correct, REVERT that hunk to origin (\`git checkout origin/claude/phase-a-port -- <file>\`) — better to drop a fix than break the build.
+2. **5-target clean-leaf** (Windows is the priority — most fixes are cfg(windows)): \`for t in x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-unknown-freebsd aarch64-linux-android x86_64-unknown-linux-musl; do cargo clean -p bun_runtime -p bun_bin --target $t 2>/dev/null; n=$(cargo check -p bun_bin --target $t 2>&1 | grep -cE '^error\\['); echo "$t: $n"; done\` — fix any non-zero, loop until ALL 0.
+3. \`bun bd --version\` exit 0 + \`bun bd test test/js/bun/util/inspect.test.js\` 72/0.
+4. \`git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-h: Windows bughunt r2 (${allBlocking.length} fixes, ${hunted.filter(r => r && r.fix).length} files)"\`. NO push.
 
 Return {rounds, errors_after, commit}.`,
   { label: "compile-fix-commit", phase: "Compile", schema: COMPILE_S },

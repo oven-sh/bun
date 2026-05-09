@@ -44,9 +44,18 @@ pub use crate::unlinkat;
 pub use crate::unlinkat_with_flags;
 // Zig: `pub const mkdirOSPath = bun.sys.mkdirOSPath;` — on Windows that's the
 // WTF-16 `CreateDirectoryW` wrapper (handles unpaired surrogates / `\\?\` long
-// paths). Re-export the real port (`mkdir_w`), NOT the UTF-8 `mkdir`, so callers
+// paths). Wrap the real port (`mkdir_w`), NOT the UTF-8 `mkdir`, so callers
 // passing an `OSPathSlice` keep WTF-16 semantics.
-pub use crate::mkdir_w as mkdir_os_path;
+//
+// Spec: `pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void)`
+// (sys.zig:939). The `flags` param is ignored on Windows (`_ = flags;`) but is
+// part of the public 2-arg signature, so we cannot `pub use mkdir_w as ...` —
+// that would drop the second arg and break Zig-ported callers that pass a mode.
+#[inline]
+pub fn mkdir_os_path(file_path: &bun_core::WStr, flags: Mode) -> Result<()> {
+    let _ = flags;
+    crate::mkdir_w(file_path)
+}
 
 // Note: `req = undefined; req.deinit()` has a safety-check in a debug build
 

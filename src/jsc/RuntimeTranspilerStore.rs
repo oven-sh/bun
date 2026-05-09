@@ -571,10 +571,7 @@ impl TranspilerJob {
                 p
             }
             None => {
-                // SAFETY: heap::alloc never null.
-                let p = unsafe {
-                    NonNull::new_unchecked(bun_core::heap::into_raw(Box::new(Arena::new())))
-                };
+                let p = bun_core::heap::into_raw_nn(Box::new(Arena::new()));
                 cell.set(Some(p));
                 p
             }
@@ -615,8 +612,7 @@ impl TranspilerJob {
         let mut ast_store_ptr = AST_MEMORY_STORE.with(|cell| {
             if cell.get().is_none() {
                 let boxed = Box::new(ASTMemoryAllocator::new(arena_ref));
-                // SAFETY: heap::alloc never null
-                cell.set(Some(unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(boxed)) }));
+                cell.set(Some(bun_core::heap::into_raw_nn(boxed)));
             }
             cell.get().unwrap()
         });
@@ -1035,8 +1031,7 @@ impl TranspilerJob {
                 let writer = BufferWriter::init();
                 let mut bp = Box::new(BufferPrinter::init(writer));
                 bp.ctx.append_null_byte = false;
-                // SAFETY: heap::alloc never null
-                cell.set(Some(unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(bp)) }));
+                cell.set(Some(bun_core::heap::into_raw_nn(bp)));
             }
             cell.get().unwrap()
         });

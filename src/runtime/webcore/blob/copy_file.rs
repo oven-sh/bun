@@ -1088,12 +1088,16 @@ impl ReadWriteLoop {
 
 #[cfg(windows)]
 extern "C" fn on_read(req: *mut libuv::fs_t) {
-    // SAFETY: req points to CopyFileWindows.io_request
-    let this: &mut CopyFileWindows = unsafe {
-        &mut *bun_core::from_field_ptr!(CopyFileWindows, io_request, req)
-    };
-    // SAFETY: req points to a live CopyFileWindows.io_request.
-    debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
+    // SAFETY: `req->data` was set to `core::ptr::from_mut(self)` (whole-struct
+    // provenance) before scheduling. Recover the parent from `data` rather than
+    // `from_field_ptr!(.., io_request, req)`: the `req` pointer libuv hands back was
+    // produced from a `&mut self.io_request` reborrow whose provenance covers only the
+    // `io_request` field, so `container_of`-style subtraction would yield a
+    // `*mut CopyFileWindows` with out-of-bounds provenance (UB under Stacked/Tree
+    // Borrows). After forming `this`, access the request via `this.io_request` — never
+    // through `(*req)`, which would alias the live `&mut`.
+    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 
     let source_fd = this.read_write_loop.source_fd;
     let destination_fd = this.read_write_loop.destination_fd;
@@ -1102,8 +1106,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
     let event_loop = this.event_loop;
 
-    // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `result` before invoking this callback.
-    let rc = unsafe { (*req).result };
+    let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_read({}, {}) = {}", source_fd, read_buf.len(), rc.int());
     if let Some(err) = rc.to_error(bun_sys::Tag::read) {
@@ -1124,8 +1127,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     }
 
     // Re-use the fs request.
-    // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
-    unsafe { (*req).deinit() };
+    this.io_request.deinit();
     // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` points into
     // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`.
     let rc2 = unsafe {
@@ -1150,18 +1152,15 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
 #[cfg(windows)]
 extern "C" fn on_write(req: *mut libuv::fs_t) {
-    // SAFETY: req points to CopyFileWindows.io_request
-    let this: &mut CopyFileWindows = unsafe {
-        &mut *bun_core::from_field_ptr!(CopyFileWindows, io_request, req)
-    };
-    // SAFETY: req points to a live CopyFileWindows.io_request.
-    debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
+    // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
+    // not `from_field_ptr!`; then access the request only via `this.io_request`.
+    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
     let buf_len = this.read_write_loop.read_buf.len();
 
     let destination_fd = this.read_write_loop.destination_fd;
 
-    // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `result` before invoking this callback.
-    let rc = unsafe { (*req).result };
+    let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_write({}, {}) = {}", destination_fd, buf_len, rc.int());
 
@@ -1183,8 +1182,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         }
 
         // Re-use the fs request.
-        // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
-        unsafe { (*req).deinit() };
+        this.io_request.deinit();
         this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
         let prev = this.read_write_loop.uv_buf.slice();
@@ -1213,8 +1211,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         return;
     }
 
-    // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
-    unsafe { (*req).deinit() };
+    this.io_request.deinit();
     match this.read_write_loop_read() {
         bun_sys::Result::Err(err) => {
             this.err = Some(err);
@@ -1694,23 +1691,19 @@ impl<'a> CopyFileWindows<'a> {
 
 #[cfg(windows)]
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
-    // SAFETY: req points to CopyFileWindows.io_request
-    let this: &mut CopyFileWindows = unsafe {
-        &mut *bun_core::from_field_ptr!(CopyFileWindows, io_request, req)
-    };
-    // SAFETY: req points to a live CopyFileWindows.io_request.
-    debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
+    // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
+    // not `from_field_ptr!`; then access the request only via `this.io_request`.
+    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 
     let event_loop = this.event_loop;
     event_loop.unref_concurrently();
-    // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `result` before invoking this callback.
-    let rc = unsafe { (*req).result };
+    let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
     if let Some(errno) = rc.err_enum_e() {
         if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT {
-            // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
-            unsafe { (*req).deinit() };
+            this.io_request.deinit();
             this.mkdirp();
             return;
         } else {
@@ -1740,25 +1733,21 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
-    // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `statbuf` for a successful uv_fs_copyfile.
-    let size = unsafe { (*req).statbuf.size() };
+    let size = this.io_request.statbuf.size();
     this.on_complete(size as usize);
 }
 
 #[cfg(windows)]
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
-    // SAFETY: req points to CopyFileWindows.io_request
-    let this: &mut CopyFileWindows = unsafe {
-        &mut *bun_core::from_field_ptr!(CopyFileWindows, io_request, req)
-    };
-    // SAFETY: req points to a live CopyFileWindows.io_request.
-    debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
+    // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
+    // not `from_field_ptr!`; then access the request only via `this.io_request`.
+    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 
     let event_loop = this.event_loop;
     event_loop.unref_concurrently();
 
-    // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `result` before invoking this callback.
-    let rc = unsafe { (*req).result };
+    let rc = this.io_request.result;
     if let Some(errno) = rc.err_enum_e() {
         let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
         let destination = &this.destination_file_store.data.as_file();
@@ -1777,7 +1766,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     bun_sys::syslog!("mkdirp complete");
     // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
     // by `mkdirp` above; sole owner on this concurrent path.
-    let this = unsafe { &mut *ctx.cast::<CopyFileWindows>() };
+    let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
     debug_assert!(this.err.is_none());
     this.err = match err_ {
         bun_sys::Result::Err(e) => Some(e),

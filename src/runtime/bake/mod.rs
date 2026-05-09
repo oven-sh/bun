@@ -390,9 +390,7 @@ impl Framework {
             );
         }
         for fsr in self.file_system_router_types.iter_mut() {
-            // SAFETY: `Resolver.fs` is the `*mut FileSystem` singleton (LIFETIMES.tsv
-            // JSC_BORROW), live for the resolver's lifetime.
-            let top_level_dir = unsafe { (*server.fs).top_level_dir };
+            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
             fsr.root = Cow::Owned(
                 bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
                     top_level_dir,
@@ -438,9 +436,7 @@ impl Framework {
             }
             return;
         }
-        // SAFETY: `Resolver.fs` is the `*mut FileSystem` singleton, live for
-        // the resolver's lifetime.
-        let top_level_dir = unsafe { (*r.fs).top_level_dir };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         match r.resolve(top_level_dir, path, bun_options_types::ImportKind::Stmt) {
             Ok(mut result) => {
                 let p = result.path().expect("just resolved");

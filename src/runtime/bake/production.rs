@@ -370,8 +370,7 @@ pub fn build_with_vm(
     // by the JSC heap; unique &mut for `set_handled`/`unwrap` on this thread.
     unsafe { (*config_promise_ptr).set_handled() };
     vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr));
-    // SAFETY: vm.jsc_vm is live.
-    let jsc_vm = unsafe { &mut *vm.jsc_vm };
+    let jsc_vm = vm.jsc_vm_mut();
     // SAFETY: see above; promise cell is still live (rooted via the module loader).
     let mut options = match unsafe { (*config_promise_ptr).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
         Unwrapped::Pending => unreachable!(),
@@ -661,10 +660,8 @@ pub fn build_with_vm(
             unsafe { &mut *server_ptr },
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
-                // SAFETY: stack-owned; see above.
-                client_transpiler: unsafe { NonNull::new_unchecked(client_ptr) },
-                // SAFETY: stack-owned; see above.
-                ssr_transpiler: unsafe { NonNull::new_unchecked(ssr_ptr) },
+                client_transpiler: NonNull::new(client_ptr).expect("stack-owned transpiler"),
+                ssr_transpiler: NonNull::new(ssr_ptr).expect("stack-owned transpiler"),
                 plugins: options.bundler_options.plugin,
             },
             &options.arena,
@@ -1171,11 +1168,9 @@ pub fn build_with_vm(
     // Rebind from the raw pointer: `PerThread::init`/`attach`/`load_bundled_module`
     // above accessed the same allocation through `vm_ptr`, invalidating the
     // earlier `&mut` under Stacked Borrows.
-    // SAFETY: see binding at function entry.
-    let vm = unsafe { &mut *vm_ptr };
+    let vm = VirtualMachine::get().as_mut();
     vm.wait_for_promise(AnyPromise::Normal(render_promise));
-    // SAFETY: vm.jsc_vm is live.
-    let jsc_vm = unsafe { &mut *vm.jsc_vm };
+    let jsc_vm = vm.jsc_vm_mut();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
@@ -1210,23 +1205,21 @@ fn load_module(
     // permits mutation — casting a `&T` to `*mut T` and writing through it is
     // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
     //
-    // SAFETY: `vm` is the unique live VM on this thread; no overlapping &mut.
-    unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+    let _ = vm;
+    let vm_ref = VirtualMachine::get();
+    vm_ref.as_mut().wait_for_promise(AnyPromise::Internal(promise));
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
-    // SAFETY: see above; event_loop() returns a self-ptr.
-    if unsafe { (*(*vm).event_loop()).drain_microtasks() }.is_err() {
+    if vm_ref.event_loop_mut().drain_microtasks().is_err() {
         Global::crash();
     }
-    // SAFETY: vm is the live per-thread VM; jsc_vm is live for VM lifetime.
-    let jsc_vm = unsafe { &mut *(*vm).jsc_vm };
+    let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
         Unwrapped::Rejected(err) => {
-            // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
-            Err(js_err(unsafe { &*(*vm).global }.throw_value(err)))
+            Err(js_err(vm_ref.global().throw_value(err)))
         }
     }
 }

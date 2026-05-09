@@ -49,22 +49,15 @@ pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 #[unsafe(export_name = "Bun__Process__exit")]
 pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
-    // SAFETY: vm is the live per-thread VirtualMachine for this global.
-    unsafe { (*vm).exit_handler.exit_code = code };
-    // SAFETY: worker is either None or a valid `*const WebWorker` (BACKREF set
-    // by `init_worker`).
-    if let Some(worker) = unsafe { (*vm).worker } {
+    vm.exit_handler.exit_code = code;
+    if let Some(worker) = vm.worker {
         // TODO(@190n) we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
         // SAFETY: worker pointer is valid for the lifetime of the VM.
         unsafe { (*worker.cast::<WebWorker>()).exit() };
     } else {
-        // SAFETY: vm is the live per-thread VirtualMachine; on_exit/global_exit
-        // are the canonical shutdown path.
-        unsafe {
-            (*vm).on_exit();
-            (*vm).global_exit();
-        }
+        vm.on_exit();
+        vm.global_exit();
     }
 }
 

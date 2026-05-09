@@ -1494,7 +1494,7 @@ impl Store {
 
     unsafe extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
         // SAFETY: ctx was set to `self as *mut Store` in `put` above.
-        let this = unsafe { &mut *ctx.cast::<Store>() };
+        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
     }
 }

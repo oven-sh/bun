@@ -2151,9 +2151,8 @@ mod tests {
             bun_js_parser::ast::expr::Expr::data_store_create();
             bun_js_parser::ast::stmt::Stmt::data_store_create();
             // const fs = try FileSystem.init(null);
-            let fs = bun_resolver::fs::FileSystem::init(None)?;
-            // SAFETY: singleton just initialized above.
-            let top_level_dir = unsafe { (*fs).top_level_dir };
+            let _ = bun_resolver::fs::FileSystem::init(None)?;
+            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
             // var pages_parts = [_]string{ top_level_dir, "pages" };
             // const pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
@@ -2228,9 +2227,8 @@ mod tests {
             bun_js_parser::ast::expr::Expr::data_store_create();
             bun_js_parser::ast::stmt::Stmt::data_store_create();
             // const fs = try FileSystem.initWithForce(null, true);
-            let fs = bun_resolver::fs::FileSystem::init_with_force::<true>(None)?;
-            // SAFETY: singleton just initialized above.
-            let top_level_dir = unsafe { (*fs).top_level_dir };
+            let _ = bun_resolver::fs::FileSystem::init_with_force::<true>(None)?;
+            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
             let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
             let pages_dir = bun_resolver::fs::FileSystem::instance()

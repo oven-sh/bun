@@ -49,18 +49,13 @@ impl HeadersExt for Headers {
         }
         result.entries.ensure_total_capacity(header_count).expect("OOM"); // Zig: bun.handleOom
         result.buf.reserve_exact(buf_len);
-        // SAFETY: capacity reserved above; bytes are fully initialized by the copy loop below.
-        unsafe { result.buf.set_len(buf_len) };
-        let mut offset: u32 = 0;
         for header in headers {
             let name = header.name();
             let value = header.value();
-            let name_offset = offset;
-            result.buf[offset as usize..][..name.len()].copy_from_slice(name);
-            offset += u32::try_from(name.len()).unwrap();
-            let value_offset = offset;
-            result.buf[offset as usize..][..value.len()].copy_from_slice(value);
-            offset += u32::try_from(value.len()).unwrap();
+            let name_offset = u32::try_from(result.buf.len()).unwrap();
+            result.buf.extend_from_slice(name);
+            let value_offset = u32::try_from(result.buf.len()).unwrap();
+            result.buf.extend_from_slice(value);
 
             // PORT NOTE: Zig pre-set `entries.len = headers.len` then `set(i, ..)`.
             // Rust `MultiArrayList` lacks `set_len`; capacity was reserved above

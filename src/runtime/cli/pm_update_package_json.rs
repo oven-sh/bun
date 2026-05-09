@@ -124,7 +124,7 @@ pub fn update_package_json_and_install(
             // SAFETY: `ctx` was set to `&mut analyzer as *mut _ as *mut ()` below and
             // outlives the `BuildCommand::exec` call; no other borrow of `analyzer` is
             // live.
-            let analyzer = unsafe { &mut *ctx.cast::<Analyzer>() };
+            let analyzer = unsafe { bun_ptr::callback_ctx::<Analyzer>(ctx.cast()) };
             Analyzer::on_analyze(analyzer, result)
         }
 

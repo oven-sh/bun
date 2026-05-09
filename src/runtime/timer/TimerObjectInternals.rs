@@ -256,13 +256,16 @@ impl TimerObjectInternals {
     /// `vm.event_loop().enter()` then re-enters JS which may itself touch the
     /// VM/EventLoop; aliased `&mut` would be UB.
     pub fn run_immediate_task(&mut self, vm: *mut VirtualMachine) -> bool {
-        // SAFETY: `vm` is the live per-thread VM (hook contract).
+        // `vm` is the live per-thread VM (hook contract); route reads through
+        // the safe `VirtualMachine::get()` accessor.
+        let vm_ref = VirtualMachine::get();
+        debug_assert!(core::ptr::eq(vm, vm_ref));
         let cleared = self.flags.has_cleared_timer()
-            || self.generation != unsafe { (*vm).test_isolation_generation }
+            || self.generation != vm_ref.test_isolation_generation
             // unref'd setImmediate callbacks should only run if there are things keeping the event
             // loop alive other than setImmediates
             || (!self.flags.is_keeping_event_loop_alive()
-                && !unsafe { (*vm).is_event_loop_alive_excluding_immediates() });
+                && !vm_ref.is_event_loop_alive_excluding_immediates());
         if cleared {
             self.set_enable_keeping_event_loop_alive(vm, false);
             self.this_value.downgrade();
@@ -280,15 +283,13 @@ impl TimerObjectInternals {
                 return false;
             }
         };
-        // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.
-        let global_this = unsafe { (*vm).global };
+        let global_this = vm_ref.global;
         self.this_value.downgrade();
         self.event_loop_timer().state = EventLoopTimerState::FIRED;
         self.set_enable_keeping_event_loop_alive(vm, false);
         timer.ensure_still_alive();
 
-        // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded EventLoop.
-        unsafe { (*(*vm).event_loop()).enter() };
+        vm_ref.event_loop_mut().enter();
         let callback = JSImmediate::callback_get_cached(timer).unwrap();
         let arguments = JSImmediate::arguments_get_cached(timer).unwrap();
 
@@ -304,8 +305,7 @@ impl TimerObjectInternals {
         };
         // --- after this point, the timer is no longer guaranteed to be alive ---
 
-        // SAFETY: `vm` is live; see `enter()` note above.
-        if unsafe { (*(*vm).event_loop()).exit_maybe_drain_microtasks(!exception_thrown) }.is_err() {
+        if vm_ref.event_loop_mut().exit_maybe_drain_microtasks(!exception_thrown).is_err() {
             return true;
         }
 
@@ -322,11 +322,13 @@ impl TimerObjectInternals {
         let id = self.id;
         let kind: KindBig = self.flags.kind().into();
         let async_id = ID { id, kind };
-        // SAFETY: `vm` is the live per-thread VM (FIRE_TIMER hook contract).
+        // `vm` is the live per-thread VM (FIRE_TIMER hook contract).
+        let vm_ref = VirtualMachine::get();
+        debug_assert!(core::ptr::eq(vm, vm_ref));
         let has_been_cleared = self.event_loop_timer().state == EventLoopTimerState::CANCELLED
             || self.flags.has_cleared_timer()
-            || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
-            || self.generation != unsafe { (*vm).test_isolation_generation };
+            || vm_ref.script_execution_status() != ScriptExecutionStatus::Running
+            || self.generation != vm_ref.test_isolation_generation;
 
         self.event_loop_timer().state = EventLoopTimerState::FIRED;
 

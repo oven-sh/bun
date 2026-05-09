@@ -324,9 +324,8 @@ impl SplitBundlerOptions {
             Some(p) => p,
             None => {
                 let p = Plugin::create(global, bun_jsc::BunPluginTarget::Bun);
-                // SAFETY: `JSBundlerPlugin__create` returns a non-null JSCell
-                // pointer (it `protect()`s it before returning).
-                let p = unsafe { NonNull::new_unchecked(p) };
+                let p = NonNull::new(p)
+                    .expect("JSBundlerPlugin__create returns a non-null protected JSCell");
                 self.plugin = Some(p);
                 p
             }
@@ -688,9 +687,7 @@ impl Framework {
         }
 
         for fsr in clone.file_system_router_types.iter_mut() {
-            // SAFETY: `Resolver.fs` is a `*mut FileSystem` singleton (LIFETIMES.tsv
-            // JSC_BORROW), live for the resolver's lifetime.
-            let top_level_dir = unsafe { (*server.fs).top_level_dir };
+            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
             fsr.root = arena_erase(arena.alloc_slice_copy(
                 paths::resolve_path::join_abs::<paths::platform::Auto>(
                     top_level_dir,
@@ -731,9 +728,7 @@ impl Framework {
             return;
         }
 
-        // SAFETY: `Resolver.fs` is a `*mut FileSystem` singleton live for the
-        // resolver's lifetime (LIFETIMES.tsv JSC_BORROW).
-        let top_level_dir = unsafe { (*r.fs).top_level_dir };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let mut result = match r.resolve(top_level_dir, *path, bun_options_types::ImportKind::Stmt) {
             Ok(res) => res,
             Err(err) => {
@@ -1390,9 +1385,7 @@ impl Default for ReactFastRefresh {
 
 #[inline]
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
-    // SAFETY: `Resolver.fs` / `Resolver.log` are `*mut` singletons live for
-    // the resolver's lifetime (LIFETIMES.tsv JSC_BORROW).
-    let top_level_dir = unsafe { (*r.fs).top_level_dir };
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     match r.resolve(top_level_dir, path, bun_options_types::ImportKind::Stmt) {
         Ok(res) => Some(arena_erase(res.path_const().unwrap().text)),
         Err(_) => {

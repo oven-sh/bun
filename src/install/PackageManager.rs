@@ -1347,12 +1347,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     let abs_ca_z: &ZStr = if opts.abs_ca_file_name.is_empty() {
         ZStr::EMPTY
     } else {
-        unsafe {
-            ZStr::from_raw(
-                opts.abs_ca_file_name.as_ptr(),
-                opts.abs_ca_file_name.len() - 1,
-            )
-        }
+        ZStr::from_slice_with_nul(opts.abs_ca_file_name)
     };
     match err {
         http::InitError::LoadCAFile => {

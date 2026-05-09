@@ -1271,9 +1271,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn watcher_top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: `transpiler.fs` is the process-global `FileSystem::instance()`
-        // pointer set during build_command init.
-        unsafe { (*self.transpiler.fs).top_level_dir }
+        FileSystem::get().top_level_dir
     }
 
     fn install_bun_watcher(
@@ -1284,10 +1282,11 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         // Zig (the non-ImportWatcher arm, hot_reloader.zig:330):
         //   this.bun_watcher = Watcher.init(...);
         //   this.transpiler.resolver.watcher = ResolveWatcher(...).init(this.bun_watcher.?);
-        let watcher_ptr: *mut Watcher = bun_core::heap::into_raw(watcher);
-        // SAFETY: `watcher_ptr` is a fresh non-null heap allocation; live for
-        // the process (BundleV2 is leaked under --watch — see `generate_from_cli`).
-        self.bun_watcher = Some(unsafe { core::ptr::NonNull::new_unchecked(watcher_ptr) });
+        // `watcher_nn` is a fresh non-null heap allocation; live for the
+        // process (BundleV2 is leaked under --watch — see `generate_from_cli`).
+        let watcher_nn = bun_core::heap::into_raw_nn(watcher);
+        let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
+        self.bun_watcher = Some(watcher_nn);
         // SAFETY: `watcher_ptr` was just installed; live for the process.
         self.transpiler.resolver.watcher =
             Some(unsafe { (*watcher_ptr).get_resolve_watcher() });

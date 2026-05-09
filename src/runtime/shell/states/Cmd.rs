@@ -19,7 +19,7 @@ use crate::shell::ExitCode;
 
 pub struct Cmd {
     pub base: Base,
-    pub node: *const ast::Cmd,
+    pub node: bun_ptr::BackRef<ast::Cmd>,
     pub io: IO,
     pub state: CmdState,
     pub args: Vec<Vec<u8>>,
@@ -60,14 +60,12 @@ impl Default for Exec {
 impl Cmd {
     /// Borrow the AST node this `Cmd` was built from.
     ///
-    /// `node` is a `*const ast::Cmd` into the parsed-script arena, which is
-    /// owned by the `Interpreter` and outlives every `Cmd` slot (the arena is
-    /// dropped only in `Interpreter::deinit`). Localises the per-callsite
-    /// `unsafe { &*self.node }` deref.
+    /// `node` is a [`BackRef`](bun_ptr::BackRef) into the parsed-script arena,
+    /// which is owned by the `Interpreter` and outlives every `Cmd` slot (the
+    /// arena is dropped only in `Interpreter::deinit`).
     #[inline]
     pub fn ast_node(&self) -> &ast::Cmd {
-        // SAFETY: see doc comment.
-        unsafe { &*self.node }
+        self.node.get()
     }
 }
 
@@ -197,13 +195,13 @@ impl Cmd {
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Cmd,
+        node: &ast::Cmd,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Cmd(Cmd {
             base: Base::new(StateKind::Cmd, parent, shell),
-            node,
+            node: bun_ptr::BackRef::new(node),
             io,
             state: CmdState::Idle,
             args: Vec::new(),
@@ -225,9 +223,7 @@ impl Cmd {
                 let me = interp.as_cmd(this);
                 (me.base.shell, me.node)
             };
-            // SAFETY: `node` points into the AST arena which outlives every
-            // state node.
-            let n = unsafe { &*node };
+            let n = node.get();
             log!(
                 "Cmd {} next state={}",
                 this,

@@ -13,6 +13,7 @@ path = "lib.rs"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
 
 [dependencies]
+bytemuck = "1"
 bun_opaque.workspace = true
 parking_lot.workspace = true
 strum.workspace = true

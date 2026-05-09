@@ -96,7 +96,7 @@ impl JSValueAsyncCtxExt for JSValue {
     }
 }
 
-use bun_string::immutable::inet_pton;
+use bun_string::immutable::ares_inet_pton as inet_pton;
 
 #[allow(dead_code)]
 unsafe extern "C" {
@@ -108,7 +108,7 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     // SAFETY: socket.user() was set to `*mut UDPSocket` in `udp_socket()` via the `user` arg to
     // `uws::udp::Socket::create`. uws guarantees the user pointer is non-null here.
-    let this: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
+    let this: &mut UDPSocket = unsafe { bun_ptr::callback_ctx::<UDPSocket>((*socket).user()) };
     this.closed = true;
     this.poll_ref.disable();
     this.this_value.downgrade();
@@ -123,7 +123,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
     // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
     // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
     // SAFETY: see on_close.
-    let this: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
+    let this: &mut UDPSocket = unsafe { bun_ptr::callback_ctx::<UDPSocket>((*socket).user()) };
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     let err_value = sys_err.to_js(global_this);
@@ -132,7 +132,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     // SAFETY: see on_close.
-    let this: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
+    let this: &mut UDPSocket = unsafe { bun_ptr::callback_ctx::<UDPSocket>((*socket).user()) };
     let Some(this_value) = this.this_value.try_get() else { return };
     let Some(callback) = js::on_drain_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
@@ -151,7 +151,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
 
 extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketBuffer, packets: c_int) {
     // SAFETY: see on_close.
-    let udp_socket: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
+    let udp_socket: &mut UDPSocket = unsafe { bun_ptr::callback_ctx::<UDPSocket>((*socket).user()) };
     let Some(this_value) = udp_socket.this_value.try_get() else { return };
     let Some(callback) = js::on_data_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
@@ -234,8 +234,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
             BunString::init(span)
         };
 
-        // SAFETY: vm stored at construction; outlives socket.
-        let loop_ = unsafe { &mut *(*udp_socket.vm).event_loop() };
+        let loop_ = VirtualMachine::get().event_loop_mut();
         loop_.enter();
 
         let flags = JSValue::create_empty_object(global_this, 1);
@@ -633,13 +632,11 @@ impl UDPSocket {
             return;
         }
         if callback.is_empty_or_undefined_or_null() {
-            // SAFETY: VM pointer obtained from live global; single JS thread.
-            let _ = unsafe { (*vm).uncaught_exception(global_this, err, false) };
+            let _ = vm.uncaught_exception(global_this, err, false);
             return;
         }
 
-        // SAFETY: VM pointer obtained from live global; event_loop outlives this call.
-        let event_loop = unsafe { &mut *(*vm).event_loop() };
+        let event_loop = vm.event_loop_mut();
         event_loop.enter();
         let result = callback.call(global_this, this_value, &[err.to_error().unwrap_or(err)]);
         if let Err(e) = result {
@@ -1305,8 +1302,31 @@ impl UDPSocket {
                             // Windows: zone identifier is a numeric scope id, not an
                             // interface name (`fe80::1%5`). Mirrors Zig
                             // `str.substring(percent+1).toInt32()` + `std.math.cast(u32, ..)`.
-                            if let Ok(s) = core::str::from_utf8(&address_slice[percent + 1..bytes_len]) {
-                                if let Ok(signed) = s.parse::<i32>() {
+                            // toInt32 → BunString__toInt32 → WTF::parseIntegerAllowingTrailingJunk<int32_t>:
+                            // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
+                            // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
+                            let zone = &address_slice[percent + 1..bytes_len];
+                            let mut i = 0usize;
+                            while i < zone.len()
+                                && matches!(zone[i], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
+                            {
+                                i += 1;
+                            }
+                            let neg = i < zone.len() && zone[i] == b'-';
+                            if neg {
+                                i += 1;
+                            }
+                            let digits_start = i;
+                            let mut acc: i64 = 0;
+                            while i < zone.len() && zone[i].is_ascii_digit() {
+                                acc = acc
+                                    .saturating_mul(10)
+                                    .saturating_add(i64::from(zone[i] - b'0'));
+                                i += 1;
+                            }
+                            if i > digits_start {
+                                let signed = if neg { acc.saturating_neg() } else { acc };
+                                if let Ok(signed) = i32::try_from(signed) {
                                     if let Ok(id) = u32::try_from(signed) {
                                         break 'blk id;
                                     }
@@ -1500,7 +1520,7 @@ impl UDPSocket {
     fn deinit(this: *mut Self) {
         // SAFETY: called from finalize with valid Box-allocated payload.
         let this_ref = unsafe { &mut *this };
-        debug_assert!(this_ref.closed || unsafe { &*this_ref.vm }.is_shutting_down());
+        debug_assert!(this_ref.closed || VirtualMachine::get().is_shutting_down());
         this_ref.poll_ref.disable();
         // config drop handled by heap::take below.
         // this_value.deinit() handled by JsRef Drop.

@@ -63,8 +63,7 @@ pub fn filter<'a>(
     test_files: &'a mut [PathString],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, bun_core::Error> {
-    // SAFETY: `vm.transpiler.fs` is the process-lifetime FileSystem singleton.
-    let top_level_dir: &[u8] = unsafe { (*vm.transpiler.fs).top_level_dir };
+    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // If this process was restarted by the --watch file watcher, it
     // recorded exactly which files changed in this env var before
@@ -318,13 +317,8 @@ pub fn filter<'a>(
 /// inherited through every restart. The value is a short path, never
 /// the list itself, so there is no env size concern.
 pub const TRIGGER_FILE_ENV_VAR: &str = "BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE";
-// SAFETY: literal ends in NUL; len excludes it.
-const TRIGGER_FILE_ENV_VAR_Z: &ZStr = unsafe {
-    ZStr::from_raw(
-        b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0".as_ptr(),
-        TRIGGER_FILE_ENV_VAR.len(),
-    )
-};
+const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
+    ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
 
 /// Make sure the trigger-file env var is set (generating a fresh temp
 /// path if this is the first process in the --watch chain) and wire up

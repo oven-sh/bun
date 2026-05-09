@@ -128,13 +128,10 @@ impl FileSystemRouter {
         if argument.is_empty_or_undefined_or_null() || !argument.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
-        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
-        let vm_ptr = global_this.bun_vm_ptr();
-        let vm = unsafe { &mut *vm_ptr };
+        let vm = global_this.bun_vm().as_mut();
 
         let mut root_dir_path: ZigStringSlice =
-            // SAFETY: `vm.transpiler.fs` is the process-global FileSystem singleton.
-            ZigStringSlice::from_utf8_never_free(unsafe { (*vm.transpiler.fs).top_level_dir });
+            ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
         // `defer root_dir_path.deinit()` → Drop on ZigStringSlice
         let mut origin_str: ZigStringSlice = ZigStringSlice::default();
         let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
@@ -231,12 +228,15 @@ impl FileSystemRouter {
         }
         let mut log = Log::Log::new();
         // `defer vm.transpiler.resolver.log = orig_log` — RAII guard restores on
-        // every exit path. Derived from `vm_ptr` (raw) via `addr_of_mut!` so the
-        // stored slot pointer stays valid under Stacked Borrows across the
-        // `&mut vm.transpiler.resolver` reborrows below.
-        // SAFETY: `vm_ptr` is the live VM for this global; resolver outlives this
+        // every exit path. Derived from the thread-local raw `*mut VirtualMachine`
+        // (via `get_mut_ptr`) so the stored slot pointer keeps valid provenance
+        // under Stacked Borrows across the `&mut vm.transpiler.resolver`
+        // reborrows below (deriving from `vm: &mut _` would be invalidated by
+        // those reborrows before the guard's `Drop` runs).
+        // SAFETY: `vm` is the live VM for this global; resolver outlives this
         // scope. Guard is declared after `log` so it drops (and restores) first.
         let _restore_log = unsafe {
+            let vm_ptr = VirtualMachine::get_mut_ptr();
             Resolver::scoped_log(
                 core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
                 &raw mut log,
@@ -357,7 +357,7 @@ impl FileSystemRouter {
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
         // `&mut` per use site so the recursive call (which does the same) doesn't pop our
         // SB tag mid-loop.
-        let vm_ptr = global_this.bun_vm_ptr();
+        let vm = global_this.bun_vm();
         #[allow(unused_mut)]
         let mut path = input_path;
         #[cfg(windows)]
@@ -367,16 +367,13 @@ impl FileSystemRouter {
             // PORT NOTE: Zig used a `ThreadlocalBuffers` slot. `with_borrow_mut` can't
             // hand back a slice that outlives the closure, so copy out (cold reload path).
             normalized = WIN32_NORMALIZE_BUF.with_borrow_mut(|buf| {
-                // SAFETY: `vm_ptr` is live; `transpiler.fs` is the FileSystem singleton.
-                unsafe { &*(*vm_ptr).transpiler.fs }
-                    .normalize_buf(&mut buf[..], input_path)
-                    .to_vec()
+                vm.fs().normalize_buf(&mut buf[..], input_path).to_vec()
             });
             path = normalized.as_slice();
         }
 
         let root_dir_info =
-            match unsafe { &mut *vm_ptr }.transpiler.resolver.read_dir_info(path) {
+            match vm.as_mut().transpiler.resolver.read_dir_info(path) {
                 Ok(v) => v,
                 Err(_) => return,
             };
@@ -393,7 +390,7 @@ impl FileSystemRouter {
                     // SAFETY: `transpiler.fs` is the FileSystem singleton; `&mut .fs`
                     // (the `Implementation` field) is the lazy-stat receiver.
                     let kind = {
-                        let fs_impl = unsafe { &mut (*(*vm_ptr).transpiler.fs).fs };
+                        let fs_impl = unsafe { &mut (*vm.transpiler.fs).fs };
                         unsafe { &mut *entry_ptr }.kind(fs_impl, false)
                     };
                     if kind == Fs::EntryKind::Dir {
@@ -404,11 +401,11 @@ impl FileSystemRouter {
                         }
                         let entry = unsafe { &*entry_ptr };
                         let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                        // SAFETY: see above. `abs()` writes into a thread-local buffer;
-                        // copy out before recursing (recursion overwrites it).
-                        let full_path =
-                            unsafe { &*(*vm_ptr).transpiler.fs }.abs(&abs_parts).to_vec();
-                        let _ = unsafe { &mut *vm_ptr }
+                        // `abs()` writes into a thread-local buffer; copy out
+                        // before recursing (recursion overwrites it).
+                        let full_path = vm.fs().abs(&abs_parts).to_vec();
+                        let _ = vm
+                            .as_mut()
                             .transpiler
                             .resolver
                             .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(
@@ -420,7 +417,7 @@ impl FileSystemRouter {
             }
         }
 
-        let _ = unsafe { &mut *vm_ptr }.transpiler.resolver.bust_dir_cache(path);
+        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
     }
 
     pub fn bust_dir_cache(&mut self, global_this: &JSGlobalObject) {
@@ -455,9 +452,9 @@ impl FileSystemRouter {
         };
 
         this.bust_dir_cache(global_this);
-        // PORT NOTE: `bust_dir_cache` re-derives `&mut *vm_ptr` internally; rebind here so
+        // PORT NOTE: `bust_dir_cache` re-derives the VM borrow internally; rebind here so
         // our `vm` borrow is fresh under Stacked Borrows.
-        let vm = unsafe { &mut *vm_ptr };
+        let vm = global_this.bun_vm().as_mut();
 
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(&this.router.config.dir) {
             Ok(Some(info)) => info,
@@ -952,8 +949,7 @@ impl MatchedRoute {
                 // SAFETY: `base_dir` is a live `*mut RefString`.
                 unsafe { (*base_dir).leak() }
             } else {
-                // SAFETY: VM singleton is alive on the JS thread for the duration of this getter.
-                unsafe { (*VirtualMachine::get().as_mut().transpiler.fs).top_level_dir }
+                Fs::FileSystem::get().top_level_dir
             },
             &origin_url,
             if let Some(prefix) = this.asset_prefix {

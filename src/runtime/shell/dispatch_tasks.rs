@@ -137,14 +137,11 @@ impl bun_event_loop::Taskable for ShellGlobTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: *mut Self) {
-        // SAFETY: scheduled via `ShellTask::schedule`; `this` is the live
-        // heap allocation handed to it.
-        let me = unsafe { &mut *this };
-        match Self::walk_impl(&mut me.walker, &mut me.result) {
+    fn run_from_thread_pool(this: &mut Self) {
+        match Self::walk_impl(&mut this.walker, &mut this.result) {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => me.err = Some(ShellGlobErr::Syscall(e)),
-            Err(e) => me.err = Some(ShellGlobErr::Unknown(e)),
+            Ok(Err(e)) => this.err = Some(ShellGlobErr::Syscall(e)),
+            Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
         }
     }
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {

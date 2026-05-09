@@ -1945,7 +1945,7 @@ pub fn write(fd: Fd, bytes: &[u8]) -> Result<usize> {
     {
         // "WriteFile sets this value to zero before doing any work or error checking."
         let mut bytes_written: u32 = 0;
-        assert!(bytes.len() > 0);
+        debug_assert!(bytes.len() > 0);
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         let rc = unsafe {
             kernel32::WriteFile(
@@ -1957,24 +1957,26 @@ pub fn write(fd: Fd, bytes: &[u8]) -> Result<usize> {
             )
         };
         if rc == 0 {
-            log!("WriteFile({}, {}) = {}", fd, adjusted_len, <&str>::from(windows::get_last_errno()));
+            // Capture GetLastError() before any logging — the log path may issue Win32
+            // calls (WriteConsoleW, HeapAlloc) that clobber the thread-local last error.
             let er = kernel32::GetLastError();
+            log!("WriteFile({}, {}) = {}", fd, adjusted_len, <&str>::from(windows::get_last_errno()));
             if er == windows::Win32Error::ACCESS_DENIED {
                 // file is not writable
                 return Result::Err(Error {
                     errno: SystemErrno::EBADF as _,
                     syscall: Tag::write,
-                    fd: Some(fd),
+                    fd,
                     ..Default::default()
                 });
             }
-            let errno = SystemErrno::init(kernel32::GetLastError())
+            let errno = SystemErrno::init(er)
                 .unwrap_or(SystemErrno::EUNKNOWN)
                 .to_e();
             return Result::Err(Error {
                 errno: errno as _,
                 syscall: Tag::write,
-                fd: Some(fd),
+                fd,
                 ..Default::default()
             });
         }
@@ -2209,7 +2211,7 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
             let ret = Result::<usize>::Err(Error {
                 errno: windows::get_last_errno() as _,
                 syscall: Tag::read,
-                fd: Some(fd),
+                fd,
                 ..Default::default()
             });
             if cfg!(debug_assertions) {
@@ -2243,6 +2245,7 @@ const SEND_FLAGS_NONBLOCK: u32 = c::MSG_DONTWAIT | c::MSG_NOSIGNAL;
 #[cfg(unix)]
 const RECV_FLAGS_NONBLOCK: u32 = c::MSG_DONTWAIT;
 
+#[cfg(unix)]
 pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Result<usize> {
     recv(fd, buf, RECV_FLAGS_NONBLOCK)
 }
@@ -2345,6 +2348,7 @@ pub fn kevent(fd: Fd, changelist: &[libc::kevent], eventlist: &mut [libc::kevent
     }
 }
 
+#[cfg(unix)]
 pub fn send_non_block(fd: Fd, buf: &[u8]) -> Result<usize> {
     send(fd, buf, SEND_FLAGS_NONBLOCK)
 }
@@ -4636,7 +4640,12 @@ pub fn get_self_exe_shared_lib_paths() -> core::result::Result<Vec<Box<ZStr>>, b
         return Ok(paths);
     }
     #[cfg(not(any(unix, target_os = "haiku")))]
-    compile_error!("getSelfExeSharedLibPaths unimplemented for this target");
+    {
+        // Zig uses @compileError here, which is lazy (only fires if the function is
+        // referenced on that target). Rust's compile_error! is eager and would break
+        // the Windows build unconditionally, so use a runtime panic instead.
+        unimplemented!("getSelfExeSharedLibPaths unimplemented for this target");
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -4672,7 +4681,8 @@ pub fn dlopen(filename: &ZStr, flags: c_int) -> Option<*mut c_void> {
     {
         let _ = flags;
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        return Option::from(unsafe { windows::LoadLibraryA(filename.as_ptr().cast::<c_char>()) });
+        let p = unsafe { windows::LoadLibraryA(filename.as_ptr().cast::<c_char>()) };
+        return if p.is_null() { None } else { Some(p) };
     }
     #[cfg(not(windows))]
     {
@@ -4686,7 +4696,8 @@ pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_voi
     #[cfg(windows)]
     {
         // SAFETY: FFI call; arguments are valid for the duration of the call.
-        return Option::from(unsafe { windows::GetProcAddressA(handle.unwrap_or(core::ptr::null_mut()), name.as_ptr().cast::<c_char>()) });
+        let p = unsafe { windows::GetProcAddressA(handle.unwrap_or(core::ptr::null_mut()), name.as_ptr().cast::<c_char>()) };
+        return if p.is_null() { None } else { Some(p) };
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
     {

@@ -1427,9 +1427,7 @@ impl ValkeyClient {
 
         let mut promise = command::Promise::create(global_this, checked_command.meta);
 
-        // SAFETY: `JSPromiseStrong::get` is a resolver-style accessor; sole live
-        // borrow at this point. We only need the raw pointer for the return value.
-        let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(unsafe { promise.promise.get() });
+        let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(promise.promise.get());
         if self.flags.failed {
             let _ = promise.reject(
                 global_this,

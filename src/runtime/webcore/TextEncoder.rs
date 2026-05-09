@@ -176,7 +176,7 @@ impl<'a> RopeStringEncoder<'a> {
         let it = unsafe { &mut *it };
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter(); the
         // encoder lives in a disjoint allocation from `*it`.
-        let this = unsafe { &mut *it.data_ptr().cast::<RopeStringEncoder<'a>>() };
+        let this = unsafe { bun_ptr::callback_ctx::<RopeStringEncoder<'a>>(it.data_ptr()) };
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let result =
@@ -195,7 +195,7 @@ impl<'a> RopeStringEncoder<'a> {
         let it = unsafe { &mut *it };
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter(); the
         // encoder lives in a disjoint allocation from `*it`.
-        let this = unsafe { &mut *it.data_ptr().cast::<RopeStringEncoder<'a>>() };
+        let this = unsafe { bun_ptr::callback_ctx::<RopeStringEncoder<'a>>(it.data_ptr()) };
         this.any_non_ascii = true;
         it.stop = 1;
     }
@@ -206,7 +206,7 @@ impl<'a> RopeStringEncoder<'a> {
         let it = unsafe { &mut *it };
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter(); the
         // encoder lives in a disjoint allocation from `*it`.
-        let this = unsafe { &mut *it.data_ptr().cast::<RopeStringEncoder<'a>>() };
+        let this = unsafe { bun_ptr::callback_ctx::<RopeStringEncoder<'a>>(it.data_ptr()) };
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
@@ -225,7 +225,7 @@ impl<'a> RopeStringEncoder<'a> {
         let it = unsafe { &mut *it };
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter(); the
         // encoder lives in a disjoint allocation from `*it`.
-        let this = unsafe { &mut *it.data_ptr().cast::<RopeStringEncoder<'a>>() };
+        let this = unsafe { bun_ptr::callback_ctx::<RopeStringEncoder<'a>>(it.data_ptr()) };
         this.any_non_ascii = true;
         it.stop = 1;
     }

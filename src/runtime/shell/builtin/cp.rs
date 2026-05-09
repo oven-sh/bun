@@ -802,7 +802,7 @@ impl bun_event_loop::Taskable for ShellCpTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(_this: *mut Self) {
+    fn run_from_thread_pool(_this: &mut Self) {
         // Not reached: `ShellCpTask::schedule` installs `work_pool_callback`
         // directly (cp.zig does NOT use `InnerShellTask` — the generic
         // trampoline auto-posts back, which would double-enqueue when the

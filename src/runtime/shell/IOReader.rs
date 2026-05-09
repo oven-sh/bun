@@ -275,10 +275,16 @@ impl IOReader {
             // (windows) here. In Rust this would re-derive a second
             // `&mut ReaderImpl` while the bun_io read loop still holds one on
             // its stack (PipeReader.rs aliasing contract) — Stacked-Borrows UB.
-            // It's also redundant: the read loop re-arms itself after the
-            // callback returns based on the `bool` we return (see
-            // PipeReader.rs:731/755/846/920/986 posix, :1228/1242 windows).
-            // So: do nothing — let the caller re-register.
+            // On posix the re-arm is redundant: the read loop re-registers
+            // itself after the callback returns based on the `bool` we return
+            // (PipeReader.rs:731/755/846/920/986). On Windows the re-arm is
+            // also handled by the caller (`on_file_read`'s defer block /
+            // `uv_read_start` for streams) — but `startWithCurrentPipe()` had
+            // a SECOND load-bearing side effect: `buffer().clearRetainingCapacity()`,
+            // which keeps `WindowsBufferedReader._buffer` bounded between
+            // chunks. That clear is now performed by
+            // `WindowsBufferedReader::on_read` after the streaming chunk is
+            // consumed, so we still do nothing here.
         }
         should_continue
     }

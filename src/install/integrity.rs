@@ -18,6 +18,9 @@ pub struct Integrity {
     /// We transform it though.
     pub value: [u8; DIGEST_BUF_LEN],
 }
+// SAFETY: `#[repr(C)]` with a `#[repr(transparent)] u8` tag + `[u8; 64]` →
+// size 65, align 1, no padding bytes, `Copy + 'static`. Every byte initialized.
+unsafe impl bytemuck::NoUninit for Integrity {}
 
 impl Default for Integrity {
     fn default() -> Self {
@@ -240,6 +243,9 @@ impl fmt::Display for Integrity {
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Tag(pub u8);
+// SAFETY: `#[repr(transparent)]` newtype over `u8` — same layout as `u8`,
+// no padding, `Copy + 'static`.
+unsafe impl bytemuck::NoUninit for Tag {}
 
 impl Tag {
     pub const UNKNOWN: Tag = Tag(0);

@@ -317,9 +317,10 @@ impl<T: RefCounted> RefCount<T> {
         {
             // SAFETY: self is the `ref_count` field of a live T
             let ptr: *mut T = unsafe {
-                std::ptr::from_mut::<Self>(self).cast::<u8>()
-                    .sub(offset_of_ref_count::<T, Self>())
-                    .cast::<T>()
+                bun_core::container_of::<T, Self>(
+                    std::ptr::from_mut(self),
+                    offset_of_ref_count::<T, Self>(),
+                )
             };
             self.debug.dump(
                 Some(core::any::type_name::<T>().as_bytes()),
@@ -505,9 +506,10 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         {
             // SAFETY: self is the `ref_count` field of a live T
             let ptr: *mut T = unsafe {
-                std::ptr::from_mut::<Self>(self).cast::<u8>()
-                    .sub(offset_of_ref_count_ts::<T, Self>())
-                    .cast::<T>()
+                bun_core::container_of::<T, Self>(
+                    std::ptr::from_mut(self),
+                    offset_of_ref_count_ts::<T, Self>(),
+                )
             };
             self.debug.dump(
                 Some(core::any::type_name::<T>().as_bytes()),

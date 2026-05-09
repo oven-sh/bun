@@ -353,8 +353,7 @@ impl CronRegisterJob {
             RegisterState::Done
         };
         this_ref.poll.unref(vm_ctx());
-        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-        let ev = unsafe { &mut *vm_mut().event_loop() };
+        let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
@@ -1084,8 +1083,7 @@ impl CronRemoveJob {
             RemoveState::Done
         };
         this_ref.poll.unref(vm_ctx());
-        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-        let ev = unsafe { &mut *vm_mut().event_loop() };
+        let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
@@ -2028,8 +2026,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
         ptr
     };
-    // SAFETY: per-thread VM singleton.
-    let cwd = unsafe { (*vm_mut().transpiler.fs).top_level_dir };
+    let cwd = FileSystem::get().top_level_dir;
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
@@ -2107,7 +2104,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         if let spawn::WindowsStdioResult::Buffer(dup) = spawned.stderr.take() {
             debug_assert!(core::ptr::eq(Box::as_ref(&dup), stderr_pipe_ptr));
             core::mem::forget(dup);
-            s.stderr_reader().parent = this as *mut core::ffi::c_void;
+            s.stderr_reader()
+                .set_parent(this.cast::<core::ffi::c_void>());
             *s.remaining_fds() += 1;
             if s.stderr_reader().start_with_current_pipe().is_err() {
                 s.set_err(format_args!("Failed to start reading stderr"));

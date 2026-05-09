@@ -1157,10 +1157,11 @@ pub mod ffi {
     // references/fn-ptrs (bare `extern fn` fields in `sigaction` are stored as
     // `usize` sighandler_t on every libc target).
     #[cfg(unix)] unsafe impl Zeroable for libc::sigaction {}
-    // `sigset_t` is a struct on Linux/Android but a `u32` typedef on Darwin
-    // and FreeBSD — the primitive blanket above already covers those, so a
-    // second impl here would E0119. Gate to the struct-typed targets.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    // `sigset_t` is a `u32` typedef on Darwin (covered by the primitive
+    // blanket → E0119 if re-impl'd) but a real struct on Linux/Android
+    // (`__val: [c_ulong; 16]`) and FreeBSD (`__bits: [u32; 4]`). Gate the
+    // explicit impl to everywhere it's NOT already a primitive.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     unsafe impl Zeroable for libc::sigset_t {}
     #[cfg(unix)] unsafe impl Zeroable for libc::utsname {}
     #[cfg(unix)] unsafe impl Zeroable for libc::winsize {}

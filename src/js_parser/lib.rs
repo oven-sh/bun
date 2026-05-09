@@ -1908,10 +1908,7 @@ pub mod defines {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
-            // Pure-global fallback — table lives at this tier (no hook).
-            crate::defines_table::PURE_GLOBAL_IDENTIFIER_MAP
-                .get(name)
-                .map(|v| v.value())
+            crate::defines_table::lookup_pure_global_identifier(name).map(|v| v.value())
         }
 
         // Zig: `comptime Iterator: type, iter: Iterator` — type param dropped.

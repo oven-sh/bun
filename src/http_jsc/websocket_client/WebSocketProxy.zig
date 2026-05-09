@@ -9,6 +9,9 @@ const WebSocketProxy = @This();
 /// Whether target uses TLS (wss://)
 #target_is_https: bool,
 target_port: u16,
+/// SOCKS proxy hostname for reconnecting when trying another resolved target address
+#proxy_host: []const u8,
+proxy_port: u16,
 /// WebSocket upgrade request to send after CONNECT succeeds
 #websocket_request_buf: []u8,
 kind: SocksProxy.Kind = .http,
@@ -21,6 +24,8 @@ pub fn init(
     target_host: []const u8,
     target_is_https: bool,
     target_port: u16,
+    proxy_host: []const u8,
+    proxy_port: u16,
     websocket_request_buf: []u8,
     kind: SocksProxy.Kind,
     socks: ?SocksProxy,
@@ -29,6 +34,8 @@ pub fn init(
         .#target_host = target_host,
         .#target_is_https = target_is_https,
         .target_port = target_port,
+        .#proxy_host = proxy_host,
+        .proxy_port = proxy_port,
         .#websocket_request_buf = websocket_request_buf,
         .kind = kind,
         .socks = socks,
@@ -42,6 +49,10 @@ pub fn isSocks(self: *const WebSocketProxy) bool {
 /// Get the target hostname for SNI during TLS handshake
 pub fn getTargetHost(self: *const WebSocketProxy) []const u8 {
     return self.#target_host;
+}
+
+pub fn getProxyHost(self: *const WebSocketProxy) []const u8 {
+    return self.#proxy_host;
 }
 
 /// Check if the target uses HTTPS (wss://)
@@ -70,6 +81,9 @@ pub fn takeWebsocketRequestBuf(self: *WebSocketProxy) []u8 {
 /// Clean up all allocated resources
 pub fn deinit(self: *WebSocketProxy) void {
     bun.default_allocator.free(self.#target_host);
+    if (self.#proxy_host.len > 0) {
+        bun.default_allocator.free(self.#proxy_host);
+    }
     if (self.#websocket_request_buf.len > 0) {
         bun.default_allocator.free(self.#websocket_request_buf);
     }

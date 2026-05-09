@@ -48,6 +48,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         /// Pending SOCKS5 DNS resolution (null when not resolving)
         socks_dns_pending: ?*bun.http.SocksDNSPending = null,
+        socks_resolved_addresses: []std.net.Address = &.{},
+        socks_resolved_address_index: usize = 0,
 
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: ?*SSLConfig = null,
@@ -266,6 +268,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 // Duplicate target_host (needed for SNI during TLS handshake).
                 // allocator.dupe only returns Allocator.Error; crash on OOM.
                 const target_host_dup = allocator.dupe(u8, host_slice.slice()) catch |err| bun.handleOom(err);
+                const proxy_host_dup = if (kind.isSocks())
+                    allocator.dupe(u8, proxy_host_slice.?.slice()) catch |err| bun.handleOom(err)
+                else
+                    &[_]u8{};
 
                 proxy_state = WebSocketProxy.init(
                     target_host_dup,
@@ -273,6 +279,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     // (ssl may be true for HTTPS proxy even with ws:// target)
                     target_is_secure,
                     port,
+                    proxy_host_dup,
+                    proxy_port,
                     body,
                     kind,
                     socks,
@@ -430,6 +438,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             this.subprotocols.clearAndFree();
             this.clearInput();
+            this.clearSocksResolvedAddresses();
             this.body.clearAndFree(bun.default_allocator);
 
             if (this.hostname.len > 0) {
@@ -464,6 +473,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.secure = null;
             }
         }
+
+        fn clearSocksResolvedAddresses(this: *HTTPClient) void {
+            if (this.socks_resolved_addresses.len > 0) {
+                bun.default_allocator.free(this.socks_resolved_addresses);
+                this.socks_resolved_addresses = &.{};
+            }
+            this.socks_resolved_address_index = 0;
+        }
+
         pub fn cancel(this: *HTTPClient) callconv(.c) void {
             this.clearData();
 
@@ -783,6 +801,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     else => {
+                        if (this.retrySocksWithNextAddress(socket, err)) {
+                            return;
+                        }
                         this.terminate(socksErrorCode(err));
                         return;
                     },
@@ -878,7 +899,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         fn completeSocksFromDnsReqWs(this: *HTTPClient, dns_req: *bun.dns.internal.Request) void {
             defer bun.dns.internal.freeaddrinfo(dns_req, 0);
+            this.continueSocksAfterDNSRequest(dns_req);
+        }
 
+        pub fn continueSocksAfterDNSRequest(this: *HTTPClient, dns_req: *bun.dns.internal.Request) void {
             const result = dns_req.result orelse {
                 this.terminate(ErrorCode.proxy_connect_failed);
                 return;
@@ -887,20 +911,31 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.terminate(ErrorCode.proxy_connect_failed);
                 return;
             }
-            const entry = &result.info.?[0];
             const p = if (this.proxy) |*proxy| proxy else {
                 this.terminate(ErrorCode.proxy_tunnel_failed);
                 return;
             };
-            const address = bun.http.SocksDNSPending.addrFromSockaddr(&entry.addr) catch {
+            this.clearSocksResolvedAddresses();
+            this.socks_resolved_addresses = collectSocksResolvedAddresses(result.info.?) catch |err| bun.handleOom(err);
+            if (this.socks_resolved_addresses.len == 0) {
                 this.terminate(ErrorCode.proxy_connect_failed);
                 return;
-            };
-            this.continueSocksAfterDNS(address, p.target_port);
+            }
+            this.continueSocksAfterNextDNSAddress(p.target_port);
         }
 
         /// Resume SOCKS5 CONNECT after DNS resolves. Called from
         /// SocksDNSPending.onDNSResolved on the JS main thread.
+        fn continueSocksAfterNextDNSAddress(this: *HTTPClient, target_port: u16) void {
+            if (this.socks_resolved_address_index >= this.socks_resolved_addresses.len) {
+                this.terminate(ErrorCode.proxy_connect_failed);
+                return;
+            }
+            const address = this.socks_resolved_addresses[this.socks_resolved_address_index];
+            this.socks_resolved_address_index += 1;
+            this.continueSocksAfterDNS(address, target_port);
+        }
+
         pub fn continueSocksAfterDNS(this: *HTTPClient, address: std.net.Address, target_port: u16) void {
             this.socks_dns_pending = null;
             const p = if (this.proxy) |*proxy| proxy else {
@@ -924,6 +959,56 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             };
+        }
+
+        fn retrySocksWithNextAddress(this: *HTTPClient, socket: Socket, err: anyerror) bool {
+            if (!isRetryableSocksAddressError(err) or this.socks_resolved_address_index >= this.socks_resolved_addresses.len) {
+                return false;
+            }
+            const p = if (this.proxy) |*proxy| proxy else return false;
+            const socks = if (p.socks) |*s| s else return false;
+            const address = this.socks_resolved_addresses[this.socks_resolved_address_index];
+            this.socks_resolved_address_index += 1;
+
+            socks.read_buffer.reset();
+            socks.write_buffer.reset();
+            socks.state = .idle;
+            socks.useResolvedAddressForNextConnect(address);
+            socks.begin() catch |oom| bun.handleOom(oom);
+
+            this.clearInput();
+            this.input_body_buf = bun.default_allocator.dupe(u8, socks.write_buffer.slice()) catch |oom| bun.handleOom(oom);
+            socks.write_buffer.cursor = socks.write_buffer.list.items.len;
+            socks.write_buffer.reset();
+            this.to_send = "";
+            this.body.clearRetainingCapacity();
+
+            if (socket.ext(?*HTTPClient)) |ext| {
+                ext.* = null;
+            }
+            socket.close(.failure);
+            this.tcp = .{ .socket = .{ .detached = {} } };
+
+            const vm = jsc.VirtualMachine.get();
+            const group = vm.rareData().wsUpgradeGroup(vm, ssl);
+            const kind: uws.SocketKind = if (ssl) .ws_client_upgrade_tls else .ws_client_upgrade;
+            if (Socket.connectGroup(
+                group,
+                kind,
+                null,
+                p.getProxyHost(),
+                p.proxy_port,
+                this,
+                false,
+            )) |new_socket| {
+                this.tcp = new_socket;
+                this.tcp.timeout(120);
+                this.state = .reading;
+            } else |_| {
+                this.terminate(ErrorCode.failed_to_connect);
+                this.deref();
+            }
+            return true;
         }
 
         /// Start TLS handshake inside the proxy tunnel for wss:// connections
@@ -1757,6 +1842,40 @@ fn socksErrorCode(err: anyerror) ErrorCode {
         error.SocksConnectionRefused => .proxy_connection_refused,
         else => .proxy_connect_failed,
     };
+}
+
+fn isRetryableSocksAddressError(err: anyerror) bool {
+    return switch (err) {
+        error.SocksGeneralFailure,
+        error.SocksNetworkUnreachable,
+        error.SocksHostUnreachable,
+        error.SocksConnectionRefused,
+        error.SocksTTLExpired,
+        error.SocksAddressTypeNotSupported,
+        => true,
+        else => false,
+    };
+}
+
+fn collectSocksResolvedAddresses(result_info: anytype) ![]std.net.Address {
+    const Entry = @TypeOf(result_info[0]);
+    var addresses: std.ArrayListUnmanaged(std.net.Address) = .{};
+    errdefer addresses.deinit(bun.default_allocator);
+
+    var current: ?[*]Entry = result_info;
+    while (current) |entries| {
+        const entry = &entries[0];
+        if (bun.http.SocksDNSPending.addrFromSockaddr(&entry.addr)) |address| {
+            try addresses.append(bun.default_allocator, address);
+        } else |_| {}
+
+        current = if (entry.info.next) |next_info| brk: {
+            const next_entry: *Entry = @fieldParentPtr("info", next_info);
+            break :brk @as([*]Entry, @ptrCast(next_entry));
+        } else null;
+    }
+
+    return addresses.toOwnedSlice(bun.default_allocator);
 }
 
 comptime {

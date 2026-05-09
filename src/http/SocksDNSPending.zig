@@ -84,7 +84,6 @@ pub fn onDNSResolved(this: *SocksDNSPending) void {
         return;
     }
 
-    // Extract resolved address
     const result = req.result orelse {
         this.failOwner(error.DNSLookupFailed);
         return;
@@ -93,6 +92,23 @@ pub fn onDNSResolved(this: *SocksDNSPending) void {
         this.failOwner(error.DNSLookupFailed);
         return;
     }
+
+    switch (this.owner) {
+        .ws_non_tls => |client| {
+            defer client.deref();
+            client.continueSocksAfterDNSRequest(req);
+            return;
+        },
+        .ws_tls => |client| {
+            defer client.deref();
+            client.continueSocksAfterDNSRequest(req);
+            return;
+        },
+        .http => {},
+    }
+
+    // HTTP SOCKS currently resumes with the first address, matching the
+    // surrounding HTTP client path. WebSocket keeps the full list for fallback.
     const entry = &result.info.?[0];
     const address = addrFromSockaddr(&entry.addr) catch {
         this.failOwner(error.DNSLookupFailed);
@@ -101,14 +117,7 @@ pub fn onDNSResolved(this: *SocksDNSPending) void {
 
     switch (this.owner) {
         .http => |http_owner| this.resumeHTTP(http_owner, address),
-        .ws_non_tls => |client| {
-            defer client.deref();
-            client.continueSocksAfterDNS(address, this.getTargetPort());
-        },
-        .ws_tls => |client| {
-            defer client.deref();
-            client.continueSocksAfterDNS(address, this.getTargetPort());
-        },
+        .ws_non_tls, .ws_tls => unreachable,
     }
 }
 

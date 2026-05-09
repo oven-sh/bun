@@ -51,6 +51,7 @@ kind: Kind,
 state: State = .idle,
 read_buffer: bun.io.StreamBuffer = .{},
 write_buffer: bun.io.StreamBuffer = .{},
+resolved_address: ?std.net.Address = null,
 username: []u8 = "",
 password: []u8 = "",
 
@@ -130,6 +131,10 @@ pub fn begin(this: *SocksProxy) !void {
         try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
     }
     this.state = .method_response;
+}
+
+pub fn useResolvedAddressForNextConnect(this: *SocksProxy, address: std.net.Address) void {
+    this.resolved_address = address;
 }
 
 pub fn hasPendingWrite(this: *const SocksProxy) bool {
@@ -227,6 +232,14 @@ fn writeAuth(this: *SocksProxy) !void {
 const ConnectWriteResult = enum { written, needs_dns_resolve };
 
 fn writeConnect(this: *SocksProxy, target_host: []const u8, target_port: u16) !ConnectWriteResult {
+    if (this.resolved_address) |address| {
+        this.resolved_address = null;
+        try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
+        try this.writeAddress(address, target_port);
+        this.state = .connect_response;
+        return .written;
+    }
+
     // Both socks5:// and socks5h:// should preserve numeric IP literals.
     if (std.net.Address.parseIp(target_host, target_port)) |address| {
         try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });

@@ -99,22 +99,24 @@ function ClientRequest(input, options, cb) {
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
 
+  // Node sends headers + first chunk immediately on the first write(). We
+  // defer by a tick so that `write(chunk); end();` in the same tick still
+  // takes the non-duplex fast path via send(). If end() hasn't been called by
+  // then, start the request in duplex mode so the server can respond while
+  // the body stream stays open (docker-modem relies on this for
+  // `container.exec` with stdin: true).
+  function startFetchAfterFirstWriteNT(self) {
+    if (!fetching && !self.destroyed && !self.finished) {
+      startFetch();
+    }
+  }
+
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
     if (writeCount > 1) {
       startFetch();
     } else if (writeCount === 1) {
-      // Node sends headers + first chunk immediately on the first write().
-      // We defer by a tick so that `write(chunk); end();` in the same tick
-      // still takes the non-duplex fast path via send(). If end() hasn't been
-      // called by then, start the request in duplex mode so the server can
-      // respond while the body stream stays open (docker-modem relies on this
-      // for `container.exec` with stdin: true).
-      process.nextTick(self => {
-        if (!fetching && !self.destroyed && !self.finished) {
-          startFetch();
-        }
-      }, this);
+      process.nextTick(startFetchAfterFirstWriteNT, this);
     }
     resolveNextChunk?.(false);
   };
@@ -588,6 +590,14 @@ function ClientRequest(input, options, cb) {
   // 'finish' once req.end() is eventually called.
   let deferredRequestClose = false;
 
+  function emitFinishAndDeferredCloseNT() {
+    maybeEmitFinish();
+    if (deferredRequestClose) {
+      deferredRequestClose = false;
+      maybeEmitClose();
+    }
+  }
+
   const send = () => {
     this.finished = true;
 
@@ -602,13 +612,7 @@ function ClientRequest(input, options, cb) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
     } finally {
-      process.nextTick(() => {
-        maybeEmitFinish();
-        if (deferredRequestClose) {
-          deferredRequestClose = false;
-          maybeEmitClose();
-        }
-      });
+      process.nextTick(emitFinishAndDeferredCloseNT);
     }
   };
 

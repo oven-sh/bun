@@ -913,7 +913,17 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__generateHeapSnapshot(self)
     }
 
-    // DEPRECATED - use TopExceptionScope to check for exceptions and signal exceptions by returning JSError
+    /// DEPRECATED — use [`TopExceptionScope`](crate::TopExceptionScope) to check for exceptions
+    /// and signal exceptions by returning `JsError`.
+    ///
+    /// **Under `BUN_JSC_validateExceptionChecks=1`**: the C++ side
+    /// (`JSGlobalObject__hasException`) constructs a temporary `TopExceptionScope`, whose
+    /// ctor *does* call `verifyExceptionCheckNeedIsSatisfied` — so this asserts if
+    /// `vm.m_needExceptionCheck` was left set by a prior un-scoped FFI call. The remaining
+    /// call sites in the port (1:1 with the `.zig` spec) follow `JsResult`-returning helpers
+    /// that already opened a scope and cleared the bit, so they are sound. New code must not
+    /// pair this with a raw `extern "C"` throwing call — use the generated
+    /// [`crate::cpp`] wrappers or [`top_scope!`](crate::top_scope) instead.
     pub fn has_exception(&self) -> bool {
         JSGlobalObject__hasException(self)
     }

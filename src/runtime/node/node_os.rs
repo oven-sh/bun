@@ -762,7 +762,7 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
             let str = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
             let js = str.to_js(global);
             str.deref();
-            return Ok(js);
+            return js;
         }
 
         // SAFETY: zeroed POD

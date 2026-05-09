@@ -166,7 +166,7 @@ pub type Bump = bumpalo::Bump;
 /// Arena-backed `Vec` — `Vec<T, &'a MimallocArena>`. Real `deallocate`/`grow`
 /// via `mi_free`/`mi_heap_realloc_aligned`; reclaimed on arena `reset`/`Drop`.
 pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
-pub use mimalloc_arena::{vec_from_iter_in, ArenaString, ArenaVecExt};
+pub use mimalloc_arena::{live_arena_heaps, vec_from_iter_in, ArenaString, ArenaVecExt};
 
 /// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →
 /// [`ArenaString`].

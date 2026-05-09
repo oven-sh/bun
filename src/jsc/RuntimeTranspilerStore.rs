@@ -534,7 +534,11 @@ impl TranspilerJob {
     }
 
     pub fn run(&mut self) {
-        // PERF(port): was ArenaAllocator bulk-free feeding transpiler/AST.
+        // PERF(port): Zig used `bun.ArenaAllocator` (= `std.heap.ArenaAllocator`,
+        // a cheap page-list bump allocator with no `mi_heap`) per call. The
+        // Rust `Arena = MimallocArena`, so this is one `mi_heap_new()` +
+        // `mi_heap_destroy()` per dynamic `import()`; both are paired (verified
+        // via `bun_alloc::live_arena_heaps()` — stable at +0 across iterations).
         let arena = Arena::new();
         // SAFETY: `Transpiler<'static>` (the `vm.transpiler` value-copy below)
         // requires `&'static Arena` for `set_arena`. The arena outlives
@@ -647,14 +651,16 @@ impl TranspilerJob {
         // PORT NOTE: Zig's `MacroContext.init` is a value-type with no heap
         // allocation, so re-creating it per-iteration (as `parse_maybe` does
         // when `macro_context.is_none()`) is free. The Rust port boxes a
-        // higher-tier `MacroContext` (which owns a `MimallocArena` →
-        // `mi_heap_new()`) and leaks it via `__bun_macro_context_init`. That
-        // leak is intentional for the long-lived `vm.transpiler`, but here we
-        // operate on a per-iteration `ManuallyDrop` bytewise copy, so we MUST
-        // free what `parse_maybe` allocates or every dynamic `import()` leaks
-        // one `mi_heap` (require-cache.test.ts "files transpiled and loaded
-        // don't leak file paths > via import()" OOMs at ~0.5 GB after 100k
-        // iterations).
+        // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
+        // is intentionally leaked for the long-lived `vm.transpiler`, but here
+        // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
+        // MUST free what `parse_maybe` allocates or every dynamic `import()`
+        // leaks one `Box<MacroContext>` (require-cache.test.ts "files
+        // transpiled and loaded don't leak file paths > via import()" OOMs at
+        // ~0.5 GB after 100k iterations). The owned `MimallocArena` inside is
+        // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
+        // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
+        // small `Box`.
         let _macro_ctx_guard = scopeguard::guard(
             ptr::addr_of_mut!(transpiler.macro_context),
             |slot| {

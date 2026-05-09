@@ -69,7 +69,16 @@ pub struct MacroContext {
     /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
     /// every `Expr` it produces (the parser splices the result into the AST and
     /// prints it before the `Transpiler` drops).
-    pub bump: bun_alloc::Arena,
+    ///
+    /// Lazy: `Arena::new()` calls `mi_heap_new()`, and `MacroContext::init`
+    /// runs once per `RuntimeTranspilerStore::TranspilerJob::run` iteration
+    /// (the worker bytewise-copies `vm.transpiler`, sets `macro_context =
+    /// None`, and `parse_maybe` re-creates it). `call()` is only reached when
+    /// a file actually invokes a macro, so deferring the heap until then
+    /// avoids one `mi_heap_new`/`mi_heap_destroy` pair on every dynamic
+    /// `import()` (require-cache.test.ts T040 — on macOS arm64 the per-iter
+    /// heap churn fragments mimalloc's segment cache).
+    pub bump: Option<bun_alloc::Arena>,
 }
 
 pub type MacroMap = ArrayHashMap<i32, Macro>;
@@ -94,7 +103,8 @@ impl MacroContext {
             env: transpiler.env,
             remap: &raw const transpiler.options.macro_remap,
             javascript_object: JSValue::ZERO,
-            bump: bun_alloc::Arena::new(),
+            // Deferred until `call()` — see field doc.
+            bump: None,
         }
     }
 
@@ -231,7 +241,10 @@ impl MacroContext {
         // PORT NOTE: reshaped for borrowck — `self.bump` is shared-borrowed for
         // the closure while `self.macros` was already released above; capture
         // as a raw pointer so the closure does not extend `&mut self`.
-        let bump: *const bun_alloc::Arena = &raw const self.bump;
+        // Lazy-init the backing arena now that a macro is actually being
+        // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
+        let bump: *const bun_alloc::Arena =
+            &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
         // SAFETY: `vm` is the per-thread VM, live for this call.
         let ret = unsafe { &*vm }.run_with_api_lock(|| {
             // SAFETY: `macro_` points into `self.macros` which is not mutated

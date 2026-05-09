@@ -1696,6 +1696,21 @@ pub mod waker {
             // SAFETY: loop_ is the process-global WindowsLoop singleton.
             unsafe { (*self.loop_).wakeup() };
         }
+
+        /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
+        ///
+        /// `loop_` is the process-global singleton from `WindowsLoop::get()`
+        /// (set in [`init`]), so the returned pointer has process lifetime —
+        /// safe to hand to `uv::Timer::init` and friends without an `unsafe`
+        /// block at the call site. Mirrors Zig's `waker.loop.uv_loop` field
+        /// chain (BundleThread.zig:79).
+        #[inline]
+        pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
+            // SAFETY: `loop_` is the process-global `WindowsLoop` singleton,
+            // never null after `init()`, never freed; `uv_loop` is set by
+            // C `us_create_loop` and valid for the loop's lifetime.
+            unsafe { (*self.loop_).uv_loop }
+        }
     }
 }
 

@@ -1198,8 +1198,8 @@ impl BunTest {
 
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
 
-                // SAFETY: `as_promise` returned a non-null GC-managed JSPromise.
-                match unsafe { (*promise).status() } {
+                // S012: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+                match bun_jsc::JSPromise::opaque_mut(promise).status() {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         let this_ref: RefDataPtr = if let Some(dcb_ref_value) = dcb_ref {
@@ -1225,8 +1225,7 @@ impl BunTest {
                         return Some(cfg_data);
                     }
                     PromiseStatus::Rejected => {
-                        // SAFETY: `promise` is a non-null GC-managed JSPromise.
-                        let value = unsafe { (*promise).result(global_this.vm()) };
+                        let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
                         // drain above; sole `&mut` at this point.
                         unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, cfg_data.clone()) };

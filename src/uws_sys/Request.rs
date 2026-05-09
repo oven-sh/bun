@@ -70,21 +70,17 @@ impl Request {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_url writes a pointer into request-owned storage and returns its length
         let len = unsafe { c::uws_req_get_url(self, &raw mut ptr) };
-        if len == 0 {
-            return &[];
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape uWS returns when no URL is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn method(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_method writes a pointer into request-owned storage and returns its length
         let len = unsafe { c::uws_req_get_method(self, &raw mut ptr) };
-        if len == 0 {
-            return &[];
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape uWS returns when no method is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
         debug_assert!(name[0].is_ascii_lowercase());
@@ -96,28 +92,24 @@ impl Request {
             return None;
         }
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        Some(unsafe { core::slice::from_raw_parts(ptr, len) })
+        Some(unsafe { bun_core::ffi::slice(ptr, len) })
     }
     pub fn query(&self, name: &[u8]) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_query writes a pointer into request-owned storage and returns its length
         let len = unsafe { c::uws_req_get_query(self, name.as_ptr(), name.len(), &raw mut ptr) };
-        if len == 0 {
-            return &[];
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape uWS returns when no query is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_parameter writes a pointer into request-owned storage and returns its length
         let len =
             unsafe { c::uws_req_get_parameter(self, c_ushort::try_from(index).unwrap(), &raw mut ptr) };
-        if len == 0 {
-            return &[];
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape uWS returns when no parameter is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
     }
 }
 

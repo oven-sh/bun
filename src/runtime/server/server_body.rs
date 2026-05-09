@@ -372,14 +372,20 @@ extern "C" fn _route_tramp<T, H, const SSL: bool>(
 where
     H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
 {
-    debug_assert_eq!(core::mem::size_of::<H>(), 0, "handler must be a ZST fn item");
-    // SAFETY: H is a zero-sized fn item — conjuring it is sound; ud/req/res
-    // were registered by the matching `*_ctx` call below and outlive the route.
-    let h: H = unsafe { bun_core::ffi::zeroed_unchecked() };
-    let ctx = unsafe { &mut *ud.cast::<T>() };
-    let req = unsafe { &mut *req.cast::<uws::Request>() };
-    let resp = unsafe { &mut *res.cast::<uws_sys::NewAppResponse<SSL>>() };
-    h(ctx, req, resp);
+    use bun_uws_sys::thunk;
+    // SAFETY: uWS route callback contract — `ud`/`req`/`res` were registered by
+    // the matching `*_ctx` call below and are live disjoint pointers for the
+    // duration of the call; `H` is a ZST fn item (compile-asserted in
+    // `thunk::zst`). Consolidates the open-coded `&mut *cast` derefs into the
+    // audited `thunk::*` primitives so the invariant is documented once (S005).
+    unsafe {
+        let Some(ctx) = thunk::user_mut::<T>(ud) else { return };
+        thunk::zst::<H>()(
+            ctx,
+            thunk::handle_mut(req.cast::<uws::Request>()),
+            thunk::handle_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
+        );
+    }
 }
 
 impl<const SSL: bool> AppRouteExt<SSL> for uws_sys::NewApp<SSL> {
@@ -1591,8 +1597,6 @@ where
 
         {
             let js_string = message_value.to_js_string(global)?;
-            // SAFETY: to_js_string returns a non-null *mut JSString on Ok
-            let js_string = unsafe { &*js_string };
             let view = js_string.view(global);
             let slice = view.to_slice();
             // Spec keeps `js_string` alive (server.zig:748), not `message_value`:
@@ -3325,7 +3329,7 @@ pub fn server_set_on_client_error_(global: &JSGlobalObject, server: JSValue, cal
                         // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty) buffer.
                         let this = unsafe { &mut *user_data.cast::<$T>() };
                         let packet: &[u8] = if raw_packet_len > 0 {
-                            unsafe { core::slice::from_raw_parts(raw_packet, raw_packet_len as usize) }
+                            unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
                         } else {
                             &[]
                         };

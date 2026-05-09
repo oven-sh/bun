@@ -11,6 +11,7 @@ use crate::jsc::{
 };
 use bun_uws as uws;
 use bun_io::KeepAlive;
+use bun_ptr::BackRef;
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, StringMap, OffsetByteList};
 use crate::jsc::EventLoopTimer;
@@ -112,9 +113,9 @@ pub struct PostgresSQLConnection {
     pub nonpipelinable_requests: u32,
 
     pub poll_ref: KeepAlive,
-    // `*const`, not `*mut`: derived from a `&JSGlobalObject` in `call()`, so provenance is
-    // read-only. Only ever dereferenced as `&*` via `global()`; never written through.
-    pub global_object: *const JSGlobalObject,
+    // Read-only back-reference to the JS global; the VM/global strictly outlives
+    // every connection it creates. Only ever borrowed via `global()`.
+    pub global_object: BackRef<JSGlobalObject>,
     pub vm: *mut VirtualMachine,
     pub statements: PreparedStatementsMap,
     pub prepared_statement_id: u64,
@@ -201,8 +202,7 @@ impl PostgresSQLConnection {
 impl PostgresSQLConnection {
     #[inline]
     fn global(&self) -> &JSGlobalObject {
-        // SAFETY: JSC_BORROW — global_object outlives this connection (owned by VM).
-        unsafe { &*self.global_object }
+        self.global_object.get()
     }
     /// SAFETY: returns `&mut VirtualMachine` derived from `&self`; two calls
     /// alias the same VM. Caller must not hold another live `&mut` to it.
@@ -1197,9 +1197,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         pipelined_requests: 0,
         nonpipelinable_requests: 0,
         poll_ref: KeepAlive::default(),
-        // `&T` → `*const T` coercion; field is `*const` (read-only provenance) and only
-        // ever dereferenced as `&*` via `global()`.
-        global_object,
+        global_object: BackRef::new(global_object),
         // `VirtualMachine::get()` returns the singleton `*mut` with full write provenance
         // (same pointer as `global_object.bun_vm()`, asserted in debug builds). Avoids
         // deriving `*mut` from the `&VirtualMachine` above, which would make `vm()`'s
@@ -1503,7 +1501,7 @@ impl PostgresSQLConnection {
                 // just ignore success and fail cases
                 QueryStatus::Success | QueryStatus::Fail => {}
             }
-            unsafe { PostgresSQLQuery::deref_(request_ptr) };
+            unsafe { PostgresSQLQuery::deref(request_ptr) };
             self.requests.discard(1);
         }
     }
@@ -1757,12 +1755,12 @@ impl PostgresSQLConnection {
                     // so we do the cleanup here
                     match result.status {
                         QueryStatus::Success => {
-                            unsafe { PostgresSQLQuery::deref_(result_ptr) };
+                            unsafe { PostgresSQLQuery::deref(result_ptr) };
                             $self.requests.discard(1);
                             continue;
                         }
                         QueryStatus::Fail => {
-                            unsafe { PostgresSQLQuery::deref_(result_ptr) };
+                            unsafe { PostgresSQLQuery::deref(result_ptr) };
                             $self.requests.discard(1);
                             continue;
                         }
@@ -1803,7 +1801,7 @@ impl PostgresSQLConnection {
                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                             }
                             if offset == 0 {
-                                unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                unsafe { PostgresSQLQuery::deref(req_ptr) };
                                 self.requests.discard(1);
                             } else {
                                 // deinit later
@@ -1836,7 +1834,7 @@ impl PostgresSQLConnection {
                                         req.on_js_error(ev, self.global());
                                     }
                                     if offset == 0 {
-                                        unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                        unsafe { PostgresSQLQuery::deref(req_ptr) };
                                         self.requests.discard(1);
                                     } else {
                                         // deinit later
@@ -1849,7 +1847,7 @@ impl PostgresSQLConnection {
                                     let Some(this_value) = req.this_value.try_get() else {
                                         debug_assert!(false, "query value was freed earlier than expected");
                                         if offset == 0 {
-                                            unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                            unsafe { PostgresSQLQuery::deref(req_ptr) };
                                             self.requests.discard(1);
                                         } else {
                                             // deinit later
@@ -1870,10 +1868,10 @@ impl PostgresSQLConnection {
                                         debug!("parse, bind and execute unnamed stmt");
                                         let query_str = req.query.to_utf8();
                                         // PORT NOTE: hoist global to avoid &self/&mut self overlap
-                                        // with `self.writer()` (JSC_BORROW — global outlives self).
-                                        let global = unsafe { &*self.global_object };
+                                        // with `self.writer()` (BackRef is Copy — global outlives self).
+                                        let global = self.global_object;
                                         if let Err(err) = PostgresRequest::parse_and_bind_and_execute(
-                                            global,
+                                            &global,
                                             query_str.slice(),
                                             statement,
                                             binding_value,
@@ -1887,7 +1885,7 @@ impl PostgresSQLConnection {
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
-                                                unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                                unsafe { PostgresSQLQuery::deref(req_ptr) };
                                                 self.requests.discard(1);
                                             } else {
                                                 // deinit later
@@ -1899,10 +1897,10 @@ impl PostgresSQLConnection {
                                         }
                                     } else {
                                         debug!("binding and executing stmt");
-                                        // PORT NOTE: hoist global (JSC_BORROW) — see above.
-                                        let global = unsafe { &*self.global_object };
+                                        // PORT NOTE: hoist global (BackRef is Copy) — see above.
+                                        let global = self.global_object;
                                         if let Err(err) = PostgresRequest::bind_and_execute(
-                                            global,
+                                            &global,
                                             statement,
                                             binding_value,
                                             columns_value,
@@ -1914,7 +1912,7 @@ impl PostgresSQLConnection {
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
-                                                unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                                unsafe { PostgresSQLQuery::deref(req_ptr) };
                                                 self.requests.discard(1);
                                             } else {
                                                 // deinit later
@@ -1955,7 +1953,7 @@ impl PostgresSQLConnection {
                                         let Some(this_value) = req.this_value.try_get() else {
                                             debug_assert!(false, "query value was freed earlier than expected");
                                             if offset == 0 {
-                                                unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                                unsafe { PostgresSQLQuery::deref(req_ptr) };
                                                 self.requests.discard(1);
                                             } else {
                                                 // deinit later
@@ -1967,10 +1965,10 @@ impl PostgresSQLConnection {
                                         // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                                         let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                         debug!("prepareAndQueryWithSignature");
-                                        // PORT NOTE: hoist global (JSC_BORROW) — see above.
-                                        let global = unsafe { &*self.global_object };
+                                        // PORT NOTE: hoist global (BackRef is Copy) — see above.
+                                        let global = self.global_object;
                                         if let Err(err) = PostgresRequest::prepare_and_query_with_signature(
-                                            global,
+                                            &global,
                                             query_str.slice(),
                                             binding_value,
                                             self.writer(),
@@ -1984,7 +1982,7 @@ impl PostgresSQLConnection {
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
-                                                unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                                unsafe { PostgresSQLQuery::deref(req_ptr) };
                                                 self.requests.discard(1);
                                             } else {
                                                 // deinit later
@@ -2011,17 +2009,17 @@ impl PostgresSQLConnection {
                                         let Some(this_value) = req.this_value.try_get() else {
                                             debug_assert!(false, "query value was freed earlier than expected");
                                             debug_assert!(offset == 0);
-                                            unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                            unsafe { PostgresSQLQuery::deref(req_ptr) };
                                             self.requests.discard(1);
                                             continue;
                                         };
                                         let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                         let columns_value = postgres_sql_query::js::columns_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
-                                        // PORT NOTE: hoist global (JSC_BORROW) — see above.
-                                        let global = unsafe { &*self.global_object };
+                                        // PORT NOTE: hoist global (BackRef is Copy) — see above.
+                                        let global = self.global_object;
                                         if let Err(err) = PostgresRequest::parse_and_bind_and_execute(
-                                            global,
+                                            &global,
                                             query_str.slice(),
                                             statement,
                                             binding_value,
@@ -2037,7 +2035,7 @@ impl PostgresSQLConnection {
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             debug_assert!(offset == 0);
-                                            unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                            unsafe { PostgresSQLQuery::deref(req_ptr) };
                                             self.requests.discard(1);
                                             debug!("parseAndBindAndExecute failed: {}", <&'static str>::from(err));
                                             continue;
@@ -2073,7 +2071,7 @@ impl PostgresSQLConnection {
                                             req.on_write_fail(err, self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
-                                        unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                        unsafe { PostgresSQLQuery::deref(req_ptr) };
                                         self.requests.discard(1);
                                         debug!("write query failed: {}", <&'static str>::from(err));
                                         continue;
@@ -2087,7 +2085,7 @@ impl PostgresSQLConnection {
                                             req.on_write_fail(err, self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
-                                        unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                                        unsafe { PostgresSQLQuery::deref(req_ptr) };
                                         self.requests.discard(1);
                                         debug!("write query (sync) failed: {}", <&'static str>::from(err));
                                         continue;
@@ -2134,7 +2132,7 @@ impl PostgresSQLConnection {
                         offset += 1;
                         continue;
                     }
-                    unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                    unsafe { PostgresSQLQuery::deref(req_ptr) };
                     self.requests.discard(1);
                     continue;
                 }
@@ -2144,7 +2142,7 @@ impl PostgresSQLConnection {
                         offset += 1;
                         continue;
                     }
-                    unsafe { PostgresSQLQuery::deref_(req_ptr) };
+                    unsafe { PostgresSQLQuery::deref(req_ptr) };
                     self.requests.discard(1);
                     continue;
                 }

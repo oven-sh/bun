@@ -2236,7 +2236,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             match expr.data {
                 js_ast::ExprData::EIdentifier(ident) => {
                     if ident.ref_.eql(r#ref)
-                        || self.symbols[ident.ref_.inner_index() as usize].link.eql(r#ref)
+                        || self.symbols[ident.ref_.inner_index() as usize].link.get().eql(r#ref)
                     {
                         self.ignore_usage(r#ref);
                         return Substitution::Success(replacement);
@@ -3027,7 +3027,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     && (scope_kind == js_ast::scope::Kind::Entry || scope_kind == js_ast::scope::Kind::FunctionBody))
                             {
                                 // Silently merge this symbol into the existing symbol
-                                self.symbols[symbol_idx].link = member_in_scope.ref_;
+                                self.symbols[symbol_idx].link.set(member_in_scope.ref_);
                                 // PORT NOTE: Zig also wrote `entry.key_ptr.* = name`; the Rust
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
@@ -3067,7 +3067,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                             // If this is a catch identifier, silently merge the existing symbol
                             // into this symbol but continue hoisting past this catch scope
-                            self.symbols[existing_idx].link = value.ref_;
+                            self.symbols[existing_idx].link.set(value.ref_);
                             *_scope.get_or_put_member_with_hash(name, hash.unwrap()).value_ptr = value;
                         }
 
@@ -4263,7 +4263,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         ref_ = existing.ref_;
                     }
                     MR::ReplaceWithNew => {
-                        self.symbols[symbol_idx].link = ref_;
+                        self.symbols[symbol_idx].link.set(ref_);
 
                         // If these are both functions, remove the overwritten declaration
                         if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
@@ -4281,7 +4281,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     MR::OverwriteWithNew => {}
                 }
             } else {
-                self.symbols[ref_.inner_index() as usize].link = existing.ref_;
+                self.symbols[ref_.inner_index() as usize].link.set(existing.ref_);
             }
         }
         // PORT NOTE: StringHashMap has no key_ptr (std::HashMap can't hand out &mut K).
@@ -4621,7 +4621,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     if !symbol.has_link() {
                         break;
                     }
-                    local.ref_ = Some(symbol.link);
+                    local.ref_ = Some(symbol.link.get());
                 }
                 self.relocated_top_level_vars[i] = local;
                 let Some(ref_) = local.ref_ else { continue };
@@ -5609,7 +5609,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Follow the link chain in case symbols were merged
         let mut symbol = &self.symbols[name_ref.inner_index() as usize];
         while symbol.has_link() {
-            let link = symbol.link;
+            let link = symbol.link.get();
             name_ref = link;
             symbol = &self.symbols[name_ref.inner_index() as usize];
         }
@@ -6006,7 +6006,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                         for arg_decorator in arg.ts_decorators.slice() {
                                             let arg0 = self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc);
                                             let args = self.arena.alloc_slice_copy(&[arg0, *arg_decorator]);
-                                            let args = unsafe { ExprNodeList::from_bump_slice(args) };
+                                            let args = ExprNodeList::from_arena_slice(args);
                                             let call = self.call_runtime(arg_decorator.loc, b"__legacyDecorateParamTS", args);
                                             let decorators = if is_constructor {
                                                 // `prop` borrows the (separate) properties arena
@@ -6071,7 +6071,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         let full_items = ExprNodeList::from_bump_vec(full);
                         let array_expr = self.new_expr(E::Array { items: full_items, ..Default::default() }, loc);
                         let args_slice = self.arena.alloc_slice_copy(&[array_expr, target, descriptor_key, descriptor_kind]);
-                        let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
+                        let args = ExprNodeList::from_arena_slice(args_slice);
 
                         let decorator = self.call_runtime(prop.key.expect("infallible: prop has key").loc, b"__legacyDecorateClassTS", args);
                         let decorator_stmt = self.s(S::SExpr { value: decorator, ..Default::default() }, decorator.loc);
@@ -6243,14 +6243,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self.serialize_metadata(ca.ts_metadata.clone()).expect("unreachable");
                                 }
-                                let items = unsafe { ExprNodeList::from_bump_slice(param_array) };
+                                let items = ExprNodeList::from_arena_slice(param_array);
                                 self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY)
                             } else {
                                 self.new_expr(E::Array { items: ExprNodeList::default(), ..Default::default() }, logger::Loc::EMPTY)
                             };
                             let label = self.new_expr(E::EString::from_static(b"design:paramtypes"), logger::Loc::EMPTY);
                             let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
-                            let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
+                            let args = ExprNodeList::from_arena_slice(args_slice);
                             array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
                         }
                     }
@@ -6261,7 +6261,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let array_expr = self.new_expr(E::Array { items: array_items, ..Default::default() }, stmt.loc);
                     let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let args_slice = self.arena.alloc_slice_copy(&[array_expr, class_ident]);
-                    let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
+                    let args = ExprNodeList::from_arena_slice(args_slice);
 
                     let lhs = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let rhs = self.call_runtime(stmt.loc, b"__legacyDecorateClassTS", args);
@@ -6296,7 +6296,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let label = self.new_expr(E::EString::from_static($label), logger::Loc::EMPTY);
                 let value = $value;
                 let args = self.arena.alloc_slice_copy(&[label, value]);
-                let args = unsafe { ExprNodeList::from_bump_slice(args) };
+                let args = ExprNodeList::from_arena_slice(args);
                 array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
             }};
         }
@@ -6319,7 +6319,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
-                            let items = unsafe { ExprNodeList::from_bump_slice(args_array) };
+                            let items = ExprNodeList::from_arena_slice(args_array);
                             let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
                         }
@@ -6360,7 +6360,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
-                            let items = unsafe { ExprNodeList::from_bump_slice(args_array) };
+                            let items = ExprNodeList::from_arena_slice(args_array);
                             let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
                         }
@@ -7267,13 +7267,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             core::mem::forget(core::mem::replace(
                                 &mut part.import_record_indices,
                                 // SAFETY: `alloc_slice_copy` returns a leaked
-                                // bump-arena slice; elements are never dropped
-                                // again after this bitwise move.
-                                unsafe {
-                                    Vec::from_bump_slice(
-                                        arena.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
-                                    )
-                                },
+                                // bump-arena slice; `u32: Copy` so the bitwise
+                                // move is a plain copy (safe `from_arena_slice`).
+                                Vec::from_arena_slice(
+                                    arena.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
+                                ),
                             ));
                         } else {
                             part.import_record_indices
@@ -7436,7 +7434,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         let mut r#ref = input;
                         let mut symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
                         while symbol_ref.has_link() {
-                            r#ref = symbol_ref.link;
+                            r#ref = symbol_ref.link.get();
                             symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
                         }
 
@@ -8008,7 +8006,7 @@ impl LowerUsingDeclarationsContext {
                         ),
                     ]);
                     decl.value = Some(p.call_runtime(value_loc, b"__using",
-                        unsafe { ExprNodeList::from_bump_slice(args) }));
+                        ExprNodeList::from_arena_slice(args)));
                 }
             }
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -8143,7 +8141,7 @@ impl LowerUsingDeclarationsContext {
                 p.new_expr(E::Identifier { ref_: err_ref, ..Default::default() }, loc),
                 p.new_expr(E::Identifier { ref_: has_err_ref, ..Default::default() }, loc),
             ]);
-            p.call_runtime(loc, b"__callDispose", unsafe { ExprNodeList::from_bump_slice(args) })
+            p.call_runtime(loc, b"__callDispose", ExprNodeList::from_arena_slice(args))
         };
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {

@@ -639,8 +639,9 @@ impl MultiPartUpload {
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
-        // PORT NOTE: `defer this.deref()` — guard runs even on early return / error
-        let _deref_guard = scopeguard::guard(this, |t| MultiPartUpload::deref_(t));
+        // PORT NOTE: `defer this.deref()` — `adopt` consumes the prior +1 on Drop.
+        // SAFETY: callback context — a ref was taken before the request was queued.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
         let this = unsafe { &mut *this };
         if this.state == State::Finished {
@@ -1052,8 +1053,9 @@ impl MultiPartUpload {
             return Ok(ResumableSinkBackpressure::Done); // no backpressure since we are done
         }
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
-        self.ref_();
-        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |t| MultiPartUpload::deref_(t));
+        // SAFETY: `self` is the live IntrusiveRc allocation; `ScopedRef` bumps the count
+        // and derefs on every exit path.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::new(std::ptr::from_mut::<Self>(self)) };
 
         if self.state == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case
@@ -1099,10 +1101,8 @@ impl MultiPartUpload {
                 WriteEncoding::Bytes => self.buffered.write(chunk)?,
                 WriteEncoding::Latin1 => self.buffered.write_latin1::<true>(chunk)?,
                 WriteEncoding::Utf16 => {
-                    // SAFETY: @alignCast — caller guarantees chunk is u16-aligned
-                    let utf16 = unsafe {
-                        core::slice::from_raw_parts(chunk.as_ptr().cast::<u16>(), chunk.len() / 2)
-                    };
+                    // @alignCast — caller guarantees chunk is u16-aligned; bytemuck checks at runtime.
+                    let utf16: &[u16] = bytemuck::cast_slice(chunk);
                     self.buffered.write_utf16(utf16)?
                 }
             }

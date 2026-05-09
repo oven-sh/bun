@@ -533,8 +533,7 @@ mod platform {
                     // NT_ERROR status (e.g. parameter validation), the block
                     // is left untouched, so zero-initialize it rather than
                     // reading uninitialized stack if the call fails.
-                    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-                    let mut io: IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
                     if self.first {
                         // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
                         self.buf.fill(0);

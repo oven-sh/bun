@@ -258,8 +258,9 @@ pub fn canonicalize_ip<'a>(
         }
     }
     // use the null-terminated size to return the string
-    // SAFETY: ares_inet_ntop wrote a NUL-terminated string into out_ip on success.
-    let size = unsafe { CStr::from_ptr(out_ip.as_ptr().cast::<c_char>()) }
+    // ares_inet_ntop wrote a NUL-terminated string into out_ip on success.
+    let size = CStr::from_bytes_until_nul(&out_ip[..])
+        .expect("ares_inet_ntop NUL-terminates on success")
         .to_bytes()
         .len();
     Some(&out_ip[..size])
@@ -287,8 +288,9 @@ pub fn ip2_string<'a>(
     }
 
     // use the null-terminated size to return the string
-    // SAFETY: ares_inet_ntop wrote a NUL-terminated string into out_ip on success.
-    let size = unsafe { CStr::from_ptr(out_ip.as_ptr().cast::<c_char>()) }
+    // ares_inet_ntop wrote a NUL-terminated string into out_ip on success.
+    let size = CStr::from_bytes_until_nul(&out_ip[..])
+        .expect("ares_inet_ntop NUL-terminates on success")
         .to_bytes()
         .len();
     Some(&out_ip[..size])

@@ -1415,9 +1415,7 @@ impl FetchTasklet {
 
         let mut url = fetch_options.url;
         let mut proxy: Option<ZigURL> = None;
-        // SAFETY: `transpiler.env` is a `*mut bun_dotenv::Loader` self-ptr field on the VM;
-        // uniquely accessed here on the JS thread.
-        let env = unsafe { &mut *global_this.bun_vm().as_mut().transpiler.env };
+        let env = global_this.bun_vm().as_mut().transpiler.env_mut();
         if let Some(proxy_opt) = &fetch_options.proxy {
             if !proxy_opt.is_empty() {
                 //if is empty just ignore proxy

@@ -125,36 +125,40 @@ bun_core::opaque_extern!(
 // This is the same link-time-dispatch pattern as other `*_sys` crates use for
 // their C backends — only here the "backend" is Rust in a higher tier.
 // PORT NOTE: signatures mirror `src/runtime/socket/UpgradedDuplex.rs`.
+// SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
+// via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
+// ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
+// scalars are `safe fn`; the two `(ptr,len)` slice writers stay `unsafe fn`.
 unsafe extern "C" {
-    fn UpgradedDuplex__ssl_error(this: *const UpgradedDuplex) -> us_bun_verify_error_t;
-    fn UpgradedDuplex__is_established(this: *const UpgradedDuplex) -> bool;
-    fn UpgradedDuplex__is_closed(this: *const UpgradedDuplex) -> bool;
-    fn UpgradedDuplex__is_shutdown(this: *const UpgradedDuplex) -> bool;
-    fn UpgradedDuplex__ssl(this: *const UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
-    fn UpgradedDuplex__set_timeout(this: *mut UpgradedDuplex, seconds: core::ffi::c_uint);
-    fn UpgradedDuplex__flush(this: *mut UpgradedDuplex);
+    safe fn UpgradedDuplex__ssl_error(this: &UpgradedDuplex) -> us_bun_verify_error_t;
+    safe fn UpgradedDuplex__is_established(this: &UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
+    safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
+    safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
     fn UpgradedDuplex__encode_and_write(this: *mut UpgradedDuplex, ptr: *const u8, len: usize) -> i32;
     fn UpgradedDuplex__raw_write(this: *mut UpgradedDuplex, ptr: *const u8, len: usize) -> i32;
-    fn UpgradedDuplex__shutdown(this: *mut UpgradedDuplex);
-    fn UpgradedDuplex__shutdown_read(this: *mut UpgradedDuplex);
-    fn UpgradedDuplex__close(this: *mut UpgradedDuplex);
+    safe fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
 }
 impl UpgradedDuplex {
-    #[inline] pub fn ssl_error(&self) -> us_bun_verify_error_t { unsafe { UpgradedDuplex__ssl_error(self) } }
-    #[inline] pub fn is_established(&self) -> bool { unsafe { UpgradedDuplex__is_established(self) } }
-    #[inline] pub fn is_closed(&self) -> bool { unsafe { UpgradedDuplex__is_closed(self) } }
-    #[inline] pub fn is_shutdown(&self) -> bool { unsafe { UpgradedDuplex__is_shutdown(self) } }
+    #[inline] pub fn ssl_error(&self) -> us_bun_verify_error_t { UpgradedDuplex__ssl_error(self) }
+    #[inline] pub fn is_established(&self) -> bool { UpgradedDuplex__is_established(self) }
+    #[inline] pub fn is_closed(&self) -> bool { UpgradedDuplex__is_closed(self) }
+    #[inline] pub fn is_shutdown(&self) -> bool { UpgradedDuplex__is_shutdown(self) }
     #[inline] pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        let p = unsafe { UpgradedDuplex__ssl(self) };
+        let p = UpgradedDuplex__ssl(self);
         if p.is_null() { None } else { Some(p) }
     }
-    #[inline] pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) { unsafe { UpgradedDuplex__set_timeout(self, seconds) } }
-    #[inline] pub fn flush(&mut self) { unsafe { UpgradedDuplex__flush(self) } }
+    #[inline] pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) { UpgradedDuplex__set_timeout(self, seconds) }
+    #[inline] pub fn flush(&mut self) { UpgradedDuplex__flush(self) }
     #[inline] pub fn encode_and_write(&mut self, data: &[u8]) -> i32 { unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) } }
     #[inline] pub fn raw_write(&mut self, data: &[u8]) -> i32 { unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) } }
-    #[inline] pub fn shutdown(&mut self) { unsafe { UpgradedDuplex__shutdown(self) } }
-    #[inline] pub fn shutdown_read(&mut self) { unsafe { UpgradedDuplex__shutdown_read(self) } }
-    #[inline] pub fn close(&mut self) { unsafe { UpgradedDuplex__close(self) } }
+    #[inline] pub fn shutdown(&mut self) { UpgradedDuplex__shutdown(self) }
+    #[inline] pub fn shutdown_read(&mut self) { UpgradedDuplex__shutdown_read(self) }
+    #[inline] pub fn close(&mut self) { UpgradedDuplex__close(self) }
 }
 
 // ── WindowsNamedPipe (cycle-break shim) ─────────────────────────────────────
@@ -164,40 +168,40 @@ impl UpgradedDuplex {
 // `#[no_mangle]`. Surface mirrors `src/jsc/api/bun/socket.zig WindowsNamedPipe`.
 #[cfg(windows)]
 unsafe extern "C" {
-    fn WindowsNamedPipe__ssl_error(this: *const WindowsNamedPipe) -> us_bun_verify_error_t;
-    fn WindowsNamedPipe__is_established(this: *const WindowsNamedPipe) -> bool;
-    fn WindowsNamedPipe__is_closed(this: *const WindowsNamedPipe) -> bool;
-    fn WindowsNamedPipe__is_shutdown(this: *const WindowsNamedPipe) -> bool;
-    fn WindowsNamedPipe__ssl(this: *const WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
-    fn WindowsNamedPipe__set_timeout(this: *mut WindowsNamedPipe, seconds: core::ffi::c_uint);
-    fn WindowsNamedPipe__flush(this: *mut WindowsNamedPipe);
+    safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;
+    safe fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
+    safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
+    safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
     fn WindowsNamedPipe__encode_and_write(this: *mut WindowsNamedPipe, ptr: *const u8, len: usize) -> i32;
     fn WindowsNamedPipe__raw_write(this: *mut WindowsNamedPipe, ptr: *const u8, len: usize) -> i32;
-    fn WindowsNamedPipe__shutdown(this: *mut WindowsNamedPipe);
-    fn WindowsNamedPipe__shutdown_read(this: *mut WindowsNamedPipe);
-    fn WindowsNamedPipe__close(this: *mut WindowsNamedPipe);
-    fn WindowsNamedPipe__pause_stream(this: *mut WindowsNamedPipe) -> bool;
-    fn WindowsNamedPipe__resume_stream(this: *mut WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__shutdown(this: &mut WindowsNamedPipe);
+    safe fn WindowsNamedPipe__shutdown_read(this: &mut WindowsNamedPipe);
+    safe fn WindowsNamedPipe__close(this: &mut WindowsNamedPipe);
+    safe fn WindowsNamedPipe__pause_stream(this: &mut WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__resume_stream(this: &mut WindowsNamedPipe) -> bool;
 }
 #[cfg(windows)]
 impl WindowsNamedPipe {
-    #[inline] pub fn ssl_error(&self) -> us_bun_verify_error_t { unsafe { WindowsNamedPipe__ssl_error(self) } }
-    #[inline] pub fn is_established(&self) -> bool { unsafe { WindowsNamedPipe__is_established(self) } }
-    #[inline] pub fn is_closed(&self) -> bool { unsafe { WindowsNamedPipe__is_closed(self) } }
-    #[inline] pub fn is_shutdown(&self) -> bool { unsafe { WindowsNamedPipe__is_shutdown(self) } }
+    #[inline] pub fn ssl_error(&self) -> us_bun_verify_error_t { WindowsNamedPipe__ssl_error(self) }
+    #[inline] pub fn is_established(&self) -> bool { WindowsNamedPipe__is_established(self) }
+    #[inline] pub fn is_closed(&self) -> bool { WindowsNamedPipe__is_closed(self) }
+    #[inline] pub fn is_shutdown(&self) -> bool { WindowsNamedPipe__is_shutdown(self) }
     #[inline] pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        let p = unsafe { WindowsNamedPipe__ssl(self) };
+        let p = WindowsNamedPipe__ssl(self);
         if p.is_null() { None } else { Some(p) }
     }
-    #[inline] pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) { unsafe { WindowsNamedPipe__set_timeout(self, seconds) } }
-    #[inline] pub fn flush(&mut self) { unsafe { WindowsNamedPipe__flush(self) } }
+    #[inline] pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) { WindowsNamedPipe__set_timeout(self, seconds) }
+    #[inline] pub fn flush(&mut self) { WindowsNamedPipe__flush(self) }
     #[inline] pub fn encode_and_write(&mut self, data: &[u8]) -> i32 { unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) } }
     #[inline] pub fn raw_write(&mut self, data: &[u8]) -> i32 { unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) } }
-    #[inline] pub fn shutdown(&mut self) { unsafe { WindowsNamedPipe__shutdown(self) } }
-    #[inline] pub fn shutdown_read(&mut self) { unsafe { WindowsNamedPipe__shutdown_read(self) } }
-    #[inline] pub fn close(&mut self) { unsafe { WindowsNamedPipe__close(self) } }
-    #[inline] pub fn pause_stream(&mut self) -> bool { unsafe { WindowsNamedPipe__pause_stream(self) } }
-    #[inline] pub fn resume_stream(&mut self) -> bool { unsafe { WindowsNamedPipe__resume_stream(self) } }
+    #[inline] pub fn shutdown(&mut self) { WindowsNamedPipe__shutdown(self) }
+    #[inline] pub fn shutdown_read(&mut self) { WindowsNamedPipe__shutdown_read(self) }
+    #[inline] pub fn close(&mut self) { WindowsNamedPipe__close(self) }
+    #[inline] pub fn pause_stream(&mut self) -> bool { WindowsNamedPipe__pause_stream(self) }
+    #[inline] pub fn resume_stream(&mut self) -> bool { WindowsNamedPipe__resume_stream(self) }
 }
 
 // ───────────────────────────── module map ────────────────────────────────────

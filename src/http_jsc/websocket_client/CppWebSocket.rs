@@ -194,16 +194,14 @@ impl CppWebSocketRef {
     /// `ws` must point to a live C++ `WebCore::WebSocket` that outlives the
     /// returned guard.
     pub unsafe fn new(ws: core::ptr::NonNull<CppWebSocket>) -> Self {
-        // SAFETY: caller contract — `ws` is live.
-        unsafe { ws.as_ref() }.r#ref();
+        CppWebSocket::opaque_ref(ws.as_ptr()).r#ref();
         Self(ws)
     }
 }
 
 impl Drop for CppWebSocketRef {
     fn drop(&mut self) {
-        // SAFETY: `new()` requires the pointee to outlive this guard.
-        unsafe { self.0.as_ref() }.unref();
+        CppWebSocket::opaque_ref(self.0.as_ptr()).unref();
     }
 }
 

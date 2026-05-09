@@ -1643,10 +1643,10 @@ impl CronJob {
                     promise.set_handled(this_ref.global.vm());
                     // `bun_jsc::AnyPromise` (lib.rs duplicate) lacks `.result()`;
                     // dispatch on the variant and call `JSPromise::result` directly.
-                    // SAFETY: variants hold a live JSC heap cell.
+                    // S012: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
                     let reason = match promise {
-                        jsc::AnyPromise::Normal(p) => unsafe { (*p).result(this_ref.global.vm()) },
-                        jsc::AnyPromise::Internal(p) => unsafe { (*p).result(this_ref.global.vm()) },
+                        jsc::AnyPromise::Normal(p) => jsc::JSPromise::opaque_mut(p).result(this_ref.global.vm()),
+                        jsc::AnyPromise::Internal(p) => jsc::JSPromise::opaque_mut(p).result(this_ref.global.vm()),
                     };
                     // SAFETY: `vm.global` is live; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).

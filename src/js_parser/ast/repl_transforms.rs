@@ -741,7 +741,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     let slice: &mut [G::Decl] =
         bump.alloc_slice_fill_with(1, |_| G::Decl { binding, value: None });
-    unsafe { G::DeclList::from_bump_slice(slice) }
+    G::DeclList::from_arena_slice(slice)
 }
 
 // ported from: src/js_parser/ast/repl_transforms.zig

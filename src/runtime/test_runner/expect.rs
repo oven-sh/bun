@@ -2709,9 +2709,9 @@ impl ExpectMatcherUtils {
         let options = if arguments.len() > 3 { arguments[3] } else { JSValue::UNDEFINED };
 
         let mut is_not = false;
-        let mut comment: Option<*mut JSString> = None; // TODO support
-        let mut promise: Option<*mut JSString> = None; // TODO support
-        let mut second_argument: Option<*mut JSString> = None; // TODO support
+        let mut comment: Option<&JSString> = None; // TODO support
+        let mut promise: Option<&JSString> = None; // TODO support
+        let mut second_argument: Option<&JSString> = None; // TODO support
         // TODO support "chalk" colors (they are actually functions like: (value: string) => string;)
         //var second_argument_color: ?string = null;
         //var expected_color: ?string = null;

@@ -399,6 +399,47 @@ impl ZStr {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
         unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
     }
+    /// View as `&CStr`. Safe-surface bridge for FFI sites that need a
+    /// `*const c_char` via `CStr` — funnels the ~dozen open-coded
+    /// `CStr::from_bytes_with_nul_unchecked` call sites through one audited
+    /// `unsafe`. Debug-asserts no interior NUL (CStr's extra invariant over
+    /// ZStr); release relies on the construction-site contract (path/host
+    /// bytes never embed NUL — same assumption Zig `[:0]const u8` → C makes).
+    #[inline]
+    pub fn as_cstr(&self) -> &core::ffi::CStr {
+        debug_assert!(
+            !self.0.contains(&0),
+            "ZStr::as_cstr: interior NUL would truncate the C view",
+        );
+        // SAFETY: `as_bytes_with_nul()` is `[.., 0]` by the ZStr invariant;
+        // no interior NUL is debug-asserted above (caller contract in release).
+        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(self.as_bytes_with_nul()) }
+    }
+    /// Borrow a `&CStr` as `&ZStr` — both are NUL-terminated, len excludes NUL.
+    #[inline]
+    pub fn from_cstr(s: &core::ffi::CStr) -> &ZStr {
+        // SAFETY: `CStr` guarantees `bytes[count] == 0` and the whole range is
+        // readable for the borrow lifetime — exactly the ZStr invariant.
+        unsafe { Self::from_raw(s.as_ptr().cast::<u8>(), s.count_bytes()) }
+    }
+    /// Borrow a NUL-terminated FFI C string as `&ZStr`, or `EMPTY` if `p` is
+    /// null. Single audited funnel for the `strlen`-then-`from_raw` shape that
+    /// previously appeared as ad-hoc local helpers in libarchive / uSockets /
+    /// HTTPCertError. Returns `&'a ZStr` so the *caller* picks the lifetime.
+    ///
+    /// # Safety
+    /// If `p` is non-null it must point to a valid NUL-terminated byte sequence
+    /// readable for `'a`. Null is explicitly allowed (→ `ZStr::EMPTY`).
+    #[inline]
+    pub unsafe fn from_c_ptr<'a>(p: *const core::ffi::c_char) -> &'a ZStr {
+        if p.is_null() {
+            return Self::EMPTY;
+        }
+        // SAFETY: caller contract — `p` is non-null, NUL-terminated, valid for `'a`.
+        let len = unsafe { libc::strlen(p) };
+        // SAFETY: `p[len] == 0` (strlen postcondition) and `p[..len]` readable.
+        unsafe { Self::from_raw(p.cast::<u8>(), len) }
+    }
     // NOTE: prefer `ZBox` for owned NUL-terminated strings. `Box<ZStr>` is
     // supported only as a transitional shim for ported fields that were typed
     // `Box<ZStr>` before `ZBox` existed (e.g. `PackageManager.cache_directory_path`).
@@ -873,6 +914,31 @@ impl Fd {
             // SAFETY: FFI call into libuv; file_number came from _open_osfhandle.
             DecodeWindows::Uv(file_number) => unsafe { fd::uv_get_osfhandle(file_number) },
         }
+    }
+    /// Borrow this `Fd` as a [`std::os::fd::BorrowedFd`] for handing to APIs
+    /// (e.g. `rustix`) that speak the std I/O-safety types.
+    ///
+    /// The returned borrow is tied to `&self`'s lifetime. `Fd` is a plain
+    /// `Copy` integer wrapper, so this does *not* by itself prevent the
+    /// underlying descriptor from being closed elsewhere — it encodes the
+    /// same "caller keeps the fd open for the duration of the call" contract
+    /// every `bun_sys` syscall wrapper already relies on when accepting `Fd`
+    /// by value.
+    #[cfg(unix)]
+    #[inline]
+    pub fn as_borrowed_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        let raw = self.native();
+        // `BorrowedFd`'s niche is `-1`; constructing one with that value is
+        // immediate UB regardless of later use. `Fd::INVALID` (i32::MIN) and
+        // `Fd::cwd()` (AT_FDCWD, -100) are both ≠ -1, so the only way to hit
+        // this is a caller explicitly wrapping a raw `-1`.
+        assert!(raw != -1, "Fd::as_borrowed_fd on raw fd -1");
+        // SAFETY: `raw != -1` (asserted above, satisfying `BorrowedFd`'s
+        // niche). The "remains open for the borrow's lifetime" invariant is
+        // the `Fd` type's contract — every API taking `Fd` requires the
+        // caller to keep the descriptor open for the call, and the returned
+        // borrow cannot outlive `&self`.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
     }
     /// libuv c_int file number. On POSIX this equals `native()`. On Windows,
     /// when kind=uv this extracts the stored uv_file; when kind=system this
@@ -2747,14 +2813,12 @@ impl OptionsEnvArg for &'static ZStr {
         v.extend_from_slice(s);
         v.push(0);
         let z: &'static [u8] = v.leak();
-        // SAFETY: `z[len-1] == 0` (just pushed) and `z` is process-static.
-        unsafe { ZStr::from_raw(z.as_ptr(), z.len() - 1) }
+        ZStr::from_slice_with_nul(z)
     }
     fn from_buf(mut buf: Vec<u8>) -> Self {
         buf.push(0);
         let z: &'static [u8] = buf.leak();
-        // SAFETY: `z[len-1] == 0` (just pushed) and `z` is process-static.
-        unsafe { ZStr::from_raw(z.as_ptr(), z.len() - 1) }
+        ZStr::from_slice_with_nul(z)
     }
 }
 
@@ -2978,7 +3042,7 @@ pub fn which<'a>(
     };
     // Absolute `bin` → probe it directly without joining `cwd` (which.zig:35-42).
     if is_absolute(bin) {
-        return check(buf, b"", bin).map(|n| unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+        return check(buf, b"", bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     if has_sep {
         // Relative with separator → resolve against cwd only. Zig trims
@@ -2989,15 +3053,14 @@ pub fn which<'a>(
             c
         };
         let bin = bin.strip_prefix(b"./").unwrap_or(bin);
-        // SAFETY: n < buf.len, buf[n]==0.
-        return check(buf, cwd, bin).map(|n| unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+        return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     // Bare names go straight to PATH (which.zig:44-63) — do NOT consult cwd.
     let delim: u8 = if cfg!(windows) { b';' } else { b':' };
     for dir in path.split(|&b| b == delim) {
         if dir.is_empty() { continue; }
         if let Some(n) = check(buf, dir, bin) {
-            return Some(unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+            return Some(ZStr::from_buf(&buf.0, n));
         }
     }
     None

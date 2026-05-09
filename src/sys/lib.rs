@@ -201,13 +201,13 @@ pub mod dir_iterator {
         /// Zig: `name.sliceAssumeZ()` — `[:0]const u8` on POSIX.
         #[cfg(not(windows))]
         #[inline] pub fn as_zstr(&self) -> &bun_core::ZStr {
-            // SAFETY: trailing NUL pushed in `from_slice`.
-            unsafe { bun_core::ZStr::from_raw(self.native.as_ptr(), self.native.len() - 1) }
+            // `from_slice` pushed a trailing NUL.
+            bun_core::ZStr::from_slice_with_nul(&self.native)
         }
         #[cfg(windows)]
         #[inline] pub fn as_zstr(&self) -> &bun_core::WStr {
-            // SAFETY: trailing NUL pushed in `from_slice`.
-            unsafe { bun_core::WStr::from_raw(self.native.as_ptr(), self.native.len() - 1) }
+            // `from_slice` pushed a trailing NUL.
+            bun_core::WStr::from_slice_with_nul(&self.native)
         }
     }
 
@@ -495,8 +495,7 @@ pub mod dir_iterator {
                     // NT_ERROR status (e.g. parameter validation), the block
                     // is left untouched, so zero-initialize it rather than
                     // reading uninitialized stack if the call fails.
-                    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-                    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
                     if self.first {
                         // > Any bytes inserted for alignment SHOULD be set to
                         // > zero, and the receiver MUST ignore them.
@@ -2602,8 +2601,7 @@ mod windows_impl {
         // FileEndOfFileInformation)` directly on the HANDLE (NOT via libuv —
         // sys_uv::ftruncate requires a CRT fd via `fd.uv()`, which fails for
         // HANDLE-backed `Fd`s that have no uv mapping).
-        // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-        let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
         let mut eof = bun_windows_sys::FILE_END_OF_FILE_INFORMATION { EndOfFile: len };
         // SAFETY: FFI; fd is a valid HANDLE, eof/io valid for the call.
         let rc = unsafe {
@@ -5016,8 +5014,7 @@ pub fn open_dir_at_windows_nt_path(
         SecurityQualityOfService: core::ptr::null_mut(),
     };
     let mut fd: w::HANDLE = bun_windows_sys::INVALID_HANDLE_VALUE;
-    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     // SAFETY: FFI; all pointer args valid for the call.
     let rc = unsafe {
         w::ntdll::NtCreateFile(
@@ -5091,8 +5088,7 @@ pub fn open_file_at_windows_nt_path(
         SecurityDescriptor: core::ptr::null_mut(),
         SecurityQualityOfService: core::ptr::null_mut(),
     };
-    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
 
     let mut attributes = options.attributes;
     loop {
@@ -5382,8 +5378,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
             SecurityDescriptor: core::ptr::null_mut(),
             SecurityQualityOfService: core::ptr::null_mut(),
         };
-        // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION.
-        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
         // SAFETY: FFI; attr/basic_info valid for the call duration.
         let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
         if rc != w::NTSTATUS::SUCCESS {

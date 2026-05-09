@@ -60,7 +60,7 @@ impl FontWeight {
             return Ok(FontWeight::Absolute(v));
         }
         let location = input.current_source_location();
-        let ident = unsafe { css::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
         if strings::eql_case_insensitive_ascii_check_length(ident, b"bolder") {
             Ok(FontWeight::Bolder)
         } else if strings::eql_case_insensitive_ascii_check_length(ident, b"lighter") {
@@ -116,7 +116,7 @@ impl AbsoluteFontWeight {
             return Ok(AbsoluteFontWeight::Weight(n));
         }
         let location = input.current_source_location();
-        let ident = unsafe { css::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
         if strings::eql_case_insensitive_ascii_check_length(ident, b"normal") {
             Ok(AbsoluteFontWeight::Normal)
         } else if strings::eql_case_insensitive_ascii_check_length(ident, b"bold") {
@@ -578,7 +578,7 @@ impl FontStyle {
 
     pub fn parse(input: &mut css::Parser) -> CssResult<FontStyle> {
         let location = input.current_source_location();
-        let ident = unsafe { css::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
         // todo_stuff.match_ignore_ascii_case
         if strings::eql_case_insensitive_ascii_check_length(b"normal", ident) {
             Ok(FontStyle::Normal)

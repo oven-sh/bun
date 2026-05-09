@@ -321,9 +321,8 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
-        // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
-        // long-lived `*mut Loader<'static>` owned by the VM. `'static` widens to `'a`.
-        unsafe { &*self.global_this.bun_vm().as_mut().transpiler.env }
+        // `env_loader()` returns `&'static Loader<'static>`; `'static` widens to `'a`.
+        self.global_this.bun_vm().as_mut().env_loader()
     }
 
     #[inline]

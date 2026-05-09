@@ -295,13 +295,22 @@ impl Worker {
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
+    /// Borrow the parent `Coordinator`.
+    ///
+    /// SAFETY (invariant): `coord` is a backref to the owning `Coordinator`,
+    /// set at construction and valid for the worker's entire lifetime (the
+    /// coordinator owns all workers). Never null.
+    #[inline]
+    fn coord(&self) -> &Coordinator<'static> {
+        // SAFETY: see doc comment — non-null backref valid for `'_`.
+        unsafe { &*self.coord }
+    }
+
     pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
-        // SAFETY: coord backref valid for worker lifetime.
-        unsafe { (*self.coord).vm.event_loop() }
+        self.coord().vm.event_loop()
     }
     pub fn loop_(&self) -> *mut r#async::Loop {
-        // SAFETY: coord backref valid for worker lifetime.
-        unsafe { (*self.coord).vm.uv_loop() }
+        self.coord().vm.uv_loop()
     }
 
     pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {

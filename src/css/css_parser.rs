@@ -338,15 +338,11 @@ pub mod enum_property_util {
 
     pub fn parse<T: EnumProperty>(input: &mut Parser) -> CssResult<T> {
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let ident = input.expect_ident_cloned()?;
         if let Some(x) = T::from_ascii_case_insensitive(ident) {
             return Ok(x);
         }
-        // SAFETY: ident is a sub-slice of `input.tokenizer.src`; see `src_str`.
-        Err(location.new_unexpected_token_error(Token::Ident(unsafe { src_str(ident) })))
+        Err(location.new_unexpected_token_error(Token::Ident(ident)))
     }
 
     pub fn to_css<T: Into<&'static str> + Copy>(this: &T, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -3773,10 +3769,7 @@ impl<'a> Parser<'a> {
             Token::UnquotedUrl(value) => return Ok(*value),
             Token::Function(name) => {
                 if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string().map(|s| {
-                        // SAFETY: see `src_str` — slice borrows the same input.
-                        unsafe { src_str(s) }
-                    }));
+                    return self.parse_nested_block(|parser| parser.expect_string_cloned());
                 }
             }
             _ => {}
@@ -3795,16 +3788,77 @@ impl<'a> Parser<'a> {
             Token::QuotedString(value) => return Ok(*value),
             Token::Function(name) => {
                 if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string().map(|s| {
-                        // SAFETY: see `src_str` — slice borrows the same input.
-                        unsafe { src_str(s) }
-                    }));
+                    return self.parse_nested_block(|parser| parser.expect_string_cloned());
                 }
             }
             _ => {}
         }
         let tok = tok.clone();
         Err(start_location.new_unexpected_token_error(tok))
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // `*_cloned` helpers — C-7 in PORT_NOTES_PLAN.
+    //
+    // These wrap `expect_*` / `slice_from` and return the slice with its
+    // lifetime detached from `&mut self` (to `'static`, matching `Token`'s
+    // current `&'static [u8]` payload). All `unsafe { src_str(..) }` call
+    // sites in the CSS parser route through here instead of laundering the
+    // lifetime locally.
+    //
+    // Once C-9 threads `'i` through `Token<'i>`, these become safe
+    // `-> CssResult<&'i [u8]>` and the body drops the `unsafe` — no caller
+    // changes needed.
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// `expect_ident` with the borrow detached from `&mut self` so the parser
+    /// is reusable while the slice is held (and the slice fits `Token::Ident`).
+    #[inline]
+    pub fn expect_ident_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_ident()?;
+        // SAFETY: `s` is a sub-slice of `self.input.tokenizer.src` (`&'a [u8]`)
+        // or arena-owned; the returned reference is only ever stored in
+        // structures reachable through the same `Parser<'a>`. See `src_str`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `expect_function` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn expect_function_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_function()?;
+        // SAFETY: see `expect_ident_cloned`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `expect_string` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn expect_string_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_string()?;
+        // SAFETY: see `expect_ident_cloned`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `expect_ident_or_string` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn expect_ident_or_string_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_ident_or_string()?;
+        // SAFETY: see `expect_ident_cloned`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `expect_url` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn expect_url_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_url()?;
+        // SAFETY: see `expect_ident_cloned`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `slice_from` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn slice_from_cloned(&self, start_position: usize) -> &'static [u8] {
+        // SAFETY: see `expect_ident_cloned`.
+        unsafe { src_str(self.slice_from(start_position)) }
     }
 
     pub fn position(&self) -> usize {

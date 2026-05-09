@@ -565,7 +565,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
     let mut cpu_index: u32 = 0;
     // SAFETY: info points to num_cpus entries per host_processor_info contract
-    let info_slice = unsafe { core::slice::from_raw_parts(info, num_cpus as usize) };
+    let info_slice = unsafe { bun_core::ffi::slice(info, num_cpus as usize) };
     while cpu_index < num_cpus {
         let ticks = &info_slice[cpu_index as usize].cpu_ticks;
         let times = CPUTimes {
@@ -604,7 +604,7 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
     let values = JSValue::create_empty_array(global_this, usize::try_from(count).expect("int cast"))?;
 
     // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
-    let infos = unsafe { core::slice::from_raw_parts(cpu_infos, usize::try_from(count).expect("int cast")) };
+    let infos = unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
     for (i, cpu_info) in infos.iter().enumerate() {
         let times = CPUTimes {
             user: cpu_info.cpu_times.user,
@@ -629,12 +629,11 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn get_process_priority(pid: i32) -> i32;
+    safe fn get_process_priority(pid: i32) -> i32;
 }
 
 pub fn get_priority(global: &JSGlobalObject, pid: i32) -> JsResult<i32> {
-    // SAFETY: pure FFI call
-    let result = unsafe { get_process_priority(pid) };
+    let result = get_process_priority(pid);
     if result == i32::MAX {
         let err = SystemError {
             message: BunString::static_("no such process"),
@@ -765,8 +764,7 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
             return js;
         }
 
-        // SAFETY: zeroed POD
-        let mut result: windows::ws2_32::WSADATA = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
         // SAFETY: valid out-pointer
         if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
             // SAFETY: valid buffer
@@ -1137,7 +1135,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
     let mut mac_buf = [0u8; 17];
 
     // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
-    let iface_slice = unsafe { core::slice::from_raw_parts(ifaces, usize::try_from(count).expect("int cast")) };
+    let iface_slice = unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
     for iface in iface_slice {
         let interface = JSValue::create_empty_object(global_this, 7);
 
@@ -1311,7 +1309,7 @@ pub fn release() -> BunString {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub fn set_process_priority(pid: i32, priority: i32) -> i32;
+    pub safe fn set_process_priority(pid: i32, priority: i32) -> i32;
 }
 
 pub fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
@@ -1319,8 +1317,7 @@ pub fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
         return bun_sys::E::ESRCH;
     }
 
-    // SAFETY: pure FFI call
-    let code: i32 = unsafe { set_process_priority(pid, priority) };
+    let code: i32 = set_process_priority(pid, priority);
 
     if code == -2 {
         return bun_sys::E::ESRCH;

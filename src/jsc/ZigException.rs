@@ -12,11 +12,14 @@ use crate::{
     Exception, JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace,
 };
 
+// SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
+// opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);
+// `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place.
 unsafe extern "C" {
-    pub fn ZigException__collectSourceLines(
+    pub safe fn ZigException__collectSourceLines(
         js_value: JSValue,
-        global: *mut JSGlobalObject,
-        exception: *mut ZigException,
+        global: &JSGlobalObject,
+        exception: &mut ZigException,
     );
 }
 
@@ -50,12 +53,7 @@ pub struct ZigException {
 
 impl ZigException {
     pub fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
-        // SAFETY: `self` is a valid &mut; `global.as_mut_ptr()` derives a `*mut`
-        // with write provenance via `UnsafeCell::get()` (JSGlobalObject is an
-        // opaque interior-mutable FFI handle), so C++ may mutate through it.
-        unsafe {
-            ZigException__collectSourceLines(value, global.as_mut_ptr(), self);
-        }
+        ZigException__collectSourceLines(value, global, self);
     }
 
     // PORT NOTE: kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI

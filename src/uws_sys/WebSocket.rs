@@ -188,7 +188,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         let mut ptr: *mut u8 = core::ptr::null_mut();
         let len = unsafe { c::uws_ws_get_remote_address(SSL_FLAG, self.raw(), &raw mut ptr) };
         // SAFETY: uWS returns a pointer+len into its internal buffer.
-        let src = unsafe { core::slice::from_raw_parts(ptr, len) };
+        let src = unsafe { bun_core::ffi::slice(ptr, len) };
         buf[..len].copy_from_slice(src);
         &mut buf[..len]
     }
@@ -276,8 +276,9 @@ impl AnyWebSocket {
             AnyWebSocket::Ssl(p) => (1, p),
             AnyWebSocket::Tcp(p) => (0, p),
         };
-        // SAFETY: see doc comment.
-        (ssl, unsafe { &mut *p })
+        // S012: `RawWebSocket` is an `opaque_ffi!` ZST — route the
+        // `*mut → &mut` deref through the const-asserted safe accessor.
+        (ssl, RawWebSocket::opaque_mut(p))
     }
 
     pub fn memory_cost(self) -> usize {
@@ -413,16 +414,18 @@ impl AnyWebSocket {
         compress: bool,
     ) -> bool {
         // Zig: switch (ssl) { inline else => |tls| uws.NewApp(tls).publishWithOptions(...) }
+        // S012: `NewApp<SSL>` is a ZST opaque — route the `*mut → &mut` deref
+        // through `bun_opaque::opaque_deref_mut` (caller still vouches that
+        // `app` is the matching `uws_app_t*`; the `ssl` flag selects the
+        // const-generic instantiation).
         if ssl {
             uws::NewApp::<true>::publish_with_options(
-                // SAFETY: caller guarantees `app` is the matching uws_app_t*.
-                unsafe { &mut *app.cast::<uws::NewApp<true>>() },
+                bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<true>>()),
                 topic, message, opcode, compress,
             )
         } else {
             uws::NewApp::<false>::publish_with_options(
-                // SAFETY: caller guarantees `app` is the matching uws_app_t*.
-                unsafe { &mut *app.cast::<uws::NewApp<false>>() },
+                bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<false>>()),
                 topic, message, opcode, compress,
             )
         }
@@ -442,7 +445,7 @@ impl AnyWebSocket {
         // SAFETY: `p` is a live uWS-owned socket; out-param is a valid *mut *mut u8.
         let len = unsafe { c::uws_ws_get_remote_address(ssl_flag, p, &raw mut ptr) };
         // SAFETY: uWS returns a pointer+len into its internal buffer.
-        let src = unsafe { core::slice::from_raw_parts(ptr, len) };
+        let src = unsafe { bun_core::ffi::slice(ptr, len) };
         buf[..len].copy_from_slice(src);
         &mut buf[..len]
     }

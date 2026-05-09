@@ -4308,7 +4308,7 @@ impl Resolver {
                     break 'brk RecordType::DEFAULT;
                 }
                 // SAFETY: `to_js_string` returns a live *mut JSString rooted by `record_type_value`.
-                let record_type_str = unsafe { &*record_type_value.to_js_string(global_this)? };
+                let record_type_str = record_type_value.to_js_string(global_this)?;
                 if record_type_str.length() == 0 {
                     break 'brk RecordType::DEFAULT;
                 }
@@ -4329,7 +4329,7 @@ impl Resolver {
             return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
         }
         // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-        let name_str = unsafe { &*name_value.to_js_string(global_this)? };
+        let name_str = name_value.to_js_string(global_this)?;
         if name_str.length() == 0 {
             return Err(global_this.throw_invalid_argument_type("resolve", "name", "non-empty string"));
         }
@@ -4368,7 +4368,7 @@ impl Resolver {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
         // SAFETY: `to_js_string` returns a live *mut JSString rooted by `ip_value`.
-        let ip_str = unsafe { &*ip_value.to_js_string(global_this)? };
+        let ip_str = ip_value.to_js_string(global_this)?;
         if ip_str.length() == 0 {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "non-empty string"));
         }
@@ -4421,7 +4421,7 @@ impl Resolver {
             return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
         }
         // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-        let name_str = unsafe { &*name_value.to_js_string(global_this)? };
+        let name_str = name_value.to_js_string(global_this)?;
         if name_str.length() == 0 {
             return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "non-empty string"));
         }
@@ -4524,7 +4524,7 @@ macro_rules! resolve_record_fn {
                 return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
             }
             // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-            let name_str = unsafe { &*name_value.to_js_string(global_this)? };
+            let name_str = name_value.to_js_string(global_this)?;
             if !$allow_empty && name_str.length() == 0 {
                 return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "non-empty string"));
             }
@@ -4984,13 +4984,10 @@ impl Resolver {
             return Err(global_this.throw_invalid_argument_type("lookupService", "address", "string"));
         }
         let addr_str = addr_value.to_js_string(global_this)?;
-        // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
-        if unsafe { (*addr_str).length() } == 0 {
+        if addr_str.length() == 0 {
             return Err(global_this.throw_invalid_argument_type("lookupService", "address", "non-empty string"));
         }
-        // SAFETY: addr_str is a live JSString cell; get_zig_string borrows its
-        // backing buffer, which JSC keeps alive while addr_str is reachable.
-        let addr_zigstr = unsafe { (*addr_str).get_zig_string(global_this) };
+        let addr_zigstr = addr_str.get_zig_string(global_this);
         let addr_s = addr_zigstr.slice();
 
         let port_value = arguments.ptr[1];

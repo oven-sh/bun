@@ -885,11 +885,9 @@ impl MySQLConnection {
             debug!("Received unexpected command response");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
-        // SAFETY: queue holds a ref on every request; pointer is live.
-        unsafe { (*request).ref_() };
-        // Zig: `defer request.deref()` — scopeguard captures the raw pointer by
-        // copy; deref runs on every exit path.
-        let _request_guard = scopeguard::guard(request, |r| unsafe { (*r).deref_() });
+        // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
+        // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
+        let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
 
         debug!("handleCommand");
         // SAFETY: see above.
@@ -1076,9 +1074,9 @@ impl MySQLConnection {
             debug!("Unexpected prepared statement packet missing request");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
-        // SAFETY: queue holds a ref on every request; pointer is live.
-        unsafe { (*request).ref_() };
-        let _request_guard = scopeguard::guard(request, |r| unsafe { (*r).deref_() });
+        // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
+        // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
+        let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
         // SAFETY: see above.
         let Some(statement) = (unsafe { (*request).get_statement() }) else {
             debug!("Unexpected prepared statement packet missing statement");
@@ -1285,9 +1283,9 @@ impl MySQLConnection {
             debug!("Unexpected result set packet");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
-        // SAFETY: queue holds a ref on every request; pointer is live.
-        unsafe { (*request).ref_() };
-        let _request_guard = scopeguard::guard(request, |r| unsafe { (*r).deref_() });
+        // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
+        // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
+        let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
         let mut ok = OKPacket {
             header: 0,
             affected_rows: 0,

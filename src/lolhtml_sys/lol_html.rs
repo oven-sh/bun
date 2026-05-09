@@ -363,7 +363,7 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(ptr: *const u8, len: us
     let this = unsafe { &mut *user_data.cast::<S>() };
     match len {
         0 => this.done(),
-        _ => this.write(unsafe { core::slice::from_raw_parts(ptr, len) }),
+        _ => this.write(unsafe { bun_core::ffi::slice(ptr, len) }),
     }
 }
 
@@ -422,7 +422,7 @@ impl TextChunkContent {
     pub fn slice(&self) -> &[u8] {
         auto_disable();
         // SAFETY: lol-html guarantees ptr[0..len] is valid for the lifetime of the handler call
-        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
     }
 }
 
@@ -751,13 +751,10 @@ impl HTMLString {
         auto_disable();
         // Zig: @setRuntimeSafety(false)
         // lol_html.h: several getters (lol_html_take_last_error, lol_html_element_get_attribute,
-        // lol_html_doctype_*_get) return { data: NULL, len: 0 } to mean "absent". from_raw_parts
-        // requires a non-null aligned pointer even for len==0, so guard the null case.
-        if self.ptr.is_null() {
-            return &[];
-        }
+        // lol_html_doctype_*_get) return { data: NULL, len: 0 } to mean "absent". `ffi::slice`
+        // tolerates the (null, 0) shape.
         // SAFETY: lol-html guarantees ptr[0..len] is valid until lol_html_str_free
-        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
     }
 
     /// Free callback for `bun.String.createExternal`. Exposed so the higher-level

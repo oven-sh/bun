@@ -396,8 +396,7 @@ impl Listener {
                 // NUL-terminate for the C `&CStr` parameter.
                 let mut hostz = host.to_vec();
                 hostz.push(0);
-                // SAFETY: just appended NUL; bytes contain no interior NUL by construction.
-                let host_cstr = unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&hostz) };
+                let host_cstr = bun_core::ZStr::from_slice_with_nul(&hostz).as_cstr();
                 let ls = this_ref.group.listen(
                     kind,
                     secure_ctx_ptr,
@@ -622,8 +621,7 @@ impl Listener {
         // NUL-terminate for the C `&CStr` parameter.
         let mut server_name_buf = server_name_bytes.to_vec();
         server_name_buf.push(0);
-        // SAFETY: just appended NUL.
-        let server_name = unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&server_name_buf) };
+        let server_name = bun_core::ZStr::from_slice_with_nul(&server_name_buf).as_cstr();
 
         let ListenerType::Uws(ls) = this.listener else {
             return Ok(JSValue::UNDEFINED);

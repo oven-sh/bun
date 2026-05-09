@@ -440,8 +440,8 @@ pub struct Directory<A: Accessor> {
 impl<A: Accessor> Directory<A> {
     #[inline]
     fn dir_path(&self) -> &ZStr {
-        // SAFETY: path[dir_path_len] == 0 was written by transition_to_dir_iter_state
-        unsafe { ZStr::from_raw(self.path.as_ptr(), self.dir_path_len) }
+        // path[dir_path_len] == 0 was written by transition_to_dir_iter_state
+        ZStr::from_buf(&self.path[..], self.dir_path_len)
     }
 }
 

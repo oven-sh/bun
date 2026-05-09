@@ -76,8 +76,7 @@ impl LayerName {
 
     pub fn parse(input: &mut css::css_parser::Parser<'_>) -> css::css_parser::CssResult<LayerName> {
         let mut parts: SmallList<&'static [u8], 1> = SmallList::default();
-        // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
-        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
         parts.append(ident);
 
         loop {

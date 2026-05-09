@@ -546,8 +546,7 @@ pub fn build_with_vm(
             }
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
-            // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-            let _ = unsafe { &*server_transpiler.log }.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = server_transpiler.log().print(std::ptr::from_mut(Output::error_writer()));
             Global::crash();
         }
     };
@@ -1204,9 +1203,9 @@ fn load_module(
         AnyPromise::Internal(p) => p,
         AnyPromise::Normal(_) => unreachable!(),
     };
-    // SAFETY: `as_any_promise` returns a non-null cell pointer owned by the JSC
-    // heap; unique &mut for `set_handled`/`unwrap` on this thread.
-    unsafe { (*promise).set_handled() };
+    // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
+    // safe `*mut → &mut` deref via the const-asserted accessor.
+    jsc::JSInternalPromise::opaque_mut(promise).set_handled();
     // PORT NOTE: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
     // We take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
     // permits mutation — casting a `&T` to `*mut T` and writing through it is
@@ -1223,8 +1222,7 @@ fn load_module(
     }
     // SAFETY: vm is the live per-thread VM; jsc_vm is live for VM lifetime.
     let jsc_vm = unsafe { &mut *(*vm).jsc_vm };
-    // SAFETY: see above; promise cell is still live (rooted via the module loader).
-    match unsafe { (*promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
+    match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
         Unwrapped::Rejected(err) => {

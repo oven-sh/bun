@@ -7,6 +7,7 @@ use bun_threading::{work_pool::WorkPool, WorkPoolTask};
 use crate::debugger::AsyncTaskTracker;
 use crate::event_loop::EventLoop;
 use crate::JSGlobalObject;
+use bun_ptr::BackRef;
 
 /// A generic task that runs work on a thread pool and executes a callback on the main JavaScript thread.
 /// Unlike ConcurrentPromiseTask which automatically resolves a Promise, WorkTask provides more flexibility
@@ -39,7 +40,7 @@ pub struct WorkTask<Context: WorkTaskContext> {
     pub task: WorkPoolTask,
     pub event_loop: *const EventLoop,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
-    pub global_this: *const JSGlobalObject,
+    pub global_this: BackRef<JSGlobalObject>,
     pub concurrent_task: ConcurrentTask,
     pub async_task_tracker: AsyncTaskTracker,
 
@@ -69,7 +70,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         let mut this = Box::new(Self {
             event_loop,
             ctx: value,
-            global_this,
+            global_this: BackRef::new(global_this),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_from_thread_pool,
@@ -115,11 +116,9 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         let this = unsafe { &mut *this };
         let ctx = this.ctx;
         let tracker = this.async_task_tracker;
-        let global_this = this.global_this;
+        let global_this = this.global_this.get();
         this.ref_.unref(js_event_loop_ctx());
 
-        // SAFETY: `global_this` outlives the WorkTask (BACKREF, captured at create).
-        let global_this = unsafe { &*global_this };
         let _dispatch = tracker.dispatch(global_this);
         Context::then(ctx, global_this)
     }
@@ -128,8 +127,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // SAFETY: `this` is the live heap allocation from create_on_js_thread.
         let this = unsafe { &mut *this };
         this.ref_.ref_(js_event_loop_ctx());
-        // SAFETY: `global_this` outlives the WorkTask (BACKREF).
-        this.async_task_tracker.did_schedule(unsafe { &*this.global_this });
+        this.async_task_tracker.did_schedule(this.global_this.get());
         WorkPool::schedule(&raw mut this.task);
     }
 

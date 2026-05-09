@@ -191,9 +191,7 @@ impl IniTestingAPIs {
         let bunstr = jsstr.to_bun_string(global)?;
         let utf8str = bunstr.to_utf8();
 
-        // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
-        // `transpiler.env` is set during VM init (transpiler.rs).
-        let env = unsafe { &mut *global.bun_vm().as_mut().transpiler.env };
+        let env = global.bun_vm().as_mut().transpiler.env_mut();
         // TODO(port): lifetime — `Parser::init` ties `src: &'a [u8]` and
         // `env: &'a mut DotEnvLoader<'a>` to one invariant `'a`; the VM-owned
         // env is `'static`, so erase `src` to match. SAFETY: `parser` is dropped

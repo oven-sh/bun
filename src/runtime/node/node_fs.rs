@@ -4881,7 +4881,7 @@ impl NodeFS {
     pub fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
         let path = if cfg!(windows) && args.path.slice() == b"/dev/null" {
             // SAFETY: literal is NUL-terminated; len excludes the sentinel.
-            unsafe { ZStr::from_raw(b"\\\\.\\NUL\0".as_ptr(), b"\\\\.\\NUL".len()) }
+            ZStr::from_static(b"\\\\.\\NUL\0")
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
@@ -6069,7 +6069,7 @@ impl NodeFS {
 
             let path_slice = args.path.slice();
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
-            let fs = unsafe { &*FileSystem::instance() };
+            let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
             let path_len = fs.abs_buf(&parts, &mut inbuf[..]).len();
             inbuf[path_len] = 0;
@@ -6263,8 +6263,7 @@ impl NodeFS {
                         &[dir, target_path],
                     ).len();
                     self.sync_error_buf[src_len] = 0;
-                    // SAFETY: NUL just written at [src_len].
-                    let src_z = unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), src_len) };
+                    let src_z = ZStr::from_buf(&self.sync_error_buf[..], src_len);
                     break 'auto_detect match sys::directory_exists_at(FD::INVALID, src_z) {
                         Err(_) => ResolvedLinkType::File,
                         Ok(is_dir) => if is_dir { ResolvedLinkType::Dir } else { ResolvedLinkType::File },
@@ -6291,8 +6290,7 @@ impl NodeFS {
                     ).len();
                     self.sync_error_buf[0..4].copy_from_slice(&paths::windows::LONG_PATH_PREFIX_U8);
                     self.sync_error_buf[4 + target_len] = 0;
-                    // SAFETY: NUL written; bytes [0..4+target_len] initialised above.
-                    break 'target unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), 4 + target_len) };
+                    break 'target ZStr::from_buf(&self.sync_error_buf[..], 4 + target_len);
                 }
                 if paths::is_absolute(target_path) {
                     // This normalizes slashes and adds the long path prefix
@@ -6303,8 +6301,7 @@ impl NodeFS {
                 paths::resolve_path::dangerously_convert_path_to_windows_in_place::<u8>(
                     &mut self.sync_error_buf[..target_path.len()],
                 );
-                // SAFETY: NUL written at [target_path.len()].
-                break 'target unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), target_path.len()) };
+                break 'target ZStr::from_buf(&self.sync_error_buf[..], target_path.len());
             };
             return match Syscall::symlink_uv(
                 processed_target,

@@ -261,9 +261,9 @@ pub fn caa_reply_to_js(
     obj.put(global_this, b"critical", JSValue::js_number(this.critical as f64));
 
     // SAFETY: property is a c-ares-owned buffer of plength bytes.
-    let property = unsafe { core::slice::from_raw_parts(this.property, this.plength as usize) };
+    let property = unsafe { bun_core::ffi::slice(this.property, this.plength as usize) };
     // SAFETY: value is a c-ares-owned buffer of length bytes.
-    let value = unsafe { core::slice::from_raw_parts(this.value, this.length as usize) };
+    let value = unsafe { bun_core::ffi::slice(this.value, this.length as usize) };
     obj.put(global_this, property, utf8_to_js(global_this, value)?);
 
     Ok(obj)
@@ -396,7 +396,7 @@ pub fn txt_reply_to_js(
 ) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global_this, 1)?;
     // SAFETY: txt is a c-ares-owned buffer of `length` bytes.
-    let value = unsafe { core::slice::from_raw_parts(this.txt, this.length as usize) };
+    let value = unsafe { bun_core::ffi::slice(this.txt, this.length as usize) };
     array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
     Ok(array)
 }
@@ -422,7 +422,7 @@ pub fn txt_reply_to_js_for_any(
         // SAFETY: txt walks the c-ares-owned linked list.
         let node = unsafe { &mut *txt };
         // SAFETY: txt is a c-ares-owned buffer of `length` bytes.
-        let value = unsafe { core::slice::from_raw_parts(node.txt, node.length as usize) };
+        let value = unsafe { bun_core::ffi::slice(node.txt, node.length as usize) };
         array.put_index(global_this, i, utf8_to_js(global_this, value)?)?;
         txt = node.next;
         i += 1;
@@ -719,10 +719,9 @@ impl ErrorDeferred {
     pub fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
         struct Context {
             deferred: Box<ErrorDeferred>,
-            // TODO(port): lifetime — LIFETIMES.tsv row 1403 says JSC_BORROW → `&JSGlobalObject`,
-            // but this Box<Context> crosses an event-loop tick via enqueue_task (needs 'static).
-            // Stored as raw and re-borrowed in callback; Phase B to reconcile with TSV.
-            global_this: *const JSGlobalObject,
+            // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
+            // enqueued task (VM-owned), so a `BackRef` captures the invariant.
+            global_this: bun_ptr::BackRef<JSGlobalObject>,
         }
         impl Context {
             // PORT NOTE: `bun_event_loop::ManagedTask::new` expects
@@ -731,15 +730,14 @@ impl ErrorDeferred {
                 // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
-                // SAFETY: global_this outlives the enqueued task (VM-owned).
-                let global = unsafe { &*this.global_this };
+                let global = this.global_this.get();
                 this.deferred.reject(global).map_err(Into::into)
             }
         }
 
         let context = bun_core::heap::into_raw(Box::new(Context {
             deferred: self,
-            global_this: std::ptr::from_ref(global_this),
+            global_this: bun_ptr::BackRef::new(global_this),
         }));
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of

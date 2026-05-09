@@ -487,7 +487,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // existing AST trees, a link must be established.
                     let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
                     symbol.use_count_estimate = 0;
-                    symbol.link = stmt.namespace_ref;
+                    symbol.link.set(stmt.namespace_ref);
                     // PORT NOTE: Zig `@hasField(@typeInfo(@TypeOf(p)).pointer.child, "symbol_uses")`
                     // gated this on whether the concrete `p` type carries `symbol_uses`. The
                     // concrete `P` always does; once a `ParserLike` trait is introduced for

@@ -433,8 +433,7 @@ impl PackageManager {
         let cwd: &[u8] = &cwd_owned;
         let this_transpiler = self.configure_env_for_scripts(ctx, log_level)?;
 
-        // SAFETY: `Transpiler.env` is set during `Transpiler::init` and never null afterward.
-        let env_loader = unsafe { &mut *this_transpiler.env };
+        let env_loader = this_transpiler.env_mut();
         let mut script_env = env_loader.map.clone_with_allocator()?;
         // `defer script_env.map.deinit()` — handled by Drop
 

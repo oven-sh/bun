@@ -562,11 +562,9 @@ impl Encoding for Utf16 {
     #[inline]
     fn key_bytes(s: &[u16]) -> &[u8] {
         // Reinterpret `&[u16]` as `&[u8]` of `len * 2` for byte-keyed hashing.
-        // SAFETY: u8 alignment is 1 (always satisfied); the resulting slice
-        // covers exactly the same memory. Uniqueness is preserved (equal u16
-        // slices ⇔ equal byte slices). Same pattern as
-        // `bun_logger::ast::E::EString::hash()` for the utf16 arm.
-        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len() * 2) }
+        // Uniqueness is preserved (equal u16 slices ⇔ equal byte slices). Same
+        // pattern as `bun_logger::ast::E::EString::hash()` for the utf16 arm.
+        bytemuck::cast_slice(s)
     }
     #[inline]
     fn unit_from_u16(u: u16) -> u16 {

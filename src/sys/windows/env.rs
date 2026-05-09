@@ -66,7 +66,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
             num_vars += 1;
         }
         // SAFETY: we just measured `len` u16 elements (including terminators) within the OS-owned block.
-        let wtf16_slice = unsafe { core::slice::from_raw_parts(wtf16_buf, len) };
+        let wtf16_slice = unsafe { bun_core::ffi::slice(wtf16_buf, len) };
         // Zig: `bun.strings.toUTF8AllocWithType(allocator, []u16, slice) catch oom()`.
         // Rust `bun_core::strings::to_utf8_alloc` is infallible (panics on OOM)
         // and returns `Vec<u8>` directly — no `?` here.

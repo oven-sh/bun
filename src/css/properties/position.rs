@@ -45,19 +45,10 @@ fn lookup_keyword(ident: &[u8]) -> Option<PositionKeyword> {
 impl Position {
     pub fn parse(input: &mut Parser) -> css::Result<Position> {
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            Err(e) => return Err(e),
-            Ok(v) => v,
-        };
+        let ident = input.expect_ident_cloned()?;
 
         let Some(keyword) = lookup_keyword(ident) else {
-            // SAFETY: `ident` is a slice into Parser's source buffer, which the
-            // arena outlives; `Token` stores it as `&'static [u8]` (the
-            // crate-wide `src_str` lifetime erasure used everywhere in
-            // css_parser.rs — see `css_parser::src_str`).
-            return Err(location.new_unexpected_token_error(
-                Token::Ident(unsafe { crate::css_parser::src_str(ident) }),
-            ));
+            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         };
 
         Ok(match keyword {

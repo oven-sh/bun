@@ -262,8 +262,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         jsc::mark_binding!();
         if let Some(ws) = self.outgoing_websocket.take() {
             log!("fail ({})", <&'static str>::from(code));
-            // SAFETY: ws is a valid CppWebSocket* held by us
-            unsafe { (*ws.as_ptr()).did_abrupt_close(code) };
+            CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code);
             // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
             // the socket/tunnel I/O ref (or by caller's guard).
             unsafe { Self::deref(self) };
@@ -285,8 +284,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("onHandshake({})", success);
 
         if let Some(ws) = self.outgoing_websocket {
-            // SAFETY: ws is a valid CppWebSocket* held by us
-            let ws_ref = unsafe { ws.as_ref() };
+            let ws_ref = CppWebSocket::opaque_ref(ws.as_ptr());
             let reject_unauthorized = ws_ref.reject_unauthorized();
 
             // Only reject the connection if reject_unauthorized is true
@@ -408,8 +406,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.clear_data();
             return;
         };
-        // SAFETY: out is a valid CppWebSocket* held by us
-        let out = unsafe { out.as_ref() };
+        let out = CppWebSocket::opaque_ref(out.as_ptr());
 
         match kind {
             Opcode::Text => {
@@ -1442,8 +1439,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let opcode = Opcode::from_raw(op);
         // SAFETY: ptr/len from C++; caller guarantees valid slice. Empty Blob
-        // sends (null, 0), which `from_raw_parts` rejects, so use `&[]`.
-        let slice: &[u8] = if len == 0 { &[] } else { unsafe { core::slice::from_raw_parts(ptr, len) } };
+        // sends (null, 0); `ffi::slice` tolerates that shape.
+        let slice: &[u8] = unsafe { bun_core::ffi::slice(ptr, len) };
         let bytes = Copy::Bytes(slice);
         // fast path: small frame, no backpressure, attempt to send without allocating
         let frame_size = WebsocketHeader::frame_size_including_mask(len);
@@ -1590,8 +1587,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
         self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         jsc::mark_binding!();
-        // SAFETY: out is a valid CppWebSocket*
-        unsafe { (*out.as_ptr()).did_abrupt_close(code) };
+        CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code);
         // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
         // caller's ref guard (see cancel/handle_close).
         unsafe { Self::deref(self) };
@@ -1603,8 +1599,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
         self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         jsc::mark_binding!();
-        // SAFETY: out is a valid CppWebSocket*
-        unsafe { (*out.as_ptr()).did_close(code, reason) };
+        CppWebSocket::opaque_ref(out.as_ptr()).did_close(code, reason);
         // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
         // caller's ref guard.
         unsafe { Self::deref(self) };

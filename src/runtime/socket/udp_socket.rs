@@ -2,6 +2,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::mem::MaybeUninit;
 
 use bun_io::KeepAlive;
+use bun_ptr::BackRef;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -95,8 +96,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
     // SAFETY: see on_close.
     let this: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
-    // SAFETY: globalThis stored at construction; VM outlives socket.
-    let global_this = unsafe { &*this.global_this };
+    let global_this = this.global_this.get();
     let err_value = sys_err.to_js(global_this);
     this.call_error_handler(JSValue::ZERO, err_value);
 }
@@ -112,8 +112,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
 
     let event_loop = VirtualMachine::get().event_loop_mut();
     event_loop.enter();
-    // SAFETY: globalThis stored at construction; VM outlives socket.
-    let global_this = unsafe { &*this.global_this };
+    let global_this = this.global_this.get();
     let result = callback.call(global_this, this_value, &[this_value]);
     if let Err(err) = result {
         this.call_error_handler(JSValue::ZERO, global_this.take_exception(err));
@@ -130,8 +129,11 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         return;
     }
 
-    // SAFETY: globalThis stored at construction; VM outlives socket.
-    let global_this = unsafe { &*udp_socket.global_this };
+    // Copy the BackRef out (it is `Copy`) so the `&JSGlobalObject` borrow is
+    // tied to a local, not `*udp_socket` — `call_error_handler` below needs
+    // `&mut *udp_socket` while `global_this` is still live.
+    let global_this_ref = udp_socket.global_this;
+    let global_this = global_this_ref.get();
     // SAFETY: buf valid for the duration of this callback per uws contract.
     let buf = unsafe { &mut *buf };
 
@@ -438,11 +440,9 @@ pub struct UDPSocket {
     pub socket: Option<*mut uws::udp::Socket>,
     pub loop_: *mut uws::Loop,
 
-    // Stored as `*const` because we only ever re-borrow it as `&JSGlobalObject`
-    // (see Zig spec: `globalThis: *JSGlobalObject` is read-only at every use site).
-    // A `*mut` here would require a `&T as *const T as *mut T` cast at construction,
-    // which is UB-adjacent provenance laundering even when never written through.
-    pub global_this: *const JSGlobalObject,
+    // Read-only back-reference to the owning JS global; the VM/global strictly
+    // outlives every socket it creates (see Zig spec: `globalThis: *JSGlobalObject`).
+    pub global_this: BackRef<JSGlobalObject>,
     pub this_value: JsRef,
 
     pub jsc_ref: JscRef,
@@ -465,7 +465,7 @@ impl UDPSocket {
         let this_ptr = Self::new(Self {
             socket: None,
             config: UDPSocketConfig::default(),
-            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+            global_this: BackRef::new(global_this),
             loop_: uws::Loop::get(),
             vm,
             this_value: JsRef::empty(),
@@ -607,8 +607,7 @@ impl UDPSocket {
             this_value_
         };
         let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
-        // SAFETY: global_this stored at construction; VM outlives socket.
-        let global_this = unsafe { &*self.global_this };
+        let global_this = self.global_this.get();
         let vm = global_this.bun_vm().as_mut();
 
         if err.is_termination_exception() {
@@ -1073,8 +1072,7 @@ impl UDPSocket {
                     // is expected — and root that, so phase 2 only ever sees
                     // primitive JSString cells.
                     if val.is_string() {
-                        // SAFETY: to_js_string returned non-null on success path.
-                        break 'blk unsafe { (*val.to_js_string(global_this)?).to_js() };
+                        break 'blk val.to_js_string(global_this)?.to_js();
                     }
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected ArrayBufferView or string as payload"
@@ -1222,7 +1220,7 @@ impl UDPSocket {
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
                 // SAFETY: to_js_string returned non-null on success path.
-                payload_str = unsafe { (*payload_arg.to_js_string(global_this)?).to_slice(global_this) };
+                payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
                 break 'brk payload_str.slice();
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1406,8 +1404,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_hostname(this: &Self, _: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: global_this stored at construction; VM outlives socket.
-        this.config.hostname.to_js(unsafe { &*this.global_this })
+        this.config.hostname.to_js(this.global_this.get())
     }
 
     #[bun_jsc::host_fn(getter)]

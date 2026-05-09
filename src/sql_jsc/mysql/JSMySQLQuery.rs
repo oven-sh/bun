@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
+use bun_ptr::BackRef;
 use crate::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
     VirtualMachine, VirtualMachineSqlExt as _,
@@ -29,39 +30,21 @@ macro_rules! debug {
 // `bun_jsc::{JSGlobalObject, CallFrame, JSValue, JsError}`, which are distinct
 // from this crate's local `crate::jsc::*` mirror types until `crate::jsc`
 // becomes `pub use bun_jsc as jsc;` (see lib.rs TODO). Re-enable then.
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
     this_value: JsRef,
     // unfortunately we cannot use #ref_count here
     ref_count: Cell<u32>,
     // TODO(port): lifetime — heap-stored borrow of VM/global (JSC_BORROW on m_ctx payload)
     vm: NonNull<VirtualMachine>,
-    global_object: NonNull<JSGlobalObject>,
+    global_object: BackRef<JSGlobalObject>,
     query: MySQLQuery,
 }
 
-// Intrusive refcount (bun.ptr.RefCount): ref/deref drive deinit when count hits 0.
-impl JSMySQLQuery {
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    pub fn deref(&mut self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
-        if n == 0 {
-            // SAFETY: self was allocated via heap::alloc in create_instance; count hit 0.
-            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
-        }
-    }
-
-    /// `deref_` — spelling used by raw-pointer call sites in
-    /// `MySQLConnection.rs` where Rust's `Deref` trait would otherwise be
-    /// found first via auto-deref. Forwards to the intrusive-rc decrement.
-    #[inline]
-    pub fn deref_(&mut self) {
-        self.deref();
-    }
-}
+// Intrusive refcount (bun.ptr.RefCount): `ref_()`/`deref()` provided by
+// `#[derive(CellRefCounted)]`; `destroy` routes to `Self::deinit` via the
+// struct-level `#[ref_count(destroy = …)]` attribute.
 
 impl JSMySQLQuery {
     pub fn estimated_size(&self) -> usize {
@@ -94,7 +77,8 @@ impl JSMySQLQuery {
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
         let this = bun_core::heap::release(self);
         this.this_value.finalize();
-        this.deref();
+        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
+        unsafe { Self::deref(this) };
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLQuery__createInstance")]
@@ -149,7 +133,7 @@ impl JSMySQLQuery {
             // SAFETY: `sql_vm_ptr()` is non-null (asserted in debug builds);
             // stored with full write provenance for later `&mut *p` at use sites.
             vm: unsafe { NonNull::new_unchecked(global_this.sql_vm_ptr()) },
-            global_object: NonNull::from(global_this),
+            global_object: BackRef::new(global_this),
             query: MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple),
         }));
         // SAFETY: just allocated; uniquely owned here until handed to the JS wrapper.
@@ -175,17 +159,16 @@ impl JSMySQLQuery {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         debug!("doRun");
-        this.ref_();
-        let mut _guard = scopeguard::guard(std::ptr::from_mut::<Self>(this), |p| {
-            // SAFETY: `p` points to `*this`, which outlives this scope (m_ctx payload).
-            unsafe { (*p).deref() };
-        });
-        // PORT NOTE: reshaped for borrowck — re-borrow through guard pointer.
-        // SAFETY: `*_guard` was derived from the `&mut Self` param above; this
+        let this_ptr = std::ptr::from_mut::<Self>(this);
+        // SAFETY: `this_ptr` points to the live m_ctx payload; `ScopedRef` bumps
+        // the intrusive count and derefs on every exit path.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // PORT NOTE: reshaped for borrowck — re-borrow through the raw pointer.
+        // SAFETY: `this_ptr` was derived from the `&mut Self` param above; this
         // re-borrow is a stacked descendant. The original `this` is shadowed and
-        // never accessed again; the guard's drop-closure runs only after this
-        // borrow ends (reverse local drop order), so no two `&mut` overlap.
-        let this = unsafe { &mut **_guard };
+        // never accessed again; `_guard`'s drop runs only after this borrow ends
+        // (reverse local drop order), so no two `&mut` overlap.
+        let this = unsafe { &mut *this_ptr };
 
         let arguments = callframe.arguments();
         if arguments.len() < 2 {
@@ -287,7 +270,7 @@ impl JSMySQLQuery {
                 if (*p).this_value.is_not_empty() && is_last_result {
                     (*p).this_value.downgrade();
                 }
-                (*p).deref();
+                Self::deref(p);
             }
         });
         // PORT NOTE: reshaped for borrowck — re-borrow through guard pointer.
@@ -346,16 +329,15 @@ impl JSMySQLQuery {
     pub fn mark_as_failed(&mut self) {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
-        self.ref_();
-        let mut _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| {
-            // SAFETY: `p` aliases `*self` for the duration of this scope only.
-            unsafe { (*p).deref() };
-        });
-        // SAFETY: `*_guard` was derived from `self as *mut Self`; this re-borrow
+        let this_ptr = std::ptr::from_mut::<Self>(self);
+        // SAFETY: `this_ptr` aliases `*self` for the duration of this scope only;
+        // `ScopedRef` bumps the count and derefs on every exit path.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: `this_ptr` was derived from `self as *mut Self`; this re-borrow
         // is a stacked descendant of the incoming `&mut self`. `self` is not
-        // accessed again below, and `_guard`'s drop-closure runs only after
-        // `this` is dropped (reverse local drop order).
-        let this = unsafe { &mut **_guard };
+        // accessed again below, and `_guard`'s drop runs only after `this` is
+        // dropped (reverse local drop order).
+        let this = unsafe { &mut *this_ptr };
         if this.this_value.is_not_empty() {
             this.this_value.downgrade();
         }
@@ -389,7 +371,7 @@ impl JSMySQLQuery {
                 if (*p).this_value.is_not_empty() {
                     (*p).this_value.downgrade();
                 }
-                (*p).deref();
+                Self::deref(p);
             }
         });
         // PORT NOTE: reshaped for borrowck — re-borrow through guard pointer.
@@ -447,7 +429,7 @@ impl JSMySQLQuery {
         }
         // PORT NOTE: detach `global_object`'s lifetime from `&self` so the
         // `&mut self` re-borrows below (this_value.upgrade / errguard / query)
-        // don't conflict. `self.global_object` is a `NonNull` whose pointee
+        // don't conflict. `self.global_object` is a `BackRef` whose pointee
         // outlives every JSMySQLQuery (owned by the VM).
         // SAFETY: see `Self::global_object()` — same invariant, unbounded 'a.
         let global_object: &JSGlobalObject = unsafe { &*self.global_object.as_ptr() };
@@ -627,8 +609,7 @@ impl JSMySQLQuery {
     }
     #[inline]
     fn global_object(&self) -> &JSGlobalObject {
-        // SAFETY: global outlives every JSMySQLQuery (owned by the VM).
-        unsafe { self.global_object.as_ref() }
+        self.global_object.get()
     }
 }
 

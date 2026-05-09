@@ -62,9 +62,12 @@ impl From<bun_sys::SystemError> for SystemError {
 pub type Maybe<R> = core::result::Result<R, SystemError>;
 
 // TODO(port): move to jsc_sys
+// SAFETY (safe fn): `SystemError` is `#[repr(C)]` and read-only on the C++ side;
+// `JSGlobalObject` is an opaque `UnsafeCell`-backed handle, so `&JSGlobalObject`
+// is ABI-identical to a non-null `JSGlobalObject*` with write provenance.
 unsafe extern "C" {
-    fn SystemError__toErrorInstance(this: *const SystemError, global: *mut JSGlobalObject) -> JSValue;
-    fn SystemError__toErrorInstanceWithInfoObject(this: *const SystemError, global: *mut JSGlobalObject) -> JSValue;
+    safe fn SystemError__toErrorInstance(this: &SystemError, global: &JSGlobalObject) -> JSValue;
+    safe fn SystemError__toErrorInstanceWithInfoObject(this: &SystemError, global: &JSGlobalObject) -> JSValue;
 }
 
 impl SystemError {
@@ -108,10 +111,7 @@ impl SystemError {
 
     pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         // Zig: defer this.deref();
-        // SAFETY: self is a valid #[repr(C)] SystemError read-only by C++; `global.as_mut_ptr()`
-        // yields a write-provenance `*mut` via the `UnsafeCell` in `JSGlobalObject`, matching the
-        // Zig spec's `*JSGlobalObject` (C++ may mutate VM/exception state through it).
-        let result = unsafe { SystemError__toErrorInstance(self, global.as_mut_ptr()) };
+        let result = SystemError__toErrorInstance(self, global);
         self.deref();
         result
     }
@@ -147,10 +147,7 @@ impl SystemError {
     /// to match the error code that `node:os` throws.
     pub fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue {
         // Zig: defer this.deref();
-        // SAFETY: self is a valid #[repr(C)] SystemError read-only by C++; `global.as_mut_ptr()`
-        // yields a write-provenance `*mut` via the `UnsafeCell` in `JSGlobalObject`, matching the
-        // Zig spec's `*JSGlobalObject` (C++ may mutate VM/exception state through it).
-        let result = unsafe { SystemError__toErrorInstanceWithInfoObject(self, global.as_mut_ptr()) };
+        let result = SystemError__toErrorInstanceWithInfoObject(self, global);
         self.deref();
         result
     }

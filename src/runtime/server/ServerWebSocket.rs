@@ -663,8 +663,7 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            // SAFETY: to_js_string returns a non-null *mut JSString on Ok.
-            let view = unsafe { &*js_string }.view(global_this);
+            let view = js_string.view(global_this);
             let slice = view.to_slice();
 
             let buffer = slice.slice();
@@ -692,7 +691,7 @@ impl ServerWebSocket {
                     0.0
                 },
             );
-            unsafe { &*js_string }.ensure_still_alive();
+            js_string.ensure_still_alive();
             Ok(ret)
         }
     }
@@ -741,8 +740,7 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        // SAFETY: to_js_string returns a non-null *mut JSString on Ok.
-        let view = unsafe { &*js_string }.view(global_this);
+        let view = js_string.view(global_this);
         let slice = view.to_slice();
 
         let buffer = slice.slice();
@@ -770,7 +768,7 @@ impl ServerWebSocket {
                 0.0
             },
         );
-        unsafe { &*js_string }.ensure_still_alive();
+        js_string.ensure_still_alive();
         Ok(ret)
     }
 
@@ -1051,8 +1049,7 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            // SAFETY: to_js_string returns a non-null *mut JSString on Ok.
-            let view = unsafe { &*js_string }.view(global_this);
+            let view = js_string.view(global_this);
             let slice = view.to_slice();
 
             let buffer = slice.slice();
@@ -1082,7 +1079,7 @@ impl ServerWebSocket {
                     JSValue::js_number(0.0)
                 }
             };
-            unsafe { &*js_string }.ensure_still_alive();
+            js_string.ensure_still_alive();
             Ok(ret)
         }
     }
@@ -1120,8 +1117,7 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        // SAFETY: to_js_string returns a non-null *mut JSString on Ok.
-        let view = unsafe { &*js_string }.view(global_this);
+        let view = js_string.view(global_this);
         let slice = view.to_slice();
 
         let buffer = slice.slice();
@@ -1151,7 +1147,7 @@ impl ServerWebSocket {
                 JSValue::js_number(0.0)
             }
         };
-        unsafe { &*js_string }.ensure_still_alive();
+        js_string.ensure_still_alive();
         Ok(ret)
     }
 
@@ -1348,7 +1344,7 @@ impl ServerWebSocket {
                 } else if value.is_string() {
                     // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
                     let string_value =
-                        unsafe { &*value.to_js_string(global_this)? }.to_slice(global_this);
+                        value.to_js_string(global_this)?.to_slice(global_this);
                     let buffer = string_value.slice();
 
                     return Ok(match self.websocket().send(buffer, opcode, false, true) {

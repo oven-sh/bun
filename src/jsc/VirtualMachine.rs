@@ -2929,10 +2929,7 @@ impl VirtualMachine {
         if let Some(v) = self.default_tls_reject_unauthorized {
             return v;
         }
-        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
-        // SAFETY: `transpiler.env` is a process-lifetime allocation; `&mut`
-        // needed for the cached-result write inside.
-        unsafe { &mut *self.transpiler.env }.get_tls_reject_unauthorized()
+        self.transpiler.env_mut().get_tls_reject_unauthorized()
     }
 
     /// Spec VirtualMachine.zig:302 `onSubprocessSpawn`.

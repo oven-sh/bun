@@ -247,10 +247,9 @@ impl UTF8Fallback {
     ) -> streams::result::Writable {
         // PERF(port): `write_fn` was `comptime anytype` (monomorphized); now a fn pointer.
         let bytes = input.slice();
-        // SAFETY: input.slice() is guaranteed by caller to be u16-aligned UTF-16 bytes.
-        let str_: &[u16] = unsafe {
-            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-        };
+        // input.slice() is guaranteed by caller to be u16-aligned UTF-16 bytes;
+        // bytemuck checks alignment + even length at runtime.
+        let str_: &[u16] = bytemuck::cast_slice(bytes);
 
         if Self::STACK_SIZE >= str_.len() * 2 {
             let mut buf = [0u8; Self::STACK_SIZE];
@@ -799,20 +798,16 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
 
         let str_ = arg.to_js_string(global)?;
-        // SAFETY: to_js_string returns a live JSString* on Ok.
-        let view = unsafe { &*str_ }.view(global);
+        let view = str_.view(global);
         if view.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
 
-        // SAFETY: keep the JSString GC-live while we borrow its character buffer.
-        let _keep_str = bun_jsc::EnsureStillAlive(unsafe { &*str_ }.to_js());
+        // Keep the JSString GC-live while we borrow its character buffer.
+        let _keep_str = bun_jsc::EnsureStillAlive(str_.to_js());
         if view.is_16bit() {
             let utf16 = view.utf16_slice_aligned();
-            // SAFETY: reinterpreting &[u16] as &[u8] of double length.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(utf16.as_ptr().cast::<u8>(), utf16.len() * 2)
-            };
+            let bytes: &[u8] = bytemuck::cast_slice(utf16);
             // SAFETY: borrowed view over GC-kept JSString.
             let data = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(bytes) };
             return Ok(this
@@ -1325,10 +1320,7 @@ macro_rules! js_sink {
                 let _keep_str = ::bun_jsc::EnsureStillAlive(str_.as_value());
                 if view.is_16bit() {
                     let utf16 = view.utf16_slice_aligned();
-                    // SAFETY: reinterpreting &[u16] as &[u8] of double length.
-                    let bytes = unsafe {
-                        ::core::slice::from_raw_parts(utf16.as_ptr().cast::<u8>(), utf16.len() * 2)
-                    };
+                    let bytes: &[u8] = bytemuck::cast_slice(utf16);
                     return this
                         .sink
                         .write_utf16(streams::Result::Temporary(
@@ -1386,10 +1378,7 @@ macro_rules! js_sink {
                     // TODO(port): Zig passed `view.utf16SliceAligned()` directly into
                     // `.temporary` (a Vec<u8>) — relying on implicit slice coercion.
                     let utf16 = view.utf16_slice_aligned();
-                    // SAFETY: reinterpreting &[u16] as &[u8] of double length.
-                    let bytes = unsafe {
-                        ::core::slice::from_raw_parts(utf16.as_ptr().cast::<u8>(), utf16.len() * 2)
-                    };
+                    let bytes: &[u8] = bytemuck::cast_slice(utf16);
                     return this
                         .sink
                         .write_utf16(streams::Result::Temporary(

@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use bun_collections::VecExt;
 
 use crate::ImportItemStatus;
@@ -27,7 +29,12 @@ pub struct Symbol {
     pub namespace_alias: Option<G::NamespaceAlias>,
 
     /// Used by the parser for single pass parsing.
-    pub link: Ref,
+    ///
+    /// `Cell` because union-find (`merge`/`follow`) mutates this through
+    /// `&Symbol` while other shared refs to the same table are live. `Ref` is
+    /// `Copy`, so `Cell<Ref>` is zero-cost and lets those algorithms run
+    /// without raw-pointer writes.
+    pub link: Cell<Ref>,
 
     /// An estimate of the number of uses of this symbol. This is used to detect
     /// whether a symbol is used or not. For example, TypeScript imports that are
@@ -163,7 +170,7 @@ impl Default for Symbol {
         Self {
             original_name: crate::StoreStr::EMPTY,
             namespace_alias: None,
-            link: Ref::NONE,
+            link: Cell::new(Ref::NONE),
             use_count_estimate: 0,
             chunk_index: INVALID_CHUNK_INDEX,
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
@@ -227,7 +234,7 @@ impl Symbol {
     #[inline]
     pub fn has_link(&self) -> bool {
         // Zig: `self.link.tag != .invalid`
-        self.link.is_valid()
+        self.link.get().is_valid()
     }
 }
 
@@ -393,7 +400,7 @@ impl Map {
             );
             for (inner_index, symbol) in symbols.slice().iter().enumerate() {
                 let display_ref = if symbol.has_link() {
-                    symbol.link
+                    symbol.link.get()
                 } else {
                     Ref::new(
                         inner_index as u32, // @truncate
@@ -450,36 +457,35 @@ impl Map {
             return new;
         }
 
-        // Union-find with path compression. Zig holds two aliasing *Symbol into the same
-        // NestedList; we mirror that with raw-pointer-only access — no `&mut Symbol` is
-        // materialized across the recursive `&mut self` calls. `get()` derives *mut from
-        // Vec's raw `NonNull` (write provenance preserved, independent of `&self`
-        // borrow); backing storage is never reallocated during merge.
-        let old_symbol = self.get(old).unwrap();
-        // SAFETY: valid in-bounds ptr from `get()`; see note above.
-        if unsafe { (*old_symbol).has_link() } {
-            let old_link = unsafe { (*old_symbol).link };
+        // Union-find with path compression. `link` is `Cell<Ref>`, so all link
+        // reads/writes go through safe shared access (`get_const`). Backing
+        // storage is never reallocated during merge, so re-looking-up after the
+        // recursive call is cheap and the borrow ends before the `&mut self`
+        // recursion.
+        let old_link = self.get_const(old).unwrap().link.get();
+        if old_link.is_valid() {
             let merged = self.merge(old_link, new);
-            // SAFETY: storage not reallocated by recursion; ptr still valid.
-            unsafe { (*old_symbol).link = merged };
+            self.get_const(old).unwrap().link.set(merged);
             return merged;
         }
 
-        let new_symbol = self.get(new).unwrap();
-        // SAFETY: valid in-bounds ptr from `get()`; see note above.
-        if unsafe { (*new_symbol).has_link() } {
-            let new_link = unsafe { (*new_symbol).link };
+        let new_link = self.get_const(new).unwrap().link.get();
+        if new_link.is_valid() {
             let merged = self.merge(old, new_link);
-            // SAFETY: storage not reallocated by recursion; ptr still valid.
-            unsafe { (*new_symbol).link = merged };
+            self.get_const(new).unwrap().link.set(merged);
             return merged;
         }
 
-        // SAFETY: `old != new` (checked above) so old_symbol/new_symbol are disjoint
-        // elements; materializing both `&mut` here is sound (cf. split_at_mut). Neither
-        // outlives this block.
+        self.get_const(old).unwrap().link.set(new);
+        // `merge_contents_with` mutates non-Cell fields (use_count_estimate,
+        // must_not_be_renamed, original_name) on `new` while reading `old`.
+        // SAFETY: `old != new` (checked above) so the two slots are disjoint
+        // elements of the NestedList; `get()` derives `*mut` from Vec's raw
+        // `NonNull` (write provenance preserved). Neither `&mut` outlives this
+        // block (cf. split_at_mut).
+        let old_symbol = self.get(old).unwrap();
+        let new_symbol = self.get(new).unwrap();
         unsafe {
-            (*old_symbol).link = new;
             (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
         }
         new
@@ -580,11 +586,11 @@ impl Map {
 
     pub fn get_with_link(&self, ref_: Ref) -> Option<*mut Symbol> {
         let symbol_ptr = self.get(ref_)?;
-        // SAFETY: ptr from get() is valid while storage is not reallocated. Read-only
-        // access here; raw deref avoids holding a `&mut` we don't need.
-        if unsafe { (*symbol_ptr).has_link() } {
-            let link = unsafe { (*symbol_ptr).link };
-            return Some(self.get(link).unwrap_or(symbol_ptr));
+        // SAFETY: ptr from get() is a valid in-bounds element while storage is
+        // not reallocated. Shared-ref deref only — link is read via `Cell`.
+        let symbol = unsafe { &*symbol_ptr };
+        if symbol.has_link() {
+            return Some(self.get(symbol.link.get()).unwrap_or(symbol_ptr));
         }
         Some(symbol_ptr)
     }
@@ -592,35 +598,23 @@ impl Map {
     pub fn get_with_link_const(&self, ref_: Ref) -> Option<&Symbol> {
         let symbol = self.get_const(ref_)?;
         if symbol.has_link() {
-            return Some(self.get_const(symbol.link).unwrap_or(symbol));
+            return Some(self.get_const(symbol.link.get()).unwrap_or(symbol));
         }
         Some(symbol)
     }
 
     pub fn follow_all(&mut self) {
         // TODO(b2-blocked): bun_perf::trace("Symbols.followAll") — RAII guard
-        // PORT NOTE: reshaped for borrowck — iterate via raw ptrs (same aliasing model as
-        // `get`). follow() does not reallocate symbols_for_source. Derive *mut from the
-        // raw NonNull fields directly (NOT via `.slice()`, which would yield read-only
-        // provenance).
-        let outer_len = self.symbols_for_source.len();
-        let outer = self.symbols_for_source.as_ptr().cast_mut();
-        for src in 0..outer_len {
-            // SAFETY: src in-bounds; raw-ptr field reads — no `&` created.
-            let (base, inner_len) = unsafe {
-                let inner: *mut List = outer.add(src);
-                ((*inner).as_mut_ptr(), (*inner).len())
-            };
-            for i in 0..inner_len {
-                // SAFETY: in-bounds; storage stable across follow(). Raw-ptr access — no
-                // `&mut` held across the `follow(&self, ..)` call.
-                let symbol = unsafe { base.add(i) };
-                if !unsafe { (*symbol).has_link() } {
+        // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
+        // mutate `link` in place; `follow()` only takes `&self` and only touches
+        // `link`, so the nested shared borrows coexist.
+        for symbols in self.symbols_for_source.slice().iter() {
+            for symbol in symbols.slice().iter() {
+                if !symbol.has_link() {
                     continue;
                 }
-                let link = unsafe { (*symbol).link };
-                let resolved = Self::follow(self, link);
-                unsafe { (*symbol).link = resolved };
+                let resolved = self.follow(symbol.link.get());
+                symbol.link.set(resolved);
             }
         }
     }
@@ -636,14 +630,11 @@ impl Map {
     pub fn follow(&self, ref_: Ref) -> Ref {
         // Entry guard — `ref_` may be `Ref::None` / a SourceContentsSlice ref
         // (callers pass arbitrary Refs read out of AST nodes). After this,
-        // `symbol_ptr` is a valid in-bounds slot.
-        let Some(symbol_ptr) = self.get(ref_) else {
+        // `symbol` is a valid in-bounds slot.
+        let Some(symbol) = self.get_const(ref_) else {
             return ref_;
         };
-        // SAFETY: see note on `get` — `*mut Symbol` derived from Vec's raw
-        // NonNull (write provenance preserved). Raw-ptr-only access; no `&`/
-        // `&mut` materialized across mutation.
-        let mut link = unsafe { (*symbol_ptr).link };
+        let mut link = symbol.link.get();
         // `has_link()` is `link.is_valid()` (tag != RefTag::Invalid). This is
         // the overwhelmingly common exit — most symbols are roots, especially
         // after `follow_all` has run once.
@@ -660,28 +651,15 @@ impl Map {
         // such refs satisfy the `get_unchecked` contract: in-bounds
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
         // never `SourceContentsSlice` and never the null source sentinel.
-        // We can therefore index without re-checking the entry guards on
-        // every hop.
-        let outer = self.symbols_for_source.as_ptr().cast_mut();
-        let outer_len = self.symbols_for_source.len();
-        // SAFETY: invariant above — every valid `link` on the chain satisfies
-        // the `get_unchecked` contract; `symbols_for_source` is never
-        // reallocated during link/print. Same provenance argument as `get()`.
-        let lookup = |r: Ref| -> *mut Symbol {
-            let src = r.source_index() as usize;
-            let idx = r.inner_index() as usize;
+        let outer = self.symbols_for_source.slice();
+        let lookup = |r: Ref| -> &Symbol {
             debug_assert!(!r.is_source_contents_slice());
-            debug_assert!(src < outer_len);
-            unsafe {
-                let inner: *mut List = outer.add(src);
-                debug_assert!(idx < (*inner).len());
-                (*inner).as_mut_ptr().add(idx)
-            }
+            &outer[r.source_index() as usize].slice()[r.inner_index() as usize]
         };
 
         let mut root = link;
         loop {
-            let next = unsafe { (*lookup(root)).link };
+            let next = lookup(root).link.get();
             if !next.is_valid() {
                 break;
             }
@@ -692,23 +670,21 @@ impl Map {
         // intermediate node to point directly at `root` (matches the Zig
         // recursion's post-order `symbol.link = link` writes). The `!=` gate
         // mirrors Zig's `if (!symbol.link.eql(link))` to avoid a redundant
-        // store when the chain was already length-1.
+        // store when the chain was already length-1. `link` is `Cell<Ref>`, so
+        // writes go through `&Symbol` safely.
         if !link.eql(root) {
-            // SAFETY: `symbol_ptr` from `get()` above; storage not reallocated.
-            unsafe { (*symbol_ptr).link = root };
+            symbol.link.set(root);
             loop {
                 let p = lookup(link);
-                let next = unsafe { (*p).link };
-                // `next.eql(root)` ⇔ `(*p).link` already points at root —
+                let next = p.link.get();
+                // `next.eql(root)` ⇔ `p.link` already points at root —
                 // mirrors Zig's post-order `if (!symbol.link.eql(link))` gate
                 // and saves a redundant store on the last intermediate plus
                 // the otherwise-wasted lookup of `root` itself.
                 if next.eql(root) || !next.is_valid() {
                     break;
                 }
-                // SAFETY: `p` is a valid in-bounds slot per `lookup` invariant;
-                // raw-ptr write, no aliasing `&mut` exists.
-                unsafe { (*p).link = root };
+                p.link.set(root);
                 link = next;
             }
         }

@@ -196,7 +196,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         let vm: &mut VirtualMachine = unsafe { &mut *vm.cast_mut() };
         #[cfg(windows)]
         {
-            let _ = vm;
             // ipc=true matches ipc.zig windowsConfigureClient. With ipc=true
             // libuv wraps reads/writes in its own framing; both ends use it so
             // the wrapping is transparent and our payload bytes pass through

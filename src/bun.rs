@@ -1785,14 +1785,13 @@ pub fn errno_to_zig_err(err: i32) -> bun_core::Error {
             debug_assert!(num > 0);
         }
     }
-    // Bounds-checked construction (Zig: `if (num > 0 and num < errno_map.len)`).
-    // `from_raw` is an unchecked transmute and would be UB for out-of-range
-    // codes (e.g. `abs(UV_ENOENT)` = 4058 on Windows). On Windows the i32 path
-    // routes through `init_c_int` (uv/Win32 mapping with range checks); on
-    // POSIX `init(i64)` bounds-checks against `SystemErrno::MAX`.
-    #[cfg(windows)]
-    let mapped = bun_sys::SystemErrno::init(num);
-    #[cfg(not(windows))]
+    // Direct discriminant lookup (Zig: `if (num > 0 and num < errno_map.len)
+    // return errno_map[num]`). `num` is a SystemErrno discriminant on every
+    // target — Windows callers (e.g. `get_last_error()`) pass `get_last_errno()
+    // as i32`, NOT a Win32 error code. The `i64` dispatch hits the
+    // direct-discriminant path on both targets; routing Windows through the
+    // `i32` impl (`init_c_int` → Win32-error table) would mis-map e.g. `13`
+    // (EACCES) → ERROR_INVALID_DATA → EINVAL.
     let mapped = bun_sys::SystemErrno::init(num as i64);
     if let Some(e) = mapped {
         return bun_core::Error::intern(e.name());

@@ -5960,12 +5960,12 @@ impl NodeFS {
         if (args.flag.as_int() & sys::O::APPEND) == 0 && !matches!(args.file, PathOrFileDescriptor::Fd(_)) {
             // If this errors, we silently ignore it.
             // Not all files are seekable (and thus, not all files can be truncated).
-            #[cfg(windows)] { let _ = unsafe { windows::SetEndOfFile(fd.cast()) }; }
+            #[cfg(windows)] { let _ = unsafe { windows::SetEndOfFile(fd.native()) }; }
             #[cfg(not(windows))] { let _ = Syscall::ftruncate(fd, (written as u64 & ((1u64 << 63) - 1)) as i64); }
         }
 
         if args.flush {
-            #[cfg(windows)] { let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.cast()) }; }
+            #[cfg(windows)] { let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) }; }
             #[cfg(not(windows))] { let _ = unsafe { libc::fsync(fd.native()) }; }
         }
 

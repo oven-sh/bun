@@ -76,11 +76,7 @@ test("http2 session does not retain closed streams", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stderr, stdout: stdout.trim().split("\n").pop(), exitCode }).toEqual({
     stderr: "",
     stdout: expect.stringMatching(/^ok retained=\d+ lastId=\d+$/),

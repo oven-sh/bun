@@ -22,7 +22,6 @@ use crate::ast::{
 // was `Expr.Data.Store` / `*E.Foo`; some callers route through `expr::`).
 pub use crate::ast::StoreRef;
 
-pub use crate::BlobRef;
 
 use crate::StoreStr as Str;
 
@@ -145,20 +144,17 @@ impl Expr {
     // PORT NOTE: `Expr.fromBlob` (Zig) lives at the JSC tier — it touches
     // `bun.http.MimeType`, `JSON.parseForMacro`, and `jsc::webcore::Blob`. The
     // `bun_http_types` crate is not a dependency of `bun_js_parser`, so the
-    // Rust port routes through a vtable (`BlobRef`) and a content-type byte
-    // slice instead of the typed `MimeType` struct. Category detection is
-    // inlined here from `MimeType::Category` (Zig: `mime_type.category ==
-    // .json` / `.isTextLike()`).
+    // Rust port takes the blob's bytes + content-type as raw slices and the
+    // caller (`bun_js_parser_jsc::Macro`) extracts them from the `Blob` cell.
+    // Category detection is inlined here from `MimeType::Category` (Zig:
+    // `mime_type.category == .json` / `.isTextLike()`).
     pub fn from_blob(
-        blob: BlobRef,
+        bytes: &[u8],
         bump: &Bump,
-        mime_type_: Option<&[u8]>,
+        mime_type: &[u8],
         log: &mut logger::Log,
         loc: Loc,
     ) -> Result<Expr, bun_core::Error> {
-        let bytes = blob.shared_view();
-        let mime_type: &[u8] = mime_type_.unwrap_or_else(|| blob.content_type());
-
         // MimeType::Category::Json — `application/json` or `+json` suffix.
         let is_json = mime_type == b"application/json"
             || mime_type.ends_with(b"+json")

@@ -1586,15 +1586,6 @@ impl Default for RuntimeTranspilerCache {
     }
 }
 
-// `Expr::from_blob` (macro-expansion path) reads a `bun_jsc::webcore::Blob`
-// (T6 upward ref). `bun_js_parser_jsc` provides the `WebCore` arm.
-bun_dispatch::link_interface! {
-    pub BlobRef[WebCore] {
-        fn shared_view() -> &'static [u8];
-        fn content_type() -> &'static [u8];
-    }
-}
-
 // Low tier (`js_parser`) names no `bun_jsc` types; `bun_jsc` provides the
 // `Jsc` arm. Cold path: at most twice per parse; callee does file I/O.
 // `parser_options` is `*const ()` because `parser::Options` would be a forward

@@ -7,7 +7,6 @@ use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::{err, Error, Output};
 use bun_js_parser::{
     self as js_ast,
-    ast::expr::BlobRef,
     ast::DisableStoreReset,
     Expr, ExprData, ExprNodeList, ToJSError, E, G, S,
 };
@@ -35,13 +34,6 @@ use bun_jsc::virtual_machine::{
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::{BuildMessage, ResolveMessage};
 
-bun_js_parser::link_impl_BlobRef! {
-    WebCore for WebCore::Blob => |this| {
-        // Slices borrow the blob's store, pinned by the JS cell for the call.
-        shared_view()  => bun_collections::detach_lifetime((*this).shared_view()),
-        content_type() => bun_collections::detach_lifetime((*this).content_type_slice()),
-    }
-}
 use bun_resolver::Result as ResolveResult;
 
 pub const NAMESPACE: &[u8] = b"macro";
@@ -697,14 +689,15 @@ impl<'a> Run<'a> {
                 }
 
                 if let Some(blob) = blob_ {
-                    // SAFETY: `blob` (a JS cell) is pinned for the call.
-                    let blob_ref = unsafe {
-                        BlobRef::new(bun_js_parser::BlobRefKind::WebCore, blob.cast_mut())
+                    // SAFETY: `blob` (a JS cell) is pinned for the call; the
+                    // shared-view/content-type slices borrow its store.
+                    let (bytes, ct) = unsafe {
+                        ((*blob).shared_view(), (*blob).content_type_slice())
                     };
                     return Expr::from_blob(
-                        blob_ref,
+                        bytes,
                         self.bump,
-                        mime_type,
+                        mime_type.unwrap_or(ct),
                         self.log,
                         self.caller.loc,
                     )

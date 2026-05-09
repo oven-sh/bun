@@ -1180,15 +1180,20 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
         let prev = this.read_write_loop.uv_buf.slice();
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
-        let rc2 = libuv::uv_fs_write(
-            this.event_loop.uv_loop(),
-            &mut this.io_request,
-            destination_fd.uv(),
-            core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
-            1,
-            -1,
-            Some(on_write),
-        );
+        // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` is a tail
+        // slice of the previous write buffer (still backed by `read_buf`), and
+        // `on_write` is a valid `uv_fs_cb`.
+        let rc2 = unsafe {
+            libuv::uv_fs_write(
+                this.event_loop.uv_loop(),
+                &mut this.io_request,
+                destination_fd.uv(),
+                core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
+                1,
+                -1,
+                Some(on_write),
+            )
+        };
 
         if let Some(err) = rc2.to_error(bun_sys::Tag::write) {
             this.err = Some(err);
@@ -1240,10 +1245,13 @@ impl<'a> CopyFileWindows<'a> {
         destination_mode: Option<Mode>,
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
+        // SAFETY: `event_loop.global` is set to the VM's `JSGlobalObject` before any JS task can
+        // schedule a CopyFile; it has process lifetime.
+        let global = unsafe { event_loop.global.unwrap().as_ref() };
         let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
-            promise: jsc::JSPromiseStrong::init(event_loop.global),
+            promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: unsafe { core::mem::zeroed::<libuv::fs_t>() },
             event_loop,

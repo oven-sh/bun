@@ -3448,6 +3448,16 @@ where
     }
 }
 
+#[cfg(windows)]
+impl<C, F> read_file::ReadFileUvHandler for NewInternalReadFileHandler<C, F>
+where
+    F: InternalReadFileFn<C>,
+{
+    fn run(ctx: *mut c_void, bytes: read_file::ReadFileResultType) {
+        Self::run(ctx, bytes);
+    }
+}
+
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4166,7 +4176,7 @@ pub fn write_file_with_source_destination(
             let promise_value = promise.as_value(ctx);
             promise_value.ensure_still_alive();
             // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise.strong.set(ctx, promise_value) };
+            unsafe { (*write_file_promise).promise.set(ctx, promise_value) };
             match write_file_mod::WriteFileWindows::create(
                 ctx.bun_vm().event_loop(),
                 destination_blob.borrowed_view(),
@@ -4175,8 +4185,10 @@ pub fn write_file_with_source_destination(
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
-                Err(e) if e == bun_core::err!("WriteFileWindowsDeinitialized") => {}
-                Err(e) => return Err(e.into()),
+                Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
+                Err(write_file_mod::WriteFileWindowsError::JSTerminated) => {
+                    return Err(jsc::JsTerminated.into());
+                }
                 Ok(_) => {}
             }
             return Ok(promise_value);
@@ -4209,14 +4221,16 @@ pub fn write_file_with_source_destination(
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
         #[cfg(windows)]
         {
-            return copy_file::CopyFileWindows::init(
+            return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
-                ctx.bun_vm().event_loop(),
+                // SAFETY: `bun_vm()` is live for the duration of a host call;
+                // the event loop outlives the async copy state machine.
+                unsafe { &*ctx.bun_vm().event_loop() },
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size,
                 options.mode,
-            );
+            ));
         }
         #[cfg(not(windows))]
         {
@@ -4894,7 +4908,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     if truncate {
         #[cfg(windows)]
         // SAFETY: fd is a valid open handle on this code path; FFI call.
-        unsafe { bun_sys::windows::kernel32::SetEndOfFile(fd.cast()) };
+        unsafe { bun_sys::windows::kernel32::SetEndOfFile(fd.native()) };
         #[cfg(not(windows))]
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }

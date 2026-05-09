@@ -300,7 +300,11 @@ impl PathWatcher {
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
         let mut outbuf = PathBuffer::uninit();
-        let event_path: &ZStr = match sys::readlink(path, &mut outbuf) {
+        // Windows `sys::readlink` returns the byte length (`Maybe<usize>`); the link target is
+        // written into `outbuf[..len]` with `outbuf[len] == 0` (sys_uv NUL-terminates). Reconstruct
+        // the `[:0]const u8` Zig sees from `Maybe([:0]u8)` via `ZStr::from_buf`.
+        let readlink_result = sys::readlink(path, &mut outbuf);
+        let event_path: &ZStr = match readlink_result {
             sys::Result::Err(err) => 'brk: {
                 if err.errno == sys::E::NOENT as _ {
                     return sys::Result::Err(sys::Error {
@@ -311,7 +315,7 @@ impl PathWatcher {
                 }
                 break 'brk path;
             }
-            sys::Result::Ok(event_path) => event_path,
+            sys::Result::Ok(len) => ZStr::from_buf(outbuf.as_slice(), len),
         };
 
         // BACKREF field stays raw (LIFETIMES.tsv); capture the pointer once before further &mut use.
@@ -349,7 +353,7 @@ impl PathWatcher {
                 &mut (*this).handle,
                 Some(PathWatcher::uv_event_callback),
                 event_path.as_ptr().cast::<c_char>(),
-                if recursive { uv::UV_FS_EVENT_RECURSIVE } else { 0 },
+                if recursive { uv::UV_FS_EVENT_RECURSIVE as u32 } else { 0 },
             )
         };
         if let Some(err) = start_rc.to_error(sys::Tag::watch) {
@@ -369,11 +373,11 @@ impl PathWatcher {
         // SAFETY: handle is open (uv_fs_event_start succeeded); uv_unref only flips the ref flag.
         unsafe { uv::uv_unref(ptr::addr_of_mut!((*this).handle).cast()) };
 
-        // Owned key: NUL-terminated dupe of event_path (Zig: `dupeZ`).
-        manager.watchers
-            .insert(ZStr::from_bytes(event_path.as_bytes()).into_boxed(), this);
-        // TODO(port): `ZStr::from_bytes(..).into_boxed()` is a placeholder for `allocator.dupeZ(u8, ..)`
-        // — confirm bun_str API for "owned NUL-terminated byte slice".
+        // Owned key: dupe of event_path bytes (Zig: `dupeZ` — the sentinel NUL is not part of the
+        // slice's `.len`, so the StringArrayHashMap key compares equal to `event_path.as_bytes()`).
+        manager
+            .watchers
+            .insert(Box::<[u8]>::from(event_path.as_bytes()), this);
 
         sys::Result::Ok(this)
     }

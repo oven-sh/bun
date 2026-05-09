@@ -89,6 +89,52 @@ pub type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
 pub type StdioResult = Option<Fd>;
 
+/// RAII handle owning one intrusive ref on a heap `FileSink` (Zig's
+/// `Writable.pipe: *FileSink`). `FileSink` carries its own
+/// `#[derive(CellRefCounted)]` refcount and is allocated via `Box::into_raw`
+/// in `FileSink::create*`, so it cannot live behind an `Arc`. Drop derefs
+/// (and frees on last ref), matching Zig's `pipe.deref()` on teardown.
+pub struct FileSinkPtr(core::ptr::NonNull<FileSink>);
+
+impl FileSinkPtr {
+    /// Adopt the +1 ref returned by `FileSink::create*`.
+    ///
+    /// # Safety
+    /// `ptr` is non-null, points to a live `FileSink` from
+    /// `FileSink::create*`, and the caller transfers its single owned ref to
+    /// this handle.
+    #[inline]
+    unsafe fn adopt(ptr: *mut FileSink) -> Self {
+        // SAFETY: caller contract — `ptr` is non-null.
+        Self(unsafe { core::ptr::NonNull::new_unchecked(ptr) })
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut FileSink {
+        self.0.as_ptr()
+    }
+
+    /// Mutably borrow the payload. Shell is single-threaded; mirrors Zig's
+    /// `*FileSink` mutation through any alias.
+    ///
+    /// # Safety
+    /// Caller must ensure no overlapping `&`/`&mut` to the `FileSink` is live.
+    #[inline]
+    pub unsafe fn as_mut(&self) -> &mut FileSink {
+        // SAFETY: caller contract.
+        unsafe { &mut *self.0.as_ptr() }
+    }
+}
+
+impl Drop for FileSinkPtr {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `adopt` contract — `self.0` is live with one owned intrusive
+        // ref; `FileSink::deref` (CellRefCounted derive) frees on zero.
+        unsafe { FileSink::deref(self.0.as_ptr()) };
+    }
+}
+
 bun_output::declare_scope!(SHELL_SUBPROC, visible);
 
 macro_rules! log {

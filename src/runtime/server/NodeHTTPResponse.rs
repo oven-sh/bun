@@ -897,12 +897,18 @@ impl NodeHTTPResponse {
             self.buffered_request_body_data_during_pause.len()
         );
         if self.buffered_request_body_data_during_pause.len() > 0 {
-            let result = JSValue::create_buffer(
+            // Zig spec: `createBuffer` then `.{}` — `bun.ByteList` has no Drop, so the
+            // assignment just forgets the storage and ownership transfers to JSC. A Rust
+            // `Vec` *does* Drop, so the prior `create_buffer(slice_mut)` + `= Vec::new()`
+            // freed the backing allocation while JSC still pointed at it (mimalloc
+            // free-list pointer overwrote the first 8 bytes — test-http-pause.js saw
+            // `'�\x01xУ\x02\x00\x00Body from Client'`). Move the Vec out and hand the
+            // boxed slice to JSC so the deallocator owns the only free.
+            let bytes = std::mem::take(&mut self.buffered_request_body_data_during_pause);
+            return Some(JSValue::create_buffer_from_box(
                 global_object,
-                self.buffered_request_body_data_during_pause.slice_mut(),
-            );
-            self.buffered_request_body_data_during_pause = Vec::new();
-            return Some(result);
+                bytes.into_boxed_slice(),
+            ));
         }
         None
     }

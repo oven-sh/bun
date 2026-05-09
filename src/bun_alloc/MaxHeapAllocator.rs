@@ -7,10 +7,11 @@ use core::ptr::NonNull;
 use crate::{Alignment, Allocator};
 
 // `std.c.max_align_t` alignment. The `libc` crate does not expose
-// `max_align_t` on Windows MSVC, so a local mirror is used there only —
-// non-Windows targets keep `libc::max_align_t` (which carries `long double`,
-// align 16 on x86_64/aarch64; the {f64,i64,*const ()} fallback would silently
-// downgrade to 8).
+// `max_align_t` on every target Bun ships (missing on Windows MSVC and on
+// FreeBSD aarch64), so those targets carry a local mirror of the Zig
+// definition. Remaining non-Windows targets keep `libc::max_align_t` (which
+// carries `long double`, align 16 on x86_64/aarch64; the {f64,i64,*const ()}
+// fallback would silently downgrade to 8).
 #[cfg(windows)]
 #[repr(C)]
 struct MaxAlignT {
@@ -20,7 +21,13 @@ struct MaxAlignT {
 }
 #[cfg(windows)]
 const MAX_ALIGN: usize = align_of::<MaxAlignT>();
-#[cfg(not(windows))]
+// Zig: `extern struct { a: c_longlong, b: c_longdouble }` — on AArch64
+// AAPCS64 `long double` is IEEE binary128, 16-byte aligned. The `libc` crate
+// only defines `max_align_t` for FreeBSD on x86_64, so hardcode the ABI value
+// for the aarch64 port.
+#[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
+const MAX_ALIGN: usize = 16;
+#[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
 const MAX_ALIGN: usize = align_of::<libc::max_align_t>();
 
 /// Zig backed `array_list` with `std.array_list.AlignedManaged(u8, .of(std.c.max_align_t))`

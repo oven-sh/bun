@@ -29,8 +29,8 @@ pub fn to_match_snapshot(
         return this.throw_fmt(
             global,
             signature,
-            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
-            format_args!(""),
+            "",
+            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"),
         );
     }
 
@@ -40,8 +40,8 @@ pub fn to_match_snapshot(
         return this.throw_fmt(
             global,
             signature,
-            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n",
-            format_args!(""),
+            "",
+            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"),
         );
     };
     let _ = buntest_strong; // Drop at scope exit replaces `defer buntest_strong.deinit()`.
@@ -59,8 +59,8 @@ pub fn to_match_snapshot(
                 return this.throw_fmt(
                     global,
                     "",
-                    "\n\nMatcher error: Expected first argument to be a string or object\n",
-                    format_args!(""),
+                    "",
+                    format_args!("\n\nMatcher error: Expected first argument to be a string or object\n"),
                 );
             }
         }
@@ -72,8 +72,8 @@ pub fn to_match_snapshot(
                 return this.throw_fmt(
                     global,
                     signature,
-                    "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
-                    format_args!(""),
+                    "",
+                    format_args!("\n\nMatcher error: Expected <green>properties<r> must be an object\n"),
                 );
             }
 
@@ -85,8 +85,8 @@ pub fn to_match_snapshot(
                 return this.throw_fmt(
                     global,
                     "",
-                    "\n\nMatcher error: Expected second argument to be a string\n",
-                    format_args!(""),
+                    "",
+                    format_args!("\n\nMatcher error: Expected second argument to be a string\n"),
                 );
             }
         }

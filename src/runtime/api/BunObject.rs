@@ -1685,39 +1685,44 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         let mut map_size: Option<usize> = None;
 
         if let Some(opts) = args.next_eat() {
-            flags = if opts.get_boolean_loose(global_this, "shared")?.unwrap_or(true) {
-                libc::MAP_SHARED
-            } else {
-                libc::MAP_PRIVATE
-            };
+            if opts.is_object() {
+                flags = if opts.get_boolean_loose(global_this, "shared")?.unwrap_or(true) {
+                    libc::MAP_SHARED
+                } else {
+                    libc::MAP_PRIVATE
+                };
 
-            // TODO(port): @hasField(std.c.MAP, "SYNC") — gated by target_os in Rust.
-            #[cfg(target_os = "linux")]
-            if opts.get_boolean_loose(global_this, "sync")?.unwrap_or(false) {
-                flags = libc::MAP_SHARED_VALIDATE | libc::MAP_SYNC;
-            }
-
-            if let Some(value) = opts.get(global_this, "size")? {
-                let size_value = value.coerce_to_int64(global_this)?;
-                if size_value < 0 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "size must be a non-negative integer",
-                    )));
+                // TODO(port): @hasField(std.c.MAP, "SYNC") — gated by target_os in Rust.
+                #[cfg(target_os = "linux")]
+                if opts.get_boolean_loose(global_this, "sync")?.unwrap_or(false) {
+                    flags = libc::MAP_SHARED_VALIDATE | libc::MAP_SYNC;
                 }
-                map_size = Some(usize::try_from(size_value).expect("int cast"));
-            }
 
-            if let Some(value) = opts.get(global_this, "offset")? {
-                let offset_value = value.coerce_to_int64(global_this)?;
-                if offset_value < 0 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "offset must be a non-negative integer",
-                    )));
+                if let Some(value) = opts.get(global_this, "size")? {
+                    let size_value = value.coerce_to_int64(global_this)?;
+                    if size_value < 0 {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "size must be a non-negative integer",
+                        )));
+                    }
+                    map_size = Some(usize::try_from(size_value).expect("int cast"));
                 }
-                offset = usize::try_from(offset_value).expect("int cast");
-                // std.mem.alignBackwardAnyAlign(usize, offset, pageSize())
-                let page = bun_sys::page_size();
-                offset -= offset % page;
+
+                if let Some(value) = opts.get(global_this, "offset")? {
+                    let offset_value = value.coerce_to_int64(global_this)?;
+                    if offset_value < 0 {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "offset must be a non-negative integer",
+                        )));
+                    }
+                    offset = usize::try_from(offset_value).expect("int cast");
+                    // std.mem.alignBackwardAnyAlign(usize, offset, pageSize())
+                    let page = bun_sys::page_size();
+                    offset -= offset % page;
+                }
+            } else if !opts.is_undefined_or_null() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected options to be an object")));
             }
         }
 

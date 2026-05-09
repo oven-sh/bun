@@ -1596,9 +1596,16 @@ impl Run {
             );
         }
 
-        // PORT NOTE: `fixDeadCodeElimination()` calls dropped — Rust does not
-        // DCE `#[no_mangle] extern "C"` symbols the way Zig does, so the
-        // anti-DCE shims are unnecessary here.
+        // These create undefined references to externally-defined C symbols
+        // (uv_* posix stubs, v8:: shims) so the linker pulls those archive
+        // members from libbun.a in CI's split link-only mode and keeps them
+        // through `--gc-sections`. Without them, dlopen'd NAPI modules see
+        // `undefined symbol: uv_*` instead of the friendly crash message.
+        // (Rust-defined `#[no_mangle]` exports don't need this; the imported
+        // C symbols do.)
+        crate::napi::fix_dead_code_elimination();
+        crate::webcore::bake_response::fix_dead_code_elimination();
+        bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }
 }

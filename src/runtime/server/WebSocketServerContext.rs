@@ -331,6 +331,12 @@ pub fn on_create(
                 break 'getter;
             }
 
+            if !per_message_deflate.is_object() {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "websocket expects perMessageDeflate to be a boolean or an object"
+                )));
+            }
+
             if let Some(compression) = per_message_deflate.get_truthy(global_object, "compress")? {
                 if compression.is_boolean() {
                     server.compression |= if compression.to_boolean() {

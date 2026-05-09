@@ -1179,11 +1179,18 @@ impl MySQLConnection {
                 // buffer which will be overwritten by the next packet. The statement is cached
                 // in this.statements and its error_response may be read later via
                 // stmt.error_response.toJS(), so we must own a copy of the message bytes.
-                // TODO(b2-blocked): ErrorPacket lacks Clone in bun_sql; manual
-                // copy of just `error_message` is what the Zig actually needs.
-                statement.error_response = ErrorPacket::default(); // drop old (Drop handles deinit)
-                statement.error_response.error_message =
-                    Data::create(err.error_message.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?;
+                // Zig: `statement.error_response = err;` (struct copy) then overwrite
+                // `error_message` with an owned dupe. ErrorPacket lacks Clone in bun_sql
+                // (Data is not Clone), so reconstruct field-by-field — the scalar fields
+                // (header / error_code / sql_state) are all Copy.
+                statement.error_response = ErrorPacket {
+                    header: err.header,
+                    error_code: err.error_code,
+                    sql_state_marker: err.sql_state_marker,
+                    sql_state: err.sql_state,
+                    error_message: Data::create(err.error_message.slice())
+                        .map_err(|_| AnyMySQLError::OutOfMemory)?,
+                };
                 self.queue.mark_as_ready_for_query();
                 // SAFETY: request is live (ref'd above).
                 self.queue.mark_current_request_as_finished(unsafe { &mut *request });
@@ -1348,7 +1355,7 @@ impl MySQLConnection {
                         // Can't be 0
                         return Err(AnyMySQLError::UnexpectedPacket);
                     }
-                    if statement.columns.len() != header.field_count as usize {
+                    if statement.columns.len() as u64 != header.field_count {
                         bun_core::scoped_log!(
                             MySQLConnection,
                             "header field count mismatch: {} != {}",
@@ -1362,9 +1369,17 @@ impl MySQLConnection {
                             // the already-freed columns again (use-after-free / double-free).
                             statement.columns = Vec::new();
                         }
-                        statement.columns = (0..header.field_count as usize)
-                            .map(|_| ColumnDefinition41::default())
-                            .collect();
+                        // Zig: `try bun.default_allocator.alloc(ColumnDefinition41, header.field_count)`
+                        // — fallible. field_count is server-controlled (lenenc int up to 2^64-1),
+                        // so a panicking `collect()` would let a malicious/buggy server crash us.
+                        let field_count = usize::try_from(header.field_count)
+                            .map_err(|_| AnyMySQLError::OutOfMemory)?;
+                        let mut columns = Vec::new();
+                        columns
+                            .try_reserve_exact(field_count)
+                            .map_err(|_| AnyMySQLError::OutOfMemory)?;
+                        columns.resize_with(field_count, ColumnDefinition41::default);
+                        statement.columns = columns;
                         statement.columns_received = 0;
                     }
                     statement

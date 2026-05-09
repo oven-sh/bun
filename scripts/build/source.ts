@@ -603,8 +603,12 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
       cfg.rustToolchain !== undefined
         ? `${stream} $env ${rustup} toolchain install ${cfg.rustToolchain} --force --component rust-src --target $rust_target`
         : `${stream} $env ${rustup} target add $rust_target`;
+    // Windows: ninja runs commands via CreateProcess (no shell) — wrap in
+    // `cmd /c "..."` so `&&` is interpreted as a chain operator instead of
+    // being passed as a literal arg. See rust.ts `rust_build_cross`.
+    const cargoCrossChain = `${cargoCrossEnsure} && ${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`;
     n.rule("dep_cargo_cross", {
-      command: `${cargoCrossEnsure} && ${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`,
+      command: hostWin ? `cmd /c "${cargoCrossChain}"` : cargoCrossChain,
       description: "cargo $name ($rust_target)",
       restat: true,
       pool: "dep",

@@ -215,12 +215,21 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // requesting a *narrower* profile on a `--force` reinstall is asking for
   // trouble. We only care that `rust-src` and `rust-std-<triple>` exist on
   // top of whatever profile is there.
+  //
+  // Windows: ninja spawns commands via CreateProcess directly (no shell), so
+  // `&&` would be passed as a literal argument to the first node.exe — rustup
+  // then sees the second half of the chain as extra argv and rejects
+  // `--experimental-strip-types`. Wrap in `cmd /c "..."` so cmd.exe handles
+  // the chain (cmd's quote-stripping rule removes only the outermost pair,
+  // preserving the embedded `"..."` around paths/env values). Same pattern as
+  // codegen.ts / bun.ts.
   const rustup = findRustup(cfg);
   if (rustup !== undefined && cfg.rustToolchain !== undefined) {
+    const chain =
+      `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && ` +
+      `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
     n.rule("rust_build_cross", {
-      command:
-        `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && ` +
-        `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
+      command: hostWin ? `cmd /c "${chain}"` : chain,
       description: "cargo bun_bin → $label ($rust_target_arg)",
       pool: "console",
       restat: true,

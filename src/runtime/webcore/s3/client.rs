@@ -483,7 +483,7 @@ pub fn writable_stream(
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         queue: None,
         available: IntegerBitSet::init_full(),
-        current_part_number: 0,
+        current_part_number: 1,
         ref_count: core::cell::Cell::new(2), // +1 for the stream
         ended: false,
         options,
@@ -833,7 +833,7 @@ pub fn upload_stream(
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         queue: None,
         available: IntegerBitSet::init_full(),
-        current_part_number: 0,
+        current_part_number: 1,
         ref_count: core::cell::Cell::new(2), // +1 for the stream ctx (only deinit after task and context ended)
         ended: false,
         options,

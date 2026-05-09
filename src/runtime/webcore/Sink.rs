@@ -1633,9 +1633,18 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         // TODO(b2-blocked): `Subprocess<'_>` cannot implement `UnionMember` (lifetime
         // param), so it isn't part of `DestructorPtr`'s type list yet — cast the raw
         // pointer directly until the second variant is restored.
+        //
+        // Spec Sink.zig:641 `ptr.as(Subprocess)` → `TaggedPointer.get`, which
+        // masks to the low 49 address bits. `DestructorPtr::ptr()` is
+        // `TaggedPtr::to()` and *preserves* the tag bits (round-trip encoding),
+        // so casting that would hand `on_stdin_destroyed` a pointer with
+        // `0x07fe…` in the high word and ASAN SEGVs on the first field load.
+        // Use the masked address.
+        //
         // SAFETY: caller (C++) guarantees a valid non-Detached tag points at a live
         // Subprocess.
-        let subprocess: &mut Subprocess<'_> = unsafe { &mut *ptr.ptr().cast::<Subprocess<'_>>() };
+        let subprocess: &mut Subprocess<'_> =
+            unsafe { &mut *(ptr.as_uintptr() as usize as *mut Subprocess<'_>) };
         subprocess.on_stdin_destroyed();
         return;
     }

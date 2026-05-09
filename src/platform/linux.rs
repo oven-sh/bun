@@ -23,9 +23,13 @@ use bun_core::Fd;
 #[inline(always)]
 fn encode_raw_errno(rc: c_long) -> isize {
     if rc == -1 {
-        // SAFETY: `__errno_location` is guaranteed by glibc/musl to return a valid
-        // thread-local pointer for the calling thread's lifetime.
+        // SAFETY: the TLS errno accessor is guaranteed by libc to return a valid
+        // thread-local pointer for the calling thread's lifetime. glibc/musl
+        // spell it `__errno_location()`; bionic (Android) spells it `__errno()`.
+        #[cfg(not(target_os = "android"))]
         let err = unsafe { *libc::__errno_location() } as isize;
+        #[cfg(target_os = "android")]
+        let err = unsafe { *libc::__errno() } as isize;
         -err
     } else {
         rc as isize
@@ -84,7 +88,7 @@ impl RWFFlagSupport {
 
     /// Workaround for https://github.com/google/gvisor/issues/2601
     pub fn is_maybe_supported() -> bool {
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", target_os = "android")) {
             return false;
         }
         let current: RWFFlagSupport = match RWF_BOOL.load(Ordering::Relaxed) {

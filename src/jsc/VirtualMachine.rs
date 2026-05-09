@@ -2028,6 +2028,18 @@ impl VirtualMachine {
             (*uws::Loop::get()).internal_loop_data.jsc_vm = jsc_vm.cast();
         }
 
+        // Spec VirtualMachine.zig:1316 / :1191 — `if (opts.is_main_thread)
+        // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`.
+        // Must run AFTER `ensure_waker()` (above) has set `event_loop_handle`,
+        // since on macOS the kqueue registration resolves the platform loop via
+        // `event_loop_ctx → uws_loop()`. No-op off macOS / when `--no-orphans`
+        // is not enabled. `init_with_module_graph` / `init_bake` route through
+        // here with their caller's `is_main_thread`; `init_worker` passes
+        // `false` so workers never arm the watchdog (matches spec `initWorker`).
+        if opts.is_main_thread {
+            bun_io::ParentDeathWatchdog::install_on_event_loop(Self::event_loop_ctx(vm));
+        }
+
         if opts.smol {
             // SAFETY: written once during init.
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
@@ -5113,11 +5125,12 @@ impl VirtualMachine {
                     break 'code bun_string::ZigStringSlice::EMPTY;
                 }
                 let mut log = logger::Log::default();
-                let top_url = frames[top].source_url.dupe_ref();
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
-                    top_url,
+                    // Spec VirtualMachine.zig:3194 passes `top.source_url` by
+                    // value (no `dupeRef`); `bun_string::String` is `Copy`.
+                    frames[top].source_url,
                     bun_string::String::empty(),
                     &mut log,
                     FetchFlags::PrintSource,
@@ -5125,7 +5138,25 @@ impl VirtualMachine {
                     return;
                 };
                 *must_reset_parser_arena_later = true;
-                original_source.source_code.to_utf8()
+                // PORT NOTE: spec ModuleLoader.zig:358 *borrows*
+                // `parse_result.source.contents` for `.print_source`
+                // (`bun.String.init`), so the Zig caller has nothing to
+                // release. The Rust transpile path must `clone_utf8` instead
+                // (the backing `parse_result` drops on return — see
+                // jsc_hooks.rs PORT NOTE at the `PrintSource` arm), leaving
+                // `source_code` with a +1 strong ref this caller never
+                // consumed. `to_utf8()` takes its own ref via
+                // `ZigStringSlice::WTF`, so balance the clone here. Also
+                // release the `dupe_ref` / `create_if_different` refs on
+                // `specifier` / `source_url` — this caller never reads them.
+                // Skipping the `source_code` deref leaks one WTFStringImpl
+                // (~file-size) per `Bun.inspect(new Error)` and fails
+                // inspect-error-leak.test.js.
+                let code = original_source.source_code.to_utf8();
+                original_source.source_code.deref();
+                original_source.specifier.deref();
+                original_source.source_url.deref();
+                code
             };
 
             if enable_source_code_preview && code.slice().is_empty() {

@@ -8,9 +8,6 @@ use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 // TODO(port): move to jsc_sys
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
-    // TODO(port): Zig declares this as `bun.JSError!void` via generated binding; confirm the
-    // actual C ABI (likely void with pending exception on the VM) before finalizing.
-    pub fn Bun__performTask(global: *mut JSGlobalObject, task: *mut CppTask);
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
     safe fn Bun__EventLoopTaskNoContext__createdInBunVm(
         task: &EventLoopTaskNoContext,
@@ -32,12 +29,16 @@ impl CppTask {
     pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         crate::mark_binding!();
         // SAFETY: self is a valid C++ EventLoopTask; global outlives the call.
-        // `JSGlobalObject` wraps `UnsafeCell`, so `as_mut_ptr()` yields a write-
-        // provenance `*mut` from `&self` without laundering a read-only pointer.
-        unsafe { Bun__performTask(global.as_mut_ptr(), std::ptr::from_mut::<CppTask>(self)) };
-        // TODO(port): Bun__performTask returns bun.JSError!void in Zig via generated binding;
-        // confirm whether the C ABI actually surfaces an error or if this is infallible.
-        Ok(())
+        //
+        // `Bun__performTask` is `[[ZIG_EXPORT(check_slow)]]` — the task body
+        // (a `ScriptExecutionContext::postTask` lambda) may declare its own
+        // throw scope (e.g. `JSUint8Array::create`, `JSC::call`) without an
+        // enclosing one, so we must go through the generated `cpp::` wrapper
+        // (which opens a `TopExceptionScope` and `return_if_exception`s) rather
+        // than the raw FFI. Calling the raw extern left the simulated throw
+        // unchecked, which then tripped `drainMicrotasks`'s scope ctor under
+        // `BUN_JSC_validateExceptionChecks=1`.
+        unsafe { crate::cpp::Bun__performTask(global, std::ptr::from_mut::<CppTask>(self)) }
     }
 }
 

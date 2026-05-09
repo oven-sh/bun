@@ -2004,7 +2004,11 @@ impl AsyncReaddirRecursiveTask {
         // SAFETY: `ptr[..len]` is the duped bytes; `ptr[len] == 0`. The Box<[u8]>
         // backing is reconstructed and freed in `ReaddirSubtask::run_owned`.
         let basename_ps = PathString::init(unsafe { core::slice::from_raw_parts(ptr, len) });
-        debug_assert!(self.subtask_count.fetch_add(1, Ordering::Relaxed) > 0);
+        // Spec (node_fs.zig:1061) `bun.assert(subtask_count.fetchAdd(1, .monotonic) > 0)`
+        // — the fetch_add is load-bearing (refcounts the in-flight subtask). It
+        // MUST run in release builds; only the `> 0` invariant check is debug-only.
+        let prev = self.subtask_count.fetch_add(1, Ordering::Relaxed);
+        debug_assert!(prev > 0);
         WorkPool::schedule_new(ReaddirSubtask {
             readdir_task: self,
             basename: basename_ps,

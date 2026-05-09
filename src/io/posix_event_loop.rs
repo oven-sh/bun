@@ -449,7 +449,7 @@ impl FilePoll {
         self.on_update(kqueue_event.data as i64);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
         self.update_flags(Flags::from_epoll_event(epoll_event));
         self.on_update(0);
@@ -1368,7 +1368,7 @@ impl Flags {
         flags
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn from_epoll_event(epoll: &bun_sys::linux::epoll_event) -> FlagsSet {
         use bun_sys::linux::EPOLL;
         let mut flags = FlagsSet::empty();
@@ -1551,7 +1551,7 @@ impl Pollable {
 // `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
 // on Windows the libuv loop drives readiness, so this entry point is never
 // linked there. Restrict to the platforms where the fields are present.
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
@@ -1580,7 +1580,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
         let ev = unsafe { ptr::read(ptr::addr_of!((*loop_).ready_polls[idx])) };
         file_poll.on_kqueue_event(&ev);
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: idx in bounds per loop contract; event is POD.
         let ev = unsafe { ptr::read(ptr::addr_of!((*loop_).ready_polls[idx])) };

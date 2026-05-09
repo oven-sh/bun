@@ -1596,8 +1596,8 @@ pub mod tocss_servo {
                 }
             }
             Component::Nth(nth_data) => {
-                nth_data.write_start(dest, nth_data.is_function)?;
-                if nth_data.is_function {
+                nth_data.write_start(dest, nth_data.is_function_())?;
+                if nth_data.is_function_() {
                     nth_data.write_affine(dest)?;
                     dest.write_char(b')')?;
                 }

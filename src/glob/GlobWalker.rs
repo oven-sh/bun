@@ -2400,20 +2400,35 @@ fn work_item_logical_path(path: &[u8]) -> &[u8] {
 }
 
 // const stdJoin = if (!sentinel) std.fs.path.join else std.fs.path.joinZ;
-// TODO(port): std.fs.path.join / joinZ — needs a bun_paths helper that joins
-// with platform separator WITHOUT normalizing. Placeholder implementation.
+// Port of Zig's `std.fs.path.joinSepMaybeZ`: naively concatenates parts with the
+// native separator WITHOUT normalizing, but — critically — does NOT insert a
+// separator when the previous part already ends with one (or this part starts
+// with one), and collapses a single duplicate sep at the seam if both sides
+// have one. Matches vendor/zig/lib/std/fs/path.zig joinSepMaybeZ.
 fn std_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
+    #[inline]
+    fn is_sep(c: u8) -> bool {
+        if cfg!(windows) { c == b'/' || c == b'\\' } else { c == b'/' }
+    }
     let mut out: Vec<u8> = Vec::new();
-    let mut first = true;
+    let mut prev_last: Option<u8> = None;
     for p in parts {
         if p.is_empty() {
             continue;
         }
-        if !first {
-            out.push(bun_paths::SEP);
-        }
-        first = false;
-        out.extend_from_slice(p);
+        let this = match prev_last {
+            None => *p,
+            Some(prev) => {
+                let prev_sep = is_sep(prev);
+                let this_sep = is_sep(p[0]);
+                if !prev_sep && !this_sep {
+                    out.push(bun_paths::SEP);
+                }
+                if prev_sep && this_sep { &p[1..] } else { *p }
+            }
+        };
+        out.extend_from_slice(this);
+        prev_last = Some(p[p.len() - 1]);
     }
     if SENTINEL {
         out.push(0);

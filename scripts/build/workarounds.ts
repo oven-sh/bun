@@ -95,6 +95,27 @@ export const workarounds: Workaround[] = [
       `in resolveLlvmToolchain() (tools.ts), the rustLld/rustLlvmVersion fields on Toolchain/Config, ` +
       `and this entry.`,
   },
+  {
+    id: "rust-lld-musl-crt-zlib",
+    issue: "https://github.com/rust-lang/rust/issues/data-compression-not-enabled",
+    description:
+      "rust-lld is built without LLVM_ENABLE_ZLIB. Alpine's musl CRT objects ship with " +
+      "ELFCOMPRESS_ZLIB debug sections, which rust-lld rejects at input parse time. " +
+      "Decompress them via objcopy and prepend a -B search path.",
+    // Only exercised when the rust-lld swap actually fired on a musl link.
+    applies: cfg => cfg.linux && cfg.abi === "musl" && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld,
+    expectedToBeFixed: cfg => {
+      // Obsolete the same instant the rust-lld swap above is — once clang's
+      // ld.lld (built with zlib) reads rustc's bitcode, we never select
+      // rust-lld and the compressed CRTs are a non-issue.
+      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
+      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
+      return clangMajor >= rustMajor;
+    },
+    cleanup:
+      `Delete needsMuslCrtDecompress(), MUSL_CRT_OBJECTS, the shim_crt_decompress rule, and the ` +
+      `musl block in emitShims() (scripts/build/shims.ts), and this entry.`,
+  },
 ];
 
 /**

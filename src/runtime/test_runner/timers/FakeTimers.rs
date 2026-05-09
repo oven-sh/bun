@@ -95,6 +95,10 @@ impl CurrentTime {
 #[derive(Copy, Clone)]
 enum AssertMode {
     Locked,
+    // PORT NOTE: `.unlocked` callers (`execute_*`/`fire`) were converted to
+    // associated fns with no `self` (noalias re-entrancy — see below); the
+    // Zig `.unlocked` arm was a no-op anyway.
+    #[allow(dead_code)]
     Unlocked,
 }
 
@@ -179,32 +183,40 @@ impl FakeTimers {
         self.assert_valid(AssertMode::Locked);
     }
 
-    fn execute_next(&mut self, global: &JSGlobalObject) -> bool {
-        self.assert_valid(AssertMode::Unlocked);
+    // PORT NOTE (noalias re-entrancy): `execute_*` / `fire` do NOT take
+    // `&mut self`. `EventLoopTimer::fire` dispatches into JS; a `setInterval`
+    // callback's reschedule (`timer::All::update` → `insert_lock_held` →
+    // `(*timer_all()).fake_timers.timers.insert`) writes back into *this
+    // same* `FakeTimers::timers` heap through a fresh raw pointer. With a
+    // live `&mut self` LLVM's `noalias` lets it cache `self.timers.root`
+    // across the (inlined) `fire` body — `peek()` on the next loop iteration
+    // then misses the re-inserted interval, so `advanceTimersByTime` /
+    // `runOnlyPendingTimers` fire each interval at most once per call. Same
+    // bug class as `TimerObjectInternals::fire` (see dc37f2018b34). Access
+    // the heap via the raw `timer_all()` pointer instead so every iteration
+    // reloads from memory.
+    fn execute_next(global: &JSGlobalObject) -> bool {
         let timers = timer_all();
 
         let next = {
             // SAFETY: per-thread `timer::All`; lock()/unlock() are non-RAII.
             unsafe { (*timers).lock.lock() };
-            let n = self.timers.delete_min();
+            // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`;
+            // single-threaded JS heap so no concurrent `&mut` to `.fake_timers`.
+            let n = unsafe { (*timers).fake_timers.timers.delete_min() };
             unsafe { (*timers).lock.unlock() };
             match n {
                 Some(n) => n,
-                None => {
-                    self.assert_valid(AssertMode::Unlocked);
-                    return false;
-                }
+                None => return false,
             }
         };
 
-        self.fire(global, next);
-        self.assert_valid(AssertMode::Unlocked);
+        Self::fire(global, next);
         true
     }
 
-    fn fire(&mut self, global: &JSGlobalObject, next: *mut EventLoopTimer) {
-        self.assert_valid(AssertMode::Unlocked);
-        let vm = global.bun_vm();
+    fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) {
+        let _vm = global.bun_vm();
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.
         let now_el = unsafe { (*next).next };
@@ -218,12 +230,9 @@ impl FakeTimers {
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
         unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
-
-        self.assert_valid(AssertMode::Unlocked);
     }
 
-    fn execute_until(&mut self, global: &JSGlobalObject, until: Timespec) {
-        self.assert_valid(AssertMode::Unlocked);
+    fn execute_until(global: &JSGlobalObject, until: Timespec) {
         let timers = timer_all();
 
         'outer: loop {
@@ -231,7 +240,10 @@ impl FakeTimers {
                 // SAFETY: per-thread `timer::All`; lock()/unlock() are non-RAII.
                 unsafe { (*timers).lock.lock() };
 
-                let Some(peek) = self.timers.peek() else {
+                // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`;
+                // single-threaded JS heap. Re-derive each iteration so the
+                // re-entrant `insert` from setInterval rescheduling is observed.
+                let Some(peek) = (unsafe { (*timers).fake_timers.timers.peek() }) else {
                     unsafe { (*timers).lock.unlock() };
                     break 'outer;
                 };
@@ -242,48 +254,38 @@ impl FakeTimers {
                 }
                 // bun.assert always evaluates its arg; debug_assert! does NOT in release.
                 // Hoist the side-effecting delete_min() out so the timer is removed in all builds.
-                let min = self.timers.delete_min().expect("unreachable");
+                // SAFETY: as above.
+                let min = unsafe { (*timers).fake_timers.timers.delete_min() }.expect("unreachable");
                 debug_assert!(core::ptr::eq(min, peek));
                 unsafe { (*timers).lock.unlock() };
                 break 'blk min;
             };
-            self.fire(global, next);
+            Self::fire(global, next);
         }
-
-        self.assert_valid(AssertMode::Unlocked);
     }
 
-    fn execute_only_pending_timers(&mut self, global: &JSGlobalObject) {
-        self.assert_valid(AssertMode::Unlocked);
+    fn execute_only_pending_timers(global: &JSGlobalObject) {
         let timers = timer_all();
 
         let until = {
             // SAFETY: per-thread `timer::All`; lock()/unlock() are non-RAII.
             unsafe { (*timers).lock.lock() };
-            let target = self.timers.find_max();
+            // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`.
+            let target = unsafe { (*timers).fake_timers.timers.find_max() };
             unsafe { (*timers).lock.unlock() };
             match target {
                 Some(t) => {
                     // SAFETY: `t` was reachable in the heap under the lock.
                     from_el_timespec(unsafe { &(*t).next })
                 }
-                None => {
-                    self.assert_valid(AssertMode::Unlocked);
-                    return;
-                }
+                None => return,
             }
         };
-        self.execute_until(global, until);
-
-        self.assert_valid(AssertMode::Unlocked);
+        Self::execute_until(global, until);
     }
 
-    fn execute_all_timers(&mut self, global: &JSGlobalObject) {
-        self.assert_valid(AssertMode::Unlocked);
-
-        while self.execute_next(global) {}
-
-        self.assert_valid(AssertMode::Unlocked);
+    fn execute_all_timers(global: &JSGlobalObject) {
+        while Self::execute_next(global) {}
     }
 }
 
@@ -396,21 +398,15 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
 #[bun_jsc::host_fn]
 fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let timers = timer_all();
-    // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
     error_unless_fake_timers(global)?;
 
-    let _ = this.execute_next(global);
+    let _ = FakeTimers::execute_next(global);
 
     Ok(frame.this())
 }
 
 #[bun_jsc::host_fn]
 fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let timers = timer_all();
-    // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
     error_unless_fake_timers(global)?;
 
     let arg = frame.arguments_as_array::<1>()[0];
@@ -438,7 +434,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
     let target = current.add_ms_float(effective_advance);
 
-    this.execute_until(global, target);
+    FakeTimers::execute_until(global, target);
     CURRENT_TIME.set(global, &target, None);
 
     Ok(frame.this())
@@ -446,24 +442,18 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 
 #[bun_jsc::host_fn]
 fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let timers = timer_all();
-    // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
     error_unless_fake_timers(global)?;
 
-    this.execute_only_pending_timers(global);
+    FakeTimers::execute_only_pending_timers(global);
 
     Ok(frame.this())
 }
 
 #[bun_jsc::host_fn]
 fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let timers = timer_all();
-    // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
     error_unless_fake_timers(global)?;
 
-    this.execute_all_timers(global);
+    FakeTimers::execute_all_timers(global);
 
     Ok(frame.this())
 }

@@ -163,7 +163,24 @@ impl<'a> Scanner<'a> {
                 debug_assert!(fd != Fd::INVALID);
                 // Collect first so `self.next(…)` doesn't overlap the
                 // `entries.data` borrow.
-                let entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
+                // PORT NOTE: this branch is taken when the resolver already has
+                // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
+                // cwd before the scanner runs), so `read_directory_with_iterator`
+                // returned the cached `EntryMap` without invoking `iterator.next`.
+                // Zig walks `std.HashMapUnmanaged` slot order here, which is
+                // deterministic per its linear-probing layout; Rust's SwissTable
+                // iteration order differs even with the same wyhash seed. Sort by
+                // (lowercased) base name so test-file discovery order is stable
+                // across the port — regression/issue/26851 relies on `a_*.test`
+                // running before `b_*.test` under `--bail`.
+                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
+                entry_ptrs.sort_by(|a, b| {
+                    // SAFETY: `EntryMap` stores `*mut Entry` into the
+                    // process-static `EntryStore`; valid for `'static`.
+                    let an = unsafe { (**a).base_lowercase() };
+                    let bn = unsafe { (**b).base_lowercase() };
+                    an.cmp(bn)
+                });
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.

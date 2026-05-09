@@ -307,12 +307,30 @@ unsafe fn init_runtime_state(
                     t.options.emit_dce_annotations = false;
                     t.resolver.store_fd = opts.store_fd;
                     t.resolver.prefer_module_field = false;
+                    // Spec VirtualMachine.zig:1291 — propagate `--preserve-symlinks`
+                    // from CLI args to the resolver so symlinked node_modules
+                    // entries resolve via their link path (peer deps stay reachable).
+                    t.resolver.opts.preserve_symlinks =
+                        opts.transform_options.preserve_symlinks.unwrap_or(false);
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(ptr::addr_of_mut!((*vm).modules).cast()),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
                         on_dependency_error: Some(bun_jsc::async_module::Queue::on_dependency_error),
                     };
-                    t.configure_linker();
+                    // Spec: `init` calls `configureLinker()` (auto_jsx=true,
+                    // VirtualMachine.zig:1299) but `initWithModuleGraph` /
+                    // `initWorker`-with-graph call `configureLinkerWithAutoJSX(false)`
+                    // (zig:1172/1470). The Rust port routes all three through this
+                    // hook, so branch on `opts.graph` here — auto_jsx=true would
+                    // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
+                    // `apply_standalone_runtime_flags` can set
+                    // `resolver.opts.load_tsconfig_json = false`, defeating
+                    // `compile.autoloadTsconfig: false`.
+                    if opts.graph.is_some() {
+                        t.configure_linker_with_auto_jsx(false);
+                    } else {
+                        t.configure_linker();
+                    }
                 }
             }
             Err(e) => {
@@ -326,13 +344,15 @@ unsafe fn init_runtime_state(
         }
     }
 
-    // TODO(b2-cycle): `ParentDeathWatchdog::install_on_event_loop` — spec
-    // VirtualMachine.zig:1316 `if (opts.is_main_thread)
-    // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`.
-    // The low-tier `VirtualMachine::init` doc-comment delegates this here; not
-    // arming it means a child Bun process won't exit when its parent dies.
-    // Gate on `opts.is_main_thread` once `bun_io::parent_death_watchdog`
-    // un-gates.
+    // PORT NOTE: spec VirtualMachine.zig:1316 `if (opts.is_main_thread)
+    // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`
+    // does NOT live in this hook — `init_runtime_state` fires BEFORE
+    // `ensure_waker()` sets `vm.event_loop_handle`, so on macOS the kqueue
+    // registration would `.expect("uws event_loop_handle is null")`-panic.
+    // The call is inlined in `VirtualMachine::init` itself, immediately after
+    // the `internal_loop_data.jsc_vm` write (matching spec ordering
+    // zig:1313→1316); `bun_jsc` already depends on `bun_io` so no layering
+    // break.
 
     // Spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)` —
     // called by `init`/`initBake`, NOT by `initWorker` (spec :1394-1491). The

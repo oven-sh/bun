@@ -62,16 +62,24 @@ pub mod posix {
         #[inline] pub const fn ISSOCK(m: mode_t) -> bool { m & IFMT == IFSOCK }
     }
 
+    // glibc/musl spell the TLS errno accessor `__errno_location()`; bionic
+    // (Android) spells it `__errno()` — same contract, different symbol name.
+    // This file is compiled for both `target_os = "linux"` and `"android"`.
+    #[cfg(not(target_os = "android"))]
     unsafe extern "C" {
-        // glibc/musl: `int *__errno_location(void)`
+        fn __errno_location() -> *mut c_int;
+    }
+    #[cfg(target_os = "android")]
+    unsafe extern "C" {
+        #[link_name = "__errno"]
         fn __errno_location() -> *mut c_int;
     }
 
     /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
     #[inline]
     pub fn errno() -> c_int {
-        // SAFETY: __errno_location is guaranteed by libc to return a valid
-        // thread-local pointer for the calling thread's lifetime.
+        // SAFETY: __errno_location/__errno is guaranteed by libc to return a
+        // valid thread-local pointer for the calling thread's lifetime.
         unsafe { *__errno_location() }
     }
 }

@@ -224,7 +224,21 @@ pub struct TOML<'a> {
     // a second `&mut Log` borrow overlapping `lexer.log`.
     pub bump: &'a Bump,
     pub stack_check: StackCheck,
+    // PORT NOTE: explicit recursion depth counter. Zig relies solely on
+    // `StackCheck`, which works there because each `parseValue` frame carries a
+    // ~200-byte `std.heap.stackFallback(@sizeOf(Rope) * 6)` buffer; the Rust
+    // port allocates Ropes from `bump` instead, so frames are small enough that
+    // 25k-deep inline tables fit without tripping the 128 KB headroom check
+    // (test/js/bun/resolve/toml/toml.test.js). Track depth explicitly so the
+    // overflow guard is deterministic regardless of compiler frame layout.
+    pub depth: u32,
 }
+
+/// Hard cap on `parse_value` recursion. Real-world TOML never nests inline
+/// tables/arrays anywhere near this; the limit exists so pathological input
+/// throws `RangeError` instead of relying on stack-frame size to trip
+/// `StackCheck` (which is compiler-/opt-level-dependent).
+const MAX_NESTING_DEPTH: u32 = 1000;
 
 impl<'a> TOML<'a> {
     pub fn init(
@@ -238,6 +252,7 @@ impl<'a> TOML<'a> {
             lexer: Lexer::init(log, source_, bump, redact_logs)?,
             bump,
             stack_check: StackCheck::init(),
+            depth: 0,
         })
     }
 
@@ -492,11 +507,22 @@ impl<'a> TOML<'a> {
     }
 
     pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
-        if !self.stack_check.is_safe_to_recurse() {
-            // Zig: `bun.throwStackOverflow()`.
+        // Zig: `bun.throwStackOverflow()` guarded only by `StackCheck`. See the
+        // `depth` field note for why the Rust port also tracks an explicit
+        // counter — without the per-frame `stackFallback` buffer the Zig spec
+        // carries, release-mode frames are too small for `StackCheck` alone to
+        // trip on the 25k-deep input the test suite feeds us.
+        self.depth += 1;
+        if self.depth > MAX_NESTING_DEPTH || !self.stack_check.is_safe_to_recurse() {
+            self.depth -= 1;
             return Err(bun_core::err!("StackOverflow"));
         }
+        let result = self.parse_value_inner();
+        self.depth -= 1;
+        result
+    }
 
+    fn parse_value_inner(&mut self) -> Result<Expr, bun_core::Error> {
         let loc = self.lexer.loc();
 
         self.lexer.allow_double_bracket = true;

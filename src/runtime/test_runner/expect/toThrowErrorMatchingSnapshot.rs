@@ -28,8 +28,8 @@ pub fn to_throw_error_matching_snapshot(
         return this.throw_fmt(
             global,
             signature,
-            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
-            format_args!(""),
+            "",
+            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"),
         );
     }
 
@@ -38,8 +38,8 @@ pub fn to_throw_error_matching_snapshot(
         return this.throw_fmt(
             global,
             signature,
-            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n",
-            format_args!(""),
+            "",
+            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"),
         );
     };
     // Zig: `defer bunTest_strong.deinit();` — handled by Drop.
@@ -55,8 +55,8 @@ pub fn to_throw_error_matching_snapshot(
                 return this.throw_fmt(
                     global,
                     "",
-                    "\n\nMatcher error: Expected first argument to be a string\n",
-                    format_args!(""),
+                    "",
+                    format_args!("\n\nMatcher error: Expected first argument to be a string\n"),
                 );
             }
         }
@@ -64,8 +64,8 @@ pub fn to_throw_error_matching_snapshot(
             return this.throw_fmt(
                 global,
                 "",
-                "\n\nMatcher error: Expected zero or one arguments\n",
-                format_args!(""),
+                "",
+                format_args!("\n\nMatcher error: Expected zero or one arguments\n"),
             );
         }
     }
@@ -87,8 +87,8 @@ pub fn to_throw_error_matching_snapshot(
         return this.throw_fmt(
             global,
             signature,
-            "\n\n<b>Matcher error<r>: Received function did not throw\n",
-            format_args!(""),
+            "",
+            format_args!("\n\n<b>Matcher error<r>: Received function did not throw\n"),
         );
     };
 

@@ -2055,7 +2055,7 @@ fn get_source_code(
     // pointers and reborrows disjoint fields only.
     // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
     // bundle pass.
-    let transpiler: *mut Transpiler<'static> = unsafe { data.transpiler.as_mut_ptr() };
+    let transpiler: *mut Transpiler<'static> = &raw mut data.transpiler;
     // PORT NOTE: errdefer transpiler.resetStore() — reshaped: call on the err
     // path explicitly (scopeguard would alias `transpiler` access below).
     // SAFETY: `transpiler` is live; `resolver` projects a field of it.

@@ -443,8 +443,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             // Vec<Expr>`, which (if non-empty) would free the
                             // *original AST's* allocation. The "JSON ⇒ ts_decorators
                             // empty" invariant makes that drop a no-op today, but
-                            // `ptr::write` enforces it structurally (matches the
-                            // ThreadPool.rs `clone_for_worker` post-write rule).
+                            // `ptr::write` enforces it structurally.
                             let key = prop.key;
                             let value_loc =
                                 prop.value.as_ref().expect("infallible: prop has value").loc;

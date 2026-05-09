@@ -4399,10 +4399,10 @@ impl<C> ResolveWatcher<C> {
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // PORT NOTE: Zig `fs: *Fs.FileSystem` / `log: *logger.Log` are raw aliasing
-    // pointers — the bundler bitwise-copies `Resolver` per worker thread
-    // (`clone_for_worker`), so `&'a mut` here would manufacture aliased unique
-    // refs across threads (instant UB). Model as `*mut` and deref through the
-    // `fs()` / `log()` accessors below.
+    // pointers — the bundler builds a `Resolver` per worker thread sharing the
+    // process-wide `FileSystem` singleton, so `&'a mut` here would manufacture
+    // aliased unique refs across threads (instant UB). Model as `*mut` and
+    // deref through the `fs()` / `log()` accessors below.
     pub fs: *mut Fs::FileSystem,
     pub log: *mut logger::Log,
     // allocator dropped — global mimalloc
@@ -4496,8 +4496,8 @@ pub struct Resolver<'a> {
     /// to validate your keys with `Resolver.assertValidCacheKey`
     // PORT NOTE: Zig `dir_cache: *DirInfo.HashMap` is a raw aliasing pointer to the
     // `DirInfo::hash_map_instance()` singleton. Modeled as `*mut` (not `&'static mut`)
-    // for the same reason as `fs`/`log` above — `clone_for_worker` bitwise-copies the
-    // Resolver, so a `&'static mut` here would manufacture aliased unique refs (UB).
+    // for the same reason as `fs`/`log` above — every per-worker `Resolver` shares the
+    // singleton, so a `&'static mut` here would manufacture aliased unique refs (UB).
     // Deref through the `dir_cache()` accessor below.
     pub dir_cache: *mut DirInfo::HashMap,
 
@@ -4532,6 +4532,66 @@ impl Drop for ResolverLogScope {
 }
 
 impl<'a> Resolver<'a> {
+    /// Per-worker constructor — replaces the bundler's prior bitwise
+    /// `transpiler.* = from.*` (Zig ThreadPool.zig:308) for the resolver
+    /// portion. Every `Copy` / raw-pointer field is copied from `from`; the
+    /// per-worker `caches` (the only `Drop`-carrying field, via the
+    /// `Json` cache's `MimallocArena`) and `debug_logs`/`timer` are freshly
+    /// constructed so nothing the parent owns is aliased into the worker.
+    ///
+    /// `opts` and `log` are supplied by the caller (the worker projects a
+    /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
+    ///
+    /// # Safety
+    /// `from`'s `standalone_module_graph` / `env_loader` borrow data that
+    /// outlives the returned resolver (process-lifetime singletons in every
+    /// caller). The lifetime is widened from `'from` to `'a` here; callers
+    /// must uphold that the borrowed data outlives `'a`.
+    pub unsafe fn for_worker(
+        from: &Resolver<'_>,
+        log: *mut logger::Log,
+        opts: options::BundleOptions,
+    ) -> Resolver<'a> {
+        Resolver {
+            opts,
+            fs: from.fs,
+            log,
+            extension_order: from.extension_order,
+            timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
+            care_about_bin_folder: from.care_about_bin_folder,
+            care_about_scripts: from.care_about_scripts,
+            care_about_browser_field: from.care_about_browser_field,
+            // `DebugLogs` owns Vecs — per-worker fresh.
+            debug_logs: None,
+            elapsed: 0,
+            watcher: from.watcher,
+            // Spec ThreadPool.zig:313 `transpiler.resolver.caches = CacheSet.Set.init(allocator)`.
+            caches: CacheSet::init(),
+            generation: from.generation,
+            package_manager: from.package_manager,
+            on_wake_package_manager: from.on_wake_package_manager.clone(),
+            // SAFETY: see fn doc — pointee outlives `'a`.
+            env_loader: from.env_loader.map(|p| p.cast::<DotEnv::Loader<'a>>()),
+            store_fd: from.store_fd,
+            // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
+            // vtable layout is identical (only the borrow-checker tag differs);
+            // a raw-pointer `as`-cast cannot change the `+ 'b` bound, so widen
+            // via a layout-preserving transmute on the `Option<&dyn>`.
+            standalone_module_graph: unsafe {
+                core::mem::transmute::<
+                    Option<&'_ dyn StandaloneModuleGraph>,
+                    Option<&'a dyn StandaloneModuleGraph>,
+                >(from.standalone_module_graph)
+            },
+            mutex: from.mutex,
+            dir_cache: from.dir_cache,
+            prefer_module_field: from.prefer_module_field,
+            // Transient per-resolve scratch (only set for `require(..., {paths})`);
+            // never carried across worker init.
+            custom_dir_paths: None,
+        }
+    }
+
     /// Port of Zig `r.fs` deref.
     ///
     /// PORT NOTE (Stacked Borrows): returns the RAW `*mut` (NOT `&'a mut`). A
@@ -4685,7 +4745,7 @@ impl<'a> Resolver<'a> {
     /// Centralizes the `unsafe { &mut *self.dir_cache() }` retag that every
     /// call site previously open-coded. `&mut self` ensures no two coexisting
     /// `&mut HashMap` are produced from the SAME `Resolver`; cross-clone
-    /// aliasing (worker `clone_for_worker` copies share the singleton) is
+    /// aliasing (per-worker `Resolver`s share the singleton) is
     /// guarded by the resolver `mutex` — identical invariant to the prior
     /// per-site `unsafe`.
     ///
@@ -9369,9 +9429,9 @@ impl<'a> Resolver<'a> {
 impl<'a> Resolver<'a> {
     /// Port of `pub fn deinit(r: *ThisResolver)` (resolver.zig:601-604).
     ///
-    /// PORT NOTE: NOT `impl Drop` — the bundler bitwise-copies `Resolver` per worker
-    /// thread (see `clone_for_worker`), and all clones share the same `dir_cache`
-    /// singleton. A `Drop` impl would fire once per worker-clone going out of scope,
+    /// PORT NOTE: NOT `impl Drop` — the bundler builds a `Resolver` per worker
+    /// thread (see `for_worker`), and all instances share the same `dir_cache`
+    /// singleton. A `Drop` impl would fire once per worker going out of scope,
     /// resetting the SHARED cache (freeing PackageJSON/TSConfigJSON, closing cached
     /// fds) while other live Resolvers still hold pointers into it. Spec calls
     /// `deinit` explicitly exactly once at shutdown; mirror that.

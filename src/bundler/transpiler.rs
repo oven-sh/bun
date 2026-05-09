@@ -250,28 +250,116 @@ impl<'a> Transpiler<'a> {
         unsafe { &mut *self.env }
     }
 
-    /// Port of `bundle_v2.zig:198 initializeClientTranspiler`'s
-    /// `client_transpiler.* = this_transpiler.*` value copy.
+    /// Per-worker / client-transpiler constructor — port of Zig's
+    /// `transpiler.* = from.*` (ThreadPool.zig:308, bundle_v2.zig:204).
     ///
     /// Zig structs have no destructors, so a bitwise struct copy that aliases
-    /// heap-owning fields is sound there (both copies live in the bundler arena
-    /// and are bulk-freed). The Rust port mirrors that by `ptr::read`ing into a
-    /// bumpalo arena slot (never `Drop`ped) and requiring the caller to use
-    /// `ptr::write` for any subsequent heap-field overwrites so the aliased
-    /// originals are never freed.
+    /// heap-owning fields is sound there. In Rust the prior bitwise
+    /// `ptr::copy_nonoverlapping` aliased every `Box`/`Vec` between parent and
+    /// worker; reassigning any of them on the worker (e.g.
+    /// `resolver.caches = ...`) ran `Drop` on the parent's allocation. This
+    /// constructor instead handles each field explicitly: `Copy`/raw-pointer
+    /// fields are copied, owned fields are deep-cloned via
+    /// [`options::BundleOptions::for_worker`] / [`Resolver::for_worker`], and
+    /// per-worker scratch (`result`, `output_files`, `resolve_queue`, …) is
+    /// freshly default-constructed.
+    ///
+    /// The returned value is a normal owned `Transpiler` whose `Drop` is sound
+    /// — no `MaybeUninit` / `ptr::write` field-overwrite contract is needed by
+    /// callers. **Self-referential pointers are NOT yet wired** (the value may
+    /// still be moved into its final slot); call [`Self::wire_after_move`]
+    /// once the `Transpiler` is at its final address.
     ///
     /// # Safety
-    /// - `arena` must outlive `self`.
-    /// - The returned `Transpiler` aliases every heap-owning field of `self`.
-    ///   It is never dropped (bumpalo). Callers MUST NOT assign to a heap-
-    ///   owning field of the clone with `=` (which would drop the shared old
-    ///   value); use `core::ptr::write` instead. Non-heap (`Copy`) fields and
-    ///   raw-pointer fields may be assigned normally.
-    pub unsafe fn arena_bitwise_dup(&self, arena: &'a Arena) -> &'a mut Transpiler<'a> {
-        // SAFETY: bitwise read of `*self`; the duplicate is placed in `arena`
-        // which never runs `Drop`, so no double-free occurs. See fn docs for
-        // the field-overwrite contract callers must uphold.
-        arena.alloc(unsafe { core::ptr::read(self) })
+    /// `from` must outlive the returned `Transpiler<'a>`. The few
+    /// lifetime-carrying borrows in `BundleOptions<'_>` / `Resolver<'_>`
+    /// (`framework`, `optimize_imports`, `standalone_module_graph`,
+    /// `env_loader`) are widened from `from`'s lifetime to `'a` via a
+    /// layout-preserving transmute — sound because those reference
+    /// process-lifetime data in every caller, but unprovable to borrowck.
+    pub unsafe fn for_worker(
+        from: &Transpiler<'_>,
+        arena: &'a Arena,
+        log: *mut logger::Log,
+    ) -> Transpiler<'a> {
+        // Deep-clone the heavy nested fields at `from`'s lifetime, then
+        // lifetime-widen to `'a`. Layout is identical (only the lifetime
+        // parameter differs), so `transmute` is a no-op reinterpretation.
+        // SAFETY: see fn doc.
+        let options: options::BundleOptions<'a> = unsafe {
+            core::mem::transmute::<options::BundleOptions<'_>, options::BundleOptions<'a>>(
+                from.options.for_worker(),
+            )
+        };
+        let resolver_opts = resolver_bundle_options_subset(&options);
+        // SAFETY: see fn doc — `Resolver::for_worker` widens
+        // `standalone_module_graph` / `env_loader` lifetimes.
+        let resolver: Resolver<'a> =
+            unsafe { Resolver::for_worker(&from.resolver, log, resolver_opts) };
+
+        Transpiler {
+            options,
+            log,
+            arena,
+            // Per-worker scratch — Zig's bitwise copy carried these too, but
+            // workers never read the parent's accumulated state.
+            result: options::TransformResult::default(),
+            resolver,
+            fs: from.fs,
+            output_files: Vec::new(),
+            resolve_results: Box::new(ResolveResults::default()),
+            resolve_queue: ResolveQueue::default(),
+            elapsed: 0,
+            needs_runtime: from.needs_runtime,
+            // Router carries owned routes/config and is unused by bundle_v2
+            // workers; per-worker fresh.
+            router: None,
+            source_map: from.source_map,
+            // Self-referential — wired by `wire_after_move`. Null back-pointers
+            // for now (matches `Transpiler::init`; never derefed before then).
+            linker: crate::linker::Linker::init(
+                log,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                from.fs,
+            ),
+            timer: SystemTimer::start().expect("Timer fail"),
+            // SAFETY: lifetime-widen the `Loader<'from>` raw pointer to `'a`
+            // (process-lifetime singleton; see fn doc).
+            env: from.env.cast(),
+            // Spec ThreadPool.zig:311 `MacroContext.init(transpiler)` takes the
+            // transpiler's *address*; deferred to `wire_after_move`.
+            macro_context: None,
+        }
+    }
+
+    /// Wire the self-referential `linker` back-pointers and `macro_context`
+    /// after this `Transpiler` has reached its final address (post-move into
+    /// `WorkerData` / arena slot). Port of the post-copy fixups in
+    /// ThreadPool.zig:309-313 / bundle_v2.zig:228-232.
+    pub fn wire_after_move(&mut self) {
+        // Spec: `transpiler.setLog(log)` already ran inside `for_worker` via
+        // direct field init; re-thread into `options.log` / `resolver.log` /
+        // `linker.log` here so all four aliases agree.
+        let log = self.log;
+        self.options.log = log;
+        self.resolver.log = log;
+        self.resolver.fs = self.fs;
+        // Spec ThreadPool.zig:310 `transpiler.linker.resolver = &transpiler.resolver`.
+        // Re-init the whole `Linker` against `self`'s now-stable addresses
+        // (`Linker::init` is cheap — just stores the pointers + defaults).
+        self.linker = crate::linker::Linker::init(
+            log,
+            core::ptr::addr_of_mut!(self.resolve_queue),
+            core::ptr::addr_of_mut!(self.options).cast(),
+            core::ptr::addr_of_mut!(self.resolver).cast(),
+            core::ptr::addr_of_mut!(*self.resolve_results),
+            self.fs,
+        );
+        // Spec ThreadPool.zig:311 `transpiler.macro_context = MacroContext.init(transpiler)`.
+        self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
 
     /// Port of `transpiler.zig:91 getPackageManager`.
@@ -496,41 +584,6 @@ impl<'a> Transpiler<'a> {
         }
         let _ = w.write_all(b"\n}\n");
         bun_core::Output::flush();
-    }
-
-    /// Port of Zig `transpiler.* = from.*` (ThreadPool.zig:308) — bitwise
-    /// struct copy for per-worker `Transpiler` initialization.
-    ///
-    /// # Safety
-    /// The returned value aliases every heap allocation owned by `from`
-    /// (`options`, `resolver`, `resolve_results`, …). Caller must ensure:
-    ///   * `from` outlives every clone (the `BundleV2`-owned transpiler does), and
-    ///   * the clone is stored where `Drop` never runs (`MaybeUninit` slot in
-    ///     `WorkerData`), so no double-free occurs. `Worker::deinit` mirrors
-    ///     Zig and only tears down the arena, never the per-worker `Transpiler`.
-    ///
-    /// PORT NOTE: writes in-place into the caller's `MaybeUninit` slot rather
-    /// than returning an owned `Transpiler<'a>` by value. Returning by value
-    /// would put an owned, fully-aliased `Transpiler` on the stack across the
-    /// caller's `.write()`; if a panic unwound at that point `Drop` would run
-    /// and double-free every heap field. Writing through `MaybeUninit::as_mut_ptr`
-    /// guarantees no aliased owned value ever exists where `Drop` can reach it
-    /// (PORTING.md §Forbidden — `ManuallyDrop`/`ptr::read` without paired drop).
-    pub unsafe fn clone_for_worker(
-        from: &Transpiler<'_>,
-        out: &mut core::mem::MaybeUninit<Transpiler<'a>>,
-    ) {
-        // SAFETY: bitwise copy + lifetime erase per caller contract above.
-        // `Transpiler<'x>` and `Transpiler<'a>` differ only in the lifetime
-        // parameter, so the pointer cast is layout-preserving. `from` and
-        // `out` cannot overlap (`from` is `&` and `out` is `&mut`).
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                std::ptr::from_ref::<Transpiler<'_>>(from).cast::<Transpiler<'a>>(),
-                out.as_mut_ptr(),
-                1,
-            );
-        }
     }
 }
 

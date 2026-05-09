@@ -120,6 +120,14 @@ impl<'a> ProcessHandle<'a> {
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
+        // Windows: `spawn_process_windows` has already moved the heap pipe out of
+        // `options.stdout/stderr` (via `heap::take`) into `spawned.stdout/stderr`
+        // as `WindowsStdioResult::Buffer(Box<Pipe>)`. The raw `*mut Pipe` left in
+        // `options` is dangling-by-design — re-`heap::take`ing it here would be a
+        // double `Box::from_raw` (UAF + double-free). Take the Box from the
+        // *result* instead, before `to_process` consumes `spawned`.
+        #[cfg(windows)]
+        let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
@@ -128,27 +136,12 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            // Zig: `handle.stdout.source = .{ .pipe = this.options.stdout.buffer }` —
-            // tagged-union payload access. We constructed `.Buffer(_)` ourselves in
-            // `run_filtered_scripts`, so the match arm is infallible (Zig's payload
-            // access panics on wrong tag in safe builds; mirror that here).
-            let stdout_pipe = match &handle.options.stdout {
-                spawn::Stdio::Buffer(p) => *p,
-                _ => unreachable!("filter_run options.stdout is always Buffer on Windows"),
-            };
-            let stderr_pipe = match &handle.options.stderr {
-                spawn::Stdio::Buffer(p) => *p,
-                _ => unreachable!("filter_run options.stderr is always Buffer on Windows"),
-            };
-            // SAFETY: pipes were heap-allocated via `heap::into_raw(Box::new(zeroed()))`
-            // in `run_filtered_scripts` and initialised by `spawn_process_windows`;
-            // ownership now transfers from `options` (no Drop on WindowsStdio) into
-            // the reader's `source`. Same `*mut uv::Pipe → Box<Pipe>` pattern as
-            // `PipeReader::set_stdio_result`.
-            handle.stdout.source =
-                Some(bun_io::Source::Pipe(unsafe { bun_core::heap::take(stdout_pipe) }));
-            handle.stderr.source =
-                Some(bun_io::Source::Pipe(unsafe { bun_core::heap::take(stderr_pipe) }));
+            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
+                handle.stdout.source = Some(bun_io::Source::Pipe(pipe));
+            }
+            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
+                handle.stderr.source = Some(bun_io::Source::Pipe(pipe));
+            }
         }
 
         #[cfg(unix)]

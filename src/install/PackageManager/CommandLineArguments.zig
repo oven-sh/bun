@@ -47,6 +47,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)") catch unreachable,
     clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
     clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
+    clap.parseParam("--no-save-package-json                Don't update package.json") catch unreachable,
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
@@ -230,6 +231,7 @@ ca_file_name: string = "",
 save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
+    no_save_package_json: bool = false,
 
 node_linker: ?Options.NodeLinker = null,
 
@@ -809,6 +811,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.no_summary = args.flag("--no-summary");
     cli.ca = args.options("--ca");
     cli.lockfile_only = args.flag("--lockfile-only");
+    cli.no_save_package_json = args.flag("--no-save-package-json");
 
     if (args.option("--linker")) |linker| {
         cli.node_linker = Options.NodeLinker.fromStr(linker) orelse {

@@ -499,9 +499,11 @@ pub fn load(
             this.scope.token = cli.token;
         }
 
-        if (cli.no_save) {
-            this.do.save_lockfile = false;
+        if (cli.no_save or cli.no_save_package_json) {
             this.do.write_package_json = false;
+            if (cli.no_save) {
+                this.do.save_lockfile = false;
+            }
         }
 
         if (cli.dry_run) {

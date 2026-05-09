@@ -1828,6 +1828,18 @@ impl StackCheck {
         remaining > threshold
     }
 
+    /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
+    /// headroom on top of the platform threshold. Use when the code after the
+    /// check makes a deep call (e.g. into the transpiler) before reaching the
+    /// next check — on Windows a single stack `PathBuffer` is ~96 KB, so a
+    /// chain of two or three exceeds the default 256 KB headroom.
+    #[inline]
+    pub fn is_safe_to_recurse_with_extra(&self, extra: usize) -> bool {
+        let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
+        let threshold: usize = if cfg!(windows) { 256 * 1024 } else { 128 * 1024 };
+        remaining > threshold.saturating_add(extra)
+    }
+
     /// Approximate the current stack position. Reads the stack-pointer
     /// register so the result is on the real machine stack — taking the
     /// address of a local lands on ASAN's heap-backed fake stack when

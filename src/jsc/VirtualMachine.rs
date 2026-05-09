@@ -5285,14 +5285,26 @@ impl VirtualMachine {
         // `allow_side_effects`-monomorphized so each instantiation carries
         // only one branch's locals. The Rust port collapses those to runtime
         // bools, so `print_error_instance_body` carries the union of all
-        // branches' locals (every `pretty_write!` expands to two `write!`s)
-        // and this frame stack-allocates a ~4 KB `Holder`. On Windows debug
-        // one cycle (print_as → print_error → here → body → format → print_as)
-        // can exceed the 256 KB headroom `is_safe_to_recurse()` leaves, so we
-        // re-check here — same parity-level protection the Object path gets
-        // from C++ `forEachProperty`'s `vm.isSafeToRecurse()`. The formatter's
-        // `stack_check` was seated by the caller (`format2` / `Bun.inspect`).
-        if !formatter.stack_check.is_safe_to_recurse() {
+        // branches' locals (every `pretty_write!` expands to two `write!`s).
+        // More importantly, `remap_zig_exception` below calls
+        // `fetch_without_on_load_plugins` → the transpiler for source-line
+        // preview, and on Windows that call tree stack-allocates `PathBuffer`s
+        // (`MAX_PATH_BYTES = 98302` vs 4096 on Linux). One cycle can therefore
+        // exceed the default 256 KB headroom `is_safe_to_recurse()` leaves, so
+        // re-check here with an extra `MAX_PATH_BYTES * 3` of slack on Windows
+        // to cover the transpiler's nested path buffers — same parity-level
+        // protection the Object path gets from C++ `forEachProperty`'s
+        // `vm.isSafeToRecurse()`. The formatter's `stack_check` was seated by
+        // the caller (`format2` / `Bun.inspect`).
+        let extra_headroom: usize = if cfg!(windows) {
+            // 3× PathBuffer ≈ 288 KB — empirically enough for the
+            // `remap_zig_exception` → `transpile_source_code` chain on the
+            // 16K-deep Error test (`bun-inspect.test.ts`).
+            bun_paths::MAX_PATH_BYTES * 3
+        } else {
+            0
+        };
+        if !formatter.stack_check.is_safe_to_recurse_with_extra(extra_headroom) {
             formatter.failed = true;
             if formatter.can_throw_stack_overflow {
                 let _ = self.global().throw_stack_overflow();

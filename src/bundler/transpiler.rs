@@ -348,9 +348,12 @@ impl<'a> Transpiler<'a> {
         self.resolver.log = log;
         self.resolver.fs = self.fs;
         // Spec ThreadPool.zig:310 `transpiler.linker.resolver = &transpiler.resolver`.
-        // Re-init the whole `Linker` against `self`'s now-stable addresses
-        // (`Linker::init` is cheap — just stores the pointers + defaults).
-        self.linker = crate::linker::Linker::init(
+        // Only reseat the back-pointers — do NOT `Linker::init` here: that
+        // would clobber `import_counter` / `plugin_runner` /
+        // `tagged_resolutions` / `any_needs_runtime`, which the spec
+        // preserves across the move (bundle_v2.zig:230 only assigns
+        // `linker.resolver`).
+        self.linker.reseat_self_refs(
             log,
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),

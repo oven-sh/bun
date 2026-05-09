@@ -807,7 +807,9 @@ impl WebWorker {
         // proxy_env_storage / env.map, copy of standalone_module_graph),
         // so a shared reference is sufficient and matches the .zig intent.
         let parent = unsafe { &*self.parent };
-        let mut transform_options = parent.transpiler.options.transform_options.clone();
+        // Deref-clone out of the `Arc` — worker mutates `allow_addons` below
+        // and passes the owned struct as `args` to the new VM.
+        let mut transform_options = (*parent.transpiler.options.transform_options).clone();
 
         if let Some(exec_argv) = self.exec_argv() {
             // Spec web_worker.zig:445-476 — parse `execArgv` with the

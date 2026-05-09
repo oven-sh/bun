@@ -394,13 +394,14 @@ impl BlobExt for Blob {
             promise_value.ensure_still_alive();
 
             read_file::ReadFileUV::start::<Handler<'_, F>>(
-                // SAFETY: `bun_vm()` returns the live VM for this global; the
-                // event loop outlives any in-flight async fs request.
-                unsafe { &*global.bun_vm().event_loop() },
+                // `bun_vm()` returns the live VM for this global; the event
+                // loop outlives any in-flight async fs request. `start<H>`
+                // takes the raw `*mut EventLoop` and erases `*mut H` itself.
+                global.bun_vm().event_loop(),
                 self.store.as_ref().expect("infallible: store present").clone(),
                 self.offset,
                 self.size,
-                handler.cast::<c_void>(),
+                handler,
             );
             return promise_value;
         }
@@ -4177,7 +4178,7 @@ pub fn write_file_with_source_destination(
             ) {
                 Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
                 Err(write_file_mod::WriteFileWindowsError::JSTerminated) => {
-                    return Err(jsc::JsTerminated.into());
+                    return Err(jsc::JsTerminated::JSTerminated.into());
                 }
                 Ok(_) => {}
             }

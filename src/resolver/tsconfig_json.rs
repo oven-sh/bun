@@ -116,170 +116,57 @@ pub enum JsonMode {
     Jsonc,
 }
 
-/// CYCLEBREAK (§Dispatch, cold-path manual vtable): replaces the
-/// `bun_bundler::cache::Json` direct dep so `TSConfigJSON::parse` does not name
-/// a higher-tier type. `bun_bundler` provides a static `JsonCacheVTable` that
-/// forwards to `cache::Json::{parseJSON, parsePackageJSON, parseTSConfig}`; the
-/// resolver only sees `(*mut (), &vtable)`.
+/// Port of `cache::Json` (cache.zig:283). Moved down from `bun_bundler::cache`
+/// so the resolver names it directly — `bun_interchange::json_parser` is
+/// lower-tier than the resolver, so no cycle exists.
 ///
-/// All three slots mirror cache.zig:296-313 so the resolver can call any of
-/// them without naming `bun_bundler` / `bun_json` directly.
-pub struct JsonCacheVTable {
-    /// Returns `Ok(Some(expr))` on a successful parse, `Ok(None)` when the
-    /// source produced no AST (empty/comments-only), `Err` on hard failure.
-    pub parse_tsconfig: unsafe fn(
-        cache: *mut (),
-        log: &mut logger::Log,
-        source: &logger::Source,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error>,
-    /// Port of `cache::Json.parsePackageJSON` (cache.zig:307).
-    pub parse_package_json: unsafe fn(
-        cache: *mut (),
-        log: &mut logger::Log,
-        source: &logger::Source,
-        force_utf8: bool,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error>,
-    /// Port of `cache::Json.parseJSON` (cache.zig:296).
-    pub parse_json: unsafe fn(
-        cache: *mut (),
-        log: &mut logger::Log,
-        source: &logger::Source,
-        mode: JsonMode,
-        force_utf8: bool,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error>,
-}
-
-/// Erased handle to a `bun_bundler::cache::Json` (or equivalent).
+/// Zig's `Json` is stateless and threads `bun.default_allocator` through every
+/// call; the Rust `json_parser` arena-allocates into a `&bun_alloc::Arena`, so
+/// this struct owns one. The arena is **never reset** — package.json/tsconfig
+/// ASTs are cached process-long ("DirInfo cache is reused globally / so we
+/// cannot free these", package_json.zig).
 pub struct JsonCache {
-    pub ptr: *mut (),
-    pub vtable: &'static JsonCacheVTable,
-}
-
-thread_local! {
-    /// Backing arena for the default (`unwired`) vtable. Zig's `Json{}` is an
-    /// empty struct whose methods take `std.mem.Allocator param` — the
-    /// resolver passes `bun.default_allocator`, which never frees. The Rust
-    /// `bun_interchange::json` parser arena-allocates AST nodes into a `&Bump`;
-    /// this thread-local is the `default_allocator` equivalent (never reset, so
-    /// returned `Expr` `StoreRef`s stay valid for the thread's lifetime).
-    ///
-    /// The bundler swaps in its own per-`cache::Json` arena via
-    /// `Json::as_resolver_cache` (src/bundler/cache.rs); this is the fallback
-    /// so a bare `Resolver` works without that wiring, matching Zig semantics.
-    static UNWIRED_JSON_ARENA: bun_alloc::Arena = bun_alloc::Arena::new();
-}
-
-/// Port of `cache::Json::parse` (cache.zig:287) for the default vtable.
-/// `_: *@This()` is dropped — Zig's `Json` is stateless.
-#[inline]
-fn unwired_json_parse(
-    log: &mut logger::Log,
-    source: &logger::Source,
-    func: fn(
-        &logger::Source,
-        &mut logger::Log,
-        &bun_alloc::Arena,
-    ) -> Result<json_parser::Expr, bun_core::Error>,
-) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-    let mut temp_log = logger::Log::init();
-    // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
-    // runs after the `func() catch null` body; here the append is hoisted past the match.
-    let result = UNWIRED_JSON_ARENA.with(|bump| match func(source, &mut temp_log, bump) {
-        // Lift the T2 value-subset `bun_logger::js_ast::Expr` into the full
-        // `bun_js_parser::Expr` (src/js_parser/ast/Expr.rs `From` impl).
-        Ok(expr) => Some(js_ast::Expr::from(expr)),
-        Err(_) => None,
-    });
-    let _ = temp_log.append_to_maybe_recycled(log, source);
-    Ok(result)
+    bump: bun_alloc::Arena,
 }
 
 impl JsonCache {
-    /// Default vtable for `cache::Set::init()` — port of Zig's `Json{}` empty
-    /// struct (cache.zig:283), which is fully functional on first use because
-    /// its methods statically forward to `json_parser`. The resolver crate
-    /// reaches `json_parser` via `bun_interchange` (lower-tier; already a
-    /// transitive dep through `bun_js_parser`), so no cycle-break is needed here
-    /// — only the `bun_bundler::cache::Json` *type* sat in a higher tier, and
-    /// that is what the vtable erasure replaces. The bundler may still install
-    /// its own vtable (to share an arena), but it is no longer required for
-    /// correctness.
-    pub const fn unwired() -> JsonCache {
-        /// Port of `cache::Json.parseTSConfig` (cache.zig:311).
-        unsafe fn unwired_tsconfig(
-            _cache: *mut (),
-            log: &mut logger::Log,
-            source: &logger::Source,
-        ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-            unwired_json_parse(log, source, json_parser::parse_ts_config::<true>)
-        }
-        /// Port of `cache::Json.parsePackageJSON` (cache.zig:307).
-        unsafe fn unwired_package_json(
-            _cache: *mut (),
-            log: &mut logger::Log,
-            source: &logger::Source,
-            force_utf8: bool,
-        ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-            // PORT NOTE: `comptime force_utf8: bool` → runtime branch over the two
-            // monomorphizations (vtable slot is a plain `fn`, not generic).
-            let f: fn(
-                &logger::Source,
-                &mut logger::Log,
-                &bun_alloc::Arena,
-            ) -> Result<json_parser::Expr, bun_core::Error> = if force_utf8 {
-                json_parser::parse_ts_config::<true>
-            } else {
-                json_parser::parse_ts_config::<false>
-            };
-            unwired_json_parse(log, source, f)
-        }
-        /// Port of `cache::Json.parseJSON` (cache.zig:296).
-        unsafe fn unwired_json(
-            _cache: *mut (),
-            log: &mut logger::Log,
-            source: &logger::Source,
-            mode: JsonMode,
-            force_utf8: bool,
-        ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-            // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
-            // They are JSON files with comments and trailing commas.
-            // Sometimes tooling expects this to work.
-            let f: fn(
-                &logger::Source,
-                &mut logger::Log,
-                &bun_alloc::Arena,
-            ) -> Result<json_parser::Expr, bun_core::Error> = match (mode, force_utf8) {
-                (JsonMode::Jsonc, true) => json_parser::parse_ts_config::<true>,
-                (JsonMode::Jsonc, false) => json_parser::parse_ts_config::<false>,
-                (JsonMode::Json, true) => json_parser::parse::<true>,
-                (JsonMode::Json, false) => json_parser::parse::<false>,
-            };
-            unwired_json_parse(log, source, f)
-        }
-        static UNWIRED_VTABLE: JsonCacheVTable = JsonCacheVTable {
-            parse_tsconfig: unwired_tsconfig,
-            parse_package_json: unwired_package_json,
-            parse_json: unwired_json,
+    pub fn init() -> JsonCache {
+        JsonCache { bump: bun_alloc::Arena::new() }
+    }
+
+    /// Port of `cache::Json::parse` (cache.zig:287).
+    #[inline]
+    fn parse(
+        &mut self,
+        log: &mut logger::Log,
+        source: &logger::Source,
+        func: fn(
+            &logger::Source,
+            &mut logger::Log,
+            &bun_alloc::Arena,
+        ) -> Result<json_parser::Expr, bun_core::Error>,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+        let mut temp_log = logger::Log::init();
+        // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
+        // runs after the `func() catch null` body; here the append is hoisted past the match.
+        let result = match func(source, &mut temp_log, &self.bump) {
+            // Lift the T2 value-subset `bun_logger::js_ast::Expr` into the full
+            // `bun_js_parser::Expr` (src/js_parser/ast/Expr.rs `From` impl).
+            Ok(expr) => Some(js_ast::Expr::from(expr)),
+            Err(_) => None,
         };
-        JsonCache { ptr: core::ptr::null_mut(), vtable: &UNWIRED_VTABLE }
+        let _ = temp_log.append_to_maybe_recycled(log, source);
+        Ok(result)
     }
 
-    /// Deprecated alias for [`JsonCache::unwired`]. Kept so out-of-crate
-    /// callers compile while they migrate; new code must not use this.
-    #[deprecated = "use JsonCache::unwired()"]
-    pub const fn noop() -> JsonCache {
-        Self::unwired()
-    }
-
+    /// Port of `cache::Json.parseTSConfig` (cache.zig:311).
     #[inline]
     pub fn parse_tsconfig(
         &mut self,
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-        // SAFETY: `ptr` points to the cache instance the vtable was minted for;
-        // caller (bun_bundler) guarantees they were paired.
-        unsafe { (self.vtable.parse_tsconfig)(self.ptr, log, source) }
+        self.parse(log, source, json_parser::parse_ts_config::<true>)
     }
 
     /// Port of `cache::Json.parsePackageJSON` (cache.zig:307).
@@ -290,8 +177,11 @@ impl JsonCache {
         source: &logger::Source,
         force_utf8: bool,
     ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-        // SAFETY: see `parse_tsconfig`.
-        unsafe { (self.vtable.parse_package_json)(self.ptr, log, source, force_utf8) }
+        if force_utf8 {
+            self.parse(log, source, json_parser::parse_ts_config::<true>)
+        } else {
+            self.parse(log, source, json_parser::parse_ts_config::<false>)
+        }
     }
 
     /// Port of `cache::Json.parseJSON` (cache.zig:296).
@@ -303,8 +193,20 @@ impl JsonCache {
         mode: JsonMode,
         force_utf8: bool,
     ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-        // SAFETY: see `parse_tsconfig`.
-        unsafe { (self.vtable.parse_json)(self.ptr, log, source, mode, force_utf8) }
+        // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
+        // They are JSON files with comments and trailing commas.
+        // Sometimes tooling expects this to work.
+        let f: fn(
+            &logger::Source,
+            &mut logger::Log,
+            &bun_alloc::Arena,
+        ) -> Result<json_parser::Expr, bun_core::Error> = match (mode, force_utf8) {
+            (JsonMode::Jsonc, true) => json_parser::parse_ts_config::<true>,
+            (JsonMode::Jsonc, false) => json_parser::parse_ts_config::<false>,
+            (JsonMode::Json, true) => json_parser::parse::<true>,
+            (JsonMode::Json, false) => json_parser::parse::<false>,
+        };
+        self.parse(log, source, f)
     }
 }
 
@@ -502,8 +404,6 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    // `json_cache` is the erased `JsonCache` vtable handle (was
-    // `&mut bun_bundler::cache::Json`).
     // PORT NOTE: Zig `Expr.asString(allocator)` allocates and never frees (the
     // resolver owns the JSON AST for its lifetime). The live Rust `Expr` query
     // API exposes `as_utf8_string_literal() -> Option<&[u8]>` instead — the

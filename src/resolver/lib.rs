@@ -2603,7 +2603,7 @@ pub mod cache {
                     use_alternate_source_cache: false,
                     stream: false,
                 },
-                json: Json::unwired(),
+                json: Json::init(),
             }
         }
     }

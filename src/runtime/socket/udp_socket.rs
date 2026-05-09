@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_void};
-use core::mem::MaybeUninit;
 
 use bun_io::KeepAlive;
 use bun_ptr::BackRef;
@@ -520,21 +519,16 @@ impl UDPSocket {
 
         // PORT NOTE: `JsClass::to_js(self)` boxes by value, but we already own
         // the heap allocation in `this_ptr` and need to keep that exact pointer
-        // (it is stashed as the uws user_data). Bind the codegen `__create`
-        // export directly — same call the Zig `toJS(*Self)` makes.
-        // Signature must match the one `#[bun_jsc::JsClass]` emits for the same
-        // link_name to avoid a clashing_extern_declarations diagnostic.
-        // `UDPSocket` is not `#[repr(C)]`, but the C++ side treats `ptr` as an
-        // opaque `void*` (stored verbatim in `m_ctx`), so layout is irrelevant.
-        #[allow(improper_ctypes)]
-        unsafe extern "C" {
-            // `safe fn` to match the declaration `#[bun_jsc::JsClass]` emits
-            // for the same `link_name` (avoids `clashing_extern_declarations`).
-            #[link_name = "UDPSocket__create"]
-            safe fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut UDPSocket) -> JSValue;
-        }
-        // `global_this` is live; `this_ptr` ownership transfers to the C++ wrapper.
-        let this_value = udp_socket_create(global_this.as_mut_ptr(), this_ptr);
+        // (it is stashed as the uws user_data). Route through the
+        // `#[bun_jsc::JsClass]`-generated `to_js_ptr` inherent method, which
+        // binds `UDPSocket__create` with the correct `jsc.conv` ABI
+        // (`extern "sysv64"` on Windows-x64, `extern "C"` elsewhere — the C++
+        // side declares it `extern JSC_CALLCONV`). A manual `extern "C"` block
+        // here would be a Win64-vs-SysV mismatch on Windows.
+        //
+        // SAFETY: `this_ptr` is a fresh `heap::into_raw` allocation (line 478);
+        // ownership transfers to the C++ wrapper's `m_ctx`.
+        let this_value = unsafe { Self::to_js_ptr(this_ptr, global_this) };
         this_value.ensure_still_alive();
         this.this_value.set_strong(this_value, global_this);
 
@@ -664,8 +658,14 @@ impl UDPSocket {
         }
 
         let enabled = arguments[0].to_boolean();
-        // SAFETY: !closed implies socket is Some and valid.
-        let res = unsafe { (*this.socket.unwrap()).set_broadcast(enabled) };
+        let Some(socket) = this.socket else {
+            return Err(global_this.throw_value(
+                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
+            ));
+        };
+        // SAFETY: !closed and socket is Some imply the uws handle is live.
+        let res = unsafe { (*socket).set_broadcast(enabled) };
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -693,8 +693,20 @@ impl UDPSocket {
         }
 
         let enabled = arguments[0].to_boolean();
-        // SAFETY: !closed implies socket is Some and valid.
-        let res = unsafe { (*this.socket.unwrap()).set_multicast_loopback(enabled) };
+        // Spec: udp_socket.zig:424 uses bare `.?`, but the same file's
+        // `setAnyTTL` (zig:593) / `setMembership` (zig:450) guard with
+        // `orelse throw` — on Windows the Rust port can observe
+        // `closed=false && socket=None` here (panic seen in
+        // test-dgram-multicast-loopback.js). Throw EBADF to match the
+        // `closed` branch above instead of panicking.
+        let Some(socket) = this.socket else {
+            return Err(global_this.throw_value(
+                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
+            ));
+        };
+        // SAFETY: !closed and socket is Some imply the uws handle is live.
+        let res = unsafe { (*socket).set_multicast_loopback(enabled) };
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -793,31 +805,24 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments, got {}", arguments.len())));
         }
 
-        let mut source_addr = MaybeUninit::<sockaddr_storage>::uninit();
-        // SAFETY: parse_addr fully initializes on success; we never read on failure.
-        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], unsafe {
-            &mut *source_addr.as_mut_ptr()
-        })? {
+        // See `set_multicast_interface`: zero-init instead of `MaybeUninit` —
+        // `parse_addr` only writes the sockaddr_in/in6 prefix, so
+        // `assume_init()` on the full 128-byte storage would be UB.
+        let mut source_addr: sockaddr_storage = bun_core::ffi::zeroed();
+        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], &mut source_addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
             ));
         }
-        // SAFETY: initialized by parse_addr above.
-        let source_addr = unsafe { source_addr.assume_init() };
 
-        let mut group_addr = MaybeUninit::<sockaddr_storage>::uninit();
-        // SAFETY: see above.
-        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[1], unsafe {
-            &mut *group_addr.as_mut_ptr()
-        })? {
+        let mut group_addr: sockaddr_storage = bun_core::ffi::zeroed();
+        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[1], &mut group_addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
             ));
         }
-        // SAFETY: initialized by parse_addr above.
-        let group_addr = unsafe { group_addr.assume_init() };
 
         if source_addr.ss_family != group_addr.ss_family {
             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -825,19 +830,15 @@ impl UDPSocket {
             )));
         }
 
-        let mut interface = MaybeUninit::<sockaddr_storage>::uninit();
+        let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
 
         let Some(socket) = this.socket else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
         let res = if arguments.len() > 2
-            && this.parse_addr(global_this, JSValue::js_number(0.0), arguments[2], unsafe {
-                &mut *interface.as_mut_ptr()
-            })?
+            && this.parse_addr(global_this, JSValue::js_number(0.0), arguments[2], &mut interface)?
         {
-            // SAFETY: initialized by parse_addr above.
-            let interface = unsafe { interface.assume_init() };
             if source_addr.ss_family != interface.ss_family {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch among source, group and interface addresses"
@@ -893,16 +894,19 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument, got {}", arguments.len())));
         }
 
-        let mut addr = MaybeUninit::<sockaddr_storage>::uninit();
+        // Zig spec uses `var addr: sockaddr.storage = undefined;`. `parse_addr`
+        // only writes the leading sockaddr_in/in6 prefix (≤28 bytes), so the
+        // remaining 100+ bytes stay uninitialized. Zig permits that (only
+        // written fields are read), but in Rust producing a `sockaddr_storage`
+        // value via `assume_init()` from a partially-initialized `MaybeUninit`
+        // is UB. Zero-initialize instead — matches `set_membership` and is
+        // semantically equivalent (the C side reads only `ss_family` + the
+        // address-family-specific fields `parse_addr` populated).
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
 
-        // SAFETY: parse_addr fully initializes on success; never read on failure.
-        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], unsafe {
-            &mut *addr.as_mut_ptr()
-        })? {
+        if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], &mut addr)? {
             return Ok(JSValue::FALSE);
         }
-        // SAFETY: initialized by parse_addr above.
-        let addr = unsafe { addr.assume_init() };
 
         let Some(socket) = this.socket else {
             return Err(global_this.throw(format_args!("Socket is closed")));

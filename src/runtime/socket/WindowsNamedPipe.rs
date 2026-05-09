@@ -106,7 +106,15 @@ bitflags::bitflags! {
         /// allocation on early-error paths (before adoption) without risking a
         /// double-free once the writer owns it.
         const PIPE_ADOPTED = 1 << 4;
-        // _: u3 padding
+        /// Rust-only re-entrancy guard: set while `SSLWrapper::receive_data`
+        /// is executing through a raw `*mut WrapperType` into `self.wrapper`.
+        /// `release_resources()` checks this to DEFER `self.wrapper = None`
+        /// (which would run `SSLWrapper::drop` and rewrite the `Option`
+        /// discriminant) until the in-flight call returns — `receive_data` can
+        /// synchronously fire `ssl_on_close → on_close → release_resources`,
+        /// and dropping the wrapper out from under its own `&mut self` is UAF.
+        const WRAPPER_BUSY = 1 << 5;
+        // _: u2 padding
     }
 }
 
@@ -252,11 +260,29 @@ impl WindowsNamedPipe {
             let w: *mut WrapperType =
                 // SAFETY: `is_some()` checked just above; single JS thread.
                 unsafe { self.wrapper.as_mut().unwrap_unchecked() };
-            // SAFETY: `w` points into `self.wrapper`'s payload; the re-entrant
-            // `&mut *this` formed by the SSL trampolines does not touch
-            // `self.wrapper` (only timer/writer/flags via `internal_write`), so
-            // the wrapper bytes stay valid for the duration of the call.
+            // `receive_data → handle_traffic` may synchronously invoke
+            // `trigger_close_callback` → `ssl_on_close` → `on_close` →
+            // `release_resources()`. Guard so that path defers
+            // `self.wrapper = None` instead of dropping the `SSLWrapper`
+            // (and rewriting the `Option` discriminant) while `*w` is still
+            // mid-execution inside its payload.
+            self.flags.insert(Flags::WRAPPER_BUSY);
+            // SAFETY: `w` points into `self.wrapper`'s `Some` payload. The
+            // re-entrant `&mut *this` formed by the SSL trampolines touches
+            // only timer/writer/flags/handlers (`internal_write`, `on_data`,
+            // `on_handshake`, `on_close`); `WRAPPER_BUSY` ensures the one
+            // path that WOULD mutate `self.wrapper` (`release_resources`)
+            // skips its `= None`, so the payload bytes stay valid and
+            // un-overwritten for the duration of this call.
             unsafe { (*w).receive_data(data.as_slice()) };
+            self.flags.remove(Flags::WRAPPER_BUSY);
+            // If close fired re-entrantly, the deferred drop is now safe:
+            // `receive_data` has returned and no `&mut` into the wrapper is
+            // live. (`release_resources` is idempotent, but we only need the
+            // wrapper teardown it skipped.)
+            if self.flags.is_closed() {
+                self.wrapper = None;
+            }
         } else {
             (self.handlers.on_data)(self.handlers.ctx, data.as_slice());
         }
@@ -476,8 +502,21 @@ impl WindowsNamedPipe {
         // is_some() first, call reset_timeout(), then re-borrow wrapper.
         if self.wrapper.is_some() {
             self.reset_timeout();
-            if let Some(wrapper) = self.wrapper.as_mut() {
-                wrapper.receive_data(data);
+            // Same re-entrancy hazard as `on_read`: `receive_data` may fire
+            // `ssl_on_close` synchronously. Hold `WRAPPER_BUSY` so
+            // `release_resources()` defers `self.wrapper = None`, and call
+            // through a raw pointer so no outer `&mut self.wrapper` Unique tag
+            // is live across the re-entrant `&mut *this` retag.
+            let w: *mut WrapperType =
+                // SAFETY: `is_some()` checked above; single JS thread.
+                unsafe { self.wrapper.as_mut().unwrap_unchecked() };
+            self.flags.insert(Flags::WRAPPER_BUSY);
+            // SAFETY: see `on_read` — `WRAPPER_BUSY` keeps the `Some` payload
+            // bytes at `*w` valid and un-overwritten for the call's duration.
+            unsafe { (*w).receive_data(data) };
+            self.flags.remove(Flags::WRAPPER_BUSY);
+            if self.flags.is_closed() {
+                self.wrapper = None;
             }
         }
     }
@@ -1093,7 +1132,15 @@ impl WindowsNamedPipe {
         {
             self.writer.outgoing = Default::default();
         }
-        self.wrapper = None;
+        // `receive_data → handle_traffic → trigger_close_callback` can land
+        // here while a raw `*mut WrapperType` into `self.wrapper`'s payload is
+        // still mid-execution (see `on_read`/`on_internal_receive_data`).
+        // Dropping the wrapper now would free SSL/SSL_CTX and overwrite the
+        // `Option` discriminant under that live pointer — UAF / aliased-&mut
+        // UB. Defer; the call site drops it after `receive_data` returns.
+        if !self.flags.contains(Flags::WRAPPER_BUSY) {
+            self.wrapper = None;
+        }
         self.ssl_error = CertError::default();
     }
 }

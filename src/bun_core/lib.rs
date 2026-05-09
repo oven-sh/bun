@@ -2074,7 +2074,40 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     }
 }
 
-/// Fallback for targets without `libc::backtrace` (musl, Android, Windows, …).
+/// Windows: `RtlCaptureStackBackTrace` (kernel32/ntdll). Zig's
+/// `std.debug.captureStackTrace` uses this on Windows. No DbgHelp dependency
+/// for capture; symbolization happens later in `dump_stack_trace`.
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
+    if out.is_null() || cap == 0 { return 0; }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn RtlCaptureStackBackTrace(
+            FramesToSkip: u32,
+            FramesToCapture: u32,
+            BackTrace: *mut *mut core::ffi::c_void,
+            BackTraceHash: *mut u32,
+        ) -> u16;
+    }
+    // `FramesToCapture` is bounded at `u16::MAX` by the API; clamp.
+    let cap_u32 = cap.min(u16::MAX as usize) as u32;
+    // SAFETY: FFI; `out` is valid for `cap` writes, hash ptr may be null.
+    let n = unsafe {
+        RtlCaptureStackBackTrace(0, cap_u32, out as *mut *mut core::ffi::c_void, core::ptr::null_mut())
+    } as usize;
+    // Match the unix arm's `begin` semantics: treat `begin` as a small skip
+    // count when in `[1, n)`, otherwise ignore (callers also pass an address
+    // here, which is always > n and so a no-op).
+    if begin > 0 && begin < n {
+        // SAFETY: `begin < n ≤ cap`; copying `n - begin` words within `out[..n]`.
+        unsafe { core::ptr::copy(out.add(begin), out, n - begin); }
+        return n - begin;
+    }
+    n
+}
+
+/// Fallback for targets without `libc::backtrace` (musl, Android, …).
 /// Returns 0 frames so callers degrade to a frame-less crash report instead of
 /// failing to compile.
 #[cfg(not(any(
@@ -2084,6 +2117,7 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     target_os = "dragonfly",
     target_os = "netbsd",
     target_os = "openbsd",
+    windows,
 )))]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {

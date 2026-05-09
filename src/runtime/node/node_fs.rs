@@ -774,8 +774,12 @@ where
 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
         // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
+        // Copy the raw pointer for the cleanup guard so the `defer!` closure
+        // captures `req_cleanup` (not `req`) — borrowck otherwise treats the
+        // closure's `&req` capture as conflicting with `&mut *req` below.
+        let req_cleanup: *mut uv::fs_t = req;
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
+        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req_cleanup) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
@@ -1566,7 +1570,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 this.finish_concurrently(Err(sys::Error {
                     errno: SystemErrno::ENOENT as _,
                     syscall: sys::Tag::copyfile,
-                    path: nodefs.os_path_into_sync_error_buf(src),
+                    path: nodefs.os_path_into_sync_error_buf(src).into(),
                     ..Default::default()
                 }));
                 return;
@@ -3899,10 +3903,15 @@ pub use ret as ReturnType;
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
-        let path: &OSPathSliceZ = if args.path.slice().is_empty() {
-            os_path_literal_empty()
+        // PORT: Zig passes `osPathKernel32(...)` (wide on Windows) into
+        // `Syscall.access(OSPathSliceZ)`. The Rust `bun_sys::access` Windows
+        // arm takes `&ZStr` and performs the kernel32 widening internally
+        // (sys/lib.rs `windows_impl::access`), so feed it the UTF-8 path on
+        // every platform — net behaviour is identical.
+        let path: &ZStr = if args.path.slice().is_empty() {
+            ZStr::EMPTY
         } else {
-            args.path.os_path_kernel32(&mut self.sync_error_buf)
+            args.path.slice_z(&mut self.sync_error_buf)
         };
         match Syscall::access(path, args.mode.as_int()) {
             Err(err) => Err(err.with_path(args.path.slice())),

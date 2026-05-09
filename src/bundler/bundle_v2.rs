@@ -75,6 +75,14 @@ pub struct BundleV2<'a> {
     /// When Server Components is enabled, this is used for the client bundles
     /// and `transpiler` is used for the server bundles.
     pub client_transpiler: Option<NonNull<Transpiler<'a>>>,
+    /// Owns the storage backing `client_transpiler` when it was lazily created
+    /// by `initialize_client_transpiler` (browser-target request from a
+    /// server-side build). Stays `None` when `client_transpiler` is borrowed
+    /// from `BakeOptions` (DevServer owns that one). Dropped in
+    /// `deinit_without_freeing_arena` so the deep-cloned `BundleOptions` /
+    /// `Resolver` global-heap fields are released — `arena.alloc` would leak
+    /// them since bumpalo never runs `Drop`.
+    pub owned_client_transpiler: Option<Box<Transpiler<'a>>>,
     /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
     pub ssr_transpiler: *mut Transpiler<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
@@ -1643,11 +1651,17 @@ impl<'a> BundleV2<'a> {
         // builds a fresh owned `Transpiler` via `Transpiler::for_worker`
         // (per-field deep clone), mutates the browser-specific options with
         // ordinary assignment (every field is owned by the clone, so `Drop` on
-        // the overwritten value is correct), then moves it into the bundle
-        // arena and wires the self-referential `linker`/`macro_context`.
+        // the overwritten value is correct), then boxes it on the global heap
+        // (NOT the bump arena — the clone holds `Box`/`Vec`/`MimallocArena`
+        // fields that need `Drop` to run) and wires the self-referential
+        // `linker`/`macro_context`. The box is parked on
+        // `self.owned_client_transpiler` so `deinit_without_freeing_arena`
+        // releases it.
 
+        // `arena` is only the scratch param for `Transpiler::for_worker`; the
+        // returned `Transpiler` itself is NOT placed in it.
         // SAFETY: `graph.heap` outlives the bundle pass; erase the `&self`
-        // borrow so the returned `&'a mut Transpiler<'a>` doesn't keep `self`
+        // borrow so the `'a` widen inside `for_worker` doesn't keep `self`
         // borrowed.
         let arena: &'a bun_alloc::Arena =
             unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
@@ -1684,30 +1698,37 @@ impl<'a> BundleV2<'a> {
             ct.options.public_path = b"/".to_vec().into_boxed_slice();
         }
 
-        // Move into the arena slot, then wire self-refs at the final address.
-        // PERF(port): the arena does not run `Drop`, so the cloned `Box` fields
-        // inside `ct` are released only when the bundle's `MimallocArena` is
-        // destroyed (matches Zig's `alloc.create` + arena bulk-free).
-        let client_transpiler: &'a mut Transpiler<'a> = arena.alloc(ct);
+        // Move into a stable heap slot, then wire self-refs at the final
+        // address. `Box` (global mimalloc heap) so `Drop` runs on the
+        // deep-cloned `BundleOptions`/`Resolver` fields; `arena.alloc` would
+        // leak them (bumpalo never drops).
+        let mut boxed: Box<Transpiler<'a>> = Box::new(ct);
         // Zig: `setLog` / `setAllocator` / `linker.resolver = &resolver` /
         // `macro_context = MacroContext.init(transpiler)` /
         // `resolver.caches = CacheSet.init(alloc)` — all handled by
         // `for_worker` + `wire_after_move`.
-        client_transpiler.wire_after_move();
+        boxed.wire_after_move();
 
         // `configure_defines` early-returns on `options.defines_loaded` (cloned
         // as `true`); kept for spec parity.
-        client_transpiler.configure_defines()?;
+        boxed.configure_defines()?;
 
         // Zig: `client_transpiler.resolver.opts = client_transpiler.options;` —
         // re-project the resolver subset now that `target`/`conditions` etc.
         // have been overwritten for the browser.
-        client_transpiler.sync_resolver_opts();
+        boxed.sync_resolver_opts();
         // Zig: `client_transpiler.resolver.env_loader = client_transpiler.env;`
-        client_transpiler.resolver.env_loader = NonNull::new(this_env.cast());
+        boxed.resolver.env_loader = NonNull::new(this_env.cast());
 
-        self.client_transpiler = Some(NonNull::from(&mut *client_transpiler));
-        Ok(client_transpiler)
+        // Park the owning Box first, then derive both the published `NonNull`
+        // and the returned `&mut` from its final resting place. Taking the
+        // pointer *before* moving `boxed` into `self` would give it stale
+        // provenance under Stacked Borrows (Box retags on move and asserts
+        // uniqueness, invalidating any previously-derived raw pointer).
+        self.owned_client_transpiler = Some(boxed);
+        let ct: &mut Transpiler<'a> = self.owned_client_transpiler.as_deref_mut().unwrap();
+        self.client_transpiler = Some(NonNull::from(&mut *ct));
+        Ok(ct)
     }
 
     /// By calling this function, it implies that the returned log *will* be
@@ -2589,6 +2610,7 @@ impl<'a> BundleV2<'a> {
         let mut this = Box::new(BundleV2 {
             transpiler,
             client_transpiler: None,
+            owned_client_transpiler: None,
             ssr_transpiler: ssr_alias,
             framework: None,
             graph: Graph {
@@ -4214,6 +4236,18 @@ impl<'a> BundleV2<'a> {
 
         // TODO(port): defer block — graph.ast/input_files/entry_points/entry_point_original_names deinit
         // In Rust these are dropped automatically; arena-backed slices are bulk-freed.
+
+        // Drop the lazily-created client transpiler (if any) before tearing
+        // down workers — matches the .zig spec ordering where the arena slot
+        // is invalidated ahead of `pool.workers_assignments` so no worker can
+        // observe a half-torn-down transpiler. Clear the `client_transpiler`
+        // alias first so it never dangles past the Box drop; in the
+        // `BakeOptions`-borrowed path `owned_client_transpiler` is `None` and
+        // the DevServer-owned pointer is left untouched.
+        if self.owned_client_transpiler.is_some() {
+            self.client_transpiler = None;
+            self.owned_client_transpiler = None;
+        }
 
         // bundle_v2.zig:1426-1437 — worker-assignment teardown.
         let pool = self.graph.pool_mut();

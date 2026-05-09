@@ -1864,7 +1864,13 @@ pub struct BundleOptions<'a> {
     pub import_path_format: ImportPathFormat,
     pub defines_loaded: bool,
     pub env: Env,
-    pub transform_options: api::TransformOptions,
+    /// The raw API struct as passed to `from_api`. Kept around because a
+    /// handful of places (jsx auto-detect, resolver `main_fields_is_default`,
+    /// `configure_defines`, runtime VM/server config) re-read the original
+    /// user-supplied flags after projection. `Arc` so `for_worker` is a
+    /// pointer-clone instead of a deep clone of the (large) peechy struct —
+    /// workers never mutate it.
+    pub transform_options: std::sync::Arc<api::TransformOptions>,
     pub polyfill_node_globals: bool,
     pub transform_only: bool,
     pub load_tsconfig_json: bool,
@@ -2000,6 +2006,10 @@ impl<'a> BundleOptions<'a> {
     /// so a per-worker clone allocates. Profile in Phase B; the hot fields
     /// (`define`, `loaders`, `conditions`) are O(dozens) entries.
     pub fn for_worker(&self) -> BundleOptions<'a> {
+        debug_assert!(
+            self.defines_loaded,
+            "BundleOptions::for_worker requires configure_defines() to have run on the parent (env.defaults is not cloned)",
+        );
         BundleOptions {
             footer: self.footer.clone(),
             banner: self.banner.clone(),
@@ -2069,7 +2079,7 @@ impl<'a> BundleOptions<'a> {
                 files: self.env.files.clone(),
                 disable_default_env_files: self.env.disable_default_env_files,
             },
-            transform_options: self.transform_options.clone(),
+            transform_options: std::sync::Arc::clone(&self.transform_options),
             polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
             load_tsconfig_json: self.load_tsconfig_json,
@@ -2292,7 +2302,7 @@ impl<'a> BundleOptions<'a> {
             entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
             env: Env::init(),
-            transform_options: transform.clone(),
+            transform_options: std::sync::Arc::new(transform.clone()),
             css_chunking: false,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,

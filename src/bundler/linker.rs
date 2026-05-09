@@ -285,6 +285,30 @@ impl Linker {
         }
     }
 
+    /// Re-seat the self-referential back-pointers after the owning
+    /// `Transpiler` has been moved to its final address. Port of the
+    /// post-copy fixups in ThreadPool.zig:310 / bundle_v2.zig:230 — those
+    /// only re-assign the pointer fields and do NOT reset
+    /// `import_counter` / `plugin_runner` / `tagged_resolutions` /
+    /// `any_needs_runtime`, so neither does this. Use instead of `init` from
+    /// `Transpiler::wire_after_move`.
+    pub fn reseat_self_refs(
+        &mut self,
+        log: *mut Log,
+        resolve_queue: *mut ResolveQueue,
+        options: *mut BundleOptions<'static>,
+        resolver: *mut Resolver<'static>,
+        resolve_results: *mut ResolveResults,
+        fs: *mut Fs::FileSystem,
+    ) {
+        self.log = log;
+        self.resolve_queue = resolve_queue;
+        self.options = options;
+        self.resolver = resolver;
+        self.resolve_results = resolve_results;
+        self.fs = fs;
+    }
+
     /// Accessor for the `relative_paths_list` singleton (Zig:
     /// `Linker.relative_paths_list`). Returns `*mut` because the Zig contract
     /// is a global `*Self` pointer — fabricating `&'static mut` here would

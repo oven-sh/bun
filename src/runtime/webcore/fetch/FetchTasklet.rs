@@ -1425,8 +1425,9 @@ impl FetchTasklet {
         // only by `detach_js` — neither runs, so FetchTasklet.deinit (and thus
         // `clear_sink`) is never reached. The wrapper test still passes because it
         // checks RSS growth only and ignores the spawned fixture's exit code; the
-        // inner assertion failing on iteration 0 makes it exit with a single RSS
-        // sample, so `last < first*10` is trivially true. Not a port divergence;
+        // inner assertion fails on iteration 1 leaving a single RSS sample
+        // (iteration 0's), so `last < first*10` is trivially true. Not a port
+        // divergence;
         // any fix belongs in the spec (cancel the sink when `is_done && success`
         // in `on_progress_update`, mirroring the `!success` branch).
 

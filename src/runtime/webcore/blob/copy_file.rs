@@ -1541,13 +1541,20 @@ impl<'a> CopyFileWindows<'a> {
             ) {
                 self.written_bytes = written;
                 let mut pathbuf = PathBuffer::uninit();
-                let path = self
+                // PORT NOTE (borrowck): `slice_z` ties the returned `&ZStr` to
+                // `&self.destination_file_store`, which would conflict with the
+                // `core::ptr::from_mut(self)` below. Capture the raw C pointer now —
+                // it points either into the stack-local `pathbuf` or into the
+                // Arc-held `destination_file_store` path bytes, both of which outlive
+                // the `uv_fs_chmod` call (libuv `strdup`s the path internally).
+                let path_ptr = self
                     .destination_file_store
                     .data
                     .as_file()
                     .pathlike
                     .path()
-                    .slice_z(&mut pathbuf);
+                    .slice_z(&mut pathbuf)
+                    .as_ptr();
                 let loop_ = self.event_loop.uv_loop();
                 self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
@@ -1555,13 +1562,13 @@ impl<'a> CopyFileWindows<'a> {
                 self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
                 // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` was just zeroed,
-                // `path` is NUL-terminated (from `slice_z`), and `on_chmod` is a valid
-                // `uv_fs_cb`.
+                // `path_ptr` is NUL-terminated (from `slice_z`) and live for this call,
+                // and `on_chmod` is a valid `uv_fs_cb`.
                 let rc = unsafe {
                     libuv::uv_fs_chmod(
                         loop_,
                         &mut self.io_request,
-                        path.as_ptr(),
+                        path_ptr,
                         i32::try_from(mode).expect("int cast"),
                         Some(on_chmod),
                     )
@@ -1636,30 +1643,33 @@ impl<'a> CopyFileWindows<'a> {
     fn mkdirp(&mut self) {
         bun_sys::syslog!("mkdirp");
         self.mkdirp_if_not_exists = false;
-        let destination = &self.destination_file_store.data.as_file();
-        if !matches!(
-            destination.pathlike,
-            PathOrFileDescriptor::Path(_)
-        ) {
-            self.throw(bun_sys::Error {
-                errno: bun_sys::SystemErrno::EINVAL as u16,
-                syscall: bun_sys::Tag::mkdir,
-                ..Default::default()
-            });
-            return;
-        }
-
-        self.event_loop.ref_concurrently();
-        let path_slice = destination.pathlike.path().slice();
-        node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
-            completion: on_mkdirp_complete_concurrent,
-            completion_ctx: core::ptr::from_mut(self).cast::<()>(),
+        // PORT NOTE (borrowck): compute the raw path slice pointer up-front so the
+        // immutable borrow of `self.destination_file_store` ends before we take
+        // `core::ptr::from_mut(self)` for `completion_ctx` below.
+        let path: *const [u8] = {
+            let destination = &self.destination_file_store.data.as_file();
+            if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
+                self.throw(bun_sys::Error {
+                    errno: bun_sys::SystemErrno::EINVAL as u16,
+                    syscall: bun_sys::Tag::mkdir,
+                    ..Default::default()
+                });
+                return;
+            }
+            let path_slice = destination.pathlike.path().slice();
             // BORROW: not owned — `destination_file_store` (and thus its path) is held in
             // `self`, which outlives the workpool task (completion runs `copyfile`/`throw`
             // on `self` before any `destroy`).
-            path: bun_paths::dirname(path_slice)
+            bun_paths::dirname(path_slice)
                 // this shouldn't happen
-                .unwrap_or(path_slice) as *const [u8],
+                .unwrap_or(path_slice) as *const [u8]
+        };
+
+        self.event_loop.ref_concurrently();
+        node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
+            completion: on_mkdirp_complete_concurrent,
+            completion_ctx: core::ptr::from_mut(self).cast::<()>(),
+            path,
             ..Default::default()
         })
         .schedule();

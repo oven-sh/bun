@@ -4244,8 +4244,9 @@ impl<'a> BundleV2<'a> {
         // alias first so it never dangles past the Box drop; in the
         // `BakeOptions`-borrowed path `owned_client_transpiler` is `None` and
         // the DevServer-owned pointer is left untouched.
-        if self.owned_client_transpiler.take().is_some() {
+        if self.owned_client_transpiler.is_some() {
             self.client_transpiler = None;
+            self.owned_client_transpiler = None;
         }
 
         // bundle_v2.zig:1426-1437 — worker-assignment teardown.

@@ -675,6 +675,10 @@ pub const H2FrameParser = struct {
     outStandingPings: u64 = 0,
     maxSendHeaderBlockLength: u32 = 0,
     lastStreamID: u32 = 0,
+    /// Highest stream id we've removed from the map via removeStreamByID.
+    /// Used to distinguish stale (previously-open, now-reclaimed) stream ids
+    /// from brand-new ones we've simply never seen. Monotonic: only advances.
+    max_removed_stream_id: u32 = 0,
     isServer: bool = false,
     prefaceReceivedLen: u8 = 0,
     // we buffer requests until we get the first settings ACK
@@ -1240,8 +1244,22 @@ pub const H2FrameParser = struct {
     ///    could be disturbed by insertions (removal is safe; growth is not).
     /// No-op if the id is not in the map (defensive; normal paths always find it).
     fn removeStreamByID(this: *H2FrameParser, stream_id: u32) void {
+        // Server-side removal is disabled. Bun's own client emits child
+        // HEADERS ahead of the parent's HEADERS when a request() options
+        // getter re-enters (see node-http2-streams-rehash), so ids can
+        // arrive out of order on the wire and a brand-new id can land at
+        // or below our high-water mark. Without a reliable way to tell
+        // "stale removed stream" from "out-of-order new stream" on the
+        // server, the safer choice is to keep closed streams in the map
+        // as before. The #30415 leak is strictly client-side (AWS SDK
+        // pooled `http2.connect()` sessions); the server-side unbounded
+        // map growth was the pre-PR status quo.
+        if (this.isServer) return;
         if (this.streams.fetchRemove(stream_id)) |kv| {
             const stream = kv.value;
+            if (stream_id > this.max_removed_stream_id) {
+                this.max_removed_stream_id = stream_id;
+            }
             // freeResources is idempotent; call again in case an earlier path
             // skipped it (e.g. request() error branches that set state = .CLOSED
             // without invoking freeResources).
@@ -2738,24 +2756,17 @@ pub const H2FrameParser = struct {
             return stream;
         }
 
-        // Stale-stream detection applies only to the client side. Client
-        // stream ids are allocated monotonically via getNextStream() (and the
-        // even-id push-promise space is updated the same way), so any id
-        // <= lastStreamID that isn't in the map was closed and removed.
-        // RFC 7540 §5.1 permits late frames from the peer during the brief
-        // window before it sees our RST/END_STREAM. Signal to callers by
-        // returning null; frame handlers below distinguish "stream-level
-        // stale" from "connection-level (id=0)" using streamIdentifier.
+        // Stale stream on the client side: client ids are allocated
+        // monotonically via getNextStream(), so any id <= lastStreamID that
+        // isn't in the map was closed and removed (RFC 7540 §5.1 permits
+        // late frames from the peer before it sees our RST/END_STREAM).
+        // Frame handlers distinguish "stream-level stale" from
+        // "connection-level (id=0)" using streamIdentifier itself.
         //
-        // On the server, the peer chooses ids. A new id <= lastStreamID may
-        // be a stale removed stream OR an out-of-order stream from a
-        // misbehaving client. We can't distinguish without tracking every
-        // removed id, so keep the pre-PR "create a fresh stream" behavior
-        // and avoid rejecting out-of-order clients more strictly than before.
-        // The memory leak this PR targets (#30415) is client-side only
-        // (AWS SDK pooled `http2.connect()` sessions) — server-side map
-        // growth still bounds to the total lifetime request count, which is
-        // the prior behavior.
+        // Server-side removal is disabled in removeStreamByID (see comment
+        // there), so server-side closed streams stay in the map and this
+        // branch is unreachable from the server — a server-observed id
+        // that isn't in the map is genuinely new.
         if (!this.isServer and streamIdentifier <= this.lastStreamID) {
             return null;
         }

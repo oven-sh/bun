@@ -75,8 +75,15 @@ while (true) {
     // Use indirect eval to execute in global scope
     (0, eval)(script);
   } catch (_e) {
-    // Print uncaught exception like workerd does
-    console.log(`uncaught:${_e}`);
+    // Print uncaught exception like workerd does. The thrown value can be
+    // an arbitrary object whose string coercion itself throws (e.g. a
+    // Symbol.toPrimitive that returns a non-primitive), so guard the
+    // logging so the REPRL loop never exits from inside the catch.
+    try {
+      console.log(`uncaught:${_e}`);
+    } catch {
+      console.log("uncaught:<unprintable>");
+    }
     exit_code = 1;
   }
 

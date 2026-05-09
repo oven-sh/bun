@@ -4386,7 +4386,11 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut dest_buf = paths::os_path_buffer_pool::get();
-            let src = strings::to_kernel32_path(bun_core::reinterpret_slice::<u16>(&mut self.sync_error_buf), args.src.slice());
+            // SAFETY: `sync_error_buf` is `align(@alignOf(u16))` (see field decl);
+            // reinterpreting the byte buffer as `&mut [u16]` is the documented
+            // pattern for the Windows wide-path scratch (matches Zig
+            // `@ptrCast(@alignCast(&this.sync_error_buf))`).
+            let src = strings::to_kernel32_path(unsafe { bun_core::reinterpret_slice::<u16>(&mut self.sync_error_buf) }, args.src.slice());
             let dest = strings::to_kernel32_path(&mut *dest_buf, args.dest.slice());
             // SAFETY: src/dest are NUL-terminated wide paths; CopyFileW is the Win32 FFI
             if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), if args.mode.shouldnt_overwrite() { 1 } else { 0 }) } == windows::FALSE {

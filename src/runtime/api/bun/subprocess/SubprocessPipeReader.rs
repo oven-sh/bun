@@ -132,7 +132,13 @@ impl PipeReader {
         MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
         #[cfg(windows)]
         {
-            this.reader.source = Some(bun_io::Source::Pipe(this.stdio_result.buffer));
+            // Zig: `this.reader.source = .{ .pipe = this.stdio_result.buffer }` —
+            // on Windows `StdioResult` is the `WindowsStdioResult` enum and the
+            // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
+            // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
+            if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
+                this.reader.source = Some(bun_io::Source::Pipe(pipe));
+            }
         }
 
         let raw: *mut PipeReader = bun_core::heap::into_raw(this);
@@ -400,7 +406,7 @@ impl PipeReader {
                 && this_ref.reader.source.is_some()
                 && !this_ref.reader.source.as_ref().unwrap().is_closed()
             {
-                this_ref.reader.close_impl(false);
+                this_ref.reader.close_impl::<false>();
             }
             debug_assert!(
                 this_ref.reader.source.is_none()

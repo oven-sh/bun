@@ -21,7 +21,7 @@ use bun_interchange::json;
 use bun_logger::js_ast::expr::Data as ExprData;
 use bun_paths::{self, PathBuffer, DELIMITER};
 use bun_str::{strings, ZStr};
-use bun_sys::{self, Fd, FdDirExt as _, O};
+use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, O};
 use bun_wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
 

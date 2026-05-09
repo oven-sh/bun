@@ -902,9 +902,10 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
         if ih_size < 40 || off > buf.len() as u64 {
             continue;
         }
+        let file_size = u32::try_from(buf.len()).expect("int cast");
         buf[0] = b'B';
         buf[1] = b'M';
-        buf[2..6].copy_from_slice(&u32::try_from(buf.len()).expect("int cast").to_le_bytes());
+        buf[2..6].copy_from_slice(&file_size.to_le_bytes());
         buf[6..10].copy_from_slice(&0u32.to_le_bytes());
         buf[10..14].copy_from_slice(&u32::try_from(off).expect("int cast").to_le_bytes());
         return Ok(Some(buf));

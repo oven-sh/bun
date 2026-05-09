@@ -4378,9 +4378,15 @@ pub const H2FrameParser = struct {
     }
 
     /// Sweep and free every stream entry whose state is CLOSED. Used by
-    /// session-teardown paths that mark all streams CLOSED mid-iteration —
-    /// removing in-place during a StreamResumableIterator walk could disturb
-    /// the iterator, so terminal paths batch the removal here.
+    /// `flushStreamQueue`'s defer to reclaim streams that `flushQueue`
+    /// transitioned to CLOSED but intentionally left in the map (see the
+    /// comment block there), and as a belt-and-suspenders leading/trailing
+    /// sweep around the `emitAbortToAllStreams` / `emitErrorToAllStreams`
+    /// walks to catch any pre-existing CLOSED entries that their loops
+    /// skip. `std.HashMap.fetchRemove` only tombstones the slot — it never
+    /// rehashes or shifts — so mid-iteration removal itself is safe; this
+    /// batching is a deferred cleanup for paths that deliberately defer
+    /// reclamation, not a workaround for iterator fragility.
     fn removeAllClosedStreams(this: *H2FrameParser) void {
         // Mirror removeStreamByID's server-side gate so we don't walk the
         // map + heap-allocate an O(N) id list on every flushStreamQueue for

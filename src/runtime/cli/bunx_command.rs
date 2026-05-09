@@ -874,7 +874,7 @@ impl BunxCommand {
                             #[cfg(windows)]
                             {
                                 use bun_sys::windows as win;
-                                let fd = match bun_sys::openat(Fd::cwd(), destination, O::RDONLY, 0).unwrap_result() {
+                                let fd = match bun_sys::openat(Fd::cwd(), destination, O::RDONLY, 0) {
                                     Ok(fd) => fd,
                                     Err(_) => {
                                         // if we cant open this, we probably will just fail when we run it

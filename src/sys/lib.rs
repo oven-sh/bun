@@ -950,10 +950,18 @@ pub mod O {
     pub const RDONLY: i32 = libc::O_RDONLY;
     pub const WRONLY: i32 = libc::O_WRONLY;
     pub const RDWR: i32 = libc::O_RDWR;
-    pub const CREAT: i32 = libc::O_CREAT;
-    pub const TRUNC: i32 = libc::O_TRUNC;
-    pub const APPEND: i32 = libc::O_APPEND;
-    pub const EXCL: i32 = libc::O_EXCL;
+    // sys.zig:193-197 — on Windows the `O.*` constants are the Zig spec values
+    // (octal, Linux-shaped), NOT MSVCRT `_O_*`. `uv::O::from_bun_o` bit-tests
+    // against these exact values, so re-using `libc::O_CREAT` (0x100) etc.
+    // silently dropped CREAT/EXCL/APPEND on Windows.
+    #[cfg(unix)] pub const CREAT: i32 = libc::O_CREAT;
+    #[cfg(unix)] pub const TRUNC: i32 = libc::O_TRUNC;
+    #[cfg(unix)] pub const APPEND: i32 = libc::O_APPEND;
+    #[cfg(unix)] pub const EXCL: i32 = libc::O_EXCL;
+    #[cfg(windows)] pub const CREAT: i32 = 0o100;
+    #[cfg(windows)] pub const EXCL: i32 = 0o200;
+    #[cfg(windows)] pub const TRUNC: i32 = 0o1000;
+    #[cfg(windows)] pub const APPEND: i32 = 0o2000;
     #[cfg(unix)] pub const NONBLOCK: i32 = libc::O_NONBLOCK;
     #[cfg(unix)] pub const CLOEXEC: i32 = libc::O_CLOEXEC;
     // Windows libc has no `O_NONBLOCK`/`O_CLOEXEC`; libuv ignores them. Values
@@ -962,13 +970,20 @@ pub mod O {
     #[cfg(windows)] pub const NONBLOCK: i32 = 0o4000;
     #[cfg(windows)] pub const CLOEXEC: i32 = 0o2000000;
     #[cfg(unix)] pub const DIRECTORY: i32 = libc::O_DIRECTORY;
-    #[cfg(windows)] pub const DIRECTORY: i32 = 0;
+    // sys.zig:202 — non-zero on Windows so `(flags & O::DIRECTORY) != 0`
+    // routes `openat_windows_impl` to the directory NtCreateFile path.
+    #[cfg(windows)] pub const DIRECTORY: i32 = 0o200000;
     #[cfg(target_os = "linux")] pub const PATH: i32 = libc::O_PATH;
     #[cfg(target_os = "linux")] pub const NOATIME: i32 = libc::O_NOATIME;
     #[cfg(target_os = "linux")] pub const TMPFILE: i32 = libc::O_TMPFILE;
-    #[cfg(not(target_os = "linux"))] pub const PATH: i32 = 0;
-    #[cfg(not(target_os = "linux"))] pub const NOATIME: i32 = 0;
-    #[cfg(not(target_os = "linux"))] pub const TMPFILE: i32 = 0;
+    // sys.zig:209-212 — Windows defines these (non-zero) so the `O.PATH` /
+    // `O.NOATIME` bit-tests in `openat_windows_impl` are meaningful.
+    #[cfg(windows)] pub const PATH: i32 = 0o10000000;
+    #[cfg(windows)] pub const NOATIME: i32 = 0o1000000;
+    #[cfg(windows)] pub const TMPFILE: i32 = 0o20200000;
+    #[cfg(all(unix, not(target_os = "linux")))] pub const PATH: i32 = 0;
+    #[cfg(all(unix, not(target_os = "linux")))] pub const NOATIME: i32 = 0;
+    #[cfg(all(unix, not(target_os = "linux")))] pub const TMPFILE: i32 = 0;
     // sys.zig:66-216 — defined for every platform; Darwin-only flags map to 0
     // elsewhere so `flags & O.EVTONLY` etc. compile and are no-ops.
     #[cfg(unix)] pub const NOFOLLOW: i32 = libc::O_NOFOLLOW;
@@ -2628,20 +2643,13 @@ mod windows_impl {
 
     // ── kernel32 / ntdll arms (sys.zig windows branches) ─────────────────
     pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        // sys.zig:1773 — on windows `openat` re-routes through `openatWindowsT`.
-        // PORT NOTE: full NtCreateFile triad lives in `lib_draft_b1.rs::open_file_at_windows_nt_path`;
-        // until that lands at this layer, resolve `dir`+`path` to an absolute and `open()` it.
-        if path.as_bytes().first().map(|&b| b == b'/' || b == b'\\').unwrap_or(false)
-            || (path.len() >= 2 && path.as_bytes()[1] == b':')
-            || dir == Fd::cwd()
-        {
-            return open(path, flags, mode);
-        }
-        let mut dirbuf = bun_core::PathBuffer::default();
-        let dir_path = super::get_fd_path(dir, &mut dirbuf)?;
-        let mut joined = bun_core::PathBuffer::default();
-        let abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(&mut joined.0, &[dir_path, path.as_bytes()]);
-        open(abs, flags, mode)
+        // sys.zig:1773 — `if (Environment.isWindows) return openatWindowsT(u8,
+        // dirfd, file_path, flags, perm)`. Route through the NtCreateFile path
+        // (normalize → `open_file_at_windows_nt_path`) so the result is a
+        // HANDLE-backed `Fd` and `O::DIRECTORY`/`O::NOFOLLOW`/`O::PATH` are
+        // honoured. Do NOT fall back to libuv `open()` here — that returns a
+        // CRT-fd-backed `Fd` and ignores the directory/nofollow flags.
+        super::openat_windows_a(dir, path.as_bytes(), flags, mode)
     }
     pub fn dup(fd: Fd) -> Maybe<Fd> {
         // sys.zig:3911 — DuplicateHandle on the underlying HANDLE.
@@ -2979,9 +2987,11 @@ mod windows_impl {
         _umask(mode as core::ffi::c_int) as Mode
     }
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
-        // sys.zig:2243-2244 — windows: winsock `recv` with `adjusted_len =
-        // @min(buf.len, max_count)` so the `usize → i32` cast can't wrap.
-        let len = buf.len().min(MAX_COUNT) as i32;
+        // sys.zig:2243-2244 — windows: winsock `recv`. Winsock's `len` is a
+        // signed `int`, so clamp to `i32::MAX` (NOT `MAX_COUNT == u32::MAX`)
+        // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
+        // negative length and Winsock fails with WSAEFAULT.
+        let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd));
@@ -2991,7 +3001,7 @@ mod windows_impl {
     pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
         // sys.zig:2294 — windows: winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
-        let len = buf.len().min(MAX_COUNT) as i32;
+        let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd));
@@ -4927,7 +4937,42 @@ pub fn normalize_path_windows_opts<'a>(
     use bun_core::WStr;
     let too_long = || Error::from_code(E::ENAMETOOLONG, Tag::open);
 
+    let mut path = path;
     if bun_paths::is_absolute_windows_wtf16(path) {
+        // sys.zig:1019-1048 — three special-cases that must run BEFORE
+        // `normalizeStringGenericTZ`, otherwise device paths get mangled:
+        if path.len() >= 4 {
+            // (a) `…\nul` / `…\NUL` → literal NT object path `\??\NUL`.
+            const BS_NUL_LO: [u16; 4] = [b'\\' as u16, b'n' as u16, b'u' as u16, b'l' as u16];
+            const BS_NUL_UP: [u16; 4] = [b'\\' as u16, b'N' as u16, b'U' as u16, b'L' as u16];
+            let tail = &path[path.len() - 4..];
+            if tail == BS_NUL_LO || tail == BS_NUL_UP {
+                const NT_NUL: [u16; 7] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16, b'N' as u16, b'U' as u16, b'L' as u16];
+                if buf.len() <= NT_NUL.len() { return Err(too_long()); }
+                buf[..NT_NUL.len()].copy_from_slice(&NT_NUL);
+                buf[NT_NUL.len()] = 0;
+                return Ok(WStr::from_buf(&buf[..], NT_NUL.len()));
+            }
+            let is_sep = |c: u16| c == b'/' as u16 || c == b'\\' as u16;
+            if is_sep(path[1]) && is_sep(path[3]) {
+                // (b) `\\.\…` device path → preserve verbatim so `\\.\pipe\foo`
+                // is not collapsed to `\pipe\foo` by the normalizer.
+                if path[2] == b'.' as u16 {
+                    if path.len() >= buf.len() { return Err(too_long()); }
+                    buf[0] = b'\\' as u16; buf[1] = b'\\' as u16;
+                    buf[2] = b'.' as u16; buf[3] = b'\\' as u16;
+                    let rest = &path[4..];
+                    buf[4..4 + rest.len()].copy_from_slice(rest);
+                    buf[path.len()] = 0;
+                    return Ok(WStr::from_buf(&buf[..], path.len()));
+                }
+                // (c) `\??\…` / `\\?\…` already prefixed → strip the 4-u16
+                // prefix before re-normalizing to avoid a double `\??\`.
+                if path[2] == b'?' as u16 {
+                    path = &path[4..];
+                }
+            }
+        }
         if opts.add_nt_prefix {
             // Absolute → add `\??\` (idempotent if already present), normalize
             // separators/`..` and NUL-terminate.
@@ -4971,7 +5016,9 @@ pub fn normalize_path_windows_opts<'a>(
         &mut base_buf.0[..],
     ) {
         Ok(p) => p,
-        Err(_) => return Err(Error::from_code(E::EBADF, Tag::open)),
+        // sys.zig:1080 — `E.BADFD` (errno 77 'file descriptor in bad state'),
+        // not `EBADF` (9).
+        Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
     };
 
     // Strip a leading drive letter (`C:`) on the relative part (sys.zig:1204).
@@ -5193,6 +5240,10 @@ pub fn open_file_at_windows_nt_path(
                     if unsafe {
                         w::SetFilePointerEx(result, 0, core::ptr::null_mut(), w::FILE_END)
                     } == 0 {
+                        // NtCreateFile succeeded — close the live HANDLE before
+                        // bailing so this error path doesn't leak it.
+                        // SAFETY: FFI; `result` is the just-created handle.
+                        unsafe { w::CloseHandle(result); }
                         return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
                     }
                 }
@@ -5212,11 +5263,15 @@ pub fn open_dir_at_windows(dir_fd: Fd, path: &[u16], options: WindowsOpenDirOpti
 #[cfg(windows)]
 #[inline(never)]
 pub fn open_dir_at_windows_a(dir_fd: Fd, path: &[u8], options: WindowsOpenDirOptions) -> Maybe<Fd> {
+    // sys.zig:1262 `openDirAtWindowsT(u8, …)` → `normalizePathWindows(u8, dirFd,
+    // path, wbuf, .{})` does the UTF-8→UTF-16 conversion internally and THEN
+    // applies the absolute/relative/device-path logic. Do the plain transcode
+    // here (no NT-prefix, no normalization) so relative inputs stay relative
+    // and resolve against `dir_fd`'s `RootDirectory`.
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let nt = bun_str::strings::paths::to_nt_path(&mut wbuf.0[..], path);
-    // PORT NOTE: re-borrow as &[u16] then re-normalize for the relative case.
+    let wide = bun_str::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf.0[..], path);
     let mut buf2 = bun_paths::w_path_buffer_pool::get();
-    let norm = normalize_path_windows(dir_fd, nt.as_slice(), &mut buf2.0[..])?;
+    let norm = normalize_path_windows(dir_fd, wide, &mut buf2.0[..])?;
     open_dir_at_windows_nt_path(dir_fd, norm, options)
 }
 #[cfg(windows)]
@@ -5225,13 +5280,14 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
     let norm = normalize_path_windows(dir_fd, path, &mut wbuf.0[..])?;
     open_file_at_windows_nt_path(dir_fd, norm, opts)
 }
-/// sys.zig `openFileAtWindowsA` — UTF-8 entry point: convert to NT wide path
-/// then defer to [`open_file_at_windows`].
+/// sys.zig `openFileAtWindowsA` — UTF-8 entry point: convert to UTF-16 (no
+/// NT-prefix yet — `normalize_path_windows` adds that) then defer to
+/// [`open_file_at_windows`].
 #[cfg(windows)]
 pub fn open_file_at_windows_a(dir_fd: Fd, path: &[u8], opts: NtCreateFileOptions) -> Maybe<Fd> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let nt = bun_str::strings::paths::to_nt_path(&mut wbuf.0[..], path);
-    open_file_at_windows(dir_fd, nt.as_slice(), opts)
+    let wide = bun_str::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf.0[..], path);
+    open_file_at_windows(dir_fd, wide, opts)
 }
 
 /// sys.zig:1608 `openatWindowsTMaybeNormalize` — POSIX-flag → NtCreateFile
@@ -5309,10 +5365,13 @@ pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd
 #[cfg(windows)]
 #[inline(never)]
 pub fn openat_windows_a(dir: Fd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
+    // sys.zig `openatWindowsT(u8, …)` — `normalizePathWindows` does the
+    // UTF-8→UTF-16 conversion internally; mirror that with a plain transcode
+    // (no NT-prefix) so relative paths stay relative against `dir`.
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let nt = bun_str::strings::paths::to_nt_path(&mut wbuf.0[..], path);
+    let wide = bun_str::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf.0[..], path);
     let mut buf2 = bun_paths::w_path_buffer_pool::get();
-    let norm = normalize_path_windows(dir, nt.as_slice(), &mut buf2.0[..])?;
+    let norm = normalize_path_windows(dir, wide, &mut buf2.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)
 }
 
@@ -5715,7 +5774,23 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
         return Ok(&mut out.0[..len]);
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))] {
+    #[cfg(windows)] {
+        // sys.zig:3008-3018 — `GetFinalPathNameByHandle` into a wide buffer,
+        // then transcode WTF-16 → UTF-8 into `out`.
+        let mut wide_buf = bun_paths::w_path_buffer_pool::get();
+        let wide_slice = match crate::windows::GetFinalPathNameByHandle(
+            fd.cast(),
+            Default::default(),
+            &mut wide_buf.0[..],
+        ) {
+            Ok(p) => p,
+            Err(_) => return Err(Error::from_code(E::EBADF, Tag::GetFinalPathNameByHandle)),
+        };
+        // Trust that Windows gives us valid UTF-16LE.
+        let len = bun_str::strings::paths::from_w_path(&mut out.0[..], wide_slice).len();
+        return Ok(&mut out.0[..len]);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))] {
         let _ = (fd, out);
         Err(Error::from_code_int(libc::ENOSYS, Tag::readlink))
     }

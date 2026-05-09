@@ -226,7 +226,7 @@ pub fn copy_file_with_state(
         // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
         let rc = unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
         if rc == 0 {
-            return Err(crate::Error::from_code_int(crate::last_errno(), Tag::copyfile));
+            return Err(crate::Error::from_code(crate::windows::get_last_errno(), Tag::copyfile));
         }
         return Ok(());
     }

@@ -240,7 +240,14 @@ impl Scripts {
                 ) else {
                     break 'brk cwd_.slice();
                 };
-                match bun_sys::get_fd_path(cwd_handle, &mut cwd_buf) {
+                // Resolve the canonical path, then close the directory HANDLE.
+                // (Zig spec at Scripts.zig:209-210 leaks `cwd_handle`; we fix
+                // that here rather than faithfully porting the leak — `Fd` is
+                // `Copy` with no `Drop`, so without this explicit close one
+                // kernel directory HANDLE leaks per script-bearing package.)
+                let path = bun_sys::get_fd_path(cwd_handle, &mut cwd_buf);
+                let _ = bun_sys::close(cwd_handle);
+                match path {
                     Ok(p) => p,
                     Err(_) => cwd_.slice(),
                 }

@@ -522,6 +522,13 @@ pub mod fs {
             }
             #[cfg(windows)]
             {
+                // Spec: `if (this.isPrettyPathPosix()) return this.dupeAlloc(allocator);`
+                // — `isPrettyPathPosix` on Windows is `indexOfChar(pretty, '\\') == null`.
+                // Short-circuiting preserves the `pretty.ptr == text.ptr` aliasing
+                // optimisation inside `dupe_alloc` and avoids a fresh FilenameStore alloc.
+                if !self.pretty.iter().any(|&b| b == b'\\') {
+                    return self.dupe_alloc();
+                }
                 let mut new = self.clone();
                 new.pretty = b"";
                 let mut new = new.dupe_alloc()?;
@@ -1158,7 +1165,7 @@ pub mod fs {
     // ── RealFS.Tmpfile ───────────────────────────────────────────────────
     /// Port of `FileSystem.RealFS.Tmpfile` (fs.zig). The Zig POSIX impl never
     /// touched its `*RealFS` arg (it always opens at cwd); the Windows impl
-    /// only needs the temp-dir path, which routes via `get_default_temp_dir`.
+    /// only needs the temp-dir path, which routes via `tmpdir_path`.
     pub struct RealFsTmpfile {
         pub fd: bun_sys::Fd,
         pub dir_fd: bun_sys::Fd,
@@ -1201,11 +1208,28 @@ pub mod fs {
             }
             #[cfg(windows)]
             {
-                let tmp = RealFS::get_default_temp_dir();
-                let tmp_dir = bun_sys::open_dir_at(bun_sys::Fd::cwd(), tmp).map(bun_sys::Dir::from_fd)?;
-                self.dir_fd = tmp_dir.fd();
+                // Spec: `const tmp_dir = try rfs.openTmpDir();` — `openTmpDir`
+                // is `openDirAtWindowsA(invalid_fd, tmpdirPath(), .{ iterable,
+                // !can_rename_or_delete, read_only })`. `tmpdirPath()` uses
+                // `BUN_TMPDIR.getNotEmpty()` (so an empty env var falls through
+                // to `platformTempDir`), not `get()`.
+                let tmp = RealFS::tmpdir_path();
+                let tmp_dir = bun_sys::open_dir_at_windows_a(
+                    bun_sys::Fd::INVALID,
+                    tmp,
+                    bun_sys::WindowsOpenDirOptions {
+                        iterable: true,
+                        can_rename_or_delete: false,
+                        read_only: true,
+                        ..Default::default()
+                    },
+                )?;
+                // Spec's `TmpfileWindows` has no `dir_fd` field — the handle is
+                // local. Close it once we've captured the absolute path so we
+                // don't leak a directory HANDLE per tmpfile.
+                scopeguard::defer! { let _ = bun_sys::close(tmp_dir); }
                 let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
-                self.fd = bun_sys::openat(tmp_dir.fd(), name, flags, 0)?;
+                self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
                 let mut buf = bun_paths::PathBuffer::uninit();
                 let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
                 self.existing_path = Box::<[u8]>::from(&*existing_path);
@@ -1231,13 +1255,42 @@ pub mod fs {
             }
             #[cfg(windows)]
             {
+                use bun_sys::windows as w;
+                use w::Win32ErrorUnwrap as _;
                 let _ = from_name;
+                let mut existing_buf = bun_paths::WPathBuffer::uninit();
+                let mut new_buf = bun_paths::WPathBuffer::uninit();
                 self.close();
-                // TODO(port-windows): MoveFileExW with MOVEFILE_COPY_ALLOWED |
-                // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
-                // (fs.zig TmpfileWindows.promoteToCWD). Route via renameat for now.
-                bun_sys::renameat_z(self.dir_fd, from_name, bun_sys::Fd::cwd(), name)
-                    .map_err(Into::into)
+                let existing = bun_string::strings::paths::to_extended_path_normalized(
+                    &mut new_buf.0[..],
+                    &self.existing_path,
+                );
+                let new = if bun_paths::is_absolute_windows(name.as_bytes()) {
+                    bun_string::strings::paths::to_extended_path_normalized(
+                        &mut existing_buf.0[..],
+                        name.as_bytes(),
+                    )
+                } else {
+                    bun_string::strings::paths::to_w_path_normalized(
+                        &mut existing_buf.0[..],
+                        name.as_bytes(),
+                    )
+                };
+                // SAFETY: `existing`/`new` are NUL-terminated WTF-16 backed by
+                // stack `WPathBuffer`s alive for this frame.
+                if unsafe {
+                    w::kernel32::MoveFileExW(
+                        existing.as_ptr(),
+                        new.as_ptr(),
+                        w::MOVEFILE_COPY_ALLOWED
+                            | w::MOVEFILE_REPLACE_EXISTING
+                            | w::MOVEFILE_WRITE_THROUGH,
+                    )
+                } == w::FALSE
+                {
+                    w::Win32Error::get().unwrap()?;
+                }
+                Ok(())
             }
         }
     }
@@ -1404,12 +1457,31 @@ pub mod fs {
 
         /// Port of `RealFS.openDir` in `fs.zig` — `open(path, O_DIRECTORY)`.
         pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> core::result::Result<Fd, bun_core::Error> {
-            // PORT NOTE: Zig used `std.fs.openDirAbsolute` (POSIX) /
-            // `bun.sys.openDirAtWindowsA` (Windows). Both reduce to opening the path
-            // with `O_DIRECTORY` for iteration; route through `bun_sys::open_a` so
-            // the cross-platform NUL-termination + Windows long-path handling lives
-            // in one place.
-            bun_sys::open_a(unsafe_dir_string, bun_sys::O::DIRECTORY, 0).map_err(Into::into)
+            #[cfg(windows)]
+            {
+                // Spec: `bun.sys.openDirAtWindowsA(invalid_fd, path,
+                // .{ iterable, !no_follow, read_only })` — NtCreateFile with
+                // FILE_DIRECTORY_FILE/FILE_LIST_DIRECTORY so the resulting
+                // handle is iterable for `readdir`.
+                return bun_sys::open_dir_at_windows_a(
+                    bun_sys::Fd::INVALID,
+                    unsafe_dir_string,
+                    bun_sys::WindowsOpenDirOptions {
+                        iterable: true,
+                        no_follow: false,
+                        read_only: true,
+                        ..Default::default()
+                    },
+                )
+                .map_err(Into::into);
+            }
+            #[cfg(not(windows))]
+            {
+                // PORT NOTE: Zig used `std.fs.openDirAbsolute` on POSIX, which
+                // reduces to `open(path, O_DIRECTORY)`; route through
+                // `bun_sys::open_a` for the NUL-termination handling.
+                bun_sys::open_a(unsafe_dir_string, bun_sys::O::DIRECTORY, 0).map_err(Into::into)
+            }
         }
 
         /// Port of `RealFS.readdir` in `fs.zig` — iterate `handle` and populate a

@@ -561,11 +561,13 @@ impl bun_io::BufferedReaderParent for FileResponseStream {
         unsafe { (*this).on_reader_error(err) }
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Route through the io vtable (knows EventLoopHandle layout).
+        // Delegate to the inherent `r#loop()` which already does the
+        // cfg(windows) `.uv_loop` projection — `EventLoopCtx::loop_()` returns
+        // the uws `WindowsLoop*` on Windows, NOT a `uv_loop_t*`, so casting it
+        // directly (the old body) type-punned the wrapper struct into libuv.
+        // Zig spec: FileResponseStream.zig `loop()` does the same projection.
         // SAFETY: trait contract — `this` non-null/live.
-        unsafe { <Self as bun_io::BufferedReaderParent>::event_loop(this) }
-            .loop_()
-            .cast()
+        unsafe { (*this).r#loop() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass

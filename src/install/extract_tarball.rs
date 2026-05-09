@@ -599,12 +599,17 @@ impl ExtractTarball {
                                             .copy_from_slice(&[b't', b'm', b'p', 0]);
                                         let tempdest =
                                             ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        match sys::renameat_concurrently_a(
+                                        let mut folder_name_z_buf = PathBuffer::uninit();
+                                        folder_name_z_buf[0..folder_name.len()]
+                                            .copy_from_slice(folder_name);
+                                        folder_name_z_buf[folder_name.len()] = 0;
+                                        let folder_name_z =
+                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
+                                        match sys::renameat(
                                             Fd::from_std_dir(&cache_dir),
-                                            folder_name,
+                                            folder_name_z,
                                             Fd::from_std_dir(&tmpdir),
-                                            tempdest.as_bytes(),
-                                            Default::default(),
+                                            tempdest,
                                         ) {
                                             bun_sys::Result::Err(_) => {}
                                             bun_sys::Result::Ok(_) => {

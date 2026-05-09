@@ -253,16 +253,23 @@ impl WorkspaceMap {
                 ),
             );
             #[cfg(windows)]
-            {
-                // SAFETY: rel_input_path points into a mutable threadlocal buffer; Zig @constCast'd it.
-                let rel_mut = unsafe {
-                    bun_core::ffi::slice_mut(
-                        rel_input_path.as_ptr().cast_mut(),
-                        rel_input_path.len(),
-                    )
-                };
-                path::dangerously_convert_path_to_posix_in_place::<u8>(rel_mut);
-            }
+            let rel_input_path: &[u8] = {
+                // `rel_input_path` is a shared borrow into the thread-local
+                // `relative_to_common_path_buf()`. Deriving a `&mut` from
+                // `rel_input_path.as_ptr().cast_mut()` and writing through it is
+                // Stacked-Borrows UB (SharedReadOnly provenance), and the still-live
+                // shared ref would alias it. Instead capture the length, drop the
+                // shared borrow, take a single fresh `&mut` reborrow from the raw
+                // threadlocal pointer, mutate, then downgrade to `&[u8]`.
+                let len = rel_input_path.len();
+                let _ = rel_input_path;
+                // SAFETY: thread-local scratch; this is the only live borrow on this
+                // thread for the remainder of this block.
+                let s: &mut [u8] =
+                    &mut unsafe { &mut *resolve_path::relative_to_common_path_buf() }[0..len];
+                path::dangerously_convert_path_to_posix_in_place::<u8>(s);
+                &*s
+            };
 
             if let Some(builder) = string_builder.as_deref_mut() {
                 builder.count(&workspace_entry.name);
@@ -465,16 +472,24 @@ impl WorkspaceMap {
                         abs_workspace_dir_path,
                     );
                     #[cfg(windows)]
-                    {
-                        // SAFETY: workspace_path points into a mutable threadlocal buffer; Zig @constCast'd it.
-                        let wp_mut = unsafe {
-                            bun_core::ffi::slice_mut(
-                                workspace_path.as_ptr().cast_mut(),
-                                workspace_path.len(),
-                            )
-                        };
-                        path::dangerously_convert_path_to_posix_in_place::<u8>(wp_mut);
-                    }
+                    let workspace_path: &[u8] = {
+                        // `workspace_path` is a shared borrow into the thread-local
+                        // `relative_to_common_path_buf()`. Deriving a `&mut` from
+                        // `workspace_path.as_ptr().cast_mut()` and writing through it is
+                        // Stacked-Borrows UB (SharedReadOnly provenance), and the
+                        // still-live shared ref would alias it. Instead capture the
+                        // length, drop the shared borrow, take a single fresh `&mut`
+                        // reborrow from the raw threadlocal pointer, mutate, then
+                        // downgrade to `&[u8]`.
+                        let len = workspace_path.len();
+                        let _ = workspace_path;
+                        // SAFETY: thread-local scratch; this is the only live borrow on
+                        // this thread for the remainder of this block.
+                        let s: &mut [u8] =
+                            &mut unsafe { &mut *resolve_path::relative_to_common_path_buf() }[0..len];
+                        path::dangerously_convert_path_to_posix_in_place::<u8>(s);
+                        &*s
+                    };
 
                     if let Some(builder) = string_builder.as_deref_mut() {
                         builder.count(&workspace_entry.name);

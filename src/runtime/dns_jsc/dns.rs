@@ -406,7 +406,11 @@ pub mod lib_uv_backend {
 
         let holder = bun_core::heap::into_raw(Box::new(Holder {
             uv_info,
-            task: unsafe { MaybeUninit::zeroed().assume_init() },
+            // Zig: `.task = undefined`. `AnyTask.callback` is a non-nullable
+            // `fn` pointer, so `MaybeUninit::zeroed().assume_init()` would be
+            // instant UB regardless of the overwrite below; use the trapping
+            // Default and overwrite in place.
+            task: jsc::AnyTask::AnyTask::default(),
         }));
         // SAFETY: holder is a valid heap allocation
         unsafe {
@@ -1494,26 +1498,48 @@ impl GetAddrInfoRequest {
                 }
             }
 
+            // On Windows, libuv's `uv_getaddrinfo` calls `GetAddrInfoW` then
+            // re-packs the wide result into a single ANSI block allocated via
+            // `uv__malloc`; that block must be released with `uv_freeaddrinfo`
+            // (== `uv__free`). `GetAddrInfoResultAny::Addrinfo`'s `Drop` calls
+            // `ws2_32!freeaddrinfo`, which is the wrong allocator here and
+            // would corrupt the heap. The Zig spec never frees it on this path
+            // (leak). Convert to an owned `List` immediately, free the libuv
+            // buffer with the correct deallocator, and pass `List` downstream
+            // so `ResultAny::Drop` never sees libuv-owned memory.
+            let addrinfo = (*uv_info).addrinfo;
+            let result_any = if addrinfo.is_null() {
+                GetAddrInfoResultAny::Addrinfo(ptr::null_mut())
+            } else {
+                let list = GetAddrInfoResult::to_list(&*addrinfo).unwrap_or_default();
+                libuv::uv_freeaddrinfo(addrinfo.cast());
+                GetAddrInfoResultAny::List(list)
+            };
+
             if let Some(resolver) = (*this).resolver_for_caching {
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
                         (*this).head.global_this(),
                         retcode,
-                        GetAddrInfoResultAny::Addrinfo((*uv_info).addrinfo),
+                        result_any,
                     );
                     return;
                 }
             }
 
-            // Capture addrinfo first: `uv_info` points into `(*this).backend`,
-            // which is freed when the Box deallocates below.
-            let addrinfo = (*uv_info).addrinfo;
             // Consume the request and move `head` out by value; `ptr::read`
             // + `heap::take` would double-Drop `DNSLookup` (impls Drop).
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
-            DNSLookup::process_get_addr_info_native(&mut head, retcode, addrinfo);
+            // Inline `process_get_addr_info_native` so the success path can
+            // reuse the owned `List` instead of re-wrapping the (now-freed)
+            // raw `addrinfo` pointer.
+            if c_ares::Error::init_eai(retcode).is_some() {
+                DNSLookup::process_get_addr_info_native(&raw mut head, retcode, ptr::null_mut());
+            } else {
+                DNSLookup::on_complete_native(&raw mut head, result_any);
+            }
         }
     }
 }

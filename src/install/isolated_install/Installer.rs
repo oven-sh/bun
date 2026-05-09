@@ -940,20 +940,27 @@ impl Task {
 
                                         #[cfg(windows)]
                                         {
-                                            // SAFETY: FFI — `folder_dir` is an open
-                                            // handle; `src_path.buf()` is a writable
-                                            // WPathBuffer of the passed length.
+                                            // Hoist a single `&mut [u16]` borrow so the raw pointer
+                                            // and length come from the SAME reborrow — calling
+                                            // `src_path.buf()` twice in the FFI arg list would take
+                                            // a fresh `&mut` for the len, invalidating the `*mut u16`
+                                            // derived from the first call under Stacked Borrows.
+                                            let buf = src_path.buf();
+                                            let cap = buf.len();
+                                            let ptr = buf.as_mut_ptr();
+                                            // SAFETY: FFI — `folder_dir` is an open handle; `ptr`
+                                            // points into a writable WPathBuffer of `cap` elements.
                                             let src_path_len = unsafe {
                                                 bun_sys::windows::GetFinalPathNameByHandleW(
                                                     folder_dir.native(),
-                                                    src_path.buf().as_mut_ptr(),
-                                                    u32::try_from(src_path.buf().len()).expect("int cast"),
+                                                    ptr,
+                                                    u32::try_from(cap).expect("int cast"),
                                                     0,
                                                 )
                                             };
 
                                             if src_path_len == 0
-                                                || src_path_len as usize >= src_path.buf().len()
+                                                || src_path_len as usize >= cap
                                             {
                                                 use bun_sys::windows::Win32ErrorExt as _;
                                                 let err: sys::SystemErrno = if src_path_len == 0 {
@@ -980,8 +987,8 @@ impl Task {
 
                                         let mut file_copier = FileCopier::init(
                                             folder_dir,
-                                            src_path.into_sep::<{ PathSeparators::ANY }>(),
-                                            dest.into_sep::<{ PathSeparators::ANY }>(),
+                                            src_path.into_sep::<{ PathSeparators::AUTO }>(),
+                                            dest.into_sep::<{ PathSeparators::AUTO }>(),
                                             &[bun_paths::os_path_literal!("node_modules")],
                                         )?;
 
@@ -1316,8 +1323,8 @@ impl Task {
 
                                 let mut file_copier = FileCopier::init(
                                     cached_package_dir.unwrap(),
-                                    src_path.into_sep::<{ PathSeparators::ANY }>(),
-                                    dest_subpath.into_sep::<{ PathSeparators::ANY }>(),
+                                    src_path.into_sep::<{ PathSeparators::AUTO }>(),
+                                    dest_subpath.into_sep::<{ PathSeparators::AUTO }>(),
                                     &[],
                                 )?;
 

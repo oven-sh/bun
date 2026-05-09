@@ -510,11 +510,14 @@ pub mod windows_stdio {
     }
 
     pub fn restore() {
-        // SAFETY: PEB access is sound on Windows; handles are valid for process lifetime.
-        let peb = unsafe { w::peb() };
-        let stdout = peb.ProcessParameters.hStdOutput;
-        let stderr = peb.ProcessParameters.hStdError;
-        let stdin = peb.ProcessParameters.hStdInput;
+        // SAFETY: PEB access is sound on Windows; handles are valid for process
+        // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
+        // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a
+        // long-lived `&` — read the handle fields through raw-pointer deref.
+        let (stdin, stdout, stderr) = unsafe {
+            let pp = (*w::peb()).ProcessParameters;
+            ((*pp).hStdInput, (*pp).hStdOutput, (*pp).hStdError)
+        };
 
         let handles = [stdin, stdout, stderr];
         // SAFETY: CONSOLE_MODE is only mutated at init/restore on the main thread.

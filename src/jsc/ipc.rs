@@ -1617,8 +1617,14 @@ impl SendQueue {
         bun_sys::Result::Ok(())
     }
 
+    /// # Safety
+    /// `this` must point at a live `SendQueue` and must derive from the
+    /// allocation's root raw pointer (SharedReadWrite provenance), NOT from a
+    /// `&mut` reborrow: the pointer is stashed in `uv_handle_t.data` for the
+    /// pipe's lifetime and later writes through the root would otherwise pop
+    /// its tag under Stacked Borrows.
     #[cfg(windows)]
-    pub fn windows_configure_client(&mut self, pipe_fd: Fd) -> Result<(), bun_core::Error> {
+    pub unsafe fn windows_configure_client(this: *mut Self, pipe_fd: Fd) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         log!("configureClient");
         let ipc_pipe: *mut uv::Pipe =
@@ -1633,7 +1639,7 @@ impl SendQueue {
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
         if let Some(err) =
-            unsafe { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::pipe)
+            unsafe { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::open)
         {
             // SAFETY: ipc_pipe is a live initialized uv_pipe_t; close_and_destroy frees the Box.
             unsafe { uv::Pipe::close_and_destroy(ipc_pipe) };
@@ -1641,18 +1647,24 @@ impl SendQueue {
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
         unsafe { (*ipc_pipe).unref() };
-        self.socket = SocketUnion::Open(ipc_pipe);
-        self.windows.is_server = false;
+        // SAFETY: caller contract — `this` is a live SendQueue.
+        unsafe {
+            (*this).socket = SocketUnion::Open(ipc_pipe);
+            (*this).windows.is_server = false;
+        }
 
-        // SAFETY: ipc_pipe is the live uv handle just stored in self.socket.
+        // SAFETY: ipc_pipe is the live uv handle just stored in (*this).socket.
         let stream = unsafe { (*ipc_pipe).as_stream() };
 
-        // SAFETY: stream points to the live uv handle just stored in self.socket.
+        // SAFETY: stream points to the live uv handle; `this` is the root-raw
+        // context pointer (see fn safety contract) so storing it in
+        // `handle.data` is sound for the handle's lifetime.
         if let Some(err) =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(self) }
+            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }
                 .to_error(bun_sys::Tag::listen)
         {
-            self.close_socket(CloseReason::Failure, CloseFrom::User);
+            // SAFETY: caller contract — `this` is a live SendQueue.
+            unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
             return Err(err.into());
         }
         Ok(())

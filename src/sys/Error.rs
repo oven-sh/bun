@@ -160,12 +160,15 @@ impl Error {
     pub fn get_errno(&self) -> E {
         // Zig `@enumFromInt` is unchecked, but in Rust transmuting an out-of-range discriminant
         // (e.g. TODO_ERRNO = u16::MAX-1) into a #[repr(u16)] enum is immediate UB. Use the checked
-        // constructor and fall back to SUCCESS for unmapped values.
+        // discriminant constructor and fall back to SUCCESS for unmapped values.
         #[cfg(windows)]
         {
-            // On Windows `E` and `SystemErrno` share the same #[repr(u16)] discriminant
-            // table; `to_e()` is the identity transmute.
-            SystemErrno::init(self.errno as i64).map(SystemErrno::to_e).unwrap_or(E::SUCCESS)
+            // `self.errno` already stores an E/SystemErrno *discriminant* (set via `E as Int`).
+            // Zig does `@as(E, @enumFromInt(this.errno))` — a direct discriminant cast. Do NOT
+            // route through `SystemErrno::init`: on Windows its u16/i32 entry points are the
+            // Win32/WSA/uv-error→errno *mapper*, not a discriminant validator, and would
+            // corrupt the value (e.g. EPERM=1 → Win32 INVALID_FUNCTION → EISDIR).
+            E::try_from_raw(self.errno).unwrap_or(E::SUCCESS)
         }
         #[cfg(not(windows))]
         {
@@ -285,13 +288,21 @@ impl Error {
         {
             // Zig used @setRuntimeSafety(false) + @enumFromInt on a possibly-invalid value, then
             // `bun.tagName` (which returns null for invalid). In Rust transmuting to an invalid
-            // enum is UB, so fold both steps into a single fallible lookup.
+            // enum is UB, so fold both steps into a single fallible *discriminant* lookup.
+            // Do NOT call `SystemErrno::init` here — on Windows its u16/i32 entry points map
+            // Win32/WSA error codes to errnos and would corrupt a value that is already a
+            // SystemErrno discriminant (e.g. discriminant 1/EPERM → Win32(1) → EISDIR).
             let system_errno: Option<SystemErrno> = if self.from_libuv {
                 let translated =
                     crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
-                SystemErrno::init(translated as Int as i64)
+                // `translated` is already a valid `E`; E and SystemErrno share identical
+                // #[repr(u16)] discriminant tables, so this is the identity transmute
+                // (Zig: `@enumFromInt(@intFromEnum(translateUVErrorToE(...)))`).
+                Some(unsafe { core::mem::transmute::<E, SystemErrno>(translated) })
             } else {
-                SystemErrno::init(self.errno as i64)
+                // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
+                E::try_from_raw(self.errno)
+                    .map(|e| unsafe { core::mem::transmute::<E, SystemErrno>(e) })
             };
             if let Some(errname) = system_errno.and_then(tag_name) {
                 return errname.as_bytes();
@@ -329,14 +340,17 @@ impl Error {
         #[cfg(windows)]
         {
             // Zig used @setRuntimeSafety(false) + @enumFromInt on a possibly-invalid value; see
-            // note in `name()` above.
+            // note in `name()` above. Direct discriminant cast — NOT `SystemErrno::init` (which
+            // on Windows maps Win32/WSA codes, not discriminants).
             let system_errno: SystemErrno = 'brk: {
                 if self.from_libuv {
                     let translated =
                         crate::windows::translate_uv_error_to_e(c_int::from(self.errno) * -1);
-                    break 'brk SystemErrno::init(translated as Int as i64)?;
+                    // Identity transmute: E and SystemErrno share #[repr(u16)] discriminants.
+                    break 'brk unsafe { core::mem::transmute::<E, SystemErrno>(translated) };
                 }
-                SystemErrno::init(self.errno as i64)?
+                E::try_from_raw(self.errno)
+                    .map(|e| unsafe { core::mem::transmute::<E, SystemErrno>(e) })?
             };
             if let Some(errname) = tag_name(system_errno) {
                 return Some((errname, system_errno));

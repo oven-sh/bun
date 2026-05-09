@@ -2747,6 +2747,7 @@ mod v8_api {
 
 #[cfg(windows)]
 mod v8_api {
+    use core::ffi::c_void;
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
     //
@@ -2754,10 +2755,166 @@ mod v8_api {
     //
     // Bug @paperclover if you get stuck here
     //
-    // TODO(port): MSVC-mangled symbol names contain `?@` and are not valid Rust identifiers.
-    // Phase B should generate `#[link_name = "..."]` attributes for each entry from the Zig
-    // source list (see src/napi/napi.zig V8API windows arm). The list is purely for DCE
-    // suppression / link-time existence checks and has no runtime callers.
+    // MSVC-mangled symbol names contain `?@$` and are not valid Rust identifiers, so each entry
+    // is exposed under a Rust-safe alias via `#[link_name = "..."]`. The list is purely for DCE
+    // suppression / link-time existence checks and has no runtime callers — only the symbol
+    // *address* is taken (see `fix_dead_code_elimination`). Keep in sync with the Zig V8API
+    // windows arm in src/runtime/napi/napi.zig.
+    #[rustfmt::skip]
+    unsafe extern "C" {
+        #[link_name = "?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"]
+        pub fn v8_Isolate_TryGetCurrent() -> *mut c_void;
+        #[link_name = "?GetCurrent@Isolate@v8@@SAPEAV12@XZ"]
+        pub fn v8_Isolate_GetCurrent() -> *mut c_void;
+        #[link_name = "?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ"]
+        pub fn v8_Isolate_GetCurrentContext() -> *mut c_void;
+        #[link_name = "?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"]
+        pub fn node_AddEnvironmentCleanupHook() -> *mut c_void;
+        #[link_name = "?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"]
+        pub fn node_RemoveEnvironmentCleanupHook() -> *mut c_void;
+        #[link_name = "?New@Number@v8@@SA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@N@Z"]
+        pub fn v8_Number_New() -> *mut c_void;
+        #[link_name = "?Value@Number@v8@@QEBANXZ"]
+        pub fn v8_Number_Value() -> *mut c_void;
+        #[link_name = "?NewFromUtf8@String@v8@@SA?AV?$MaybeLocal@VString@v8@@@2@PEAVIsolate@2@PEBDW4NewStringType@2@H@Z"]
+        pub fn v8_String_NewFromUtf8() -> *mut c_void;
+        #[link_name = "?WriteUtf8@String@v8@@QEBAHPEAVIsolate@2@PEADHPEAHH@Z"]
+        pub fn v8_String_WriteUtf8() -> *mut c_void;
+        #[link_name = "?ToLocalEmpty@api_internal@v8@@YAXXZ"]
+        pub fn v8_api_internal_ToLocalEmpty() -> *mut c_void;
+        #[link_name = "?Length@String@v8@@QEBAHXZ"]
+        pub fn v8_String_Length() -> *mut c_void;
+        #[link_name = "?New@External@v8@@SA?AV?$Local@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z"]
+        pub fn v8_External_New() -> *mut c_void;
+        #[link_name = "?Value@External@v8@@QEBAPEAXXZ"]
+        pub fn v8_External_Value() -> *mut c_void;
+        #[link_name = "?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z"]
+        pub fn v8_Object_New() -> *mut c_void;
+        #[link_name = "?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z"]
+        pub fn v8_Object_Set_key() -> *mut c_void;
+        #[link_name = "?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@IV?$Local@VValue@v8@@@2@@Z"]
+        pub fn v8_Object_Set_index() -> *mut c_void;
+        #[link_name = "?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z"]
+        pub fn v8_Object_SetInternalField() -> *mut c_void;
+        #[link_name = "?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z"]
+        pub fn v8_Object_SlowGetInternalField() -> *mut c_void;
+        #[link_name = "?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z"]
+        pub fn v8_Object_Get_index() -> *mut c_void;
+        #[link_name = "?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
+        pub fn v8_Object_Get_key() -> *mut c_void;
+        #[link_name = "?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z"]
+        pub fn v8_HandleScope_CreateHandle() -> *mut c_void;
+        #[link_name = "??0HandleScope@v8@@QEAA@PEAVIsolate@1@@Z"]
+        pub fn v8_HandleScope_ctor() -> *mut c_void;
+        #[link_name = "??1HandleScope@v8@@QEAA@XZ"]
+        pub fn v8_HandleScope_dtor() -> *mut c_void;
+        #[link_name = "?GetFunction@FunctionTemplate@v8@@QEAA?AV?$MaybeLocal@VFunction@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub fn v8_FunctionTemplate_GetFunction() -> *mut c_void;
+        #[link_name = "?New@FunctionTemplate@v8@@SA?AV?$Local@VFunctionTemplate@v8@@@2@PEAVIsolate@2@P6AXAEBV?$FunctionCallbackInfo@VValue@v8@@@2@@ZV?$Local@VValue@v8@@@2@V?$Local@VSignature@v8@@@2@HW4ConstructorBehavior@2@W4SideEffectType@2@PEBVCFunction@2@GGG@Z"]
+        pub fn v8_FunctionTemplate_New() -> *mut c_void;
+        #[link_name = "?NewInstance@ObjectTemplate@v8@@QEAA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub fn v8_ObjectTemplate_NewInstance() -> *mut c_void;
+        #[link_name = "?SetInternalFieldCount@ObjectTemplate@v8@@QEAAXH@Z"]
+        pub fn v8_ObjectTemplate_SetInternalFieldCount() -> *mut c_void;
+        #[link_name = "?InternalFieldCount@ObjectTemplate@v8@@QEBAHXZ"]
+        pub fn v8_ObjectTemplate_InternalFieldCount() -> *mut c_void;
+        #[link_name = "?New@ObjectTemplate@v8@@SA?AV?$Local@VObjectTemplate@v8@@@2@PEAVIsolate@2@V?$Local@VFunctionTemplate@v8@@@2@@Z"]
+        pub fn v8_ObjectTemplate_New() -> *mut c_void;
+        #[link_name = "?EscapeSlot@EscapableHandleScopeBase@v8@@IEAAPEA_KPEA_K@Z"]
+        pub fn v8_EscapableHandleScopeBase_EscapeSlot() -> *mut c_void;
+        #[link_name = "??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z"]
+        pub fn v8_EscapableHandleScopeBase_ctor() -> *mut c_void;
+        #[link_name = "?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z"]
+        pub fn v8_internal_IsolateFromNeverReadOnlySpaceObject() -> *mut c_void;
+        #[link_name = "?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z"]
+        pub fn v8_Array_New_elements() -> *mut c_void;
+        #[link_name = "?Length@Array@v8@@QEBAIXZ"]
+        pub fn v8_Array_Length() -> *mut c_void;
+        #[link_name = "?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@H@Z"]
+        pub fn v8_Array_New_len() -> *mut c_void;
+        #[link_name = "?New@Array@v8@@SA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@_KV?$function@$$A6A?AV?$MaybeLocal@VValue@v8@@@v8@@XZ@std@@@Z"]
+        pub fn v8_Array_New_fn() -> *mut c_void;
+        #[link_name = "?Iterate@Array@v8@@QEAA?AV?$Maybe@X@2@V?$Local@VContext@v8@@@2@P6A?AW4CallbackResult@12@IV?$Local@VValue@v8@@@2@PEAX@Z2@Z"]
+        pub fn v8_Array_Iterate() -> *mut c_void;
+        #[link_name = "?CheckCast@Array@v8@@CAXPEAVValue@2@@Z"]
+        pub fn v8_Array_CheckCast() -> *mut c_void;
+        #[link_name = "?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"]
+        pub fn v8_Function_SetName() -> *mut c_void;
+        #[link_name = "?IsBoolean@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsBoolean() -> *mut c_void;
+        #[link_name = "?Value@Boolean@v8@@QEBA_NXZ"]
+        pub fn v8_Boolean_Value() -> *mut c_void;
+        #[link_name = "?FullIsTrue@Value@v8@@AEBA_NXZ"]
+        pub fn v8_Value_FullIsTrue() -> *mut c_void;
+        #[link_name = "?FullIsFalse@Value@v8@@AEBA_NXZ"]
+        pub fn v8_Value_FullIsFalse() -> *mut c_void;
+        #[link_name = "??1EscapableHandleScope@v8@@QEAA@XZ"]
+        pub fn v8_EscapableHandleScope_dtor() -> *mut c_void;
+        #[link_name = "??0EscapableHandleScope@v8@@QEAA@PEAVIsolate@1@@Z"]
+        pub fn v8_EscapableHandleScope_ctor() -> *mut c_void;
+        #[link_name = "?IsObject@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsObject() -> *mut c_void;
+        #[link_name = "?IsNumber@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsNumber() -> *mut c_void;
+        #[link_name = "?IsUint32@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsUint32() -> *mut c_void;
+        #[link_name = "?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub fn v8_Value_Uint32Value() -> *mut c_void;
+        #[link_name = "?IsUndefined@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsUndefined() -> *mut c_void;
+        #[link_name = "?IsNull@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsNull() -> *mut c_void;
+        #[link_name = "?IsNullOrUndefined@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsNullOrUndefined() -> *mut c_void;
+        #[link_name = "?IsTrue@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsTrue() -> *mut c_void;
+        #[link_name = "?IsFalse@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsFalse() -> *mut c_void;
+        #[link_name = "?IsString@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsString() -> *mut c_void;
+        #[link_name = "?StrictEquals@Value@v8@@QEBA_NV?$Local@VValue@v8@@@2@@Z"]
+        pub fn v8_Value_StrictEquals() -> *mut c_void;
+        #[link_name = "?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z"]
+        pub fn v8_Boolean_New() -> *mut c_void;
+        #[link_name = "?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z"]
+        pub fn v8_Object_GetInternalField() -> *mut c_void;
+        #[link_name = "?GetIsolate@Context@v8@@QEAAPEAVIsolate@2@XZ"]
+        pub fn v8_Context_GetIsolate() -> *mut c_void;
+        #[link_name = "?NewFromOneByte@String@v8@@SA?AV?$MaybeLocal@VString@v8@@@2@PEAVIsolate@2@PEBEW4NewStringType@2@H@Z"]
+        pub fn v8_String_NewFromOneByte() -> *mut c_void;
+        #[link_name = "?IsExternal@String@v8@@QEBA_NXZ"]
+        pub fn v8_String_IsExternal() -> *mut c_void;
+        #[link_name = "?IsExternalOneByte@String@v8@@QEBA_NXZ"]
+        pub fn v8_String_IsExternalOneByte() -> *mut c_void;
+        #[link_name = "?IsExternalTwoByte@String@v8@@QEBA_NXZ"]
+        pub fn v8_String_IsExternalTwoByte() -> *mut c_void;
+        #[link_name = "?IsOneByte@String@v8@@QEBA_NXZ"]
+        pub fn v8_String_IsOneByte() -> *mut c_void;
+        #[link_name = "?Utf8Length@String@v8@@QEBAHPEAVIsolate@2@@Z"]
+        pub fn v8_String_Utf8Length() -> *mut c_void;
+        #[link_name = "?ContainsOnlyOneByte@String@v8@@QEBA_NXZ"]
+        pub fn v8_String_ContainsOnlyOneByte() -> *mut c_void;
+        #[link_name = "?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z"]
+        pub fn v8_api_internal_GlobalizeReference() -> *mut c_void;
+        #[link_name = "?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"]
+        pub fn v8_api_internal_DisposeGlobal() -> *mut c_void;
+        #[link_name = "?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z"]
+        pub fn v8_api_internal_GetFunctionTemplateData() -> *mut c_void;
+        #[link_name = "?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub fn v8_Function_GetName() -> *mut c_void;
+        #[link_name = "?IsFunction@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsFunction() -> *mut c_void;
+        #[link_name = "?IsMap@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsMap() -> *mut c_void;
+        #[link_name = "?IsArray@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsArray() -> *mut c_void;
+        #[link_name = "?IsInt32@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsInt32() -> *mut c_void;
+        #[link_name = "?IsBigInt@Value@v8@@QEBA_NXZ"]
+        pub fn v8_Value_IsBigInt() -> *mut c_void;
+        #[link_name = "?FromJustIsNothing@api_internal@v8@@YAXXZ"]
+        pub fn v8_api_internal_FromJustIsNothing() -> *mut c_void;
+    }
 }
 
 /// V8 API functions whose mangled name differs by C++ stdlib namespace:
@@ -3113,7 +3270,35 @@ pub fn fix_dead_code_elimination() {
     }
     #[cfg(windows)]
     {
-        // TODO(port): see v8_api windows module — MSVC-mangled symbols need #[link_name].
+        use v8_api::*;
+        keep_symbols!(
+            v8_Isolate_TryGetCurrent, v8_Isolate_GetCurrent, v8_Isolate_GetCurrentContext,
+            node_AddEnvironmentCleanupHook, node_RemoveEnvironmentCleanupHook, v8_Number_New,
+            v8_Number_Value, v8_String_NewFromUtf8, v8_String_WriteUtf8,
+            v8_api_internal_ToLocalEmpty, v8_String_Length, v8_External_New, v8_External_Value,
+            v8_Object_New, v8_Object_Set_key, v8_Object_Set_index, v8_Object_SetInternalField,
+            v8_Object_SlowGetInternalField, v8_Object_Get_index, v8_Object_Get_key,
+            v8_HandleScope_CreateHandle, v8_HandleScope_ctor, v8_HandleScope_dtor,
+            v8_FunctionTemplate_GetFunction, v8_FunctionTemplate_New,
+            v8_ObjectTemplate_NewInstance, v8_ObjectTemplate_SetInternalFieldCount,
+            v8_ObjectTemplate_InternalFieldCount, v8_ObjectTemplate_New,
+            v8_EscapableHandleScopeBase_EscapeSlot, v8_EscapableHandleScopeBase_ctor,
+            v8_internal_IsolateFromNeverReadOnlySpaceObject, v8_Array_New_elements,
+            v8_Array_Length, v8_Array_New_len, v8_Array_New_fn, v8_Array_Iterate,
+            v8_Array_CheckCast, v8_Function_SetName, v8_Value_IsBoolean, v8_Boolean_Value,
+            v8_Value_FullIsTrue, v8_Value_FullIsFalse, v8_EscapableHandleScope_dtor,
+            v8_EscapableHandleScope_ctor, v8_Value_IsObject, v8_Value_IsNumber,
+            v8_Value_IsUint32, v8_Value_Uint32Value, v8_Value_IsUndefined, v8_Value_IsNull,
+            v8_Value_IsNullOrUndefined, v8_Value_IsTrue, v8_Value_IsFalse, v8_Value_IsString,
+            v8_Value_StrictEquals, v8_Boolean_New, v8_Object_GetInternalField,
+            v8_Context_GetIsolate, v8_String_NewFromOneByte, v8_String_IsExternal,
+            v8_String_IsExternalOneByte, v8_String_IsExternalTwoByte, v8_String_IsOneByte,
+            v8_String_Utf8Length, v8_String_ContainsOnlyOneByte,
+            v8_api_internal_GlobalizeReference, v8_api_internal_DisposeGlobal,
+            v8_api_internal_GetFunctionTemplateData, v8_Function_GetName, v8_Value_IsFunction,
+            v8_Value_IsMap, v8_Value_IsArray, v8_Value_IsInt32, v8_Value_IsBigInt,
+            v8_api_internal_FromJustIsNothing,
+        );
     }
 
     // posix_platform_specific_v8_apis

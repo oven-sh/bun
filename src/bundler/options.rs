@@ -828,15 +828,16 @@ pub fn get_loader_and_virtual_source<'a>(
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a logger::Source = unsafe { &*eval_source };
-        // PORT NOTE: Zig used `bun.OSPathLiteral("/[eval]")` (slash on POSIX,
-        // backslash on Windows). The `[eval]`/`[stdin]` virtual specifiers are
-        // always emitted with forward slashes by the loader, so a plain literal
-        // is correct on both platforms.
-        if strings::ends_with(specifier, b"/[eval]") {
+        // Spec: `bun.pathLiteral("/[eval]")` — the eval/stdin entry path is built
+        // via `bun.pathLiteral` (cli.zig / run_command.zig / bun.js.zig), which
+        // rewrites `/` → `\` on Windows, so the suffix uses the platform separator.
+        const EVAL_SUFFIX: &[u8] = if cfg!(windows) { b"\\[eval]" } else { b"/[eval]" };
+        const STDIN_SUFFIX: &[u8] = if cfg!(windows) { b"\\[stdin]" } else { b"/[stdin]" };
+        if strings::ends_with(specifier, EVAL_SUFFIX) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
-        if strings::ends_with(specifier, b"/[stdin]") {
+        if strings::ends_with(specifier, STDIN_SUFFIX) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }

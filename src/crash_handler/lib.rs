@@ -386,10 +386,21 @@ fn fmt_err(e: bun_core::Error) -> bun_core::Error { e }
 /// `AtomicBool` static. Re-exported here so call sites read like the Zig.
 use bun_core::output::enable_ansi_colors_stderr;
 
-/// Zig: `std.posix.abort()`. `bun_sys::posix` does not re-export it; route
-/// through libc directly (async-signal-safe).
+/// Zig: `std.posix.abort()`. On POSIX this is `libc::abort()` (async-signal-safe).
+/// On Windows, Zig's `std.posix.abort()` is *not* MSVCRT `abort()` — it is
+/// `if (Debug) @breakpoint(); kernel32.ExitProcess(3);`. UCRT `abort()` would
+/// raise SIGABRT, may print `R6010 - abort() has been called` to stderr, and
+/// can pop a Watson/WER dialog — none of which the Zig spec does.
 #[inline(always)]
 fn abort() -> ! {
+    #[cfg(windows)]
+    {
+        #[cfg(debug_assertions)]
+        core::intrinsics::breakpoint();
+        // SAFETY: ExitProcess never returns.
+        unsafe { bun_sys::windows::kernel32::ExitProcess(3) }
+    }
+    #[cfg(not(windows))]
     // SAFETY: libc::abort has no preconditions; never returns.
     unsafe { libc::abort() }
 }
@@ -1812,7 +1823,12 @@ impl StackLine {
 
             return Some(StackLine {
                 // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
-                address: i32::try_from(addr - base_address).expect("int cast"),
+                // Zig: `@intCast(addr - base_address)` — unchecked in ReleaseFast.
+                // Use a wrapping cast so an oversize/underflowed module offset
+                // produces a junk frame instead of panicking *inside* the crash
+                // handler (which would escalate to a double-panic and lose the
+                // entire report).
+                address: addr.wrapping_sub(base_address) as i32,
 
                 object: if name != image_path.as_slice() {
                     let basename_start = name.iter().rposition(|&c| c == b'\\' as u16 || c == b'/' as u16)
@@ -2306,8 +2322,15 @@ fn crash() -> ! {
     {
         // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it
         // includes a breakpoint which makes crashes easier to debug.
-        // SAFETY: intentionally aborting to terminate the process.
-        unsafe { libc::abort() }
+        //
+        // Zig spec: `std.posix.abort()` on Windows = `@breakpoint()` (Debug only)
+        // then `kernel32.ExitProcess(3)`. Do NOT call MSVCRT `libc::abort()` here —
+        // that raises SIGABRT, may print the CRT `abort() has been called` message,
+        // and can invoke WER, none of which the Zig path does.
+        #[cfg(debug_assertions)]
+        core::intrinsics::breakpoint();
+        // SAFETY: ExitProcess never returns.
+        unsafe { bun_sys::windows::kernel32::ExitProcess(3) }
     }
 }
 
@@ -2423,14 +2446,16 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
             // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
             Ok(d) => unsafe { &mut *d },
             Err(err) => {
-                let _ = write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\nFallback trace:\n", bstr::BStr::new(err.name()));
+                // Zig: `stderr.print(..) catch return;` — if stderr write fails
+                // (e.g. broken pipe), bail out entirely; don't fall through.
+                if write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\nFallback trace:\n", bstr::BStr::new(err.name())).is_err() { return; }
                 break 'attempt_dump;
             }
         };
         match write_stack_trace(trace, stderr, debug_info, debug::detect_tty_config_stderr(), &limits) {
             Ok(()) => return,
             Err(err) => {
-                let _ = write!(stderr, "Unable to dump stack trace: {}\nFallback trace:\n", bstr::BStr::new(err.name()));
+                if write!(stderr, "Unable to dump stack trace: {}\nFallback trace:\n", bstr::BStr::new(err.name())).is_err() { return; }
                 break 'attempt_dump;
             }
         }
@@ -2476,13 +2501,26 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
         match spawn_symbolizer(program, trace) {
             // try next program if this one wasn't found
             Err(e) if e == bun_core::err!("FileNotFound") => continue,
+            // Windows: `bun_core::spawn_sync_inherit` is currently a `#[cfg(not(unix))]`
+            // stub returning `Unexpected`. Zig's `std.process.Child` *does* work on
+            // Windows, so until the stub is filled in, treat the sentinel like
+            // FileNotFound and fall through to the WTF fallback below instead of
+            // returning with no trace at all.
+            #[cfg(windows)]
+            Err(e) if e == bun_core::err!("Unexpected") => continue,
             Err(_) => {}
             Ok(()) => {}
         }
         return;
     }
     let _ = limits;
-    // Fallback: hand the raw addresses to WTF (always linked).
+    // INTENTIONAL DIVERGENCE from Zig spec (crash_handler.zig:1749-1760 falls
+    // off the end of the `for (programs)` loop with no further fallback). On
+    // Windows, `spawn_sync_inherit` is stubbed and `pdb-addr2line` is rarely
+    // installed, so without this the user would get *only* "Fallback trace:"
+    // and nothing else. Hand the raw addresses to WTF (always linked) so there
+    // is at least some trace. Windows crash-trace snapshot tests must account
+    // for this extra output.
     // SAFETY: trace.instruction_addresses is a valid slice of `index` entries
     unsafe { WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), trace.index); }
 }

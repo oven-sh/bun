@@ -86,7 +86,11 @@ mod nt {
         #[link_name = "NtReadFile"]
         pub fn NtReadFile(
             FileHandle: HANDLE,             // [in]
-            Event: Option<HANDLE>,          // [in, optional]
+            // PORT NOTE: Zig `?w.HANDLE` is pointer-sized via null-niche. Rust
+            // `Option<*mut c_void>` is NOT (raw pointers can already be null →
+            // no niche → 16-byte tagged enum, passed by-reference under Win64
+            // ABI). Use a plain HANDLE and pass null_mut() for "no event".
+            Event: HANDLE,                  // [in, optional]
             ApcRoutine: *mut c_void,        // [in, optional]
             ApcContext: PVOID,              // [in, optional]
             IoStatusBlock: *mut IO_STATUS_BLOCK, // [out]
@@ -100,7 +104,7 @@ mod nt {
         #[link_name = "NtWriteFile"]
         pub fn NtWriteFile(
             FileHandle: HANDLE,             // [in]
-            Event: Option<HANDLE>,          // [in, optional]
+            Event: HANDLE,                  // [in, optional] (see NtReadFile note re: Option<HANDLE>)
             ApcRoutine: *mut c_void,        // [in, optional]
             ApcContext: PVOID,              // [in, optional]
             IoStatusBlock: *mut IO_STATUS_BLOCK, // [out]
@@ -254,7 +258,6 @@ impl core::fmt::Display for FailReason {
                 "\n",
                 "    powershell -c \"irm bun.sh/install.ps1|iex\"\n",
                 "\n",
-                "\n",
             ),
             _ => concat!(
                 "Bun failed to remap this bin to its proper location within node_modules.\n",
@@ -263,7 +266,6 @@ impl core::fmt::Display for FailReason {
                 "Please run 'bun install --force' in the project root and try\n",
                 "it again. If this message persists, please open an issue:\n",
                 "https://github.com/oven-sh/bun/issues\n",
-                "\n",
                 "\n",
             ),
         };
@@ -277,7 +279,7 @@ pub fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
     let rc = unsafe {
         nt::NtWriteFile(
             handle,
-            None,
+            core::ptr::null_mut(),
             core::ptr::null_mut(),
             core::ptr::null_mut(),
             &mut io,
@@ -404,6 +406,9 @@ trait BunCtx {
     fn force_use_bun(&self) -> bool;
     fn direct_launch_with_bun_js(&self, wpath: &mut [u16]);
     fn environment(&self) -> Option<*const u16>;
+    /// Caller-provided output buffer of `BUF2_U16_LEN` u16s for
+    /// `LauncherMode::ReadWithoutLaunch`. `None` for contexts that launch in-place.
+    fn out_buf(&self) -> Option<*mut u16> { None }
 }
 
 impl BunCtx for () {
@@ -610,8 +615,16 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     // there are more arguments!
                     // if this is the end of the string then this becomes an empty slice,
                     // otherwise it is a slice of just the arguments
-                    while cmd_line_u16[i] == ' ' as u16 {
+                    //
+                    // PORT NOTE: Zig ReleaseSmall reads one past `Length` here and hits the
+                    // PEB CommandLine NUL terminator, exiting the loop. Rust slice indexing
+                    // always bounds-checks, so we must guard the upper bound explicitly.
+                    while i < cmd_line_u16.len() && cmd_line_u16[i] == ' ' as u16 {
                         i += 1;
+                    }
+                    if i == cmd_line_u16.len() {
+                        // only trailing spaces, no real args
+                        break 'find_args &cmd_line_u8[0..0];
                     }
                     break 'find_args &cmd_line_u8[i * 2 - 2 * 1 /* " ".len */..];
                 }
@@ -729,7 +742,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let read_status = unsafe {
         nt::NtReadFile(
             metadata_handle,
-            None,
+            core::ptr::null_mut(),
             core::ptr::null_mut(),
             core::ptr::null_mut(),
             &mut io,
@@ -1033,10 +1046,35 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         }
     };
 
+    if MODE == LauncherMode::ReadWithoutLaunch {
+        // Early-return the assembled command line to the caller instead of spawning.
+        // In Zig the `read_without_launch` instantiation would compile-error at the later
+        // `bun_ctx.environment` access (FromBunShellContext has no such field), so the spawn
+        // path is provably dead there. Rust's trait abstraction defers that to a runtime
+        // `unreachable!()`, hence the explicit branch-out here.
+        //
+        // Copy into the caller-provided buffer so the returned pointer outlives this stack
+        // frame (covers both the buf1-backed no-shebang path and the buf2-backed shebang path).
+        // SAFETY: spawn_command_line is NUL-terminated (terminator written above).
+        let len = unsafe { span_u16(spawn_command_line) }.len();
+        if let Some(dst) = bun_ctx.out_buf() {
+            debug_assert!(len + 1 <= BUF2_U16_LEN);
+            // SAFETY: dst points to BUF2_U16_LEN u16s; src is valid for len+1 u16s.
+            unsafe { core::ptr::copy(spawn_command_line, dst, len + 1) };
+            return LauncherRet::Read(ReadWithoutLaunchResult::CommandLine(dst, len));
+        }
+        return LauncherRet::Read(ReadWithoutLaunchResult::CommandLine(spawn_command_line, len));
+    }
+
     #[cfg(not(feature = "shim_standalone"))]
-    {
+    if MODE == LauncherMode::Launch {
         // Prepare stdio for the child process, as after this we are going to *immediatly* exit
         // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
+        //
+        // PORT NOTE: gated on `Launch` so `ReadWithoutLaunch` does not irreversibly mutate the
+        // parent process's stdio state. In Zig the `read_without_launch` instantiation would
+        // compile-error at the later `bun_ctx.environment` access, so it never reaches here;
+        // Rust's trait abstraction defeats that comptime guard, hence the explicit mode check.
         bun_core::output::source::stdio::restore();
         // SAFETY: FFI; sets `HANDLE_FLAG_INHERIT` on the three standard
         // handles. No preconditions beyond those handles being valid (they are
@@ -1216,8 +1254,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                 let data = &mut *FAILURE_REASON_DATA.get();
                                 FAILURE_REASON_ARGUMENT.write(Some('brk: {
                                     let mut i: u32 = 0;
-                                    while *spawn_command_line.add(i as usize) != ' ' as u16
-                                        && i < 512
+                                    while i < 512
+                                        && *spawn_command_line.add(i as usize) != ' ' as u16
                                     {
                                         data[i as usize] =
                                             (*spawn_command_line.add(i as usize) & 0x7F) as u8;
@@ -1350,7 +1388,7 @@ pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     }
 }
 
-pub struct FromBunShellContext<'a> {
+pub struct FromBunShellContext {
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
     pub base_path: *mut u16,
     pub base_path_len: usize,
@@ -1362,13 +1400,16 @@ pub struct FromBunShellContext<'a> {
     pub handle: HANDLE,
     /// Was --bun passed?
     pub force_use_bun: bool,
-    /// A pointer to memory needed to store the command line
-    pub buf: &'a mut [u16; BUF2_U16_LEN],
+    /// A pointer to memory needed to store the command line.
+    /// Matches Zig `buf: *Buf` (`*[buf2_u16_len]u16`). Kept as a raw pointer so the
+    /// `BunCtx` impl (which only sees `&Self`) can hand out a writable pointer without
+    /// laundering provenance through a shared reborrow of `&mut [_; N]`.
+    pub buf: *mut FromBunShellContextBuf,
 }
 
 pub type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
 
-impl<'a> BunCtx for &FromBunShellContext<'a> {
+impl BunCtx for &FromBunShellContext {
     fn base_path(&self) -> *mut u16 { self.base_path }
     fn base_path_len(&self) -> usize { self.base_path_len }
     fn arguments(&self) -> &[u16] {
@@ -1379,6 +1420,7 @@ impl<'a> BunCtx for &FromBunShellContext<'a> {
     fn force_use_bun(&self) -> bool { self.force_use_bun }
     fn direct_launch_with_bun_js(&self, _: &mut [u16]) { unreachable!() }
     fn environment(&self) -> Option<*const u16> { unreachable!() }
+    fn out_buf(&self) -> Option<*mut u16> { Some(self.buf.cast::<u16>()) }
 }
 
 // PORT NOTE: Zig `union` (untagged). Rust enums are tagged; the discriminant overhead is
@@ -1397,18 +1439,13 @@ pub enum ReadWithoutLaunchResult {
 /// The cost of spawning is about 5-12ms, and the unicode conversions are way
 /// faster than that, so this is a huge win.
 #[cfg(not(feature = "shim_standalone"))]
-pub fn read_without_launch(context: FromBunShellContext<'_>) -> ReadWithoutLaunchResult {
+pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchResult {
     debug_assert!(!unsafe {
         bun_core::ffi::slice(context.base_path, context.base_path_len)
     }
     .starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
     // TODO(port): `comptime assert(bun.FeatureFlags.windows_bunx_fast_path)` — wire up FeatureFlags const.
-    // TODO(port): the Zig `launcher` body never produces a `.command_line` result for
-    // `.read_without_launch` mode; it falls through to the spawn path. Phase B should verify
-    // whether the upstream Zig is missing a `mode == .read_without_launch` early-return after
-    // building `spawn_command_line` (and should write into `context.buf`, which is currently
-    // unused).
     match launcher::<{ LauncherMode::ReadWithoutLaunch }, _>(&context) {
         LauncherRet::Read(r) => r,
         LauncherRet::LaunchFellThrough => unreachable!(),

@@ -152,8 +152,10 @@ impl InstallCompletionsCommand {
             // TODO: fix this zig bug, it is one line change to a few functions.
             // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
-            file.write_all(SCRIPT)?;
-            // file dropped here (defer file.close())
+            // bun_sys::File has no Drop impl; must close explicitly (zig: defer file.close())
+            let res = file.write_all(SCRIPT);
+            let _ = file.close();
+            res?;
         }
         Ok(())
     }
@@ -202,8 +204,10 @@ impl InstallCompletionsCommand {
         )?;
 
         let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
-        file.write_all(CONTENT)?;
-        // file dropped here (defer file.close())
+        // bun_sys::File has no Drop impl; must close explicitly (zig: defer file.close())
+        let res = file.write_all(CONTENT);
+        let _ = file.close();
+        res?;
         Ok(())
     }
 

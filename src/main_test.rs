@@ -42,9 +42,13 @@ pub fn main() {
                 bun_alloc::mimalloc::mi_calloc as *mut _,
                 bun_alloc::mimalloc::mi_free as *mut _,
             );
-            // TODO(port): std.os.environ.ptr — obtain the raw environ block pointer for Windows.
-            environ.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
-            _environ.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+            // TODO(port): std.os.environ.ptr — obtain the raw environ block pointer for Windows
+            // and store it into `environ`/`_environ` so linked C code (libuv, getenv, native
+            // addons) sees the process environment. Until that pointer source exists, leave the
+            // CRT-initialized `_environ` untouched — writing NULL here would clobber it and make
+            // C code see an empty environment (or crash on `*environ`).
+            let _ = &environ;
+            let _ = &_environ;
         }
     }
 

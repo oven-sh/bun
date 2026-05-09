@@ -215,8 +215,10 @@ pub(crate) fn get_dl_error() -> Result<Box<[u8]>, bun_core::Error> {
     {
         use std::io::Write as _;
         // On Windows, we need to use GetLastError() and FormatMessageW()
-        // TODO(b2-blocked): bun_sys::windows::GetLastError
-        let err_int = 0u32;
+        // SAFETY: GetLastError() is a Win32 API that reads thread-local state and
+        // takes no arguments; it has no preconditions and is always safe to call.
+        let err = unsafe { bun_sys::windows::GetLastError() };
+        let err_int = err as u32;
         let mut v = Vec::new();
         write!(&mut v, "error code {}", err_int).ok();
         Ok(v.into_boxed_slice())

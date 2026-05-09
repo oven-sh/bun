@@ -1903,7 +1903,10 @@ impl ShellExecEnv {
         // PORT NOTE: reshaped for borrowck — `prev_cwd()` borrows `self`, so
         // copy into a stack buffer before the `&mut self` call. Bounded by the
         // ENAMETOOLONG check inside `change_cwd_impl` (same 4 KiB).
-        let mut buf = bun_paths::PathBuffer::uninit();
+        // Spec uses `ResolvePath.join_buf` (`[4096]u8` on every platform); do
+        // NOT use `bun_paths::PathBuffer` here — on Windows that is ~96 KiB of
+        // zero-filled stack, and `change_cwd_impl` stacks another on top.
+        let mut buf = [0u8; 4096];
         let prev = self.prev_cwd();
         let n = prev.len();
         buf[..n].copy_from_slice(prev);
@@ -1932,8 +1935,12 @@ impl ShellExecEnv {
     ) -> bun_sys::Result<()> {
         let is_abs = bun_paths::is_absolute(new_cwd_);
 
-        // Spec bounds-check against the 4096-byte join buffer (ENAMETOOLONG).
-        let mut buf = bun_paths::PathBuffer::uninit();
+        // Spec interpreter.zig:620 bounds-checks against `ResolvePath.join_buf`
+        // — a `[4096]u8` threadlocal on *every* platform. Do NOT use
+        // `bun_paths::PathBuffer` here: on Windows that is `MAX_PATH_BYTES =
+        // 32767*3+1` ≈ 96 KiB of zero-filled stack per `cd`, and the
+        // `>= buf.len()` check would diverge from the Zig ENAMETOOLONG bound.
+        let mut buf = [0u8; 4096];
         let required_len = if is_abs {
             new_cwd_.len()
         } else {
@@ -1981,7 +1988,7 @@ impl ShellExecEnv {
             buf[n] = 0;
             n
         };
-        let new_cwd_z = bun_core::ZStr::from_buf(buf.as_slice(), new_cwd_len);
+        let new_cwd_z = bun_core::ZStr::from_buf(&buf[..], new_cwd_len);
 
         let new_cwd_fd = shell_openat(
             self.cwd_fd,

@@ -1700,6 +1700,17 @@ pub fn install_isolated_packages(
                     let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") else {
                         break 'is_new_bun_modules true;
                     };
+                    // Windows HANDLE-leak audit: `Fd` is `Copy` (no Drop) and the
+                    // `WrappedIterator` from `sys::iterate_dir` does not own/close it.
+                    // The Zig spec (isolated_install.zig:1299) likewise lacks a
+                    // `defer node_modules.close()`, so this leak is pre-existing in
+                    // the spec — fixed in both per the audit. The guard fires on
+                    // normal fall-through to step 3 and on every
+                    // `break 'is_new_bun_modules true` early exit.
+                    let _close_node_modules = scopeguard::guard(node_modules, |fd| {
+                        use bun_sys::FdExt as _;
+                        fd.close();
+                    });
 
                     let mut entry_path = bun_core::handle_oom(AutoRelPath::from(b"node_modules"));
 

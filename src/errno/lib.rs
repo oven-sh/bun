@@ -63,13 +63,21 @@ pub fn get_errno<T: GetErrno>(rc: T) -> E {
 }
 
 impl SystemErrno {
-    /// Zig: `@enumFromInt(n)`. Unchecked discriminant cast; debug-asserts `n < MAX`.
+    /// Zig: `@enumFromInt(n)`. Unchecked discriminant cast.
+    ///
+    /// On POSIX the enum is dense `0..MAX`, so we debug-assert `n < MAX`.
+    /// On Windows the enum is **sparse** (dense `0..=137` plus isolated `UV_E*`
+    /// discriminants in the ~3000-4095 range — see windows_errno.rs), so the
+    /// `< MAX` bound does not hold for valid tags and the assert is skipped.
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
         // `as usize` on both sides papers over per-OS `MAX` typing (POSIX `u16`
         // vs Windows `usize`) without normalizing the constant itself.
+        #[cfg(not(windows))]
         debug_assert!((n as usize) < (Self::MAX as usize));
-        // SAFETY: caller guarantees n < MAX; #[repr(u16)] with contiguous discriminants.
+        // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
+        // of `SystemErrno` (Zig `@enumFromInt` precondition). The enum is NOT
+        // contiguous on Windows; do not assume `n < MAX` implies validity there.
         unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
     }
 }

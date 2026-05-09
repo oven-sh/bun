@@ -1164,7 +1164,12 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
         let pipe_rc =
             unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        if let Some(e) = pipe_rc.err_enum() {
+        // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
+        // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
+        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
+        // make `errno_to_zig_err` index the wrong table. Zig's `rc.errEnum()`
+        // (libuv.zig) routes through `translateUVErrorToE`; this matches it.
+        if let Some(e) = pipe_rc.err_enum_e() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
             return Err(bun_core::errno_to_zig_err(e as i32));
@@ -1210,7 +1215,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             return Err(e.into());
         }
         if let Some(e) =
-            unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::pipe)
+            unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::open)
         {
             return Err(e.into());
         }

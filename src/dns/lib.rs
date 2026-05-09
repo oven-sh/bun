@@ -17,7 +17,7 @@ use bun_wyhash::Wyhash11 as Wyhash;
 #[cfg(not(windows))]
 mod sock {
     pub use libc::{
-        addrinfo, freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6,
+        addrinfo, freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6, sockaddr_un,
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
     };
 }
@@ -27,6 +27,15 @@ mod sock {
         addrinfo, freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6,
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
     };
+    // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
+    // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
+    // here so address_to_string stays cfg-free below — matches Zig std's
+    // `std.os.windows.ws2_32.sockaddr_un { family: u16, path: [108]u8 }`.
+    #[repr(C)]
+    pub struct sockaddr_un {
+        pub sun_family: u16,
+        pub sun_path: [u8; 108],
+    }
 }
 
 // TODO(port): move to dns_sys / verify libc crate exposes these on all targets
@@ -385,10 +394,11 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
                 None => Ok(BunString::EMPTY),
             }
         }
-        #[cfg(unix)]
         sock::AF_UNIX => {
+            // Zig spec gates this on `comptime std.net.has_unix_sockets`, which is
+            // true on every target Bun ships (Windows 10 rs4+ included), so no cfg.
             // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
-            let un = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_un>() };
+            let un = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_un>() };
             // SAFETY: reinterpreting [c_char; N] as [u8; N] (same size/align).
             let path: &[u8] = unsafe {
                 core::slice::from_raw_parts(

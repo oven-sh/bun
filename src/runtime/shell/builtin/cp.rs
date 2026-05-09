@@ -297,14 +297,21 @@ impl Cp {
             let tref = unsafe { &mut *task };
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if let Some(err) = &tref.err {
-                    // Spec: cp.zig — defer the task if it errored with EBUSY
-                    // on its own resolved src/tgt path.
+                    // Spec: cp.zig — defer the task to the ebusy phase.
+                    // PORT NOTE: cp.zig L215-221 reads
+                    //   `err.* == .sys and err.sys.getErrno() == .BUSY and (tgt_match) or (src_match)`
+                    // Zig `and` binds tighter than `or`, so this parses as
+                    //   `(is_sys && errno==BUSY && tgt_match) || src_match`
+                    // i.e. ANY sys error whose `path` equals `src_absolute` is
+                    // deferred regardless of errno. We mirror that precedence
+                    // exactly here for spec parity (even though it is almost
+                    // certainly a latent precedence bug upstream).
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
-                        if sys.get_errno() == bun_sys::E::EBUSY
-                            && (tref.tgt_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p))
-                                || tref.src_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p))));
+                        if (sys.get_errno() == bun_sys::E::EBUSY
+                                && tref.tgt_absolute.as_deref()
+                                    .map_or(false, |p| sys.path.eql_utf8(p)))
+                            || tref.src_absolute.as_deref()
+                                    .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
                         exec.ebusy.tasks.push(task);
                         return Self::next(interp, cmd).run(interp);

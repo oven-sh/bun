@@ -11,20 +11,22 @@ pub trait EStringRef {
     fn slice16(&mut self) -> &[u16];
 }
 
-/// A growable byte buffer. In Zig this paired an `Allocator` with an
-/// `ArrayListUnmanaged(u8)`; in Rust the global mimalloc allocator is implicit,
-/// so this is a thin wrapper over `Vec<u8>`.
-/// `uv_buf_t`-shaped scatter/gather vector for Windows (`{ ULONG len; char* base; }`).
-/// Layout-identical to `bun_libuv_sys::uv_buf_t`; declared locally because
-/// `bun_string` is leaf and may not depend on `bun_libuv_sys`.
-#[cfg(windows)]
+/// Layout-identical to Zig's `std.posix.iovec_const`
+/// (`extern struct { base: [*]const u8, len: usize }`), which is defined
+/// unconditionally for every target — it does NOT alias `uv_buf_t`/`WSABUF`
+/// on Windows (those have reversed field order and a `u32` len). The Zig
+/// spec `MutableString.toSocketBuffers` returns this shape on all platforms,
+/// so there is no `cfg(windows)` split.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SocketBuffer {
-    pub len: u32,
-    pub base: *mut u8,
+    pub iov_base: *const u8,
+    pub iov_len: usize,
 }
 
+/// A growable byte buffer. In Zig this paired an `Allocator` with an
+/// `ArrayListUnmanaged(u8)`; in Rust the global mimalloc allocator is implicit,
+/// so this is a thin wrapper over `Vec<u8>`.
 #[derive(Default, Clone)]
 pub struct MutableString {
     // Zig field `std.mem.Allocator` param — deleted (global mimalloc).
@@ -441,34 +443,18 @@ impl MutableString {
         self.list.as_slice() == other
     }
 
-    #[cfg(not(windows))]
-    pub fn to_socket_buffers<const COUNT: usize>(
-        &self,
-        ranges: [(usize, usize); COUNT],
-    ) -> [libc::iovec; COUNT] {
-        // PORT NOTE: `std.posix.iovec_const` is just `libc::iovec` (the
-        // `iov_base` is `*mut` in libc but writev/sendmsg never write through it).
-        // PERF(port): Zig used `inline for` (unrolled); plain loop here.
-        core::array::from_fn(|i| {
-            let r = ranges[i];
-            let s = &self.list[r.0..r.1];
-            libc::iovec { iov_base: s.as_ptr().cast_mut().cast::<_>(), iov_len: s.len() }
-        })
-    }
-
-    /// Windows variant — `std.posix.iovec_const` aliases `uv_buf_t` there
-    /// (`{ ULONG len; char* base; }`). `bun_string` is leaf and may not depend
-    /// on `bun_libuv_sys`, so the 16-byte struct is mirrored locally; callers
-    /// reinterpret-cast to `*const uv_buf_t` (identical layout).
-    #[cfg(windows)]
+    /// Zig spec: `[count]std.posix.iovec_const` — that struct is
+    /// `{ base: [*]const u8, len: usize }` on every target (including Windows;
+    /// it is NOT `uv_buf_t`). Single implementation, no `cfg(windows)` split.
     pub fn to_socket_buffers<const COUNT: usize>(
         &self,
         ranges: [(usize, usize); COUNT],
     ) -> [SocketBuffer; COUNT] {
+        // PERF(port): Zig used `inline for` (unrolled); plain loop here.
         core::array::from_fn(|i| {
             let r = ranges[i];
             let s = &self.list[r.0..r.1];
-            SocketBuffer { len: s.len() as u32, base: s.as_ptr() as *mut _ }
+            SocketBuffer { iov_base: s.as_ptr(), iov_len: s.len() }
         })
     }
 

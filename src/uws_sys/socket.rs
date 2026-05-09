@@ -488,21 +488,13 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         is_ipc: bool,
     ) -> Option<Self> {
         // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET` (`usize`) on
-        // Windows. Do NOT route through `Fd::native()` on Windows — that calls
-        // `uv_get_osfhandle` for kind=uv fds and yields a *file* HANDLE, which
-        // is not interchangeable with a winsock SOCKET. The caller must supply
-        // a system-kind (raw SOCKET) fd here.
-        #[cfg(windows)] let fd_raw = match handle.decode_windows() {
-            // System-kind: raw SOCKET stored verbatim — reinterpret as
-            // LIBUS_SOCKET_DESCRIPTOR (= SOCKET = usize) without going through
-            // `.native()`, which would otherwise call `uv_get_osfhandle` for
-            // the Uv arm and yield a *file* HANDLE (wrong kernel table).
-            bun_core::DecodeWindows::Windows(h) => h as crate::LIBUS_SOCKET_DESCRIPTOR,
-            bun_core::DecodeWindows::Uv(_) => {
-                debug_assert!(false, "Socket::from_fd requires a system-kind (raw SOCKET) Fd on Windows");
-                return None;
-            }
-        };
+        // Windows. Zig (socket.zig:330) calls `handle.native()` unconditionally;
+        // on Windows that resolves kind=uv via `uv_get_osfhandle(file_number)`
+        // (`_get_osfhandle` returns whatever HANDLE was wrapped — including a
+        // SOCKET — so a uv-wrapped SOCKET round-trips correctly). All current
+        // callers are POSIX-gated so the Uv arm is presently unreachable on
+        // Windows, but mirror Zig exactly rather than rejecting it.
+        #[cfg(windows)] let fd_raw = handle.native() as crate::LIBUS_SOCKET_DESCRIPTOR;
         #[cfg(not(windows))] let fd_raw = handle.native();
         // Zig `?*This` is null-niche optimized (8 bytes); the dispatch
         // trampolines read the ext slot as `Option<NonNull<_>>`, so size and

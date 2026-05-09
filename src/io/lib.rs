@@ -629,6 +629,11 @@ impl IoRequestLoop {
         }
     }
 
+    // Zig: `Waker.getFd` / the loop's poll fd are `@compileError` on Windows
+    // (src/io/windows_event_loop.zig:368-373). Gate these so any Windows
+    // call site fails at compile time, matching the spec, rather than
+    // compiling cleanly and only panicking at runtime.
+    #[cfg(not(windows))]
     pub fn pollfd(&self) -> Fd {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -644,6 +649,7 @@ impl IoRequestLoop {
         }
     }
 
+    #[cfg(not(windows))]
     pub fn fd(&self) -> Fd {
         self.waker.get_fd()
     }
@@ -1671,20 +1677,19 @@ pub mod waker {
 
     #[cfg(windows)]
     impl WindowsWaker {
+        /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
+        /// its real waker is created). `loop_` is null and must never be
+        /// dereferenced — overwrite via `ptr::write` before first
+        /// `wake()`/`wait()`/`uv_loop()`. Mirrors `LinuxWaker::placeholder` /
+        /// `KEventWaker::placeholder` so cross-platform call sites don't fall
+        /// back to `mem::zeroed()` (UB for raw-ptr fields that are later
+        /// dereferenced unconditionally).
+        pub const fn placeholder() -> Self {
+            Self { loop_: core::ptr::null_mut() }
+        }
+
         pub fn init() -> Result<Self, bun_core::Error> {
             Ok(Self { loop_: bun_uws_sys::WindowsLoop::get() })
-        }
-
-        // TODO(port): Zig used @compileError; on Windows these must never be linked.
-        #[allow(unused)]
-        pub fn get_fd(&self) -> Fd {
-            unreachable!("Waker.getFd is unsupported on Windows");
-        }
-
-        // TODO(port): Zig used @compileError; on Windows these must never be linked.
-        #[allow(unused)]
-        pub fn init_with_file_descriptor(_fd: Fd) -> Self {
-            unreachable!("Waker.initWithFileDescriptor is unsupported on Windows");
         }
 
         pub fn wait(&self) {

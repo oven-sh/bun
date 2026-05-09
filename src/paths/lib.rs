@@ -108,10 +108,26 @@ pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
 #[macro_export]
 macro_rules! path_literal {
     ($lit:expr) => {{
-        // TODO(port-windows): const-eval `/`→`\` rewrite (const_format::str_replace).
-        const __B: &[u8] = ::core::concat!($lit, "\0").as_bytes();
-        // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        unsafe { ::bun_core::ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
+        // Port of `bun.zig:pathLiteral` — on Windows, const-eval `/`→`\` so
+        // callers feeding `\\?\`-prefixed NT paths get backslashes (Win32 does
+        // NOT normalize `/` under the `\\?\` namespace). On POSIX the rewrite
+        // condition is `false` and bytes copy through unchanged.
+        const __B: &[u8] = $lit.as_bytes();
+        const __N: usize = __B.len();
+        const __OUT: [u8; __N + 1] = {
+            let mut o = [0u8; __N + 1];
+            let mut i = 0;
+            while i < __N {
+                o[i] = if cfg!(windows) && __B[i] == b'/' { b'\\' } else { __B[i] };
+                i += 1;
+            }
+            o // o[__N] == 0 (NUL terminator)
+        };
+        // Explicit `&__OUT` borrow for guaranteed rvalue static promotion
+        // (mirrors `os_path_literal!`).
+        const __REF: &[u8; __N + 1] = &__OUT;
+        // SAFETY: __REF[__N] == 0 (NUL terminator); len excludes it.
+        unsafe { ::bun_core::ZStr::from_raw(__REF.as_ptr(), __N) }
     }};
 }
 

@@ -356,7 +356,19 @@ impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
         unsafe { (*this).on_reader_error(err) };
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        unsafe { (*this).io_evtloop() }.loop_().cast()
+        // Spec: IOReader.zig `loop()`. On Windows, `io_evtloop().loop_()`
+        // returns the uws `WindowsLoop*` wrapper, which owns the libuv loop
+        // via its `uv_loop` field — we must project that field, not type-pun
+        // the wrapper pointer (the wrapper's first bytes are InternalLoopData,
+        // not a uv_loop_t). On POSIX the uws Loop *is* the async loop.
+        #[cfg(windows)]
+        {
+            unsafe { (*(*this).io_evtloop().loop_()).uv_loop }
+        }
+        #[cfg(not(windows))]
+        {
+            unsafe { (*this).io_evtloop() }.loop_().cast()
+        }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         unsafe { (*this).io_evtloop() }

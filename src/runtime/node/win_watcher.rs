@@ -382,8 +382,10 @@ impl PathWatcher {
         sys::Result::Ok(this)
     }
 
-    extern "C" fn uv_closed_callback(handler: *mut c_void) {
+    unsafe extern "C" fn uv_closed_callback(handler: *mut uv::uv_handle_t) {
         bun_output::scoped_log!(fs_watch, "onClose");
+        // SAFETY: `uv_fs_event_t` is `#[repr(C)]` and prefixed with `uv_handle_t` (UvHandle impl);
+        // libuv passes back the same pointer registered in `uv_close`.
         let event = handler.cast::<uv::uv_fs_event_t>();
         // SAFETY: event.data was set to the PathWatcher* in `init`.
         let this = unsafe { (*event).data.cast::<PathWatcher>() };
@@ -398,7 +400,7 @@ impl PathWatcher {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let me = unsafe { &mut *this };
-        if me.handlers.swap_remove(&handler).is_some() {
+        if me.handlers.swap_remove(&handler) {
             me.maybe_deinit();
         }
     }
@@ -433,8 +435,8 @@ impl PathWatcher {
             unsafe { (*manager).unregister_watcher(this, path) };
         }
 
-        // SAFETY: handle was initialized via uv_fs_event_init; uv_is_closed only reads flags.
-        if unsafe { uv::uv_is_closed(ptr::addr_of!(me.handle).cast()) } {
+        // `UvHandle::is_closed` reads `flags & UV_HANDLE_CLOSED` via the handle prefix.
+        if me.handle.is_closed() {
             // SAFETY: `this` was heap-allocated in `init`.
             drop(unsafe { bun_core::heap::take(this) });
         } else {

@@ -401,9 +401,11 @@ impl ShellSubprocess {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
-                    // SAFETY: Arc<FileSink> is single-thread; raw mut access mirrors Zig.
-                    unsafe { (*Arc::as_ptr(pipe).cast_mut()).signal.clear() };
-                    // drop Arc<FileSink>
+                    // SAFETY: shell is single-threaded; no other borrow of the
+                    // FileSink is live across this call (mirrors Zig
+                    // `this.stdin.pipe.signal.clear()`).
+                    unsafe { pipe.as_mut() }.signal.clear();
+                    // FileSinkPtr::drop derefs (Zig: `pipe.deref()`).
                     self.stdin = Writable::Ignore;
                 }
                 Writable::Buffer(_) => {

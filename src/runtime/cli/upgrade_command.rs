@@ -1504,8 +1504,8 @@ pub mod upgrade_js_bindings {
 
             match sys::windows::Win32Error::from_nt_status(rc) {
                 sys::windows::Win32Error::SUCCESS => {
-                    // `Fd` backing on Windows is `u64`; HANDLE is `*mut c_void`.
-                    TEMPDIR_FD.with(|f| f.set(Some(sys::Fd::from_native(fd as u64))));
+                    // Zig: `bun.FD.fromNative(fd)` — system-kind handle on Windows.
+                    TEMPDIR_FD.with(|f| f.set(Some(sys::Fd::from_system(fd))));
                 }
                 _ => {}
             }

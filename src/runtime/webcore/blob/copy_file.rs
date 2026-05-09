@@ -1294,9 +1294,9 @@ impl<'a> CopyFileWindows<'a> {
                     Err(_) => {
                         result.close();
                         return bun_sys::Result::Err(bun_sys::Error {
-                            errno: bun_sys::SystemErrno::EMFILE as c_int,
+                            errno: bun_sys::SystemErrno::EMFILE as u16,
                             syscall: bun_sys::Tag::open,
-                            path: Some(path.slice().into()),
+                            path: path.slice().into(),
                             ..Default::default()
                         });
                     }
@@ -1318,7 +1318,7 @@ impl<'a> CopyFileWindows<'a> {
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut self.destination_file_store.data.as_file().pathlike,
+            &mut self.destination_file_store.data_mut().as_file_mut().pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
             false,
         ) {
@@ -1335,7 +1335,7 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut self.source_file_store.data.as_file().pathlike,
+            &mut self.source_file_store.data_mut().as_file_mut().pathlike,
             &mut self.read_write_loop.must_close_source_fd,
             true,
         ) {
@@ -1382,7 +1382,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match bun_sys::File::from(fd).kind() {
+                    match (bun_sys::File { handle: fd }).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;
@@ -1429,7 +1429,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match bun_sys::File::from(fd).kind() {
+                    match (bun_sys::File { handle: fd }).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;

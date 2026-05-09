@@ -1637,6 +1637,12 @@ pub mod js_bundler {
                 Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
+            // Zig (JSBundler.zig:1572-1582) opens an explicit `TopExceptionScope`
+            // before the FFI call and `returnIfException`s after; the C++ side has
+            // a `DECLARE_THROW_SCOPE` whose dtor sets `m_needExceptionCheck` under
+            // `BUN_JSC_validateExceptionChecks=1`, so a post-hoc `has_exception()`
+            // (whose own scope ctor asserts) is wrong.
+            bun_jsc::top_scope!(scope, global_this);
             // SAFETY: self is valid opaque FFI handle
             let value = unsafe {
                 JSBundlerPlugin__runOnEndCallbacks(
@@ -1646,13 +1652,7 @@ pub mod js_bundler {
                     rejection_value,
                 )
             };
-
-            // PORT NOTE: TopExceptionScope is placement-init only (Phase B);
-            // route the post-call check through `from_js_host_call`-style probe.
-            if global_this.has_exception() {
-                return Err(JsError::Thrown);
-            }
-
+            scope.return_if_exception()?;
             Ok(value)
         }
 

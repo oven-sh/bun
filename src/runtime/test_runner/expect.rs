@@ -107,8 +107,15 @@ unsafe extern "C" {
 
 impl AsymmetricMatcherConstructorType {
     pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        // C++ side opens `DECLARE_THROW_SCOPE` and returns -1 ⟺ threw; under
+        // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so
+        // open a validation scope here and assert the sentinel/exception biconditional
+        // (Zig: `bun.cpp.AsymmetricMatcherConstructorType__fromJS` is `zero_is_throw`-shaped
+        // with -1 as the sentinel).
+        bun_jsc::validation_scope!(scope, global_object);
         // SAFETY: FFI call with valid &JSGlobalObject; JSValue is Copy/repr(transparent)
         let result = unsafe { AsymmetricMatcherConstructorType__fromJS(global_object, value) };
+        scope.assert_exception_presence_matches(result == -1);
         Ok(match result {
             -1 => return Err(JsError::Thrown),
             1 => Self::Symbol,

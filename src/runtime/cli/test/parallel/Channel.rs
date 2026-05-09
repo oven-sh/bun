@@ -600,7 +600,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         len: core::ffi::c_int,
     ) -> *mut uws::us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid for the call.
-        let slice = unsafe { core::slice::from_raw_parts(data, len as usize) };
+        let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
         // SAFETY: see `chan` doc.
         unsafe { Self::chan(s) }.ingest(slice);
         s

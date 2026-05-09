@@ -1943,31 +1943,28 @@ fn update_name_and_name_hash_from_version_replacement(
     original_name_hash: PackageNameHash,
     new_version: dependency::Version,
 ) -> (SemverString, PackageNameHash) {
-    // SAFETY: each arm reads the union field discriminated by `new_version.tag`.
-    unsafe {
-        match new_version.tag {
-            // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
-            dependency::version::Tag::DistTag => (
-                new_version.value.dist_tag.name,
-                Semver::string::Builder::string_hash(
-                    lockfile.str(&new_version.value.dist_tag.name),
-                ),
+    match new_version.tag {
+        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+        dependency::version::Tag::DistTag => (
+            new_version.dist_tag().name,
+            Semver::string::Builder::string_hash(
+                lockfile.str(&new_version.dist_tag().name),
             ),
-            dependency::version::Tag::Npm => (
-                new_version.value.npm.name,
-                Semver::string::Builder::string_hash(lockfile.str(&new_version.value.npm.name)),
-            ),
-            dependency::version::Tag::Git => {
-                (new_version.value.git.package_name, original_name_hash)
-            }
-            dependency::version::Tag::Github => {
-                (new_version.value.github.package_name, original_name_hash)
-            }
-            dependency::version::Tag::Tarball => {
-                (new_version.value.tarball.package_name, original_name_hash)
-            }
-            _ => (original_name, original_name_hash),
+        ),
+        dependency::version::Tag::Npm => (
+            new_version.npm().name,
+            Semver::string::Builder::string_hash(lockfile.str(&new_version.npm().name)),
+        ),
+        dependency::version::Tag::Git => {
+            (new_version.git().package_name, original_name_hash)
         }
+        dependency::version::Tag::Github => {
+            (new_version.github().package_name, original_name_hash)
+        }
+        dependency::version::Tag::Tarball => {
+            (new_version.tarball().package_name, original_name_hash)
+        }
+        _ => (original_name, original_name_hash),
     }
 }
 

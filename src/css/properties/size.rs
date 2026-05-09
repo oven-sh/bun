@@ -33,15 +33,13 @@ pub enum BoxSizing {
 impl BoxSizing {
     pub fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        let ident = input.expect_ident_cloned()?;
         if bun_string::strings::eql_case_insensitive_ascii(ident, b"content-box", true) {
             Ok(BoxSizing::ContentBox)
         } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"border-box", true) {
             Ok(BoxSizing::BorderBox)
         } else {
-            Err(location.new_unexpected_token_error(css::Token::Ident(unsafe {
-                css::css_parser::src_str(ident)
-            })))
+            Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
         }
     }
 

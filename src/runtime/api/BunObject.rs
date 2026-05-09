@@ -954,8 +954,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
         let mut slot = cell.borrow_mut();
         let slot = &mut *slot;
         let edit = &mut slot.ctx;
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-        let env = unsafe { &mut *vm.transpiler.env };
+        let env = vm.transpiler.env_mut();
 
         if let Some(opts) = arguments.next_eat() {
             if !opts.is_undefined_or_null() {
@@ -2084,8 +2083,7 @@ pub mod environment_variables {
     ) -> usize {
         // SAFETY: caller is C++ with live global; ptr is a valid out-param.
         let bun_vm = unsafe { (*global_object).bun_vm() }.as_mut();
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-        let env = unsafe { &*bun_vm.transpiler.env };
+        let env = bun_vm.env_loader();
         let keys: &[Box<[u8]>] = env.map.map.keys();
         // C++ declares this out-param as `void**` and only ever round-trips it
         // back into `Bun__getEnvKey` below; the element layout is opaque to it.
@@ -2179,10 +2177,9 @@ pub mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
         // PORT NOTE: `Loader.map` is `&'a mut Map` (a mutable reference field);
         // re-borrow as `&mut *` to avoid moving the reference out of the loader.
-        let env_map = &mut *unsafe { &mut *vm.transpiler.env }.map;
+        let env_map = &mut *vm.transpiler.env_mut().map;
 
         // SAFETY: `value` is a live `bun.String` from C++.
         if unsafe { (*value).is_empty() } {

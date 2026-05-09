@@ -488,7 +488,10 @@ pub struct Symbol {
     /// Set for symbols representing items in an ES6 import clause.
     pub namespace_alias: Option<NamespaceAlias>,
     /// Used by the parser for single-pass parsing.
-    pub link: Ref,
+    ///
+    /// `Cell` because union-find (`merge`/`follow`) mutates this through
+    /// `&Symbol` while other shared refs to the same table are live.
+    pub link: core::cell::Cell<Ref>,
     /// Estimate of use count (zero ⇒ unused, e.g. type-only TS imports).
     pub use_count_estimate: u32,
     /// Do not access directly — use `chunk_index()`.
@@ -511,7 +514,7 @@ impl Default for Symbol {
         Symbol {
             original_name: b"",
             namespace_alias: None,
-            link: Ref::NONE,
+            link: core::cell::Cell::new(Ref::NONE),
             use_count_estimate: 0,
             chunk_index: Symbol::INVALID_CHUNK_INDEX,
             nested_scope_slot: Symbol::INVALID_NESTED_SCOPE_SLOT,
@@ -549,7 +552,7 @@ impl Symbol {
     }
     #[inline]
     pub fn has_link(&self) -> bool {
-        !matches!(self.link.tag(), RefTag::Invalid)
+        !matches!(self.link.get().tag(), RefTag::Invalid)
     }
     #[inline]
     pub fn is_hoisted(&self) -> bool {
@@ -613,7 +616,9 @@ pub mod symbol {
 
     // SAFETY: the symbol table is single-owner per parse and never shared across
     // threads concurrently; `UnsafeCell` only opts out of the auto-`Sync` impl.
-    unsafe impl Sync for Map where NestedList: Sync {}
+    // (`Symbol` itself contains `Cell<Ref>` so a structural `where NestedList: Sync`
+    // bound would never hold — the guarantee here is external single-threaded use.)
+    unsafe impl Sync for Map {}
 
     impl Map {
         pub fn init_list(list: NestedList) -> Map {
@@ -668,10 +673,11 @@ pub mod symbol {
         /// same soundness reason as `get` — caller owns the unsafe deref.
         pub fn get_with_link(&self, r: Ref) -> Option<*mut Symbol> {
             let p = self.get_ptr(r)?;
-            // SAFETY: `p` is a valid slot pointer; we only read `link` here.
-            let (has_link, link) = unsafe { ((*p).has_link(), (*p).link) };
-            if has_link {
-                if let Some(linked) = self.get_ptr(link) {
+            // SAFETY: `p` is a valid slot pointer; shared-ref deref only —
+            // `link` is read via `Cell`.
+            let symbol = unsafe { &*p };
+            if symbol.has_link() {
+                if let Some(linked) = self.get_ptr(symbol.link.get()) {
                     return Some(linked);
                 }
             }
@@ -681,7 +687,7 @@ pub mod symbol {
         pub fn get_with_link_const(&self, r: Ref) -> Option<&Symbol> {
             let symbol = self.get_const(r)?;
             if symbol.has_link() {
-                return Some(self.get_const(symbol.link).unwrap_or(symbol));
+                return Some(self.get_const(symbol.link.get()).unwrap_or(symbol));
             }
             Some(symbol)
         }
@@ -690,34 +696,37 @@ pub mod symbol {
             if old.eql(new) {
                 return new;
             }
-            let old_ptr = match self.get_ptr(old) {
-                Some(p) => p,
+            // `link` is `Cell<Ref>`: read/write through transient `&Symbol`
+            // borrows that end before the recursive `self.merge` call (so the
+            // bottom-case `&mut *new_ptr` never overlaps a live `&NestedList`).
+            let old_link = match self.get_const(old) {
+                Some(s) => s.link.get(),
                 None => return new,
             };
-            // SAFETY: `old_ptr` is the only pointer live across this read/write.
-            unsafe {
-                if (*old_ptr).has_link() {
-                    let old_link = (*old_ptr).link;
-                    let merged = self.merge(old_link, new);
-                    (*old_ptr).link = merged;
-                    return merged;
-                }
+            if old_link.is_valid() {
+                let merged = self.merge(old_link, new);
+                self.get_const(old).unwrap().link.set(merged);
+                return merged;
             }
-            let new_ptr = match self.get_ptr(new) {
-                Some(p) => p,
+            let new_link = match self.get_const(new) {
+                Some(s) => s.link.get(),
                 None => return new,
             };
-            // SAFETY: `old != new` was checked above, so `old_ptr` and `new_ptr`
-            // address distinct slots; we never hold two `&mut` simultaneously —
-            // all access stays at the raw-pointer level.
+            if new_link.is_valid() {
+                let merged = self.merge(old, new_link);
+                self.get_const(new).unwrap().link.set(merged);
+                return merged;
+            }
+            self.get_const(old).unwrap().link.set(new);
+            // `merge_contents_with` mutates non-Cell fields on `new`. Drop the
+            // `get_const` borrows and go through raw ptrs so no `&NestedList`
+            // shared borrow is live across the `&mut Symbol` materialization.
+            // SAFETY: `old != new` (checked above) so the two slots are
+            // disjoint; `get_ptr` derives `*mut` via `UnsafeCell::get` (write
+            // provenance preserved). Neither ref outlives this block.
+            let old_ptr = self.get_ptr(old).unwrap();
+            let new_ptr = self.get_ptr(new).unwrap();
             unsafe {
-                if (*new_ptr).has_link() {
-                    let new_link = (*new_ptr).link;
-                    let merged = self.merge(old, new_link);
-                    (*new_ptr).link = merged;
-                    return merged;
-                }
-                (*old_ptr).link = new;
                 (*new_ptr).merge_contents_with(&*old_ptr);
             }
             new
@@ -725,44 +734,33 @@ pub mod symbol {
 
         /// Equivalent to `followSymbols` in esbuild.
         pub fn follow(&self, r: Ref) -> Ref {
-            let p = match self.get_ptr(r) {
-                Some(p) => p,
+            let symbol = match self.get_const(r) {
+                Some(s) => s,
                 None => return r,
             };
-            // SAFETY: `p` is valid; the recursive `self.follow` re-enters
-            // `get_ptr` (raw pointers only) so no `&mut` aliasing occurs.
-            unsafe {
-                if !(*p).has_link() {
-                    return r;
-                }
-                let link = self.follow((*p).link);
-                if !(*p).link.eql(link) {
-                    (*p).link = link;
-                }
-                link
+            if !symbol.has_link() {
+                return r;
             }
+            let link = self.follow(symbol.link.get());
+            if !symbol.link.get().eql(link) {
+                symbol.link.set(link);
+            }
+            link
         }
 
         pub fn follow_all(&self) {
             // PERF(port): was `bun.perf.trace("Symbols.followAll")`.
-            // SAFETY: write provenance via `UnsafeCell::get`; we never form a
-            // `&mut` here — `self.follow` goes through `get_ptr` which is also
-            // raw-pointer-only, so the inner `sym` pointer stays valid across
-            // the recursive call.
-            let nested: *mut NestedList = self.symbols_for_source.get();
-            let outer_len = unsafe { (*nested).len() };
-            for i in 0..outer_len {
-                let list: *mut List = unsafe { (*nested).as_mut_ptr().add(i) };
-                let inner_len = unsafe { (*list).len() };
-                for j in 0..inner_len {
-                    let sym: *mut Symbol = unsafe { (*list).as_mut_ptr().add(j) };
-                    unsafe {
-                        if !(*sym).has_link() {
-                            continue;
-                        }
-                        let link = self.follow((*sym).link);
-                        (*sym).link = link;
+            // `link` is `Cell<Ref>`, so we iterate by shared ref and mutate
+            // in place; `follow()` only takes `&self` and only touches `link`.
+            // SAFETY: shared read of the table; no concurrent structural mutation.
+            let nested = unsafe { &*self.symbols_for_source.get() };
+            for list in nested.iter() {
+                for sym in list.iter() {
+                    if !sym.has_link() {
+                        continue;
                     }
+                    let link = self.follow(sym.link.get());
+                    sym.link.set(link);
                 }
             }
         }

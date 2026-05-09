@@ -482,11 +482,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let hostz = bun_core::ZBox::from_bytes(clean);
                 let port = *port;
                 // `host` borrow ends here; `self.connection` no longer borrowed.
-                // SAFETY: `ZBox` guarantees a trailing NUL and contains no
-                // interior NUL (host bytes were `[` stripped slice).
-                let host_c = unsafe {
-                    core::ffi::CStr::from_bytes_with_nul_unchecked(hostz.as_bytes_with_nul())
-                };
+                // `ZBox` guarantees a trailing NUL; host bytes contain no interior NUL.
+                let host_c = hostz.as_zstr().as_cstr();
 
                 self.socket = match group.connect(
                     kind,
@@ -964,10 +961,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // The error is effectively handled, but we should still reject the promise.
             // UFCS so rustc can back-infer `val: JSValue` even if the
             // `promise` field's `try_swap()` resolution is in flux upstream.
-            let promise: *mut jsc::JSPromise = JSValue::as_promise(val).unwrap();
-            // SAFETY: `as_promise` returned non-null; promise lives for this call.
-            let err_ = err.to_error_instance_with_async_stack(&global, unsafe { &*promise });
-            unsafe { (*promise).reject_as_handled(&global, err_) }?;
+            let promise = jsc::JSPromise::opaque_mut(JSValue::as_promise(val).unwrap());
+            let err_ = err.to_error_instance_with_async_stack(&global, promise);
+            promise.reject_as_handled(&global, err_)?;
         }
 
         // `_scope_guard` (declared after `cleanup`) drops first → scope.exit();

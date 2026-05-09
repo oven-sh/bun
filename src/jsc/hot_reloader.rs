@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use core::marker::PhantomData;
-use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_collections::{StringHashMap, StringSet};
@@ -493,8 +492,8 @@ pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     // type on a generic parameter without specialization; storing it
     // unconditionally for now.
     pub paths: [&'static [u8]; 8],
-    /// Left uninitialized until .enqueue
-    pub concurrent_task: MaybeUninit<ConcurrentTask>,
+    /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
+    pub concurrent_task: Option<ConcurrentTask>,
     pub reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
 }
 
@@ -513,7 +512,7 @@ where
             // TODO(port): was `if (Ctx == bun.bake.DevServer) [_][]const u8{&.{}} ** 8`
             paths: [b"".as_slice(); 8],
             count: 0,
-            concurrent_task: MaybeUninit::uninit(),
+            concurrent_task: None,
         }
     }
 
@@ -623,7 +622,7 @@ where
             count: self.count,
             paths: self.paths,
             hashes: self.hashes,
-            concurrent_task: MaybeUninit::uninit(),
+            concurrent_task: None,
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
         unsafe {
@@ -631,7 +630,7 @@ where
             // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
             // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
             // use the raw `(tag, ptr)` constructor.
-            (*that).concurrent_task.write(ConcurrentTask {
+            let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
                 task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
                 ..Default::default()
             });
@@ -644,10 +643,7 @@ where
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
             let event_loop = (*ctx).event_loop();
-            EventLoopType::enqueue_task_concurrent(
-                event_loop,
-                std::ptr::from_mut((*that).concurrent_task.assume_init_mut()),
-            );
+            EventLoopType::enqueue_task_concurrent(event_loop, std::ptr::from_mut(concurrent));
         }
         self.count = 0;
     }

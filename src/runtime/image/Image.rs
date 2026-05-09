@@ -699,7 +699,7 @@ impl Image {
                             // SAFETY: classifier guarantees `ptr[0..len]` is
                             // valid for the duration of this call (JS thread).
                             let copied =
-                                unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
+                                unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
                             Ok(Input { copied: Some(copied), ..Default::default() })
                         }
                     }
@@ -716,7 +716,7 @@ impl Image {
                         } else {
                             // SAFETY: pinned for the lifetime of the task;
                             // unpinned in `then()` via `Input::release()`.
-                            let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+                            let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
                             Ok(Input {
                                 bytes: bun_ptr::RawSlice::new(bytes),
                                 pinned: v,

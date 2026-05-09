@@ -73,17 +73,13 @@ pub unsafe trait OpaqueHandle: Sized {
 ///
 /// Replaces `// SAFETY: H is a ZST → core::mem::zeroed()` repeated at every
 /// trampoline site. The ZST invariant is enforced at compile time via the
-/// inline `const { assert!() }`, so callers no longer need their own copy.
-///
-/// # Safety
-/// `H` must be inhabited (true for any `Fn*` ZST — fn items and capture-less
-/// closures). The size check is a compile-time assert.
+/// inline `const { assert!() }`, so a non-ZST `H` is a *compile* error at the
+/// monomorphisation site — which is what lets this be a *safe* fn (S016).
+/// Thin re-export of [`bun_core::ffi::conjure_zst`] kept for the shorter
+/// `thunk::zst::<H>()` spelling at the ~20 uWS trampoline call sites.
 #[inline(always)]
-pub unsafe fn zst<H>() -> H {
-    const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
-    // SAFETY: `H` has zero size (asserted above) and is inhabited per caller
-    // contract, so the empty bit-pattern is a valid value.
-    unsafe { bun_core::ffi::zeroed_unchecked() }
+pub fn zst<H>() -> H {
+    bun_core::ffi::conjure_zst::<H>()
 }
 
 /// Recover `&mut U` from a uWS user-data word, returning `None` for null.
@@ -179,4 +175,61 @@ pub unsafe fn connecting_ext_owner<'a, T>(c: *mut ConnectingSocket) -> Option<&'
 pub unsafe fn connecting_ext_ptr<T>(c: *mut ConnectingSocket) -> Option<NonNull<T>> {
     // SAFETY: per caller contract above.
     unsafe { *(*c).ext::<Option<NonNull<T>>>() }
+}
+
+// ───────────────────────── safe-surface trampoline ──────────────────────────
+//
+// S005: the primitives above are `unsafe fn` because each call site must
+// re-assert the uWS callback contract. For the common, *non-re-entrant*
+// dispatch path (single-threaded event loop, handler does not call back into
+// uWS on the same socket while holding `&mut Owner`) that contract is uniform
+// and can be discharged once at the type level instead of at every call site.
+// `ExtSlot<T>` is that type-level discharge: choosing it as `Handler::Ext`
+// moves the proof obligation from ~30 `unsafe { ext_owner(ext) }` blocks to
+// the one `unsafe` inside `owner_mut()`.
+
+/// Typed-safe wrapper for the `Option<NonNull<T>>` word stored in a uWS socket
+/// ext slot. The newtype is the safe-surface entry point for the
+/// `socket.ext(**T).*` pattern: choosing `type Ext = ExtSlot<T>` in a
+/// [`crate::vtable::Handler`] impl asserts the **non-re-entrancy contract** —
+/// that the handler bodies do not re-enter uWS dispatch on the same socket
+/// while a `&mut T` borrowed from this slot is live (re-entrant consumers must
+/// keep `type Ext = Option<NonNull<T>>` and pass `*mut T` onward; see
+/// `RawPtrHandler`).
+///
+/// Because the inner field is private and there is no public safe constructor,
+/// safe Rust cannot fabricate an `ExtSlot<T>` containing a dangling pointer;
+/// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
+/// `vtable::Trampolines` layer from C-allocated socket ext memory (via
+/// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
+/// [`Self::owner_mut`] sound as a *safe* fn — the one `unsafe { p.as_mut() }`
+/// inside discharges the same invariant every former
+/// `unsafe { thunk::ext_owner(ext) }` call site repeated open-coded.
+#[repr(transparent)]
+pub struct ExtSlot<T>(Option<NonNull<T>>);
+
+impl<T> ExtSlot<T> {
+    /// Recover `&mut T` from the slot, or `None` for the calloc'd-but-not-yet-
+    /// stamped window during connect/accept. Safe: see type-level docs for the
+    /// invariant that discharges the `unsafe` inside.
+    #[inline(always)]
+    pub fn owner_mut(&mut self) -> Option<&mut T> {
+        match self.0 {
+            // SAFETY: `ExtSlot<T>` is only ever materialised by the uws_sys
+            // trampoline layer from a live socket ext slot. The slot holds the
+            // unique heap owner; uWS dispatch is single-threaded and — per the
+            // `Handler::Ext = ExtSlot<T>` contract — non-re-entrant on this
+            // user-data, so no aliasing `&mut T` exists for `'_`.
+            Some(mut p) => Some(unsafe { p.as_mut() }),
+            None => None,
+        }
+    }
+
+    /// Snapshot the raw pointer word without forming a borrow. Used by
+    /// `on_connect_error` paths that must read the owner *before* closing the
+    /// socket (which may invalidate the ext storage `self` points into).
+    #[inline(always)]
+    pub fn get(&self) -> Option<NonNull<T>> {
+        self.0
+    }
 }

@@ -105,36 +105,31 @@ pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
 pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
-    // SAFETY: `dir` is caller-owned for the call.
-    let dir = unsafe { bfd(dir.native()) };
+    let dir = dir.as_borrowed_fd();
     retry(|| rustix::fs::openat(dir, zcstr(path), oflags, mode)).map(own_fd)
 }
 
 #[inline]
 pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize, i32> {
-    // SAFETY: `fd` is caller-owned for the call.
-    let fd = unsafe { bfd(fd.native()) };
+    let fd = fd.as_borrowed_fd();
     retry(|| rustix::io::read(fd, buf))
 }
 
 #[inline]
 pub fn write(fd: Fd, buf: &[u8]) -> Result<usize, i32> {
-    // SAFETY: `fd` is caller-owned for the call.
-    let fd = unsafe { bfd(fd.native()) };
+    let fd = fd.as_borrowed_fd();
     retry(|| rustix::io::write(fd, buf))
 }
 
 #[inline]
 pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Result<usize, i32> {
-    // SAFETY: `fd` is caller-owned for the call.
-    let fd = unsafe { bfd(fd.native()) };
+    let fd = fd.as_borrowed_fd();
     retry(|| rustix::io::pread(fd, buf, off as u64))
 }
 
 #[inline]
 pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Result<usize, i32> {
-    // SAFETY: `fd` is caller-owned for the call.
-    let fd = unsafe { bfd(fd.native()) };
+    let fd = fd.as_borrowed_fd();
     retry(|| rustix::io::pwrite(fd, buf, off as u64))
 }
 
@@ -175,8 +170,7 @@ pub fn close(fd: i32) -> Result<(), i32> {
 
 #[inline]
 pub fn fstat(fd: Fd) -> Result<libc::stat, i32> {
-    // SAFETY: `fd` is caller-owned for the call.
-    let fd = unsafe { bfd(fd.native()) };
+    let fd = fd.as_borrowed_fd();
     retry(|| rustix::fs::fstat(fd)).map(stat_to_libc)
 }
 
@@ -277,7 +271,7 @@ pub unsafe fn writev(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize
     let slice = unsafe {
         core::slice::from_raw_parts(vecs as *const rustix::io::IoSlice<'_>, n)
     };
-    let fd = unsafe { bfd(fd.native()) };
+    let fd = fd.as_borrowed_fd();
     retry(|| rustix::io::writev(fd, slice))
 }
 
@@ -305,7 +299,7 @@ pub unsafe fn pwritev(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> R
     let slice = unsafe {
         core::slice::from_raw_parts(vecs as *const rustix::io::IoSlice<'_>, n)
     };
-    let fd = unsafe { bfd(fd.native()) };
+    let fd = fd.as_borrowed_fd();
     retry(|| rustix::io::pwritev(fd, slice, off as u64))
 }
 

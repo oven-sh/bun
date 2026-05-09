@@ -16,7 +16,6 @@
 //!   - `[n]u8`: Function name
 
 use bun_alloc::ArenaVecExt as _;
-use core::ptr::NonNull;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::ArrayHashMap;
@@ -37,9 +36,9 @@ use crate::server::static_route::InitFromBytesOptions;
 use crate::server::StaticRoute;
 
 pub struct ErrorReportRequest {
-    // TODO(port): lifetime — backref to owning DevServer; raw because the
-    // request is heap-allocated and DevServer outlives it.
-    dev: NonNull<DevServer>,
+    // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
+    // outlives every in-flight request (BackRef invariant).
+    dev: bun_ptr::BackRef<DevServer>,
     // PORT NOTE: BodyReaderMixin is a Zig comptime mixin parameterized by
     // (Self, "body", run_with_body, finalize). Modeled as a generic helper that
     // stores the buffered body and dispatches to the two callbacks below.
@@ -65,12 +64,13 @@ impl BodyReaderHandler for ErrorReportRequest {
 impl ErrorReportRequest {
     pub fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
         let ctx = bun_core::heap::into_raw(Box::new(ErrorReportRequest {
-            dev: NonNull::from(dev),
+            dev: bun_ptr::BackRef::new_mut(dev),
             body: uws::BodyReaderMixin::init(),
         }));
-        // SAFETY: ctx was just allocated and is non-null; dev/server are live.
+        // SAFETY: ctx was just allocated and is non-null; BackRef exclusivity —
+        // JS-thread only, sole `&mut DevServer` in scope.
         unsafe {
-            (*ctx).dev.as_mut().server.as_mut().unwrap().on_pending_request();
+            (*ctx).dev.get_mut().server.as_mut().unwrap().on_pending_request();
         }
         uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
     }
@@ -83,7 +83,7 @@ impl ErrorReportRequest {
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
         // both of which uphold this contract.
         unsafe {
-            (*ctx).dev.as_mut().server.as_mut().unwrap().on_static_request_complete();
+            (*ctx).dev.get_mut().server.as_mut().unwrap().on_static_request_complete();
             drop(bun_core::heap::take(ctx));
         }
     }
@@ -116,11 +116,11 @@ impl ErrorReportRequest {
         // allocates VLQ scratch + result mappings into the global mimalloc
         // heap, so no per-map reset arena is threaded here.
 
-        // SAFETY: DevServer outlives this request; immutable borrow for the
-        // duration of remapping (only `source_maps` and `root` are read). No
-        // `&mut *ctx` is formed for the body of this fn — `finalize(ctx)` at
-        // the tail consumes the original Box pointer directly.
-        let dev: &DevServer = unsafe { (*ctx).dev.as_ref() };
+        // BackRef::get() is safe under the back-reference invariant (DevServer
+        // outlives this request). No `&mut *ctx` is formed for the body of this
+        // fn — `finalize(ctx)` at the tail consumes the original Box pointer.
+        // SAFETY: `ctx` is the live heap allocation from `run` (caller contract).
+        let dev: &DevServer = unsafe { &*ctx }.dev.get();
 
         // Read payload, assemble ZigException
         let name = read_string32(&mut reader)?;

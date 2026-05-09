@@ -454,9 +454,7 @@ impl JSValkeyClient {
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
             arguments[0].to_bun_string(&global_object)?
         } else {
-            // SAFETY: `vm.transpiler.env` is set during VM init and points at the
-            // process-lifetime `bun_dotenv::Loader`; never null on the JS thread.
-            let env = unsafe { &*vm_ref.transpiler.env };
+            let env = vm_ref.env_loader();
             match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
                 Some(url) => BunString::borrow_utf8(url),
                 None => BunString::static_(b"valkey://localhost:6379"),

@@ -671,14 +671,14 @@ fn css_symbols_to_parser_symbols(
         };
         // `bun_js_parser::ast::Ref` is a re-export of `bun_logger::Ref` (ast/base.rs:172)
         // — same nominal type, no bridge needed.
-        let link: bun_js_parser::ast::Ref = s.link;
+        let link: bun_js_parser::ast::Ref = s.link.get();
         out.append_assume_capacity(PSym {
             original_name: bun_js_parser::StoreStr::new(s.original_name),
             // CSS-module locals are never ES6 namespace-aliased (the CSS parser
             // never assigns `namespace_alias`); drop rather than bridge the
             // distinct `NamespaceAlias` mirrors.
             namespace_alias: None,
-            link,
+            link: std::cell::Cell::new(link),
             use_count_estimate: s.use_count_estimate,
             chunk_index: s.chunk_index,
             nested_scope_slot: s.nested_scope_slot,
@@ -2007,8 +2007,8 @@ fn get_source_code(
     // `ThreadPool::Worker::create`); the worker is pinned for the bundle pass.
     let bump: &Bump = unsafe { &*this.arena };
 
-    // SAFETY: `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
-    let data = unsafe { this.data.assume_init_mut() };
+    // `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
+    let data = this.data.as_mut().expect("Worker.data set in create()");
     // PORT NOTE: `resolver` is a field of `*transpiler` (Zig
     // `&transpiler.resolver`). Hold both as raw `*mut` and never materialize
     // `&mut Transpiler` while `resolver` is live — the callee chain takes raw

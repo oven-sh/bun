@@ -50,8 +50,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
         if *w == u16::from(b'/') { *w = u16::from(b'\\'); }
     }
     wbuf[n] = 0;
-    // SAFETY: POD, zero-valid.
-    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = bun_core::ffi::zeroed();
     // SAFETY: `wbuf` is NUL-terminated at `[n]`; `data` is a valid out-ptr.
     let ok = unsafe {
         fs::GetFileAttributesExW(wbuf.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
@@ -162,7 +161,7 @@ impl BunSocketContextOptions {
             hp.update(as_bytes(&n));
             if !arr.is_null() {
                 // SAFETY: `arr` points to `n` (possibly null) C strings.
-                let slice = unsafe { core::slice::from_raw_parts(arr, n as usize) };
+                let slice = unsafe { bun_core::ffi::slice(arr, n as usize) };
                 for &s in slice {
                     hp.update(&[(!s.is_null()) as u8]);
                     if !s.is_null() {
@@ -228,7 +227,7 @@ impl BunSocketContextOptions {
                 return;
             }
             // SAFETY: `arr` points to `count` (possibly null) C strings.
-            let slice = unsafe { core::slice::from_raw_parts(arr, count as usize) };
+            let slice = unsafe { bun_core::ffi::slice(arr, count as usize) };
             for &s in slice {
                 if !s.is_null() {
                     // SAFETY: NUL-terminated C string.

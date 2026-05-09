@@ -146,7 +146,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn call_rt(&mut self, l: logger::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
-        let list = unsafe { ExprNodeList::from_bump_slice(a) };
+        let list = ExprNodeList::from_arena_slice(a);
         self.call_runtime(l, name, list)
     }
 
@@ -214,7 +214,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let bump = self.arena;
         let stmt = self.s(S::SExpr { value: expr, ..Default::default() }, l);
         let stmts = bump.alloc_slice_copy(&[stmt]);
-        let stmts_list = unsafe { Vec::<Stmt>::from_bump_slice(stmts) };
+        let stmts_list = Vec::<Stmt>::from_arena_slice(stmts);
         let sb = bump.alloc(G::ClassStaticBlock { loc: l, stmts: stmts_list });
         Property {
             kind: PropertyKind::ClassStaticBlock,
@@ -1978,8 +1978,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     );
                     let spread = p.new_expr(E::Spread { value: inner }, loc);
                     let arg_slice = bump.alloc_slice_copy(&[spread]);
-                    let call_args =
-                        unsafe { ExprNodeList::from_bump_slice(arg_slice) };
+                    let call_args = ExprNodeList::from_arena_slice(arg_slice);
                     let call = p.new_expr(
                         E::Call { target, args: call_args, ..Default::default() },
                         loc,

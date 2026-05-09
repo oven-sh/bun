@@ -875,10 +875,15 @@ pub mod command {
     /// `ConstParamTy` (lower-tier crate), so demoted to a runtime arg; the only
     /// comptime-dependent bit was `Tag.uses_global_options.get(command)`, which
     /// the runtime `USES_GLOBAL_OPTIONS` set covers.
+    /// Returns `&'static mut` to the process-global `CONTEXT_DATA`. Sound
+    /// because CLI dispatch is single-threaded and this is the sole live
+    /// borrow at the time of return; callers thread it down via the `ctx`
+    /// parameter rather than re-deriving (Zig: `Context = *ContextData`).
+    #[track_caller]
     pub fn create_context_data(
         cmd: Tag,
         log: &mut logger::Log,
-    ) -> Result<*mut ContextData, bun_core::Error> {
+    ) -> Result<&'static mut ContextData, bun_core::Error> {
         // SAFETY: single-threaded CLI startup; `CMD` is read by crash-reporter
         // and debug logging only.
         unsafe { CMD.write(Some(cmd)) };
@@ -1002,8 +1007,7 @@ pub mod command {
                         // SAFETY: single-threaded startup.
                         unsafe { bun::set_argv(full_argv) };
 
-                        // SAFETY: single-threaded startup; `init` published this ctx.
-                        break 'brk unsafe { &mut *result };
+                        break 'brk result;
                     }
 
                     // If no compile_exec_argv, skip executable name if present
@@ -1083,23 +1087,14 @@ pub mod command {
                 Global::exit(0);
             }
             Tag::PackageManagerCommand => {
-                // SAFETY: see RunAsNodeCommand arm — single-threaded startup.
-                let ctx = unsafe { &mut *init(Tag::PackageManagerCommand, log)? };
+                let ctx = init(Tag::PackageManagerCommand, log)?;
                 return super::package_manager_command::PackageManagerCommand::exec(ctx);
             }
             Tag::RunAsNodeCommand => {
-                // SAFETY: `init` writes the process-global `CONTEXT_DATA` once
-                // during single-threaded startup and returns its raw address;
-                // we are that startup thread and this is the sole live `&mut`
-                // to it (Zig: `Context = *ContextData`, freely aliased — here
-                // the borrow is threaded down via the `ctx` parameter instead
-                // of re-derived). All other `init(...)` arms below share this
-                // invariant.
-                let ctx = unsafe { &mut *init(tag, log)? };
+                let ctx = init(tag, log)?;
                 return run_command::RunCommand::exec_as_if_node(ctx);
             }
             Tag::AutoCommand | Tag::RunCommand => {
-                // SAFETY: see RunAsNodeCommand arm above.
                 // PORT NOTE: Zig's AutoCommand arm swallows
                 // `error.MissingEntryPoint` from `Command.init` and prints
                 // help. `bun_core::Error` has no variant table yet (B-1 stub
@@ -1109,7 +1104,7 @@ pub mod command {
                 // help path anyway.
                 // TODO(b2): restore `MissingEntryPoint → HelpCommand::exec()`
                 // once `bun_core::Error` interns names.
-                let ctx = unsafe { &mut *init(tag, log)? };
+                let ctx = init(tag, log)?;
                 ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
                 if ctx.parallel || ctx.sequential {
@@ -1163,91 +1158,74 @@ pub mod command {
                 return bun_info(log);
             }
             Tag::BuildCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::BuildCommand, log)? };
+                let ctx = init(Tag::BuildCommand, log)?;
                 super::build_command::BuildCommand::exec(ctx, None)?;
             }
             Tag::InstallCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::InstallCommand, log)? };
+                let ctx = init(Tag::InstallCommand, log)?;
                 return super::install_command::InstallCommand::exec(ctx);
             }
             Tag::AddCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::AddCommand, log)? };
+                let ctx = init(Tag::AddCommand, log)?;
                 return super::add_command::AddCommand::exec(ctx);
             }
             Tag::UpdateCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::UpdateCommand, log)? };
+                let ctx = init(Tag::UpdateCommand, log)?;
                 return super::update_command::UpdateCommand::exec(ctx);
             }
             Tag::PatchCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::PatchCommand, log)? };
+                let ctx = init(Tag::PatchCommand, log)?;
                 return super::patch_command::PatchCommand::exec(ctx);
             }
             Tag::PatchCommitCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::PatchCommitCommand, log)? };
+                let ctx = init(Tag::PatchCommitCommand, log)?;
                 return super::patch_commit_command::PatchCommitCommand::exec(ctx);
             }
             Tag::OutdatedCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::OutdatedCommand, log)? };
+                let ctx = init(Tag::OutdatedCommand, log)?;
                 return super::outdated_command::OutdatedCommand::exec(ctx);
             }
             Tag::UpdateInteractiveCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::UpdateInteractiveCommand, log)? };
+                let ctx = init(Tag::UpdateInteractiveCommand, log)?;
                 return super::update_interactive_command::UpdateInteractiveCommand::exec(ctx);
             }
             Tag::PublishCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::PublishCommand, log)? };
+                let ctx = init(Tag::PublishCommand, log)?;
                 return super::publish_command::PublishCommand::exec(ctx);
             }
             Tag::AuditCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::AuditCommand, log)? };
+                let ctx = init(Tag::AuditCommand, log)?;
                 super::audit_command::AuditCommand::exec(ctx)?;
             }
             Tag::WhyCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::WhyCommand, log)? };
+                let ctx = init(Tag::WhyCommand, log)?;
                 return super::why_command::WhyCommand::exec(ctx);
             }
             Tag::BunxCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::BunxCommand, log)? };
+                let ctx = init(Tag::BunxCommand, log)?;
                 let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) { 0 } else { 1 };
                 let argv = argv_zslice();
                 return super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..]);
             }
             Tag::ReplCommand => {
                 // PORT NOTE: Zig inits with .RunCommand here (repl reuses run params).
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::RunCommand, log)? };
+                let ctx = init(Tag::RunCommand, log)?;
                 return super::repl_command::ReplCommand::exec(ctx);
             }
             Tag::RemoveCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::RemoveCommand, log)? };
+                let ctx = init(Tag::RemoveCommand, log)?;
                 return super::remove_command::RemoveCommand::exec(ctx);
             }
             Tag::LinkCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::LinkCommand, log)? };
+                let ctx = init(Tag::LinkCommand, log)?;
                 return super::link_command::LinkCommand::exec(ctx);
             }
             Tag::UnlinkCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::UnlinkCommand, log)? };
+                let ctx = init(Tag::UnlinkCommand, log)?;
                 return super::unlink_command::UnlinkCommand::exec(ctx);
             }
             Tag::TestCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::TestCommand, log)? };
+                let ctx = init(Tag::TestCommand, log)?;
                 return super::test_command::TestCommand::exec(ctx);
             }
             Tag::GetCompletionsCommand => {
@@ -1257,13 +1235,11 @@ pub mod command {
                 return bun_create(log);
             }
             Tag::UpgradeCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::UpgradeCommand, log)? };
+                let ctx = init(Tag::UpgradeCommand, log)?;
                 return super::upgrade_command::UpgradeCommand::exec(ctx);
             }
             Tag::ExecCommand => {
-                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                let ctx = unsafe { &mut *init(Tag::ExecCommand, log)? };
+                let ctx = init(Tag::ExecCommand, log)?;
                 if ctx.positionals.len() > 1 {
                     super::exec_command::ExecCommand::exec(ctx)?;
                 } else {
@@ -1272,8 +1248,7 @@ pub mod command {
             }
             Tag::FuzzilliCommand => {
                 if bun_core::Environment::ENABLE_FUZZILLI {
-                    // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
-                    let ctx = unsafe { &mut *init(Tag::FuzzilliCommand, log)? };
+                    let ctx = init(Tag::FuzzilliCommand, log)?;
                     return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
                 }
                 return Err(bun_core::err!("UnrecognizedCommand"));
@@ -1307,8 +1282,7 @@ pub mod command {
         use super::run_command::{Filter, RunCommand};
         use super::shell_completions::ShellCompletions;
 
-        // SAFETY: single-threaded startup.
-        let ctx = unsafe { &mut *init(Tag::GetCompletionsCommand, log)? };
+        let ctx = init(Tag::GetCompletionsCommand, log)?;
         // PORT NOTE: `ctx.positionals` is `Vec<Box<[u8]>>`; clone into a local
         // owned vec so `filter` doesn't borrow `ctx` (passed `&mut` below).
         let positionals: Vec<Box<[u8]>> = ctx.positionals.clone();
@@ -1404,8 +1378,7 @@ pub mod command {
         };
 
         // Create command wraps bunx
-        // SAFETY: single-threaded startup.
-        let ctx = unsafe { &mut *init(Tag::CreateCommand, log)? };
+        let ctx = init(Tag::CreateCommand, log)?;
         let args = argv_zslice();
 
         if args.len() <= 2 {
@@ -1555,8 +1528,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // Parse arguments manually since the standard flow doesn't work for standalone commands
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
         let json_output = cli.json_output;
-        // SAFETY: single-threaded startup.
-        let ctx = unsafe { &mut *init(Tag::InfoCommand, log)? };
+        let ctx = init(Tag::InfoCommand, log)?;
         let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
 
         // Handle arguments correctly for standalone info command

@@ -651,7 +651,7 @@ pub fn basename(
     args_len: u16,
 ) -> JsResult<JSValue> {
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let suffix_ptr: Option<JSValue> = if args_len > 1 && !args[1].is_undefined() {
         Some(args[1])
     } else {
@@ -873,7 +873,7 @@ pub fn dirname(
     args_len: u16,
 ) -> JsResult<JSValue> {
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
@@ -1121,7 +1121,7 @@ pub fn extname(
     args_len: u16,
 ) -> JsResult<JSValue> {
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
@@ -1281,7 +1281,7 @@ pub fn format(
     args_len: u16,
 ) -> JsResult<JSValue> {
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let path_object_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_object(global_object, path_object_ptr, format_args!("pathObject"), Default::default())?;
@@ -1369,7 +1369,7 @@ pub fn is_absolute(
     args_len: u16,
 ) -> JsResult<JSValue> {
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
@@ -1439,7 +1439,7 @@ pub extern "C" fn Bun__Node__Path_joinWTF(
     result: *mut bun_string::String,
 ) {
     // SAFETY: caller passes valid pointers from C++.
-    let rhs = unsafe { core::slice::from_raw_parts(rhs_ptr, rhs_len) };
+    let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
     let mut buf = [0u8; path_size::<u8>()];
     let mut buf2 = [0u8; path_size::<u8>()];
     // SAFETY: lhs is a valid BunString pointer.
@@ -1614,7 +1614,7 @@ pub fn join(
 
     // PERF(port): was arena bulk-free + stack-fallback — profile in Phase B
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
 
     // Zig leaks each per-arg `toSlice()` into the arena and bulk-frees at the end;
     // here the `ZigStringSlice` RAII guards live in `owned` for the same effect.
@@ -2057,7 +2057,7 @@ pub fn normalize(
     args_len: u16,
 ) -> JsResult<JSValue> {
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
@@ -2385,7 +2385,7 @@ pub fn parse(
     args_len: u16,
 ) -> JsResult<JSValue> {
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let path_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
@@ -2794,7 +2794,7 @@ pub fn relative(
     args_len: u16,
 ) -> JsResult<JSValue> {
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let from_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
     crate::node::validators_impl::validate_string(global_object, from_ptr, format_args!("from"))?;
     let to_ptr: JSValue = if args_len > 1 { args[1] } else { JSValue::UNDEFINED };
@@ -3214,7 +3214,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
 
         if device_len > 0 {
             // SAFETY: (device_ptr, device_len) describes a live region in tmp_buf or device_buf.
-            let device = unsafe { core::slice::from_raw_parts(device_ptr, device_len) };
+            let device = unsafe { bun_core::ffi::slice(device_ptr, device_len) };
             if resolved_device_len > 0 {
                 // Translated from the following JS code:
                 //   if (StringPrototypeToLowerCase(device) !==
@@ -3392,7 +3392,7 @@ pub fn resolve(
     // PERF(port): was RareData path_buf pooled allocator — profile in Phase B.
 
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
 
     let mut paths_buf: Vec<Box<[u8]>> = Vec::with_capacity(args_len as usize);
     let mut paths_offset: usize = args_len as usize;
@@ -3565,7 +3565,7 @@ pub fn to_namespaced_path(
         return Ok(JSValue::UNDEFINED);
     }
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
-    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
+    let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
     let path_ptr = args[0];
 
     // Based on Node v21.6.1 path.win32.toNamespacedPath and path.posix.toNamespacedPath:

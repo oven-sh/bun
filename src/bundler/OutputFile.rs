@@ -530,7 +530,7 @@ impl OutputFile {
         {
             // SAFETY: `FileSystem::instance()` is initialized before any bundler
             // output is produced.
-            do_close = unsafe { (*crate::bun_fs::FileSystem::instance()).fs.need_to_close_files() };
+            do_close = crate::bun_fs::FileSystem::get().fs.need_to_close_files();
 
             // use paths instead of bun.getFdPathW()
             panic!("TODO windows");

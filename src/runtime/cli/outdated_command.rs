@@ -268,7 +268,7 @@ impl OutdatedCommand {
 
         // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
         // process-singleton is populated; mirrors Zig `FileSystem.instance.top_level_dir`.
-        let top_level_dir = unsafe { (*FileSystem::instance()).top_level_dir };
+        let top_level_dir = FileSystem::get().top_level_dir;
 
         // move all matched workspaces to front of array
         let mut i: usize = 0;
@@ -357,8 +357,7 @@ impl OutdatedCommand {
             if item.is_catalog {
                 let dep = &dependencies[item.dep_id as usize];
                 let name_hash = hash(dep.name.slice(string_buf));
-                // SAFETY: `is_catalog` ⇒ `dep.version.tag == Catalog` ⇒ `value.catalog` active.
-                let catalog = unsafe { dep.version.value.catalog };
+                let catalog = *dep.version.catalog();
                 let catalog_name = catalog.slice(string_buf);
                 let catalog_name_hash = hash(catalog_name);
                 let key = CatalogKey {
@@ -386,8 +385,7 @@ impl OutdatedCommand {
 
             let dep = &dependencies[item.dep_id as usize];
             let name_hash = hash(dep.name.slice(string_buf));
-            // SAFETY: `is_catalog` ⇒ `value.catalog` active.
-            let catalog = unsafe { dep.version.value.catalog };
+            let catalog = *dep.version.catalog();
             let catalog_name = catalog.slice(string_buf);
             let catalog_name_hash = hash(catalog_name);
             let key = CatalogKey {

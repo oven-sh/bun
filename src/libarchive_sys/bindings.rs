@@ -15,11 +15,8 @@ use bun_core::{Fd, FileKind, Mode, kind_from_mode};
 
 #[inline]
 unsafe fn zstr_from_ptr<'a>(p: *const u8) -> &'a ZStr {
-    if p.is_null() {
-        return ZStr::EMPTY;
-    }
-    // SAFETY: caller guarantees `p` is a NUL-terminated string valid for `'a`.
-    unsafe { ZStr::from_raw(p, libc::strlen(p.cast())) }
+    // SAFETY: caller guarantees `p` is null or a NUL-terminated string valid for `'a`.
+    unsafe { ZStr::from_c_ptr(p.cast()) }
 }
 
 #[inline]
@@ -1208,8 +1205,7 @@ impl ArchiveIterator {
                 ArchiveResult::Retry => continue,
                 ArchiveResult::Eof => IteratorResult::init_res(None),
                 ArchiveResult::Ok => {
-                    // SAFETY: entry was set by archive_read_next_header on Ok.
-                    let kind = kind_from_mode(unsafe { (*entry).filetype() });
+                    let kind = kind_from_mode(ArchiveEntry::opaque_ref(entry).filetype());
 
                     if self.filter.contains(kind) {
                         continue;

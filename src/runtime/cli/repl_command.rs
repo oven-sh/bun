@@ -130,10 +130,10 @@ impl ReplCommand {
             Global::exit(1);
         }
 
-        // SAFETY: vm.log is set by VirtualMachine::init; b.env is a valid Loader.
+        // SAFETY: vm.log is set by VirtualMachine::init.
         bun_http::async_http::load_env(
             unsafe { (*vm).log.unwrap().as_mut() },
-            unsafe { &*b.env },
+            b.env(),
         );
         unsafe { (&mut *vm).load_extra_env_and_source_code_printer() };
 

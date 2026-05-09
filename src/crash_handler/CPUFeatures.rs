@@ -3,7 +3,7 @@ use core::fmt;
 
 // TODO(port): move to crash_handler_sys
 unsafe extern "C" {
-    fn bun_cpu_features() -> u8;
+    safe fn bun_cpu_features() -> u8;
 }
 
 #[derive(Copy, Clone)]
@@ -101,8 +101,7 @@ impl CPUFeatures {
     }
 
     pub fn get() -> CPUFeatures {
-        // SAFETY: bun_cpu_features is a pure C fn returning a u8 bitmask.
-        let raw = unsafe { bun_cpu_features() };
+        let raw = bun_cpu_features();
         let flags = Flags::from_bits_retain(raw);
         // sanity check: `none` bit clear and no padding bits set
         debug_assert!(!flags.contains(Flags::NONE) && (raw & !Flags::all().bits()) == 0);

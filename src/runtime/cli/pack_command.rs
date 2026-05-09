@@ -767,11 +767,11 @@ fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<ZBox, AllocErr
 
 fn entry_name_z<'a>(entry_name: &[u8], entry_subpath: &'a ZStr) -> &'a ZStr {
     // doing this because `entry_subpath` has a sentinel and we don't trust `entry.name.sliceAssumeZ()`
-    let bytes = entry_subpath.as_bytes();
-    let start = bytes.len() - entry_name.len();
-    // SAFETY: entry_subpath is NUL-terminated; the suffix starting at `start`
-    // has length `entry_name.len()` and shares the same trailing NUL.
-    unsafe { ZStr::from_raw(bytes.as_ptr().add(start), entry_name.len()) }
+    let with_nul = entry_subpath.as_bytes_with_nul();
+    let start = with_nul.len() - 1 - entry_name.len();
+    // The suffix `with_nul[start..]` is `entry_name.len()` bytes followed by the
+    // shared trailing NUL.
+    ZStr::from_buf(&with_nul[start..], entry_name.len())
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -790,8 +790,7 @@ fn iterate_bundled_deps(
 
     let mut dir: Dir = match dir_open_dir_z(
         root_dir,
-        // SAFETY: literal is NUL-terminated, len excludes the NUL.
-        unsafe { ZStr::from_raw(b"node_modules\0".as_ptr(), b"node_modules".len()) },
+        ZStr::from_static(b"node_modules\0"),
         bun_sys::OpenDirOptions { iterate: true, ..Default::default() },
     ) {
         Ok(d) => d,
@@ -1540,38 +1539,31 @@ trait ArchivePtrExt {
 impl ArchivePtrExt for *mut Archive {
     #[inline]
     fn write_set_format_pax_restricted(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::write_new()`.
-        unsafe { &*self }.write_set_format_pax_restricted()
+        Archive::opaque_ref(self).write_set_format_pax_restricted()
     }
     #[inline]
     fn write_add_filter_gzip(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::write_new()`.
-        unsafe { &*self }.write_add_filter_gzip()
+        Archive::opaque_ref(self).write_add_filter_gzip()
     }
     #[inline]
     fn write_set_filter_option(self, module: Option<&ZStr>, key: &ZStr, value: &ZStr) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::write_new()`.
-        unsafe { &*self }.write_set_filter_option(module, key, value)
+        Archive::opaque_ref(self).write_set_filter_option(module, key, value)
     }
     #[inline]
     fn write_set_options(self, opts: &ZStr) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::write_new()`.
-        unsafe { &*self }.write_set_options(opts)
+        Archive::opaque_ref(self).write_set_options(opts)
     }
     #[inline]
     fn write_open_filename(self, path: &ZStr) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::write_new()`.
-        unsafe { &*self }.write_open_filename(path)
+        Archive::opaque_ref(self).write_open_filename(path)
     }
     #[inline]
     fn write_close(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::write_new()`.
-        unsafe { &*self }.write_close()
+        Archive::opaque_ref(self).write_close()
     }
     #[inline]
     fn write_free(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::write_new()`; not used after.
-        unsafe { &*self }.write_free()
+        Archive::opaque_ref(self).write_free()
     }
     #[inline]
     fn error_string(self) -> &'static [u8] {
@@ -1579,48 +1571,39 @@ impl ArchivePtrExt for *mut Archive {
     }
     #[inline]
     fn read_support_format_tar(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::read_new()`.
-        unsafe { &*self }.read_support_format_tar()
+        Archive::opaque_ref(self).read_support_format_tar()
     }
     #[inline]
     fn read_support_format_gnutar(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::read_new()`.
-        unsafe { &*self }.read_support_format_gnutar()
+        Archive::opaque_ref(self).read_support_format_gnutar()
     }
     #[inline]
     fn read_support_filter_gzip(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::read_new()`.
-        unsafe { &*self }.read_support_filter_gzip()
+        Archive::opaque_ref(self).read_support_filter_gzip()
     }
     #[inline]
     fn read_set_options(self, opts: &core::ffi::CStr) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::read_new()`.
-        unsafe { &*self }.read_set_options(opts)
+        Archive::opaque_ref(self).read_set_options(opts)
     }
     #[inline]
     fn read_open_memory(self, buf: &[u8]) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::read_new()`; `buf` outlives the archive.
-        unsafe { &*self }.read_open_memory(buf)
+        Archive::opaque_ref(self).read_open_memory(buf)
     }
     #[inline]
     fn read_next_header(self, entry: &mut *mut ArchiveEntry) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::read_new()`.
-        unsafe { &*self }.read_next_header(entry)
+        Archive::opaque_ref(self).read_next_header(entry)
     }
     #[inline]
     fn read_data(self, buf: &mut [u8]) -> isize {
-        // SAFETY: `self` came from `Archive::read_new()`.
-        unsafe { &*self }.read_data(buf)
+        Archive::opaque_ref(self).read_data(buf)
     }
     #[inline]
     fn read_close(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::read_new()`.
-        unsafe { &*self }.read_close()
+        Archive::opaque_ref(self).read_close()
     }
     #[inline]
     fn read_free(self) -> ArchiveResult {
-        // SAFETY: `self` came from `Archive::read_new()`; not used after.
-        unsafe { &*self }.read_free()
+        Archive::opaque_ref(self).read_free()
     }
 }
 
@@ -2178,9 +2161,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 uses_workspaces: false,
                 publish_script,
                 postpublish_script,
-                // SAFETY: `Transpiler::env` is set by `configure_env_for_run` and
-                // points at the process-singleton loader (`&'static`).
-                script_env: Some(unsafe { &mut *this_transpiler.env }),
+                script_env: Some(this_transpiler.env_mut()),
                 normalized_pkg_info: Box::new([]),
             }));
         }
@@ -2407,8 +2388,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
     }
 
-    // SAFETY: entry came from `ArchiveEntry::new2()` and is valid.
-    unsafe { &*entry }.free();
+    ArchiveEntry::opaque_ref(entry).free();
 
     match archive.write_close() {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
@@ -2561,9 +2541,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             uses_workspaces: false,
             publish_script,
             postpublish_script,
-            // SAFETY: `Transpiler::env` is set by `configure_env_for_run` and
-            // points at the process-singleton loader (`&'static`).
-            script_env: Some(unsafe { &mut *this_transpiler.env }),
+            script_env: Some(this_transpiler.env_mut()),
             normalized_pkg_info: normalized_pkg_info.unwrap_or_default(),
         }));
     }
@@ -2773,8 +2751,7 @@ fn archive_package_json(
     edited_package_json: &[u8],
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
-    // SAFETY: caller passes a live entry from `Entry::new2`/previous `.clear()`.
-    let entry = unsafe { &*entry };
+    let entry = ArchiveEntry::opaque_ref(entry);
     let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json")) {
         Ok(s) => s,
         Err(err) => {
@@ -2819,8 +2796,7 @@ fn add_archive_entry(
     bins: &[BinInfo],
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
-    // SAFETY: caller passes a live entry from `Entry::new2`/previous `.clear()`.
-    let entry = unsafe { &*entry };
+    let entry = ArchiveEntry::opaque_ref(entry);
     write!(print_buf, "{}{}\x00", bstr::BStr::new(PACKAGE_PREFIX), bstr::BStr::new(filename.as_bytes())).expect("OOM");
     let pathname_len = PACKAGE_PREFIX.len() + filename.as_bytes().len();
     // SAFETY: print_buf[pathname_len] == 0 written above
@@ -3621,8 +3597,7 @@ pub mod bindings {
                     )));
                 }
                 _ => {
-                    // SAFETY: read_next_header set archive_entry on success
-                    let archive_entry_ref = unsafe { &mut *archive_entry };
+                    let archive_entry_ref = ArchiveEntry::opaque_mut(archive_entry);
                     #[cfg(windows)]
                     let pathname_string = {
                         let pathname_w = archive_entry_ref.pathname_w();

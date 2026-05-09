@@ -49,6 +49,8 @@ unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
 /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
 /// zero it invokes [`NativeZlib::deinit`].
 #[bun_jsc::JsClass]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct NativeZlib {
     pub ref_count: Cell<u32>,
     // TODO(port): lifetime — JSC_BORROW backref; global outlives this m_ctx payload.

@@ -148,11 +148,8 @@ impl SyntaxString {
                                 }
                                 SyntaxComponentKind::Literal(value) => {
                                     let location = i.current_source_location();
-                                    let ident = i.expect_ident()?;
+                                    let ident = i.expect_ident_cloned()?;
                                     if !strings::eql(ident, value) {
-                                        // SAFETY: `ident` borrows the parser source/arena which
-                                        // outlives the returned `ParseError`; see `css::src_str`.
-                                        let ident: &'static [u8] = unsafe { css::src_str(ident) };
                                         return Err(location.new_unexpected_token_error(Token::Ident(ident)));
                                     }
                                     ParsedComponent::Literal(Ident { v: std::ptr::from_ref::<[u8]>(ident) })

@@ -167,11 +167,10 @@ impl ArrayBufferSink {
             return next.write_utf16(data);
         }
         let bytes = data.slice();
-        // SAFETY: mirrors Zig `@ptrCast(@alignCast(data.slice().ptr))` — caller
+        // Mirrors Zig `@ptrCast(@alignCast(data.slice().ptr))` — caller
         // guarantees the byte slice is u16-aligned and has even length when the
-        // stream encoding is UTF-16.
-        let utf16: &[u16] =
-            unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) };
+        // stream encoding is UTF-16. bytemuck checks both at runtime.
+        let utf16: &[u16] = bytemuck::cast_slice(bytes);
         let len = match self.bytes.write_utf16(utf16) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),

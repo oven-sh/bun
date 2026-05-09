@@ -5,7 +5,11 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_string::{OwnedString, String as BunString};
 
 unsafe extern "C" {
-    fn Bun__HTTPMethod__toJS(method: Method, global_object: *mut JSGlobalObject) -> JSValue;
+    // SAFETY (safe fn): `Method` is a `#[repr(uN)]` scalar; `JSGlobalObject` is an
+    // opaque `UnsafeCell`-backed handle, so `&JSGlobalObject` is ABI-identical to a
+    // non-null `JSGlobalObject*` and C++ mutating VM/heap state through it is
+    // interior mutation invisible to Rust.
+    safe fn Bun__HTTPMethod__toJS(method: Method, global_object: &JSGlobalObject) -> JSValue;
 }
 
 /// Port of Zig `Method.fromJS` (= `Map.fromJS`, the `ComptimeStringMap` JSC
@@ -34,11 +38,7 @@ pub trait MethodJsc {
 impl MethodJsc for Method {
     #[inline]
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is a valid live JSGlobalObject for the duration of the call;
-        // `Method` is `#[repr(uN)]` matching the C++ definition of `Bun__HTTPMethod__toJS`.
-        // `as_ptr()` routes through `JSGlobalObject`'s `UnsafeCell` interior, so the
-        // resulting `*mut` carries write provenance (C++ may mutate VM/heap state).
-        unsafe { Bun__HTTPMethod__toJS(self, global.as_ptr()) }
+        Bun__HTTPMethod__toJS(self, global)
     }
 }
 

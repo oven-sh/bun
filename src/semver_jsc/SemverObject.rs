@@ -38,9 +38,8 @@ pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let left_string = arguments[0].to_js_string(global)?;
     let right_string = arguments[1].to_js_string(global)?;
 
-    // SAFETY: `to_js_string` returned a non-null live JSString cell.
-    let left = unsafe { &*left_string }.to_slice(global);
-    let right = unsafe { &*right_string }.to_slice(global);
+    let left = left_string.to_slice(global);
+    let right = right_string.to_slice(global);
 
     if !strings::is_all_ascii(left.slice()) {
         return Ok(JSValue::js_number_from_int32(0));
@@ -91,9 +90,8 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let left_string = arguments[0].to_js_string(global)?;
     let right_string = arguments[1].to_js_string(global)?;
 
-    // SAFETY: `to_js_string` returned a non-null live JSString cell.
-    let left = unsafe { &*left_string }.to_slice(global);
-    let right = unsafe { &*right_string }.to_slice(global);
+    let left = left_string.to_slice(global);
+    let right = right_string.to_slice(global);
 
     if !strings::is_all_ascii(left.slice()) {
         return Ok(JSValue::FALSE);

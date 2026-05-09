@@ -377,6 +377,10 @@ pub struct PROCESS_INFORMATION {
     pub dwProcessId: DWORD,
     pub dwThreadId: DWORD,
 }
+// SAFETY: `#[repr(C)]` POD — two raw-pointer HANDLEs (null-valid) + two u32.
+unsafe impl bun_core::ffi::Zeroable for PROCESS_INFORMATION {}
+// SAFETY: `#[repr(C)]` POD — ULONG_PTR/DWORD integers + raw-pointer HANDLE.
+unsafe impl bun_core::ffi::Zeroable for OVERLAPPED {}
 
 /// `std.os.windows.CreateIoCompletionPort` — wraps the kernel32 call and
 /// returns `Err` on `NULL` (matching Zig's `error.Unexpected`).
@@ -3433,9 +3437,9 @@ pub fn CreateHardLinkW(
     #[cfg(debug_assertions)]
     {
         // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
-        let new_w = unsafe { core::slice::from_raw_parts(new_file_name, wcslen(new_file_name)) };
+        let new_w = unsafe { bun_core::ffi::slice(new_file_name, wcslen(new_file_name)) };
         // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
-        let existing_w = unsafe { core::slice::from_raw_parts(existing_file_name, wcslen(existing_file_name)) };
+        let existing_w = unsafe { bun_core::ffi::slice(existing_file_name, wcslen(existing_file_name)) };
         bun_sys::syslog!(
             "CreateHardLinkW({}, {}) = {}",
             bun_core::fmt::utf16(new_w),
@@ -3643,6 +3647,14 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
     pub PriorityClass: DWORD,
     pub SchedulingClass: DWORD,
 }
+// SAFETY: `#[repr(C)]` POD — integers + one raw pointer (null-valid). Nested
+// in JOBOBJECT_EXTENDED_LIMIT_INFORMATION which is zero-init before
+// `SetInformationJobObject`.
+unsafe impl bun_core::ffi::Zeroable for JOBOBJECT_BASIC_LIMIT_INFORMATION {}
+// SAFETY: `#[repr(C)]` POD — six u64 counters.
+unsafe impl bun_core::ffi::Zeroable for IO_COUNTERS {}
+// SAFETY: `#[repr(C)]` POD — nested Zeroable + usize fields.
+unsafe impl bun_core::ffi::Zeroable for JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
 
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 pub const JobObjectExtendedLimitInformation: DWORD = 9;
@@ -3762,9 +3774,7 @@ pub fn user_unique_id() -> u32 {
     }
     let name = &buf[0..size as usize];
     bun_core::scoped_log!(windowsUserUniqueId, "username: {}", bun_core::fmt::utf16(name));
-    // SAFETY: u16 slice -> byte slice
-    let bytes = unsafe { core::slice::from_raw_parts(name.as_ptr().cast::<u8>(), name.len() * 2) };
-    bun_wyhash::hash32(bytes)
+    bun_wyhash::hash32(bytemuck::cast_slice::<u16, u8>(name))
 }
 
 pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(), bun_core::Error> {
@@ -4030,8 +4040,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         SecurityDescriptor: ptr::null_mut(),
         SecurityQualityOfService: ptr::null_mut(),
     };
-    // SAFETY: all-zero is a valid IO_STATUS_BLOCK
-    let mut io: IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut tmp_handle: HANDLE = ptr::null_mut();
     // SAFETY: all out-params are valid
     let mut rc = unsafe {
@@ -4157,9 +4166,10 @@ pub fn detect_runtime_version() -> &'static str {
         fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
     }
     static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
+    // SAFETY: `#[repr(C)]` POD — five u32 + a `[u16; 128]` array.
+    unsafe impl bun_core::ffi::Zeroable for OSVERSIONINFOW {}
     CACHE.get_or_init(|| {
-        // SAFETY: out-param fully written by RtlGetVersion when it returns 0.
-        let mut info: OSVERSIONINFOW = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
         info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
         // SAFETY: `info` is a valid out-pointer.
         if unsafe { RtlGetVersion(&mut info) } != 0 {
@@ -4489,8 +4499,7 @@ pub fn is_watcher_child() -> bool {
 
 pub fn become_watcher_manager() -> ! {
     // this process will be the parent of the child process that actually runs the script
-    // SAFETY: all-zero is a valid PROCESS_INFORMATION
-    let mut procinfo: PROCESS_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut procinfo: PROCESS_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: FFI call has no input invariants; mutates process-global stdio inheritance flags
     unsafe { externs::windows_enable_stdio_inheritance() };
     // SAFETY: null args allowed
@@ -4502,8 +4511,7 @@ pub fn become_watcher_manager() -> ! {
             err
         ));
     }
-    // SAFETY: all-zero is valid for this C struct
-    let mut jeli: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut jeli: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
     jeli.BasicLimitInformation.LimitFlags =
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         | JOB_OBJECT_LIMIT_BREAKAWAY_OK
@@ -4742,8 +4750,7 @@ pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
             | FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
     };
 
-    // SAFETY: all-zero is a valid IO_STATUS_BLOCK
-    let mut io: win32::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     // SAFETY: fd valid; info/io valid
     let rc = unsafe {
         ntdll::NtSetInformationFile(
@@ -4804,8 +4811,7 @@ pub fn move_opened_file_at(
     // reborrow would shrink provenance to just the struct, making that write UB. The buffer is
     // uniquely owned on this stack frame, so no aliasing is possible.
     let rename_info: *mut win32::FILE_RENAME_INFORMATION_EX = rename_info_buf.as_mut_ptr().cast();
-    // SAFETY: all-zero is a valid IO_STATUS_BLOCK
-    let mut io_status_block: win32::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut io_status_block: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
 
     let mut flags: ULONG = win32::FILE_RENAME_POSIX_SEMANTICS | win32::FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
     if replace_if_exists {

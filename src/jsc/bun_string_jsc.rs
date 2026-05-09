@@ -175,9 +175,7 @@ pub fn js_get_string_width(
     }
 
     let js_str = argument.to_js_string(global_object)?;
-    // SAFETY: `to_js_string` returned a non-null `*mut JSString`; valid for the
-    // remainder of this host call (rooted on the JS stack via `argument`).
-    let view = unsafe { (*js_str).view(global_object) };
+    let view = js_str.view(global_object);
 
     if view.is_empty() {
         return Ok(JSValue::js_number_from_int32(0));

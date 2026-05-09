@@ -1318,8 +1318,7 @@ impl JSTranspiler {
 
         let parse_result =
             self.get_parse_result(&arena, code, loader, MacroJSCtx::ZERO);
-        // SAFETY: `transpiler.log` was just set to `&mut log` above.
-        let log_ref = unsafe { &mut *self.transpiler.log };
+        let log_ref = self.transpiler.log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
                 return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
@@ -1506,8 +1505,7 @@ impl JSTranspiler {
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
         let parse_result = self.get_parse_result(&arena, code, loader, macro_js_ctx);
-        // SAFETY: `transpiler.log` was just set to `&mut log` above.
-        let log_ref = unsafe { &mut *self.transpiler.log };
+        let log_ref = self.transpiler.log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
                 return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));

@@ -705,35 +705,29 @@ impl VersionExt for Version {
             return false;
         }
 
-        // SAFETY: every union access below is guarded by self.tag == rhs.tag
-        unsafe {
-            match self.tag {
-                // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
-                // semver ranges involve a ton of pointer chasing
-                Tag::Npm => {
-                    strings::eql_long(
-                        self.literal.slice(lhs_buf),
-                        rhs.literal.slice(rhs_buf),
-                        true,
-                    ) || self.value.npm.eql(&rhs.value.npm, lhs_buf, rhs_buf)
-                }
-                Tag::Folder | Tag::DistTag => {
-                    self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
-                }
-                Tag::Git => Repository::eql(&self.value.git, &rhs.value.git, lhs_buf, rhs_buf),
-                Tag::Github => {
-                    Repository::eql(&self.value.github, &rhs.value.github, lhs_buf, rhs_buf)
-                }
-                Tag::Tarball => self
-                    .value
-                    .tarball
-                    .eql(&rhs.value.tarball, lhs_buf, rhs_buf),
-                Tag::Symlink => self.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
-                Tag::Workspace => {
-                    self.value.workspace.eql(rhs.value.workspace, lhs_buf, rhs_buf)
-                }
-                _ => true,
+        match self.tag {
+            // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
+            // semver ranges involve a ton of pointer chasing
+            Tag::Npm => {
+                strings::eql_long(
+                    self.literal.slice(lhs_buf),
+                    rhs.literal.slice(rhs_buf),
+                    true,
+                ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
             }
+            Tag::Folder | Tag::DistTag => {
+                self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
+            }
+            Tag::Git => Repository::eql(self.git(), rhs.git(), lhs_buf, rhs_buf),
+            Tag::Github => {
+                Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf)
+            }
+            Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
+            Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
+            Tag::Workspace => {
+                self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf)
+            }
+            _ => true,
         }
     }
 }

@@ -690,10 +690,13 @@ impl JSValue {
         T::coerce_from(self, global)
     }
     #[track_caller]
-    pub fn to_js_string(self, global: &JSGlobalObject) -> JsResult<*mut JSString> {
+    pub fn to_js_string<'a>(self, global: &'a JSGlobalObject) -> JsResult<&'a JSString> {
         // `[[ZIG_EXPORT(null_is_throw)]]` — null ⟺ threw.
+        // S008: `JSString` is an `opaque_ffi!` ZST, so the non-null pointer
+        // returned on the `Ok` path is safely reborrowed via `opaque_ref`
+        // (zero-byte deref; see `bun_opaque::opaque_deref`).
         crate::call_null_is_throw(global, || JSC__JSValue__toStringOrNull(self, global))
-            .map(|p| p.as_ptr())
+            .map(|p| JSString::opaque_ref(p.as_ptr()))
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         bun_string_jsc::from_js(self, global)
@@ -720,11 +723,7 @@ impl JSValue {
     /// `JSString` cell, so it outlives GC. Allocator param dropped per
     /// PORTING.md (default_allocator only).
     pub fn to_slice_clone(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
-        let str = self.to_js_string(global)?;
-        // SAFETY: `to_js_string` returns non-null on `Ok` (null ⇒ `Err(Thrown)`
-        // above); the cell is live for this call (GC cannot run between the
-        // FFI return and this deref).
-        unsafe { &*str }.to_slice_clone(global)
+        self.to_js_string(global)?.to_slice_clone(global)
     }
     /// Call `toString()` on the JSValue and clone the result.
     ///

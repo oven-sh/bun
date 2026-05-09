@@ -305,7 +305,7 @@ impl BackgroundSize {
         }
 
         let location = input.current_source_location();
-        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"cover") {
             Ok(BackgroundSize::Cover)
@@ -414,7 +414,7 @@ impl BackgroundRepeat {
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
-        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"repeat-x") {
             return Ok(BackgroundRepeat {

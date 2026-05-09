@@ -35,11 +35,9 @@ impl HTTPCertError {
         /// type (see TODO above re: ownership).
         #[inline]
         fn zstr(p: *const core::ffi::c_char) -> &'static ZStr {
-            if p.is_null() {
-                return ZStr::EMPTY;
-            }
-            // SAFETY: `p` is a non-null NUL-terminated C string from uSockets.
-            unsafe { ZStr::from_raw(p.cast::<u8>(), bun_core::ffi::cstr(p).count_bytes()) }
+            // SAFETY: `p` is null or a NUL-terminated C string from uSockets,
+            // valid for the static lifetime of the error constant table.
+            unsafe { ZStr::from_c_ptr(p) }
         }
         Self {
             error_no: ssl_error.error_no,

@@ -162,7 +162,7 @@ pub fn view(
     // TODO(port): headers.content.ptr.?[0..headers.content.len]
     // SAFETY: `headers.allocate()` populated `ptr` with at least `len` bytes.
     let header_buf: &[u8] = match headers.content.ptr {
-        Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
+        Some(p) => unsafe { bun_core::ffi::slice(p.as_ptr(), headers.content.len) },
         None => &[],
     };
     let http_proxy = manager.http_proxy(&url);

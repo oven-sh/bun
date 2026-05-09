@@ -470,7 +470,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         let (p, l) = spawned.buf[j];
         // SAFETY: pointers reference either 'static data or `spawned.file_path_buf`,
         // both of which outlive this function.
-        argv[j] = unsafe { core::slice::from_raw_parts(p, l) };
+        argv[j] = unsafe { bun_core::ffi::slice(p, l) };
     }
 
     // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.

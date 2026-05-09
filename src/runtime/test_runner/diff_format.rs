@@ -117,8 +117,8 @@ pub extern "C" fn zig__renderDiff(
 ) {
     // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes valid UTF-8 buffers
     // of the given lengths for the duration of this call.
-    let expected = unsafe { core::slice::from_raw_parts(expected_ptr.cast::<u8>(), expected_len) };
-    let received = unsafe { core::slice::from_raw_parts(received_ptr.cast::<u8>(), received_len) };
+    let expected = unsafe { bun_core::ffi::slice(expected_ptr.cast::<u8>(), expected_len) };
+    let received = unsafe { bun_core::ffi::slice(received_ptr.cast::<u8>(), received_len) };
     let formatter = DiffFormatter {
         received_string: Some(received),
         expected_string: Some(expected),

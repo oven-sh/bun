@@ -29,6 +29,7 @@ pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 pub use js::to_js;
 
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
+#[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLQuery {
     pub statement: Option<*mut PostgresSQLStatement>,
     pub query: BunString,
@@ -39,8 +40,8 @@ pub struct PostgresSQLQuery {
     pub status: Status,
 
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
-    // TODO(port): IntrusiveRc<PostgresSQLQuery>; ref_/deref_ below manipulate this directly
-    // because *PostgresSQLQuery is stored raw in PostgresSQLConnection.requests.
+    // `#[derive(CellRefCounted)]` provides `ref_()`/`deref()` and the `AnyRefCounted`
+    // bridge so `ScopedRef<PostgresSQLQuery>` brackets re-entrant callback paths.
     ref_count: Cell<u32>,
 
     pub flags: Flags,
@@ -128,43 +129,7 @@ impl Status {
 }
 
 impl PostgresSQLQuery {
-    // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
-    // TODO(port): these are IntrusiveRc inc/dec; deref_ runs deinit (Drop + heap::take) at 0.
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-    /// Intrusive refcount decrement. Takes a raw `*mut Self` (mirroring Zig's
-    /// `*@This()`) rather than `&self`/`&mut self` because reaching zero frees the
-    /// allocation — holding a live reference across that drop, or deriving the
-    /// `*mut` for `heap::take` from a `&self` (read-only provenance), is UB.
-    ///
-    /// # Safety
-    /// `this` must point to a live `PostgresSQLQuery` produced by `heap::alloc`
-    /// in `call`. If this call drops the count to zero, no `&`/`&mut` borrows of
-    /// `*this` may outlive it.
-    pub unsafe fn deref_(this: *mut Self) {
-        // SAFETY: `this` is valid per contract; `ref_count` is `Cell<u32>` so a
-        // shared borrow of just that field is sound regardless of other access.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: last reference; `this` originated from `heap::alloc` in `call`.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
-    }
-
-    /// `&mut self` adapter over [`deref_`] for callers that already hold a
-    /// mutable borrow (PostgresSQLConnection request-queue cleanup paths).
-    ///
-    /// # Safety
-    /// The caller must not use `self` after this returns if the call dropped the
-    /// last reference. PostgresSQLConnection only invokes this on requests it is
-    /// removing from its queue.
-    pub fn deref(&mut self) {
-        // SAFETY: see method-level note; provenance is widened from `&mut self`.
-        unsafe { Self::deref_(std::ptr::from_mut::<Self>(self)) }
-    }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
     pub fn get_target(&self, global_object: &JSGlobalObject, clean_target: bool) -> Option<JSValue> {
         let this_value = self.this_value.try_get()?;
@@ -182,8 +147,8 @@ impl PostgresSQLQuery {
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
         let this = bun_core::heap::release(self);
         this.this_value.finalize();
-        // SAFETY: `this` is the live m_ctx allocation; `deref_` frees on count==0.
-        unsafe { Self::deref_(this) };
+        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
+        unsafe { Self::deref(this) };
     }
 
     pub fn on_write_fail(
@@ -192,13 +157,12 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
-        self.ref_();
         // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
         // route *every* field access through `this_ptr` and never touch `self` again, so
         // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
-        // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
+        // before the guards fire. `ScopedRef` bumps the count and derefs on every exit path.
         let this_ptr = std::ptr::from_mut::<Self>(self);
-        let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
+        let _deref = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         unsafe { (*this_ptr).status = Status::Fail };
         let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
         // Capture the raw pointer (not `&mut self.this_value`) so the guard holds no
@@ -219,13 +183,12 @@ impl PostgresSQLQuery {
     }
 
     pub fn on_js_error(&mut self, err: JSValue, global_object: &JSGlobalObject) {
-        self.ref_();
         // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
         // route *every* field access through `this_ptr` and never touch `self` again, so
         // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
-        // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
+        // before the guards fire. `ScopedRef` bumps the count and derefs on every exit path.
         let this_ptr = std::ptr::from_mut::<Self>(self);
-        let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
+        let _deref = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         unsafe { (*this_ptr).status = Status::Fail };
         let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
         // Capture the raw pointer (not `&mut self.this_value`) so the guard holds no
@@ -266,13 +229,12 @@ impl PostgresSQLQuery {
     }
 
     pub fn on_result(&mut self, command_tag_str: &[u8], global_object: &JSGlobalObject, connection: JSValue, is_last: bool) {
-        self.ref_();
         // SAFETY: `this_ptr` is derived from the exclusive `&mut self`. After this cast we
         // route *every* field access through `this_ptr` and never touch `self` again, so
         // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
-        // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
+        // before the guards fire. `ScopedRef` bumps the count and derefs on every exit path.
         let this_ptr = std::ptr::from_mut::<Self>(self);
-        let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
+        let _deref = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
         unsafe {
             (*this_ptr).status = if is_last { Status::Success } else { Status::PartialResponse };
         }
@@ -503,7 +465,7 @@ impl PostgresSQLQuery {
                     // satisfying `Drop`'s `debug_assert_eq!(ref_count, 0)`.
                     unsafe { PostgresSQLStatement::deref(stmt) };
                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                    unsafe { Self::deref_(this_ptr) };
+                    unsafe { Self::deref(this_ptr) };
 
                     if !global_object.has_exception() {
                         return Err(global_object.throw_value(postgres_error_to_js(
@@ -527,7 +489,7 @@ impl PostgresSQLQuery {
                 // satisfying `Drop`'s `debug_assert_eq!(ref_count, 0)`.
                 unsafe { PostgresSQLStatement::deref(stmt) };
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref_(this_ptr) };
+                unsafe { Self::deref(this_ptr) };
 
                 return Err(global_object.throw_out_of_memory());
             }
@@ -555,7 +517,7 @@ impl PostgresSQLQuery {
             Ok(s) => s,
             Err(err) => {
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref_(this_ptr) };
+                unsafe { Self::deref(this_ptr) };
                 if !global_object.has_exception() {
                     return Err(global_object.throw_error(err, "failed to generate signature"));
                 }
@@ -599,7 +561,7 @@ impl PostgresSQLQuery {
                             // SAFETY: drop the ref we took above.
                             unsafe { PostgresSQLStatement::deref(stmt) };
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                            unsafe { Self::deref_(this_ptr) };
+                            unsafe { Self::deref(this_ptr) };
                             return Err(global_object.throw_value(error_response));
                         }
                         StatementStatus::Prepared => {
@@ -622,7 +584,7 @@ impl PostgresSQLQuery {
                                     // SAFETY: drop the ref we took above.
                                     unsafe { PostgresSQLStatement::deref(stmt) };
                                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                                    unsafe { Self::deref_(this_ptr) };
+                                    unsafe { Self::deref(this_ptr) };
 
                                     if !global_object.has_exception() {
                                         return Err(global_object.throw_value(postgres_error_to_js(
@@ -670,7 +632,7 @@ impl PostgresSQLQuery {
                             unsafe { PostgresSQLStatement::deref(stmt) };
                         }
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref_(this_ptr) };
+                        unsafe { Self::deref(this_ptr) };
                         if !global_object.has_exception() {
                             return Err(global_object.throw_value(postgres_error_to_js(
                                 global_object,
@@ -704,7 +666,7 @@ impl PostgresSQLQuery {
                             unsafe { PostgresSQLStatement::deref(stmt) };
                         }
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref_(this_ptr) };
+                        unsafe { Self::deref(this_ptr) };
                         if !global_object.has_exception() {
                             return Err(global_object.throw_value(postgres_error_to_js(
                                 global_object,

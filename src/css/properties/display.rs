@@ -136,7 +136,7 @@ impl DisplayPair {
         }
 
         let location = input.current_source_location();
-        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
         // 8 keys → if-chain over `eql_case_insensitive_ascii::<true>` (phf values
@@ -245,7 +245,7 @@ pub enum DisplayInside {
 impl DisplayInside {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let location = input.current_source_location();
-        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
         // 10 keys → if-chain over `eql_case_insensitive_ascii::<true>`.

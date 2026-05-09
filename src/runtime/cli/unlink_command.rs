@@ -84,11 +84,9 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             lockfile.init_empty();
 
             let mut resolver: () = ();
-            // SAFETY: `manager.log` is set to a non-null `*mut Log` by `pm::init`;
-            // mirrors Zig's non-optional `*logger.Log`. The borrow does not alias
-            // the `&mut PackageManager` passed alongside (raw-ptr field, disjoint
-            // storage owned by the CLI `Context`).
-            let log = unsafe { &mut *manager.log };
+            // `log_mut()` returns a borrow decoupled from `&self`; disjoint
+            // storage from `&mut PackageManager` (owned by the CLI `Context`).
+            let log = manager.log_mut();
             package.parse::<()>(
                 &mut lockfile,
                 manager,

@@ -1512,10 +1512,8 @@ impl<'a> CopyFileWindows<'a> {
         // PORT NOTE: `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
         // borrowck doesn't tie it to `self` across `destroy` below.
-        let promise: *mut JSPromise = self.promise.swap();
-        // SAFETY: `promise` is a live GC cell (held strongly until `swap` released the
-        // slot; the JS-side promise chain still roots it for the duration of this tick).
-        let err_instance = err.to_js_with_async_stack(global_this, unsafe { &*promise });
+        let promise = JSPromise::opaque_mut(self.promise.swap());
+        let err_instance = err.to_js_with_async_stack(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
@@ -1524,9 +1522,8 @@ impl<'a> CopyFileWindows<'a> {
         };
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
-        // SAFETY: `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid
-        // after `destroy`.
-        let _ = unsafe { (*promise).reject(global_this, err_instance) }; // TODO: properly propagate exception upwards
+        // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
+        let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
     }
 
     pub fn on_complete(&mut self, written_actual: usize) {
@@ -1602,9 +1599,9 @@ impl<'a> CopyFileWindows<'a> {
     fn resolve_promise(&mut self, written: usize) {
         // SAFETY: `event_loop.global` is the VM's `JSGlobalObject` (process lifetime).
         let global_this = unsafe { self.event_loop.global.unwrap().as_ref() };
-        // PORT NOTE: see `throw` — decay the `&mut JSPromise` (GC cell) to a raw ptr so it
+        // PORT NOTE: see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
-        let promise: *mut JSPromise = self.promise.swap();
+        let promise = JSPromise::opaque_mut(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
         let _guard = unsafe {
@@ -1613,9 +1610,8 @@ impl<'a> CopyFileWindows<'a> {
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
-        // SAFETY: `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid
-        // after `destroy`.
-        let _ = unsafe { (*promise).resolve(global_this, JSValue::js_number_from_uint64(written as u64)) }; // TODO: properly propagate exception upwards
+        // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
+        let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
     }
 
     #[cold]

@@ -508,7 +508,7 @@ fn send_audit_request(
     // SAFETY: `allocate()` succeeded above so `ptr` is non-null when `len > 0`;
     // the buffer is kept alive on this stack frame for the synchronous request.
     let headers_buf: &[u8] = match headers.content.ptr {
-        Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
+        Some(p) => unsafe { bun_core::ffi::slice(p.as_ptr(), headers.content.len) },
         None => &[],
     };
 

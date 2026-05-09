@@ -408,7 +408,7 @@ impl BlockList {
         // non-null out-param the caller expects us to advance.
         let ptr = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
-        let buf = unsafe { core::slice::from_raw_parts(*ptr, total_length) };
+        let buf = unsafe { bun_core::ffi::slice(*ptr, total_length) };
         let mut pos: usize = 0;
 
         let int = match read_int_le_usize(buf, &mut pos) {

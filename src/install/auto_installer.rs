@@ -175,20 +175,13 @@ impl hooks::AutoInstaller for PackageManager {
 
         // Zig writes through `items.ptr[len..total_len]` and only bumps
         // `.items.len` after the last fallible point (Package.zig:265-296).
-        // Mirror that with `spare_capacity_mut()` so an error from `clone_in`
-        // leaves both buffer lengths untouched and the lockfile consistent.
-        let spare = dependencies_list.spare_capacity_mut();
-        for slot in &mut spare[..total_dependencies_count as usize] {
-            slot.write(dependency::Dependency::default());
-        }
-        // SAFETY: the first `total_dependencies_count` spare slots were just
-        // initialized with `Dependency::default()` above.
-        let mut dependencies: &mut [dependency::Dependency] = unsafe {
-            bun_core::ffi::slice_mut(
-                spare.as_mut_ptr().cast::<dependency::Dependency>(),
-                total_dependencies_count as usize,
-            )
-        };
+        // Mirror that by default-filling the tail now and `truncate`-ing back
+        // to `dep_start` on the error path so a failed `clone_in` leaves both
+        // buffer lengths consistent.
+        let mut dependencies: &mut [dependency::Dependency] = bun_core::vec::grow_default(
+            dependencies_list,
+            total_dependencies_count as usize,
+        );
 
         for (_, dep) in package_json.dependency_iter() {
             if !dep.behavior.is_enabled(features) {
@@ -201,8 +194,9 @@ impl hooks::AutoInstaller for PackageManager {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
                     // Zig: `defer string_builder.clamp()` — must run on the
-                    // error path too. Buffer lengths were never bumped, so
-                    // returning here leaves the lockfile consistent.
+                    // error path too. Restore the buffer length so the
+                    // lockfile stays consistent (`Dependency` is no-op Drop).
+                    dependencies_list.truncate(dep_start);
                     string_builder.clamp();
                     return Err(e);
                 }
@@ -231,10 +225,9 @@ impl hooks::AutoInstaller for PackageManager {
         );
 
         let new_length = package.dependencies.len as usize + dep_start;
-        // SAFETY: capacity reserved above; `[dep_start..new_length)` was
-        // initialized by the clone loop. Commit only now that all fallible
-        // `clone_in` calls have succeeded.
-        unsafe { dependencies_list.set_len(new_length) };
+        // Length was bumped to `dep_start + total_dependencies_count` by
+        // `grow_default` above; trim any unused tail.
+        dependencies_list.truncate(new_length);
         resolutions_list.resize(new_length, crate::INVALID_PACKAGE_ID);
 
         string_builder.clamp();

@@ -666,9 +666,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for the field take; ends before the FFI call.
         let ws = unsafe { (*this).outgoing_websocket.take() };
         if let Some(ws) = ws {
-            // SAFETY: ws is a live C++ WebSocket back-reference (BACKREF). No
-            // `&mut Self` is live across this call.
-            unsafe { (*ws).did_abrupt_close(code) };
+            CppWebSocket::opaque_ref(ws).did_abrupt_close(code);
             // SAFETY: `this` carries root provenance; may free `this`.
             unsafe { Self::deref(this) };
         }
@@ -719,8 +717,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let mut reject_unauthorized = false;
         // SAFETY: short-lived read of `outgoing_websocket`.
         if let Some(ws) = unsafe { (*this).outgoing_websocket } {
-            // SAFETY: live C++ back-reference.
-            reject_unauthorized = unsafe { (*ws).reject_unauthorized() };
+            reject_unauthorized = CppWebSocket::opaque_ref(ws).reject_unauthorized();
         }
 
         if handshake_success {
@@ -1067,8 +1064,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Get certificate verification setting
         let reject_unauthorized = match me.outgoing_websocket {
-            // SAFETY: live C++ back-reference.
-            Some(ws) => unsafe { (*ws).reject_unauthorized() },
+            Some(ws) => CppWebSocket::opaque_ref(ws).reject_unauthorized(),
             None => true,
         };
 
@@ -1333,8 +1329,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             // SAFETY: short-lived read of `outgoing_websocket`.
                             if let Some(ws) = unsafe { (*this).outgoing_websocket } {
                                 let mut protocol_str = BunString::clone_latin1(protocol);
-                                // SAFETY: live C++ back-reference.
-                                unsafe { (*ws).set_protocol(&mut protocol_str) };
+                                CppWebSocket::opaque_ref(ws).set_protocol(&mut protocol_str);
                                 // `BunString` is `Copy`; explicitly drop the
                                 // ref taken by `clone_latin1` (Zig: `defer
                                 // protocol_str.deref()`).
@@ -1855,8 +1850,8 @@ impl<'a> Headers8Bit<'a> {
             return Self { slices: Vec::new(), _marker: core::marker::PhantomData };
         }
         // SAFETY: per fn contract.
-        let names_in = unsafe { core::slice::from_raw_parts(names_ptr, len) };
-        let values_in = unsafe { core::slice::from_raw_parts(values_ptr, len) };
+        let names_in = unsafe { bun_core::ffi::slice(names_ptr, len) };
+        let values_in = unsafe { bun_core::ffi::slice(values_ptr, len) };
 
         let mut slices: Vec<Utf8Slice> = Vec::with_capacity(len * 2);
         for i in 0..len {

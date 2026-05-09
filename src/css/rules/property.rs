@@ -187,11 +187,7 @@ const _: () = {
                 this.syntax = Some(syntax);
             } else if strings::eql_case_insensitive_ascii_check_length(b"inherits", name) {
                 let location = input.current_source_location();
-                // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
-                let ident: &'static [u8] = match input.expect_ident() {
-                    Ok(vv) => unsafe { css::css_parser::src_str(vv) },
-                    Err(e) => return Err(e),
-                };
+                let ident = input.expect_ident_cloned()?;
                 let inherits = if strings::eql_case_insensitive_ascii_check_length(b"true", ident) {
                     true
                 } else if strings::eql_case_insensitive_ascii_check_length(b"false", ident) {
@@ -204,8 +200,7 @@ const _: () = {
                 // Buffer the value into a string. We will parse it later.
                 let start = input.position();
                 while input.next().is_ok() {}
-                // SAFETY: borrows parser source/arena; see `css_parser::src_str`.
-                let initial_value = unsafe { css::css_parser::src_str(input.slice_from(start)) };
+                let initial_value = input.slice_from_cloned(start);
                 this.initial_value = Some(initial_value);
             } else {
                 return Err(input.new_custom_error(ParserError::invalid_declaration));

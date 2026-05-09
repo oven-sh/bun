@@ -75,9 +75,7 @@ impl UntrustedCommand {
         // SAFETY: `load_lockfile` dropped above; `pm_raw` is the only path to
         // the singleton for the rest of this fn (same as the original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
-        // SAFETY: `pm.log` is the non-null `*mut logger::Log` set at
-        // `PackageManager::init`; CLI is single-threaded.
-        let log: &mut logger::Log = unsafe { &mut *pm.log };
+        let log: &mut logger::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
 
         let packages = lockfile.packages.slice();

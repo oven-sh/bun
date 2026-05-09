@@ -2714,14 +2714,14 @@ impl TestCommand {
                 reporter.summary().files += 1;
             }
 
-            // SAFETY: load_entry_point_for_test_runner returns a live *mut JSInternalPromise
-            // rooted by the module loader for the duration of this turn.
-            match unsafe { (*promise).status() } {
+            // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+            match jsc::JSInternalPromise::opaque_mut(promise).status() {
                 jsc::js_promise::Status::Rejected => {
                     // SAFETY: vm.global is the live global object pointer; decoupled from
                     // `vm`'s borrow so `unhandled_rejection(&mut self, ...)` can reborrow.
                     let global = unsafe { &*vm.global };
-                    let (result, promise_js) = unsafe { ((*promise).result(global.vm()), (*promise).to_js()) };
+                    let p = jsc::JSInternalPromise::opaque_mut(promise);
+                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
                     vm.unhandled_rejection(global, result, promise_js);
                     reporter.summary().fail += 1;
 

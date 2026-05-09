@@ -1156,9 +1156,7 @@ fn configure_env_for_scripts_run(
         // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
         let thread_count = bun_core::get_thread_count();
         if thread_count > 2 {
-            // SAFETY: `this_transpiler.env` was set by `Transpiler::init` and is
-            // never null on the script-config path (mirrors Zig `*DotEnv.Loader`).
-            let t_env = unsafe { &mut *this_transpiler.env };
+            let t_env = this_transpiler.env_mut();
             if !t_env.has(b"JOBS") {
                 let mut int_buf = [0u8; 10];
                 let mut cursor = &mut int_buf[..];

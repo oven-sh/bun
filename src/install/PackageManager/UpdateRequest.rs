@@ -240,14 +240,13 @@ impl UpdateRequest {
                     version = ver;
                 }
             }
-            // SAFETY: union field access guarded by `version.tag` discriminant.
             if match version.tag {
-                dependency::version::Tag::DistTag => unsafe {
-                    version.value.dist_tag.name.eql(placeholder, input, input)
-                },
-                dependency::version::Tag::Npm => unsafe {
-                    version.value.npm.name.eql(placeholder, input, input)
-                },
+                dependency::version::Tag::DistTag => {
+                    version.dist_tag().name.eql(placeholder, input, input)
+                }
+                dependency::version::Tag::Npm => {
+                    version.npm().name.eql(placeholder, input, input)
+                }
                 _ => false,
             } {
                 if fatal {

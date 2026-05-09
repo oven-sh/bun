@@ -92,8 +92,10 @@ pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
 #[cfg(windows)]
 type SyncProcess = sync::SyncWindowsProcess;
+// `opaque_ffi!` emits an inherent `impl` that doesn't carry inner `#[cfg]`
+// attrs, so gate the whole macro invocation rather than the struct alone.
+#[cfg(not(windows))]
 bun_opaque::opaque_ffi! {
-    #[cfg(not(windows))]
     pub struct SyncProcessPosix;
 }
 #[cfg(not(windows))]

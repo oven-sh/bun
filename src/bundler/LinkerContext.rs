@@ -413,8 +413,7 @@ impl<'a> LinkerContext<'a> {
         let transpiler = unsafe { &mut *(*bundle).transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
         // TODO(port): lifetime — log is &'a mut Log; reassigning here mirrors Zig's pointer assignment
-        // SAFETY: `transpiler.log` is a `*mut Log` backref valid for the bundle's lifetime.
-        self.log = unsafe { &mut *transpiler.log };
+        self.log = transpiler.log_mut();
 
         // PORT NOTE: lifetime — `self.resolver` is `*mut Resolver<'static>` but
         // `transpiler.resolver` is `Resolver<'_>`; raw `*mut T` is invariant in
@@ -607,7 +606,7 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                unsafe { self.graph.symbol_mut(original_ref) }.link = actual_ref;
+                unsafe { self.graph.symbol_mut(original_ref) }.link.set(actual_ref);
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph.generate_symbol_import_and_use(
@@ -2033,7 +2032,7 @@ impl<'a> LinkerContext<'a> {
                                 js_ast::RefTag::Symbol,
                             );
                             while symbol.has_link() {
-                                r#ref = symbol.link;
+                                r#ref = symbol.link.get();
                                 symbol = all_symbols[r#ref.source_index() as usize]
                                     .at(r#ref.inner_index() as usize);
                             }

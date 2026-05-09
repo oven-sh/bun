@@ -1313,8 +1313,7 @@ fn open_dir_at_windows_nt_path(
         SecurityQualityOfService: core::ptr::null_mut(),
     };
     let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
-    // SAFETY: all-zero is a valid value for this repr(C) POD type.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
 
     // SAFETY: FFI call; arguments are valid for the duration of the call.
     let rc = unsafe {
@@ -1529,8 +1528,7 @@ pub fn open_file_at_windows_nt_path(
         SecurityDescriptor: core::ptr::null_mut(),
         SecurityQualityOfService: core::ptr::null_mut(),
     };
-    // SAFETY: all-zero is a valid value for this repr(C) POD type.
-    let mut io: windows::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut io: windows::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
 
     let mut attributes = options.attributes;
     loop {
@@ -2461,8 +2459,7 @@ pub fn readlinkat<'a>(fd: Fd, in_: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut Z
 pub fn ftruncate(fd: Fd, size: isize) -> Result<()> {
     #[cfg(windows)]
     {
-        // SAFETY: all-zero is a valid value for this repr(C) POD type.
-        let mut io_status_block: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut io_status_block: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
         let mut eof_info = w::FILE_END_OF_FILE_INFORMATION { EndOfFile: size as i64 };
 
         // SAFETY: FFI call; arguments are valid for the duration of the call.
@@ -3840,8 +3837,7 @@ pub fn exists_at_type(fd: Fd, subpath: impl AsRef<[u8]>) -> Result<ExistsAtType>
             SecurityDescriptor: core::ptr::null_mut(),
             SecurityQualityOfService: core::ptr::null_mut(),
         };
-        // SAFETY: all-zero is a valid value for this repr(C) POD type.
-        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         let rc = unsafe { ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
         if let Some(err) = Result::<bool>::errno_sys(rc, Tag::access) {

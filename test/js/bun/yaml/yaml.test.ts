@@ -1676,9 +1676,8 @@ config:
 
         // Signed infinity — the YAML parser accepts "+.inf"/"+.Inf"/"+.INF" (and the
         // '-' variants) as signed infinity, so strings that look like those must be
-        // quoted too. "+.nan" / "-.nan" are *not* treated as numbers by the parser so
-        // they don't need quoting for numeric reasons (but they do anyway for other
-        // reasons — verified by round-trip below).
+        // quoted. "+.nan" / "-.nan" are *not* treated as numbers by the parser so
+        // they don't need quoting for numeric reasons.
         expect(YAML.stringify("+.inf")).toBe('"+.inf"');
         expect(YAML.stringify("+.Inf")).toBe('"+.Inf"');
         expect(YAML.stringify("+.INF")).toBe('"+.INF"');
@@ -1718,6 +1717,15 @@ config:
           "-.inf",
           "-.Inf",
           "-.INF",
+          // Embedded signs — wtf.parseDouble is a strtod-style prefix parser, so
+          // "1+5" etc. round-trip to the leading digits as a number unless quoted.
+          "1+5",
+          "1-5",
+          "0+5",
+          "0-5",
+          "123-456",
+          "3.14+2",
+          ".5+3",
         ];
         for (const value of numberLike) {
           expect(YAML.parse(YAML.stringify({ id: value }))).toEqual({ id: value });

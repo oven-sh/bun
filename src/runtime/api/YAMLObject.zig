@@ -741,11 +741,8 @@ const Stringifier = struct {
                         }
                     }
 
-                    if (i == 0) {
-                        var n_i: usize = 0;
-                        if (stringIsNumber(str, &n_i)) {
-                            return true;
-                        }
+                    if (i == 0 and stringIsNumber(str)) {
+                        return true;
                     }
                     i += 1;
                 },
@@ -769,32 +766,23 @@ const Stringifier = struct {
                         }
                     }
 
-                    if (i == 0) {
-                        var n_i: usize = 0;
-                        if (stringIsNumber(str, &n_i)) {
-                            return true;
-                        }
+                    if (i == 0 and stringIsNumber(str)) {
+                        return true;
                     }
                     i += 1;
                 },
 
                 '0'...'9' => {
-                    if (i == 0) {
-                        var n_i: usize = 0;
-                        if (stringIsNumber(str, &n_i)) {
-                            return true;
-                        }
+                    if (i == 0 and stringIsNumber(str)) {
+                        return true;
                     }
                     i += 1;
                 },
 
                 '+' => {
                     // Leading '+' followed by digits/dot parses as a positive number.
-                    if (i == 0) {
-                        var n_i: usize = 0;
-                        if (stringIsNumber(str, &n_i)) {
-                            return true;
-                        }
+                    if (i == 0 and stringIsNumber(str)) {
+                        return true;
                     }
                     i += 1;
                 },
@@ -817,155 +805,96 @@ const Stringifier = struct {
         return false;
     }
 
-    fn stringIsNumber(str: String, offset: *usize) bool {
-        const start = offset.*;
-        var i = start;
+    /// Returns true when `str` would be parsed back as a number by `YAML.parse`.
+    ///
+    /// This mirrors the rules in `src/interchange/yaml.zig`'s `tryResolveNumber`:
+    /// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF` for signed infinity.
+    /// - Otherwise a numeric mantissa: digits/`.`/`e`/`E`/hex letters, plus additional `+`/`-`
+    ///   (the parser accepts any number of `+` after the leading sign as long as no `x` was
+    ///   seen, and at most one additional `-`).
+    /// - `0x` / `0X` → hex digits; `0o` / `0O` → octal digits.
+    /// - Additionally, `wtf.parseDouble` is a prefix parser, so a leading numeric prefix is
+    ///   enough for `YAML.parse` to resolve a number — e.g. `"1+5"` round-trips to `1`.
+    ///   We err on the side of quoting when the parser's scanner would accept the full token
+    ///   as `valid`.
+    fn stringIsNumber(str: String) bool {
+        const len = str.length();
+        if (len == 0) return false;
 
-        // Have we consumed the leading sign? (at most one, at position `start`)
-        var leading_sign = false;
-        // Have we seen the exponent marker (e/E)?
-        var e = false;
-        // Have we consumed the exponent sign after e/E? (at most one)
-        var exp_sign = false;
-        var dot = false;
+        var i: usize = 0;
 
-        var base: enum { dec, hex, oct } = .dec;
-
-        next: switch (str.charAt(i)) {
-            '.' => {
-                if (dot or base != .dec) {
-                    offset.* = i;
-                    return false;
-                }
-                // Signed `.inf`/`.Inf`/`.INF` — the YAML parser treats "+.inf" and "-.inf"
-                // as signed infinity. Quote any string that starts with a sign followed by
-                // one of those so the round-trip preserves it as a string.
-                if (leading_sign and i == start + 1 and isInfSuffix(str, i)) {
-                    return true;
-                }
-                dot = true;
-                i += 1;
-                if (i < str.length()) {
-                    continue :next str.charAt(i);
-                }
-                return true;
-            },
-
-            '+', '-' => {
-                // Two places a sign is allowed:
-                //  1. At the very start of the string (leading sign).
-                //  2. Immediately after the exponent marker 'e'/'E'.
-                if (i == start and !leading_sign) {
-                    leading_sign = true;
-                } else if (e and !exp_sign and base == .dec) {
-                    exp_sign = true;
-                } else {
-                    offset.* = i;
-                    return false;
-                }
-                i += 1;
-                if (i < str.length()) {
-                    continue :next str.charAt(i);
-                }
-                // A lone sign isn't a number, but a sign followed only by an exponent
-                // marker also isn't — `leading_sign && !e && i == start+1` means the
-                // whole input is "+" or "-". Still conservatively return true; the
-                // caller only uses this to decide whether to quote, and quoting "+" /
-                // "-" is safe (they aren't strictly numbers, but quoting is no harm).
-                return true;
-            },
-
-            '0' => {
-                if (i == start or (leading_sign and i == start + 1)) {
-                    // Leading zero (or leading-sign + zero): inspect the next char to
-                    // decide whether we're looking at a hex/octal base prefix or a
-                    // regular decimal/float continuation.
-                    if (i + 1 < str.length()) {
-                        switch (str.charAt(i + 1)) {
-                            'x', 'X' => {
-                                base = .hex;
-                                i += 1;
-                            },
-                            'o', 'O' => {
-                                base = .oct;
-                                i += 1;
-                            },
-                            '0'...'9',
-                            // 'e'/'E' — exponent continues a decimal float like "0e6836".
-                            // '.' — decimal point continues a decimal float like "0.0".
-                            // Fall through and let the next iteration handle them.
-                            'e',
-                            'E',
-                            '.',
-                            => {
-                                // leading 0 is fine; continue
-                            },
-                            else => {
-                                offset.* = i;
-                                return false;
-                            },
-                        }
-                    } else {
-                        return true;
-                    }
-                }
-
-                i += 1;
-                if (i < str.length()) {
-                    continue :next str.charAt(i);
-                }
-                return true;
-            },
-
-            'e',
-            'E',
-            => {
-                if (base == .oct or (e and base == .dec)) {
-                    offset.* = i;
-                    return false;
-                }
-                e = true;
-                i += 1;
-                if (i < str.length()) {
-                    continue :next str.charAt(i);
-                }
-                return true;
-            },
-
-            'a'...'d',
-            'f',
-            'A'...'D',
-            'F',
-            => {
-                if (base != .hex) {
-                    offset.* = i;
-                    return false;
-                }
-                i += 1;
-                if (i < str.length()) {
-                    continue :next str.charAt(i);
-                }
-                return true;
-            },
-
-            '1'...'9' => {
-                i += 1;
-                if (i < str.length()) {
-                    continue :next str.charAt(i);
-                }
-                return true;
-            },
-
-            else => {
-                offset.* = i;
-                return false;
-            },
+        // Optional leading sign.
+        const first = str.charAt(0);
+        const signed = first == '+' or first == '-';
+        if (signed) {
+            i = 1;
+            if (i >= len) return false; // bare "+" / "-" isn't a number
+            // Signed special floats: "+.inf", "+.Inf", "+.INF" (and the '-' variants).
+            // The parser also rejects ".nan" after a sign, so we only check ".inf" here.
+            if (str.charAt(i) == '.' and isInfSuffix(str, i)) return true;
         }
+
+        // Hex / octal base prefix.
+        var base: enum { dec, hex, oct } = .dec;
+        if (i + 1 < len and str.charAt(i) == '0') {
+            switch (str.charAt(i + 1)) {
+                'x', 'X' => {
+                    base = .hex;
+                    i += 2;
+                    if (i >= len) return false; // "0x" alone isn't hex
+                },
+                'o', 'O' => {
+                    base = .oct;
+                    i += 2;
+                    if (i >= len) return false; // "0o" alone isn't oct
+                },
+                else => {},
+            }
+        }
+
+        // Scan the rest. Track the minimal state the parser uses to decide validity.
+        var saw_dot = false;
+        var saw_exp = false;
+        var saw_minus_after_sign = false;
+
+        while (i < len) : (i += 1) {
+            const c = str.charAt(i);
+            switch (c) {
+                '0'...'9' => {},
+                'a'...'d', 'f', 'A'...'D', 'F' => {
+                    // Hex digits only valid in hex base.
+                    if (base != .hex) return false;
+                },
+                'e', 'E' => {
+                    if (base == .dec) {
+                        if (saw_exp) return false;
+                        saw_exp = true;
+                    }
+                    // In hex base, 'e'/'E' are just hex digits.
+                },
+                '.' => {
+                    if (saw_dot or base != .dec) return false;
+                    saw_dot = true;
+                },
+                '+' => {
+                    // Parser rule: '+' accepted unless we're in hex base.
+                    if (base == .hex) return false;
+                },
+                '-' => {
+                    // Parser rule: at most one '-' after the leading sign.
+                    if (saw_minus_after_sign) return false;
+                    saw_minus_after_sign = true;
+                },
+                else => return false,
+            }
+        }
+        return true;
     }
 
     /// True if the three chars after position `i` (which is a `.`) spell "inf", "Inf",
     /// or "INF" — the suffix the YAML parser accepts after a signed `.` to mean
-    /// +/- infinity.
+    /// +/- infinity. Over-matches `+.infX` etc., which is harmless for the quoting
+    /// decision.
     fn isInfSuffix(str: String, i: usize) bool {
         if (i + 4 > str.length()) return false;
         const a = str.charAt(i + 1);

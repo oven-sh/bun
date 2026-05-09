@@ -630,6 +630,14 @@ pub fn bindgen_node_os_dispatch_set_priority2(
 // the C++-side `bindgen_<ns>_js<Fn>` host fn. The C++ side already exports the
 // host fn (it lives in `Generated*Bindings.cpp`); we just call
 // `NewRuntimeFunction` here.
+//
+// ABI: `generate-js2native.ts` declares these on the C++ side as
+// `extern "C" SYSV_ABI ...(Zig::GlobalObject*)` (the `callJS2Native` switch
+// dispatches through them), so the Rust thunk MUST be `jsc` (sysv64 on
+// win-x64), not plain `c`. With `c`, the win-x64 callee read `global` from
+// RCX while C++ passed it in RDI → garbage `&JSGlobalObject` propagated into
+// `Bun__CreateFFIFunctionValue` → `getVM(garbage)` segfault on first
+// `bun:internal-for-testing` import.
 
 bun_jsc::jsc_abi_extern! {
     // C++-side host fns (Generated*Bindings.cpp).
@@ -637,13 +645,13 @@ bun_jsc::jsc_abi_extern! {
     fn bindgen_DevServer_jsGetDeinitCountForTesting(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
 }
 
-// HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, c)
+// HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, jsc)
 pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue {
     let name = bun_string::ZigString::init_utf8(b"fmtString");
     bun_jsc::host_fn::new_runtime_function(global, Some(&name), 3, bindgen_Fmt_jsc_jsFmtString, false, None)
 }
 
-// HOST_EXPORT(js2native_bindgen_DevServer_getDeinitCountForTesting, c)
+// HOST_EXPORT(js2native_bindgen_DevServer_getDeinitCountForTesting, jsc)
 pub fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) -> JSValue {
     let name = bun_string::ZigString::init_utf8(b"getDeinitCountForTesting");
     bun_jsc::host_fn::new_runtime_function(

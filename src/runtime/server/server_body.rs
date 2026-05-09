@@ -3410,10 +3410,15 @@ pub fn server_set_max_http_header_size_(
 // `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`
 // (= `host_fn::to_js_host_fn_result`) so a `JsError` becomes `.zero` with the
 // exception left on the global. Signatures match the C++ callers in
-// `node:http`/`node:https` (`bindings/BunJSCHost.cpp`).
-#[bun_jsc::host_call]
+// `node:http`/`node:https` (`bindings/NodeHTTP.cpp`).
+//
+// NOTE: these are plain `extern "C"` (NOT `#[bun_jsc::host_call]` / sysv64).
+// Zig's `wrap{3,4}` emits `callconv(.c)` and the C++ declarations in
+// NodeHTTP.cpp are bare `extern "C"` with no `SYSV_ABI`, so on Windows the
+// caller uses Win64 ABI. Using `host_call` here forced sysv64 on the Rust
+// side, scrambling the `server` argument and tripping the `is_object()` guard.
 #[unsafe(export_name = "Server__setAppFlags")]
-fn server_set_app_flags_shim(
+unsafe extern "C" fn server_set_app_flags_shim(
     global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
@@ -3425,9 +3430,8 @@ fn server_set_app_flags_shim(
     )
 }
 
-#[bun_jsc::host_call]
 #[unsafe(export_name = "Server__setOnClientError")]
-fn server_set_on_client_error_shim(
+unsafe extern "C" fn server_set_on_client_error_shim(
     global: &JSGlobalObject,
     server: JSValue,
     callback: JSValue,
@@ -3435,9 +3439,8 @@ fn server_set_on_client_error_shim(
     host_fn::to_js_host_fn_result(global, server_set_on_client_error_(global, server, callback))
 }
 
-#[bun_jsc::host_call]
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
-fn server_set_max_http_header_size_shim(
+unsafe extern "C" fn server_set_max_http_header_size_shim(
     global: &JSGlobalObject,
     server: JSValue,
     max_header_size: u64,

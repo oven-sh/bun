@@ -658,47 +658,12 @@ fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> J
 
 // Codegen accessor namespace (JSNativeBrotli generated bindings).
 // In Zig this is `jsc.Codegen.JSNativeBrotli`; the C++ side
-// (`NativeBrotliPrototype__*CachedValue`) is emitted by generate-classes.ts.
-// We call those externs directly so behavior matches the Zig 1:1.
+// (`NativeBrotliPrototype__*CachedValue`) is emitted by generate-classes.ts
+// with `extern JSC_CALLCONV` (= sysv64 on win-x64), so we must go through
+// `codegen_cached_accessors!` for the ABI cfg-split — a hand-written
+// `extern "C"` block here is wrong-ABI on Windows.
 mod js {
-    use bun_jsc::{JSGlobalObject, JSValue};
-
-    // `safe fn` to match the `safe fn …CachedValue` declarations
-    // `generate-classes.ts` emits in `generated_classes.rs` (avoids
-    // `clashing_extern_declarations`).
-    unsafe extern "C" {
-        safe fn NativeBrotliPrototype__writeCallbackSetCachedValue(
-            this_value: JSValue,
-            global: *mut JSGlobalObject,
-            value: JSValue,
-        );
-        safe fn NativeBrotliPrototype__writeCallbackGetCachedValue(this_value: JSValue) -> JSValue;
-        safe fn NativeBrotliPrototype__errorCallbackSetCachedValue(
-            this_value: JSValue,
-            global: *mut JSGlobalObject,
-            value: JSValue,
-        );
-        safe fn NativeBrotliPrototype__errorCallbackGetCachedValue(this_value: JSValue) -> JSValue;
-    }
-
-    #[inline]
-    pub fn write_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue) {
-        NativeBrotliPrototype__writeCallbackSetCachedValue(this_value, global.as_mut_ptr(), cb)
-    }
-    #[inline]
-    pub fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
-        let v = NativeBrotliPrototype__writeCallbackGetCachedValue(this_value);
-        if v.is_empty() { None } else { Some(v) }
-    }
-    #[inline]
-    pub fn error_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
-        let v = NativeBrotliPrototype__errorCallbackGetCachedValue(this_value);
-        if v.is_empty() { None } else { Some(v) }
-    }
-    #[inline]
-    pub fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue) {
-        NativeBrotliPrototype__errorCallbackSetCachedValue(this_value, global.as_mut_ptr(), cb)
-    }
+    bun_jsc::codegen_cached_accessors!("NativeBrotli"; writeCallback, errorCallback);
 }
 
 crate::__compression_stream_mixin_reexports!(NativeBrotli);

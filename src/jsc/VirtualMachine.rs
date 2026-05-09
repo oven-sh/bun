@@ -1563,10 +1563,6 @@ pub struct RuntimeHooks {
     /// `ResolveMessage` arms in `Macro::Run::coerce`.
     pub body_mixin_get_blob:
         unsafe fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
-    /// The static `VmLoaderVTable` instance for [`fetch_without_on_load_plugins`]
-    /// — its function pointers reach into `Blob`/`ObjectURLRegistry`
-    /// (`bun_runtime::webcore`), so the high tier supplies the table.
-    pub vm_loader_vtable: &'static bun_bundler::options::VmLoaderVTable,
     /// `bun.api.node.process.exit(global, code)` — spec
     /// `runtime/node/node_process.zig`. Main-thread is `noreturn`; in a worker
     /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
@@ -3665,32 +3661,26 @@ impl VirtualMachine {
         // Spec :1676-1677 — `var blob_to_deinit: ?webcore.Blob = null;
         // defer if (blob_to_deinit) |*blob| blob.deinit();`. The blob crosses
         // the bundler↔runtime boundary as an erased `OpaqueBlob`; deinit goes
-        // through the same `VmLoaderVTable` that produced it, so model the
-        // `defer` as a drop guard holding `(slot, deinit_fn)`.
+        // through the same `VmLoaderCtx` that produced it.
         struct BlobDeinit(
             Option<bun_bundler::options::OpaqueBlob>,
-            unsafe fn(bun_bundler::options::OpaqueBlob),
+            bun_bundler::options::VmLoaderCtx,
         );
         impl Drop for BlobDeinit {
             fn drop(&mut self) {
                 if let Some(blob) = self.0.take() {
-                    // SAFETY: `blob` was produced by `vtable.resolve_blob`;
-                    // `self.1` is that vtable's `blob_deinit`.
-                    unsafe { (self.1)(blob) };
+                    self.1.blob_deinit(blob);
                 }
             }
         }
-        // `get_loader_and_virtual_source` takes a `&VmLoaderCtx` (erased VM +
-        // vtable); the vtable's fn pointers reach into `Blob` /
-        // `ObjectURLRegistry` (`bun_runtime::webcore`), so the high tier
-        // supplies it via [`RuntimeHooks::vm_loader_vtable`].
-        let loader_ctx = bun_bundler::options::VmLoaderCtx {
-            vm: std::ptr::from_ref::<VirtualMachine>(jsc_vm).cast::<()>(),
-            vtable: runtime_hooks()
-                .expect("fetch_without_on_load_plugins: bun_runtime hooks not installed")
-                .vm_loader_vtable,
+        // SAFETY: `jsc_vm` outlives this stack frame.
+        let loader_ctx = unsafe {
+            bun_bundler::options::VmLoaderCtx::new(
+                bun_bundler::options::VmLoaderCtxKind::Runtime,
+                std::ptr::from_ref::<VirtualMachine>(jsc_vm).cast_mut(),
+            )
         };
-        let mut blob_to_deinit = BlobDeinit(None, loader_ctx.vtable.blob_deinit);
+        let mut blob_to_deinit = BlobDeinit(None, loader_ctx);
         let lr = match bun_bundler::options::get_loader_and_virtual_source(
             specifier_clone.slice(),
             &loader_ctx,

@@ -7,6 +7,7 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
+bun_dispatch.workspace = true
 parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true

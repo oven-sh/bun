@@ -1457,50 +1457,16 @@ fn on_not_found(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
     not_found(resp);
 }
 
-/// LAYERING: `BundleV2.bun_watcher` (T5 `bun_bundler`) cannot name the T6
-/// `bun_watcher::Watcher`; it stores an erased `WatcherHandle` (owner +
-/// `&'static WatcherVTable`). Construct the runtime-side vtable here, where
-/// both crates are visible.
-static BAKE_WATCHER_VTABLE: bun_bundler::dispatch::WatcherVTable =
-    bun_bundler::dispatch::WatcherVTable {
-        add_file: bake_watcher_add_file,
-    };
-
-/// `WatcherVTable.add_file` shim — dispatches the runtime `copy_file_path`
-/// flag to `Watcher::add_file::<const CLONE>`.
-unsafe fn bake_watcher_add_file(
-    watcher: *mut (),
-    fd: bun_sys::Fd,
-    file_path: &[u8],
-    hash: u32,
-    loader: bun_options_types::Loader,
-    dir_fd: bun_sys::Fd,
-    package_json: Option<*const ()>,
-    copy_file_path: bool,
-) -> Result<(), bun_core::Error> {
-    // SAFETY: `watcher` is the `&mut *dev.bun_watcher` registered by
-    // `bake_watcher_handle`; valid for the BundleV2 lifetime.
-    let w = unsafe { &mut *watcher.cast::<Watcher>() };
-    // SAFETY: `package_json` is an erased `*const PackageJSON` owned by the
-    // resolver's package-json cache (process lifetime); Watcher only stores it.
-    let pj = package_json.map(|p| unsafe { &*p.cast::<bun_watcher::PackageJSON>() });
-    // PORT NOTE: `bun_watcher::Loader` is an opaque `#[repr(transparent)] u8`
-    // newtype mirroring `bun_options_types::Loader` (#[repr(u8)]). Watcher only
-    // stores the discriminant; convert by value.
-    let loader = bun_watcher::Loader(loader as u8);
-    let r = if copy_file_path {
-        w.add_file::<true>(fd, file_path, hash, loader, dir_fd, pj)
-    } else {
-        w.add_file::<false>(fd, file_path, hash, loader, dir_fd, pj)
-    };
-    r.map_err(bun_core::Error::from)
-}
-
+// `WatcherHandle[Watcher]` impl lives in `bun_jsc::hot_reloader` (single
+// `bun_watcher::Watcher` owner type for both `bun build --watch` and bake).
 #[inline]
 fn bake_watcher_handle(w: &mut Watcher) -> bun_bundler::dispatch::WatcherHandle {
-    bun_bundler::dispatch::WatcherHandle {
-        owner: ::core::ptr::NonNull::from(w).cast::<()>(),
-        vtable: &BAKE_WATCHER_VTABLE,
+    // SAFETY: `w` is `&mut *dev.bun_watcher`; valid for the BundleV2 lifetime.
+    unsafe {
+        bun_bundler::dispatch::WatcherHandle::new(
+            bun_bundler::dispatch::WatcherHandleKind::Watcher,
+            w,
+        )
     }
 }
 

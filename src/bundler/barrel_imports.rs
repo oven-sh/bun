@@ -165,7 +165,7 @@ fn apply_barrel_optimization_impl(
     if let Some(dev) = dev_handle {
         // SAFETY: barrel_needed_exports is owned by DevServer; bundler runs on the bundle
         // thread which holds the DevServer lock during this callback.
-        let needed = unsafe { &*(dev.vtable.barrel_needed_exports)(dev.owner) };
+        let needed = unsafe { &*dev.barrel_needed_exports() };
         if let Some(persisted) = needed.get(result.source.path.text) {
             for alias in persisted.keys() {
                 if let Some(resolution) =
@@ -253,12 +253,8 @@ fn apply_barrel_optimization_impl(
         // ensuring it gets re-parsed on every incremental build. This is needed
         // because the set of needed exports can change when importing files change.
         if let Some(dev) = dev_handle {
-            // barrel_files_with_deferrals get_or_put + key dupe encapsulated
-            // in DevServerVTable. PERF(port): was direct hashmap access.
-            unsafe {
-                (dev.vtable.register_barrel_with_deferrals)(dev.owner, result.source.path.text)
-            }
-            .map_err(|_| AllocError)?;
+            dev.register_barrel_with_deferrals(result.source.path.text)
+                .map_err(|_| AllocError)?;
         }
     }
 
@@ -806,13 +802,7 @@ fn persist_barrel_export(
     barrel_path: &[u8],
     alias: &[u8],
 ) {
-    // CYCLEBREAK GENUINE: bun_runtime::bake::DevServer → vtable. PERF(port): was
-    // direct field access in Zig. The vtable slot wraps the entire body of
-    // `barrel_imports.zig:persistBarrelExport` (getOrPut + key dupe on both the
-    // outer and inner maps), so the bundler crate doesn't name DevServer.
-    // SAFETY: owner is a live `*mut DevServer` per handle invariant; bundler
-    // runs on the bundle thread which holds the DevServer lock.
-    unsafe { (dev.vtable.register_barrel_export)(dev.owner, barrel_path, alias) }
+    dev.register_barrel_export(barrel_path, alias)
 }
 
 // ported from: src/bundler/barrel_imports.zig

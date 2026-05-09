@@ -387,22 +387,6 @@ impl fmt::Display for CrashReason {
 /// higher-tier crate; `chunk`/`part_range` stay erased and are reinterpreted by
 /// the `Linker` impl in `bun_bundler::LinkerContext`.
 #[cfg(feature = "show_crash_trace")]
-#[derive(Clone, Copy)]
-pub struct BundleGenerateChunk {
-    pub ctx: BundleGenerateChunkCtx,
-    /// SAFETY: erased `&bun_bundler::Chunk`
-    pub chunk: *const (),
-    /// SAFETY: erased `&bun_bundler::PartRange`
-    pub part_range: *const (),
-}
-
-#[cfg(feature = "show_crash_trace")]
-bun_dispatch::link_interface! {
-    pub BundleGenerateChunkCtx[Linker] {
-        fn fmt(chunk: *const (), part_range: *const (), writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result;
-    }
-}
-
 #[cfg(feature = "show_crash_trace")]
 #[derive(Clone, Copy)]
 pub struct ResolverAction {
@@ -418,8 +402,11 @@ pub enum Action {
     Print(&'static [u8]),
     // TODO(port): lifetime — these slices borrow caller-owned paths; &'static is a Phase A placeholder.
 
+    /// Pre-formatted at push time (`cfg(show_crash_trace)`-only debug path);
+    /// the bundler leaks the string so `Action` stays `Copy` for the
+    /// `Cell<Option<Action>>` thread-local.
     #[cfg(feature = "show_crash_trace")]
-    BundleGenerateChunk(BundleGenerateChunk),
+    BundleGenerateChunk(&'static str),
     #[cfg(not(feature = "show_crash_trace"))]
     BundleGenerateChunk(()),
 
@@ -438,7 +425,7 @@ impl fmt::Display for Action {
             Action::Visit(path) => write!(writer, "visiting {}", bstr::BStr::new(path)),
             Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
             #[cfg(feature = "show_crash_trace")]
-            Action::BundleGenerateChunk(data) => data.ctx.fmt(data.chunk, data.part_range, writer),
+            Action::BundleGenerateChunk(s) => writer.write_str(s),
             #[cfg(not(feature = "show_crash_trace"))]
             Action::BundleGenerateChunk(()) => Ok(()),
             #[cfg(feature = "show_crash_trace")]

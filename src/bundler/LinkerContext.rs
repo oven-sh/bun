@@ -60,57 +60,37 @@ bun_core::declare_scope!(TreeShake, hidden);
 // `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
 // the formatter that knows their layout. Mirrors src/crash_handler/crash_handler.zig:135.
 // ══════════════════════════════════════════════════════════════════════════
-#[cfg(feature = "show_crash_trace")]
-bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
-    Linker for LinkerContext => |this| {
-        fmt(chunk, part_range, writer) => {
-            let ctx = &*this;
-            let chunk = &*chunk.cast::<Chunk>();
-            let pr = &*part_range.cast::<PartRange>();
-            let parse_graph = ctx.parse_graph();
-            let sources = parse_graph.input_files.items_source();
-            let entry = if pr.source_index.is_valid() {
-                sources
-                    .get(chunk.entry_point.source_index() as usize)
-                    .map(|s| bstr::BStr::new(&s.path.text))
-            } else {
-                None
-            };
-            let source = if pr.source_index.is_valid() {
-                sources
-                    .get(pr.source_index.get() as usize)
-                    .map(|s| bstr::BStr::new(&s.path.text))
-            } else {
-                None
-            };
-            write!(
-                writer,
-                "generating bundler chunk\n  chunk entry point: {:?}\n  source: {:?}\n  part range: {}..{}",
-                entry, source, pr.part_index_begin, pr.part_index_end,
-            )
-        },
-    }
-}
-
 /// Helper for call-sites that previously wrote `Action::BundleGenerateChunk(.{...})`.
+/// Eagerly formats — `cfg(show_crash_trace)` is a debug-only feature, so the
+/// per-chunk leak is acceptable and keeps `Action: Copy` for the `Cell` TLS.
 #[cfg(feature = "show_crash_trace")]
 #[inline]
 pub fn bundle_generate_chunk_action(
     ctx: &LinkerContext,
     chunk: &Chunk,
-    part_range: &PartRange,
+    pr: &PartRange,
 ) -> bun_crash_handler::Action {
-    bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
-        // SAFETY: `ctx`/`chunk`/`part_range` outlive the crash-trace scope this is held for.
-        ctx: unsafe {
-            bun_crash_handler::BundleGenerateChunkCtx::new(
-                bun_crash_handler::BundleGenerateChunkCtxKind::Linker,
-                core::ptr::from_ref(ctx).cast_mut(),
-            )
-        },
-        chunk: core::ptr::from_ref::<Chunk>(chunk).cast::<()>(),
-        part_range: core::ptr::from_ref::<PartRange>(part_range).cast::<()>(),
-    })
+    let parse_graph = ctx.parse_graph();
+    let sources = parse_graph.input_files.items_source();
+    let entry = if pr.source_index.is_valid() {
+        sources
+            .get(chunk.entry_point.source_index() as usize)
+            .map(|s| bstr::BStr::new(&s.path.text))
+    } else {
+        None
+    };
+    let source = if pr.source_index.is_valid() {
+        sources
+            .get(pr.source_index.get() as usize)
+            .map(|s| bstr::BStr::new(&s.path.text))
+    } else {
+        None
+    };
+    let s = format!(
+        "generating bundler chunk\n  chunk entry point: {:?}\n  source: {:?}\n  part range: {}..{}",
+        entry, source, pr.part_index_begin, pr.part_index_end,
+    );
+    bun_crash_handler::Action::BundleGenerateChunk(Box::leak(s.into_boxed_str()))
 }
 #[cfg(not(feature = "show_crash_trace"))]
 #[inline]

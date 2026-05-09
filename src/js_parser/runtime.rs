@@ -172,36 +172,8 @@ impl fmt::Display for Base64FallbackMessage<'_> {
         let mut bb: Vec<u8> = Vec::new();
         let mut encoder = schema::Writer::new(&mut bb);
         self.msg.encode(&mut encoder); // catch {}
-        let _ = base64_encoder::encode(&bb, f); // catch {}
-        Ok(())
-    }
-}
-
-/// Zig: `Fallback.Base64FallbackMessage.Base64Encoder`
-pub mod base64_encoder {
-    use core::fmt;
-
-    /// `std.base64.standard_alphabet_chars`
-    const ALPHABET_CHARS: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    pub fn encode(source: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
-        // Zig used u12/u4/u6 — Rust widens to u16/u8 with masking.
-        let mut acc: u16 = 0;
-        let mut acc_len: u8 = 0;
-        for &v in source {
-            acc = (acc << 8) + u16::from(v);
-            acc_len += 8;
-            while acc_len >= 6 {
-                acc_len -= 6;
-                let idx = ((acc >> acc_len) & 0x3F) as usize; // @truncate to u6
-                writer.write_char(ALPHABET_CHARS[idx] as char)?;
-            }
-        }
-        if acc_len > 0 {
-            let idx = ((acc << (6 - acc_len)) & 0x3F) as usize; // @truncate to u6
-            writer.write_char(ALPHABET_CHARS[idx] as char)?;
-        }
+        // Zig: `Fallback.Base64FallbackMessage.Base64Encoder` (standard alphabet, no '=' padding)
+        let _ = bun_base64::zig_base64::STANDARD_NO_PAD.encoder.encode_to_fmt(&bb, f); // catch {}
         Ok(())
     }
 }

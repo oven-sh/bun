@@ -104,6 +104,21 @@ impl Names {
         }
         false
     }
+
+    /// Check whether `name` (with leading `-`/`--`) matches this param's short,
+    /// long, or any long alias. Shared predicate for `has_flag`/`find_param`.
+    pub fn matches(&self, name: &[u8]) -> bool {
+        if let Some(s) = self.short {
+            // Zig: mem.eql(u8, name, "-" ++ [_]u8{s})
+            if name.len() == 2 && name[0] == b'-' && name[1] == s {
+                return true;
+            }
+        }
+        if name.len() >= 2 && &name[..2] == b"--" {
+            return self.matches_long(&name[2..]);
+        }
+        false
+    }
 }
 
 /// Whether a param takes no value (a flag), one value, or can be specified multiple times.
@@ -153,160 +168,11 @@ impl<Id: Default> Default for Param<Id> {
     }
 }
 
-// TODO(b1): `thiserror` not in workspace deps — manual Display/Error below.
-#[derive(strum::IntoStaticStr, Debug)]
-pub enum ParseParamError {
-    NoParamFound,
-    InvalidShortParam,
-    TrailingComma,
-}
-impl fmt::Display for ParseParamError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for ParseParamError {}
-// TODO(port): impl From<ParseParamError> for bun_core::Error
-
-/// Takes a string and parses it to a `Param<Help>`.
-/// This is the reverse of 'help' but for at single parameter only.
-/// Supports multiple long name variants separated by '/' (e.g., "--test-name-pattern/--grep").
-// TODO(port): Zig calls this at comptime (`@setEvalBranchQuota`); Rust evaluates at runtime.
-// Phase B may want a `const fn` or build-script to regain comptime param tables.
-pub fn parse_param(line: &'static [u8]) -> Result<Param<Help>, ParseParamError> {
-    let mut found_comma = false;
-    // TODO(port): std.mem.tokenizeAny with `.rest()` — Rust split iterators have no `.rest()`.
-    // Using a hand-rolled tokenizer that tracks the remaining slice.
-    let mut it = TokenizeAny::new(line, b" \t");
-    let mut param_str = it.next().ok_or(ParseParamError::NoParamFound)?;
-
-    let short_name: Option<u8> = if !param_str.starts_with(b"--") && param_str.starts_with(b"-") {
-        'blk: {
-            found_comma = param_str[param_str.len() - 1] == b',';
-            if found_comma {
-                param_str = &param_str[0..param_str.len() - 1];
-            }
-
-            if param_str.len() != 2 {
-                return Err(ParseParamError::InvalidShortParam);
-            }
-
-            let short_name = param_str[1];
-            if !found_comma {
-                let mut res = parse_param_rest(it.rest());
-                res.names.short = Some(short_name);
-                return Ok(res);
-            }
-
-            param_str = it.next().ok_or(ParseParamError::NoParamFound)?;
-            break 'blk Some(short_name);
-        }
-    } else {
-        None
-    };
-
-    if param_str.starts_with(b"--") {
-        if param_str[param_str.len() - 1] == b',' {
-            return Err(ParseParamError::TrailingComma);
-        }
-    } else if found_comma {
-        return Err(ParseParamError::TrailingComma);
-    } else if short_name.is_none() {
-        // TODO(b1): bun_str::strings::trim_left missing — local helper
-        return Ok(parse_param_rest(trim_left(line, b" \t")));
-    }
-
-    let mut res = parse_param_rest(it.rest());
-    res.names.short = short_name;
-
-    // Parse long names - supports multiple variants separated by '/'
-    // e.g., "--test-name-pattern/--grep" becomes primary "test-name-pattern" with alias "grep"
-    let long_names = parse_long_names(param_str);
-    res.names.long = long_names.long;
-    res.names.long_aliases = long_names.long_aliases;
-    Ok(res)
-}
-
-fn parse_long_names(param_str: &'static [u8]) -> Names {
-    // TODO(port): Zig evaluates this entire body at `comptime` and materializes
-    // `aliases` as a comptime-known `[N][]const u8`. Rust cannot allocate a
-    // statically-sized array from a runtime count, so we leak a boxed slice for
-    // the alias list. Phase B should replace this with a const-eval / build-time
-    // table so no runtime allocation occurs.
-
-    // Count how many long name variants we have (separated by '/')
-    let mut alias_count: usize = 0;
-    for &c in param_str {
-        if c == b'/' {
-            alias_count += 1;
-        }
-    }
-
-    if alias_count == 0 {
-        // No aliases, just the primary name
-        if param_str.starts_with(b"--") {
-            return Names { long: Some(&param_str[2..]), long_aliases: &[], ..Default::default() };
-        }
-        return Names { long: None, long_aliases: &[], ..Default::default() };
-    }
-
-    // Parse multiple long names
-    // First pass: find the primary name
-    let mut primary: Option<&'static [u8]> = None;
-    let mut name_it = param_str.split(|&b| b == b'/');
-    while let Some(name_part) = name_it.next() {
-        if !name_part.starts_with(b"--") {
-            continue;
-        }
-        primary = Some(&name_part[2..]);
-        break;
-    }
-
-    // Second pass: collect aliases
-    // TODO(port): Zig builds `aliases` as a comptime `[N][]const u8` (zero runtime
-    // cost, true `&'static`). Stable Rust cannot materialize a `&'static [..]` from
-    // a runtime scan without leaking (forbidden per PORTING.md §Forbidden). The
-    // alias list is dropped at runtime; the Phase-B `parse_param!` proc-macro must
-    // restore alias support by emitting a `static` array per call site.
-    let _ = alias_count;
-
-    Names { long: primary, long_aliases: &[], ..Default::default() }
-}
-
-fn parse_param_rest(line: &'static [u8]) -> Param<Help> {
-    'blk: {
-        if !line.starts_with(b"<") {
-            break 'blk;
-        }
-        let Some(len) = line.iter().position(|&b| b == b'>') else {
-            break 'blk;
-        };
-        let takes_many = line[len + 1..].starts_with(b"...");
-        let takes_one_optional = line[len + 1..].starts_with(b"?");
-        let help_start =
-            len + 1 + 3usize * (takes_many as usize) + 1usize * (takes_one_optional as usize);
-        return Param {
-            takes_value: if takes_many {
-                Values::Many
-            } else if takes_one_optional {
-                Values::OneOptional
-            } else {
-                Values::One
-            },
-            id: Help {
-                // TODO(b1): bun_str::strings::trim missing — local helper
-                msg: trim(&line[help_start..], b" \t"),
-                value: &line[1..len],
-            },
-            ..Default::default()
-        };
-    }
-
-    Param {
-        id: Help { msg: trim(line, b" \t"), ..Default::default() },
-        ..Default::default()
-    }
-}
+// NOTE: the runtime spec parser (`fn parse_param` / `parse_long_names` /
+// `parse_param_rest` / `ParseParamError` / `TokenizeAny`) was removed — the
+// canonical implementation lives in `bun_clap_macros` and runs at compile time
+// via `parse_param!` / `param!` / `parse_params!` above. All param specs are
+// string literals, so there is no runtime caller.
 
 #[cfg(test)]
 fn expect_param(expect: Param<Help>, actual: Param<Help>) {
@@ -670,18 +536,20 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
     Ok(())
 }
 
-pub fn simple_help(params: &[Param<Help>]) {
-    let max_spacing: usize = 'blk: {
-        let mut res: usize = 2;
-        for param in params {
-            let flags_len = if let Some(l) = param.names.long { l.len() } else { 0 };
-            let value_len: usize = if param.takes_value != Values::None { 6 } else { 0 };
-            if res < flags_len + value_len {
-                res = flags_len + value_len;
-            }
+fn compute_max_help_spacing(params: &[Param<Help>]) -> usize {
+    let mut res: usize = 2;
+    for param in params {
+        let flags_len = if let Some(l) = param.names.long { l.len() } else { 0 };
+        let value_len: usize = if param.takes_value != Values::None { 6 } else { 0 };
+        if res < flags_len + value_len {
+            res = flags_len + value_len;
         }
-        break 'blk res;
-    };
+    }
+    res
+}
+
+pub fn simple_help(params: &[Param<Help>]) {
+    let max_spacing: usize = compute_max_help_spacing(params);
 
     for param in params {
         if param.names.short.is_none() && param.names.long.is_none() {
@@ -724,17 +592,7 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
 
-    let computed_max_spacing: usize = 'blk: {
-        let mut res: usize = 2;
-        for param in params {
-            let flags_len = if let Some(l) = param.names.long { l.len() } else { 0 };
-            let value_len: usize = if param.takes_value != Values::None { 6 } else { 0 };
-            if res < flags_len + value_len {
-                res = flags_len + value_len;
-            }
-        }
-        break 'blk res;
-    };
+    let computed_max_spacing: usize = compute_max_help_spacing(params);
 
     // Zig: @compileError; here a debug-time assert.
     debug_assert!(
@@ -915,59 +773,6 @@ fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::E
 
 // ───────────── helpers (no Zig std equivalent in PORTING.md) ─────────────
 
-// TODO(b1): bun_str::strings::{trim, trim_left} missing from lower-tier stub.
-fn trim_left<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-    let mut i = 0;
-    while i < s.len() && chars.contains(&s[i]) { i += 1; }
-    &s[i..]
-}
-fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-    let s = trim_left(s, chars);
-    let mut e = s.len();
-    while e > 0 && chars.contains(&s[e - 1]) { e -= 1; }
-    &s[..e]
-}
-
-
-// TODO(port): `std.mem.tokenizeAny` replacement that supports `.rest()`. If a
-// shared helper exists in `bun_str::strings`, replace this.
-struct TokenizeAny {
-    buf: &'static [u8],
-    delims: &'static [u8],
-    index: usize,
-}
-
-impl TokenizeAny {
-    fn new(buf: &'static [u8], delims: &'static [u8]) -> Self {
-        Self { buf, delims, index: 0 }
-    }
-
-    fn is_delim(&self, b: u8) -> bool {
-        self.delims.iter().any(|&d| d == b)
-    }
-
-    fn next(&mut self) -> Option<&'static [u8]> {
-        while self.index < self.buf.len() && self.is_delim(self.buf[self.index]) {
-            self.index += 1;
-        }
-        let start = self.index;
-        if start == self.buf.len() {
-            return None;
-        }
-        while self.index < self.buf.len() && !self.is_delim(self.buf[self.index]) {
-            self.index += 1;
-        }
-        Some(&self.buf[start..self.index])
-    }
-
-    fn rest(&mut self) -> &'static [u8] {
-        while self.index < self.buf.len() && self.is_delim(self.buf[self.index]) {
-            self.index += 1;
-        }
-        &self.buf[self.index..]
-    }
-}
-
 // TODO(port): `std.io.countingWriter` replacement. If `bun_io` grows one, swap.
 struct CountingWriter<'a, W: fmt::Write> {
     inner: Option<&'a mut W>,
@@ -1021,7 +826,7 @@ mod tests {
                 names: Names { short: Some(b's'), long: Some(b"long"), ..Default::default() },
                 takes_value: Values::One,
             },
-            parse_param(b"-s, --long <value> Help text").unwrap(),
+            parse_param!("-s, --long <value> Help text"),
         );
 
         expect_param(
@@ -1030,7 +835,7 @@ mod tests {
                 names: Names { short: Some(b's'), long: Some(b"long"), ..Default::default() },
                 takes_value: Values::Many,
             },
-            parse_param(b"-s, --long <value>... Help text").unwrap(),
+            parse_param!("-s, --long <value>... Help text"),
         );
 
         expect_param(
@@ -1039,7 +844,7 @@ mod tests {
                 names: Names { long: Some(b"long"), ..Default::default() },
                 takes_value: Values::One,
             },
-            parse_param(b"--long <value> Help text").unwrap(),
+            parse_param!("--long <value> Help text"),
         );
 
         expect_param(
@@ -1048,7 +853,7 @@ mod tests {
                 names: Names { short: Some(b's'), ..Default::default() },
                 takes_value: Values::One,
             },
-            parse_param(b"-s <value> Help text").unwrap(),
+            parse_param!("-s <value> Help text"),
         );
 
         expect_param(
@@ -1057,7 +862,7 @@ mod tests {
                 names: Names { short: Some(b's'), long: Some(b"long"), ..Default::default() },
                 ..Default::default()
             },
-            parse_param(b"-s, --long Help text").unwrap(),
+            parse_param!("-s, --long Help text"),
         );
 
         expect_param(
@@ -1066,7 +871,7 @@ mod tests {
                 names: Names { short: Some(b's'), ..Default::default() },
                 ..Default::default()
             },
-            parse_param(b"-s Help text").unwrap(),
+            parse_param!("-s Help text"),
         );
 
         expect_param(
@@ -1075,7 +880,7 @@ mod tests {
                 names: Names { long: Some(b"long"), ..Default::default() },
                 ..Default::default()
             },
-            parse_param(b"--long Help text").unwrap(),
+            parse_param!("--long Help text"),
         );
 
         expect_param(
@@ -1084,7 +889,7 @@ mod tests {
                 names: Names { long: Some(b"long"), ..Default::default() },
                 takes_value: Values::One,
             },
-            parse_param(b"--long <A | B> Help text").unwrap(),
+            parse_param!("--long <A | B> Help text"),
         );
 
         expect_param(
@@ -1093,7 +898,7 @@ mod tests {
                 names: Names::default(),
                 takes_value: Values::One,
             },
-            parse_param(b"<A> Help text").unwrap(),
+            parse_param!("<A> Help text"),
         );
 
         expect_param(
@@ -1102,14 +907,11 @@ mod tests {
                 names: Names::default(),
                 takes_value: Values::Many,
             },
-            parse_param(b"<A>... Help text").unwrap(),
+            parse_param!("<A>... Help text"),
         );
 
-        assert!(matches!(parse_param(b"--long, Help"), Err(ParseParamError::TrailingComma)));
-        assert!(matches!(parse_param(b"-s, Help"), Err(ParseParamError::TrailingComma)));
-        assert!(matches!(parse_param(b"-ss Help"), Err(ParseParamError::InvalidShortParam)));
-        assert!(matches!(parse_param(b"-ss <value> Help"), Err(ParseParamError::InvalidShortParam)));
-        assert!(matches!(parse_param(b"- Help"), Err(ParseParamError::InvalidShortParam)));
+        // Error-case specs ("--long,", "-ss", "-", trailing comma) are now
+        // compile errors via the proc-macro and are not assertable at runtime.
     }
 
     // Compile-time check: the macro output is const-evaluable in a `static`.
@@ -1128,38 +930,7 @@ mod tests {
     };
 
     #[test]
-    fn parse_param_macro_matches_runtime() {
-        // Every macro-produced param must match the runtime parser exactly.
-        let cases: &[&'static [u8]] = &[
-            b"-s, --long <value> Help text",
-            b"-s, --long <value>... Help text",
-            b"--long <value> Help text",
-            b"-s <value> Help text",
-            b"-s, --long Help text",
-            b"-s Help text",
-            b"--long Help text",
-            b"--long <A | B> Help text",
-            b"<A> Help text",
-            b"<A>... Help text",
-            b"-c, --config <STR>?  Specify path to config",
-        ];
-        let macro_out: [Param<Help>; 11] = [
-            parse_param!("-s, --long <value> Help text"),
-            parse_param!("-s, --long <value>... Help text"),
-            parse_param!("--long <value> Help text"),
-            parse_param!("-s <value> Help text"),
-            parse_param!("-s, --long Help text"),
-            parse_param!("-s Help text"),
-            parse_param!("--long Help text"),
-            parse_param!("--long <A | B> Help text"),
-            parse_param!("<A> Help text"),
-            parse_param!("<A>... Help text"),
-            parse_param!("-c, --config <STR>?  Specify path to config"),
-        ];
-        for (line, m) in cases.iter().zip(macro_out.iter()) {
-            expect_param(parse_param(line).unwrap(), *m);
-        }
-
+    fn parse_param_macro_static_tables() {
         // Static-table sanity.
         assert_eq!(MACRO_PARAMS[0].names.short, Some(b's'));
         assert_eq!(MACRO_PARAMS[0].names.long, Some(b"long" as &[u8]));

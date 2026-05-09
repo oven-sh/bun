@@ -4,11 +4,9 @@ use core::ptr::NonNull;
 use bun_jsc::{JSGlobalObject, JsResult};
 use bun_uws::ResponseKind;
 
-/// Opaque FFI handle. Always used behind a pointer (`*mut CookieMap`).
-#[repr(C)]
-pub struct CookieMap {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle. Always used behind a pointer (`*mut CookieMap`).
+    pub struct CookieMap;
 }
 
 // TODO(port): move to runtime_sys (or webcore_sys) — extern decls belong in the *_sys crate

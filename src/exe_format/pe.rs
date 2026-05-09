@@ -48,11 +48,7 @@ pub enum Error {
     SizeOfImageMismatch,
 }
 
-impl From<Error> for bun_core::Error {
-    fn from(e: Error) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(Error);
 
 // Enums for strip modes and options
 #[derive(Copy, Clone, Eq, PartialEq)]

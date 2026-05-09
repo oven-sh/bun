@@ -1,0 +1,7 @@
+[package]
+name = "bun_output_tags"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"

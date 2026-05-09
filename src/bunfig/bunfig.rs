@@ -11,8 +11,6 @@
 use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
 
-use std::io::Write as _;
-
 use bun_alloc::Arena as Bump;
 use bun_core::err;
 use bun_interchange::json as json_parser;
@@ -29,7 +27,6 @@ use bun_options_types::OfflineMode::PREFER as OFFLINE_PREFER;
 
 use bun_options_types::CommandTag::Tag as CommandTag;
 use bun_options_types::Context::ContextData;
-use bun_url::URL;
 
 // Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
 pub use bun_options_types::OfflineMode::OfflineMode;
@@ -1248,41 +1245,12 @@ impl<'a> Parser<'a> {
         &mut self,
         str: &E::EString,
     ) -> Result<api::NpmRegistry, bun_core::Error> {
-        let url = URL::parse(str.string(self.bump)?);
-        let mut registry = api::NpmRegistry::default();
-
-        // Token
-        if url.username.is_empty() && !url.password.is_empty() {
-            registry.token = url.password.into();
-            let mut s = Vec::<u8>::new();
-            write!(
-                &mut s,
-                "{}://{}/{}/",
-                bstr::BStr::new(url.display_protocol()),
-                url.display_host(),
-                bstr::BStr::new(bun_string::strings::trim(url.pathname, b"/")),
-            )
-            .expect("unreachable");
-            registry.url = s.into();
-        } else if !url.username.is_empty() && !url.password.is_empty() {
-            registry.username = url.username.into();
-            registry.password = url.password.into();
-            let mut s = Vec::<u8>::new();
-            write!(
-                &mut s,
-                "{}://{}/{}/",
-                bstr::BStr::new(url.display_protocol()),
-                url.display_host(),
-                bstr::BStr::new(bun_string::strings::trim(url.pathname, b"/")),
-            )
-            .expect("unreachable");
-            registry.url = s.into();
-        } else {
-            // Do not include a trailing slash. There might be parameters at the end.
-            registry.url = url.href.into();
-        }
-
-        Ok(registry)
+        // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
+        // The api `Parser` is generic over log/source and never reads them for
+        // this path, so we just hand it our reborrowed handles.
+        let bytes = str.string(self.bump)?;
+        Ok(bun_api::npm_registry::Parser { log: &mut *self.log, source: self.source }
+            .parse_registry_url_string_impl(bytes)?)
     }
 
     fn parse_registry_object(

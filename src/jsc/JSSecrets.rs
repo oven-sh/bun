@@ -17,11 +17,7 @@ pub struct SecretsJob {
 }
 
 // Opaque pointer to C++ SecretsJobOptions struct
-#[repr(C)]
-pub struct SecretsJobOptions {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {

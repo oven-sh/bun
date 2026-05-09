@@ -27,7 +27,7 @@ pub mod wtf;
 #[path = "identifier.rs"] pub mod identifier;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-pub use wtf::{WTFStringImpl, WTFStringImplStruct};
+pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.String` — 5-variant tagged WTFString-or-ZigString. extern layout
@@ -723,7 +723,14 @@ impl String {
     pub fn to_zig_string(&self) -> ZigString {
         match self.tag {
             Tag::ZigString | Tag::StaticZigString => *self.as_zig(),
-            Tag::WTFStringImpl => self.as_wtf().to_zig_string(),
+            Tag::WTFStringImpl => {
+                // Inherent `WTFStringImplStruct::to_zig_string` lives in
+                // `bun_alloc` and returns the lower-tier `bun_alloc::ZigString`.
+                // Both are `#[repr(C)] { *const u8, usize }` with identical
+                // tag-bit semantics, so convert field-by-field.
+                let z = self.as_wtf().to_zig_string();
+                ZigString::from_tagged_ptr(z._unsafe_ptr_do_not_use, z.len)
+            }
             _ => ZigString::EMPTY,
         }
     }
@@ -1732,7 +1739,7 @@ impl Drop for ZigStringSlice {
     fn drop(&mut self) {
         if let Self::WTF { string_impl, .. } = *self {
             // SAFETY: constructor took a ref; we now release it.
-            unsafe { wtf::Bun__WTFStringImpl__deref(string_impl) }
+            unsafe { (*string_impl).deref() }
         }
     }
 }

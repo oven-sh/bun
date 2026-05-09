@@ -19,17 +19,10 @@ pub mod c {
     ///
     /// `UnsafeCell` makes the type `!Freeze` so a `&ZSTD_DStream` does not assert
     /// immutability of the C-owned state (zstd mutates internally on every call).
-    #[repr(C)]
-    pub struct ZSTD_DStream {
-        _p: UnsafeCell<[u8; 0]>,
-        _m: PhantomData<(*mut u8, PhantomPinned)>,
-    }
-
-    /// `ZSTD_CCtx` — opaque streaming-compression context.
-    #[repr(C)]
-    pub struct ZSTD_CCtx {
-        _p: UnsafeCell<[u8; 0]>,
-        _m: PhantomData<(*mut u8, PhantomPinned)>,
+    bun_opaque::opaque_ffi! {
+        pub struct ZSTD_DStream;
+        /// `ZSTD_CCtx` — opaque streaming-compression context.
+        pub struct ZSTD_CCtx;
     }
 
     /// `typedef ZSTD_DCtx ZSTD_DStream;` — same opaque object.

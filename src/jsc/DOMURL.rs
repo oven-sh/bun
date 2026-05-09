@@ -4,11 +4,9 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::{JSValue, VM};
 use bun_string::{self as bstr, ZigString};
 
-/// Opaque FFI handle for WebCore::DOMURL (C++ side).
-#[repr(C)]
-pub struct DOMURL {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for WebCore::DOMURL (C++ side).
+    pub struct DOMURL;
 }
 
 // TODO(port): move to jsc_sys

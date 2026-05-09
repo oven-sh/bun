@@ -6,11 +6,9 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-/// Opaque FFI handle (`us_quic_socket_t`). `!Send + !Sync + !Unpin`.
-#[repr(C)]
-pub struct Socket {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle (`us_quic_socket_t`). `!Send + !Sync + !Unpin`.
+    pub struct Socket;
 }
 
 unsafe extern "C" {

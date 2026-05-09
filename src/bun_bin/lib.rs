@@ -171,24 +171,21 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     //    by `bun_sys`; `stdio::init()` calls C's `bun_initialize_process()` and
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
-    struct FlushOnDrop;
-    impl Drop for FlushOnDrop {
-        fn drop(&mut self) {
-            output::flush();
-        }
-    }
-    let _flush = FlushOnDrop;
+    let _flush = output::flush_guard();
 
     // main.zig: `bun_warn_avx_missing(...)` — x86_64 + SIMD + posix only.
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    unsafe {
+    #[cfg(all(target_arch = "x86_64", unix))]
+    if bun_core::Environment::ENABLE_SIMD {
         unsafe extern "C" {
             fn bun_warn_avx_missing(url: *const core::ffi::c_char);
         }
-        // TODO(phase-c): plumb `UpgradeCommand::Bun__githubBaselineURL` once
-        // `bun_runtime::cli` is linkable. Empty string is harmless — the C
-        // side only prints it.
-        bun_warn_avx_missing(c"".as_ptr());
+        // SAFETY: BUN__GITHUB_BASELINE_URL is a NUL-terminated static; the C
+        // side only reads it to print the suggested download URL.
+        unsafe {
+            bun_warn_avx_missing(
+                bun_runtime::cli::upgrade_command::UpgradeCommand::BUN__GITHUB_BASELINE_URL.as_ptr(),
+            );
+        }
     }
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.

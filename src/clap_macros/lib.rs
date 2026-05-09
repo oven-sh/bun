@@ -16,7 +16,10 @@ use syn::punctuated::Punctuated;
 use syn::{LitByteStr, LitStr, Path, Token, parse_macro_input};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Parsed representation (mirrors `Param<Help>` from bun_clap)
+// Parsed representation — build-time IR; the public `Param<Help>` / `Names` /
+// `Values` / `Help` shapes live in `bun_clap` (this proc-macro crate cannot
+// depend on it without a cycle, and the public types borrow `&'static` data
+// that does not exist at macro-expansion time).
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -106,6 +109,7 @@ impl<'a> TokenizeAny<'a> {
     }
 }
 
+// local copy: proc-macro crate cannot depend on bun_string
 fn trim_left(s: &[u8]) -> &[u8] {
     let mut i = 0;
     while i < s.len() && (s[i] == b' ' || s[i] == b'\t') {

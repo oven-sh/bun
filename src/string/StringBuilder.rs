@@ -136,6 +136,33 @@ impl StringBuilder {
         &self.allocated_slice()[start..start + slice.len()]
     }
 
+    /// Copy `slice` into the reserved buffer and return a borrow of the copied
+    /// bytes with an *unbound* lifetime. Mirrors Zig's untracked `[]const u8`
+    /// return so callers may interleave appends and stash both slices (e.g.
+    /// `picohttp::Header::clone`).
+    ///
+    /// # Safety
+    /// The returned slice aliases `self.ptr` and is only valid until the
+    /// builder is dropped or `move_to_slice()` is called. Caller must keep the
+    /// builder (or the moved-out buffer) alive while the slice is in use.
+    pub unsafe fn append_raw<'a>(&mut self, slice: &[u8]) -> &'a [u8] {
+        debug_assert!(self.len + slice.len() <= self.cap); // didn't count everything
+        debug_assert!(self.ptr.is_some()); // must call allocate first
+
+        // SAFETY: `ptr` was allocated with `cap` bytes by `allocate()`; the
+        // debug_assert above guarantees `len + slice.len() <= cap`, so
+        // `[len..len+slice.len())` is in-bounds and exclusively owned here.
+        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
+        unsafe { core::ptr::copy_nonoverlapping(slice.as_ptr(), base, slice.len()) };
+        self.len += slice.len();
+
+        debug_assert!(self.len <= self.cap);
+
+        // SAFETY: `base..base+slice.len()` was just initialized above and lives
+        // for as long as `self.ptr` (heap allocation never moves).
+        unsafe { core::slice::from_raw_parts(base, slice.len()) }
+    }
+
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {
         // PORT NOTE: reshaped for borrowck — capture self.len before borrowing alloc.
         let start = self.len;

@@ -35,11 +35,9 @@ unsafe extern "C" {
     );
 }
 
-/// Opaque JSC `JSObject` cell handle. Always borrowed (`&JSObject` / `&mut JSObject`).
-#[repr(C)]
-pub struct JSObject {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque JSC `JSObject` cell handle. Always borrowed (`&JSObject` / `&mut JSObject`).
+    pub struct JSObject;
 }
 
 impl JSObject {

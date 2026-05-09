@@ -15,11 +15,9 @@ pub type LoopDataMutex = *mut c_void;
 #[cfg(not(windows))]
 pub type LoopDataMutex = u32;
 
-/// Opaque C handle from `us_internal_create_async`.
-#[repr(C)]
-pub struct us_internal_async {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque C handle from `us_internal_create_async`.
+    pub struct us_internal_async;
 }
 
 #[repr(C)]

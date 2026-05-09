@@ -62,16 +62,11 @@ fn raw(e: Errno) -> i32 {
     e.raw_os_error()
 }
 
-/// Read the calling thread's `errno`. glibc/musl spell the TLS accessor
-/// `__errno_location()`; bionic spells it `__errno()` — same contract.
+/// Read the calling thread's `errno`. Canonical target_os→symbol ladder lives
+/// in `bun_core::ffi`; kept as a local `unsafe fn` so existing call sites
+/// (`unsafe { errno() }`) keep their shape.
 #[inline(always)]
-unsafe fn errno() -> i32 {
-    // SAFETY: both accessors return a valid thread-local int*.
-    #[cfg(not(target_os = "android"))]
-    return unsafe { *libc::__errno_location() };
-    #[cfg(target_os = "android")]
-    return unsafe { *libc::__errno() };
-}
+unsafe fn errno() -> i32 { bun_core::ffi::errno() }
 
 /// EINTR-retry a rustix call. Matches the `while (true) { ...; if .INTR continue }`
 /// loop in the sys.zig Linux arms.

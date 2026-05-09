@@ -104,31 +104,17 @@ pub enum SendStatus {
     Dropped = 2,
 }
 
-/// `bun.timespec` mirror — `us_loop_run_bun_tick` takes `*const timespec`.
-/// Kept local so this crate doesn't depend on a higher tier for the layout.
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct Timespec {
-    pub sec: i64,
-    pub nsec: i64,
-}
+/// `bun.timespec` — `us_loop_run_bun_tick` takes `*const timespec`.
+pub use bun_core::Timespec;
 
 // Opaque FFI handles (Nomicon pattern) — what higher tiers reach for when the
-// real module body isn't needed. `_p: UnsafeCell<[u8; 0]>` (not bare `[u8; 0]`)
-// so that `&T` does NOT carry `readonly`/`noalias` attributes at the ABI
-// boundary — the C side mutates through these handles regardless of whether
-// Rust holds `&` or `&mut`, and a readonly attribute would license LLVM to
-// cache loads across the FFI call. With UnsafeCell the reference is
+// real module body isn't needed. See `bun_core::opaque_extern!` doc for the
+// `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
 // ABI-identical to a non-null pointer, which lets us declare value-typed shims
 // as `safe fn` and drop per-call-site `unsafe { }`.
-macro_rules! opaque {
-    ($($name:ident),+ $(,)?) => {$(
-        #[repr(C)] pub struct $name { _p: core::cell::UnsafeCell<[u8; 0]>, _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
-    )+};
-}
-opaque!(
-    us_loop_t, us_socket_context_t, us_udp_socket_t, us_udp_packet_buffer_t,
-    UpgradedDuplex, WindowsNamedPipe,
+bun_core::opaque_extern!(
+    pub us_loop_t, pub us_socket_context_t, pub us_udp_socket_t, pub us_udp_packet_buffer_t,
+    pub UpgradedDuplex, pub WindowsNamedPipe,
 );
 
 // ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────

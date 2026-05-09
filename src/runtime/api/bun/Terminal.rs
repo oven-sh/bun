@@ -724,13 +724,7 @@ pub struct OpenPtyTermios {
     pub c_ospeed: u32,
 }
 
-#[repr(C)]
-pub struct Winsize {
-    pub ws_row: u16,
-    pub ws_col: u16,
-    pub ws_xpixel: u16,
-    pub ws_ypixel: u16,
-}
+pub use bun_core::Winsize;
 
 pub type OpenPtyFn = unsafe extern "C" fn(
     amaster: *mut c_int,
@@ -821,10 +815,10 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     let mut slave_fd: c_int = -1;
 
     let winsize = Winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
+        row: rows,
+        col: cols,
+        xpixel: 0,
+        ypixel: 0,
     };
 
     // SAFETY: openpty writes to master_fd/slave_fd; name/termp are null (allowed).
@@ -1412,19 +1406,11 @@ impl Terminal {
             #[cfg(not(target_os = "macos"))]
             const TIOCSWINSZ: c_ulong = 0x5414;
 
-            #[repr(C)]
-            struct IoctlWinsize {
-                ws_row: u16,
-                ws_col: u16,
-                ws_xpixel: u16,
-                ws_ypixel: u16,
-            }
-
-            let winsize = IoctlWinsize {
-                ws_row: new_rows,
-                ws_col: new_cols,
-                ws_xpixel: 0,
-                ws_ypixel: 0,
+            let winsize = bun_core::Winsize {
+                row: new_rows,
+                col: new_cols,
+                xpixel: 0,
+                ypixel: 0,
             };
 
             // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ

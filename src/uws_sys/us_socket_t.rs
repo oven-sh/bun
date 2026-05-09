@@ -16,11 +16,7 @@ const MAX_I32: usize = i32::MAX as usize;
 ///
 /// Higher-level wrappers (`uws::SocketTCP`/`SocketTLS`) cover named pipes,
 /// upgraded duplexes, and async DNS.
-#[repr(C)]
-pub struct us_socket_t {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]

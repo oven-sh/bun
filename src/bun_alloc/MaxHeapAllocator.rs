@@ -102,7 +102,7 @@ impl MaxHeapAllocator {
 
     /// Zig: `pub fn isInstance(allocator) bool { return allocator.vtable == &vtable; }`
     pub fn is_instance(alloc: &dyn Allocator) -> bool {
-        Allocator::type_id(alloc) == core::any::TypeId::of::<MaxHeapAllocator>()
+        alloc.is::<Self>()
     }
 }
 

@@ -39,13 +39,9 @@ impl ZigStackFramePosition {
         })
     }
 
-    pub fn encode<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
-    where
-        W: ?Sized + bun_analytics::Writer,
-    {
-        writer.write_int(self.line.zero_based())?;
-        writer.write_int(self.column.zero_based())?;
-        Ok(())
+    pub fn encode(&self, writer: &mut bun_options_types::schema::Writer<'_>) {
+        writer.write_int(self.line.zero_based());
+        writer.write_int(self.column.zero_based());
     }
 }
 

@@ -412,11 +412,6 @@ impl SpawnSyncEventLoop {
         // This will only process I/O related to this subprocess
         // and will NOT interfere with the main event loop
         //
-        // PORT NOTE: `bun_core::Timespec` and `bun_uws::Timespec` are distinct
-        // nominal types but layout-identical (`#[repr(C)] {sec: i64, nsec: i64}`,
-        // both mirroring `bun.timespec`). The C ABI only sees `*const timespec`,
-        // so re-express the borrow as a `uws::Timespec` for `tick_with_timeout`.
-        let uws_ts = duration.map(|ts| uws::Timespec { sec: ts.sec, nsec: ts.nsec });
         // ALIASING: hoist the `uws_loop` pointer *before* storing `*mut Self` into `timer.data`
         // below, so that between that store and the re-entrant `on_uv_timer` callback we touch
         // *no* bytes of `*self` at all. Do NOT route the tick through `self.uws_loop_mut()` here:
@@ -439,7 +434,7 @@ impl SpawnSyncEventLoop {
         }
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` (created in `init`,
         // freed in `Drop`); `&mut self` guarantees no other safe borrow of the loop is live.
-        unsafe { (*loop_.as_ptr()).tick_with_timeout(uws_ts.as_ref()) };
+        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration) };
 
         if let Some(ts) = timeout {
             #[cfg(windows)]

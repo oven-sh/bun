@@ -1022,11 +1022,9 @@ pub fn make_typed_array_with_bytes_no_copy(
 // JSCArrayBuffer (opaque, corresponds to JSC::ArrayBuffer)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Corresponds to `JSC::ArrayBuffer`.
-#[repr(C)]
-pub struct JSCArrayBuffer {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Corresponds to `JSC::ArrayBuffer`.
+    pub struct JSCArrayBuffer;
 }
 
 // Zig: `pub const Ref = bun.ptr.ExternalShared(Self)` with

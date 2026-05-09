@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "src/opaque",
   "src/analytics",
   "src/api",
   "src/base64",
@@ -90,6 +91,7 @@ members = [
   "src/boringssl_sys",
   "src/bun_core",
   "src/bun_core_macros",
+  "src/bun_output_tags",
   "src/patch_jsc",
   "src/router",
   "src/shell_parser",
@@ -187,6 +189,7 @@ smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
 itoa = "1"
+bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }
 bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
@@ -276,6 +279,7 @@ bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
 bun_core_macros = { path = "src/bun_core_macros" }
+bun_output_tags = { path = "src/bun_output_tags" }
 bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }
 bun_shell_parser = { path = "src/shell_parser" }

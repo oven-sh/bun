@@ -73,11 +73,9 @@ macro_rules! pfmt {
 // ConsoleObject
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Opaque FFI handle for `Inspector::ScriptArguments`.
-#[repr(C)]
-pub struct ScriptArguments {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for `Inspector::ScriptArguments`.
+    pub struct ScriptArguments;
 }
 
 /// Default depth for `console.log` object inspection.

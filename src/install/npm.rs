@@ -481,16 +481,7 @@ pub mod registry {
             drop(output_buf_owned);
 
             let final_href: Box<[u8]> = if needs_normalize {
-                let mut href = Vec::new();
-                write!(
-                    &mut href,
-                    "{}://{}/{}/",
-                    bstr::BStr::new(url.display_protocol()),
-                    url.display_host(),
-                    bstr::BStr::new(strings::trim(url.pathname, b"/")),
-                )
-                .unwrap();
-                href.into_boxed_slice()
+                url.href_without_auth()
             } else {
                 // PORT NOTE: reshaped for borrowck — `url` (borrowing
                 // `registry_url`) is dead on this branch (every path that

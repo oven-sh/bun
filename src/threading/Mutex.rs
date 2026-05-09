@@ -124,7 +124,6 @@ pub type ExternImpl = OsUnfairLock;
 #[cfg(not(any(windows, target_vendor = "apple")))]
 pub type ExternImpl = u32;
 
-// TODO(port): map to the real OS thread-id helper (std.Thread.Id / getCurrentId).
 type ThreadId = u64;
 #[inline]
 fn current_thread_id() -> ThreadId {

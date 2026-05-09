@@ -122,11 +122,7 @@ pub enum ShellIteratorError {
     // under the global mimalloc allocator, so that variant is dropped.
 }
 
-impl From<ShellIteratorError> for bun_core::Error {
-    fn from(e: ShellIteratorError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ShellIteratorError);
 
 /// An argument iterator that takes a string and parses it into arguments, simulating
 /// how shells split arguments.

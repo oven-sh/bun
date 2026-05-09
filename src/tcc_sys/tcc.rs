@@ -148,20 +148,14 @@ impl Default for OutputFormat {
 
 /// Nominal type for some registered symbol. Used to force pointer-cast usage without
 /// allowing for interop with other APIs taking `*mut c_void` pointers.
-#[repr(C)]
-pub struct Symbol {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Symbol; }
 
 /// Zig: `Symbol.Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void`
 pub type SymbolCallback = unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: *const Symbol);
 
-/// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
-#[repr(C)]
-pub struct State {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
+    pub struct State;
 }
 
 /// Zig: `State.Config(ErrCtx).err` anonymous struct.

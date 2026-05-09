@@ -1,5 +1,5 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_core::StringBuilder;
+use bun_string::StringBuilder;
 use bun_sql::postgres::protocol::error_response::ErrorResponse;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 use bun_string::String;

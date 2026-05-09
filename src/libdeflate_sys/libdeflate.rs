@@ -79,12 +79,10 @@ pub fn load() {
     LOADED_ONCE.call_once(load_once);
 }
 
-/// Opaque libdeflate compressor handle. `UnsafeCell` makes the type `!Freeze`
-/// so a `&Compressor` does not assert immutability of the C-owned state.
-#[repr(C)]
-pub struct Compressor {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque libdeflate compressor handle. `UnsafeCell` makes the type `!Freeze`
+    /// so a `&Compressor` does not assert immutability of the C-owned state.
+    pub struct Compressor;
 }
 
 impl Compressor {
@@ -184,11 +182,9 @@ impl Compressor {
     }
 }
 
-/// Opaque libdeflate decompressor handle. `UnsafeCell` makes the type `!Freeze`.
-#[repr(C)]
-pub struct Decompressor {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque libdeflate decompressor handle. `UnsafeCell` makes the type `!Freeze`.
+    pub struct Decompressor;
 }
 
 impl Decompressor {

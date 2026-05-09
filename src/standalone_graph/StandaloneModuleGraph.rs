@@ -22,11 +22,9 @@ use bun_paths::fs as bun_fs;
 
 // TODO(b2-blocked): bun_webcore::Blob — `cached_blob` is only ever set from
 // `bun_runtime` (higher tier); model as opaque erased pointer here.
-/// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
-#[repr(C)]
-pub struct Blob {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
+    pub struct Blob;
 }
 
 pub struct StandaloneModuleGraph {

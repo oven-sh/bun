@@ -12,11 +12,7 @@ pub enum EncodeError {
     OutOfMemory,
 }
 
-impl From<EncodeError> for bun_core::Error {
-    fn from(e: EncodeError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(EncodeError);
 
 impl PercentEncoding {
     /// returns true if c is a hexadecimal digit

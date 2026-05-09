@@ -213,54 +213,17 @@ impl<Id> ComptimeClap<Id> {
     // `converted_params` const. Rust takes the slice explicitly so it can be called
     // without a parsed instance; a Phase-B proc-macro can restore the const-eval form.
     pub fn has_flag(params: &[Param<Id>], name: &[u8]) -> bool {
-        for param in params {
-            if let Some(s) = param.names.short {
-                // Zig: mem.eql(u8, name, "-" ++ [_]u8{s})
-                if name.len() == 2 && name[0] == b'-' && name[1] == s {
-                    return true;
-                }
-            }
-            if let Some(l) = param.names.long {
-                // Zig: mem.eql(u8, name, "--" ++ l)
-                if name.len() >= 2 && &name[..2] == b"--" && &name[2..] == l {
-                    return true;
-                }
-            }
-            // Check aliases
-            for alias in param.names.long_aliases {
-                if name.len() >= 2 && &name[..2] == b"--" && &name[2..] == *alias {
-                    return true;
-                }
-            }
-        }
-
-        false
+        params.iter().any(|p| p.names.matches(name))
     }
 
     // TODO(port): Zig `findParam` is comptime-only and emits `@compileError` on miss.
     // Phase A does a runtime scan and panics on miss; the Phase-B proc-macro should
     // resolve names at compile time.
     fn find_param(&self, name: &[u8]) -> &Param<usize> {
-        for param in &self.converted_params {
-            if let Some(s) = param.names.short {
-                if name.len() == 2 && name[0] == b'-' && name[1] == s {
-                    return param;
-                }
-            }
-            if let Some(l) = param.names.long {
-                if name.len() >= 2 && &name[..2] == b"--" && &name[2..] == l {
-                    return param;
-                }
-            }
-            // Check aliases
-            for alias in param.names.long_aliases {
-                if name.len() >= 2 && &name[..2] == b"--" && &name[2..] == *alias {
-                    return param;
-                }
-            }
-        }
-
-        unreachable!("{} is not a parameter.", bstr::BStr::new(name));
+        self.converted_params
+            .iter()
+            .find(|p| p.names.matches(name))
+            .unwrap_or_else(|| unreachable!("{} is not a parameter.", bstr::BStr::new(name)))
     }
 }
 

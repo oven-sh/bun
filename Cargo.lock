@@ -141,6 +141,7 @@ dependencies = [
  "bstr",
  "bumpalo",
  "bun_mimalloc_sys",
+ "bun_opaque",
  "bun_wyhash",
  "const_format",
  "enum-map",
@@ -260,6 +261,8 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_core",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -296,6 +299,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -333,6 +337,7 @@ dependencies = [
  "bun_logger",
  "bun_lolhtml_sys",
  "bun_md",
+ "bun_opaque",
  "bun_options_types",
  "bun_paths",
  "bun_perf",
@@ -371,6 +376,7 @@ dependencies = [
  "bun_io",
  "bun_jsc",
  "bun_logger",
+ "bun_opaque",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
@@ -397,6 +403,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
+ "bun_api",
  "bun_bundler",
  "bun_clap",
  "bun_collections",
@@ -431,6 +438,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -511,7 +519,11 @@ dependencies = [
  "bun_alloc",
  "bun_core_macros",
  "bun_dispatch",
+ "bun_hash",
+ "bun_opaque",
+ "bun_output_tags",
  "bun_simdutf_sys",
+ "bun_windows_sys",
  "const_format",
  "libc",
  "parking_lot",
@@ -523,6 +535,7 @@ dependencies = [
 name = "bun_core_macros"
 version = "0.0.0"
 dependencies = [
+ "bun_output_tags",
  "proc-macro2",
  "quote",
  "syn",
@@ -595,6 +608,7 @@ dependencies = [
  "bun_logger",
  "bun_options_types",
  "bun_paths",
+ "bun_ptr",
  "bun_string",
  "bun_wyhash",
  "const_format",
@@ -631,6 +645,7 @@ dependencies = [
  "bun_jsc",
  "bun_logger",
  "bun_options_types",
+ "bun_ptr",
  "bun_string",
  "const_format",
  "enum-map",
@@ -874,6 +889,7 @@ dependencies = [
  "bun_io",
  "bun_jsc",
  "bun_libdeflate_sys",
+ "bun_opaque",
  "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
@@ -1091,6 +1107,7 @@ dependencies = [
  "bun_core",
  "bun_dispatch",
  "bun_errno",
+ "bun_opaque",
  "bun_paths",
  "bun_ptr",
  "bun_spawn_sys",
@@ -1247,6 +1264,7 @@ dependencies = [
  "bun_js_printer",
  "bun_jsc_macros",
  "bun_logger",
+ "bun_opaque",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
@@ -1294,6 +1312,7 @@ dependencies = [
  "bstr",
  "bun_collections",
  "bun_core",
+ "bun_opaque",
  "bun_paths",
  "bun_string",
  "bun_sys",
@@ -1316,6 +1335,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -1333,6 +1353,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -1350,6 +1371,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_windows_sys",
+ "bun_wyhash",
  "const_format",
  "enum-map",
  "enumset",
@@ -1369,6 +1391,7 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
+ "bun_paths",
  "bun_string",
  "bun_sys",
  "bun_wyhash",
@@ -1409,6 +1432,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_core",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -1466,6 +1490,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -1491,6 +1516,10 @@ dependencies = [
  "scopeguard",
  "strum",
 ]
+
+[[package]]
+name = "bun_opaque"
+version = "0.0.0"
 
 [[package]]
 name = "bun_options_types"
@@ -1527,6 +1556,10 @@ version = "0.0.0"
 dependencies = [
  "bun_core",
 ]
+
+[[package]]
+name = "bun_output_tags"
+version = "0.0.0"
 
 [[package]]
 name = "bun_patch"
@@ -1655,6 +1688,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -1826,6 +1860,7 @@ dependencies = [
  "bun_logger_jsc",
  "bun_lolhtml_sys",
  "bun_md",
+ "bun_opaque",
  "bun_options_types",
  "bun_output",
  "bun_patch_jsc",
@@ -1971,6 +2006,7 @@ dependencies = [
  "bun_boringssl",
  "bun_boringssl_sys",
  "bun_core",
+ "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
@@ -2035,6 +2071,7 @@ dependencies = [
  "bun_interchange",
  "bun_io",
  "bun_logger",
+ "bun_opaque",
  "bun_paths",
  "bun_ptr",
  "bun_semver",
@@ -2065,6 +2102,7 @@ dependencies = [
  "bun_io",
  "bun_jsc",
  "bun_logger",
+ "bun_opaque",
  "bun_options_types",
  "bun_paths",
  "bun_sourcemap",
@@ -2091,6 +2129,7 @@ dependencies = [
  "bun_dispatch",
  "bun_event_loop",
  "bun_io",
+ "bun_opaque",
  "bun_output",
  "bun_ptr",
  "bun_spawn_sys",
@@ -2153,6 +2192,7 @@ dependencies = [
  "bun_event_loop",
  "bun_io",
  "bun_jsc",
+ "bun_opaque",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sql",
@@ -2188,6 +2228,7 @@ dependencies = [
  "bun_js_parser",
  "bun_libarchive",
  "bun_logger",
+ "bun_opaque",
  "bun_options_types",
  "bun_paths",
  "bun_perf",
@@ -2239,6 +2280,7 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_libuv_sys",
+ "bun_opaque",
  "bun_output",
  "bun_paths",
  "bun_string",
@@ -2273,6 +2315,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
+ "bun_opaque",
  "bun_ptr",
  "const_format",
  "enum-map",
@@ -2395,6 +2438,7 @@ dependencies = [
  "bun_boringssl",
  "bun_core",
  "bun_jsc_macros",
+ "bun_opaque",
  "bun_string",
  "bun_uws_sys",
  "const_format",
@@ -2418,6 +2462,7 @@ dependencies = [
  "bun_errno",
  "bun_http_types",
  "bun_libuv_sys",
+ "bun_opaque",
  "bun_windows_sys",
  "const_format",
  "enum-map",
@@ -2565,6 +2610,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_core",
+ "bun_opaque",
  "bun_string",
  "const_format",
  "enum-map",

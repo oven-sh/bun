@@ -643,7 +643,7 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
         // bounds-check + memcpy with no realloc — same write traffic as the
         // previous in-place `*[4]u8` cast without the raw-pointer view.
         let mut four = [0u8; 4];
-        let _ = encode_wtf8_rune_t::<u32>(&mut four, replacement.code_point);
+        let _ = bun_core::strings::encode_wtf8_rune(&mut four, replacement.code_point);
         list.extend_from_slice(&four[..count]);
     }
 
@@ -661,13 +661,7 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     Ok(None)
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct EncodeIntoResult {
-    /// The number of u16s we read from the utf-16 buffer
-    pub read: u32,
-    /// The number of u8s we wrote to the utf-8 buffer
-    pub written: u32,
-}
+pub use bun_core::strings::EncodeIntoResult;
 
 pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> {
     let list = Vec::with_capacity(latin1_.len());
@@ -961,153 +955,11 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     convert_utf8_bytes_into_utf16_with_length(&sequence, sequence_length, bytes.len())
 }
 
-pub(super) fn copy_latin1_into_utf8(buf_: &mut [u8], latin1_: &[u8]) -> EncodeIntoResult {
-    copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf_, latin1_)
-}
-
-pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
-    buf_: &mut [u8],
-    latin1_: &[u8],
-) -> EncodeIntoResult {
-    let buf_total = buf_.len();
-    let latin1_total = latin1_.len();
-    let mut buf: &mut [u8] = buf_;
-    let mut latin1: &[u8] = latin1_;
-
-    bun_core::scoped_log!(strings, "latin1 encode {} -> {}", buf_total, latin1_total);
-
-    while !buf.is_empty() && !latin1.is_empty() {
-        'inner: {
-            // PERF(port): Zig used @Vector(ascii_vector_size, u8) + @reduce(.Max). See note in
-            // allocate_latin1_into_utf8_with_list — we emulate with a scalar high-bit scan.
-            let mut remaining_runs = buf.len().min(latin1.len()) / ASCII_VECTOR_SIZE;
-            while remaining_runs > 0 {
-                remaining_runs -= 1;
-                let chunk = &latin1[..ASCII_VECTOR_SIZE];
-                let mut has_high = false;
-                for &b in chunk {
-                    if b > 127 {
-                        has_high = true;
-                        break;
-                    }
-                }
-
-                if has_high {
-                    if STOP {
-                        return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
-                    }
-
-                    // zig or LLVM doesn't do @ctz nicely with SIMD
-                    if ASCII_VECTOR_SIZE >= 8 {
-                        const SIZE: usize = core::mem::size_of::<u64>();
-
-                        {
-                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                            // https://dotat.at/@/2022-06-27-tolower-swar.html
-                            let mask = bytes & 0x8080808080808080;
-
-                            buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-
-                            if mask > 0 {
-                                let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                                debug_assert!(latin1[first_set_byte] >= 127);
-
-                                buf = &mut buf[first_set_byte..];
-                                latin1 = &latin1[first_set_byte..];
-                                break 'inner;
-                            }
-
-                            latin1 = &latin1[SIZE..];
-                            buf = &mut buf[SIZE..];
-                        }
-
-                        if ASCII_VECTOR_SIZE >= 16 {
-                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                            // https://dotat.at/@/2022-06-27-tolower-swar.html
-                            let mask = bytes & 0x8080808080808080;
-
-                            buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-
-                            debug_assert!(mask > 0);
-                            let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                            debug_assert!(latin1[first_set_byte] >= 127);
-
-                            buf = &mut buf[first_set_byte..];
-                            latin1 = &latin1[first_set_byte..];
-                            break 'inner;
-                        }
-                    }
-                    unreachable!();
-                }
-
-                buf[..ASCII_VECTOR_SIZE].copy_from_slice(chunk);
-                latin1 = &latin1[ASCII_VECTOR_SIZE..];
-                buf = &mut buf[ASCII_VECTOR_SIZE..];
-            }
-
-            {
-                const SIZE: usize = core::mem::size_of::<u64>();
-                while buf.len().min(latin1.len()) >= SIZE {
-                    let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                    buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-
-                    // https://dotat.at/@/2022-06-27-tolower-swar.html
-
-                    let mask = bytes & 0x8080808080808080;
-
-                    if mask > 0 {
-                        let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                        if STOP {
-                            return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
-                        }
-                        debug_assert!(latin1[first_set_byte] >= 127);
-
-                        buf = &mut buf[first_set_byte..];
-                        latin1 = &latin1[first_set_byte..];
-
-                        break 'inner;
-                    }
-
-                    latin1 = &latin1[SIZE..];
-                    buf = &mut buf[SIZE..];
-                }
-            }
-
-            {
-                // PORT NOTE: reshaped for borrowck — Zig advanced raw `.ptr`/`.len` independently.
-                let limit = buf.len().min(latin1.len());
-                debug_assert!(limit < 8);
-                let mut k = 0usize;
-                while k < limit && latin1[k] <= 127 {
-                    buf[k] = latin1[k];
-                    k += 1;
-                }
-                buf = &mut buf[k..];
-                latin1 = &latin1[k..];
-            }
-        }
-
-        if !latin1.is_empty() {
-            if buf.len() >= 2 {
-                if STOP {
-                    return EncodeIntoResult { written: u32::MAX, read: u32::MAX };
-                }
-
-                let two = latin1_to_codepoint_bytes_assume_not_ascii(u32::from(latin1[0]));
-                buf[..2].copy_from_slice(&two);
-                latin1 = &latin1[1..];
-                buf = &mut buf[2..];
-            } else {
-                break;
-            }
-        }
-    }
-
-    EncodeIntoResult {
-        written: u32::try_from(buf_total - buf.len()).unwrap(),
-        read: u32::try_from(latin1_total - latin1.len()).unwrap(),
-    }
-}
+// SWAR body moved down into `bun_core::strings` (T0) so the canonical
+// `copy_latin1_into_utf8` is the spec-faithful fast path. Re-export here so
+// `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in
+// `immutable.rs` keeps resolving.
+pub use bun_core::strings::{copy_latin1_into_utf8, copy_latin1_into_utf8_stop_on_non_ascii};
 
 pub fn replace_latin1_with_utf8(buf_: &mut [u8]) {
     let mut latin1: &mut [u8] = buf_;
@@ -1989,7 +1841,7 @@ static CP1252_TO_UTF16_CONVERSION_TABLE: [u16; 256] = [
 
 pub(super) fn latin1_to_codepoint_bytes_assume_not_ascii(char: u32) -> [u8; 2] {
     let mut bytes = [0u8; 4];
-    let _ = encode_wtf8_rune(&mut bytes, i32::try_from(char).expect("int cast"));
+    let _ = bun_core::strings::encode_wtf8_rune(&mut bytes, char);
     [bytes[0], bytes[1]]
 }
 
@@ -1997,12 +1849,10 @@ pub(super) fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
     CP1252_TO_UTF16_CONVERSION_TABLE[(char as u8) as usize]
 }
 
-/// Copy a UTF-16 string as UTF-8 into `buf`
-///
-/// This may not encode everything if `buf` is not big enough.
-pub(super) fn copy_utf16_into_utf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
-    copy_utf16_into_utf8_impl::<false>(buf, utf16)
-}
+// `copy_utf16_into_utf8` (the non-generic wrapper) lives canonically in
+// `bun_core::strings`; re-exported at `crate::immutable` (line ~391). The
+// `_impl<const ALLOW_TRUNCATED>` variant below is what hot paths
+// (encoding.rs, Sink.rs, websocket_client.rs) call directly.
 
 /// See comment on `copy_utf16_into_utf8_with_buffer_impl` on what `allow_truncated_utf8_sequence` should do
 pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
@@ -2154,7 +2004,7 @@ pub(super) fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_S
         // `&mut [u8; 4]` would assert 4 valid bytes even when remaining.len() < 4,
         // so encode into a stack buffer and copy the `width` bytes that were written.
         let mut four = [0u8; 4];
-        let _ = encode_wtf8_rune_t::<u32>(&mut four, replacement.code_point);
+        let _ = bun_core::strings::encode_wtf8_rune(&mut four, replacement.code_point);
         remaining[..width].copy_from_slice(&four[..width]);
         remaining = &mut remaining[width..];
     }
@@ -2247,7 +2097,7 @@ pub(super) fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
             }
         }
 
-        let width = encode_wtf8_rune(&mut temp, r1) as usize;
+        let width = bun_core::strings::encode_wtf8_rune(&mut temp, r1 as u32);
         if j + width > str.len() {
             return false;
         }
@@ -2291,40 +2141,6 @@ pub(super) const fn encode_utf8_comptime<const CP: u32>() -> &'static [u8] {
     }
 }
 
-// This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
-// WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
-pub(super) fn encode_wtf8_rune(p: &mut [u8; 4], r: i32) -> U3Fast {
-    encode_wtf8_rune_t::<u32>(p, u32::try_from(r).expect("int cast"))
-}
-
-pub(super) fn encode_wtf8_rune_t<R: Into<u32> + Copy>(p: &mut [u8; 4], r: R) -> U3Fast {
-    let r: u32 = r.into();
-    match r {
-        0..=0x7F => {
-            p[0] = u8::try_from(r).expect("int cast");
-            1
-        }
-        0x80..=0x7FF => {
-            p[0] = (0xC0 | (r >> 6)) as u8;
-            p[1] = (0x80 | (r & 0x3F)) as u8;
-            2
-        }
-        0x800..=0xFFFF => {
-            p[0] = (0xE0 | (r >> 12)) as u8;
-            p[1] = (0x80 | ((r >> 6) & 0x3F)) as u8;
-            p[2] = (0x80 | (r & 0x3F)) as u8;
-            3
-        }
-        _ => {
-            p[0] = (0xF0 | (r >> 18)) as u8;
-            p[1] = (0x80 | ((r >> 12) & 0x3F)) as u8;
-            p[2] = (0x80 | ((r >> 6) & 0x3F)) as u8;
-            p[3] = (0x80 | (r & 0x3F)) as u8;
-            4
-        }
-    }
-}
-
 pub fn wtf8_sequence(code_point: u32) -> [u8; 4] {
     match code_point {
         0..=0x7f => [u8::try_from(code_point).expect("int cast"), 0, 0, 0],
@@ -2349,23 +2165,7 @@ pub fn wtf8_sequence(code_point: u32) -> [u8; 4] {
     }
 }
 
-#[inline]
-pub(super) fn wtf8_byte_sequence_length(first_byte: u8) -> u8 {
-    match first_byte {
-        0..=0x7f => 1,
-        _ => {
-            if (first_byte & 0xE0) == 0xC0 {
-                2
-            } else if (first_byte & 0xF0) == 0xE0 {
-                3
-            } else if (first_byte & 0xF8) == 0xF0 {
-                4
-            } else {
-                1
-            }
-        }
-    }
-}
+pub(super) use super::wtf8_byte_sequence_length;
 
 /// 0 == invalid
 #[inline]

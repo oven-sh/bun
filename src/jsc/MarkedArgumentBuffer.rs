@@ -5,11 +5,7 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 /// Opaque FFI handle for JSC's `MarkedArgumentBuffer` (a GC-rooted argument list).
 /// Nomicon extern-type pattern: zero-sized, `!Send + !Sync + !Unpin`.
-#[repr(C)]
-pub struct MarkedArgumentBuffer {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct MarkedArgumentBuffer; }
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {

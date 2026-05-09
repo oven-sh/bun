@@ -3,11 +3,9 @@ use core::ptr::NonNull;
 use bun_string::String as BunString;
 use bun_options_types::Format;
 
-/// Opaque FFI handle to JSC cached bytecode (a C++ `RefPtr<CachedBytecode>` payload).
-#[repr(C)]
-pub struct CachedBytecode {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle to JSC cached bytecode (a C++ `RefPtr<CachedBytecode>` payload).
+    pub struct CachedBytecode;
 }
 
 unsafe extern "C" {
@@ -137,7 +135,7 @@ impl CachedBytecode {
     /// via the `Allocator::type_id()` hook (the documented Rust mapping for
     /// Zig vtable-pointer equality checks).
     pub fn is_instance(alloc: &dyn bun_alloc::Allocator) -> bool {
-        bun_alloc::Allocator::type_id(alloc) == core::any::TypeId::of::<CachedBytecode>()
+        alloc.is::<Self>()
     }
 }
 

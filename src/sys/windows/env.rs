@@ -77,10 +77,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
 
     let mut envp: Vec<*mut c_char> = Vec::with_capacity(num_vars + 1);
     loop {
-        let str_len = wtf8_buf[len..]
-            .iter()
-            .position(|&b| b == 0)
-            .expect("unreachable");
+        let str_len = bun_str::slice_to_nul(&wtf8_buf[len..]).len();
         // PORT NOTE: Zig used `defer len += str_len + 1;` which also runs on `break`.
         if str_len == 0 {
             len += str_len + 1; // each string is null-terminated

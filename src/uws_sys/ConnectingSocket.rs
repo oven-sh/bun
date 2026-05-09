@@ -7,11 +7,7 @@ use crate::{Loop, SocketGroup, SocketKind};
 /// `connect()` / happy-eyeballs). No I/O is possible yet; on success the loop
 /// promotes it to a `us_socket_t` and fires `onOpen`, on failure
 /// `onConnectingError`.
-#[repr(C)]
-pub struct ConnectingSocket {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct ConnectingSocket; }
 
 impl ConnectingSocket {
     pub fn close(&mut self) {

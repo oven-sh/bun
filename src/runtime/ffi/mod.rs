@@ -113,11 +113,9 @@ mod dom_call_slowpath {
 // as an opaque pointer so `Function`/`FFI` field shapes are real.
 #[allow(non_snake_case)]
 mod TCC {
-    /// `TCCState*` — Nomicon opaque-FFI pattern.
-    #[repr(C)]
-    pub struct State {
-        _p: core::cell::UnsafeCell<[u8; 0]>,
-        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    bun_opaque::opaque_ffi! {
+        /// `TCCState*` — Nomicon opaque-FFI pattern.
+        pub struct State;
     }
     // Raw extern so the handle can be freed even while the method-ful
     // `bun_tcc_sys::State` API stays gated.

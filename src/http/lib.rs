@@ -3242,7 +3242,7 @@ impl<'a> HTTPClient<'a> {
             let mut builder = picohttp::StringBuilder::default();
             response.count(&mut builder);
             builder.count(self.url.href);
-            builder.allocate();
+            let _ = builder.allocate();
             // headers_buf is owned by the cloned_response (aka cloned_response.headers)
             // PORT NOTE: `Response::clone` ties its return lifetime to
             // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
@@ -3257,7 +3257,10 @@ impl<'a> HTTPClient<'a> {
             // we clean the temporary response since cloned_metadata is now the owner
             self.state.pending_response = None;
 
-            let href = bun_ptr::RawSlice::new(builder.append(self.url.href));
+            // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
+            // buffer is transferred to `owned_buf` immediately below and stored
+            // alongside `href` in `HTTPResponseMetadata`.
+            let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
             // Transfer the single backing allocation out of the builder
             // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
             let cap = builder.cap;

@@ -178,11 +178,9 @@ impl Drop for Optional {
     }
 }
 
-/// Opaque FFI handle. Backed by a `JSC::JSValue`-sized HandleSlot; see Strong.cpp.
-#[repr(C)]
-pub struct Impl {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle. Backed by a `JSC::JSValue`-sized HandleSlot; see Strong.cpp.
+    pub struct Impl;
 }
 
 impl Impl {

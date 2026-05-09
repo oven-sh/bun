@@ -246,11 +246,7 @@ impl<'a> Drop for JSPropertyIterator<'a> {
 }
 
 // Nomicon opaque-FFI pattern: !Send + !Sync + !Unpin
-#[repr(C)]
-pub struct JSPropertyIteratorImpl {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct JSPropertyIteratorImpl; }
 
 impl JSPropertyIteratorImpl {
     pub fn init(

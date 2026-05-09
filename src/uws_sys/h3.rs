@@ -15,11 +15,7 @@ use crate::SocketAddress;
 // ListenSocket
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct ListenSocket {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct ListenSocket; }
 
 impl ListenSocket {
     pub fn close(&mut self) {
@@ -48,11 +44,7 @@ impl ListenSocket {
 // Request
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct Request {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Request; }
 
 impl Request {
     pub fn is_ancient(&self) -> bool {
@@ -139,11 +131,7 @@ impl Request {
 // Response
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct Response {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Response; }
 
 impl Response {
     pub fn end(&mut self, data: &[u8], close_connection: bool) {
@@ -377,11 +365,7 @@ impl Response {
 // App
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct App {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct App; }
 
 #[derive(Copy, Clone)]
 enum RouteKind {

@@ -5,7 +5,7 @@ use bun_alloc::ArenaVecExt as _;
 use std::io::Write as _;
 
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
-use bun_bundler::options::{self, Loader, PackagesOption, SourceMapOption, Target};
+use bun_bundler::options::{self, Loader, PackagesOption, SourceMapOption};
 use bun_bundler::{self as Transpiler};
 use bun_bundler::transpiler::{MacroJSCtx, ParseResult, ParseOptions};
 use bun_core::Error;
@@ -131,14 +131,7 @@ impl Default for Config {
 // `transpiler-utf16-loader.test.ts`.
 // ──────────────────────────────────────────────────────────────────────────
 
-use bun_bundler_jsc::options_jsc::loader_from_js;
-
-fn target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Target>> {
-    if value.is_undefined_or_null() {
-        return Ok(None);
-    }
-    bun_bundler_jsc::options_jsc::target_from_js(global, value)
-}
+use bun_bundler_jsc::options_jsc::{loader_from_js, target_from_js};
 
 fn source_map_option_from_js(
     global: &JSGlobalObject,

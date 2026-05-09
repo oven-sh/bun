@@ -3,6 +3,8 @@ use std::sync::LazyLock;
 
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
+pub use zig_base64::STANDARD_ALPHABET_CHARS;
+
 // ASCII control codes used in the ignore set below.
 const VT: u8 = 0x0B; // std.ascii.control_code.vt
 const FF: u8 = 0x0C; // std.ascii.control_code.ff
@@ -47,11 +49,7 @@ pub enum DecodeAllocError {
     #[error("DecodingFailed")]
     DecodingFailed,
 }
-impl From<DecodeAllocError> for bun_core::Error {
-    fn from(e: DecodeAllocError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(DecodeAllocError);
 
 pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     // TODO(port): narrow error set
@@ -64,9 +62,7 @@ pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     Ok(dest)
 }
 
-pub fn encode(destination: &mut [u8], source: &[u8]) -> usize {
-    simdutf::base64::encode(source, destination, false)
-}
+pub use bun_core::base64::encode;
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> { // B-1: was Vec<u8>
     // TODO(port): narrow error set (Zig was `!bun.Vec<u8>`; OOM now aborts)
@@ -112,12 +108,14 @@ pub fn decode_len(source: &[u8]) -> usize {
     }
 }
 
-pub fn encode_len(source: &[u8]) -> usize {
+#[inline]
+pub const fn encode_len(source: &[u8]) -> usize {
     encode_len_from_size(source.len())
 }
 
-pub fn encode_len_from_size(source: usize) -> usize {
-    zig_base64::STANDARD.encoder.calc_size(source)
+#[inline]
+pub const fn encode_len_from_size(source: usize) -> usize {
+    bun_core::base64::standard_encoder_calc_size(source)
 }
 
 pub fn url_safe_encode_len(source: &[u8]) -> usize {
@@ -187,7 +185,7 @@ pub mod vlq {
         pub const ZERO: VLQ = VLQ_LOOKUP_TABLE[0];
 
         #[inline]
-        pub fn encode(value: i32) -> VLQ {
+        pub const fn encode(value: i32) -> VLQ {
             if value >= 0 && value <= 255 {
                 VLQ_LOOKUP_TABLE[value as usize]
             } else {
@@ -198,7 +196,7 @@ pub mod vlq {
 
     // Module-level alias so `bun_base64::vlq::encode(..)` mirrors the Zig file-scope fn.
     #[inline]
-    pub fn encode(value: i32) -> VLQ {
+    pub const fn encode(value: i32) -> VLQ {
         VLQ::encode(value)
     }
 
@@ -268,7 +266,7 @@ pub mod vlq {
         pub start: usize,
     }
 
-    const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const BASE64: &[u8; 64] = &crate::zig_base64::STANDARD_ALPHABET_CHARS;
 
     /// `std.math.maxInt(u7)` — Rust has no native u7.
     const U7_MAX: u8 = 127;
@@ -499,6 +497,36 @@ pub mod zig_base64 {
                 out_idx += 1;
             }
             out_idx
+        }
+
+        /// Streaming variant of [`Self::encode`] that writes into a `core::fmt::Write` sink
+        /// instead of a pre-sized `&mut [u8]`. Same 6-bit accumulator algorithm; emits the
+        /// pad char (if configured) at the tail.
+        pub fn encode_to_fmt(&self, source: &[u8], w: &mut impl core::fmt::Write) -> core::fmt::Result {
+            // PORT NOTE: Zig used u12/u4; Rust uses u16/u8 with explicit masking.
+            let mut acc: u16 = 0;
+            let mut acc_len: u8 = 0;
+            let mut out_idx: usize = 0;
+            for &v in source {
+                acc = (acc << 8) + (v as u16);
+                acc_len += 8;
+                while acc_len >= 6 {
+                    acc_len -= 6;
+                    w.write_char(self.alphabet_chars[((acc >> acc_len) & 0x3F) as usize] as char)?;
+                    out_idx += 1;
+                }
+            }
+            if acc_len > 0 {
+                w.write_char(self.alphabet_chars[((acc << (6 - acc_len)) & 0x3F) as usize] as char)?;
+                out_idx += 1;
+            }
+            if let Some(pad_char) = self.pad_char {
+                let out_len = self.calc_size(source.len());
+                for _ in out_idx..out_len {
+                    w.write_char(pad_char as char)?;
+                }
+            }
+            Ok(())
         }
     }
 

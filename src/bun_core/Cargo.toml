@@ -13,6 +13,7 @@ path = "lib.rs"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
 
 [dependencies]
+bun_opaque.workspace = true
 parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true
@@ -20,6 +21,11 @@ bstr.workspace = true
 const_format.workspace = true
 libc.workspace = true
 bun_alloc.workspace = true
+bun_hash.workspace = true
 bun_dispatch.workspace = true
 bun_simdutf_sys.workspace = true
 bun_core_macros.workspace = true
+bun_output_tags.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_windows_sys.workspace = true

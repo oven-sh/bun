@@ -442,333 +442,36 @@ pub mod fs {
         }
     }
 
-    // ── PathName ─────────────────────────────────────────────────────────
+    // ── PathName / Path ──────────────────────────────────────────────────
+    // CANONICAL: re-exported from `bun_paths::fs` (D090). The struct defs,
+    // `init`/`is_file`/`source_dir`/etc, and `Default`/`Clone`/`Copy` derives
+    // live there; only resolver-tier methods (those needing `FilenameStore`,
+    // `bun_wyhash`, `bun_options_types`) remain here as an extension trait.
+    pub use bun_paths::fs::{Path, PathName};
 
-    /// Port of `PathName` in `fs.zig`. Lifetime-generic over the input path
-    /// (Zig used implicit borrow; Phase-A draft transmuted to `'static`).
-    // `#[repr(C)]`: field-identical mirror of `bun_logger::fs::PathName` /
-    // `bun_paths::fs::PathName`; `bun_bundler::bundle_v2` bit-casts between
-    // them pending unification, so layout must be pinned.
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    pub struct PathName<'a> {
-        pub base: &'a [u8],
-        pub dir: &'a [u8],
-        /// includes the leading .
-        /// extensionless files report ""
-        pub ext: &'a [u8],
-        pub filename: &'a [u8],
+    /// Resolver-tier `fs.zig:Path` methods that pull deps `bun_paths` can't
+    /// reach (`FilenameStore`/`DirnameStore`, `bun_wyhash`, `bun_options_types`,
+    /// `bun_string`). Import this trait to call `.loader()` / `.dupe_alloc()` /
+    /// `.hash_key()` on a `Path`.
+    pub trait PathResolverExt<'a> {
+        fn dupe_alloc(&self) -> Result<Path<'static>, bun_core::Error>;
+        fn dupe_alloc_fix_pretty(&self) -> Result<Path<'static>, bun_core::Error>;
+        fn hash_key(&self) -> u64;
+        fn hash_for_kit(&self) -> u64;
+        fn package_name(&self) -> Option<&[u8]>;
+        fn loader(
+            &self,
+            loaders: &bun_options_types::BundleEnums::LoaderHashTable,
+        ) -> Option<bun_options_types::BundleEnums::Loader>;
     }
 
-    #[inline]
-    fn last_index_of_char(s: &[u8], c: u8) -> Option<usize> {
-        s.iter().rposition(|&b| b == c)
-    }
-
-    impl<'a> PathName<'a> {
-        pub fn find_extname(path_: &[u8]) -> &[u8] {
-            let mut start: usize = 0;
-            if let Some(i) = last_index_of_sep(path_) {
-                start = i + 1;
-            }
-            let base = &path_[start..];
-            if let Some(dot) = last_index_of_char(base, b'.') {
-                if dot > 0 {
-                    return &base[dot..];
-                }
-            }
-            b""
-        }
-
-        pub fn ext_without_leading_dot(&self) -> &'a [u8] {
-            if !self.ext.is_empty() && self.ext[0] == b'.' {
-                &self.ext[1..]
-            } else {
-                self.ext
-            }
-        }
-
-        pub fn non_unique_name_string_base(&self) -> &'a [u8] {
-            // /bar/foo/index.js -> foo
-            if !self.dir.is_empty() && self.base == b"index" {
-                // "/index" -> "index"
-                return PathName::init(self.dir).base;
-            }
-
-            if cfg!(debug_assertions) {
-                debug_assert!(!bun_core::strings::includes(self.base, b"/"));
-            }
-
-            // /bar/foo.js -> foo
-            self.base
-        }
-
-        pub fn dir_or_dot(&self) -> &'a [u8] {
-            if self.dir.is_empty() {
-                return b".";
-            }
-            self.dir
-        }
-
-        #[inline]
-        pub fn dir_with_trailing_slash(&self) -> &'a [u8] {
-            // The three strings basically always point to the same underlying ptr
-            // so if dir does not have a trailing slash, but is spaced one apart from the basename
-            // we can assume there is a trailing slash there
-            // so we extend the original slice's length by one
-            if self.dir.is_empty() {
-                return b"./";
-            }
-            let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
-                && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
-                as usize;
-            // SAFETY: when extend==1, dir.ptr[dir.len] is the separator byte preceding base
-            // (same allocation — both borrow the original `path_` passed to `init`).
-            unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
-        }
-
-        pub fn init(path_: &'a [u8]) -> PathName<'a> {
-            #[cfg(windows)]
-            if cfg!(debug_assertions) {
-                // This path is likely incorrect. I think it may be *possible*
-                // but it is almost entirely certainly a bug.
-                debug_assert!(!path_.starts_with(b"/:/"));
-                debug_assert!(!path_.starts_with(b"\\:\\"));
-            }
-
-            let mut path = path_;
-            let mut base = path;
-            let ext: &[u8];
-            let mut dir = path;
-            let mut is_absolute = true;
-            let has_disk_designator = path.len() > 2
-                && path[1] == b':'
-                && matches!(path[0], b'a'..=b'z' | b'A'..=b'Z')
-                && is_sep_any(path[2]);
-            if has_disk_designator {
-                path = &path[2..];
-            }
-
-            while let Some(i) = last_index_of_sep(path) {
-                // Stop if we found a non-trailing slash
-                if i + 1 != path.len() && path.len() > i + 1 {
-                    base = &path[i + 1..];
-                    dir = &path[0..i];
-                    is_absolute = false;
-                    break;
-                }
-
-                // Ignore trailing slashes
-                path = &path[0..i];
-            }
-
-            // Strip off the extension
-            if let Some(dot) = last_index_of_char(base, b'.') {
-                ext = &base[dot..];
-                base = &base[0..dot];
-            } else {
-                ext = b"";
-            }
-
-            if is_absolute {
-                dir = b"";
-            }
-
-            if base.len() > 1 && is_sep_any(base[base.len() - 1]) {
-                base = &base[0..base.len() - 1];
-            }
-
-            if !is_absolute && has_disk_designator {
-                dir = &path_[0..dir.len() + 2];
-            }
-
-            let filename = if !dir.is_empty() { &path_[dir.len() + 1..] } else { path_ };
-
-            PathName { dir, base, ext, filename }
-        }
-    }
-
-    // ── Path ─────────────────────────────────────────────────────────────
-
-    /// Port of `Path` in `fs.zig`. Lifetime-generic over the backing buffers.
-    // `#[repr(C)]`: see note on `PathName` — bit-cast target across the three
-    // `fs::Path` mirrors until they unify.
-    #[repr(C)]
-    #[derive(Clone)]
-    pub struct Path<'a> {
-        /// The display path. In the bundler, this is relative to the current
-        /// working directory. Since it can be emitted in bundles (and used
-        /// for content hashes), this should contain forward slashes on Windows.
-        pub pretty: &'a [u8],
-        /// The location of this resource. For the `file` namespace, this is
-        /// usually an absolute path with native slashes or an empty string.
-        pub text: &'a [u8],
-        pub namespace: &'a [u8],
-        // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
-        pub name: PathName<'a>,
-        pub is_disabled: bool,
-        pub is_symlink: bool,
-    }
-
-    impl<'a> Path<'a> {
-        pub const EMPTY: Path<'static> = Path {
-            pretty: b"",
-            text: b"",
-            namespace: b"file",
-            name: PathName { base: b"", dir: b"", ext: b"", filename: b"" },
-            is_disabled: false,
-            is_symlink: false,
-        };
-
-        /// Erase the borrow lifetime — see `bun_paths::fs::Path::into_static`
-        /// (the three `fs::Path` mirrors share this contract until unified).
-        ///
-        /// # Safety
-        /// Every borrowed slice in `self` must outlive every read through the
-        /// returned `Path<'static>`.
-        #[inline]
-        pub unsafe fn into_static(self) -> Path<'static> {
-            use bun_collections::detach_lifetime as d;
-            // SAFETY: caller contract — see fn doc.
-            unsafe {
-                Path {
-                    pretty: d(self.pretty),
-                    text: d(self.text),
-                    namespace: d(self.namespace),
-                    name: PathName {
-                        base: d(self.name.base),
-                        dir: d(self.name.dir),
-                        ext: d(self.name.ext),
-                        filename: d(self.name.filename),
-                    },
-                    is_disabled: self.is_disabled,
-                    is_symlink: self.is_symlink,
-                }
-            }
-        }
-
-        pub fn is_file(&self) -> bool {
-            self.namespace.is_empty() || self.namespace == b"file"
-        }
-
-        pub fn is_data_url(&self) -> bool {
-            self.namespace == b"dataurl"
-        }
-
-        pub fn is_bun(&self) -> bool {
-            self.namespace == b"bun"
-        }
-
-        pub fn is_macro(&self) -> bool {
-            self.namespace == b"macro"
-        }
-
-        #[inline]
-        pub fn source_dir(&self) -> &'a [u8] {
-            self.name.dir_with_trailing_slash()
-        }
-
-        pub fn init(text: &'a [u8]) -> Path<'a> {
-            Path {
-                pretty: text,
-                text,
-                namespace: b"file",
-                name: PathName::init(text),
-                is_disabled: false,
-                is_symlink: false,
-            }
-        }
-
-        pub fn init_with_pretty(text: &'a [u8], pretty: &'a [u8]) -> Path<'a> {
-            Path {
-                pretty,
-                text,
-                namespace: b"file",
-                name: PathName::init(text),
-                is_disabled: false,
-                is_symlink: false,
-            }
-        }
-
-        /// Port of `Path.initWithNamespaceVirtual` in `fs.zig`:
-        /// `pub inline fn initWithNamespaceVirtual(comptime text, namespace, package) Path`
-        pub fn init_with_namespace_virtual(
-            text: &'static [u8],
-            namespace: &'static [u8],
-            pretty: &'static [u8],
-        ) -> Path<'static> {
-            // PORT NOTE: Zig formed `pretty = namespace ++ ":" ++ package` at comptime;
-            // Rust callers pass the precomputed `concatcp!` result.
-            Path {
-                pretty,
-                is_symlink: true,
-                text,
-                namespace,
-                name: PathName::init(text),
-                is_disabled: false,
-            }
-        }
-
-        /// Port of `Path.initWithNamespace` in `fs.zig`.
-        pub fn init_with_namespace(text: &'a [u8], namespace: &'a [u8]) -> Path<'a> {
-            Path {
-                pretty: text,
-                text,
-                namespace,
-                name: PathName::init(text),
-                is_disabled: false,
-                is_symlink: false,
-            }
-        }
-
-        #[inline] pub fn empty() -> Path<'static> { Path::EMPTY }
-        #[inline] pub fn text(&self) -> &'a [u8] { self.text }
-        #[inline] pub fn pretty(&self) -> &'a [u8] { self.pretty }
-        #[inline] pub fn namespace(&self) -> &'a [u8] { self.namespace }
-
-        /// Port of `Path.isNodeModule` in `fs.zig`.
-        pub fn is_node_module(&self) -> bool {
-            bun_string::strings::last_index_of(
-                self.name.dir,
-                const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes(),
-            )
-            .is_some()
-        }
-
-        /// Port of `Path.setRealpath` in `fs.zig`.
-        pub fn set_realpath(&mut self, to: &'a [u8]) {
-            let old_path = self.text;
-            self.text = to;
-            self.name = PathName::init(to);
-            self.pretty = old_path;
-            self.is_symlink = true;
-        }
-
-        /// Port of `Path.assertPrettyIsValid` in `fs.zig` — debug-only check that
-        /// `pretty` contains no backslashes (Windows). No-op on POSIX.
-        #[inline]
-        pub fn assert_pretty_is_valid(&self) {
-            #[cfg(all(windows, debug_assertions))]
-            if bun_string::strings::index_of_char(self.pretty, b'\\').is_some() {
-                panic!("Expected pretty file path to have only forward slashes");
-            }
-        }
-
-        /// Port of `Path.assertFilePathIsAbsolute` in `fs.zig` — CI-assert only.
-        #[inline]
-        pub fn assert_file_path_is_absolute(&self) {
-            if bun_core::Environment::CI_ASSERT && self.is_file() {
-                debug_assert!(bun_paths::is_absolute(self.text));
-            }
-        }
-
+    impl<'a> PathResolverExt<'a> for Path<'a> {
         /// Port of `Path.dupeAlloc` in `fs.zig` — interns `text`/`pretty` into the
         /// process-static `FilenameStore` so the returned `Path` borrows `'static`
         /// data. PORT NOTE: TYPE_ONLY shim — full overlap/slice-range
         /// short-circuiting lives in the gated `fs_full::Path::dupe_alloc`; this
-        /// always interns to keep the bundler compiling until the two `Path`
-        /// definitions unify.
-        pub fn dupe_alloc(&self) -> Result<Path<'static>, bun_core::Error> {
+        /// always interns.
+        fn dupe_alloc(&self) -> Result<Path<'static>, bun_core::Error> {
             let text = FilenameStore::instance().append_slice(self.text)?;
             let pretty: &'static [u8] =
                 if core::ptr::eq(self.text.as_ptr(), self.pretty.as_ptr())
@@ -792,7 +495,7 @@ pub mod fs {
         }
 
         /// Port of `Path.dupeAllocFixPretty` in `fs.zig`.
-        pub fn dupe_alloc_fix_pretty(&self) -> Result<Path<'static>, bun_core::Error> {
+        fn dupe_alloc_fix_pretty(&self) -> Result<Path<'static>, bun_core::Error> {
             #[cfg(not(windows))]
             {
                 self.dupe_alloc()
@@ -811,7 +514,7 @@ pub mod fs {
         }
 
         /// Port of `Path.hashKey` in `fs.zig`.
-        pub fn hash_key(&self) -> u64 {
+        fn hash_key(&self) -> u64 {
             if self.is_file() {
                 return bun_wyhash::hash(self.text);
             }
@@ -832,13 +535,13 @@ pub mod fs {
         /// identify modules. Since that code is JavaScript, the hash must remain in
         /// range [-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER] or else information is lost
         /// due to floating-point precision.
-        pub fn hash_for_kit(&self) -> u64 {
+        fn hash_for_kit(&self) -> u64 {
             // u52 — truncate to 52 bits
             self.hash_key() & ((1u64 << 52) - 1)
         }
 
         /// Port of `Path.packageName` in `fs.zig`.
-        pub fn package_name(&self) -> Option<&[u8]> {
+        fn package_name(&self) -> Option<&[u8]> {
             let mut name_to_use = self.pretty;
             // SEP_STR ++ "node_modules" ++ SEP_STR
             let needle = const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes();
@@ -855,7 +558,7 @@ pub mod fs {
         }
 
         /// Port of `Path.loader` in `fs.zig`.
-        pub fn loader(
+        fn loader(
             &self,
             loaders: &bun_options_types::BundleEnums::LoaderHashTable,
         ) -> Option<bun_options_types::BundleEnums::Loader> {
@@ -912,12 +615,6 @@ pub mod fs {
         }
 
         str
-    }
-
-    impl Default for Path<'_> {
-        fn default() -> Self {
-            Path::EMPTY
-        }
     }
 
     // ── Entry / DirEntry / EntryKind ─────────────────────────────────────
@@ -2272,12 +1969,6 @@ pub mod fs {
         }
     }
 
-    impl<'a> PathName<'a> {
-        #[inline] pub fn ext(&self) -> &'a [u8] { self.ext }
-        #[inline] pub fn dir(&self) -> &'a [u8] { self.dir }
-        #[inline] pub fn filename(&self) -> &'a [u8] { self.filename }
-    }
-
     // ── `file_system` namespace shim ─────────────────────────────────────
     // The Phase-A resolver body addresses types via `Fs::file_system::*` (the
     // Zig nesting was `FileSystem.RealFS.EntriesOption` etc.). Re-export the
@@ -3397,7 +3088,18 @@ pub mod options {
         pub abs_paths: StringSet,
         pub node_modules: StringSet,
     }
-    #[derive(Clone)]
+    impl Clone for ExternalModules {
+        fn clone(&self) -> Self {
+            // `StringSet::clone` is an inherent fallible method (returns
+            // `Result<_, AllocError>`), so this can't be `#[derive(Clone)]`.
+            Self {
+                patterns: self.patterns.clone(),
+                abs_paths: self.abs_paths.clone().expect("oom"),
+                node_modules: self.node_modules.clone().expect("oom"),
+            }
+        }
+    }
+    #[derive(Debug, Clone)]
     pub struct WildcardPattern { pub prefix: Box<[u8]>, pub suffix: Box<[u8]> }
     /// Re-export the real set type so `bun_bundler` can project user-supplied
     /// `--external` `abs_paths`/`node_modules` through. The previous local ZST
@@ -5403,7 +5105,7 @@ impl<'a> Resolver<'a> {
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
         while let Some(path) = iter.next() {
-            let Ok(Some(dir)) = self.read_dir_info(path.name.dir()) else { continue };
+            let Ok(Some(dir)) = self.read_dir_info(path.name.dir) else { continue };
             let mut needs_side_effects = true;
             if let Some(existing_ptr) = result.package_json {
                 // SAFETY: ARENA — PackageJSON ptrs are interned in the global allocator-backed cache and outlive the resolver (see LIFETIMES.tsv).
@@ -5492,15 +5194,15 @@ impl<'a> Resolver<'a> {
             // If you use mjs or mts, then you're using esm
             // If you use cjs or cts, then you're using cjs
             // This should win out over the module type from package.json
-            if !kind.is_from_css() && module_type == options::ModuleType::Unknown && path.name.ext().len() == 4 {
-                module_type = MODULE_TYPE_MAP.get(path.name.ext()).copied().unwrap_or(options::ModuleType::Unknown);
+            if !kind.is_from_css() && module_type == options::ModuleType::Unknown && path.name.ext.len() == 4 {
+                module_type = MODULE_TYPE_MAP.get(path.name.ext).copied().unwrap_or(options::ModuleType::Unknown);
             }
 
             if let Some(entries) = dir.get_entries(self.generation) {
                 // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
                 // Read-only `.get()` lookup — shared borrow only (no `&mut DirEntry` materialized).
                 let entries = unsafe { &*entries };
-                if let Some(query) = entries.get(path.name.filename()) {
+                if let Some(query) = entries.get(path.name.filename) {
                     let symlink_path = query.entry().symlink(self.rfs_ptr(), self.store_fd);
                     if !symlink_path.is_empty() {
                         path.set_realpath(symlink_path);
@@ -6062,7 +5764,7 @@ impl<'a> Resolver<'a> {
                 if res.package_json.is_some() && self.care_about_browser_field {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
-                        None => match self.read_dir_info(result.path_pair.primary.name.dir()) {
+                        None => match self.read_dir_info(result.path_pair.primary.name.dir) {
                             Ok(Some(d)) => d,
                             _ => return ResultUnion::Success(result),
                         },
@@ -6110,7 +5812,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         result: &Result,
     ) -> Option<*const PackageJSON> {
-        let mut dir_info = self.dir_info_cached(result.path_pair.primary.name.dir()).ok().flatten()?;
+        let mut dir_info = self.dir_info_cached(result.path_pair.primary.name.dir).ok().flatten()?;
         loop {
             if let Some(pkg) = dir_info.package_json() {
                 // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)

@@ -21,6 +21,7 @@
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_collections::{VecExt, ByteVecExt};
+use crate::bun_str::WTFStringImplExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
@@ -871,15 +872,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     vm.cast(),
                 )
             };
-            // PORT NOTE: `bun_core::Timespec` and `bun_uws::Timespec` are
-            // distinct nominal types but layout-identical (`#[repr(C)]
-            // {sec: i64, nsec: i64}`, both mirroring `bun.timespec`). The C
-            // ABI only sees `*const timespec`, so re-express the value for
-            // `tick_with_timeout`. Same shape as SpawnSyncEventLoop.
-            let uws_ts = bun_uws::Timespec { sec: timespec.sec, nsec: timespec.nsec };
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&uws_ts) } else { None })
+                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
             };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.
@@ -976,10 +971,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     vm.cast(),
                 )
             };
-            let uws_ts = bun_uws::Timespec { sec: timespec.sec, nsec: timespec.nsec };
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&uws_ts) } else { None })
+                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
             };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.

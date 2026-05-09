@@ -22,7 +22,7 @@ use bun_libuv_sys::sockaddr_storage;
 use libc::{if_indextoname, if_nametoindex, IF_NAMESIZE};
 
 use crate::api::SocketAddress;
-use crate::socket::socket_address::inet::{self, sockaddr_in, sockaddr_in6};
+use crate::socket::socket_address::inet::{self, sockaddr_in, sockaddr_in6, INET6_ADDRSTRLEN};
 
 bun_output::declare_scope!(UdpSocket, visible);
 
@@ -65,11 +65,6 @@ impl JSValueAsyncCtxExt for JSValue {
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 }
-
-#[cfg(windows)]
-const INET6_ADDRSTRLEN: usize = 65;
-#[cfg(not(windows))]
-const INET6_ADDRSTRLEN: usize = 46;
 
 #[allow(dead_code)]
 unsafe extern "C" {

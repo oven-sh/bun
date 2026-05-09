@@ -69,9 +69,7 @@ impl PBKDF2 {
                 salt.as_ptr(),
                 salt.len(),
                 iteration_count as c_uint,
-                // `Algorithm::md()` returns `*const bun_sha_hmac::sha::ffi::EVP_MD`; cast to the
-                // boringssl-sys opaque — both name the same C `struct env_md_st`.
-                algorithm.md().unwrap().cast::<boringssl::EVP_MD>(),
+                algorithm.md().unwrap(),
                 usize::try_from(length).expect("int cast"),
                 output.as_mut_ptr(),
             )

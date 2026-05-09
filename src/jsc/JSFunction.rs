@@ -5,11 +5,9 @@ use bun_string::{String as BunString, ZigString};
 
 use crate::{JSGlobalObject, JSHostFn, JSValue};
 
-/// Opaque FFI handle for `JSC::JSFunction`.
-#[repr(C)]
-pub struct JSFunction {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for `JSC::JSFunction`.
+    pub struct JSFunction;
 }
 
 #[repr(u8)]

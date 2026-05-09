@@ -8,79 +8,15 @@ use core::fmt;
 use bstr::BStr;
 
 use bun_core::output as Output;
+use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
-#[inline]
-fn enable_ansi_colors_stderr() -> bool {
-    Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-/// Two-phase string builder: callers first `count()` every slice they will
-/// append, then `allocate()` once, then `append()` each slice. Returned slices
-/// alias the single backing buffer.
-//
-// PORT NOTE: local copy of `src/string/StringBuilder.zig` (subset). `append`
-// hands out slices that alias the internal buffer with an *unbound* lifetime so
-// `Header::clone` / `Request::clone` can call it repeatedly and stash the raw
-// ptr/len pairs — the Zig original returns aliasing `[]const u8` with no
-// lifetime tracking. The buffer is heap-owned via raw `*mut u8` (Zig `?[*]u8`);
-// callers are responsible for keeping the builder alive while the returned
-// slices are in use.
-#[derive(Default)]
-pub struct StringBuilder {
-    pub len: usize,
-    pub cap: usize,
-    pub ptr: Option<core::ptr::NonNull<u8>>,
-}
-
-impl StringBuilder {
-    #[inline]
-    pub fn count(&mut self, slice: &[u8]) {
-        self.cap += slice.len();
-    }
-
-    pub fn allocate(&mut self) {
-        // allocator.alloc(u8, this.cap)
-        let mut buf = vec![0u8; self.cap].into_boxed_slice();
-        self.ptr = core::ptr::NonNull::new(buf.as_mut_ptr());
-        core::mem::forget(buf);
-        self.len = 0;
-    }
-
-    /// Copy `slice` into the reserved buffer and return a borrow of the copied
-    /// bytes. The returned slice aliases `self.ptr` and remains valid until the
-    /// builder is dropped; the unbound `'a` mirrors Zig's untracked `[]const u8`
-    /// return so callers may interleave appends (see PORT NOTE above).
-    pub fn append<'a>(&mut self, slice: &[u8]) -> &'a [u8] {
-        debug_assert!(self.len + slice.len() <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        // SAFETY: `ptr` was allocated with `cap` bytes by `allocate()`; the
-        // debug_assert above guarantees `len + slice.len() <= cap`, so
-        // `[len..len+slice.len())` is in-bounds and exclusively owned here.
-        let base = unsafe { self.ptr.unwrap().as_ptr().add(self.len) };
-        unsafe { core::ptr::copy_nonoverlapping(slice.as_ptr(), base, slice.len()) };
-        // SAFETY: `base..base+slice.len()` was just initialized above and lives
-        // for as long as `self.ptr` (heap allocation never moves).
-        let result = unsafe { core::slice::from_raw_parts(base, slice.len()) };
-        self.len += slice.len();
-
-        debug_assert!(self.len <= self.cap);
-
-        result
-    }
-}
-
-impl Drop for StringBuilder {
-    fn drop(&mut self) {
-        if let Some(ptr) = self.ptr {
-            if self.cap != 0 {
-                // SAFETY: reconstitutes the Box<[u8]> forgotten in `allocate()`.
-                drop(unsafe { bun_core::heap::take(core::slice::from_raw_parts_mut(ptr.as_ptr(), self.cap)) });
-            }
-        }
-    }
-}
+// PORT NOTE: `Header::clone` / `Request::clone` / `Response::clone` need the
+// unbound-lifetime `append_raw` so they can interleave appends and stash the
+// raw ptr/len pairs — the Zig original returns aliasing `[]const u8` with no
+// lifetime tracking. The buffer is heap-owned; callers keep the builder (or
+// its moved-out buffer) alive while the returned slices are in use.
+pub use bun_string::StringBuilder;
 
 // TODO(b1): bun_picohttp_sys crate missing — local FFI stub surface.
 // Real bindings land in B-2 (bindgen over vendor/picohttpparser).
@@ -228,8 +164,11 @@ impl Header {
     }
 
     pub fn clone(&self, builder: &mut StringBuilder) -> Header {
-        let name = builder.append(self.name());
-        let value = builder.append(self.value());
+        // SAFETY: returned slices alias `builder`'s heap buffer; caller of the
+        // outer `clone` keeps the builder (or its moved-out buffer) alive for
+        // the lifetime of the cloned `Header` (see PORT NOTE on `StringBuilder`).
+        let name = unsafe { builder.append_raw(self.name()) };
+        let value = unsafe { builder.append_raw(self.value()) };
         Header {
             name_ptr: name.as_ptr(),
             name_len: name.len(),
@@ -381,8 +320,9 @@ impl<'a> Request<'a> {
         }
 
         Request {
-            method: builder.append(self.method),
-            path: builder.append(self.path),
+            // SAFETY: see `Header::clone` — caller keeps `builder` alive.
+            method: unsafe { builder.append_raw(self.method) },
+            path: unsafe { builder.append_raw(self.path) },
             minor_version: self.minor_version,
             headers,
             bytes_read: self.bytes_read,
@@ -641,7 +581,8 @@ impl<'a> Response<'a> {
 
     pub fn clone(&self, headers: &'a mut [Header], builder: &mut StringBuilder) -> Response<'a> {
         let mut that = *self;
-        that.status = builder.append(self.status);
+        // SAFETY: see `Header::clone` — caller keeps `builder` alive.
+        that.status = unsafe { builder.append_raw(self.status) };
 
         for (i, header) in self.headers.list.iter().enumerate() {
             headers[i] = header.clone(builder);

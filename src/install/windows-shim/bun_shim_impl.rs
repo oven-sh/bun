@@ -125,18 +125,10 @@ mod k32 {
     pub use w::kernel32::GetExitCodeProcess;
     /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
     pub use w::kernel32::GetConsoleMode;
+    /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
+    pub use w::kernel32::SetConsoleMode;
     /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
     pub use w::kernel32::SetHandleInformation;
-
-    // TODO(port): move to <install>_sys (or bun_sys::windows::kernel32)
-    unsafe extern "system" {
-        /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
-        #[link_name = "SetConsoleMode"]
-        pub fn SetConsoleMode(
-            hConsoleHandle: HANDLE, // [in]
-            dwMode: DWORD,          // [in]
-        ) -> BOOL;
-    }
 }
 
 macro_rules! debug {

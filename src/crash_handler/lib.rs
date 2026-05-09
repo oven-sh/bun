@@ -36,12 +36,15 @@ pub mod cpu_features;
 #[path = "handle_oom.rs"]
 pub mod handle_oom;
 
-/// `bun.outOfMemory()` — callable from `handle_oom` and the crash path.
-/// Mirrors `src/bun.zig:outOfMemory()` →
+/// Hook target for `bun_alloc::out_of_memory()` — registered by
+/// `install_hooks()` via `bun_alloc::set_out_of_memory_handler`. Mirrors
+/// `src/bun.zig:outOfMemory()` →
 /// `crash_handler.crashHandler(.out_of_memory, null, @returnAddress())`.
+/// `pub(crate)` so external callers route through the T0 `bun_alloc` entry
+/// (which has the early-startup abort fallback) rather than bypassing it.
 #[cold]
 #[inline(never)]
-pub fn out_of_memory() -> ! {
+pub(crate) fn out_of_memory() -> ! {
     draft::crash_handler(draft::CrashReason::OutOfMemory, None, None)
 }
 
@@ -56,23 +59,17 @@ pub use draft::*;
 pub mod debug {
     use super::draft::StackTrace;
 
-    /// `@returnAddress()` — Rust has no stable equivalent; 0 means "capture from here".
-    /// TODO(port): wire to `core::intrinsics::caller_location` or a C++ helper.
+    /// `@returnAddress()` — forwards to the canonical stub in bun_core so that
+    /// when it's wired to a real intrinsic, all callers (incl. the canonical
+    /// `StoredTrace::capture`) pick it up together.
     #[inline(always)]
-    pub fn return_address() -> usize { 0 }
+    pub fn return_address() -> usize { bun_core::return_address() }
 
-    /// Zig: `std.debug.captureStackTrace`. Uses the same C++ helper bun_core does.
-    /// Writes captured return addresses into `addrs` and returns the count written.
-    /// Callers construct the (immutable-slice) `StackTrace` *after* this returns —
-    /// the previous signature round-tripped through `StackTrace.instruction_addresses:
-    /// &[usize]` and wrote via a `*mut` cast of a shared-ref-derived pointer (UB).
+    /// Zig: `std.debug.captureStackTrace`. Thin re-export of the canonical safe
+    /// wrapper in bun_core so this crate's internal callers don't churn.
+    #[inline]
     pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
-        unsafe extern "C" {
-            fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize;
-        }
-        // SAFETY: `addrs` is a valid mutable slice for `addrs.len()` entries; the
-        // C++ side writes at most `cap` words and returns the count written.
-        unsafe { Bun__captureStackTrace(begin, addrs.as_mut_ptr(), addrs.len()) }
+        bun_core::capture_stack_trace(begin, addrs)
     }
 
     /// Zig: `std.debug.panicImpl` fallback when ENABLE == false.
@@ -214,11 +211,8 @@ use super::{debug, Write, FmtAdapter, stderr_writer};
 fn fmt_err(_: core::fmt::Error) -> bun_core::Error { bun_core::err!("WriteZero") }
 
 /// Zig: `Output.enable_ansi_colors_stderr` — runtime flag, exposed in Rust as an
-/// `AtomicBool` static. Wrapped here so call sites read like the Zig.
-#[inline(always)]
-fn enable_ansi_colors_stderr() -> bool {
-    Output::ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
-}
+/// `AtomicBool` static. Re-exported here so call sites read like the Zig.
+use bun_core::output::enable_ansi_colors_stderr;
 
 /// Zig: `std.posix.abort()`. `bun_sys::posix` does not re-export it; route
 /// through libc directly (async-signal-safe).
@@ -249,11 +243,6 @@ fn fmt_argv<W: core::fmt::Write>(w: &mut W, argv: &[Vec<u8>]) -> core::fmt::Resu
     Ok(())
 }
 
-/// Zig: `bun.strings.indexOf`. bun_core::strings has no `index_of` yet.
-#[inline]
-fn index_of(h: &[u8], n: &[u8]) -> Option<usize> {
-    bstr::ByteSlice::find(h, n)
-}
 
 // TODO(b0): `Cli` arrives from move-in (MOVE_DOWN bun_runtime::cli::Cli → crash_handler).
 // Only the two bits the crash handler needs — main-thread check and the
@@ -296,6 +285,13 @@ static HAS_PRINTED_MESSAGE: AtomicBool = AtomicBool::new(false);
 /// The counter is incremented/decremented atomically.
 /// PORT NOTE: shared with bun_core::PANICKING so T0 callers see the same state.
 use bun_core::PANICKING;
+// D131: dedup — these read the shared `PANICKING` atomic and were byte-identical
+// to the bun_core (T0) copies. Re-export so `bun_crash_handler::{is_panicking,
+// sleep_forever_if_another_thread_is_crashing}` keeps resolving for any
+// out-of-tree callers. `dump_current_stack_trace` is intentionally NOT deduped:
+// the bun_core version is a hook-dispatch shim, this crate's is the real impl
+// (wired via `set_dump_stack_trace_hook` in `init()`).
+pub use bun_core::{is_panicking, sleep_forever_if_another_thread_is_crashing};
 
 // Locked to avoid interleaving panic messages from multiple threads.
 // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
@@ -1543,23 +1539,6 @@ fn wait_for_other_thread_to_finish_panicking() {
     }
 }
 
-/// This is to be called by any thread that is attempting to exit the process.
-/// If another thread is panicking, this will sleep this thread forever, under
-/// the assumption that the crash handler will terminate the program.
-///
-/// There have been situations in the past where a bundler thread starts
-/// panicking, but the main thread ends up marking a test as passing and then
-/// exiting with code zero before the crash handler can finish the crash.
-pub fn sleep_forever_if_another_thread_is_crashing() {
-    if PANICKING.load(Ordering::Acquire) > 0 {
-        // Sleep forever without hammering the CPU
-        let futex = AtomicU32::new(0);
-        loop {
-            bun_threading::Futex::wait_forever(&futex, 0);
-        }
-    }
-}
-
 /// Each platform is encoded as a single character. It is placed right after the
 /// slash after the version, so someone just reading the trace string can tell
 /// what platform it came from. L, M, and W are for Linux, macOS, and Windows,
@@ -2155,10 +2134,9 @@ fn report(url: &[u8]) {
                     // SAFETY: closing stdin/stdout in child
                     unsafe { libc::close(i); }
                 }
-                unsafe extern "C" { static environ: *const *const c_char; }
                 // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
                 // process environment block
-                unsafe { libc::execve(argv[0], argv.as_ptr(), environ); }
+                unsafe { libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ()); }
                 // SAFETY: _exit is async-signal-safe in the forked child
                 unsafe { libc::_exit(0); }
             }
@@ -2472,54 +2450,12 @@ pub fn suppress_reporting() {
     SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
 }
 
-/// A variant of `std.builtin.StackTrace` that stores its data within itself
-/// instead of being a pointer. This allows storing captured stack traces
-/// for later printing.
-#[derive(Clone, Copy)]
-pub struct StoredTrace {
-    pub data: [usize; 31],
-    pub index: usize,
-}
-
-impl StoredTrace {
-    pub const EMPTY: StoredTrace = StoredTrace {
-        data: [0; 31],
-        index: 0,
-    };
-
-    pub fn trace(&self) -> StackTrace<'_> {
-        StackTrace {
-            index: self.index,
-            instruction_addresses: &self.data,
-        }
-    }
-
-    pub fn capture(begin: Option<usize>) -> StoredTrace {
-        let mut stored = StoredTrace::EMPTY;
-        stored.index = debug::capture_stack_trace(begin.unwrap_or_else(|| debug::return_address()), &mut stored.data);
-        for (i, &addr) in stored.data[0..stored.index].iter().enumerate() {
-            if addr == 0 {
-                stored.index = i;
-                break;
-            }
-        }
-        stored
-    }
-
-    pub fn from(stack_trace: Option<&StackTrace>) -> StoredTrace {
-        if let Some(stack) = stack_trace {
-            let mut data: [usize; 31] = [0; 31];
-            let items = stack.instruction_addresses.len().min(31);
-            data[0..items].copy_from_slice(&stack.instruction_addresses[0..items]);
-            StoredTrace {
-                data,
-                index: items.min(stack.index),
-            }
-        } else {
-            StoredTrace::EMPTY
-        }
-    }
-}
+// StoredTrace was MOVE_DOWN(b0)'d to bun_core (see src/bun_core/Global.rs and
+// src/ptr/ref_count.rs:16). Re-export so `bun_crash_handler::StoredTrace` paths
+// keep compiling. NOTE: if `debug::return_address()` is ever wired to a real
+// `@returnAddress()` intrinsic, apply that improvement in bun_core's
+// `StoredTrace::capture()` instead — this crate no longer owns the type.
+pub use bun_core::StoredTrace;
 
 // TODO(port): move to *_jsc — `pub const js_bindings = @import("../runtime/api/crash_handler_jsc.zig").js_bindings;`
 // Per PORTING.md this *_jsc alias is deleted; the bindings live as an extension trait in bun_runtime.
@@ -2561,10 +2497,6 @@ pub fn remove_pre_crash_handler(ptr: *mut c_void) {
     let _ = list.remove(index);
 }
 
-pub fn is_panicking() -> bool {
-    PANICKING.load(Ordering::Relaxed) > 0
-}
-
 pub struct SourceAtAddress {
     pub source_location: Option<SourceLocation>,
     pub symbol_name: Box<[u8]>,
@@ -2575,26 +2507,10 @@ pub struct SourceAtAddress {
 // PORT NOTE: Zig's `SourceAtAddress.deinit` only freed `source_location.file_name`;
 // `Option<SourceLocation>` owns it as `Box<[u8]>` so Drop handles it — no explicit deinit.
 
-#[derive(Clone)]
-pub struct WriteStackTraceLimits {
-    pub frame_count: usize,
-    pub stop_at_jsc_llint: bool,
-    pub skip_stdlib: bool,
-    pub skip_file_patterns: &'static [&'static [u8]],
-    pub skip_function_patterns: &'static [&'static [u8]],
-}
-
-impl Default for WriteStackTraceLimits {
-    fn default() -> Self {
-        Self {
-            frame_count: usize::MAX,
-            stop_at_jsc_llint: false,
-            skip_stdlib: false,
-            skip_file_patterns: &[],
-            skip_function_patterns: &[],
-        }
-    }
-}
+// D130: deduped — canonical def lives in bun_core (T0). Re-export under the
+// Zig-spec name so internal use-sites and any downstream
+// `bun_crash_handler::WriteStackTraceLimits` importers keep compiling.
+pub use bun_core::DumpStackTraceOptions as WriteStackTraceLimits;
 
 /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a
 /// frame count, or when hitting jsc LLInt Additionally, the printing function
@@ -2901,7 +2817,7 @@ fn print_line_from_file_any_os(
     let highlight = &line_without_newline[left..right];
     let mut after_before_comment = &line_without_newline[right..];
     let mut comment: &[u8] = b"";
-    if let Some(pos) = index_of(after_before_comment, b"//") {
+    if let Some(pos) = bun_string::strings::index_of(after_before_comment, b"//") {
         comment = &after_before_comment[pos..];
         after_before_comment = &after_before_comment[0..pos];
     }

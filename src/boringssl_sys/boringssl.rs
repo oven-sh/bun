@@ -8,28 +8,18 @@
 //
 // ported from: src/boringssl_sys/boringssl.zig
 
-use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Opaque-type helper
-//
-// `_p: UnsafeCell<[u8; 0]>` makes the type `!Freeze`, so a `&T` does not
-// assert immutability of the (C-owned) pointee. BoringSSL mutates internal
-// state through both `const T*` and `T*` handles; without `UnsafeCell`,
-// deriving a `*mut` from `&T` and writing through it (via FFI) is UB under
-// Stacked Borrows. See `Zone` in `bun_alloc::heap_breakdown` for the pattern.
+// Opaque-type helper — thin sugar over the canonical
+// `bun_opaque::opaque_ffi!` (see its crate doc for the `UnsafeCell<[u8;0]>` /
+// `PhantomPinned` rationale). Local alias just bakes in `pub` so the 21
+// `opaque!(/// doc \n Name)` call sites below stay one-arg.
 // ═══════════════════════════════════════════════════════════════════════════
 
 macro_rules! opaque {
-    ($(#[$m:meta])* $name:ident) => {
-        $(#[$m])*
-        #[repr(C)]
-        pub struct $name {
-            _p: UnsafeCell<[u8; 0]>,
-            _m: PhantomData<(*mut u8, PhantomPinned)>,
-        }
+    ($($(#[$m:meta])* $name:ident),+ $(,)?) => {
+        ::bun_opaque::opaque_ffi!($($(#[$m])* pub $name),+);
     };
 }
 
@@ -96,6 +86,10 @@ opaque!(
 opaque!(
     /// `struct ssl_ctx_st` (`typedef ... SSL_CTX`).
     SSL_CTX
+);
+opaque!(
+    /// `struct crypto_buffer_pool_st` (`typedef ... CRYPTO_BUFFER_POOL`).
+    CRYPTO_BUFFER_POOL
 );
 opaque!(
     /// `struct x509_st` (`typedef ... X509`).
@@ -654,6 +648,11 @@ unsafe extern "C" {
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
     pub fn SSL_CTX_set_ex_data(ctx: *mut SSL_CTX, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_CTX_get_ex_data(ctx: *const SSL_CTX, idx: c_int) -> *mut c_void;
+    pub fn SSL_CTX_set0_buffer_pool(ctx: *mut SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
+    pub fn SSL_CTX_set_cipher_list(ctx: *mut SSL_CTX, str_: *const c_char) -> c_int;
+
+    // ── CRYPTO_BUFFER_POOL ───────────────────────────────────────────────
+    pub fn CRYPTO_BUFFER_POOL_new() -> *mut CRYPTO_BUFFER_POOL;
 
     // ── SSL ──────────────────────────────────────────────────────────────
     pub fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;

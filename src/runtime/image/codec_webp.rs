@@ -67,15 +67,9 @@ struct WebPChunkIterator {
     private_: *mut c_void,
 }
 
-#[repr(C)]
-pub struct WebPDemuxer {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
-#[repr(C)]
-pub struct WebPMux {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    pub struct WebPDemuxer;
+    pub struct WebPMux;
 }
 
 // `WebPDemux()` and `WebPMuxNew()` are `static inline` in the headers and

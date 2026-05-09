@@ -7,14 +7,6 @@ use bun_logger::Ref;
 use bun_string::strings;
 use bun_wyhash::Wyhash;
 
-/// SAFETY: `s` borrows the parser source / arena which outlives every `Token`
-/// constructed from it. Same trick as `css_parser::src_str` (private) — `'static`
-/// is the Phase-A placeholder for the not-yet-threaded `'bump` lifetime.
-#[inline]
-unsafe fn arena_str(s: &[u8]) -> &'static [u8] {
-    unsafe { &*std::ptr::from_ref::<[u8]>(s) }
-}
-
 // ───────────────────────── DashedIdentReference ──────────────────────────
 // `properties::css_modules::Specifier` is real (parse/to_css/eql/hash); the
 // `from` field below uses it directly. `parse_with_options` honors
@@ -163,8 +155,8 @@ impl DashedIdent {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         if !strings::starts_with(ident, b"--") {
-            // SAFETY: ident borrows parser source/arena; see `arena_str`.
-            let ident: &'static [u8] = unsafe { arena_str(ident) };
+            // SAFETY: ident borrows parser source/arena; see `css::src_str`.
+            let ident: &'static [u8] = unsafe { css::src_str(ident) };
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
         Ok(DashedIdent { v: std::ptr::from_ref::<[u8]>(ident) })
@@ -511,8 +503,8 @@ impl CustomIdent {
             || strings::eql_case_insensitive_ascii_check_length(ident, b"revert-layer"));
 
         if !valid {
-            // SAFETY: ident borrows parser source/arena; see `arena_str`.
-            let ident: &'static [u8] = unsafe { arena_str(ident) };
+            // SAFETY: ident borrows parser source/arena; see `css::src_str`.
+            let ident: &'static [u8] = unsafe { css::src_str(ident) };
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
         Ok(CustomIdent { v: std::ptr::from_ref::<[u8]>(ident) })

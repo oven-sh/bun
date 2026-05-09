@@ -51,18 +51,6 @@ mod bun_io {
     }
 }
 
-// PORT NOTE: Zig `bun.rangeOfSliceInBuffer` (src/bun.zig). Not yet on bun_alloc's
-// Rust surface; implemented locally — pure pointer arithmetic.
-fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<(u32, u32)> {
-    if !bun_alloc::is_slice_in_buffer(slice, buffer) {
-        return None;
-    }
-    let off = u32::try_from((slice.as_ptr() as usize).saturating_sub(buffer.as_ptr() as usize)).unwrap();
-    let len = u32::try_from(slice.len()).unwrap();
-    debug_assert!(strings::eql_long(slice, &buffer[off as usize..][..len as usize], false));
-    Some((off, len))
-}
-
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
     // PORT NOTE: name/value borrow from the route template + the live request
@@ -443,6 +431,30 @@ impl<'a> URL<'a> {
             port: if !self.port.is_empty() { self.get_port() } else { None },
             is_https: self.is_https(),
         }
+    }
+
+    /// Zig: `std.fmt.allocPrint(alloc, "{s}://{f}/{s}/", .{
+    ///     url.displayProtocol(), url.displayHost(),
+    ///     std.mem.trim(u8, url.pathname, "/") })`.
+    ///
+    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
+    /// `Display`); the other two pieces are raw byte slices, so we assemble
+    /// into a `Vec<u8>` directly rather than going through `format!` and
+    /// risking lossy UTF-8 round-trips.
+    pub fn href_without_auth(&self) -> Box<[u8]> {
+        use std::io::Write as _;
+        let proto = self.display_protocol();
+        let path = strings::trim(self.pathname, b"/");
+
+        let mut buf: Vec<u8> = Vec::with_capacity(proto.len() + 3 + self.host.len() + 1 + path.len() + 1);
+        buf.extend_from_slice(proto);
+        buf.extend_from_slice(b"://");
+        // io::Write on Vec<u8> is infallible.
+        let _ = write!(&mut buf, "{}", self.display_host());
+        buf.push(b'/');
+        buf.extend_from_slice(path);
+        buf.push(b'/');
+        buf.into_boxed_slice()
     }
 
     pub fn has_http_like_protocol(&self) -> bool {
@@ -1465,7 +1477,7 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
         return api::StringPointer::default();
     }
 
-    if let Some((offset, length)) = range_of_slice_in_buffer(in_, parent) {
+    if let Some([offset, length]) = bun_core::range_of_slice_in_buffer(in_, parent) {
         return api::StringPointer { offset, length };
     } else {
         if let Some(i) = strings::index_of(parent, in_) {

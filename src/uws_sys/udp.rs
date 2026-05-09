@@ -9,11 +9,9 @@ use libc::sockaddr_storage;
 #[cfg(windows)]
 use bun_windows_sys::ws2_32::sockaddr_storage;
 
-/// Opaque uSockets UDP socket handle (`us_udp_socket_t`).
-#[repr(C)]
-pub struct Socket {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque uSockets UDP socket handle (`us_udp_socket_t`).
+    pub struct Socket;
 }
 
 impl Socket {
@@ -214,11 +212,9 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-/// Opaque uSockets UDP packet buffer (`us_udp_packet_buffer_t`).
-#[repr(C)]
-pub struct PacketBuffer {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque uSockets UDP packet buffer (`us_udp_packet_buffer_t`).
+    pub struct PacketBuffer;
 }
 
 impl PacketBuffer {

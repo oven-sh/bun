@@ -110,11 +110,9 @@ impl Drop for Route {
 
 // #region C++ agent reference type for Zig
 
-/// Opaque handle to the C++ `InspectorHTTPServerAgent`.
-#[repr(C)]
-pub struct InspectorHTTPServerAgent {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque handle to the C++ `InspectorHTTPServerAgent`.
+    pub struct InspectorHTTPServerAgent;
 }
 
 // TODO(port): move to jsc_sys

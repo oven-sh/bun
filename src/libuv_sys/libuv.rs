@@ -45,8 +45,9 @@ macro_rules! __uv_log {
 pub use crate::__uv_log as log;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Win32 ABI typedefs (kept local so this crate stays leaf — no `bun_sys` /
-// `windows-sys` dependency; see PORTING.md §Crate map).
+// Win32 ABI typedefs. Shared POD structs (COORD, sockaddr_*) come from the
+// tier-0 `bun_windows_sys` leaf; libuv-specific scalars stay local so this
+// crate stays free of any `bun_sys` (higher-tier) dependency.
 // ──────────────────────────────────────────────────────────────────────────
 pub type CHAR = u8;
 pub type SHORT = c_short;
@@ -99,12 +100,7 @@ pub struct CRITICAL_SECTION {
 pub type uv_mutex_t = CRITICAL_SECTION;
 
 /// `_COORD` (wincon.h).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct COORD {
-    pub X: SHORT,
-    pub Y: SHORT,
-}
+pub use bun_windows_sys::COORD;
 
 /// `INPUT_RECORD` (wincon.h) — 20 bytes (4-aligned, EventType u16 + 2 pad +
 /// 16-byte union). Only ever read by libuv internals; Rust treats payload as

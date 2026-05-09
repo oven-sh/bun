@@ -11,11 +11,7 @@ use core::marker::{PhantomData, PhantomPinned};
 pub type brotli_alloc_func = Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
 pub type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
 
-#[repr(C)]
-pub struct struct_BrotliSharedDictionaryStruct {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct struct_BrotliSharedDictionaryStruct; }
 pub type BrotliSharedDictionary = struct_BrotliSharedDictionaryStruct;
 
 pub const BROTLI_SHARED_DICTIONARY_RAW: c_int = 0;
@@ -46,12 +42,10 @@ unsafe extern "C" {
     pub safe fn BrotliDecoderVersion() -> u32;
 }
 
-/// Opaque brotli decoder state. `UnsafeCell` makes the type `!Freeze` so a
-/// `&BrotliDecoder` does not assert immutability of the C-owned state.
-#[repr(C)]
-pub struct BrotliDecoder {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque brotli decoder state. `UnsafeCell` makes the type `!Freeze` so a
+    /// `&BrotliDecoder` does not assert immutability of the C-owned state.
+    pub struct BrotliDecoder;
 }
 
 #[allow(dead_code)]
@@ -130,8 +124,7 @@ impl BrotliDecoder {
     }
 
     pub fn get_error_code(state: &BrotliDecoder) -> BrotliDecoderErrorCode {
-        // SAFETY: BrotliDecoderErrorCode2 is a superset of BrotliDecoderErrorCode discriminants (both repr(i32))
-        unsafe { core::mem::transmute::<i32, BrotliDecoderErrorCode>(BrotliDecoderGetErrorCode(state) as i32) }
+        BrotliDecoderGetErrorCode(state)
     }
 
     pub fn error_string(c: BrotliDecoderErrorCode) -> &'static core::ffi::CStr {
@@ -161,67 +154,12 @@ pub enum BrotliDecoderResult {
     needs_more_output = 3,
 }
 
-pub const BROTLI_DECODER_NO_ERROR: c_int = 0;
-pub const BROTLI_DECODER_SUCCESS: c_int = 1;
-pub const BROTLI_DECODER_NEEDS_MORE_INPUT: c_int = 2;
-pub const BROTLI_DECODER_NEEDS_MORE_OUTPUT: c_int = 3;
-pub const BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE: c_int = -1;
-pub const BROTLI_DECODER_ERROR_FORMAT_RESERVED: c_int = -2;
-pub const BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE: c_int = -3;
-pub const BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET: c_int = -4;
-pub const BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME: c_int = -5;
-pub const BROTLI_DECODER_ERROR_FORMAT_CL_SPACE: c_int = -6;
-pub const BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE: c_int = -7;
-pub const BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT: c_int = -8;
-pub const BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1: c_int = -9;
-pub const BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2: c_int = -10;
-pub const BROTLI_DECODER_ERROR_FORMAT_TRANSFORM: c_int = -11;
-pub const BROTLI_DECODER_ERROR_FORMAT_DICTIONARY: c_int = -12;
-pub const BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS: c_int = -13;
-pub const BROTLI_DECODER_ERROR_FORMAT_PADDING_1: c_int = -14;
-pub const BROTLI_DECODER_ERROR_FORMAT_PADDING_2: c_int = -15;
-pub const BROTLI_DECODER_ERROR_FORMAT_DISTANCE: c_int = -16;
-pub const BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY: c_int = -18;
-pub const BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET: c_int = -19;
-pub const BROTLI_DECODER_ERROR_INVALID_ARGUMENTS: c_int = -20;
-pub const BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES: c_int = -21;
-pub const BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS: c_int = -22;
-pub const BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP: c_int = -25;
-pub const BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1: c_int = -26;
-pub const BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2: c_int = -27;
-pub const BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES: c_int = -30;
-pub const BROTLI_DECODER_ERROR_UNREACHABLE: c_int = -31;
-
-#[repr(i32)] // Zig: enum(c_int)
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum BrotliDecoderErrorCode {
-    FORMAT_EXUBERANT_NIBBLE = -1,
-    FORMAT_RESERVED = -2,
-    FORMAT_EXUBERANT_META_NIBBLE = -3,
-    FORMAT_SIMPLE_HUFFMAN_ALPHABET = -4,
-    FORMAT_SIMPLE_HUFFMAN_SAME = -5,
-    FORMAT_CL_SPACE = -6,
-    FORMAT_HUFFMAN_SPACE = -7,
-    FORMAT_CONTEXT_MAP_REPEAT = -8,
-    FORMAT_BLOCK_LENGTH_1 = -9,
-    FORMAT_BLOCK_LENGTH_2 = -10,
-    FORMAT_TRANSFORM = -11,
-    FORMAT_DICTIONARY = -12,
-    FORMAT_WINDOW_BITS = -13,
-    FORMAT_PADDING_1 = -14,
-    FORMAT_PADDING_2 = -15,
-    FORMAT_DISTANCE = -16,
-    COMPOUND_DICTIONARY = -18,
-    DICTIONARY_NOT_SET = -19,
-    INVALID_ARGUMENTS = -20,
-    ALLOC_CONTEXT_MODES = -21,
-    ALLOC_TREE_GROUPS = -22,
-    ALLOC_CONTEXT_MAP = -25,
-    ALLOC_RING_BUFFER_1 = -26,
-    ALLOC_RING_BUFFER_2 = -27,
-    ALLOC_BLOCK_TYPE_TREES = -30,
-    UNREACHABLE = -31,
-}
+// NOTE: brotli_c.zig (translate-c output) defines this error-code table three times
+// (loose `BROTLI_DECODER_*` consts, a subset `BrotliDecoderErrorCode` enum, and the
+// full `BrotliDecoderErrorCode2` enum). They are intentionally collapsed here into the
+// single complete enum below; `BrotliDecoderErrorCode` is kept as an alias for FFI
+// signatures. Do not re-add the duplicates on a mechanical re-port.
+pub type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
 
 #[repr(i32)] // Zig: enum(c_int)
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -270,14 +208,10 @@ pub enum BrotliDecoderParameter {
 
 pub const BROTLI_UINT32_MAX: u32 = !0u32;
 pub const BROTLI_SIZE_MAX: usize = !0usize;
-pub const BROTLI_LAST_ERROR_CODE: c_int = BROTLI_DECODER_ERROR_UNREACHABLE;
+pub const BROTLI_LAST_ERROR_CODE: c_int = BrotliDecoderErrorCode2::ERROR_UNREACHABLE as c_int;
 pub type BrotliSharedDictionaryStruct = struct_BrotliSharedDictionaryStruct;
 
-#[repr(C)]
-pub struct struct_BrotliEncoderPreparedDictionaryStruct {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct struct_BrotliEncoderPreparedDictionaryStruct; }
 pub type BrotliEncoderPreparedDictionary = struct_BrotliEncoderPreparedDictionaryStruct;
 
 unsafe extern "C" {
@@ -352,11 +286,7 @@ unsafe extern "C" {
 
 /// Opaque brotli encoder state. `UnsafeCell` makes the type `!Freeze` so a
 /// `&BrotliEncoder` does not assert immutability of the C-owned state.
-#[repr(C)]
-pub struct BrotliEncoder {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct BrotliEncoder; }
 
 #[repr(u32)] // Zig: enum(c_uint)
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]

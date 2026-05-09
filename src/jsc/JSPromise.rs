@@ -12,14 +12,10 @@ use crate::{JsTerminated, TopExceptionScope};
 use crate::top_exception_scope::SourceLocation;
 use crate::virtual_machine::VirtualMachine;
 
-/// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
-/// constructed or owned on the Rust side (GC-managed).
-#[repr(C)]
-pub struct JSPromise {
-    // `UnsafeCell` opts out of `Freeze` so `&JSPromise` FFI params are not
-    // emitted with `readonly`/`noalias` LLVM attributes (mirrors JSGlobalObject).
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
+    /// constructed or owned on the Rust side (GC-managed).
+    pub struct JSPromise;
 }
 
 #[repr(u32)]

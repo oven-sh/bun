@@ -40,6 +40,7 @@ use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
 use crate::bun_fs as Fs;
 use crate::bun_node_fallbacks as NodeFallbackModules;
+use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as _resolver, Resolver};
 use crate::transpiler::Transpiler;
 
@@ -57,52 +58,10 @@ mod EventLoop {
 // borrows directly. No erasure helper is needed; `StoreStr::new` covers the
 // remaining AST-string sites (`E::String.data`, `FileLoaderHash.key`).
 
-// CYCLEBREAK FORWARD_DECL bridges: `JSBundlerPlugin` / `FileMap` are opaque
-// `[u8; 0]` in `bundle_v2.rs`; the real bodies live in T6 (`jsc::api::JSBundler`).
-// These impls forward to the C++ entry points via FFI so ParseTask can call
-// them without depending on the higher-tier JSC crate.
-unsafe extern "C" {
-    fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: *const bundler::JSBundlerPlugin) -> i32;
-    fn JSBundlerPlugin__callOnBeforeParsePlugins(
-        this: *const bundler::JSBundlerPlugin,
-        ctx: *mut c_void,
-        namespace: *const bun_string::String,
-        path: *const bun_string::String,
-        args: *mut c_void,
-        result: *mut c_void,
-        should_continue_running: *mut i32,
-    ) -> i32;
-}
-impl bundler::JSBundlerPlugin {
-    #[inline]
-    pub(crate) fn has_on_before_parse_plugins(&self) -> bool {
-        // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
-        unsafe { JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0 }
-    }
-    #[inline]
-    pub(crate) fn call_on_before_parse_plugins(
-        &self,
-        ctx: *mut c_void,
-        namespace: &bun_string::String,
-        path: &bun_string::String,
-        args: *mut parse_worker::OnBeforeParseArguments,
-        result: *mut parse_worker::OnBeforeParseResult,
-        should_continue_running: *mut i32,
-    ) -> i32 {
-        // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
-        unsafe {
-            JSBundlerPlugin__callOnBeforeParsePlugins(
-                self,
-                ctx,
-                namespace,
-                path,
-                args.cast(),
-                result.cast(),
-                should_continue_running,
-            )
-        }
-    }
-}
+// `JSBundlerPlugin::{has_on_before_parse_plugins, call_on_before_parse_plugins}`
+// live on the canonical `impl Plugin` in `bundle_v2.rs::api::JSBundler` next to
+// the other FFI wrappers; `bundler::JSBundlerPlugin` re-exports that type.
+//
 // PORT NOTE: `FileMap::get` now lives on the real `JSBundler::FileMap` in
 // bundle_v2.rs (no longer an opaque forward-decl). The placeholder
 // always-miss `get` shim that used to sit here has been removed so the two
@@ -2125,7 +2084,7 @@ fn run_with_source_code(
     // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
     // arena outlives all reads through the returned ASTs. `arena` is a
     // `*const Bump` field; the deref points outside `*worker_raw`.
-    let bump: &'static Bump = unsafe { &*(*worker_raw).arena };
+    let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
 
     // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
     let mut transpiler: *mut Transpiler<'static> =

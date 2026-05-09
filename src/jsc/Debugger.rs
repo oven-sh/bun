@@ -34,11 +34,9 @@ bun_core::declare_scope!(LifecycleAgent, visible);
 
 pub use crate::http_server_agent::HTTPServerAgent;
 
-/// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.
-#[repr(C)]
-pub struct InspectorBunFrontendDevServerAgentHandle {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.
+    pub struct InspectorBunFrontendDevServerAgentHandle;
 }
 
 /// `BunFrontendDevServerAgent` — stored inline in `Debugger`. The two
@@ -537,12 +535,7 @@ impl Debugger {
                         }
                     }
 
-                    // SAFETY: `bun_core::Timespec` and `bun_uws::Timespec` are
-                    // both `#[repr(C)] { sec: i64, nsec: i64 }` — layout-
-                    // identical.
-                    let deadline_uws: &bun_uws::Timespec =
-                        unsafe { &*(&raw const deadline).cast() };
-                    this.uws_loop_mut().tick_with_timeout(Some(deadline_uws));
+                    this.uws_loop_mut().tick_with_timeout(Some(&deadline));
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -961,11 +954,7 @@ pub enum TestType {
     Describe = 1,
 }
 
-#[repr(C)]
-pub struct TestReporterHandle {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
@@ -1136,11 +1125,7 @@ pub struct LifecycleAgent {
     pub handle: *mut LifecycleHandle,
 }
 
-#[repr(C)]
-pub struct LifecycleHandle {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {

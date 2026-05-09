@@ -6,11 +6,9 @@ use crate::event_loop::{EventLoop, JsTerminated};
 use crate::virtual_machine::VirtualMachine;
 use crate::ExceptionValidationScope;
 
-/// Opaque FFI handle for a JSC deferred work task (constructed/owned on the C++ side).
-#[repr(C)]
-pub struct JSCDeferredWorkTask {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for a JSC deferred work task (constructed/owned on the C++ side).
+    pub struct JSCDeferredWorkTask;
 }
 
 impl Taskable for JSCDeferredWorkTask {

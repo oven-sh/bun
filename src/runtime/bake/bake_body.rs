@@ -96,24 +96,7 @@ fn get_function(
     }
 }
 
-/// `bun.schema.api.SourceMapMode.fromJS` — inlined here because the canonical
-/// impl lives in `bun_bundler_jsc::source_map_mode_jsc` (not a dependency of
-/// `bun_runtime`).
-fn source_map_mode_from_js(
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<bun_schema::api::SourceMapMode>> {
-    use bun_schema::api::SourceMapMode;
-    if value.is_string() {
-        let str = value.to_slice(global)?;
-        let utf8 = str.slice();
-        if utf8 == b"none" { return Ok(Some(SourceMapMode::None)); }
-        if utf8 == b"inline" { return Ok(Some(SourceMapMode::Inline)); }
-        if utf8 == b"external" { return Ok(Some(SourceMapMode::External)); }
-        if utf8 == b"linked" { return Ok(Some(SourceMapMode::Linked)); }
-    }
-    Ok(None)
-}
+use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 
 /// Convert a `bun_core::Error` into a thrown JS exception in a `JsResult`
 /// context. Mirrors Zig `globalThis.throwError(err, msg)`.

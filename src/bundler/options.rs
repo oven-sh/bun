@@ -8,6 +8,7 @@ use bun_core::{Output, Global};
 use bun_collections::VecExt;
 use bun_collections::{StringHashMap, StringArrayHashMap, ArrayHashMap, MultiArrayList};
 use bun_resolver::fs as Fs;
+use bun_resolver::fs::PathResolverExt as _;
 #[allow(unused_imports)]
 use bun_resolver as resolver;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
@@ -64,9 +65,6 @@ pub type LoaderEnumMap = EnumMap<Loader, &'static [u8]>;
 mod bun_http {
     pub use bun_http_types::MimeType::MimeType;
 }
-// TODO(b2-blocked): bun_collections::BufSet — Zig `std.BufSet` (owns key copies).
-// Approximated with the existing StringSet; revisit ownership semantics.
-type BufSet = bun_collections::StringSet;
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
 pub use bun_collections::StringSet;
 
@@ -160,119 +158,114 @@ where
 // `&transpiler.options.allow_unresolved` straight through.
 pub use bun_js_parser::options::AllowUnresolved;
 
-#[derive(Default)]
-pub struct ExternalModules {
-    pub node_modules: BufSet,
-    pub abs_paths: BufSet,
-    pub patterns: Box<[WildcardPattern]>,
+// Canonical defs live in `bun_resolver::options` (lower tier; resolver is the
+// runtime consumer of `.patterns`/`.abs_paths`/`.node_modules`). Re-export so
+// `BundleOptions.external` and `Resolver.opts.external` are the SAME nominal
+// type and the projection in `transpiler::resolver_bundle_options_subset` is a
+// plain `.clone()`.
+pub use bun_resolver::options::{ExternalModules, WildcardPattern};
+
+/// `options.zig` `ExternalModules.isNodeBuiltin`. Free fn (not an inherent
+/// method) because `ExternalModules` is now a foreign type and Rust forbids
+/// inherent impls across crates (E0116).
+pub fn is_node_builtin(str: &[u8]) -> bool {
+    bun_resolve_builtins::Alias::has(str, bun_resolve_builtins::Target::Node, Default::default())
 }
 
-#[derive(Debug, Clone)]
-pub struct WildcardPattern {
-    pub prefix: Box<[u8]>,
-    pub suffix: Box<[u8]>,
+const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
+    (b"/bun:", b""),
+    // (b"/src:", b""),
+    // (b"/blob:", b""),
+];
+
+fn default_wildcard_patterns() -> Vec<WildcardPattern> {
+    DEFAULT_WILDCARD_PATTERNS
+        .iter()
+        .map(|(p, s)| WildcardPattern { prefix: Box::from(*p), suffix: Box::from(*s) })
+        .collect()
 }
 
-impl ExternalModules {
-    
-    // TODO(b2-blocked): bun_resolve_builtins — adding the dep triggers upstream
-    // rebuilds that expose in-progress breakage in css/logger.
-    pub fn is_node_builtin(str: &[u8]) -> bool {
-        bun_resolve_builtins::Alias::has(str, bun_resolve_builtins::Target::Node, Default::default())
-    }
+/// `options.zig` `ExternalModules.init`. Free fn for the same orphan-rule
+/// reason as [`is_node_builtin`]; stays at bundler tier because it needs
+/// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
+pub fn init_external_modules(
+    fs: &mut Fs::Implementation,
+    cwd: &[u8],
+    externals: &[&[u8]],
+    log: &mut logger::Log,
+    target: Target,
+) -> ExternalModules {
+    let mut result = ExternalModules {
+        node_modules: StringSet::default(),
+        abs_paths: StringSet::default(),
+        patterns: default_wildcard_patterns(),
+    };
 
-    const DEFAULT_WILDCARD_PATTERNS: &'static [(&'static [u8], &'static [u8])] = &[
-        (b"/bun:", b""),
-        // (b"/src:", b""),
-        // (b"/blob:", b""),
-    ];
-
-    fn default_wildcard_patterns() -> Box<[WildcardPattern]> {
-        Self::DEFAULT_WILDCARD_PATTERNS
-            .iter()
-            .map(|(p, s)| WildcardPattern { prefix: Box::from(*p), suffix: Box::from(*s) })
-            .collect()
-    }
-
-    pub fn init(
-        fs: &mut Fs::Implementation,
-        cwd: &[u8],
-        externals: &[&[u8]],
-        log: &mut logger::Log,
-        target: Target,
-    ) -> ExternalModules {
-        let mut result = ExternalModules {
-            node_modules: BufSet::default(),
-            abs_paths: BufSet::default(),
-            patterns: Self::default_wildcard_patterns(),
-        };
-
-        match target {
-            Target::Node => {
-                // TODO: fix this stupid copy
-                let _ = result
-                    .node_modules
-                    .map
-                    .ensure_total_capacity(NODE_BUILTIN_PATTERNS.len());
-                for pattern in NODE_BUILTIN_PATTERNS {
-                    result.node_modules.insert(pattern).expect("unreachable");
-                }
-            }
-            Target::Bun => {
-                // // TODO: fix this stupid copy
-                // result.node_modules.hash_map.ensureTotalCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
-                // for (BunNodeBuiltinPatternsCompat) |pattern| {
-                //     result.node_modules.insert(pattern) catch unreachable;
-                // }
-            }
-            _ => {}
-        }
-
-        if externals.is_empty() {
-            return result;
-        }
-
-        let mut patterns: Vec<WildcardPattern> =
-            Vec::with_capacity(Self::DEFAULT_WILDCARD_PATTERNS.len());
-        // PERF(port): was appendSliceAssumeCapacity
-        patterns.extend(Self::default_wildcard_patterns().into_vec());
-
-        for external in externals {
-            let path = *external;
-            if let Some(i) = strings::index_of_char(path, b'*') {
-                let i = i as usize;
-                if strings::index_of_char(&path[i + 1..], b'*').is_some() {
-                    log.add_error_fmt(
-                        None,
-                        logger::Loc::EMPTY,
-                        format_args!(
-                            "External path \"{}\" cannot have more than one \"*\" wildcard",
-                            bstr::BStr::new(external)
-                        ),
-                    )
-                    .expect("unreachable");
-                    return result;
-                }
-
-                patterns.push(WildcardPattern {
-                    prefix: Box::from(&external[0..i]),
-                    suffix: Box::from(&external[i + 1..]),
-                });
-            } else if bun_paths::is_package_path(external) {
-                result.node_modules.insert(external).expect("unreachable");
-            } else {
-                let normalized = validate_path(log, fs, cwd, external, b"external path");
-
-                if !normalized.is_empty() {
-                    result.abs_paths.insert(&normalized).expect("unreachable");
-                }
+    match target {
+        Target::Node => {
+            // TODO: fix this stupid copy
+            let _ = result
+                .node_modules
+                .map
+                .ensure_total_capacity(NODE_BUILTIN_PATTERNS.len());
+            for pattern in NODE_BUILTIN_PATTERNS {
+                result.node_modules.insert(pattern).expect("unreachable");
             }
         }
-
-        result.patterns = patterns.into_boxed_slice();
-
-        result
+        Target::Bun => {
+            // // TODO: fix this stupid copy
+            // result.node_modules.hash_map.ensureTotalCapacity(BunNodeBuiltinPatternsCompat.len) catch unreachable;
+            // for (BunNodeBuiltinPatternsCompat) |pattern| {
+            //     result.node_modules.insert(pattern) catch unreachable;
+            // }
+        }
+        _ => {}
     }
+
+    if externals.is_empty() {
+        return result;
+    }
+
+    let mut patterns: Vec<WildcardPattern> =
+        Vec::with_capacity(DEFAULT_WILDCARD_PATTERNS.len());
+    // PERF(port): was appendSliceAssumeCapacity
+    patterns.extend(default_wildcard_patterns());
+
+    for external in externals {
+        let path = *external;
+        if let Some(i) = strings::index_of_char(path, b'*') {
+            let i = i as usize;
+            if strings::index_of_char(&path[i + 1..], b'*').is_some() {
+                log.add_error_fmt(
+                    None,
+                    logger::Loc::EMPTY,
+                    format_args!(
+                        "External path \"{}\" cannot have more than one \"*\" wildcard",
+                        bstr::BStr::new(external)
+                    ),
+                )
+                .expect("unreachable");
+                return result;
+            }
+
+            patterns.push(WildcardPattern {
+                prefix: Box::from(&external[0..i]),
+                suffix: Box::from(&external[i + 1..]),
+            });
+        } else if bun_paths::is_package_path(external) {
+            result.node_modules.insert(external).expect("unreachable");
+        } else {
+            let normalized = validate_path(log, fs, cwd, external, b"external path");
+
+            if !normalized.is_empty() {
+                result.abs_paths.insert(&normalized).expect("unreachable");
+            }
+        }
+    }
+
+    result.patterns = patterns;
+
+    result
 }
 
 pub const NODE_BUILTIN_PATTERNS_RAW: &[&[u8]] = &[
@@ -1468,31 +1461,21 @@ pub fn defines_from_transform_options(
             break 'load_env;
         }
 
-        // PORT NOTE: flatten `api::StringMap` into parallel borrowed slices,
-        // mapping `api::DotEnvBehavior` → the local dotenv mirror enum (same
-        // wire values, see env_loader.rs:33).
+        // PORT NOTE: flatten `api::StringMap` into parallel borrowed slices.
+        // `api::DotEnvBehavior` is the same type as `DotEnv::DotEnvBehavior`
+        // (re-export), so no conversion needed.
         let api_defaults = framework.to_api().defaults;
         let default_keys: Vec<&[u8]> =
             api_defaults.keys.iter().map(|k| k.as_ref()).collect();
         let default_values: Vec<&[u8]> =
             api_defaults.values.iter().map(|v| v.as_ref()).collect();
-        let dotenv_behavior = match framework.behavior {
-            api::DotEnvBehavior::disable | api::DotEnvBehavior::_none => {
-                DotEnv::DotEnvBehavior::Disable
-            }
-            api::DotEnvBehavior::prefix => DotEnv::DotEnvBehavior::Prefix,
-            api::DotEnvBehavior::load_all => DotEnv::DotEnvBehavior::LoadAll,
-            api::DotEnvBehavior::load_all_without_inlining => {
-                DotEnv::DotEnvBehavior::LoadAllWithoutInlining
-            }
-        };
         defines::copy_env_for_define(
             env,
             &mut user_defines,
             &mut environment_defines,
             &default_keys,
             &default_values,
-            dotenv_behavior,
+            behavior,
             &framework.prefix,
         )?;
     }
@@ -2052,11 +2035,7 @@ impl<'a> BundleOptions<'a> {
             target: self.target,
             main_fields: self.main_fields.clone(),
             log: self.log,
-            external: ExternalModules {
-                node_modules: bun_core::handle_oom(self.external.node_modules.clone()),
-                abs_paths: bun_core::handle_oom(self.external.abs_paths.clone()),
-                patterns: self.external.patterns.clone(),
-            },
+            external: self.external.clone(),
             allow_unresolved: self.allow_unresolved.clone(),
             entry_points: self.entry_points.clone(),
             entry_naming: self.entry_naming.clone(),
@@ -2494,7 +2473,7 @@ impl<'a> BundleOptions<'a> {
 
         // PORT NOTE: Zig passed `log` directly; reborrow the raw `*mut Log`
         // for the duration of this call only.
-        opts.external = ExternalModules::init(
+        opts.external = init_external_modules(
             &mut fs.fs,
             fs.top_level_dir,
             &transform
@@ -3008,17 +2987,97 @@ pub enum PlaceholderField {
     Target,
 }
 
+// Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
+#[inline]
+pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
+    // TODO(port): Zig used comptime @tagName concatenation; here we match explicitly.
+    let needle: &[u8] = match field {
+        PlaceholderField::Dir => b"[dir]",
+        PlaceholderField::Name => b"[name]",
+        PlaceholderField::Ext => b"[ext]",
+        PlaceholderField::Hash => b"[hash]",
+        PlaceholderField::Target => b"[target]",
+    };
+    strings::contains(data, needle)
+}
+
+// Shared body for PathTemplate::print / PathTemplateConst::print (D064).
+// PORT NOTE: Zig `format(self, comptime _, _, writer: anytype)` writes raw path bytes via
+// writer.writeAll; mapped to a byte-writer free fn (not `core::fmt::Display`) per
+// PORTING.md "(comptime X: type, arg: X) writer → &mut impl bun_io::Write (bytes)".
+pub(crate) fn path_template_print<W: bun_io::Write>(
+    writer: &mut W,
+    data: &[u8],
+    dir: &[u8],
+    name: &[u8],
+    ext: &[u8],
+    hash: Option<u64>,
+    target: &[u8],
+) -> bun_io::Result<()> {
+    let mut remain: &[u8] = data;
+    while let Some(j) = strings::index_of_char(remain, b'[') {
+        let j = j as usize;
+        PathTemplate::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
+        remain = &remain[j + 1..];
+        if remain.is_empty() {
+            // TODO: throw error
+            writer.write_all(b"[")?;
+            break;
+        }
+
+        let mut count: isize = 1;
+        let mut end_len: usize = remain.len();
+        for (idx, c) in remain.iter().enumerate() {
+            count += match *c {
+                b'[' => 1,
+                b']' => -1,
+                _ => 0,
+            };
+
+            if count == 0 {
+                end_len = idx;
+                debug_assert!(end_len <= remain.len());
+                break;
+            }
+        }
+
+        let placeholder = &remain[0..end_len];
+
+        let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
+            PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
+            remain = &remain[end_len..];
+            continue;
+        };
+
+        match field {
+            PlaceholderField::Dir => PathTemplate::write_replacing_slashes_on_windows(
+                writer,
+                if !dir.is_empty() { dir } else { b"." },
+            )?,
+            PlaceholderField::Name => {
+                PathTemplate::write_replacing_slashes_on_windows(writer, name)?
+            }
+            PlaceholderField::Ext => {
+                PathTemplate::write_replacing_slashes_on_windows(writer, ext)?
+            }
+            PlaceholderField::Hash => {
+                if let Some(hash) = hash {
+                    writer.write_fmt(format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
+                }
+            }
+            PlaceholderField::Target => {
+                PathTemplate::write_replacing_slashes_on_windows(writer, target)?
+            }
+        }
+        remain = &remain[end_len + 1..];
+    }
+
+    PathTemplate::write_replacing_slashes_on_windows(writer, remain)
+}
+
 impl PathTemplate {
     pub fn needs(&self, field: PlaceholderField) -> bool {
-        // TODO(port): Zig used comptime @tagName concatenation; here we match explicitly.
-        let needle: &[u8] = match field {
-            PlaceholderField::Dir => b"[dir]",
-            PlaceholderField::Name => b"[name]",
-            PlaceholderField::Ext => b"[ext]",
-            PlaceholderField::Hash => b"[hash]",
-            PlaceholderField::Target => b"[target]",
-        };
-        strings::contains(&self.data, needle)
+        path_template_needs(&self.data, field)
     }
 
     #[inline]
@@ -3073,69 +3132,16 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    // PORT NOTE: Zig `format(self, comptime _, _, writer: anytype)` writes raw path bytes via
-    // writer.writeAll; mapped to a byte-writer inherent method (not `core::fmt::Display`) per
-    // PORTING.md "(comptime X: type, arg: X) writer → &mut impl bun_io::Write (bytes)".
     pub fn print<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
-        let mut remain: &[u8] = &self.data;
-        while let Some(j) = strings::index_of_char(remain, b'[') {
-            let j = j as usize;
-            Self::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
-            remain = &remain[j + 1..];
-            if remain.is_empty() {
-                // TODO: throw error
-                writer.write_all(b"[")?;
-                break;
-            }
-
-            let mut count: isize = 1;
-            let mut end_len: usize = remain.len();
-            for (idx, c) in remain.iter().enumerate() {
-                count += match *c {
-                    b'[' => 1,
-                    b']' => -1,
-                    _ => 0,
-                };
-
-                if count == 0 {
-                    end_len = idx;
-                    debug_assert!(end_len <= remain.len());
-                    break;
-                }
-            }
-
-            let placeholder = &remain[0..end_len];
-
-            let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
-                Self::write_replacing_slashes_on_windows(writer, placeholder)?;
-                remain = &remain[end_len..];
-                continue;
-            };
-
-            match field {
-                PlaceholderField::Dir => Self::write_replacing_slashes_on_windows(
-                    writer,
-                    if !self.placeholder.dir.is_empty() { &self.placeholder.dir } else { b"." },
-                )?,
-                PlaceholderField::Name => {
-                    Self::write_replacing_slashes_on_windows(writer, &self.placeholder.name)?
-                }
-                PlaceholderField::Ext => {
-                    Self::write_replacing_slashes_on_windows(writer, &self.placeholder.ext)?
-                }
-                PlaceholderField::Hash => {
-                    if let Some(hash) = self.placeholder.hash {
-                        writer.write_fmt(format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
-                    }
-                }
-                PlaceholderField::Target => {
-                    Self::write_replacing_slashes_on_windows(writer, &self.placeholder.target)?
-                }
-            }
-            remain = &remain[end_len + 1..];
-        }
-
-        Self::write_replacing_slashes_on_windows(writer, remain)
+        path_template_print(
+            writer,
+            &self.data,
+            &self.placeholder.dir,
+            &self.placeholder.name,
+            &self.placeholder.ext,
+            self.placeholder.hash,
+            &self.placeholder.target,
+        )
     }
 }
 
@@ -3185,80 +3191,19 @@ impl PathTemplateConst {
     /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
     /// blanket [`core::fmt::Display`] impl below.
     pub fn print<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
-        let mut remain: &[u8] = self.data;
-        while let Some(j) = strings::index_of_char(remain, b'[') {
-            let j = j as usize;
-            PathTemplate::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
-            remain = &remain[j + 1..];
-            if remain.is_empty() {
-                // TODO: throw error
-                writer.write_all(b"[")?;
-                break;
-            }
-
-            let mut count: isize = 1;
-            let mut end_len: usize = remain.len();
-            for (idx, c) in remain.iter().enumerate() {
-                count += match *c {
-                    b'[' => 1,
-                    b']' => -1,
-                    _ => 0,
-                };
-                if count == 0 {
-                    end_len = idx;
-                    debug_assert!(end_len <= remain.len());
-                    break;
-                }
-            }
-
-            let placeholder = &remain[0..end_len];
-
-            let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
-                PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
-                remain = &remain[end_len..];
-                continue;
-            };
-
-            match field {
-                PlaceholderField::Dir => PathTemplate::write_replacing_slashes_on_windows(
-                    writer,
-                    if !self.placeholder.dir.is_empty() { self.placeholder.dir } else { b"." },
-                )?,
-                PlaceholderField::Name => {
-                    PathTemplate::write_replacing_slashes_on_windows(writer, self.placeholder.name)?
-                }
-                PlaceholderField::Ext => {
-                    PathTemplate::write_replacing_slashes_on_windows(writer, self.placeholder.ext)?
-                }
-                PlaceholderField::Hash => {
-                    if let Some(hash) = self.placeholder.hash {
-                        writer.write_fmt(format_args!(
-                            "{}",
-                            bun_core::fmt::truncated_hash32(hash)
-                        ))?;
-                    }
-                }
-                PlaceholderField::Target => PathTemplate::write_replacing_slashes_on_windows(
-                    writer,
-                    self.placeholder.target,
-                )?,
-            }
-
-            remain = &remain[end_len + 1..];
-        }
-
-        PathTemplate::write_replacing_slashes_on_windows(writer, remain)
+        path_template_print(
+            writer,
+            self.data,
+            self.placeholder.dir,
+            self.placeholder.name,
+            self.placeholder.ext,
+            self.placeholder.hash,
+            self.placeholder.target,
+        )
     }
 
     pub fn needs(&self, field: PlaceholderField) -> bool {
-        let needle: &[u8] = match field {
-            PlaceholderField::Dir => b"[dir]",
-            PlaceholderField::Name => b"[name]",
-            PlaceholderField::Ext => b"[ext]",
-            PlaceholderField::Hash => b"[hash]",
-            PlaceholderField::Target => b"[target]",
-        };
-        strings::contains(self.data, needle)
+        path_template_needs(self.data, field)
     }
 }
 

@@ -1140,19 +1140,7 @@ pub(crate) fn resolver_bundle_options_subset(
             require: src.conditions.require.clone().expect("oom"),
             style: src.conditions.style.clone().expect("oom"),
         },
-        external: ropts::ExternalModules {
-            patterns: src
-                .external
-                .patterns
-                .iter()
-                .map(|p| ropts::WildcardPattern {
-                    prefix: p.prefix.clone(),
-                    suffix: p.suffix.clone(),
-                })
-                .collect(),
-            abs_paths: src.external.abs_paths.clone().expect("oom"),
-            node_modules: src.external.node_modules.clone().expect("oom"),
-        },
+        external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
         framework: src.framework.map(|f| {
             // Bundler-local `bake_types::BuiltInModule` and

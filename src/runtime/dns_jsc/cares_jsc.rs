@@ -2,7 +2,7 @@
 //! `JSValue`/`JSGlobalObject`/`CallFrame` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
-use core::ffi::{c_char, c_int, CStr};
+use core::ffi::{c_int, CStr};
 
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -827,53 +827,19 @@ pub fn bun_canonicalize_ip(
             "canonicalizeIP() expects a string but received no arguments."
         )));
     }
-    // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
-    const INET6_ADDRSTRLEN: usize = if cfg!(windows) { 65 } else { 46 };
 
     let addr_arg = arguments[0].to_slice(global_this)?;
     let addr_str = addr_arg.slice();
-    if addr_str.len() >= INET6_ADDRSTRLEN {
-        return Ok(JSValue::UNDEFINED);
-    }
 
     // CIDR not allowed
     if strings::index_of_char(addr_str, b'/').is_some() {
         return Ok(JSValue::UNDEFINED);
     }
 
-    let mut ip_binary = [0u8; 16]; // 16 bytes is enough for both IPv4 and IPv6
-
-    // we need a null terminated string as input
-    let mut ip_addr = [0u8; INET6_ADDRSTRLEN + 1];
-    ip_addr[..addr_str.len()].copy_from_slice(addr_str);
-    ip_addr[addr_str.len()] = 0;
-
-    let mut af: c_int = c_ares::AF::INET;
-    // get the binary representation of the IP
-    // SAFETY: ip_addr is NUL-terminated; ip_binary is 16 bytes.
-    if unsafe { c_ares::ares_inet_pton(af, ip_addr.as_ptr().cast::<c_char>(), ip_binary.as_mut_ptr().cast()) } != 1 {
-        af = c_ares::AF::INET6;
-        // SAFETY: same as above.
-        if unsafe { c_ares::ares_inet_pton(af, ip_addr.as_ptr().cast::<c_char>(), ip_binary.as_mut_ptr().cast()) } != 1 {
-            return Ok(JSValue::UNDEFINED);
-        }
-    }
-    // ip_addr will contain the null-terminated string of the canonicalized IP
-    // SAFETY: ip_binary holds a valid in_addr/in6_addr; ip_addr has INET6_ADDRSTRLEN+1 bytes.
-    if unsafe {
-        c_ares::ares_inet_ntop(
-            af,
-            ip_binary.as_ptr().cast(),
-            ip_addr.as_mut_ptr(),
-            core::mem::size_of_val(&ip_addr) as _,
-        )
-    }
-    .is_null()
-    {
+    let mut ip_addr = [0u8; bun_boringssl::INET6_ADDRSTRLEN + 1];
+    let Some(slice) = bun_boringssl::canonicalize_ip(addr_str, &mut ip_addr) else {
         return Ok(JSValue::UNDEFINED);
-    }
-    // use the null-terminated size to return the string
-    let slice = bun_str::slice_to_nul(&ip_addr);
+    };
     if addr_str == slice {
         return Ok(arguments[0]);
     }

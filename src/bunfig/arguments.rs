@@ -128,6 +128,18 @@ pub fn load_config_path(
     load_bunfig(cmd, auto_loaded, config_path, ctx)
 }
 
+#[cold]
+fn report_bunfig_load_failure(log: *mut logger::Log, err: bun_core::Error) -> ! {
+    // SAFETY: process-global Log; see `load_bunfig` note.
+    let log = unsafe { &mut *log };
+    if log.has_any() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        Output::print_error("\n");
+    }
+    Output::err(err, "failed to load bunfig", ());
+    Global::crash();
+}
+
 pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
@@ -156,16 +168,7 @@ pub fn load_config(
                 // SAFETY: NUL written at `len` by `join_abs_string_buf_z`.
                 let path = ZStr::from_buf(&config_buf[..], len);
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    // SAFETY: process-global Log; see `load_bunfig` note.
-                    let log = unsafe { &mut *ctx.log };
-                    if log.has_any() {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                    }
-                    if log.has_any() {
-                        Output::print_error("\n");
-                    }
-                    Output::err(err, "failed to load bunfig", ());
-                    Global::crash();
+                    report_bunfig_load_failure(ctx.log, err);
                 }
             }
         }
@@ -228,16 +231,7 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        // SAFETY: process-global Log; see `load_bunfig` note.
-        let log = unsafe { &mut *ctx.log };
-        if log.has_any() {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-        }
-        if log.has_any() {
-            Output::print_error("\n");
-        }
-        Output::err(err, "failed to load bunfig", ());
-        Global::crash();
+        report_bunfig_load_failure(ctx.log, err);
     }
     Ok(())
 }

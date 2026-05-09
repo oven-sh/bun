@@ -54,7 +54,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_core::StringBuilder;
+use bun_string::StringBuilder;
 // MOVE_DOWN(b0): bun_jsc::URL → bun_url::whatwg::URL (WHATWG parser moves out of jsc).
 use bun_url::whatwg::URL as JscUrl;
 use bun_string::{strings, OwnedString};
@@ -223,7 +223,7 @@ impl HostedGitInfo {
             None => None,
         };
 
-        let owned_buffer = sb.ptr.take().unwrap_or_default();
+        let owned_buffer = sb.move_to_slice();
 
         Ok(Self {
             committish: committish_part,
@@ -1491,7 +1491,7 @@ pub mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: sb.ptr.take(),
+                _owned_buffer: Some(sb.move_to_slice()),
             }))
         }
 
@@ -1542,7 +1542,7 @@ pub mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: sb.ptr.take(),
+                _owned_buffer: Some(sb.move_to_slice()),
             }))
         }
 
@@ -1596,7 +1596,7 @@ pub mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: sb.ptr.take(),
+                _owned_buffer: Some(sb.move_to_slice()),
             }))
         }
 
@@ -1670,7 +1670,7 @@ pub mod formatters {
                 user: user_slice,
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: sb.ptr.take(),
+                _owned_buffer: Some(sb.move_to_slice()),
             }))
         }
 
@@ -1749,7 +1749,7 @@ pub mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: sb.ptr.take(),
+                _owned_buffer: Some(sb.move_to_slice()),
             }))
         }
     }

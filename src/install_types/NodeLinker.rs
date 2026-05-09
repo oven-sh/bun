@@ -114,7 +114,7 @@ impl Drop for RegularExpression {
 }
 
 /// Compile `pattern` into a Yarr regex via the link-time extern. `pub` so
-/// `bun_install::PnpmMatcher` re-uses this single declaration site instead of
+/// higher-tier callers re-use this single declaration site instead of
 /// duplicating the `__bun_regex_*` extern block (one declarer per upward call,
 /// per PORTING.md §extern-Rust-ban).
 #[inline]

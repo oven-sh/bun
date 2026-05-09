@@ -75,11 +75,7 @@ lol_opaque!(HTMLRewriter, HTMLRewriterBuilder, HTMLSelector, TextChunk, Element,
 
 // ─── HTMLRewriter ─────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct HTMLRewriter {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct HTMLRewriter; }
 
 unsafe extern "C" {
     fn lol_html_rewriter_write(rewriter: *mut HTMLRewriter, chunk: *const u8, chunk_len: usize) -> c_int;
@@ -132,11 +128,7 @@ impl HTMLRewriter {
 
 // ─── HTMLRewriter::Builder ────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct HTMLRewriterBuilder {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct HTMLRewriterBuilder; }
 
 pub type OutputSinkFn = unsafe extern "C" fn(*const u8, usize, *mut c_void);
 
@@ -377,11 +369,7 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(ptr: *const u8, len: us
 
 // ─── HTMLSelector ─────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct HTMLSelector {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct HTMLSelector; }
 
 unsafe extern "C" {
     fn lol_html_selector_parse(selector: *const u8, selector_len: usize) -> *mut HTMLSelector;
@@ -421,11 +409,7 @@ impl HTMLSelector {
 
 // ─── TextChunk ────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct TextChunk {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct TextChunk; }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -539,11 +523,7 @@ impl TextChunk {
 
 // ─── Element ──────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct Element {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Element; }
 
 // `Element` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — see `TextChunk` extern
 // block comment for the `safe fn` rationale. (ptr,len) shims stay `unsafe`.
@@ -796,11 +776,7 @@ impl HTMLString {
 
 // ─── EndTag ───────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct EndTag {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct EndTag; }
 
 // `EndTag` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — see `TextChunk` extern
 // block comment for the `safe fn` rationale.
@@ -872,11 +848,7 @@ impl EndTag {
 
 // ─── Attribute ────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct Attribute {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Attribute; }
 
 unsafe extern "C" {
     safe fn lol_html_attribute_name_get(attribute: &Attribute) -> HTMLString;
@@ -894,11 +866,7 @@ impl Attribute {
     }
 }
 
-#[repr(C)]
-pub struct AttributeIterator {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct AttributeIterator; }
 
 // `AttributeIterator` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — see
 // `TextChunk` extern block comment for the `safe fn` rationale.
@@ -928,11 +896,7 @@ impl AttributeIterator {
 
 // ─── Comment ──────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct Comment {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Comment; }
 
 // `Comment` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — see `TextChunk` extern
 // block comment for the `safe fn` rationale.
@@ -1031,11 +995,7 @@ pub type lol_html_end_tag_handler_t = unsafe extern "C" fn(*mut EndTag, *mut c_v
 
 // ─── DocEnd ───────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct DocEnd {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct DocEnd; }
 
 unsafe extern "C" {
     fn lol_html_doc_end_append(doc_end: *mut DocEnd, content: *const u8, content_len: usize, is_html: bool) -> c_int;
@@ -1085,11 +1045,7 @@ pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Conta
 
 // ─── DocType ──────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct DocType {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct DocType; }
 
 // `DocType` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — see `TextChunk` extern
 // block comment for the `safe fn` rationale.

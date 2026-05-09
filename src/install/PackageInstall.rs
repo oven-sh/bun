@@ -173,7 +173,7 @@ pub struct Failure {
     pub err: bun_core::Error,
     pub step: Step,
     #[cfg(debug_assertions)]
-    pub debug_trace: bun_crash_handler::StoredTrace,
+    pub debug_trace: bun_core::StoredTrace,
 }
 
 impl Failure {
@@ -198,8 +198,8 @@ impl InstallResult {
             step,
             #[cfg(debug_assertions)]
             debug_trace: match _trace {
-                Some(t) => bun_crash_handler::StoredTrace::from(Some(t)),
-                None => bun_crash_handler::StoredTrace::capture(None /* @returnAddress() */),
+                Some(t) => bun_core::StoredTrace::from(Some(t)),
+                None => bun_core::StoredTrace::capture(None /* @returnAddress() */),
             },
         })
     }

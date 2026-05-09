@@ -13,19 +13,6 @@ extern crate self as bun_css;
 // `` until the cross-module re-export web is untangled in a
 // follow-up B-2 round.
 
-macro_rules! gated_mod {
-    ($name:ident, $path:literal) => {
-        
-        #[path = $path]
-        pub mod $name;
-    };
-    ($name:ident, $path:literal, { $($body:tt)* }) => {
-
-        #[path = $path]
-        pub mod $name;
-    };
-}
-
 // ─── B-2 un-gated modules ─────────────────────────────────────────────────
 #[path = "logical.rs"]
 pub mod logical;
@@ -124,8 +111,8 @@ pub use generics::DeepClone;
 // Keyword-enum / `union(enum)` derive macros (port of Zig's `DefineEnumProperty`
 // / `DeriveParse` / `DeriveToCss` comptime fns). The `EnumProperty` *trait* is
 // re-exported above from `css_parser`; the *derive* of the same name lives in
-// the proc-macro crate. `Parse`/`ToCss` are short aliases used by some leaves.
-pub use bun_css_derive::{DefineEnumProperty, DeriveParse, DeriveToCss, Parse, ToCss};
+// the proc-macro crate.
+pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
 // Serializer + dtoa helpers live in the parser hub but are referenced as
 // `css::serializer` / `css::f32_length_with_5_digits` from value modules.
 pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};
@@ -183,85 +170,13 @@ pub mod values_stub {
         pub use crate::css_parser::color::hsl_to_rgb;
     }
 
-    /// Data-only stubs of `values/ident.rs::{Ident,DashedIdent,CustomIdent}` so
-    /// `generics::ident_eql` and cross-crate name lookups compile. Behavior
-    /// (`parse`/`to_css`) lives in the gated file. Field layout matches
-    /// `ident.zig` (single arena-borrowed slice).
+    /// Re-export of the real `values/ident.rs` — the data-only stub that used
+    /// to live here (so `generics::ident_eql` could compile) is obsolete:
+    /// `values::ident` is un-gated and `generics.rs` imports it directly.
+    /// The stub `IdentOrRef` had diverged (tagged enum vs packed-u128), so
+    /// this also removes a latent type-confusion hazard.
     pub mod ident {
-        // TODO(port): arena lifetime — `v` borrows the parser arena; Phase B
-        // threads `'bump` once the bumpalo arena lifetime is plumbed.
-        macro_rules! ident_newtype {
-            ($name:ident) => {
-                #[derive(Debug, Clone, Copy)]
-                pub struct $name {
-                    pub v: *const [u8],
-                }
-                impl $name {
-                    /// Borrow the underlying arena slice.
-                    /// SAFETY: caller must ensure the parser arena outlives the borrow.
-                    #[inline]
-                    pub unsafe fn as_slice(&self) -> &[u8] {
-                        // SAFETY: upheld by caller per fn-level contract.
-                        unsafe { &*self.v }
-                    }
-                }
-            };
-        }
-        ident_newtype!(Ident);
-        ident_newtype!(DashedIdent);
-        ident_newtype!(CustomIdent);
-
-        /// Zig: `pub const CustomIdentList = SmallList(CustomIdent, 1);`
-        pub type CustomIdentList = crate::SmallList<CustomIdent, 1>;
-
-        /// Either a literal identifier or a reference into the symbol table
-        /// (CSS-modules local name). Data-only stub of `values/ident.rs::
-        /// IdentOrRef` — kept as a tagged enum mirroring the spec's
-        /// `packed struct(u128)` discriminated union (ident.zig:148-265) so
-        /// it never stores both an Ident and a Ref simultaneously.
-        ///
-        /// NOTE: the real packed-u128 implementation lives in
-        /// `crate::values::ident::IdentOrRef` (now un-gated); this stub is
-        /// retained only for any remaining `values_stub` consumers.
-        #[derive(Clone, Copy)]
-        pub enum IdentOrRef {
-            Ident(Ident),
-            Ref(bun_logger::Ref),
-        }
-        impl IdentOrRef {
-            #[inline] pub fn from_ident(ident: Ident) -> Self { IdentOrRef::Ident(ident) }
-            #[inline] pub fn from_ref(r: bun_logger::Ref) -> Self { IdentOrRef::Ref(r) }
-            #[inline] pub fn is_ident(&self) -> bool { matches!(self, IdentOrRef::Ident(_)) }
-            #[inline] pub fn as_ident(&self) -> Option<Ident> {
-                match *self { IdentOrRef::Ident(i) => Some(i), _ => None }
-            }
-            #[inline] pub fn as_ref(&self) -> Option<bun_logger::Ref> {
-                match *self { IdentOrRef::Ref(r) => Some(r), _ => None }
-            }
-            /// Returns the underlying ident bytes for debugging (matches
-            /// ident.zig:160-171). For the `Ref` arm there is no ident slice
-            /// in this stub, so a sentinel is returned.
-            #[inline] pub fn debug_ident(&self) -> &[u8] {
-                match self {
-                    // SAFETY: `v` borrows the parser arena; caller (Printer
-                    // debug path) is scoped within the parse session.
-                    IdentOrRef::Ident(i) => unsafe { i.as_slice() },
-                    IdentOrRef::Ref(_) => b"<ref>",
-                }
-            }
-        }
-    }
-
-    /// Data-only stub of `values/url.rs::Url` so `dependencies::UrlDependency::new`
-    /// can compile. Behavior (`parse`/`is_absolute`/`to_css`) lives in the gated
-    /// file. Field layout matches `url.zig`.
-    pub mod url {
-        pub struct Url {
-            /// The url string.
-            pub import_record_idx: u32,
-            /// The location where the `url()` was seen in the CSS source file.
-            pub loc: crate::dependencies::Location,
-        }
+        pub use crate::values::ident::*;
     }
 }
 
@@ -289,6 +204,13 @@ impl core::fmt::Display for PrintErr {
     }
 }
 impl core::error::Error for PrintErr {}
+
+/// `PrintErr!T` return shape (Zig: `PrintErr!void`) used by every `to_css`
+/// path. Distinct from `css_parser::PrintResult<T> = Maybe<T, PrinterError>`,
+/// which carries the rich `Err<PrinterErrorKind>` — this is just the bubbled
+/// signal (the *kind* lives in `Printer.error_kind`).
+pub type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
+
 pub use dependencies::Dependency;
 
 // B-2 Track A surface: re-export the stubbed hub types at the crate root so
@@ -418,7 +340,7 @@ pub struct SourceLocation {
 }
 
 /// Cross-source location (carries a source-map source index).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, DeepClone)]
 pub struct Location {
     /// The index of the source file within the source map.
     pub source_index: u32,

@@ -39,9 +39,6 @@ pub use bun_options_types::schema::api::{
 /// nest a type inside a struct, so it lives in a sibling module and the
 /// canonical path becomes `bun_api::npm_registry::Parser`.
 pub mod npm_registry {
-    use std::io::Write as _;
-
-    use bun_string::strings;
     use bun_url::URL;
 
     pub use super::NpmRegistry;
@@ -68,12 +65,12 @@ pub mod npm_registry {
             // Token
             if url.username.is_empty() && !url.password.is_empty() {
                 registry.token = Box::<[u8]>::from(url.password);
-                registry.url = format_url_without_auth(&url);
+                registry.url = url.href_without_auth();
             } else if !url.username.is_empty() && !url.password.is_empty() {
                 registry.username = Box::<[u8]>::from(url.username);
                 registry.password = Box::<[u8]>::from(url.password);
 
-                registry.url = format_url_without_auth(&url);
+                registry.url = url.href_without_auth();
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = Box::<[u8]>::from(url.href);
@@ -81,29 +78,6 @@ pub mod npm_registry {
 
             Ok(registry)
         }
-    }
-
-    /// Zig: `std.fmt.allocPrint(alloc, "{s}://{f}/{s}/", .{
-    ///     url.displayProtocol(), url.displayHost(),
-    ///     std.mem.trim(u8, url.pathname, "/") })`.
-    ///
-    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
-    /// `Display`); the other two pieces are raw byte slices, so we assemble
-    /// into a `Vec<u8>` directly rather than going through `format!` and
-    /// risking lossy UTF-8 round-trips.
-    fn format_url_without_auth(url: &URL<'_>) -> Box<[u8]> {
-        let proto = url.display_protocol();
-        let path = strings::trim(url.pathname, b"/");
-
-        let mut buf: Vec<u8> = Vec::with_capacity(proto.len() + 3 + url.host.len() + 1 + path.len() + 1);
-        buf.extend_from_slice(proto);
-        buf.extend_from_slice(b"://");
-        // io::Write on Vec<u8> is infallible.
-        let _ = write!(&mut buf, "{}", url.display_host());
-        buf.push(b'/');
-        buf.extend_from_slice(path);
-        buf.push(b'/');
-        buf.into_boxed_slice()
     }
 }
 

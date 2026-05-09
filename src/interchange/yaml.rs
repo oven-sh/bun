@@ -764,11 +764,7 @@ impl From<AllocError> for ParseError {
     }
 }
 
-impl From<ParseError> for bun_core::Error {
-    fn from(e: ParseError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseError);
 
 // ───────────────────────────────────────────────────────────────────────────
 // String / StringRange / StringBuilder

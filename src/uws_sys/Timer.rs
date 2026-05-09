@@ -15,11 +15,7 @@ bun_core::declare_scope!(uws, visible);
 /// This code will be deleted eventually! It is very inefficient on POSIX. On
 /// Linux, it holds an entire file descriptor for every single timer. On macOS,
 /// it's several system calls.
-#[repr(C)]
-pub struct Timer {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Timer; }
 
 impl Timer {
     pub fn create<T>(loop_: &mut Loop, _ptr: T) -> NonNull<Timer> {

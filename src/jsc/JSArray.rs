@@ -1,10 +1,8 @@
 use crate::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 
-/// Opaque FFI handle for `JSC::JSArray`. Always used behind a reference/pointer.
-#[repr(C)]
-pub struct JSArray {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for `JSC::JSArray`. Always used behind a reference/pointer.
+    pub struct JSArray;
 }
 
 // TODO(port): move to jsc_sys

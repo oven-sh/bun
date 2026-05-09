@@ -32,8 +32,7 @@ pub use self::unicode::{
 
 // Transcoding helpers from `unicode_draft` that have no T0 `bun_core::strings`
 // equivalent yet — re-export so downstream `bun_str::strings::*` callers (e.g.
-// runtime/webcore/encoding.rs) resolve. These return `unicode_draft::EncodeIntoResult`,
-// which is field-compatible with `bun_core::strings::EncodeIntoResult`.
+// runtime/webcore/encoding.rs) resolve. These return `bun_core::strings::EncodeIntoResult`.
 pub use unicode_draft::{
     allocate_latin1_into_utf8, copy_cp1252_into_utf16, copy_latin1_into_ascii,
     copy_latin1_into_utf16, copy_latin1_into_utf8_stop_on_non_ascii, copy_u16_into_u8, copy_u8_into_u16,
@@ -204,14 +203,7 @@ pub mod visible_fallback {
 pub mod unicode {
     use super::{CodePoint, U3Fast};
 
-    #[inline]
-    pub const fn wtf8_byte_sequence_length(first: u8) -> u8 {
-        if first < 0x80 { 1 }
-        else if (first & 0xE0) == 0xC0 { 2 }
-        else if (first & 0xF0) == 0xE0 { 3 }
-        else if (first & 0xF8) == 0xF0 { 4 }
-        else { 1 }
-    }
+    pub use bun_core::strings::wtf8_byte_sequence_length;
     /// Same table; the Zig version distinguished only by 0-on-invalid intent
     /// (which the body doesn't actually do — both return 1 for invalid).
     #[inline]
@@ -2722,12 +2714,13 @@ pub const UNICODE_REPLACEMENT_STR: [u8; 3] = [0xEF, 0xBF, 0xBD];
 unsafe extern "C" {
     fn inet_pton(af: c_int, src: *const u8, dst: *mut u8) -> c_int;
 }
+// dep-graph: bun_string < bun_sys, so cannot import the canonical
+// `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
+// previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback, which
+// is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
 const AF_INET: c_int = 2;
-#[cfg(target_os = "linux")]  const AF_INET6: c_int = 10;
-#[cfg(target_os = "macos")]  const AF_INET6: c_int = 30;
-#[cfg(windows)]              const AF_INET6: c_int = 23;
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-const AF_INET6: c_int = 10;
+#[cfg(not(windows))] const AF_INET6: c_int = libc::AF_INET6 as c_int;
+#[cfg(windows)]      const AF_INET6: c_int = 23; // ws2def.h
 
 pub fn is_ip_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
@@ -3160,13 +3153,7 @@ pub fn trim_left<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
 }
 
 /// `std.mem.trimRight(u8, str, chars)` — strip trailing chars in `values_to_strip`.
-pub fn trim_right<'a>(slice: &'a [u8], values_to_strip: &[u8]) -> &'a [u8] {
-    let mut end = slice.len();
-    while end > 0 && values_to_strip.contains(&slice[end - 1]) {
-        end -= 1;
-    }
-    &slice[..end]
-}
+pub use bun_core::strings::trim_right;
 
 /// `std.mem.replacementSize` — byte length of `input` after replacing every
 /// occurrence of `needle` with `replacement`.

@@ -10,14 +10,9 @@ pub trait PathLike {
     fn path_text(&self) -> &[u8];
 }
 
+// `bun_resolver::fs::Path` is now a re-export of `bun_paths::fs::Path` (D090),
+// so a single impl covers both.
 impl PathLike for bun_paths::fs::Path<'_> {
-    #[inline]
-    fn path_text(&self) -> &[u8] {
-        self.text
-    }
-}
-
-impl PathLike for bun_resolver::fs::Path<'_> {
     #[inline]
     fn path_text(&self) -> &[u8] {
         self.text
@@ -36,10 +31,7 @@ pub type Map = StringHashMap<IndexInt>;
 
 /// Mirrors Zig's `Map.GetOrPutResult` — std `HashMap::entry` doesn't expose
 /// `found_existing` + value-ptr together, so we hand-roll a thin shim.
-pub struct GetOrPutResult<'a> {
-    pub value_ptr: &'a mut IndexInt,
-    pub found_existing: bool,
-}
+pub type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
     pub fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {

@@ -10,10 +10,6 @@ pub enum InitError {
     InvalidCA,
 }
 
-impl From<InitError> for bun_core::Error {
-    fn from(e: InitError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(InitError);
 
 // ported from: src/http/InitError.zig

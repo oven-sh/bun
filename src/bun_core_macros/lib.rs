@@ -73,33 +73,16 @@ fn eval_literal(expr: &Expr, out: &mut String) -> Result<(), syn::Error> {
     }
 }
 
-/// ANSI escape for a `<tag>` body. `None` → unknown tag (compile error).
-fn color_for(name: &str) -> Option<&'static str> {
-    // Keep in sync with `COLOR_MAP` in src/bun_core/output.rs and
-    // `color_map` in src/bun_core/output.zig.
-    Some(match name {
-        "b" => "\x1b[1m",
-        "d" => "\x1b[2m",
-        "i" => "\x1b[3m",
-        "u" => "\x1b[4m",
-        "black" => "\x1b[30m",
-        "red" => "\x1b[31m",
-        "green" => "\x1b[32m",
-        "yellow" => "\x1b[33m",
-        "blue" => "\x1b[34m",
-        "magenta" => "\x1b[35m",
-        "cyan" => "\x1b[36m",
-        "white" => "\x1b[37m",
-        "bgred" => "\x1b[41m",
-        "bggreen" => "\x1b[42m",
-        _ => return None,
-    })
-}
-
-const RESET: &str = "\x1b[0m";
+use bun_output_tags::{color_for, RESET};
 
 /// 1:1 port of `prettyFmt` from output.zig, plus Zig→Rust format-spec rewrites
 /// (`{s}`/`{d}` → `{}`, `{any}`/`{?}` → `{:?}`).
+///
+/// Colour table lives in `bun_output_tags`; the state machine is kept duplicated
+/// vs `bun_core::output::pretty_fmt_runtime` because the two intentionally
+/// diverge in the `{` arm (this side rewrites Zig specs `{s}`→`{}` for the
+/// emitted `format_args!` template; runtime copies braces verbatim) and on
+/// unknown tags (this side `Err`→`compile_error!`; runtime emits `""`).
 fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
     let bytes = fmt.as_bytes();
     let mut out = String::with_capacity(bytes.len() * 2);

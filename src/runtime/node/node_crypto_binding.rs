@@ -88,11 +88,7 @@ macro_rules! extern_crypto_job {
             use super::*;
 
             // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
-            #[repr(C)]
-            pub struct Ctx {
-                _p: core::cell::UnsafeCell<[u8; 0]>,
-                _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-            }
+            bun_opaque::opaque_ffi! { pub struct Ctx; }
 
             #[repr(C)]
             pub struct Job {
@@ -1230,10 +1226,7 @@ pub fn timing_safe_equal(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
             .throw());
     }
 
-    Ok(JSValue::from(
-        // SAFETY: l and r are valid slices of equal length; CRYPTO_memcmp reads exactly len bytes.
-        unsafe { boringssl::c::CRYPTO_memcmp(l.as_ptr().cast(), r.as_ptr().cast(), l.len()) } == 0,
-    ))
+    Ok(JSValue::from(boringssl::c::constant_time_eq(l, r)))
 }
 
 #[bun_jsc::host_fn]

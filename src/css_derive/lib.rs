@@ -598,8 +598,7 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
 //   * inherent `T::as_str` / `T::parse` / `T::to_css` so call-sites needn't
 //     import the trait (mirrors Zig's `pub const parse = css_impl.parse;`)
 //
-// `DeriveParse` / `DeriveToCss` (exposed under both their Zig names and the
-// shorter `Parse` / `ToCss` aliases used by some ported leaves) handle
+// `Parse` / `ToCss` (port of Zig's `DeriveParse` / `DeriveToCss`) handle
 // `union(enum)`-shaped Rust enums: unit variants serialize as keywords,
 // single-payload tuple variants delegate to the payload's own
 // `parse` / `to_css`. Ordering follows the Zig `generateCode` contract: void
@@ -786,7 +785,7 @@ fn expand_enum_property(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-// ───────────────────────── DeriveParse / DeriveToCss ─────────────────────────
+// ───────────────────────── Parse / ToCss ─────────────────────────
 
 #[proc_macro_derive(Parse, attributes(css))]
 pub fn derive_parse(input: TokenStream) -> TokenStream {
@@ -796,24 +795,8 @@ pub fn derive_parse(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(DeriveParse, attributes(css))]
-pub fn derive_derive_parse(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    expand_derive_parse(input)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
 #[proc_macro_derive(ToCss, attributes(css))]
 pub fn derive_to_css(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    expand_derive_to_css(input)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
-#[proc_macro_derive(DeriveToCss, attributes(css))]
-pub fn derive_derive_to_css(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_derive_to_css(input)
         .unwrap_or_else(|e| e.to_compile_error())

@@ -14,13 +14,49 @@
 #[cfg(windows)] pub mod windows_errno;
 #[cfg(windows)] pub use windows_errno::{*, posix};
 
+/// Zig's `getErrno(rc: anytype)` switches on `@TypeOf(rc)` to pick the errno
+/// extraction strategy. Rust has no type-switch, so we model it as a trait with
+/// per-type impls — call as `rc.get_errno()` or `get_errno(rc)`.
+///
+/// The trait declaration is target-independent; each per-OS module supplies its
+/// own `impl GetErrno for {i32,u32,isize,usize,...}` (Linux decodes raw-syscall
+/// `-errno` from `usize`, Darwin/FreeBSD read thread-local errno on `-1`,
+/// Windows ignores `rc` and reads `GetLastError()`/`WSAGetLastError()`).
+pub trait GetErrno: Copy {
+    fn get_errno(self) -> E;
+}
+
 impl SystemErrno {
     /// Zig: `@enumFromInt(n)`. Unchecked discriminant cast; debug-asserts `n < MAX`.
     #[inline]
-    pub fn from_int(n: u16) -> SystemErrno {
+    pub const fn from_raw(n: u16) -> SystemErrno {
+        // `as usize` on both sides papers over per-OS `MAX` typing (POSIX `u16`
+        // vs Windows `usize`) without normalizing the constant itself.
         debug_assert!((n as usize) < (Self::MAX as usize));
         // SAFETY: caller guarantees n < MAX; #[repr(u16)] with contiguous discriminants.
         unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+    }
+}
+
+#[cfg(not(windows))]
+impl SystemErrno {
+    // TODO(port): Zig `anytype` accepted any integer width (signed or unsigned).
+    // i64 covers every concrete call site (errno-range values); revisit if a
+    // caller passes u64/usize directly.
+    //
+    // Windows defines its own `init<C: SystemErrnoInit>` (typed dispatch over
+    // DWORD/c_int/Win32Error) in windows_errno.rs, so this impl is POSIX-only.
+    pub fn init(code: i64) -> Option<SystemErrno> {
+        if code < 0 {
+            if code <= -(Self::MAX as i64) {
+                return None;
+            }
+            return Some(Self::from_raw((-code) as u16));
+        }
+        if code >= Self::MAX as i64 {
+            return None;
+        }
+        Some(Self::from_raw(code as u16))
     }
 }
 

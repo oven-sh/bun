@@ -38,11 +38,7 @@ pub enum ArgError {
     InvalidArgument,
 }
 
-impl From<ArgError> for bun_core::Error {
-    fn from(e: ArgError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ArgError);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ArgKind {

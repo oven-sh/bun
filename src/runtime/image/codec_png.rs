@@ -9,11 +9,7 @@ use super::quantize;
 use crate::encoded_wrap_free;
 
 // TODO(port): move to runtime_sys (or a dedicated spng_sys crate)
-#[repr(C)]
-pub struct spng_ctx {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct spng_ctx; }
 
 unsafe extern "C" {
     fn spng_ctx_new(flags: c_int) -> *mut spng_ctx;

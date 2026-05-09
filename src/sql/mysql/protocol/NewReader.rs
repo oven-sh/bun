@@ -136,28 +136,11 @@ impl<C: ReaderContext> NewReader<C> {
 }
 
 /// Helper trait replacing Zig's `comptime Int: type` + `@typeInfo(Int).int.bits`
-/// reflection in `int()`. Phase B implements this for `u8`/`u16`/`u24`/`u32`/`u64`.
-// TODO(port): @typeInfo reflection — confirm full set of int widths used by callers
-pub trait ReadableInt: Sized + Copy {
-    const SIZE: usize;
-    /// Reinterpret `bytes[..SIZE]` as `Self` (native endian — matches `@bitCast`).
-    fn from_ne_slice(bytes: &[u8]) -> Self;
-}
-
-macro_rules! impl_readable_int {
-    ($($t:ty),*) => {$(
-        impl ReadableInt for $t {
-            const SIZE: usize = core::mem::size_of::<$t>();
-            #[inline]
-            fn from_ne_slice(bytes: &[u8]) -> Self {
-                let mut buf = [0u8; core::mem::size_of::<$t>()];
-                buf.copy_from_slice(&bytes[..Self::SIZE]);
-                <$t>::from_ne_bytes(buf)
-            }
-        }
-    )*};
-}
-impl_readable_int!(u8, i8, u16, i16, u32, i32, u64, i64);
+/// reflection in `int()`. The canonical native-endian int codec lives in
+/// `bun_core`; re-exported here under the protocol-local name so callers
+/// (`int<I: ReadableInt>()` and `bun_sql::ReadableInt`) keep their paths.
+/// MySQL's u24/i24 are NOT routed through this trait — see `int_u24`/`int_i24`.
+pub use bun_core::NativeEndianInt as ReadableInt;
 
 /// Zig: `fn NewReader(comptime Context: type) type` — returned `Context` unchanged
 /// if it already had `is_wrapped`, else `NewReaderWrap(Context, Context.fn...)`.

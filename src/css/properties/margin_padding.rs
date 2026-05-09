@@ -12,48 +12,10 @@ use crate::compat::Feature;
 // `css.DefineSizeShorthand` comptime mixins. The marker traits stay (some
 // callers name `<T as RectShorthand>::Value`); the actual `parse`/`to_css`
 // inherent methods + `generic::{Parse,ToCss}` impls are generated per-struct
-// by the `impl_rect_shorthand!` / `impl_size_shorthand!` macros below — Rust
-// has no field reflection, so the field names are passed in.
+// by the `impl_rect_shorthand!` / `impl_size_shorthand!` macros defined in
+// the parent `properties/mod.rs` (shared with `border.rs`).
 pub trait RectShorthand { type Value; }
 pub trait SizeShorthand { type Value; }
-
-macro_rules! impl_rect_shorthand {
-    ($T:ident, $V:ty) => {
-        impl $T {
-            pub fn parse(input: &mut css::css_parser::Parser) -> css::Result<Self> {
-                let r = css::css_values::rect::Rect::<$V>::parse(input)?;
-                Ok(Self { top: r.top, right: r.right, bottom: r.bottom, left: r.left })
-            }
-            pub fn to_css(&self, dest: &mut css::printer::Printer) -> Result<(), css::PrintErr> {
-                css::css_values::rect::Rect::<&$V> {
-                    top: &self.top, right: &self.right, bottom: &self.bottom, left: &self.left,
-                }
-                .to_css(dest)
-            }
-        }
-        crate::impl_generic_parse_tocss!($T);
-    };
-}
-
-macro_rules! impl_size_shorthand {
-    ($T:ident, $V:ty, $start:ident, $end:ident) => {
-        impl $T {
-            pub fn parse(input: &mut css::css_parser::Parser) -> css::Result<Self> {
-                let s = css::css_values::size::Size2D::<$V>::parse(input)?;
-                Ok(Self { $start: s.a, $end: s.b })
-            }
-            pub fn to_css(&self, dest: &mut css::printer::Printer) -> Result<(), css::PrintErr> {
-                self.$start.to_css(dest)?;
-                if self.$start != self.$end {
-                    dest.write_str(b" ")?;
-                    self.$end.to_css(dest)?;
-                }
-                Ok(())
-            }
-        }
-        crate::impl_generic_parse_tocss!($T);
-    };
-}
 
 impl_rect_shorthand!(Inset, LengthPercentageOrAuto);
 impl_rect_shorthand!(Margin, LengthPercentageOrAuto);

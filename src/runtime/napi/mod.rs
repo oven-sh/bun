@@ -18,11 +18,9 @@ pub use napi_body::{fix_dead_code_elimination, napi_async_work, NapiFinalizerTas
 
 // ─── compiling free items ────────────────────────────────────────────────────
 
-/// This is `struct napi_env__` from napi.h
-#[repr(C)]
-pub struct NapiEnv {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// This is `struct napi_env__` from napi.h
+    pub struct NapiEnv;
 }
 
 #[allow(non_camel_case_types)]

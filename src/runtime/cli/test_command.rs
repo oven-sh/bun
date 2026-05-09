@@ -337,8 +337,7 @@ impl JunitReporter {
                     self.hostname_value = Some(Box::default());
                     return None;
                 }
-                let len = name_buffer.iter().position(|&b| b == 0).unwrap_or(0);
-                let hostname = &name_buffer[..len];
+                let hostname = bun_str::slice_to_nul(&name_buffer);
 
                 let mut arraylist_writer: Vec<u8> = Vec::new();
                 if escape_xml(hostname, &mut arraylist_writer).is_err() {
@@ -1485,7 +1484,7 @@ impl CommandLineReporter {
                 // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
                 let mut base64_bytes = [0u8; 8];
                 let mut shortname_buf = [0u8; 512];
-                bun::csprng(&mut base64_bytes);
+                bun_core::csprng(&mut base64_bytes);
                 // Spec: `std.fmt.bufPrintZ(..., ".lcov.info.{x}.tmp", .{&base64_bytes})`
                 // — Zig `{x}` on `*[8]u8` prints contiguous lowercase hex.
                 let tmpname = {
@@ -1496,9 +1495,9 @@ impl CommandLineReporter {
                         let _ = write!(cursor, "{:02x}", b);
                     }
                     let _ = cursor.write_all(b".tmp\0");
-                    let len = shortname_buf.iter().position(|&b| b == 0).unwrap();
-                    // SAFETY: NUL written above
-                    bun_str::ZStr::from_buf(&shortname_buf[..], len)
+                    let s = bun_str::slice_to_nul(&shortname_buf);
+                    // NUL written above; `slice_to_nul` returns the prefix before it.
+                    bun_str::ZStr::from_buf(&shortname_buf[..], s.len())
                 };
                 let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(relative_dir, &mut lcov_name_buf, &[&opts.reports_directory, tmpname.as_bytes()]);
                 let file = File::openat(

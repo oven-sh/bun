@@ -221,17 +221,18 @@ pub use maybe_owned::MaybeOwned;
 pub mod mimalloc_arena;
 
 // ── tier-0 local primitives ───────────────────────────────────────────────
-// Real, self-contained helpers used by the BSS containers below. The wider
-// `bun_paths::SEP_STR` / `bun_core::strings::trim_right` live in higher tiers
-// (which depend on this crate), so the minimal definitions are duplicated here
-// rather than importing upward.
+// Real, self-contained helpers used by the BSS containers below. These are the
+// canonical tier-0 definitions, re-exported by higher tiers (`bun_paths::SEP_STR`,
+// `bun_core::strings::trim_right`, `bun_string::strings::trim_right`).
 
 /// Zig: `std.fs.path.sep_str` — `"\\"` on Windows, `"/"` elsewhere.
-const SEP_STR: &[u8] = if cfg!(windows) { b"\\" } else { b"/" };
+/// Canonical tier-0 definition; re-exported by `bun_paths::SEP_STR`.
+pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
 
 /// Zig: `std.mem.trimRight(u8, s, chars)`.
+/// Canonical tier-0 definition; re-exported by `bun_core::strings::trim_right`.
 #[inline]
-fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+pub fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
     let mut end = s.len();
     while end > 0 && chars.contains(&s[end - 1]) {
         end -= 1;
@@ -301,8 +302,7 @@ impl AllocError {
 /// larger through `mi_malloc_aligned`. `mi_free` handles both.
 pub struct Mimalloc;
 
-/// `#define MI_MAX_ALIGN_SIZE 16` — max alignment guaranteed by `mi_malloc`.
-const MI_MAX_ALIGN_SIZE: usize = 16;
+use mimalloc::MI_MAX_ALIGN_SIZE;
 
 // SAFETY: mimalloc's allocator contract matches GlobalAlloc's:
 //   - `mi_malloc`/`mi_malloc_aligned` return null on failure or a ptr to ≥size
@@ -452,8 +452,8 @@ static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
 #[inline]
 pub fn page_size() -> usize {
     *PAGE_SIZE.get_or_init(|| {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        // SAFETY: `sysconf(_SC_PAGESIZE)` is infallible and side-effect-free.
+        #[cfg(unix)]
+        // SAFETY: `sysconf(_SC_PAGESIZE)` is POSIX-mandated, infallible and side-effect-free.
         unsafe {
             libc::sysconf(libc::_SC_PAGESIZE) as usize
         }
@@ -478,10 +478,6 @@ pub fn page_size() -> usize {
             let mut info = core::mem::zeroed::<SystemInfo>();
             GetSystemInfo(&mut info);
             info.dwPageSize as usize
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        {
-            4096
         }
     })
 }
@@ -607,15 +603,24 @@ impl ZigString {
 }
 
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
+///
+/// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
+/// `r#ref`/`deref`/`ensure_hash` hand a `*const Self` derived from `&self` to
+/// C++ FFI that **writes** those fields. Without `UnsafeCell` the struct is
+/// `Freeze`, the `&self` borrow asserts the whole pointee is read-only, and
+/// the FFI write is a Stacked-Borrows violation (LLVM may also CSE the
+/// pre-/post-FFI `ref_count()` loads). `Cell<u32>` is `repr(transparent)` over
+/// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
 #[repr(C)]
 pub struct WTFStringImplStruct {
-    pub m_ref_count: u32,
+    pub m_ref_count: core::cell::Cell<u32>,
     pub m_length: u32,
     pub m_ptr: WTFStringImplPtr,
-    pub m_hash_and_flags: u32,
+    pub m_hash_and_flags: core::cell::Cell<u32>,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub union WTFStringImplPtr {
     pub latin1: *const u8,
     pub utf16: *const u16,
@@ -625,63 +630,120 @@ pub union WTFStringImplPtr {
 pub type WTFStringImpl = *mut WTFStringImplStruct;
 
 impl WTFStringImplStruct {
-    const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+    pub const MAX: u32 = u32::MAX;
+
+    // ---------------------------------------------------------------------
+    // These details must stay in sync with WTFStringImpl.h in WebKit!
+    // ---------------------------------------------------------------------
+    pub const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
     /// The bottom bit in the ref count indicates a static (immortal) string.
-    const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
+    pub const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
     /// This allows us to ref / deref without disturbing the static string flag.
-    const S_REF_COUNT_INCREMENT: u32 = 0x2;
+    pub const S_REF_COUNT_INCREMENT: u32 = 0x2;
 
     #[inline] pub fn length(&self) -> u32 { self.m_length }
     #[inline]
     pub fn is_8bit(&self) -> bool {
-        (self.m_hash_and_flags & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
     }
     #[inline]
     pub fn byte_length(&self) -> usize {
         if self.is_8bit() { self.m_length as usize } else { (self.m_length as usize) * 2 }
     }
     #[inline]
-    pub fn ref_count(&self) -> u32 { self.m_ref_count / Self::S_REF_COUNT_INCREMENT }
+    pub fn memory_cost(&self) -> usize { self.byte_length() }
+    #[inline]
+    pub fn ref_count(&self) -> u32 { self.m_ref_count.get() / Self::S_REF_COUNT_INCREMENT }
     #[inline]
     pub fn is_static(&self) -> bool {
-        self.m_ref_count & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
+        self.m_ref_count.get() & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
     }
     #[inline]
     pub fn has_at_least_one_ref(&self) -> bool {
         // WTF::StringImpl::hasAtLeastOneRef
-        self.m_ref_count > 0
+        self.m_ref_count.get() > 0
     }
     #[inline]
-    /// # Safety
-    /// `self` must point to a live `WTFStringImpl` with refcount ≥ 1.
-    pub unsafe fn ref_(self: *mut Self) {
-        debug_assert!(unsafe { (*self).has_at_least_one_ref() });
-        // SAFETY: FFI — `Bun__WTFStringImpl__ref` increments the WTF refcount.
-        unsafe { Bun__WTFStringImpl__ref(self) }
+    pub fn r#ref(&self) {
+        let current_count = self.ref_count();
+        debug_assert!(self.has_at_least_one_ref()); // do not use current_count, it breaks for static strings
+        // SAFETY: `self` is a live WTF::StringImpl; FFI increments the WTF refcount.
+        // `m_ref_count` is `Cell<u32>` so mutation through this `&self`-derived
+        // pointer is sound under Stacked Borrows.
+        unsafe { Bun__WTFStringImpl__ref(self) };
+        debug_assert!(self.ref_count() > current_count || self.is_static());
+        let _ = current_count;
     }
     #[inline]
-    /// # Safety
-    /// `self` must point to a live `WTFStringImpl` with refcount ≥ 1. May free `*self`.
-    pub unsafe fn deref(self: *mut Self) {
-        debug_assert!(unsafe { (*self).has_at_least_one_ref() });
-        // SAFETY: FFI — `Bun__WTFStringImpl__deref` decrements (and may free) the WTF impl.
-        unsafe { Bun__WTFStringImpl__deref(self) }
+    pub fn deref(&self) {
+        let current_count = self.ref_count();
+        debug_assert!(self.has_at_least_one_ref()); // do not use current_count, it breaks for static strings
+        // SAFETY: `self` is a live WTF::StringImpl; FFI decrements (and may free) the WTF impl.
+        // `m_ref_count` is `Cell<u32>` so the C++-side write is sound; the
+        // post-FFI re-read below is gated on `current_count > 1`, i.e. the
+        // impl is guaranteed to still be alive when we touch `self` again.
+        unsafe { Bun__WTFStringImpl__deref(self) };
+        if cfg!(debug_assertions) {
+            if current_count > 1 {
+                debug_assert!(self.ref_count() < current_count || self.is_static());
+            }
+        }
+        let _ = current_count;
     }
     #[inline]
     pub fn ref_count_allocator(self: *mut Self) -> StdAllocator {
         StdAllocator { ptr: self.cast(), vtable: StringImplAllocator::VTABLE_PTR }
     }
+    /// Borrow `len` raw bytes from `m_ptr`. The `latin1` arm of the `repr(C)`
+    /// union is a valid byte pointer regardless of encoding (both arms share
+    /// the same offset). Centralises the `from_raw_parts(m_ptr.latin1, …)` used
+    /// by `byte_slice` / `latin1_slice` / `utf8_slice`.
+    #[inline(always)]
+    pub fn raw_bytes(&self, len: usize) -> &[u8] {
+        // SAFETY: `m_ptr.latin1` points at the impl's character buffer for the
+        // lifetime of `self`; every caller passes `len ≤ byte_length()`.
+        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, len) }
+    }
+    #[inline]
+    pub fn byte_slice(&self) -> &[u8] { self.raw_bytes(self.byte_length()) }
     #[inline]
     pub fn latin1_slice(&self) -> &[u8] {
         debug_assert!(self.is_8bit());
-        // SAFETY: WebKit guarantees m_ptr.latin1 valid for m_length bytes when 8-bit.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, self.m_length as usize) }
+        self.raw_bytes(self.m_length as usize)
     }
     #[inline]
     pub fn utf16_slice(&self) -> &[u16] {
         debug_assert!(!self.is_8bit());
         // SAFETY: WebKit guarantees m_ptr.utf16 valid for m_length u16s when !8-bit.
         unsafe { core::slice::from_raw_parts(self.m_ptr.utf16, self.m_length as usize) }
+    }
+    #[inline]
+    pub fn utf16_byte_length(&self) -> usize {
+        if self.is_8bit() { self.m_length as usize * 2 } else { self.m_length as usize }
+    }
+    #[inline]
+    pub fn latin1_byte_length(&self) -> usize {
+        // Not all UTF-16 characters fit are representable in latin1.
+        // Those get truncated?
+        self.m_length as usize
+    }
+    #[inline]
+    pub fn is_thread_safe(&self) -> bool {
+        // SAFETY: `self` is a valid &WTFStringImplStruct backed by a live WTF::StringImpl.
+        unsafe { WTFStringImpl__isThreadSafe(self) }
+    }
+    /// Compute the hash() if necessary
+    #[inline]
+    pub fn ensure_hash(&self) {
+        // SAFETY: `self` is a live WTF::StringImpl. C++ `StringImpl::hash()`
+        // writes the computed hash into `m_hashAndFlags`; that field is
+        // `Cell<u32>` so mutation through this `&self`-derived pointer is sound.
+        unsafe { Bun__WTFStringImpl__ensureHash(self) };
+    }
+    #[inline]
+    pub fn has_prefix(&self, text: &[u8]) -> bool {
+        // SAFETY: `self` is a valid WTF::StringImpl; text.ptr/len describe a valid slice.
+        unsafe { Bun__WTFStringImpl__hasPrefix(self, text.as_ptr(), text.len()) }
     }
     #[inline]
     pub fn to_zig_string(&self) -> ZigString {
@@ -694,8 +756,15 @@ impl WTFStringImplStruct {
 }
 
 unsafe extern "C" {
-    fn Bun__WTFStringImpl__ref(this: WTFStringImpl);
-    fn Bun__WTFStringImpl__deref(this: WTFStringImpl);
+    pub fn Bun__WTFStringImpl__ref(this: *const WTFStringImplStruct);
+    pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
+    fn WTFStringImpl__isThreadSafe(this: *const WTFStringImplStruct) -> bool;
+    fn Bun__WTFStringImpl__ensureHash(this: *const WTFStringImplStruct);
+    fn Bun__WTFStringImpl__hasPrefix(
+        this: *const WTFStringImplStruct,
+        text_ptr: *const u8,
+        text_len: usize,
+    ) -> bool;
 }
 
 /// Port of `bun.String.StringImplAllocator` (src/string/wtf.zig).
@@ -707,7 +776,7 @@ unsafe extern "C" {
 /// upward dependency on `bun_string` and no runtime fn-ptr hook.
 #[allow(non_snake_case)] // Zig namespace `bun.String.StringImplAllocator`
 pub mod StringImplAllocator {
-    use super::{Alignment, AllocatorVTable, WTFStringImpl, WTFStringImplStruct};
+    use super::{Alignment, AllocatorVTable, WTFStringImpl};
 
     unsafe fn alloc(ptr: *mut core::ffi::c_void, len: usize, _: Alignment, _: usize) -> *mut u8 {
         let this: WTFStringImpl = ptr.cast();
@@ -719,7 +788,7 @@ pub mod StringImplAllocator {
             return core::ptr::null_mut();
         }
         // SAFETY: vtable contract — `this` is a live WTFStringImpl with refcount ≥ 1.
-        unsafe { WTFStringImplStruct::ref_(this) };
+        unsafe { (*this).r#ref() };
         // we should never actually allocate
         // SAFETY: m_ptr.latin1 valid for byte_length bytes.
         unsafe { (*this).m_ptr.latin1.cast_mut() }
@@ -733,7 +802,7 @@ pub mod StringImplAllocator {
         // `byteLength()` (i.e. `m_length * 2` for UTF-16), not the code-unit count.
         debug_assert!(unsafe { (*this).byte_length() } == buf.len());
         // SAFETY: vtable contract — `this` is a live WTFStringImpl with refcount ≥ 1.
-        unsafe { WTFStringImplStruct::deref(this) };
+        unsafe { (*this).deref() };
     }
 
     pub static VTABLE: AllocatorVTable = AllocatorVTable {
@@ -873,19 +942,6 @@ pub fn is_slice_in_buffer_t<T>(slice: &[T], buffer: &[T]) -> bool {
 /// If you need to make this generic, use `is_slice_in_buffer_t`.
 pub fn is_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> bool {
     is_slice_in_buffer_t::<u8>(slice, buffer)
-}
-
-pub fn slice_range(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]> {
-    let slice_ptr = slice.as_ptr() as usize;
-    let buffer_ptr = buffer.as_ptr() as usize;
-    if buffer_ptr <= slice_ptr && (slice_ptr + slice.len()) <= (buffer_ptr + buffer.len()) {
-        Some([
-            (slice_ptr - buffer_ptr) as u32, // @truncate
-            slice.len() as u32,              // @truncate
-        ])
-    } else {
-        None
-    }
 }
 
 /// Zig: `bun.rangeOfSliceInBuffer` (`src/bun.zig`).
@@ -1079,6 +1135,23 @@ macro_rules! bss_singleton {
     };
 }
 
+/// Heap-allocate a fresh `T` via mimalloc and run its in-place `init_at` initializer.
+///
+/// Shared body of the `BSSList`/`BSSStringList`/`BSSMapInner`/`BSSMap` `init()` shims —
+/// Zig's `default_allocator.create(Self)` followed by field-init. The once-guard
+/// (Zig's `loaded` flag) is the *caller's* responsibility; use the `bss_*!` macros
+/// for the canonical per-monomorphization singleton.
+#[inline]
+pub(crate) fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
+    // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
+    let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()) }.cast::<T>();
+    let ptr = NonNull::new(ptr).expect("OOM");
+    // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
+    // process lifetime (singleton; never freed, matching Zig).
+    unsafe { init_at(ptr.as_ptr()) };
+    ptr
+}
+
 /// Declare a `BSSList<T, COUNT>` singleton accessor.
 #[macro_export]
 macro_rules! bss_list {
@@ -1124,173 +1197,12 @@ mod __bss_macro_smoke {
 // ──────────────────────────────────────────────────────────────────────────
 // heap_breakdown — macOS `malloc_zone_*` per-tag heaps (debug-only)
 //
-// Full draft lives in `heap_breakdown.rs` (macOS-only; depends on a richer
-// `Allocator` surface + a string-keyed map). This inline module exposes the
-// symbols dependents reference (`ENABLED`, `Zone`, `get_zone`,
-// `malloc_zone_{calloc,free,malloc}`) and compiles on all targets — on
+// Full port lives in `heap_breakdown.rs`. It compiles on all targets: on
 // non-macOS the FFI surface is `unreachable!()` behind `ENABLED == false`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub mod heap_breakdown {
-    use core::cell::UnsafeCell;
-    #[allow(unused_imports)]
-    use core::ffi::{c_char, c_uint, c_void};
-    use core::marker::{PhantomData, PhantomPinned};
-
-    /// `Environment.allow_assert and Environment.isMac and !Environment.enable_asan`
-    // TODO(port): `enable_asan` → cargo feature; wire in Phase B.
-    pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos");
-
-    /// Opaque FFI handle for a macOS `malloc_zone_t`.
-    //
-    // `_p` is `UnsafeCell` so the type is `!Freeze`: libmalloc mutates the
-    // zone's internal state on every `malloc_zone_*` call, and we hand out
-    // `&'static Zone` across threads. Without interior mutability, deriving a
-    // `*mut Zone` from `&Zone` and writing through it is UB under Stacked
-    // Borrows. Zig spec uses `*Zone` (freely-aliasing mutable); `UnsafeCell`
-    // is the Rust encoding of that intent.
-    #[repr(C)]
-    pub struct Zone {
-        _p: UnsafeCell<[u8; 0]>,
-        _m: PhantomData<(*mut u8, PhantomPinned)>,
-    }
-
-    // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing a
-    // `*const Zone` across threads is the documented usage.
-    unsafe impl Sync for Zone {}
-    unsafe impl Send for Zone {}
-
-    impl Zone {
-        /// Zig: `Zone.init(comptime name)` — creates and names a malloc zone.
-        ///
-        /// # Safety
-        /// `name` must point to a NUL-terminated C string that remains valid
-        /// for the entire process lifetime — `malloc_set_zone_name` stores the
-        /// pointer (does not copy).
-        #[cfg(target_os = "macos")]
-        pub unsafe fn init(name: *const c_char) -> &'static Zone {
-            // SAFETY: `malloc_create_zone(0, 0)` returns a process-lifetime zone;
-            // caller guarantees `name` outlives the process.
-            unsafe {
-                let zone = malloc_create_zone(0, 0);
-                malloc_set_zone_name(zone, name);
-                &*zone
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        #[allow(clippy::missing_safety_doc)]
-        pub unsafe fn init(_name: *const c_char) -> &'static Zone {
-            unreachable!("heap_breakdown is macOS-only; guard call sites on ENABLED")
-        }
-
-        /// Zig: `Zone.isInstance(allocator)` — vtable-identity check.
-        // Zig compared `allocator.vtable == &Zone.vtable`; the Rust trait
-        // exposes a `type_id()` hook so identity is checked by concrete type.
-        pub fn is_instance(alloc: &dyn crate::Allocator) -> bool {
-            crate::Allocator::type_id(alloc) == core::any::TypeId::of::<Zone>()
-        }
-
-        /// Raw `*mut malloc_zone_t` for the FFI surface.
-        ///
-        /// `Zone` is `#[repr(C)]` with `_p: UnsafeCell<[u8; 0]>` at offset 0,
-        /// so `_p.get()` yields a pointer at the struct's base address that
-        /// carries interior-mut provenance — no `*const → *mut` cast from a
-        /// shared ref. libmalloc handles its own synchronization.
-        #[inline]
-        pub fn as_mut_ptr(&self) -> *mut Zone {
-            self._p.get().cast()
-        }
-
-        #[inline]
-        pub fn malloc_zone_malloc(&self, size: usize) -> Option<*mut c_void> {
-            // SAFETY: `self` is a live `malloc_zone_t`; `as_mut_ptr` derives a
-            // write-capable pointer through `UnsafeCell`.
-            let p = unsafe { malloc_zone_malloc(self.as_mut_ptr(), size) };
-            if p.is_null() { None } else { Some(p) }
-        }
-
-        #[inline]
-        pub fn malloc_zone_calloc(&self, num_items: usize, size: usize) -> Option<*mut c_void> {
-            // SAFETY: `self` is a live `malloc_zone_t`; `as_mut_ptr` derives a
-            // write-capable pointer through `UnsafeCell`.
-            let p = unsafe { malloc_zone_calloc(self.as_mut_ptr(), num_items, size) };
-            if p.is_null() { None } else { Some(p) }
-        }
-
-        /// # Safety
-        /// `ptr` must have been allocated by this zone (via `malloc_zone_malloc`
-        /// / `malloc_zone_calloc`) and not already freed.
-        #[inline]
-        pub unsafe fn malloc_zone_free(&self, ptr: *mut c_void) {
-            // SAFETY: caller contract above; `self` is a live `malloc_zone_t`.
-            unsafe { malloc_zone_free(self.as_mut_ptr(), ptr) }
-        }
-    }
-
-    /// Runtime `getZone(name)` — looks up (or creates) the per-name zone.
-    ///
-    /// Zig used a comptime-monomorphized `static` per literal; the macro
-    /// `get_zone!` below is the zero-cost form. This runtime path keys a
-    /// process-global map for callers that pass a non-literal name.
-    #[allow(clippy::assertions_on_constants)]
-    pub fn get_zone(name: &[u8]) -> &'static Zone {
-        debug_assert!(ENABLED, "heap_breakdown::get_zone called with ENABLED=false");
-        // Map key = `name` (no NUL) so lookups match inserts. The NUL-terminated
-        // label handed to `malloc_set_zone_name` is stored as the map *value*
-        // (alongside the zone) to keep its allocation alive for 'static.
-        static ZONES: std::sync::OnceLock<
-            parking_lot::Mutex<std::collections::HashMap<Vec<u8>, (Vec<u8>, &'static Zone)>>,
-        > = std::sync::OnceLock::new();
-        let map = ZONES.get_or_init(Default::default);
-        let mut map = map.lock();
-        if let Some((_, z)) = map.get(name) {
-            return *z;
-        }
-        // Zone names live forever (zones are never destroyed); allocate the
-        // NUL-terminated label once, hand the OS a raw pointer into its heap
-        // buffer, then move the owning `Vec` into the 'static map so the buffer
-        // outlives the process. PORTING.md §Forbidden: no `&*(p as *const _)`
-        // lifetime extension — ownership is encoded in the map, not faked.
-        let mut owned = Vec::with_capacity(name.len() + 1);
-        owned.extend_from_slice(name);
-        owned.push(0);
-        // `Vec`'s heap buffer address is stable when the `Vec` struct is moved
-        // (only the {ptr,len,cap} header moves), and the map never removes or
-        // mutates this entry, so `raw` remains valid for process lifetime.
-        let raw = owned.as_ptr().cast::<c_char>();
-        // SAFETY: `raw` points into a NUL-terminated buffer that is moved into
-        // the 'static `ZONES` map immediately below and never freed.
-        let zone = unsafe { Zone::init(raw) };
-        map.insert(name.to_vec(), (owned, zone));
-        zone
-    }
-
-    #[cfg(target_os = "macos")]
-    unsafe extern "C" {
-        pub fn malloc_create_zone(start_size: usize, flags: c_uint) -> *mut Zone;
-        pub fn malloc_set_zone_name(zone: *mut Zone, name: *const c_char);
-        pub fn malloc_zone_malloc(zone: *mut Zone, size: usize) -> *mut c_void;
-        pub fn malloc_zone_calloc(zone: *mut Zone, num_items: usize, size: usize) -> *mut c_void;
-        pub fn malloc_zone_free(zone: *mut Zone, ptr: *mut c_void);
-        pub fn malloc_zone_memalign(zone: *mut Zone, alignment: usize, size: usize) -> *mut c_void;
-    }
-
-    // Non-macOS stubs so cross-platform call sites guarded by `if ENABLED { … }`
-    // (where `ENABLED` is a `const false`) still type-check. Never executed.
-    #[cfg(not(target_os = "macos"))]
-    #[allow(clippy::missing_safety_doc)]
-    mod stubs {
-        use super::*;
-        pub unsafe fn malloc_zone_malloc(_: *mut Zone, _: usize) -> *mut c_void { unreachable!() }
-        pub unsafe fn malloc_zone_calloc(_: *mut Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
-        pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) { unreachable!() }
-    }
-    #[cfg(not(target_os = "macos"))]
-    pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
-
-    // `Zone` participates in `&dyn Allocator` identity checks (`is_instance`).
-    impl crate::Allocator for Zone {}
-}
+#[path = "heap_breakdown.rs"]
+pub mod heap_breakdown;
 
 /// Comptime-literal form of `heap_breakdown::get_zone` — expands a per-name `OnceLock`.
 #[macro_export]
@@ -1624,14 +1536,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     /// `loaded` flag) is the *caller's* responsibility — use `bss_list!` for
     /// the canonical per-monomorphization singleton.
     pub fn init() -> NonNull<Self> {
-        // Zig: `default_allocator.create(Self)` — route through mimalloc.
-        // SAFETY: FFI — mi_malloc returns null on OOM or a writable, suitably-aligned region.
-        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
-        let ptr = NonNull::new(ptr).expect("OOM");
-        // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
-        // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr.as_ptr()) };
-        ptr
+        bss_heap_init(Self::init_at)
     }
 
     // Zig `deinit` → `impl Drop for BSSList` below (PORTING.md: never expose `pub fn deinit`).
@@ -1834,13 +1739,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_string_list!` for the canonical singleton.
     pub fn init() -> NonNull<Self> {
-        // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
-        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
-        let ptr = NonNull::new(ptr).expect("OOM");
-        // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
-        // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr.as_ptr()) };
-        ptr
+        bss_heap_init(Self::init_at)
     }
 
     // Zig `deinit`: just frees `instance`. Handled by dropping the singleton Box in Phase B.
@@ -2096,13 +1995,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_map_inner!` for the canonical singleton.
     pub fn init() -> NonNull<Self> {
-        // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
-        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
-        let ptr = NonNull::new(ptr).expect("OOM");
-        // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
-        // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr.as_ptr()) };
-        ptr
+        bss_heap_init(Self::init_at)
     }
 
     // Zig `deinit`: `self.index.deinit(allocator)` then free instance.
@@ -2117,7 +2010,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         denormalized_key: &[u8],
     ) -> core::result::Result<Result, AllocError> {
         let key = if REMOVE_TRAILING_SLASHES {
-            trim_right(denormalized_key, SEP_STR)
+            trim_right(denormalized_key, SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -2151,7 +2044,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let key = if REMOVE_TRAILING_SLASHES {
-            trim_right(denormalized_key, SEP_STR)
+            trim_right(denormalized_key, SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -2230,7 +2123,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
         let _guard = self.mutex.lock();
         let key = if REMOVE_TRAILING_SLASHES {
-            trim_right(denormalized_key, SEP_STR)
+            trim_right(denormalized_key, SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
@@ -2297,13 +2190,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_map!` for the canonical singleton.
     pub fn init() -> NonNull<Self> {
-        // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
-        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
-        let ptr = NonNull::new(ptr).expect("OOM");
-        // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
-        // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr.as_ptr()) };
-        ptr
+        bss_heap_init(Self::init_at)
     }
 
     // Zig `deinit`: `self.map.deinit()` then free instance — both handled by Drop.
@@ -2467,6 +2354,19 @@ pub trait Allocator: 'static {
     }
 }
 
+impl dyn Allocator {
+    /// Is the concrete type behind this `&dyn Allocator` exactly `T`?
+    ///
+    /// Zig's `allocator.vtable == &T.vtable` check, expressed as `TypeId`
+    /// identity via the trait's `type_id()` hook (dynamic dispatch on the
+    /// dyn receiver — NOT `Any::type_id`). All per-type
+    /// `Foo::is_instance(alloc)` associated fns delegate here.
+    #[inline]
+    pub fn is<T: Allocator>(&self) -> bool {
+        Allocator::type_id(self) == core::any::TypeId::of::<T>()
+    }
+}
+
 /// Checks whether `allocator` is the default allocator.
 ///
 /// Zig: `return allocator.vtable == c_allocator.vtable;` — compare identity
@@ -2475,7 +2375,7 @@ pub trait Allocator: 'static {
 /// `TypeId` comparison.
 #[inline]
 pub fn is_default(alloc: &dyn Allocator) -> bool {
-    Allocator::type_id(alloc) == core::any::TypeId::of::<DefaultAlloc>()
+    alloc.is::<DefaultAlloc>()
 }
 
 /// Legacy ZST naming `bun.default_allocator`. With `#[global_allocator]` set,
@@ -2507,11 +2407,6 @@ pub fn default_allocator() -> &'static dyn Allocator {
 // `basic.zig` ported as `impl GlobalAlloc for Mimalloc` above (the real impl).
 // Draft kept for diff-pass only.
  #[path = "basic.rs"] pub mod basic;
-// Full `heap_breakdown` port is macOS-only (every fn is a `malloc_zone_*`
-// libSystem call); the cross-platform surface is the inline `heap_breakdown`
-// module above. Legitimate platform gate — NOT `cfg(any())`.
-#[cfg(target_os = "macos")]
- #[path = "heap_breakdown.rs"] mod heap_breakdown_full;
 pub mod memory;
 
 // ported from: src/bun_alloc/bun_alloc.zig

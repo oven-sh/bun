@@ -2945,7 +2945,7 @@ impl Lockfile {
             return Ok(ZERO_HASH);
         }
 
-        let mut string_builder = bun_core::StringBuilder::default();
+        let mut string_builder = bun_string::StringBuilder::default();
         let names: &[SemverString] = &self.packages.items_name()[..packages_len];
         let resolutions: &[Resolution] = &self.packages.items_resolution()[..packages_len];
         let bytes = self.buffers.string_bytes.as_slice();
@@ -3018,15 +3018,7 @@ impl Lockfile {
         }
 
         string_builder.allocate().expect("unreachable");
-        // SAFETY: cap >= HASH_PREFIX.len() (added above), ptr set by allocate().
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                HASH_PREFIX.as_ptr(),
-                string_builder.ptr.as_mut().unwrap().as_mut_ptr(),
-                HASH_PREFIX.len(),
-            );
-        }
-        string_builder.len += HASH_PREFIX.len();
+        let _ = string_builder.append(HASH_PREFIX);
 
         for &i in alphabetized_names.iter() {
             let _ = string_builder.fmt(format_args!(
@@ -3052,19 +3044,10 @@ impl Lockfile {
             let _ = string_builder.append(SCRIPTS_END);
         }
 
-        // SAFETY: cap - len >= HASH_SUFFIX.len() by construction.
-        unsafe {
-            let len = string_builder.len;
-            core::ptr::copy_nonoverlapping(
-                HASH_SUFFIX.as_ptr(),
-                string_builder.ptr.as_mut().unwrap().as_mut_ptr().add(len),
-                HASH_SUFFIX.len(),
-            );
-        }
-        string_builder.len += HASH_SUFFIX.len();
+        let _ = string_builder.append(HASH_SUFFIX);
 
-        let alphabetized_name_version_string =
-            &string_builder.ptr.as_ref().unwrap()[..string_builder.len];
+        let len = string_builder.len;
+        let alphabetized_name_version_string = &string_builder.allocated_slice()[..len];
         if print_name_version_string {
             Output::flush();
             Output::disable_buffering();
@@ -3176,16 +3159,15 @@ pub mod default_trusted_dependencies {
 
     const SLOTS: usize = static_slots(MAX_DEFAULT_TRUSTED_DEPENDENCIES);
 
-    #[derive(Default)]
     pub struct TrustedDepHashCtx;
     impl HashContext<&'static [u8]> for TrustedDepHashCtx {
         #[inline]
-        fn hash(&self, s: &&'static [u8]) -> u64 {
+        fn ctx_hash(s: &&'static [u8]) -> u64 {
             // truncate to u32 because Lockfile.trustedDependencies uses the same u32 string hash
             (SemverStringBuilder::string_hash(s) as u32) as u64
         }
         #[inline]
-        fn eql(&self, a: &&'static [u8], b: &&'static [u8]) -> bool {
+        fn ctx_eql(a: &&'static [u8], b: &&'static [u8]) -> bool {
             *a == *b
         }
     }

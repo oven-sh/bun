@@ -20,17 +20,15 @@ pub type ares_socket_t = c_int;
 pub type ares_sock_state_cb =
     Option<unsafe extern "C" fn(*mut c_void, ares_socket_t, c_int, c_int)>;
 
-/// Nomicon opaque-FFI pattern. `UnsafeCell` makes the type `!Freeze` so a
-/// shared reference does not assert immutability of the C-owned state.
-#[repr(C)]
-pub struct struct_apattern {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Nomicon opaque-FFI pattern. `UnsafeCell` makes the type `!Freeze` so a
+    /// shared reference does not assert immutability of the C-owned state.
+    pub struct struct_apattern;
 }
 
 /// Mirror of `std.posix.AF` in Zig — only the address families c-ares
 /// actually uses. Kept local so this `*_sys` crate stays leaf-level
-/// (no dependency on `bun_sys`).
+/// (no dependency on `bun_sys`). Canonical: `bun_sys::posix::AF`.
 pub mod AF {
     use core::ffi::c_int;
     // `libc` does not expose AF_* on Windows MSVC; ws2def.h values are inlined
@@ -590,11 +588,7 @@ impl struct_nameinfo {
 
 pub type struct_timeval = timeval;
 
-#[repr(C)]
-pub struct struct_Channeldata {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct struct_Channeldata; }
 
 #[repr(C)]
 pub struct AddrInfo_cname {
@@ -702,13 +696,11 @@ pub struct ChannelOptions {
     pub tries: Option<i32>,
 }
 
-/// Opaque c-ares channel handle. `UnsafeCell` makes the type `!Freeze` so a
-/// `&Channel` does not assert immutability of the C-owned state (c-ares
-/// mutates the channel on every dispatch/process call).
-#[repr(C)]
-pub struct Channel {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque c-ares channel handle. `UnsafeCell` makes the type `!Freeze` so a
+    /// `&Channel` does not assert immutability of the C-owned state (c-ares
+    /// mutates the channel on every dispatch/process call).
+    pub struct Channel;
 }
 // Load-bearing: `ares_cancel`/`ares_process_fd` are declared `safe fn(&mut Channel)`
 // on the basis that re-entrant callbacks re-deriving `&mut Channel` from a raw
@@ -1110,6 +1102,51 @@ impl Default for struct_ares_addr6ttl {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Generic reply-record plumbing. The six `struct_ares_{caa,srv,mx,txt,naptr,soa}_reply`
+// types share an identical c-ares callback thunk modulo (reply type, parse fn),
+// and all six `ares_parse_*_reply` externs share the signature
+// `(abuf *const u8, alen c_int, out *mut *mut R) -> c_int`. Collapsed from six
+// copy-pasted `callback_wrapper` bodies + six per-type handler traits.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A c-ares reply record whose parser has the canonical 3-arg signature.
+pub trait AresReply: Sized {
+    /// SAFETY: thin forward to the matching `ares_parse_*_reply` extern.
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int;
+}
+
+/// Receiver for a parsed `R` reply (replaces the per-type `*Handler` traits).
+pub trait ReplyHandler<R: AresReply>: Sized {
+    fn on_reply(&mut self, status: Option<Error>, timeouts: i32, results: *mut R);
+}
+
+/// Generic `ares_callback` thunk. Monomorphized per `(R, T)` to a concrete
+/// `unsafe extern "C" fn`, so the fn-pointer ABI passed to `ares_query` is
+/// identical to the former hand-rolled `callback_wrapper`s.
+pub unsafe extern "C" fn ares_reply_callback<R: AresReply, T: ReplyHandler<R>>(
+    ctx: *mut c_void,
+    status: c_int,
+    timeouts: c_int,
+    buffer: *mut u8,
+    buffer_length: c_int,
+) {
+    // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
+    let this = unsafe { &mut *ctx.cast::<T>() };
+    if status != ARES_SUCCESS {
+        this.on_reply(Error::get(status), timeouts, ptr::null_mut());
+        return;
+    }
+    let mut start: *mut R = ptr::null_mut();
+    // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
+    let result = unsafe { R::parse(buffer, buffer_length, &raw mut start) };
+    if result != ARES_SUCCESS {
+        this.on_reply(Error::get(result), timeouts, ptr::null_mut());
+        return;
+    }
+    this.on_reply(None, timeouts, start);
+}
+
 #[repr(C)]
 pub struct struct_ares_caa_reply {
     pub next: *mut struct_ares_caa_reply,
@@ -1120,38 +1157,9 @@ pub struct struct_ares_caa_reply {
     pub length: usize,
 }
 
-pub trait CaaHandler: Sized {
-    fn on_caa(&mut self, status: Option<Error>, timeouts: i32, results: *mut struct_ares_caa_reply);
-}
-
-impl struct_ares_caa_reply {
-    // toJSResponse / toJS aliases deleted — live in bun_runtime::dns_jsc.
-
-    pub unsafe extern "C" fn callback_wrapper<T: CaaHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
-        if status != ARES_SUCCESS {
-            this.on_caa(Error::get(status), timeouts, ptr::null_mut());
-            return;
-        }
-        let mut start: *mut struct_ares_caa_reply = ptr::null_mut();
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe { ares_parse_caa_reply(buffer, buffer_length, &raw mut start) };
-        if result != ARES_SUCCESS {
-            this.on_caa(Error::get(result), timeouts, ptr::null_mut());
-            return;
-        }
-        this.on_caa(None, timeouts, start);
-    }
-
-    pub unsafe fn destroy(this: *mut struct_ares_caa_reply) {
-        unsafe { ares_free_data(this.cast::<c_void>()) };
+impl AresReply for struct_ares_caa_reply {
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        unsafe { ares_parse_caa_reply(abuf, alen, out) }
     }
 }
 
@@ -1164,38 +1172,9 @@ pub struct struct_ares_srv_reply {
     pub port: c_ushort,
 }
 
-pub trait SrvHandler: Sized {
-    fn on_srv(&mut self, status: Option<Error>, timeouts: i32, results: *mut struct_ares_srv_reply);
-}
-
-impl struct_ares_srv_reply {
-    // toJSResponse / toJS aliases deleted.
-
-    pub unsafe extern "C" fn callback_wrapper<T: SrvHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
-        if status != ARES_SUCCESS {
-            this.on_srv(Error::get(status), timeouts, ptr::null_mut());
-            return;
-        }
-        let mut srv_start: *mut struct_ares_srv_reply = ptr::null_mut();
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe { ares_parse_srv_reply(buffer, buffer_length, &raw mut srv_start) };
-        if result != ARES_SUCCESS {
-            this.on_srv(Error::get(result), timeouts, ptr::null_mut());
-            return;
-        }
-        this.on_srv(None, timeouts, srv_start);
-    }
-
-    pub unsafe fn destroy(this: *mut struct_ares_srv_reply) {
-        unsafe { ares_free_data(this.cast::<c_void>()) };
+impl AresReply for struct_ares_srv_reply {
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        unsafe { ares_parse_srv_reply(abuf, alen, out) }
     }
 }
 
@@ -1206,38 +1185,9 @@ pub struct struct_ares_mx_reply {
     pub priority: c_ushort,
 }
 
-pub trait MxHandler: Sized {
-    fn on_mx(&mut self, status: Option<Error>, timeouts: i32, results: *mut struct_ares_mx_reply);
-}
-
-impl struct_ares_mx_reply {
-    // toJSResponse / toJS aliases deleted.
-
-    pub unsafe extern "C" fn callback_wrapper<T: MxHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
-        if status != ARES_SUCCESS {
-            this.on_mx(Error::get(status), timeouts, ptr::null_mut());
-            return;
-        }
-        let mut start: *mut struct_ares_mx_reply = ptr::null_mut();
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe { ares_parse_mx_reply(buffer, buffer_length, &raw mut start) };
-        if result != ARES_SUCCESS {
-            this.on_mx(Error::get(result), timeouts, ptr::null_mut());
-            return;
-        }
-        this.on_mx(None, timeouts, start);
-    }
-
-    pub unsafe fn destroy(this: *mut struct_ares_mx_reply) {
-        unsafe { ares_free_data(this.cast::<c_void>()) };
+impl AresReply for struct_ares_mx_reply {
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        unsafe { ares_parse_mx_reply(abuf, alen, out) }
     }
 }
 
@@ -1248,38 +1198,9 @@ pub struct struct_ares_txt_reply {
     pub length: usize,
 }
 
-pub trait TxtHandler: Sized {
-    fn on_txt(&mut self, status: Option<Error>, timeouts: i32, results: *mut struct_ares_txt_reply);
-}
-
-impl struct_ares_txt_reply {
-    // toJSResponse / toJS / toJSForAny aliases deleted.
-
-    pub unsafe extern "C" fn callback_wrapper<T: TxtHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
-        if status != ARES_SUCCESS {
-            this.on_txt(Error::get(status), timeouts, ptr::null_mut());
-            return;
-        }
-        let mut srv_start: *mut struct_ares_txt_reply = ptr::null_mut();
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe { ares_parse_txt_reply(buffer, buffer_length, &raw mut srv_start) };
-        if result != ARES_SUCCESS {
-            this.on_txt(Error::get(result), timeouts, ptr::null_mut());
-            return;
-        }
-        this.on_txt(None, timeouts, srv_start);
-    }
-
-    pub unsafe fn destroy(this: *mut struct_ares_txt_reply) {
-        unsafe { ares_free_data(this.cast::<c_void>()) };
+impl AresReply for struct_ares_txt_reply {
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        unsafe { ares_parse_txt_reply(abuf, alen, out) }
     }
 }
 
@@ -1302,38 +1223,9 @@ pub struct struct_ares_naptr_reply {
     pub preference: c_ushort,
 }
 
-pub trait NaptrHandler: Sized {
-    fn on_naptr(&mut self, status: Option<Error>, timeouts: i32, results: *mut struct_ares_naptr_reply);
-}
-
-impl struct_ares_naptr_reply {
-    // toJSResponse / toJS aliases deleted.
-
-    pub unsafe extern "C" fn callback_wrapper<T: NaptrHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
-        if status != ARES_SUCCESS {
-            this.on_naptr(Error::get(status), timeouts, ptr::null_mut());
-            return;
-        }
-        let mut naptr_start: *mut struct_ares_naptr_reply = ptr::null_mut();
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe { ares_parse_naptr_reply(buffer, buffer_length, &raw mut naptr_start) };
-        if result != ARES_SUCCESS {
-            this.on_naptr(Error::get(result), timeouts, ptr::null_mut());
-            return;
-        }
-        this.on_naptr(None, timeouts, naptr_start);
-    }
-
-    pub unsafe fn destroy(this: *mut struct_ares_naptr_reply) {
-        unsafe { ares_free_data(this.cast::<c_void>()) };
+impl AresReply for struct_ares_naptr_reply {
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        unsafe { ares_parse_naptr_reply(abuf, alen, out) }
     }
 }
 
@@ -1348,38 +1240,9 @@ pub struct struct_ares_soa_reply {
     pub minttl: c_uint,
 }
 
-pub trait SoaHandler: Sized {
-    fn on_soa(&mut self, status: Option<Error>, timeouts: i32, results: *mut struct_ares_soa_reply);
-}
-
-impl struct_ares_soa_reply {
-    // toJSResponse / toJS aliases deleted.
-
-    pub unsafe extern "C" fn callback_wrapper<T: SoaHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
-        if status != ARES_SUCCESS {
-            this.on_soa(Error::get(status), timeouts, ptr::null_mut());
-            return;
-        }
-        let mut soa_start: *mut struct_ares_soa_reply = ptr::null_mut();
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe { ares_parse_soa_reply(buffer, buffer_length, &raw mut soa_start) };
-        if result != ARES_SUCCESS {
-            this.on_soa(Error::get(result), timeouts, ptr::null_mut());
-            return;
-        }
-        this.on_soa(None, timeouts, soa_start);
-    }
-
-    pub unsafe fn destroy(this: *mut struct_ares_soa_reply) {
-        unsafe { ares_free_data(this.cast::<c_void>()) };
+impl AresReply for struct_ares_soa_reply {
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        unsafe { ares_parse_soa_reply(abuf, alen, out) }
     }
 }
 

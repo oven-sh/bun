@@ -1,7 +1,8 @@
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
+use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::{self, Error, FeatureFlags};
@@ -1248,33 +1249,6 @@ fn dead_socket() -> *const DeadSocket {
 // ═══════════════════════════════════════════════════════════════════════════
 // BoringSSL helpers ported from `boringssl.zig` (Zig wrappers, not C symbols).
 // ═══════════════════════════════════════════════════════════════════════════
-
-std::thread_local! {
-    static AUTO_CRYPTO_BUFFER_POOL: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
-}
-
-unsafe extern "C" {
-    fn CRYPTO_BUFFER_POOL_new() -> *mut c_void;
-    fn SSL_CTX_set0_buffer_pool(ctx: *mut SSL_CTX, pool: *mut c_void);
-    fn SSL_CTX_set_cipher_list(ctx: *mut SSL_CTX, str_: *const c_char) -> c_int;
-}
-
-// PORT NOTE: BoringSSL's `SSL_DEFAULT_CIPHER_LIST` macro — copied verbatim
-// from `<openssl/ssl.h>` so we don't depend on a header-generated const.
-const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL:!aNULL:!eNULL:!SRP:!PSK:!CAMELLIA:!IDEA:!SEED";
-
-/// Zig: `SSL_CTX.setup(ctx)`.
-unsafe fn ssl_ctx_setup(ctx: *mut SSL_CTX) {
-    // SAFETY: thread-local guarded by null check; CRYPTO_BUFFER_POOL_new is
-    // safe to call on the HTTP thread.
-    AUTO_CRYPTO_BUFFER_POOL.with(|pool| unsafe {
-        if pool.get().is_null() {
-            pool.set(CRYPTO_BUFFER_POOL_new());
-        }
-        SSL_CTX_set0_buffer_pool(ctx, pool.get());
-        let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
-    });
-}
 
 /// Zig: `BoringSSL.getCertErrorFromNo(error_no)` — maps an X509 verify code
 /// onto a `bun_core::Error` whose name is the upper-snake Zig error-set tag

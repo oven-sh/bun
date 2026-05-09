@@ -5,9 +5,7 @@ use crate::css_values::size::Size2D;
 use crate::css_values::url::Url;
 use crate::{PrintErr, Printer};
 
-// PERF(port): Zig used `std.ArrayListUnmanaged` fed by the CSS arena arena.
-// Phase B should swap to `bun_alloc::ArenaVec<'bump, T>` and thread `'bump`.
-type ArrayList<T> = Vec<T>;
+use super::ArrayList;
 
 // ──────────────────────────────────────────────────────────────────────────
 // FontFaceProperty

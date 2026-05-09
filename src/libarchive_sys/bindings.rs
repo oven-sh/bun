@@ -364,11 +364,7 @@ const ARCHIVE_EXTRACT_SAFE_WRITES: c_int = 0x40000;
 /// the C-side state through every call, and the Zig spec passes `*Archive`
 /// (mutable) everywhere. Without `UnsafeCell`, deriving a `*mut` from `&Archive`
 /// and letting C write through it is UB.
-#[repr(C)]
-pub struct Archive {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct Archive; }
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -975,11 +971,7 @@ pub struct Block {
 /// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
 /// entry state through setters and `archive_read_next_header2`. The Zig spec
 /// passes `*Entry` (mutable) — without `UnsafeCell`, `&ArchiveEntry → *mut` is UB.
-#[repr(C)]
-pub struct ArchiveEntry {
-    _p: UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct ArchiveEntry; }
 
 unsafe extern "C" {
     safe fn archive_entry_new() -> *mut ArchiveEntry;
@@ -1590,22 +1582,10 @@ unsafe extern "C" {
     pub fn archive_entry_partial_links(res: *mut struct_archive_entry_linkresolver, links: *mut c_uint) -> *mut struct_archive_entry;
 }
 
-#[repr(C)]
-pub struct struct_stat {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
-
-#[repr(C)]
-pub struct struct_archive_acl {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
-
-#[repr(C)]
-pub struct struct_archive_entry_linkresolver {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    pub struct struct_stat;
+    pub struct struct_archive_acl;
+    pub struct struct_archive_entry_linkresolver;
 }
 
 pub type archive_acl = struct_archive_acl;
@@ -1763,11 +1743,9 @@ impl GrowingBuffer {
 // TODO(port): platform-specific libc types — verify in Phase B.
 #[allow(non_camel_case_types)]
 type dev_t = u64;
-/// Opaque libc `FILE` (only used as `*mut FILE` across FFI).
-#[repr(C)]
-pub struct FILE {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque libc `FILE` (only used as `*mut FILE` across FFI).
+    pub struct FILE;
 }
 
 // ported from: src/libarchive_sys/bindings.zig

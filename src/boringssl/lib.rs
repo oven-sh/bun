@@ -94,22 +94,15 @@ type ssl_verify_result_t = c_int;
 const ssl_verify_ok: ssl_verify_result_t = 0;
 
 /// `#define SSL_DEFAULT_CIPHER_LIST "ALL"`
-const SSL_DEFAULT_CIPHER_LIST: *const c_char = c"ALL".as_ptr();
+pub const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL";
 
-#[repr(C)]
-struct CRYPTO_BUFFER_POOL {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+use boring::{CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set0_buffer_pool, SSL_CTX_set_cipher_list};
 
 type SslCustomVerifyCb =
     Option<unsafe extern "C" fn(ssl: *mut boring::SSL, out_alert: *mut u8) -> ssl_verify_result_t>;
 
 unsafe extern "C" {
     fn SSL_CTX_set_custom_verify(ctx: *mut boring::SSL_CTX, mode: c_int, callback: SslCustomVerifyCb);
-    fn CRYPTO_BUFFER_POOL_new() -> *mut CRYPTO_BUFFER_POOL;
-    fn SSL_CTX_set0_buffer_pool(ctx: *mut boring::SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
-    fn SSL_CTX_set_cipher_list(ctx: *mut boring::SSL_CTX, s: *const c_char) -> c_int;
 }
 
 unsafe extern "C" fn noop_custom_verify(
@@ -121,11 +114,30 @@ unsafe extern "C" fn noop_custom_verify(
 
 static CTX_STORE: core::sync::atomic::AtomicPtr<boring::SSL_CTX> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
-// Zig: `threadlocal var auto_crypto_buffer_pool` — only ever populated on the
-// first `init_client()` call (guarded by `CTX_STORE`), so a plain atomic under
-// the same single-threaded-startup assumption is equivalent.
-static AUTO_CRYPTO_BUFFER_POOL: core::sync::atomic::AtomicPtr<CRYPTO_BUFFER_POOL> =
-    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
+
+std::thread_local! {
+    // Zig: `threadlocal var auto_crypto_buffer_pool: ?*CRYPTO_BUFFER_POOL = null`
+    // (boringssl.zig:19225). One pool per thread, lazily allocated on first
+    // `SSL_CTX.setup()` call from that thread.
+    static AUTO_CRYPTO_BUFFER_POOL: Cell<*mut CRYPTO_BUFFER_POOL> =
+        const { Cell::new(ptr::null_mut()) };
+}
+
+/// Zig: `SSL_CTX.setup(ctx)` (boringssl.zig:19204) — install the per-thread
+/// `CRYPTO_BUFFER_POOL` and set the cipher list to BoringSSL's
+/// `SSL_DEFAULT_CIPHER_LIST` (`"ALL"`).
+///
+/// # Safety
+/// `ctx` must be a live `SSL_CTX*`.
+pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
+    AUTO_CRYPTO_BUFFER_POOL.with(|pool| unsafe {
+        if pool.get().is_null() {
+            pool.set(CRYPTO_BUFFER_POOL_new());
+        }
+        SSL_CTX_set0_buffer_pool(ctx, pool.get());
+        let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
+    });
+}
 
 pub fn init_client() -> *mut boring::SSL {
     use core::sync::atomic::Ordering::Relaxed;
@@ -141,13 +153,7 @@ pub fn init_client() -> *mut boring::SSL {
             //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
             ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
             SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
-            let mut pool = AUTO_CRYPTO_BUFFER_POOL.load(Relaxed);
-            if pool.is_null() {
-                pool = CRYPTO_BUFFER_POOL_new();
-                AUTO_CRYPTO_BUFFER_POOL.store(pool, Relaxed);
-            }
-            SSL_CTX_set0_buffer_pool(ctx, pool);
-            let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
+            ssl_ctx_setup(ctx);
             CTX_STORE.store(ctx, Relaxed);
         }
 
@@ -208,15 +214,12 @@ pub extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
 }
 
 #[cfg(windows)]
-const INET6_ADDRSTRLEN: usize = 65;
+pub const INET6_ADDRSTRLEN: usize = 65;
 #[cfg(not(windows))]
-const INET6_ADDRSTRLEN: usize = 46;
+pub const INET6_ADDRSTRLEN: usize = 46;
 
-// `libc` doesn't surface winsock AF_* on Windows (they live in winsock2.h).
-// The values are the same on every supported target, so define them locally.
-const AF_INET: c_int = 2;
-#[cfg(windows)] const AF_INET6: c_int = 23; // winsock2.h
-#[cfg(not(windows))] const AF_INET6: c_int = libc::AF_INET6 as c_int;
+// Canonical cross-platform AF_* surface — handles the Windows ws2def.h split.
+use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
 
 /// converts IP string to canonicalized IP string
 /// return null when the IP is invalid
@@ -232,9 +235,6 @@ pub fn canonicalize_ip<'a>(
     out_ip[..addr_str.len()].copy_from_slice(addr_str);
     out_ip[addr_str.len()] = 0;
 
-    // Zig used std.posix.AF.INET — `libc` doesn't expose AF_* on Windows
-    // (winsock lives in a different crate), so route through this module's
-    // platform-neutral constants.
     let mut af: c_int = AF_INET;
     // get the standard text representation of the IP
     // SAFETY: out_ip is NUL-terminated above; ip_std_text is large enough for any address.

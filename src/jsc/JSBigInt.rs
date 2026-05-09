@@ -4,11 +4,9 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_string::String as BunString;
 
-/// Opaque JSC BigInt cell. Always used behind a reference (`&JSBigInt`).
-#[repr(C)]
-pub struct JSBigInt {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque JSC BigInt cell. Always used behind a reference (`&JSBigInt`).
+    pub struct JSBigInt;
 }
 
 // TODO(port): move to jsc_sys

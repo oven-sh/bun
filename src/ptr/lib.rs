@@ -35,7 +35,7 @@ pub type AtomicShared<T> = std::sync::Arc<T>;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Real impl.
 pub mod external_shared;
-pub use external_shared::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
+pub use external_shared::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
 
 pub mod raw_ref_count;
 pub mod weak_ptr;

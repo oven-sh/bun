@@ -24,11 +24,9 @@ use super::{
 
 const NS_PER_S: i64 = 1_000_000_000;
 
-/// This is `WTF::RunLoop::TimerBase` from WebKit — opaque FFI handle.
-#[repr(C)]
-pub struct RunLoopTimer {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// This is `WTF::RunLoop::TimerBase` from WebKit — opaque FFI handle.
+    pub struct RunLoopTimer;
 }
 
 impl RunLoopTimer {

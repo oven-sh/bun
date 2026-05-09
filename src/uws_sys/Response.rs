@@ -32,25 +32,13 @@ pub struct SocketAddress<'a> {
     pub is_ipv6: bool,
 }
 
-/// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
-#[repr(C)]
-pub struct Socket {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
-
-/// Opaque per-socket userdata blob (forward-decl; concrete type lives in `bun_uws`).
-#[repr(C)]
-pub struct SocketData {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
-
-/// Opaque uWS WebSocket upgrade context (forward-decl; concrete type lives in `bun_uws`).
-#[repr(C)]
-pub struct WebSocketUpgradeContext {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
+bun_opaque::opaque_ffi! {
+    /// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
+    pub struct Socket;
+    /// Opaque per-socket userdata blob (forward-decl; concrete type lives in `bun_uws`).
+    pub struct SocketData;
+    /// Opaque uWS WebSocket upgrade context (forward-decl; concrete type lives in `bun_uws`).
+    pub struct WebSocketUpgradeContext;
 }
 
 /// Opaque handle for `uws::Response<SSL>`.
@@ -1018,11 +1006,9 @@ pub use c::uws_res;
 pub mod c {
     use super::*;
 
-    /// Opaque `uws_res_t` (the untyped C handle).
-    #[repr(C)]
-    pub struct uws_res {
-        _p: core::cell::UnsafeCell<[u8; 0]>,
-        _m: PhantomData<(*mut u8, PhantomPinned)>,
+    bun_opaque::opaque_ffi! {
+        /// Opaque `uws_res_t` (the untyped C handle).
+        pub struct uws_res;
     }
 
     // `uws_res` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&uws_res` /

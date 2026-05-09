@@ -198,11 +198,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 // RawWebSocket
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[repr(C)]
-pub struct RawWebSocket {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct RawWebSocket; }
 
 impl RawWebSocket {
     pub fn memory_cost(&mut self, ssl_flag: i32) -> usize {

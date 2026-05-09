@@ -19,10 +19,16 @@ use bun_logger as Logger;
 pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
 pub use bv2_impl::api;
-pub use bv2_impl::{
-    JSMeta, ImportData, ExportData, ImportTracker, DevServerInput, DevServerOutput,
-    EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
+pub use bv2_impl::{ImportTrackerStatus, ImportTrackerIterator, DevServerInput, DevServerOutput};
+// DEDUP(D059): the value-type set below is canonically defined in
+// `crate::ungate_support` (lib.rs:15 glob-re-exports it at the crate root). The
+// `bv2_impl` draft body previously carried duplicate definitions that no caller
+// reached; re-export the canonical ones here to preserve `bundle_v2::Foo`
+// spellings for external callers.
+pub use crate::ungate_support::{
+    JSMeta, ImportData, ExportData, ImportTracker, generic_path_with_pretty_initialized,
 };
+pub use crate::ungate_support::entry_point::{EntryPoint, Kind as EntryPointKind, List as EntryPointList};
 // Flatten the impl-body module into this file's namespace so external callers
 // (`bun_runtime::cli::*`, `linker_context::*`) reference items as
 // `bundle_v2::Foo` rather than naming the implementation submodule.
@@ -162,18 +168,6 @@ pub struct BakeOptions<'a> {
     pub client_transpiler: NonNull<Transpiler<'a>>,
     pub ssr_transpiler: NonNull<Transpiler<'a>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
-}
-
-/// Argument struct for `patch_import_record_source_indices` — pulled out so the
-/// borrow of `import_records` (a column of `graph.ast`) doesn't overlap the
-/// `&mut self` the body needs for `path_to_source_index_map`.
-pub struct PatchImportRecordsCtx<'s> {
-    pub source_index: Index,
-    pub source_path: &'s [u8],
-    pub loader: Loader,
-    pub target: options::Target,
-    pub redirect_import_record_index: Option<u32>,
-    pub force_save: bool,
 }
 
 impl<'a> BundleV2<'a> {
@@ -321,6 +315,7 @@ use bun_js_parser::ast::server_component_boundary;
 use bun_options_types::{ImportRecord, ImportKind};
 use crate::ungate_support::bun_fs as Fs;
 use crate::ungate_support::{bun_fs, bun_css, import_record};
+use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::DataURL;
 use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 use bun_resolver::{self as _resolver, Resolver, is_package_path};
@@ -663,46 +658,11 @@ use self::api as jsc_api;
 /// FFI bodies) stay in tier-6 (`bun_runtime::api`) and re-export these.
 pub mod api {
     /// Mirrors src/runtime/api/JSBundler.zig:1799 `BuildArtifact.OutputKind`.
+    /// Canonical definition lives in `crate::options::OutputKind`; re-exported
+    /// here so the documented CYCLEBREAK path `api::build_artifact::OutputKind`
+    /// keeps resolving.
     pub mod build_artifact {
-        #[repr(u8)]
-        #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-        pub enum OutputKind {
-            #[default]
-            Chunk = 0,
-            Asset,
-            EntryPoint,
-            Sourcemap,
-            Bytecode,
-            ModuleInfo,
-            MetafileJson,
-            MetafileMarkdown,
-        }
-        impl OutputKind {
-            #[inline]
-            pub fn is_file_in_standalone_mode(self) -> bool {
-                !matches!(
-                    self,
-                    OutputKind::Sourcemap
-                        | OutputKind::Bytecode
-                        | OutputKind::ModuleInfo
-                        | OutputKind::MetafileJson
-                        | OutputKind::MetafileMarkdown
-                )
-            }
-            /// String form used by `BuildArtifact.getOutputKind` (`@tagName`).
-            pub fn as_str(self) -> &'static str {
-                match self {
-                    OutputKind::Chunk => "chunk",
-                    OutputKind::Asset => "asset",
-                    OutputKind::EntryPoint => "entry-point",
-                    OutputKind::Sourcemap => "sourcemap",
-                    OutputKind::Bytecode => "bytecode",
-                    OutputKind::ModuleInfo => "module_info",
-                    OutputKind::MetafileJson => "metafile-json",
-                    OutputKind::MetafileMarkdown => "metafile-markdown",
-                }
-            }
-        }
+        pub use crate::options::OutputKind;
     }
 
     /// Mirrors src/runtime/api/JSBundler.zig:3 `JSBundler` — TYPE_ONLY subset.
@@ -711,6 +671,7 @@ pub mod api {
     #[allow(non_snake_case)]
     pub mod JSBundler {
         use bun_options_types::ImportKind;
+        use bun_resolver::fs::PathResolverExt as _;
         use bun_string::String as BunString;
         use crate::options::{Loader, Target};
         use crate::options_impl::TargetExt;
@@ -723,11 +684,7 @@ pub mod api {
         /// JSC-aware methods (`create`, `add_plugin`, `global_object`, …) are
         /// added by `bun_runtime` via the `PluginJscExt` extension trait so
         /// this crate stays free of `JSValue` / `JSGlobalObject`.
-        #[repr(C)]
-        pub struct Plugin {
-            _p: core::cell::UnsafeCell<[u8; 0]>,
-            _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-        }
+        bun_opaque::opaque_ffi! { pub struct Plugin; }
         unsafe extern "C" {
             #[link_name = "JSBundlerPlugin__anyMatches"]
             fn JSBundlerPlugin__anyMatches(
@@ -756,6 +713,18 @@ pub mod api {
             );
             #[link_name = "JSBundlerPlugin__drainDeferred"]
             fn JSBundlerPlugin__drainDeferred(this: *mut Plugin, rejected: bool);
+            #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
+            fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: *const Plugin) -> i32;
+            #[link_name = "JSBundlerPlugin__callOnBeforeParsePlugins"]
+            fn JSBundlerPlugin__callOnBeforeParsePlugins(
+                this: *const Plugin,
+                ctx: *mut core::ffi::c_void,
+                namespace: *const BunString,
+                path: *const BunString,
+                args: *mut core::ffi::c_void,
+                result: *mut core::ffi::c_void,
+                should_continue_running: *mut i32,
+            ) -> i32;
         }
         impl Plugin {
             /// `Plugin.drainDeferred` (JSBundler.zig) — resolve every onLoad
@@ -763,12 +732,42 @@ pub mod api {
             /// for exception-scope tracking and returns `JSError!void`; the
             /// only bundler caller (`DeferredBatchTask::run_on_js_thread`) is
             /// `catch return`, so the void FFI call is the observable
-            /// behaviour at this tier. The JSC-aware wrapper lives on
-            /// `bun_runtime`'s `PluginJscExt`.
+            /// behaviour at this tier.
             pub fn drain_deferred(&mut self, rejected: bool) {
                 // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature
                 // matches JSBundlerPlugin.cpp `JSBundlerPlugin__drainDeferred`.
                 unsafe { JSBundlerPlugin__drainDeferred(self, rejected) }
+            }
+
+            #[inline]
+            pub fn has_on_before_parse_plugins(&self) -> bool {
+                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
+                unsafe { JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0 }
+            }
+
+            #[inline]
+            pub fn call_on_before_parse_plugins(
+                &self,
+                ctx: *mut core::ffi::c_void,
+                namespace: &BunString,
+                path: &BunString,
+                args: *mut crate::parse_task::parse_worker::OnBeforeParseArguments,
+                result: *mut crate::parse_task::parse_worker::OnBeforeParseResult,
+                should_continue_running: *mut i32,
+            ) -> i32 {
+                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches
+                // JSBundlerPlugin.cpp `JSBundlerPlugin__callOnBeforeParsePlugins`.
+                unsafe {
+                    JSBundlerPlugin__callOnBeforeParsePlugins(
+                        self,
+                        ctx,
+                        namespace,
+                        path,
+                        args.cast(),
+                        result.cast(),
+                        should_continue_running,
+                    )
+                }
             }
 
             pub fn has_any_matches(
@@ -1322,7 +1321,8 @@ bun_core::declare_scope!(scan_counter, visible);
 bun_core::declare_scope!(ReachableFiles, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 bun_core::declare_scope!(PartRanges, hidden);
-bun_core::declare_scope!(ContentHasher, hidden);
+// `ContentHasher` scope moved to `ungate_support.rs` alongside the canonical
+// `ContentHasher` struct (DEDUP D059).
 // Zig: `bun.Output.scoped(.watcher, .visible)` — lowercase to avoid colliding
 // with the `Watcher` type alias (hot-reloader handle) in this module.
 bun_core::declare_scope!(watcher, visible);
@@ -1449,89 +1449,17 @@ pub use crate::ungate_support::EventLoop;
 /// and never dereferences it. Nomicon opaque-FFI pattern: ZST with
 /// `PhantomData<(*mut u8, PhantomPinned)>` so it is `!Send + !Sync + !Unpin`
 /// and has no usable size/layout in this crate.
-#[repr(C)]
-pub struct JSBundleCompletionTask {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
+bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
 
 type IndexInt = u32; // Index.Int
 
-/// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
-/// DevServer relies on pretty paths for identifying modules, so they must be unique.
-pub fn generic_path_with_pretty_initialized<'a>(
-    path: Fs::Path<'a>,
-    target: options::Target,
-    top_level_dir: &[u8],
-    bump: &'a bun_alloc::Arena,
-) -> Result<Fs::Path<'a>, Error> {
-    // TODO(port): narrow error set
-    let mut buf = bun_paths::path_buffer_pool::get();
+// DEDUP(D059): `generic_path_with_pretty_initialized` is canonically defined in
+// `crate::ungate_support`. After D090 the `Fs::Path` / `Logger::fs::Path`
+// distinction is purely a `'static` alias, so the in-module caller passes
+// through directly.
 
-    let is_node = path.namespace == b"node";
-    if is_node
-        && (path.text.starts_with(NodeFallbackModules::IMPORT_PATH)
-            || !bun_paths::is_absolute(&path.text))
-    {
-        return Ok(path);
-    }
-
-    // "file" namespace should use the relative file path for its display name.
-    // the "node" namespace is also put through this code path so that the
-    // "node:" prefix is not emitted.
-    if path.is_file() || is_node {
-        let mut buf2 = bun_paths::path_buffer_pool::get();
-        // TODO(port): in Zig buf2 aliases buf when target != ssr.
-        let rel = bun_paths::resolve_path::relative_platform_buf::<bun_paths::resolve_path::platform::Loose, false>(
-            &mut **buf2, top_level_dir, &path.text,
-        );
-        let mut path_clone = path;
-        // stack-allocated temporary is not leaked because dupeAlloc on the path will
-        // move .pretty into the heap. that function also fixes some slash issues.
-        if target == Target::BakeServerComponentsSsr {
-            // the SSR graph needs different pretty names or else HMR mode will
-            // confuse the two modules.
-            let buf_slice = &mut buf.0[..];
-            let mut cursor = &mut buf_slice[..];
-            let buf_len = cursor.len();
-            let _ = write!(cursor, "ssr:{}", bstr::BStr::new(rel));
-            let written = buf_len - cursor.len();
-            path_clone.pretty = &buf.0[..written];
-        } else {
-            path_clone.pretty = rel;
-        }
-        Ok(path_clone.dupe_alloc_fix_pretty()?)
-    } else {
-        // in non-file namespaces, standard filesystem rules do not apply.
-        let mut path_clone = path;
-        let buf_slice = &mut buf.0[..];
-        let mut cursor = &mut buf_slice[..];
-        let buf_len = cursor.len();
-        let _ = write!(
-            cursor,
-            "{}{}:{}",
-            if target == Target::BakeServerComponentsSsr { "ssr:" } else { "" },
-            // make sure that a namespace including a colon wont collide with anything
-            EscapedNamespace(&path_clone.namespace),
-            bstr::BStr::new(&path_clone.text),
-        );
-        let written = buf_len - cursor.len();
-        path_clone.pretty = &buf.0[..written];
-        Ok(path_clone.dupe_alloc_fix_pretty()?)
-    }
-}
-
-/// PORT NOTE: `bun_logger::fs::Path`, `bun_resolver::fs::Path<'a>`, and
-/// `bun_paths::fs::Path<'a>` are field-identical mirrors of `fs.zig:Path` that
-/// haven't been unified yet (TYPE_ONLY split). These shims rebuild one from the
-/// other field-by-field. The proper fix is to
-/// collapse all three into a single `bun_paths::fs::Path<'a>` re-exported by
-/// `bun_logger`/`bun_resolver`; until then, callers must pass slices that are
-/// either `'static` literals, `FilenameStore`/`DirnameStore`-interned, or
-/// allocated from `BundleV2::arena()` (the bundle-pass arena).
-///
-/// Erase `&[u8]` to `&'static [u8]` for storage in the lifetime-erased
-/// `Logger::fs::Path`/`bun_paths::fs::Path<'static>` mirrors.
+/// Erase `&[u8]` to `&'static [u8]` for storage in lifetime-erased
+/// `Path<'static>` slots (`ImportRecord.path`, `Graph.input_files`).
 ///
 /// # Safety
 /// Caller guarantees `s` is one of:
@@ -1542,31 +1470,29 @@ pub fn generic_path_with_pretty_initialized<'a>(
 ///     consuming `Path` must not outlive it.
 /// All call sites in this file satisfy one of these; this is the documented
 /// Phase-A ARENA convention (PORTING.md §Type Mapping: arena-owned struct
-/// fields use erased lifetimes pending the `Path<'a>` unification).
+/// fields use erased lifetimes).
 #[inline(always)]
 pub(crate) unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
     // SAFETY: upheld by caller per fn contract.
     unsafe { bun_ptr::detach_lifetime(s) }
 }
+// D090: `Fs::Path` / `Logger::fs::Path` / `bun_paths::fs::Path` are now the
+// same nominal type. These shims remain only as named lifetime-erasure /
+// clone helpers so call sites read unchanged; the ones that previously
+// performed `'a → 'static` erasure delegate to `Path::into_static`.
 #[inline]
 pub(crate) fn fs_path_to_logger(p: Fs::Path<'_>) -> Logger::fs::Path {
-    logger_path_from_fs(&p)
+    // SAFETY: callers pass resolver/arena-interned paths (see `interned_slice`).
+    unsafe { p.into_static() }
 }
 #[inline]
 #[allow(dead_code)]
 pub(crate) fn logger_path_to_paths(p: &Logger::fs::Path) -> bun_paths::fs::Path<'static> {
-    ir_path_from_logger(p)
+    p.clone()
 }
 #[inline]
 pub(crate) fn fs_path_from_logger(p: &Logger::fs::Path) -> Fs::Path<'static> {
-    Fs::Path {
-        pretty: p.pretty,
-        text: p.text,
-        namespace: p.namespace,
-        name: Fs::PathName { base: p.name.base, dir: p.name.dir, ext: p.name.ext, filename: p.name.filename },
-        is_disabled: p.is_disabled,
-        is_symlink: p.is_symlink,
-    }
+    p.clone()
 }
 /// PORT NOTE: `Logger::Source` is `!Clone`; manual field-by-field dup for the
 /// few sites (server-component boundary handling) that need a value copy.
@@ -1578,19 +1504,6 @@ fn dup_source(s: &Logger::Source) -> Logger::Source {
         contents_is_recycled: s.contents_is_recycled,
         identifier_name: s.identifier_name.clone(),
         index: s.index,
-    }
-}
-
-struct EscapedNamespace<'a>(&'a [u8]);
-impl core::fmt::Display for EscapedNamespace<'_> {
-    fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut rest = self.0;
-        while let Some(i) = strings::index_of_char(rest, b':') {
-            write!(w, "{}", bstr::BStr::new(&rest[..i as usize]))?;
-            w.write_str("::")?;
-            rest = &rest[i as usize + 1..];
-        }
-        write!(w, "{}", bstr::BStr::new(rest))
     }
 }
 
@@ -2266,7 +2179,7 @@ impl<'a> BundleV2<'a> {
 
                         if !handles_import_errors && !self.transpiler.options.ignore_module_resolution_errors {
                             if is_package_path(&import_record.specifier) {
-                                if target == Target::Browser && options::ExternalModules::is_node_builtin(path_to_use) {
+                                if target == Target::Browser && options::is_node_builtin(path_to_use) {
                                     add_error(
                                         log, source, import_record.range,
                                         format_args!("Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
@@ -4912,7 +4825,15 @@ impl<'a> BundleV2<'a> {
         // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
         // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
         let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
-        generic_path_with_pretty_initialized(path, target, self.transpiler.fs().top_level_dir, bump)
+        // DEDUP(D059): route through the canonical body in `ungate_support`;
+        // D090 unified `Fs::Path` and `Logger::fs::Path` so the shims are identity.
+        let out = crate::ungate_support::generic_path_with_pretty_initialized(
+            fs_path_to_logger(path),
+            target,
+            self.transpiler.fs().top_level_dir,
+            bump,
+        )?;
+        Ok(fs_path_from_logger(&out))
     }
 
     fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
@@ -5040,83 +4961,28 @@ pub struct ResolveImportRecordResult {
     pub last_error: Option<Error>,
 }
 
-// `bun_paths::fs::Path` / `bun_resolver::fs::Path` /
-// `bun_logger::fs::Path` are field-identical mirrors of the same Zig `Fs.Path`.
-// Re-construct field-by-field (non-`repr(C)`, layout not guaranteed identical).
-// SAFETY: Phase-A lifetime erasure — backing slices are arena/BSSStringList-owned
-// and outlive the bundle pass (TODO(port): unify Path types to remove this).
+// D090: `Fs::Path` / `Logger::fs::Path` / `bun_paths::fs::Path` are now the
+// same nominal type. Kept as named helpers so call sites read unchanged.
 #[inline]
 pub(crate) fn fs_path_from_ir(p: &bun_paths::fs::Path<'static>) -> Fs::Path<'static> {
-    Fs::Path {
-        pretty: p.pretty,
-        text: p.text,
-        namespace: p.namespace,
-        name: Fs::PathName {
-            base: p.name.base,
-            dir: p.name.dir,
-            ext: p.name.ext,
-            filename: p.name.filename,
-        },
-        is_disabled: p.is_disabled,
-        is_symlink: p.is_symlink,
-    }
+    p.clone()
 }
 
 #[inline]
 pub(crate) fn ir_path_from_fs(p: &Fs::Path<'_>) -> bun_paths::fs::Path<'static> {
     // SAFETY: callers pass resolver/arena-interned paths (see `interned_slice`).
-    unsafe {
-        bun_paths::fs::Path {
-            pretty: interned_slice(p.pretty),
-            text: interned_slice(p.text),
-            namespace: interned_slice(p.namespace),
-            name: bun_paths::fs::PathName {
-                base: interned_slice(p.name.base),
-                dir: interned_slice(p.name.dir),
-                ext: interned_slice(p.name.ext),
-                filename: interned_slice(p.name.filename),
-            },
-            is_disabled: p.is_disabled,
-            is_symlink: p.is_symlink,
-        }
-    }
+    unsafe { p.clone().into_static() }
 }
 
 #[inline]
 pub(crate) fn ir_path_from_logger(p: &bun_logger::fs::Path) -> bun_paths::fs::Path<'static> {
-    bun_paths::fs::Path {
-        pretty: p.pretty,
-        text: p.text,
-        namespace: p.namespace,
-        name: bun_paths::fs::PathName {
-            base: p.name.base,
-            dir: p.name.dir,
-            ext: p.name.ext,
-            filename: p.name.filename,
-        },
-        is_disabled: p.is_disabled,
-        is_symlink: p.is_symlink,
-    }
+    p.clone()
 }
 
 #[inline]
 pub(crate) fn logger_path_from_fs(p: &Fs::Path<'_>) -> bun_logger::fs::Path {
     // SAFETY: callers pass resolver/arena-interned paths (see `interned_slice`).
-    unsafe {
-        bun_logger::fs::Path {
-            pretty: interned_slice(p.pretty),
-            text: interned_slice(p.text),
-            namespace: interned_slice(p.namespace),
-            name: bun_logger::fs::PathName {
-                base: interned_slice(p.name.base),
-                dir: interned_slice(p.name.dir),
-                ext: interned_slice(p.name.ext),
-                filename: interned_slice(p.name.filename),
-            },
-            is_disabled: p.is_disabled,
-            is_symlink: p.is_symlink,
-        }
-    }
+    unsafe { p.clone().into_static() }
 }
 
 impl<'a> BundleV2<'a> {
@@ -5387,7 +5253,7 @@ impl<'a> BundleV2<'a> {
                             if !import_record.flags.contains(bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS) && !self.transpiler.options.ignore_module_resolution_errors {
                                 last_error = Some(err);
                                 if is_package_path(&import_record.path.text) {
-                                    if ctx.target == Target::Browser && options::ExternalModules::is_node_builtin(&import_record.path.text) {
+                                    if ctx.target == Target::Browser && options::is_node_builtin(&import_record.path.text) {
                                         add_error(
                                             log, Some(source), import_record.range,
                                             format_args!("Browser build cannot {} Node.js builtin: \"{}\"{}",
@@ -5743,6 +5609,9 @@ impl<'a> BundleV2<'a> {
     }
 }
 
+/// Argument struct for `patch_import_record_source_indices` — pulled out so the
+/// borrow of `import_records` (a column of `graph.ast`) doesn't overlap the
+/// `&mut self` the body needs for `path_to_source_index_map`.
 #[derive(Clone, Copy)]
 pub struct PatchImportRecordsCtx<'a> {
     pub source_index: Index,
@@ -6263,290 +6132,23 @@ impl<'a> BundleV2<'a> {
 
 // `UseDirective`/`ServerComponentBoundary` already imported at module head.
 
-type RefVoidMap = ArrayHashMap<Ref, ()>; // TODO(port): Ref.ArrayHashCtx
-pub use crate::ungate_support::{ResolvedExports, TopLevelSymbolToParts};
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum WrapKind {
-    #[default]
-    None,
-    Cjs,
-    Esm,
-}
-
-#[derive(Default)]
-pub struct ImportData {
-    // This is an array of intermediate statements that re-exported this symbol
-    // in a chain before getting to the final symbol. This can be done either with
-    // "export * from" or "export {} from". If this is done with "export * from"
-    // then this may not be the result of a single chain but may instead form
-    // a diamond shape if this same symbol was re-exported multiple times from
-    // different files.
-    pub re_exports: Vec<Dependency>,
-
-    pub data: ImportTracker,
-}
-
-#[derive(Default)]
-pub struct ExportData {
-    // Export star resolution happens first before import resolution. That means
-    // it cannot yet determine if duplicate names from export star resolution are
-    // ambiguous (point to different symbols) or not (point to the same symbol).
-    // This issue can happen in the following scenario:
-    //
-    //   // entry.js
-    //   export * from './a'
-    //   export * from './b'
-    //
-    //   // a.js
-    //   export * from './c'
-    //
-    //   // b.js
-    //   export {x} from './c'
-    //
-    //   // c.js
-    //   export let x = 1, y = 2
-    //
-    // In this case "entry.js" should have two exports "x" and "y", neither of
-    // which are ambiguous. To handle this case, ambiguity resolution must be
-    // deferred until import resolution time. That is done using this array.
-    pub potentially_ambiguous_export_star_refs: Vec<ImportData>,
-
-    // This is the file that the named export above came from. This will be
-    // different from the file that contains this object if this is a re-export.
-    pub data: ImportTracker,
-}
-
-#[derive(Default)]
-pub struct JSMeta {
-    /// This is only for TypeScript files. If an import symbol is in this map, it
-    /// means the import couldn't be found and doesn't actually exist. This is not
-    /// an error in TypeScript because the import is probably just a type.
-    ///
-    /// Normally we remove all unused imports for TypeScript files during parsing,
-    /// which automatically removes type-only imports. But there are certain re-
-    /// export situations where it's impossible to tell if an import is a type or
-    /// not:
-    ///
-    ///   import {typeOrNotTypeWhoKnows} from 'path';
-    ///   export {typeOrNotTypeWhoKnows};
-    ///
-    /// Really people should be using the TypeScript "isolatedModules" flag with
-    /// bundlers like this one that compile TypeScript files independently without
-    /// type checking. That causes the TypeScript type checker to emit the error
-    /// "Re-exporting a type when the '--isolatedModules' flag is provided requires
-    /// using 'export type'." But we try to be robust to such code anyway.
-    pub probably_typescript_type: RefVoidMap,
-
-    /// Imports are matched with exports in a separate pass from when the matched
-    /// exports are actually bound to the imports. Here "binding" means adding non-
-    /// local dependencies on the parts in the exporting file that declare the
-    /// exported symbol to all parts in the importing file that use the imported
-    /// symbol.
-    ///
-    /// This must be a separate pass because of the "probably TypeScript type"
-    /// check above. We can't generate the part for the export namespace until
-    /// we've matched imports with exports because the generated code must omit
-    /// type-only imports in the export namespace code. And we can't bind exports
-    /// to imports until the part for the export namespace is generated since that
-    /// part needs to participate in the binding.
-    ///
-    /// This array holds the deferred imports to bind so the pass can be split
-    /// into two separate passes.
-    pub imports_to_bind: crate::RefImportData,
-
-    /// This includes both named exports and re-exports.
-    ///
-    /// Named exports come from explicit export statements in the original file,
-    /// and are copied from the "NamedExports" field in the AST.
-    ///
-    /// Re-exports come from other files and are the result of resolving export
-    /// star statements (i.e. "export * from 'foo'").
-    pub resolved_exports: ResolvedExports,
-    pub resolved_export_star: ExportData,
-
-    /// Never iterate over "resolvedExports" directly. Instead, iterate over this
-    /// array. Some exports in that map aren't meant to end up in generated code.
-    /// This array excludes these exports and is also sorted, which avoids non-
-    /// determinism due to random map iteration order.
-    pub sorted_and_filtered_export_aliases: Box<[Box<[u8]>]>,
-
-    /// This is merged on top of the corresponding map from the parser in the AST.
-    /// You should call "TopLevelSymbolToParts" to access this instead of accessing
-    /// it directly.
-    pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-
-    /// If this is an entry point, this array holds a reference to one free
-    /// temporary symbol for each entry in "sortedAndFilteredExportAliases".
-    /// These may be needed to store copies of CommonJS re-exports in ESM.
-    pub cjs_export_copies: Box<[Ref]>,
-
-    /// The index of the automatically-generated part used to represent the
-    /// CommonJS or ESM wrapper. This part is empty and is only useful for tree
-    /// shaking and code splitting. The wrapper can't be inserted into the part
-    /// because the wrapper contains other parts, which can't be represented by
-    /// the current part system. Only wrapped files have one of these.
-    pub wrapper_part_index: Index,
-
-    /// The index of the automatically-generated part used to handle entry point
-    /// specific stuff. If a certain part is needed by the entry point, it's added
-    /// as a dependency of this part. This is important for parts that are marked
-    /// as removable when unused and that are not used by anything else. Only
-    /// entry point files have one of these.
-    pub entry_point_part_index: Index,
-
-    pub flags: JSMetaFlags,
-}
-
-// packed struct(u8) — manual repr(transparent) over u8 with bit accessors
-#[repr(transparent)]
-#[derive(Clone, Copy, Default)]
-pub struct JSMetaFlags(u8);
-
-impl JSMetaFlags {
-    /// This is true if this file is affected by top-level await, either by having
-    /// a top-level await inside this file or by having an import/export statement
-    /// that transitively imports such a file. It is forbidden to call "require()"
-    /// on these files since they are evaluated asynchronously.
-    pub const fn is_async_or_has_async_dependency(self) -> bool { self.0 & (1 << 0) != 0 }
-    pub fn set_is_async_or_has_async_dependency(&mut self, v: bool) { if v { self.0 |= 1 << 0 } else { self.0 &= !(1 << 0) } }
-
-    /// If true, we need to insert "var exports = {};". This is the case for ESM
-    /// files when the import namespace is captured via "import * as" and also
-    /// when they are the target of a "require()" call.
-    pub const fn needs_exports_variable(self) -> bool { self.0 & (1 << 1) != 0 }
-    pub fn set_needs_exports_variable(&mut self, v: bool) { if v { self.0 |= 1 << 1 } else { self.0 &= !(1 << 1) } }
-
-    /// If true, the "__export(exports, { ... })" call will be force-included even
-    /// if there are no parts that reference "exports". Otherwise this call will
-    /// be removed due to the tree shaking pass. This is used when for entry point
-    /// files when code related to the current output format needs to reference
-    /// the "exports" variable.
-    pub const fn force_include_exports_for_entry_point(self) -> bool { self.0 & (1 << 2) != 0 }
-    pub fn set_force_include_exports_for_entry_point(&mut self, v: bool) { if v { self.0 |= 1 << 2 } else { self.0 &= !(1 << 2) } }
-
-    /// This is set when we need to pull in the "__export" symbol in to the part
-    /// at "nsExportPartIndex". This can't be done in "createExportsForFile"
-    /// because of concurrent map hazards. Instead, it must be done later.
-    pub const fn needs_export_symbol_from_runtime(self) -> bool { self.0 & (1 << 3) != 0 }
-    pub fn set_needs_export_symbol_from_runtime(&mut self, v: bool) { if v { self.0 |= 1 << 3 } else { self.0 &= !(1 << 3) } }
-
-    /// Wrapped files must also ensure that their dependencies are wrapped. This
-    /// flag is used during the traversal that enforces this invariant, and is used
-    /// to detect when the fixed point has been reached.
-    pub const fn did_wrap_dependencies(self) -> bool { self.0 & (1 << 4) != 0 }
-    pub fn set_did_wrap_dependencies(&mut self, v: bool) { if v { self.0 |= 1 << 4 } else { self.0 &= !(1 << 4) } }
-
-    /// When a converted CommonJS module is import() dynamically
-    /// We need ensure that the "default" export is set to the equivalent of module.exports
-    /// (unless a "default" export already exists)
-    pub const fn needs_synthetic_default_export(self) -> bool { self.0 & (1 << 5) != 0 }
-    pub fn set_needs_synthetic_default_export(&mut self, v: bool) { if v { self.0 |= 1 << 5 } else { self.0 &= !(1 << 5) } }
-
-    pub const fn wrap(self) -> WrapKind {
-        // Bits 6-7 store a WrapKind discriminant. `set_wrap` only ever writes
-        // 0/1/2, but a raw `JSMetaFlags(u8)` constructed in-module could carry
-        // 3 — match defensively (UB on invalid tag otherwise).
-        match (self.0 >> 6) & 0b11 {
-            1 => WrapKind::Cjs,
-            2 => WrapKind::Esm,
-            _ => WrapKind::None,
-        }
-    }
-    pub fn set_wrap(&mut self, v: WrapKind) { self.0 = (self.0 & 0b0011_1111) | ((v as u8) << 6); }
-}
-
+// DEDUP(D059): WrapKind / ImportData / ExportData / JSMeta / JSMetaFlags /
+// EntryPoint{,Kind,List} / PartRange / StableRef / ImportTracker / DeclInfo* /
+// CompileResult* / ContentHasher / cheap_prefix_normalizer / target_from_hashbang
+// are canonically defined in `crate::ungate_support` (which `lib.rs` already
+// glob-re-exports at the crate root, so every cross-module caller resolves
+// there). The duplicate definitions that previously lived here were provably
+// unreferenced — `bundle_v2.rs` itself uses `crate::ungate_support::PartRange`
+// at the `compute_chunks` body, bypassing its own copy. Re-export the canonical
+// set so any in-module / `bv2_impl::Foo` reference still resolves.
+pub use crate::ungate_support::{
+    ResolvedExports, TopLevelSymbolToParts, WrapKind, ImportData, ExportData, JSMeta,
+    PartRange, StableRef, ImportTracker, DeclInfo, DeclInfoKind, CompileResult,
+    CompileResultForSourceMap, ContentHasher, cheap_prefix_normalizer, target_from_hashbang,
+};
+pub use crate::ungate_support::js_meta::Flags as JSMetaFlags;
+pub use crate::ungate_support::entry_point::{EntryPoint, Kind as EntryPointKind, List as EntryPointList};
 pub use crate::AdditionalFile;
-
-#[derive(Default)]
-pub struct EntryPoint {
-    /// This may be an absolute path or a relative path. If absolute, it will
-    /// eventually be turned into a relative path by computing the path relative
-    /// to the "outbase" directory. Then this relative path will be joined onto
-    /// the "outdir" directory to form the final output path for this entry point.
-    pub output_path: bun_string::PathString,
-
-    /// This is the source index of the entry point. This file must have a valid
-    /// entry point kind (i.e. not "none").
-    pub source_index: IndexInt,
-
-    /// Manually specified output paths are ignored when computing the default
-    /// "outbase" directory, which is computed as the lowest common ancestor of
-    /// all automatically generated output paths.
-    pub output_path_was_auto_generated: bool,
-}
-
-pub type EntryPointList = MultiArrayList<EntryPoint>;
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
-pub enum EntryPointKind {
-    #[default]
-    None,
-    UserSpecified,
-    DynamicImport,
-    Html,
-}
-
-impl EntryPointKind {
-    pub fn output_kind(self) -> crate::options::OutputKind {
-        match self {
-            Self::UserSpecified => crate::options::OutputKind::EntryPoint,
-            _ => crate::options::OutputKind::Chunk,
-        }
-    }
-
-    #[inline]
-    pub fn is_entry_point(self) -> bool {
-        self != Self::None
-    }
-
-    #[inline]
-    pub fn is_user_specified_entry_point(self) -> bool {
-        self == Self::UserSpecified
-    }
-
-    // TODO: delete
-    #[inline]
-    pub fn is_server_entry_point(self) -> bool {
-        self == Self::UserSpecified
-    }
-}
-
-struct AstSourceIDMapping {
-    id: IndexInt,
-    source_index: IndexInt,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct PartRange {
-    pub source_index: Index,
-    pub part_index_begin: u32,
-    pub part_index_end: u32,
-}
-
-// packed struct(u96) — repr(C, packed) to match exact layout
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct StableRef {
-    pub stable_source_index: IndexInt,
-    pub r#ref: Ref,
-}
-
-impl StableRef {
-    pub fn is_less_than(_: (), a: StableRef, b: StableRef) -> bool {
-        a.stable_source_index < b.stable_source_index
-            || (a.stable_source_index == b.stable_source_index && a.r#ref.inner_index() < b.r#ref.inner_index())
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct ImportTracker {
-    pub source_index: Index,
-    pub name_loc: Logger::Loc,
-    pub import_ref: Ref,
-}
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -6582,11 +6184,34 @@ pub enum ImportTrackerStatus {
     ProbablyTypescriptType,
 }
 
-#[derive(Default)]
+/// `bundle_v2.zig:ImportTracker.Iterator`.
+///
+/// `import_data` is a raw slice into
+/// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`
+/// (Zig returned `Vec.slice()` directly). The graph SoA is never
+/// reallocated during `match_import_with_export`, so the pointer stays valid
+/// for the iterator's lifetime; the caller only reads `.data` from each entry.
+///
+/// DEDUP NOTE (D060): `value` / `import_data` name the `crate::`-root
+/// (`ungate_support`) flavours of `ImportTracker` / `ImportData` rather than
+/// the local `bv2_impl` duplicates so that `LinkerContext`'s 30+ live call
+/// sites (which import the crate-root types) type-check against this single
+/// canonical definition. The local duplicates collapse in the sibling
+/// `ImportTracker` / `ImportData` dedup clusters.
 pub struct ImportTrackerIterator {
     pub status: ImportTrackerStatus,
-    pub value: ImportTracker,
-    pub import_data: Box<[ImportData]>,
+    pub value: crate::ImportTracker,
+    pub import_data: *const [crate::ImportData],
+}
+
+impl Default for ImportTrackerIterator {
+    fn default() -> Self {
+        Self {
+            status: ImportTrackerStatus::default(),
+            value: crate::ImportTracker::default(),
+            import_data: std::ptr::from_ref::<[crate::ImportData]>(&[]),
+        }
+    }
 }
 
 // `PathTemplate` already in scope via `crate::options`.
@@ -6645,192 +6270,11 @@ impl CrossChunkImport {
     }
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DeclInfoKind { Declared, Lexical }
-
-pub struct DeclInfo {
-    pub name: Box<[u8]>,
-    pub kind: DeclInfoKind,
-}
-
-pub enum CompileResult {
-    Javascript {
-        source_index: IndexInt,
-        result: bun_js_printer::PrintResult,
-        /// Top-level declarations collected from converted statements during
-        /// parallel printing. Used by postProcessJSChunk to populate ModuleInfo
-        /// without re-scanning the original (unconverted) AST.
-        decls: Box<[DeclInfo]>,
-    },
-    Css {
-        result: Result<Box<[u8]>, Error>,
-        source_index: IndexInt,
-        source_map: Option<SourceMap::Chunk>,
-    },
-    Html {
-        source_index: IndexInt,
-        code: Box<[u8]>,
-        /// Offsets are used for DevServer to inject resources without re-bundling
-        script_injection_offset: u32,
-    },
-}
-
-impl CompileResult {
-    /// PORT NOTE: was `pub const EMPTY` — `Box<[_]>` can't be const-constructed.
-    pub fn empty() -> CompileResult {
-        CompileResult::Javascript {
-            source_index: 0,
-            result: bun_js_printer::PrintResult::Result(bun_js_printer::PrintResultSuccess {
-                code: Box::new([]),
-                source_map: None,
-            }),
-            decls: Box::new([]),
-        }
-    }
-
-    pub fn code(&self) -> &[u8] {
-        match self {
-            CompileResult::Javascript { result, .. } => match result {
-                bun_js_printer::PrintResult::Result(r) => &r.code,
-                _ => b"",
-            },
-            CompileResult::Css { result, .. } => match result {
-                Ok(v) => v,
-                Err(_) => b"",
-            },
-            CompileResult::Html { code, .. } => code,
-        }
-    }
-
-    /// Consume `self` and yield the owned code buffer. Used when the
-    /// `StringJoiner` must outlive the `CompileResult` local that produced it
-    /// (Zig `j.push(code, allocator)` ownership-transfer semantics).
-    pub fn into_code(self) -> Box<[u8]> {
-        match self {
-            CompileResult::Javascript { result, .. } => match result {
-                bun_js_printer::PrintResult::Result(r) => r.code,
-                _ => Box::default(),
-            },
-            CompileResult::Css { result, .. } => result.unwrap_or_default(),
-            CompileResult::Html { code, .. } => code,
-        }
-    }
-
-    pub fn source_map_chunk(&self) -> Option<&SourceMap::Chunk> {
-        match self {
-            CompileResult::Javascript { result, .. } => match result {
-                bun_js_printer::PrintResult::Result(r) => r.source_map.as_ref(),
-                _ => None,
-            },
-            CompileResult::Css { source_map, .. } => source_map.as_ref(),
-            CompileResult::Html { .. } => None,
-        }
-    }
-
-    pub fn source_index(&self) -> IndexInt {
-        match self {
-            CompileResult::Javascript { source_index, .. } => *source_index,
-            CompileResult::Css { source_index, .. } => *source_index,
-            CompileResult::Html { source_index, .. } => *source_index,
-        }
-    }
-}
-
-pub struct CompileResultForSourceMap {
-    pub source_map_chunk: SourceMap::Chunk,
-    pub generated_offset: SourceMap::LineColumnOffset,
-    pub source_index: u32,
-}
-
-#[derive(Default)]
-pub struct ContentHasher {
-    // xxhash64 outperforms Wyhash if the file is > 1KB or so
-    pub hasher: bun_hash::XxHash64Streaming,
-}
-
-impl ContentHasher {
-    pub fn write(&mut self, bytes: &[u8]) {
-        bun_core::scoped_log!(ContentHasher, "HASH_UPDATE {}:\n{}\n----------\n", bytes.len(), bstr::BStr::new(bytes));
-        self.hasher.update(&bytes.len().to_ne_bytes());
-        self.hasher.update(bytes);
-    }
-
-    pub fn run(bytes: &[u8]) -> u64 {
-        let mut hasher = ContentHasher::default();
-        hasher.write(bytes);
-        hasher.digest()
-    }
-
-    pub fn write_ints(&mut self, i: &[u32]) {
-        bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
-        // SAFETY: [u32] is POD; reinterpret as bytes (std.mem.sliceAsBytes).
-        let bytes = unsafe {
-            core::slice::from_raw_parts(i.as_ptr().cast::<u8>(), core::mem::size_of_val(i))
-        };
-        self.hasher.update(bytes);
-    }
-
-    pub fn digest(&self) -> u64 {
-        self.hasher.digest()
-    }
-}
-
-// non-allocating
-// meant to be fast but not 100% thorough
-// users can correctly put in a trailing slash if they want
-// this is just being nice
-pub fn cheap_prefix_normalizer<'s>(prefix: &'s [u8], suffix: &'s [u8]) -> [&'s [u8]; 2] {
-    if prefix.is_empty() {
-        let suffix_no_slash = strings::remove_leading_dot_slash(suffix);
-        return [
-            if suffix_no_slash.starts_with(b"../") { b"" } else { b"./" },
-            suffix_no_slash,
-        ];
-    }
-
-    // There are a few cases here we want to handle:
-    // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
-    // ["/foo/", "/bar.js"] => "/foo/bar.js"
-    if strings::ends_with_char(prefix, b'/') || (cfg!(windows) && strings::ends_with_char(prefix, b'\\')) {
-        if strings::starts_with_char(suffix, b'/') || (cfg!(windows) && strings::starts_with_char(suffix, b'\\')) {
-            return [
-                &prefix[..prefix.len()],
-                &suffix[1..suffix.len()],
-            ];
-        }
-
-        // It gets really complicated if we try to deal with URLs more than this
-        // These would be ideal:
-        // - example.com + ./out.js => example.com/out.js
-        // - example.com/foo + ./out.js => example.com/fooout.js
-        // - example.com/bar/ + ./out.js => example.com/bar/out.js
-        // But it's not worth the complexity to handle these cases right now.
-    }
-
-    [
-        prefix,
-        strings::remove_leading_dot_slash(suffix),
-    ]
-}
-
 fn get_redirect_id(id: u32) -> Option<u32> {
     if id == u32::MAX {
         return None;
     }
     Some(id)
-}
-
-pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
-    if buffer.len() > b"#!/usr/bin/env bun".len() {
-        if buffer.starts_with(b"#!/usr/bin/env bun") {
-            match buffer[b"#!/usr/bin/env bun".len()] {
-                b'\n' | b' ' => return Some(Target::Bun),
-                _ => {}
-            }
-        }
-    }
-    None
 }
 
 #[derive(Clone, Copy, Default)]

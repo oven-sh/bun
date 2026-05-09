@@ -51,16 +51,15 @@ fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslCo
     unsafe { (*CUSTOM_SSL_CONTEXT_MAP.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
-// TODO(b2-blocked): `bun_event_loop` is a higher-tier crate (not in bun_http
-// deps); MiniEventLoop is referenced only as a borrowed handle here. The
-// inner `*mut uws::Loop` (what HTTPContext needs for SocketGroup::init) is
-// surfaced separately so the layering hole is contained.
-type MiniEventLoop = c_void;
+use bun_event_loop::MiniEventLoop as mini_event_loop;
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 pub struct HttpThread {
-    // TODO(b2-blocked): &'static bun_event_loop::MiniEventLoop once that crate
-    // is reachable from bun_http (currently higher-tier).
-    pub loop_: *const MiniEventLoop,
+    /// Per-thread `MiniEventLoop` singleton — published by
+    /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread
+    /// (Zig: `bun.http.http_thread.loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`,
+    /// HTTPThread.zig:228+235).
+    pub loop_: *const MiniEventLoop<'static>,
     /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
     /// can `SocketGroup::init` without naming MiniEventLoop.
     pub uws_loop: *mut uws::Loop,
@@ -956,11 +955,18 @@ mod _event_loop_draft {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
         // PERF(port): was MimallocArena bulk-free for bun.http.default_allocator.
 
-        // TODO(b2-blocked): MiniEventLoop::init_global lives in bun_event_loop
-        // (higher tier). Until that's wired into bun_http's deps, drive the
-        // raw uws Loop directly. The MiniEventLoop wrapper handle (`loop_`)
-        // stays null; only `uws_loop` is consumed below.
-        let uws_loop = uws::Loop::get();
+        // Zig: `const loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`
+        // (HTTPThread.zig:228). Critical side effect: `init_global` calls
+        // `internal_loop_data.set_parent_raw(2 /* mini */, mini_ptr)` on this
+        // thread's uSockets loop. Without it, the macOS DNS cache-miss path
+        // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
+        // panics with `Parent loop not set - pointer is null`, which aborts
+        // the process — `bun install` SIGABRT on the first uncached lookup.
+        let loop_ = mini_event_loop::init_global(None, None);
+        // SAFETY: `init_global` published the per-thread singleton; this thread
+        // owns it for the thread lifetime and `loop_ptr()` is always non-null
+        // (`MiniEventLoop::init` calls `UwsLoop::get()`).
+        let uws_loop = unsafe { (*loop_).loop_ptr() };
 
         #[cfg(windows)]
         {
@@ -974,7 +980,7 @@ mod _event_loop_draft {
         }
 
         let thread = crate::http_thread_mut();
-        thread.loop_ = core::ptr::null();
+        thread.loop_ = loop_;
         thread.uws_loop = uws_loop;
         thread.http_context.init();
         if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {

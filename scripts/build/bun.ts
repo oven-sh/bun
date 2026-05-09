@@ -900,4 +900,31 @@ export function validateBunConfig(cfg: Config): void {
         `remove the symlink; ccache already shares compiled objects.`,
     );
   }
+
+  // Cross-language LTO needs an lld at least as new as the LLVM that emitted
+  // the rust bitcode. `resolveConfig()` swaps `cfg.ld` to `cfg.rustLld` when
+  // rustc's LLVM is newer than clang's; if `rustLld` couldn't be discovered
+  // (rustc/rustup missing, pinned toolchain not installed, agent provisioned
+  // without it), the build would proceed with the stale lld and fail at link
+  // time with an opaque `error: ... .rcgu.o: Invalid record`. Fail at
+  // configure time instead with a hint that points at the real problem.
+  if (
+    cfg.lto &&
+    cfg.rustToolchain !== undefined &&
+    cfg.rustLlvmVersion !== undefined &&
+    cfg.clangVersion !== undefined
+  ) {
+    const rustMajor = Number.parseInt(cfg.rustLlvmVersion.split(".")[0] ?? "", 10);
+    const clangMajor = Number.parseInt(cfg.clangVersion.split(".")[0] ?? "", 10);
+    if (Number.isFinite(rustMajor) && Number.isFinite(clangMajor) && rustMajor > clangMajor) {
+      assert(
+        cfg.ld === cfg.rustLld,
+        `Cross-language LTO is on and rustc's LLVM (${cfg.rustLlvmVersion}) is newer than clang's ` +
+          `(${cfg.clangVersion}), but rustc's bundled lld wasn't found — the link would fail with ` +
+          `"Invalid record" reading libbun_rust.a's bitcode. Install the pinned toolchain on this ` +
+          `host (\`rustup toolchain install ${cfg.rustToolchain}\`), upgrade clang/lld to LLVM ` +
+          `${rustMajor}+, or disable LTO with \`--lto=off\`.`,
+      );
+    }
+  }
 }

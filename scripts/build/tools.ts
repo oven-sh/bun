@@ -7,7 +7,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { Arch, OS, Toolchain } from "./config.ts";
@@ -565,11 +565,33 @@ export function findRustLld(os: OS): { rustLld: string | undefined; rustLlvmVers
   const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return { rustLld: undefined, rustLlvmVersion: undefined };
 
+  // The link-only CI mode runs `findRustLld()` on an agent that downloads
+  // `libbun_rust.a` rather than building it, so the pinned nightly may not be
+  // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
+  // would auto-install — but the download blows past a short spawnSync timeout
+  // and the silent failure leaves `rustLld` undefined, which falls back to the
+  // system lld. With cross-language LTO that means lld 21 reading rust-emitted
+  // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
+  // install` so the proxy resolves instantly: idempotent ~70ms when already
+  // installed, downloads on a stale agent. Skip when there's no pinned channel
+  // or no rustup — the `rustc` queries below will just use whatever's there.
+  const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  const channel = readRustToolchainChannel();
+  if (rustup !== undefined && channel !== undefined) {
+    spawnSync(rustup, ["toolchain", "install", channel, "--force", "--profile", "minimal", "--component", "rust-src"], {
+      encoding: "utf8",
+      timeout: 300_000,
+      stdio: ["ignore", "ignore", "inherit"], // surface download/error output
+    });
+  }
+
   // One spawn for both sysroot and host triple / LLVM version. `-vV` prints
   // `host: <triple>` and `LLVM version: X.Y.Z`; sysroot needs its own query.
+  // Generous timeout: if the toolchain install above was skipped (no rustup),
+  // this proxy invocation may still be the one that auto-installs.
   const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
     encoding: "utf8",
-    timeout: 30_000,
+    timeout: 300_000,
     stdio: ["ignore", "pipe", "pipe"],
   }).stdout?.trim();
   const vv = spawnSync(rustc, ["-vV"], {
@@ -592,6 +614,21 @@ export function findRustLld(os: OS): { rustLld: string | undefined; rustLlvmVers
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
   return { rustLld, rustLlvmVersion };
+}
+
+/**
+ * Read the pinned channel from `rust-toolchain.toml` at the repo root.
+ * Mirrors `readRustToolchainChannel()` in config.ts but stays in `tools.ts`
+ * because `findRustLld()` runs during `resolveToolchain()` — *before*
+ * `resolveConfig()` reads the channel into `cfg.rustToolchain`. Both walk the
+ * same file; keeping the parse local avoids an import cycle.
+ */
+function readRustToolchainChannel(): string | undefined {
+  // tools.ts lives at `scripts/build/`; the toolchain file is two levels up.
+  const path = join(import.meta.dirname, "..", "..", "rust-toolchain.toml");
+  if (!existsSync(path)) return undefined;
+  const m = /^\s*channel\s*=\s*"([^"]+)"/m.exec(readFileSync(path, "utf8"));
+  return m?.[1];
 }
 
 /**

@@ -28,6 +28,7 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_dns.workspace = true
 bun_dotenv.workspace = true
+bun_event_loop.workspace = true
 bun_http_types.workspace = true
 bun_io.workspace = true
 bun_libdeflate_sys.workspace = true

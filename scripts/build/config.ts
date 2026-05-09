@@ -163,6 +163,13 @@ export interface Config {
   ranlib: string | undefined;
   /** ld.lld on linux, lld-link on windows. May be empty on darwin (clang invokes ld). */
   ld: string;
+  /**
+   * rustc's bundled lld (see `Toolchain.rustLld`). When set and rustc's LLVM
+   * is newer than clang's under LTO, `resolveConfig()` selects it as `cfg.ld`.
+   * Forwarded so `validateBunConfig()` can fail loudly when LTO requires it
+   * but it wasn't found (mismatched LLVM versions → "Invalid record" at link).
+   */
+  rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
   rustLlvmVersion: string | undefined;
   strip: string;
@@ -835,6 +842,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
     ld,
+    rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
     strip: toolchain.strip,
     dsymutil: toolchain.dsymutil,

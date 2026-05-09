@@ -813,6 +813,7 @@ dependencies = [
  "bun_core",
  "bun_dns",
  "bun_dotenv",
+ "bun_event_loop",
  "bun_http_types",
  "bun_io",
  "bun_libdeflate_sys",

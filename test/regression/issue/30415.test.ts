@@ -77,8 +77,11 @@ test("http2 session does not retain closed streams", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, stdout: stdout.trim().split("\n").pop(), exitCode }).toEqual({
-    stderr: "",
+  // Don't pin stderr to "" — ASAN and other diagnostic builds may emit
+  // benign lines there. The test only cares about stdout + exit code; the
+  // stderr value is still included in the failure object so a real crash
+  // shows up in the diff.
+  expect({ stderr, stdout: stdout.trim().split("\n").pop(), exitCode }).toMatchObject({
     stdout: expect.stringMatching(/^ok retained=\d+ lastId=\d+$/),
     exitCode: 0,
   });

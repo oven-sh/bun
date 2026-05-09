@@ -1876,6 +1876,61 @@ pub const H2FrameParser = struct {
         end: usize,
     };
 
+    /// Drop exactly one frame's payload without dispatching it. Used when a
+    /// frame arrives for a stream we've already removed (RFC 7540 §5.1 permits
+    /// late frames during the brief window before the peer sees our
+    /// RST/END_STREAM). Advances `remainingLength` / clears `currentFrame` the
+    /// same way a normal `handleIncommingPayload` loop would, so the parser
+    /// moves past the frame and doesn't re-enter the null-stream branch
+    /// forever on subsequent reads. For DATA, the connection-level
+    /// flow-control window is charged so the peer's view of our receive window
+    /// stays consistent. For HEADERS/CONTINUATION the HPACK dynamic table is
+    /// advanced through the payload even though nothing is dispatched — HPACK
+    /// state is shared across streams, so skipping decode would desync the
+    /// table and corrupt every subsequent request on this session.
+    fn discardFramePayload(this: *H2FrameParser, frame: FrameHeader, data: []const u8) usize {
+        // DATA frames count against the connection-level receive window even
+        // when the stream is gone.
+        if (frame.type == @intFromEnum(FrameType.HTTP_FRAME_DATA)) {
+            const chunk_len: u32 = @intCast(@min(@as(usize, @intCast(this.remainingLength)), data.len));
+            this.adjustWindowSize(null, chunk_len);
+        }
+        if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            defer this.readBuffer.reset();
+            // For header block fragments, walk the decoder over the payload
+            // so the HPACK dynamic table stays in sync with the peer.
+            if (frame.type == @intFromEnum(FrameType.HTTP_FRAME_HEADERS) or
+                frame.type == @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION))
+            {
+                var payload = content.data;
+                // HEADERS carries optional padding length + optional priority
+                // before the header block. CONTINUATION has no padding/priority.
+                if (frame.type == @intFromEnum(FrameType.HTTP_FRAME_HEADERS)) {
+                    var offset: usize = 0;
+                    if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0 and payload.len >= 1) {
+                        const padding: usize = payload[0];
+                        offset += 1;
+                        if (padding + offset > payload.len) return content.end; // malformed, give up
+                        payload = payload[offset .. payload.len - padding];
+                    } else {
+                        payload = payload[offset..];
+                    }
+                    if (frame.flags & @intFromEnum(HeadersFrameFlags.PRIORITY) != 0) {
+                        if (payload.len < 5) return content.end;
+                        payload = payload[5..];
+                    }
+                }
+                while (payload.len > 0) {
+                    const header = this.decode(payload) catch break;
+                    if (header.next == 0) break; // decoder didn't advance; bail
+                    payload = payload[header.next..];
+                }
+            }
+            return content.end;
+        }
+        return data.len;
+    }
+
     // Default handling for payload is buffering it
     // for data frames we use another strategy
     pub fn handleIncommingPayload(this: *H2FrameParser, data: []const u8, streamIdentifier: u32) ?Payload {
@@ -2038,13 +2093,16 @@ pub const H2FrameParser = struct {
             log("received data frame on stream that does not exist", .{});
             // id=0 is a protocol error (DATA frames require a stream). For a
             // nonzero id that isn't in the map, the stream was closed and
-            // removed; drop the frame silently (RFC 7540 Section 5.1 allows
-            // late frames during the brief window before the peer sees our
-            // RST/END_STREAM).
+            // removed; drop the frame silently (RFC 7540 §5.1 permits late
+            // frames during the brief window before the peer sees our
+            // RST/END_STREAM). In either case the payload still has to be
+            // drained so `remainingLength`/`currentFrame` advance past the
+            // frame — otherwise the parser loops on this header forever.
             if (frame.streamIdentifier == 0) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
+                return data.len;
             }
-            return data.len;
+            return this.discardFramePayload(frame, data);
         };
 
         const settings = this.remoteSettings orelse this.localSettings;
@@ -2282,10 +2340,12 @@ pub const H2FrameParser = struct {
         var stream = stream_ orelse {
             if (frame.streamIdentifier == 0) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame on connection stream", this.lastStreamID, true);
+                return data.len;
             }
             // Stale RST for an already-closed stream: the peer is acknowledging
-            // a close we already performed — nothing more to do.
-            return data.len;
+            // a close we already performed — drain the 4-byte payload so the
+            // parser moves past this frame.
+            return this.discardFramePayload(frame, data);
         };
 
         if (frame.length != 4) {
@@ -2352,9 +2412,11 @@ pub const H2FrameParser = struct {
         var stream = stream_ orelse {
             if (frame.streamIdentifier == 0) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Priority frame on connection stream", this.lastStreamID, true);
+                return data.len;
             }
-            // Priority frames for already-closed streams are harmless; ignore.
-            return data.len;
+            // Priority frames for already-closed streams are harmless; drain
+            // the 5-byte payload and move on.
+            return this.discardFramePayload(frame, data);
         };
 
         if (frame.length != StreamPriority.byteSize) {
@@ -2393,10 +2455,14 @@ pub const H2FrameParser = struct {
         var stream = stream_ orelse {
             if (frame.streamIdentifier == 0) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation on connection stream", this.lastStreamID, true);
+                return data.len;
             }
             // CONTINUATION for an already-closed stream: nothing to attach
-            // headers to; drop quietly.
-            return data.len;
+            // headers to; drain the payload and move on. HPACK state is not
+            // advanced (decodeHeaderBlock isn't called), but stale
+            // continuations only follow HEADERS/CONTINUATION that were also
+            // dropped above, so there's no fragment to reassemble.
+            return this.discardFramePayload(frame, data);
         };
 
         if (!stream.isWaitingMoreHeaders) {
@@ -2442,9 +2508,12 @@ pub const H2FrameParser = struct {
         var stream = stream_ orelse {
             if (frame.streamIdentifier == 0) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame on connection stream", this.lastStreamID, true);
+                return data.len;
             }
-            // Late HEADERS for an already-closed stream: drop quietly.
-            return data.len;
+            // Late HEADERS/trailers for an already-closed stream: drain the
+            // payload and keep the HPACK dynamic table in sync so subsequent
+            // streams on this session still decode correctly.
+            return this.discardFramePayload(frame, data);
         };
 
         const settings = this.remoteSettings orelse this.localSettings;

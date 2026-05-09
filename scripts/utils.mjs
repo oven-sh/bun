@@ -2758,9 +2758,13 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
   if (!isBuildkite) {
     return;
   }
+  // BuildKite rejects annotation contexts > 100 chars (`400 Bad Request: This
+  // context is too long`). rustc diagnostic titles routinely exceed that and
+  // were silently dropped, leaving only short warnings visible in the UI.
+  const ctx = `${context || label}`.slice(0, 100);
   const { error, status, signal, stderr } = nodeSpawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],

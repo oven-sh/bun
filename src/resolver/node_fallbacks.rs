@@ -29,24 +29,11 @@ pub struct FallbackModule {
 // this is expressed as a macro that expands to a local `fn get()` and yields its pointer.
 macro_rules! create_source_code_getter {
     ($code_path:literal) => {{
-        // `$code_path` is relative to `BUN_CODEGEN_DIR` (codegen output, not the
-        // source tree). On embed builds, `include_str!` it at compile time; on
-        // debug builds, defer to `runtime_embed_file!` for fast iteration.
-        // `#[cfg]` (not `if cfg!()`) so the disabled arm's macros don't get
-        // expanded — `include_str!` would hard-fail when the codegen output
-        // dir doesn't exist. `bun_codegen_embed` is set via RUSTFLAGS by
-        // scripts/build/rust.ts; plain `cargo check` doesn't get `--check-cfg`
-        // for it, so suppress the unexpected_cfgs lint here.
-        #[allow(unexpected_cfgs)]
+        // `$code_path` is relative to `BUN_CODEGEN_DIR` (codegen output, not
+        // the source tree). The `cfg(bun_codegen_embed)` split lives inside
+        // `runtime_embed_file!` itself.
         fn get() -> &'static str {
-            #[cfg(bun_codegen_embed)]
-            {
-                include_str!(concat!(env!("BUN_CODEGEN_DIR"), "/", $code_path))
-            }
-            #[cfg(not(bun_codegen_embed))]
-            {
-                ::bun_core::runtime_embed_file!(::bun_core::EmbedDir::Codegen, $code_path)
-            }
+            ::bun_core::runtime_embed_file!(Codegen, $code_path)
         }
         get as fn() -> &'static str
     }};

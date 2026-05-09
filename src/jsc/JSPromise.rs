@@ -460,8 +460,7 @@ impl JSPromise {
         }
 
         // `[[ZIG_EXPORT(check_slow)]]` — `bun.cpp.JSC__JSPromise__resolve(...) catch return error.JSTerminated`.
-        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
-        unsafe { crate::cpp::JSC__JSPromise__resolve(self, global, value) }
+        crate::cpp::JSC__JSPromise__resolve(self, global, value)
             .map_err(|_| JsTerminated::JSTerminated)
     }
 
@@ -495,14 +494,13 @@ impl JSPromise {
         };
 
         // `[[ZIG_EXPORT(check_slow)]]` — `bun.cpp.JSC__JSPromise__reject(...) catch return error.JSTerminated`.
-        // SAFETY: `self` is a live GC cell; `global` is a valid handle.
-        unsafe { crate::cpp::JSC__JSPromise__reject(self, global, err) }
+        crate::cpp::JSC__JSPromise__reject(self, global, err)
             .map_err(|_| JsTerminated::JSTerminated)
     }
 
     pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
-        // `[[ZIG_EXPORT(check_slow)]]` — SAFETY: `self` is a live GC cell.
-        unsafe { crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value) }
+        // `[[ZIG_EXPORT(check_slow)]]`
+        crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value)
             .map_err(|_| JsTerminated::JSTerminated)
     }
 

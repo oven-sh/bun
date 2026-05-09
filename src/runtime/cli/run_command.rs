@@ -3243,7 +3243,7 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
 
         ctx.runtime_options.eval.script =
-            bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "eval/feedback.ts")
+            bun_core::runtime_embed_file!(Codegen, "eval/feedback.ts")
                 .as_bytes()
                 .to_vec()
                 .into_boxed_slice();

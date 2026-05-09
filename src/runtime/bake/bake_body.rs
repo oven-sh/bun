@@ -529,38 +529,16 @@ impl Framework {
     ///
     /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
     pub fn react(arena: &Arena) -> Result<Framework, bun_core::Error> {
-        // PORT NOTE: split into `#[cfg]` branches so the `include_bytes!` arm
-        // is not typechecked when `codegen_embed` is off (the codegen output
-        // dir does not exist during a non-embed build).
-        #[cfg(bun_codegen_embed)]
+        // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
-            BuiltInModule::Code(include_bytes!("./bun-framework-react/client.tsx")),
-            BuiltInModule::Code(include_bytes!("./bun-framework-react/server.tsx")),
-            BuiltInModule::Code(include_bytes!("./bun-framework-react/ssr.tsx")),
-        ];
-        #[cfg(not(bun_codegen_embed))]
-        let built_in_values: &[BuiltInModule] = &[
-            // Cannot use .import because resolution must happen from the user's POV
             BuiltInModule::Code(
-                bun_core::runtime_embed_file!(
-                    bun_core::EmbedKind::Src,
-                    "bake/bun-framework-react/client.tsx"
-                )
-                .as_bytes(),
+                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/client.tsx").as_bytes(),
             ),
             BuiltInModule::Code(
-                bun_core::runtime_embed_file!(
-                    bun_core::EmbedKind::Src,
-                    "bake/bun-framework-react/server.tsx"
-                )
-                .as_bytes(),
+                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/server.tsx").as_bytes(),
             ),
             BuiltInModule::Code(
-                bun_core::runtime_embed_file!(
-                    bun_core::EmbedKind::Src,
-                    "bake/bun-framework-react/ssr.tsx"
-                )
-                .as_bytes(),
+                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/ssr.tsx").as_bytes(),
             ),
         ];
 
@@ -629,18 +607,8 @@ impl Framework {
             fw.react_fast_refresh = Some(ReactFastRefresh {
                 import_source: b"react-refresh/runtime/index.js",
             });
-            #[cfg(bun_codegen_embed)]
-            let react_refresh_code = BuiltInModule::Code(include_bytes!(concat!(
-                env!("BUN_CODEGEN_DIR"),
-                "/node-fallbacks/react-refresh.js"
-            )));
-            #[cfg(not(bun_codegen_embed))]
             let react_refresh_code = BuiltInModule::Code(
-                bun_core::runtime_embed_file!(
-                    bun_core::EmbedKind::Codegen,
-                    "node-fallbacks/react-refresh.js"
-                )
-                .as_bytes(),
+                bun_core::runtime_embed_file!(Codegen, "node-fallbacks/react-refresh.js").as_bytes(),
             );
             let _ = arena;
             fw.built_in_modules.put(
@@ -1493,58 +1461,41 @@ fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
 
 #[inline(always)]
 pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-    // PORT NOTE: split into `#[cfg]` branches so the `include_bytes!` arm is
-    // not typechecked when `codegen_embed` is off (the codegen output dir
-    // does not exist during a non-embed build).
-    #[cfg(bun_codegen_embed)]
-    {
-        // Zig `@embedFile` yields `[:0]const u8`; `include_str!` yields `&str`
-        // with no trailing NUL — append one at compile time via `concat!` so
-        // `ZStr::from_static` (which asserts a NUL terminator) accepts it.
-        match side {
-            Side::Client => hmr_runtime_init(ZStr::from_static(
-                concat!(include_str!(concat!(env!("BUN_CODEGEN_DIR"), "/bake.client.js")), "\0").as_bytes(),
-            )),
-            Side::Server => hmr_runtime_init(ZStr::from_static(
-                concat!(include_str!(concat!(env!("BUN_CODEGEN_DIR"), "/bake.server.js")), "\0").as_bytes(),
-            )),
-        }
+    // `runtime_embed_file!` returns `&'static str` (no NUL). The Zig
+    // `runtimeEmbedFile` (bun.zig:2938) returns `[:0]const u8` from a
+    // `bun.once`-guarded static — read once per process, never freed.
+    // Mirror that with a per-side `OnceLock` holding the NUL-terminated
+    // copy. PORTING.md §Forbidden bans leaking for `&'static`; this is the
+    // sanctioned process-lifetime-singleton pattern instead. (Under
+    // `cfg(bun_codegen_embed)` the macro expands to `include_str!`, so this
+    // costs one extra copy at first call; the cost is negligible vs. keeping
+    // a per-call-site `#[cfg]` pair in sync.)
+    // TODO(port): add a `runtime_embed_file_z!` to bun_core that yields
+    // `&'static ZStr` directly so the second copy goes away.
+    use std::sync::OnceLock;
+    fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
+        let buf = cell.get_or_init(|| {
+            let mut v = Vec::with_capacity(s.len() + 1);
+            v.extend_from_slice(s.as_bytes());
+            v.push(0);
+            v.into_boxed_slice()
+        });
+        // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
+        unsafe { ZStr::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
-    #[cfg(not(bun_codegen_embed))]
-    {
-        // `runtime_embed_file!` returns `&'static str` (no NUL). The Zig
-        // `runtimeEmbedFile` (bun.zig:2938) returns `[:0]const u8` from a
-        // `bun.once`-guarded static — read once per process, never freed.
-        // Mirror that with a per-side `OnceLock` holding the NUL-terminated
-        // copy. PORTING.md §Forbidden bans leaking for `&'static`; this
-        // is the sanctioned process-lifetime-singleton pattern instead.
-        // TODO(port): add a `runtime_embed_file_z!` to bun_core that yields
-        // `&'static ZStr` directly so the second copy goes away.
-        use std::sync::OnceLock;
-        fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
-            let buf = cell.get_or_init(|| {
-                let mut v = Vec::with_capacity(s.len() + 1);
-                v.extend_from_slice(s.as_bytes());
-                v.push(0);
-                v.into_boxed_slice()
-            });
-            // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
-            unsafe { ZStr::from_raw(buf.as_ptr(), buf.len() - 1) }
-        }
-        static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
-        static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
-        hmr_runtime_init(match side {
-            Side::Client => nul_terminate(
-                bun_core::runtime_embed_file!(bun_core::EmbedKind::CodegenEager, "bake.client.js"),
-                &CLIENT,
-            ),
-            // server runtime is loaded once, so it is pointless to make this eager.
-            Side::Server => nul_terminate(
-                bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bake.server.js"),
-                &SERVER,
-            ),
-        })
-    }
+    static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
+    static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
+    hmr_runtime_init(match side {
+        Side::Client => nul_terminate(
+            bun_core::runtime_embed_file!(CodegenEager, "bake.client.js"),
+            &CLIENT,
+        ),
+        // server runtime is loaded once, so it is pointless to make this eager.
+        Side::Server => nul_terminate(
+            bun_core::runtime_embed_file!(Codegen, "bake.server.js"),
+            &SERVER,
+        ),
+    })
 }
 
 // PORT NOTE: `Mode`/`Side`/`Graph` are defined canonically in the parent

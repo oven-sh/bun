@@ -831,10 +831,9 @@ pub fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResul
 // TODO(port): land as inherent `JSValue::set_prototype_direct` in bun_jsc.
 #[track_caller]
 fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-    // `[[ZIG_EXPORT(check_slow)]]` — SAFETY: FFI into JSC; `global` is live for the call.
-    // C++ side reads `value.getObject()` so `value` must be an object (always a
-    // JSBoundFunction here).
-    unsafe { bun_jsc::cpp::Bun__JSValue__setPrototypeDirect(value, prototype, global) }
+    // `[[ZIG_EXPORT(check_slow)]]`. C++ side reads `value.getObject()` so
+    // `value` must be an object (always a JSBoundFunction here).
+    bun_jsc::cpp::Bun__JSValue__setPrototypeDirect(value, prototype, global)
 }
 
 /// Local shim for `JSValue::withAsyncContextIfNeeded` (not yet on

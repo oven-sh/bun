@@ -3001,6 +3001,64 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 pub struct SpawnStatus { pub code: i32 }
 impl SpawnStatus { #[inline] pub fn is_ok(&self) -> bool { self.code == 0 } }
 
+// ── posix_spawn_bun FFI (tier-0 minimal mirror) ───────────────────────────
+// RULE: libc `posix_spawn`/`posix_spawnp` must NEVER be called directly on
+// Linux/FreeBSD. Bun ships its own vfork-based spawner in
+// `src/jsc/bindings/bun-spawn.cpp` (`posix_spawn_bun`) which is async-signal-
+// safe, supports CLOEXEC sweeps, pdeathsig, PTY setup, and writes the exec
+// errno back through a pipe. glibc's posix_spawn forks (not vfork) on some
+// configurations and musl's has had signal-mask bugs; ours is the audited
+// path. macOS keeps libc `posix_spawnp` for the non-PTY case because Apple's
+// implementation is a true kernel fast-path (no fork at all).
+//
+// `bun_core` is tier-0 and cannot depend on `bun_spawn`/`spawn_sys`, so the
+// request struct is re-declared here with the exact C layout. KEEP IN SYNC
+// with `bun-spawn.cpp::bun_spawn_request_t` and
+// `spawn_sys::posix_spawn::BunSpawnRequest`.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod bun_spawn_ffi {
+    use core::ffi::{c_char, c_int};
+
+    // Matches `bun_spawn_request_file_action_t`. Unused here (we pass an empty
+    // action list — stdio inherits by default) but the pointer type must agree.
+    #[repr(C)]
+    pub(super) struct Action {
+        pub kind: u8,
+        pub path: *const c_char,
+        pub fds: [c_int; 2],
+        pub flags: c_int,
+        pub mode: c_int,
+    }
+
+    // Matches `bun_spawn_file_action_list_t`.
+    #[repr(C)]
+    pub(super) struct ActionsList {
+        pub ptr: *const Action,
+        pub len: usize,
+    }
+
+    // Matches `bun_spawn_request_t`.
+    #[repr(C)]
+    pub(super) struct Request {
+        pub chdir: *const c_char,
+        pub detached: bool,
+        pub new_process_group: bool,
+        pub actions: ActionsList,
+        pub pty_slave_fd: c_int,
+        pub linux_pdeathsig: c_int,
+    }
+
+    unsafe extern "C" {
+        pub(super) fn posix_spawn_bun(
+            pid: *mut c_int,
+            path: *const c_char,
+            request: *const Request,
+            argv: *const *const c_char,
+            envp: *const *const c_char,
+        ) -> isize;
+    }
+}
+
 pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
     #[cfg(unix)]
     unsafe {
@@ -3008,13 +3066,53 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
         let mut ptrs: Vec<*const core::ffi::c_char> = cargs.iter().map(|z| z.as_ptr()).collect();
         ptrs.push(core::ptr::null());
 
-        // posix_spawnp on every libc that exposes it (glibc/musl/macOS/BSD);
-        // bionic only added it at API 28 and the `libc` crate doesn't bind it
-        // for `target_os = "android"` at all, so fall back to fork+execvp there.
-        #[cfg(not(target_os = "android"))]
+        unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
+
+        // Linux/FreeBSD: route through Bun's vfork-based posix_spawn_bun.
+        // It uses execve (no PATH search), so resolve argv[0] via $PATH first
+        // to preserve the `posix_spawnp`-like contract callers expect (e.g.
+        // crash_handler spawning `llvm-symbolizer` by bare name).
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let pid: libc::pid_t = {
+            let arg0 = argv[0].as_ref();
+            let mut pathbuf = PathBuffer::uninit();
+            let exe: *const core::ffi::c_char = if arg0.contains(&b'/') {
+                // Contains a separator → use as-is (execve resolves relative
+                // to cwd, matching posix_spawnp semantics for non-bare names).
+                ptrs[0]
+            } else {
+                let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
+                match which(&mut pathbuf, path_env, b".", arg0) {
+                    Some(z) => z.as_ptr(),
+                    None => return Err(crate::Error::from_errno(libc::ENOENT)),
+                }
+            };
+
+            let req = bun_spawn_ffi::Request {
+                chdir: core::ptr::null(),
+                detached: false,
+                new_process_group: false,
+                actions: bun_spawn_ffi::ActionsList { ptr: core::ptr::null(), len: 0 },
+                pty_slave_fd: -1,
+                linux_pdeathsig: 0,
+            };
+            let mut pid: core::ffi::c_int = 0;
+            // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
+            let rc = bun_spawn_ffi::posix_spawn_bun(
+                &raw mut pid,
+                exe,
+                &raw const req,
+                ptrs.as_ptr(),
+                environ,
+            );
+            if rc != 0 { return Err(crate::Error::from_errno(rc as i32)); }
+            pid as libc::pid_t
+        };
+        // macOS: Apple's posix_spawnp is a kernel fast-path (no fork); keep it
+        // for the non-PTY inherit case. PTY spawns go through spawn_sys.
+        #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
             let mut pid: libc::pid_t = 0;
-            unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
@@ -3026,8 +3124,12 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
             if rc != 0 { return Err(crate::Error::from_errno(rc)); }
             pid
         };
+        // Android: bionic only added posix_spawnp at API 28 and the `libc`
+        // crate doesn't bind it for `target_os = "android"`; bun-spawn.cpp is
+        // gated to LINUX/DARWIN/FREEBSD. Fall back to fork+execvp.
         #[cfg(target_os = "android")]
         let pid: libc::pid_t = {
+            let _ = environ;
             let pid = libc::fork();
             if pid < 0 {
                 let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
@@ -3041,6 +3143,18 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
                 libc::_exit(127);
             }
             pid
+        };
+        // Other unix (e.g. NetBSD/OpenBSD if ever targeted): not a Bun
+        // platform. Fail loudly rather than silently fork.
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "macos",
+            target_os = "android",
+        )))]
+        let pid: libc::pid_t = {
+            let _ = (&ptrs, environ);
+            return Err(crate::err!(Unexpected));
         };
 
         let mut status: i32 = 0;

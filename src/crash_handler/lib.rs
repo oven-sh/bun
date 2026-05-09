@@ -1256,6 +1256,48 @@ pub fn install_hooks() {
     // so the trace-string + auto-report path runs — Zig's `bun.outOfMemory()`
     // calls `crash_handler.crashHandler` directly.
     bun_alloc::set_out_of_memory_handler(crate::out_of_memory);
+    // Route T0 `bun_core::dump_current_stack_trace()` to this crate's
+    // llvm-symbolizer / frame-filtered impl — Zig's `fd.zig` EBADF warn and
+    // `ref_count.zig` leak reports call `bun.crash_handler.dumpCurrentStackTrace`
+    // directly; the T0 fallback's `std::backtrace` DWARF parse costs ~8s on a
+    // debug binary, which made `closeSync(EBADF)` time out fs.test.ts.
+    bun_core::set_dump_stack_trace_hook(dump_current_stack_trace_from_core);
+}
+
+/// Adapter for non-fatal `bun_core::dump_current_stack_trace` callers
+/// (fd.rs EBADF debug-warn, ref_count leak reports). Zig routes these through
+/// `dumpStackTrace` which on Linux debug spawns `llvm-symbolizer` — but the
+/// Rust debug binary's .debug_info is large enough that the symbolizer parse
+/// alone costs ~5s, which is unacceptable on a hot non-fatal path
+/// (`closeSync(EBADF)` was timing out fs.test.ts at the 5s budget). For these
+/// advisory dumps we honour `frame_count` and use WTF's dladdr-based printer
+/// (sub-ms, function names only). The full `dump_stack_trace` (with
+/// llvm-symbolizer source lines) is kept for actual crash/panic paths, which
+/// call it directly.
+fn dump_current_stack_trace_from_core(
+    first_address: Option<usize>,
+    limits: bun_core::DumpStackTraceOptions,
+) {
+    Output::flush();
+    let mut addrs: [usize; 32] = [0; 32];
+    let n = debug::capture_stack_trace(
+        first_address.unwrap_or_else(debug::return_address),
+        &mut addrs,
+    );
+    let n = n.min(limits.frame_count);
+    if !Environment::SHOW_CRASH_TRACE {
+        // debug symbols aren't available, lets print a tracestring
+        let stderr = &mut stderr_writer();
+        let stack = StackTrace { index: n, instruction_addresses: &addrs };
+        let _ = write!(stderr, "View Debug Trace: {}\n", TraceString {
+            action: TraceStringAction::ViewTrace,
+            reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
+            trace: &stack,
+        });
+        return;
+    }
+    // SAFETY: `addrs[..n]` is a valid slice of captured return addresses.
+    unsafe { WTF__DumpStackTrace(addrs.as_ptr(), n); }
 }
 
 pub fn reset_segfault_handler() {

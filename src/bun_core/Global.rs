@@ -162,30 +162,52 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     }
 }
 
-/// Capture and dump the current call stack. Uses `std::backtrace` so T0
-/// callers (ThreadLock-panic, FD-debug) still get symbolicated frames without
-/// reaching up to `bun_crash_handler`. `limits` is accepted for signature
-/// parity with `bun_crash_handler::dump_current_stack_trace` but **ignored**
-/// (see body); the rich llvm-symbolizer / frame-filtered path lives in
-/// `bun_crash_handler` for crash reports specifically.
+/// Hook slot routing T0 `dump_current_stack_trace` up to
+/// `bun_crash_handler::dump_current_stack_trace` once that crate's
+/// `install_hooks()` runs. Same fn-ptr-as-`*mut ()` pattern as
+/// `bun_alloc::OUT_OF_MEMORY_HANDLER` — the upward dep is forbidden, so the
+/// higher tier registers itself. Before installation (very early startup /
+/// unit tests that never link `bun_crash_handler`) the fallback prints raw
+/// addresses with no symbolication.
+static DUMP_STACK_TRACE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Called once from `bun_crash_handler::install_hooks()` so Zig callers of
+/// `bun.crash_handler.dumpCurrentStackTrace` (fd.zig EBADF warn, ref_count
+/// leak reports) reach the real llvm-symbolizer / frame-filtered impl instead
+/// of the slow `std::backtrace` DWARF parse.
+pub fn set_dump_stack_trace_hook(handler: fn(Option<usize>, DumpStackTraceOptions)) {
+    DUMP_STACK_TRACE_HOOK.store(handler as *mut (), Ordering::Relaxed);
+}
+
+/// Capture and dump the current call stack. Dispatches to
+/// `bun_crash_handler::dump_current_stack_trace` once the hook is installed
+/// (matching Zig `fd.zig`/`ref_count.zig` which call
+/// `bun.crash_handler.dumpCurrentStackTrace` directly). The pre-hook fallback
+/// prints raw return addresses only — `std::backtrace::Backtrace`'s in-process
+/// DWARF parse takes multiple seconds on a debug binary this size, which is
+/// unacceptable on a hot debug-warn path (`closeSync(EBADF)` etc.).
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
-    // `std::backtrace` cannot seed capture from a return address, so the Zig
-    // behaviour of skipping frames above `first_address` (e.g. ref_count
-    // passing `return_address()` so the dump starts at the user's ref/deref
-    // site) is not reproduced here — the dump helper + a couple of internal
-    // frames appear as leading noise. Debug-only; the parameter is kept so the
-    // signature matches `bun_crash_handler::dump_current_stack_trace` (which
-    // *does* honour it via `StoredTrace::capture`).
+    let hook = DUMP_STACK_TRACE_HOOK.load(Ordering::Relaxed);
+    if !hook.is_null() {
+        // SAFETY: only `set_dump_stack_trace_hook` writes this slot, and it
+        // stores a `fn(Option<usize>, DumpStackTraceOptions)` cast to
+        // `*mut ()`; the inverse cast recovers the original function pointer
+        // with identical ABI.
+        let hook: fn(Option<usize>, DumpStackTraceOptions) =
+            unsafe { core::mem::transmute(hook) };
+        return hook(first_address, limits);
+    }
+    // Fallback (hook not yet installed). We do NOT use
+    // `std::backtrace::Backtrace::force_capture()` here — both its Display and
+    // Debug impls parse the full .debug_info section (hundreds of MB on a debug
+    // build), costing ~8s on first use. T0 callers hit this on debug-warn paths
+    // that must stay sub-millisecond. Since the hook is installed in
+    // `crash_handler::init()` before any user code runs, this branch is only
+    // reachable from unit tests / very-early startup; a stub note suffices.
     let _ = first_address;
-    // `frame_count` truncation is dropped to avoid the intermediate
-    // `format!` heap allocation on a path that may run during panic/OOM
-    // (`force_capture` already allocates internally, so this only removes the
-    // *extra* alloc — debug-only output, the few extra trailing frames are
-    // acceptable noise).
     let _ = limits;
     crate::output::flush();
-    let bt = std::backtrace::Backtrace::force_capture();
-    eprintln!("{bt}");
+    eprintln!("    (stack trace unavailable: crash_handler hook not yet installed)");
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────

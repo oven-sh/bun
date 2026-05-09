@@ -1269,6 +1269,31 @@ pub const H2FrameParser = struct {
         }
     }
 
+    /// Unlink a stream from the map without freeing it. Used by the
+    /// endStream/abortStream path to prevent a re-entrant
+    /// `removeAllClosedStreams` sweep (triggered by a user
+    /// `session.destroy()` inside a write callback dispatched by
+    /// `freeResources` → `cleanQueue`) from freeing the stream before the
+    /// outer frame finishes its post-dispatch reads. Caller is responsible
+    /// for `destroyDetachedStream` once all accesses to the `*Stream`
+    /// complete.
+    fn detachStreamFromMap(this: *H2FrameParser, stream_id: u32) void {
+        if (this.isServer) return; // mirror removeStreamByID's server gate
+        _ = this.streams.fetchRemove(stream_id);
+        if (stream_id > this.max_removed_stream_id) {
+            this.max_removed_stream_id = stream_id;
+        }
+    }
+
+    /// Free a `*Stream` that was previously unlinked via
+    /// `detachStreamFromMap` and drained via `freeResources`. Server-side
+    /// streams are never detached, so this is a no-op on the server to
+    /// match `removeStreamByID`.
+    fn destroyDetachedStream(this: *H2FrameParser, stream: *Stream) void {
+        if (this.isServer) return;
+        bun.destroy(stream);
+    }
+
     const HeaderValue = lshpack.HPACK.DecodeResult;
 
     pub fn decode(this: *H2FrameParser, src_buffer: []const u8) !HeaderValue {
@@ -1387,10 +1412,18 @@ pub const H2FrameParser = struct {
         const stream_id = stream.id;
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
+        // Unlink from the map *before* freeResources runs. freeResources →
+        // cleanQueue dispatches queued DATA write callbacks back into JS;
+        // if that callback calls session.destroy() → emitErrorToAllStreams
+        // → removeAllClosedStreams() finds this already-.CLOSED stream in
+        // the map and bun.destroy()s it, leaving the outer freeResources
+        // reading this.signal on freed memory. Dropping it from the map
+        // first means the re-entrant sweep can't see it.
+        this.detachStreamFromMap(stream_id);
         stream.freeResources(this, false);
         this.dispatchWith2Extra(.onAborted, identifier, abortReason, jsc.JSValue.jsNumber(@intFromEnum(old_state)));
         _ = this.write(&buffer);
-        this.removeStreamByID(stream_id);
+        this.destroyDetachedStream(stream);
     }
 
     pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode) void {
@@ -1419,15 +1452,21 @@ pub const H2FrameParser = struct {
         const stream_id = stream.id;
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
+        // Unlink before freeResources runs; see abortStream for the
+        // dispatch-re-entry UAF this avoids.
+        this.detachStreamFromMap(stream_id);
         stream.freeResources(this, false);
         if (rstCode == .NO_ERROR) {
-            this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+            // stream.state is guaranteed .CLOSED here; no reason to
+            // re-read it from a pointer that outlived dispatchWriteCallback.
+            const closed_state_value = @intFromEnum(@as(@FieldType(Stream, "state"), .CLOSED));
+            this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(closed_state_value));
         } else {
             this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(@intFromEnum(rstCode)));
         }
 
         _ = this.write(&buffer);
-        this.removeStreamByID(stream_id);
+        this.destroyDetachedStream(stream);
     }
 
     pub fn sendGoAway(this: *H2FrameParser, streamIdentifier: u32, rstCode: ErrorCode, debug_data: []const u8, lastStreamID: u32, emitError: bool) void {

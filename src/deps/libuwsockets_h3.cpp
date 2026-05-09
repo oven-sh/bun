@@ -353,10 +353,15 @@ void* uws_h3_wt_get_user_data(uws_websocket_t* ws)
 
 void uws_h3_wt_close(uws_websocket_t* ws) { ((WebTransportSession*)ws)->close(); }
 
-int uws_h3_wt_send(uws_websocket_t* ws, const char* msg, size_t len,
+uws_sendstatus_t uws_h3_wt_send(uws_websocket_t* ws, const char* msg, size_t len,
     uws_opcode_t op, bool /*compress*/, bool /*fin*/)
 {
-    return (int)((WebTransportSession*)ws)->send(sv(msg, len), (uWS::OpCode)op);
+    // WebTransportSession::SendStatus is value-identical to uws_sendstatus_t
+    // ({BACKPRESSURE,SUCCESS,DROPPED} = {0,1,2}); same cast as uws_ws_send().
+    static_assert((int)WebTransportSession::BACKPRESSURE == (int)BACKPRESSURE
+        && (int)WebTransportSession::SUCCESS == (int)SUCCESS
+        && (int)WebTransportSession::DROPPED == (int)DROPPED);
+    return (uws_sendstatus_t)((WebTransportSession*)ws)->send(sv(msg, len), (uWS::OpCode)op);
 }
 
 void uws_h3_wt_end(uws_websocket_t* ws, int code, const char* msg, size_t len)

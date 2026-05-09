@@ -33,9 +33,15 @@ beforeAll(async () => {
     return;
   }
 
-  // The dep .o files are built with -gz=zstd; system ld may not understand
-  // that, so use the same llvm-ar/clang the build used.
-  const llvm = (t: string) => (existsSync(`/opt/llvm-21/bin/${t}`) ? `/opt/llvm-21/bin/${t}` : t);
+  // The dep .o files are built with -gz=zstd; the system ld.lld may have
+  // been built without zstd support, so use the same llvm toolchain the
+  // build used. Matches the search paths in scripts/build/tools.ts.
+  const llvmDirs = ["/opt/llvm-21/bin", "/usr/lib/llvm-21/bin", "/usr/lib/llvm21/bin"];
+  const llvm = (t: string) => {
+    for (const d of llvmDirs) if (existsSync(`${d}/${t}`)) return `${d}/${t}`;
+    return t;
+  };
+  const lld = llvm("ld.lld");
 
   if (!existsSync(libdeps)) {
     const objs: string[] = [];
@@ -46,15 +52,19 @@ beforeAll(async () => {
     }
     const ar = Bun.spawnSync({ cmd: [llvm("llvm-ar"), "rcs", libdeps, ...objs] });
     if (ar.exitCode !== 0) {
-      console.warn("serve-webtransport: skipping (ar failed)", ar.stderr.toString());
-      return;
+      // The dep objects exist, so failing to archive them is a real error
+      // rather than an environment-shaped skip.
+      throw new Error("serve-webtransport: llvm-ar failed\n" + ar.stderr.toString());
     }
   }
 
   const cc = Bun.spawnSync({
     cmd: [
       process.env.CC ?? llvm("clang"),
-      "-fuse-ld=lld",
+      // -fuse-ld=lld resolves via PATH, which may pick up an lld that
+      // can't read zstd-compressed debug sections; pin to the same one
+      // the build used when we found it.
+      lld !== "ld.lld" ? `--ld-path=${lld}` : "-fuse-ld=lld",
       "-std=c11",
       "-O1",
       "-g",
@@ -76,8 +86,9 @@ beforeAll(async () => {
     stderr: "pipe",
   });
   if (cc.exitCode !== 0) {
-    console.warn("serve-webtransport: skipping (compile failed)\n" + cc.stderr.toString());
-    return;
+    // Same as above: once the prerequisites exist, a compile failure is a
+    // hard error so the suite cannot silently pass with a broken fixture.
+    throw new Error("serve-webtransport: wtclient.c compile failed\n" + cc.stderr.toString());
   }
   canRunClient = true;
 });
@@ -363,8 +374,8 @@ describe("WebTransport over HTTP/3", () => {
   itWT("ws.send() returns DROPPED for over-MTU payload", async () => {
     await using server = await spawnServer(`
       open(ws) {
-        const r1 = ws.send("x".repeat(64));
-        const r2 = ws.send("x".repeat(2000));
+        const r1 = ws.send(Buffer.alloc(64, "x").toString());
+        const r2 = ws.send(Buffer.alloc(2000, "x").toString());
         // ServerWebSocket.send returns bytes-written on success, -1 on
         // backpressure, 0 on drop. Datagrams queue (so r1 is 64 or -1); the
         // 2000-byte one exceeds the 1200-byte QUIC DATAGRAM cap and is
@@ -531,7 +542,8 @@ describe("WebTransport over HTTP/3", () => {
       // Unknown-type capsule with a 4-byte length varint = ~1 GiB, then keep
       // streaming body; the cap fires once buffered bytes exceed 4 KiB.
       c.proc.stdin.write(`capsule ${b64u(Buffer.from([0x78, 0xae, 0xbf, 0xff, 0xff, 0xff]))}\n`);
-      for (let i = 0; i < 8; i++) c.proc.stdin.write(`capsule ${b64u("X".repeat(1024))}\n`);
+      const kib = b64u(Buffer.alloc(1024, "X"));
+      for (let i = 0; i < 8; i++) c.proc.stdin.write(`capsule ${kib}\n`);
       const line = await server.readLine();
       expect(line).toMatch(/^closed (1009|1006)$/);
     } finally {
@@ -542,8 +554,8 @@ describe("WebTransport over HTTP/3", () => {
   itWT("getBufferedAmount reflects queued datagrams", async () => {
     await using server = await spawnServer(`
       open(ws) {
-        ws.send("a".repeat(800));
-        ws.send("b".repeat(800));
+        ws.send(Buffer.alloc(800, "a").toString());
+        ws.send(Buffer.alloc(800, "b").toString());
         console.log("buffered " + (ws.getBufferedAmount() > 0));
       },
       message() {}, close() {},

@@ -2513,8 +2513,67 @@ static ARGV_STORAGE: std::sync::OnceLock<Vec<ZBox>> = std::sync::OnceLock::new()
 static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
 static ARGV_INIT: std::sync::Once = std::sync::Once::new();
 
+/// Raw `(argc, argv)` as passed to `main` by the C runtime. Captured by
+/// [`init_argv`] before any other code runs. On glibc / macOS / Windows,
+/// libstd captures argv independently via a `.init_array` constructor /
+/// `_NSGetArgv` / `GetCommandLineW`, so `std::env::args_os()` works without
+/// this; on **musl-static** the `.init_array` constructor is invoked with no
+/// arguments (musl's `__libc_start_main` does not forward `(argc,argv,envp)`
+/// to constructors), so `std::env::args_os()` returns empty and we must read
+/// the kernel-provided block ourselves. Zig's `_start` writes `std.os.argv`
+/// directly from the stack — this is the equivalent for a clang-linked
+/// `extern "C" fn main`.
+static OS_ARGC: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static OS_ARGV: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Capture the raw `argc`/`argv` passed to `main` by the C runtime. Must be
+/// the very first call in `main`, before the crash handler (whose panic path
+/// dumps the command line) or anything else that might call [`argv()`].
+///
+/// Matches Zig `bun.initArgv` which on POSIX wraps `std.os.argv` (set by
+/// Zig's own `_start` from the kernel-provided argv block).
+///
+/// # Safety
+/// `argv` must point to `argc` valid NUL-terminated C strings that live for
+/// the entire process (the kernel/crt argv block does). Calling this after
+/// [`argv()`] has been observed is a logic error — the `OnceLock` will
+/// already have been populated from the fallback path.
+pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c_char) {
+    OS_ARGC.store(argc.max(0) as usize, core::sync::atomic::Ordering::Relaxed);
+    OS_ARGV.store(argv as *mut _, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Kernel-provided argv slice if [`init_argv`] was called, else `None`.
+#[inline]
+fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
+    let p = OS_ARGV.load(core::sync::atomic::Ordering::Relaxed);
+    if p.is_null() {
+        return None;
+    }
+    let n = OS_ARGC.load(core::sync::atomic::Ordering::Relaxed);
+    // SAFETY: `init_argv` contract — `p` points to `n` C-string pointers that
+    // live for the process lifetime.
+    Some(unsafe { core::slice::from_raw_parts(p, n) })
+}
+
 fn argv_storage() -> &'static [ZBox] {
     ARGV_STORAGE.get_or_init(|| {
+        if let Some(raw) = raw_os_argv() {
+            return raw
+                .iter()
+                .map(|&p| {
+                    // SAFETY: kernel argv entries are NUL-terminated and live
+                    // for the process; `init_argv` guarantees `p` is valid.
+                    let s = unsafe { core::ffi::CStr::from_ptr(p) };
+                    ZBox::from_bytes(s.to_bytes())
+                })
+                .collect();
+        }
+        // Fallback for entry points that don't go through `extern "C" fn main`
+        // (e.g. `cargo test` harness, Rust `fn main()` via `lang_start`). On
+        // glibc/macOS/Windows this also works for the real binary — only
+        // musl-static needs the `raw_os_argv` path above.
         std::env::args_os()
             .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
             .collect()

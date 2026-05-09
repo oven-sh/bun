@@ -158,16 +158,10 @@ impl From<Fd> for File {
 
 /// `bun.argv` — process argv as borrowed byte slices. Owned by the process.
 pub fn argv() -> impl Iterator<Item = &'static [u8]> {
-    // PERF(port): std::env::args_os allocates an iterator wrapper; Zig walks
-    // `std.os.argv` directly. Fine for the one debug-log call site here.
-    static ARGV: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
-    ARGV.get_or_init(|| {
-        std::env::args_os()
-            .map(|a| a.as_encoded_bytes().to_vec().into_boxed_slice())
-            .collect()
-    })
-    .iter()
-    .map(|b| &**b)
+    // Delegates to the canonical `bun_core::argv()` which reads the raw
+    // `(argc,argv)` captured by `init_argv` in `main` (musl-safe) and falls
+    // back to `std::env::args_os()` for tests/tools.
+    crate::util::argv().into_iter()
 }
 
 /// `bun.Output.debugWarn` — yellow `debug warn:` prefix to stderr in debug

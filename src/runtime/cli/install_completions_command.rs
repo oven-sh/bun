@@ -155,8 +155,7 @@ impl InstallCompletionsCommand {
             };
             // TODO: fix this zig bug, it is one line change to a few functions.
             // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
-            // TODO(port): std.fs.cwd().createFileW → bun_sys::File::create_w
-            let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd)?;
+            let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
             file.write_all(SCRIPT)?;
             // file dropped here (defer file.close())
         }
@@ -206,7 +205,6 @@ impl InstallCompletionsCommand {
             ],
         )?;
 
-        // TODO(port): std.fs.cwd().createFileW → bun_sys::File::create_w
         let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
         file.write_all(CONTENT)?;
         // file dropped here (defer file.close())
@@ -262,7 +260,7 @@ impl InstallCompletionsCommand {
         #[cfg(windows)]
         {
             Output::err_generic("PowerShell completions are not yet written for Bun yet.", format_args!(""));
-            Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939", format_args!(""));
+            Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
             return Ok(());
         }
 

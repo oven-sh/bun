@@ -1224,8 +1224,8 @@ impl UpdateInteractiveCommand {
         {
             use bun_sys::windows;
             let handle = match windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
-                Ok(h) => h,
-                Err(_) => return TerminalSize { height: 20, width: 80 },
+                Some(h) => h,
+                None => return TerminalSize { height: 20, width: 80 },
             };
 
             // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).

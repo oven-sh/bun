@@ -927,32 +927,38 @@ impl UpgradeCommand {
                     .expect("oom");
 
                     let mut buf = PathBuffer::uninit();
-                    let powershell_path = which(
+                    // PORT NOTE: separate fallback buffer — Zig reused `buf` for the
+                    // hardcoded path, but Rust borrowck holds `buf` for the lifetime of
+                    // `which`'s returned `Option<&ZStr>` even across the `None` arm.
+                    let mut buf2 = PathBuffer::uninit();
+                    let powershell_path: &ZStr = match which(
                         &mut buf,
                         env_var::PATH.get().unwrap_or(b""),
                         b"",
                         b"powershell",
-                    )
-                    .unwrap_or_else(|| 'hardcoded_system_powershell: {
-                        let system_root = env_var::SYSTEMROOT.get().unwrap_or(b"C:\\Windows");
-                        let hardcoded_system_powershell = bun_paths::join_abs_string_buf(
-                            system_root,
-                            &mut buf,
-                            &[system_root, b"System32\\WindowsPowerShell\\v1.0\\powershell.exe"],
-                            bun_paths::Platform::Windows,
-                        );
-                        if sys::exists(hardcoded_system_powershell) {
-                            break 'hardcoded_system_powershell hardcoded_system_powershell;
+                    ) {
+                        Some(p) => p,
+                        None => {
+                            let system_root = env_var::SYSTEMROOT.get().unwrap_or(b"C:\\Windows");
+                            let hardcoded_system_powershell =
+                                bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
+                                    system_root,
+                                    &mut buf2[..],
+                                    &[system_root, b"System32\\WindowsPowerShell\\v1.0\\powershell.exe"],
+                                );
+                            if !sys::exists(hardcoded_system_powershell.as_bytes()) {
+                                Output::pretty_errorln(format_args!(
+                                    "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
+                                    bstr::BStr::new(tmpname.as_bytes())
+                                ));
+                                Global::exit(1);
+                            }
+                            hardcoded_system_powershell
                         }
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
-                            bstr::BStr::new(tmpname.as_bytes())
-                        ));
-                        Global::exit(1);
-                    });
+                    };
 
                     let unzip_argv: [&[u8]; 6] = [
-                        powershell_path,
+                        powershell_path.as_bytes(),
                         b"-NoProfile",
                         b"-ExecutionPolicy",
                         b"Bypass",
@@ -1095,9 +1101,13 @@ impl UpgradeCommand {
                 }
             }
 
-            let destination_executable: &[u8] = bun_core::self_exe_path()
-                .map_err(|_| bun_core::err!("UpgradeFailedMissingExecutable"))?
-                .as_bytes();
+            // PORT NOTE: keep the `&ZStr` form for Windows `sys::rename` (needs
+            // a NUL-terminated path); `destination_executable` (bytes view) is
+            // used everywhere else.
+            #[cfg_attr(not(windows), allow(unused_variables))]
+            let destination_executable_z: &ZStr = bun_core::self_exe_path()
+                .map_err(|_| bun_core::err!("UpgradeFailedMissingExecutable"))?;
+            let destination_executable: &[u8] = destination_executable_z.as_bytes();
             // PORT NOTE: reshaped for borrowck — use stack-local buffer
             let mut current_executable_buf = PathBuffer::uninit();
             current_executable_buf[..destination_executable.len()]

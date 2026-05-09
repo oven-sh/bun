@@ -1981,28 +1981,38 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             }
         }
     }
+    // PORT NOTE: Zig stashes the heap libuv pipe in
+    // `stderr_reader.source.?.pipe` and reuses the same pointer for
+    // `SpawnOptions.stderr = .{ .buffer = pipe }`. Rust's `Source::Pipe`
+    // owns a `Box<uv::Pipe>`; capture the stable heap address before moving
+    // the Box into `source` so `Stdio::Buffer` can name it without
+    // re-borrowing through the enum.
     #[cfg(windows)]
-    {
-        s.stderr_reader().source = Some(bun_io::Source::Pipe(Box::new(
-            // SAFETY: all-zero is a valid uv_pipe_t init state.
-            unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
-        )));
-    }
+    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = {
+        // SAFETY: all-zero is a valid uv_pipe_t init state (matches Zig
+        // `std.mem.zeroes(uv.Pipe)`).
+        let mut pipe =
+            Box::new(unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() });
+        let ptr: *mut bun_sys::windows::libuv::Pipe = core::ptr::from_mut(pipe.as_mut());
+        s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
+        ptr
+    };
     // SAFETY: per-thread VM singleton.
     let cwd = unsafe { (*vm_mut().transpiler.fs).top_level_dir };
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
-        stderr: spawn::Stdio::Buffer(s.stderr_reader().source.as_ref().unwrap().pipe()),
+        stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
         #[cfg(not(windows))]
         stderr: spawn::Stdio::Ignore,
         cwd: cwd.into(),
         argv0: resolved_argv0,
         #[cfg(windows)]
-        windows: SpawnOptions::Windows {
+        windows: spawn::WindowsOptions {
             // SAFETY: per-thread VM singleton.
-            loop_: EventLoopHandle::init(unsafe { vm_mut() }.event_loop()),
+            loop_: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
+            ..Default::default()
         },
         ..SpawnOptions::default()
     };
@@ -2020,13 +2030,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let envp_owned;
     #[cfg(windows)]
     let envp: *const *const c_char = {
-        // SAFETY: per-thread VM singleton.
-        match unsafe { vm_mut() }
-            .transpiler
-            .env
-            .map
-            .create_null_delimited_env_map()
-        {
+        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
+        match unsafe { (*vm_mut().transpiler.env).map.create_null_delimited_env_map() } {
             Ok(v) => {
                 envp_owned = v;
                 envp_owned.as_ptr().cast()
@@ -2090,7 +2095,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         if matches!(spawned.stderr, spawn::WindowsStdioResult::Buffer(_)) {
             s.stderr_reader().parent = this as *mut core::ffi::c_void;
             *s.remaining_fds() += 1;
-            if s.stderr_reader().start_with_current_pipe().unwrap_result().is_err() {
+            if s.stderr_reader().start_with_current_pipe().is_err() {
                 s.set_err(format_args!("Failed to start reading stderr"));
                 return unsafe { T::finish(this) };
             }

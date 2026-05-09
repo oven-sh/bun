@@ -614,13 +614,25 @@ mod windows_impl {
                     }
                     PathOrFileDescriptor::Fd(fd) => {
                         wf.fd = 'brk: {
-                            if let Some(rare) = (*event_loop).virtual_machine.rare_data.as_ref() {
-                                if wf.file_blob.store == rare.stdout_store {
-                                    break 'brk 1;
-                                } else if wf.file_blob.store == rare.stderr_store {
-                                    break 'brk 2;
-                                } else if wf.file_blob.store == rare.stdin_store {
-                                    break 'brk 0;
+                            // `EventLoop.virtual_machine` is `Option<NonNull<VirtualMachine>>`;
+                            // `RareData::std{out,err,in}_store` is type-erased
+                            // `Option<NonNull<c_void>>` — compare on raw pointer identity.
+                            if let Some(vm) = (*event_loop).virtual_machine {
+                                if let Some(rare) = (*vm.as_ptr()).rare_data.as_ref() {
+                                    let store_ptr = wf
+                                        .file_blob
+                                        .store
+                                        .as_ref()
+                                        .unwrap()
+                                        .as_ptr()
+                                        .cast::<c_void>();
+                                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                        break 'brk 1;
+                                    } else if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                        break 'brk 2;
+                                    } else if rare.stdin_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                                        break 'brk 0;
+                                    }
                                 }
                             }
 
@@ -632,7 +644,9 @@ mod windows_impl {
                     }
                 }
 
-                wf.poll_ref.ref_((*wf.event_loop).virtual_machine);
+                wf.poll_ref.ref_(jsc::VirtualMachineRef::event_loop_ctx(
+                    (*wf.event_loop).virtual_machine.unwrap().as_ptr(),
+                ));
             }
             Ok(write_file)
         }

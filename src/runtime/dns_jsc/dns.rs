@@ -4167,11 +4167,18 @@ impl Resolver {
     }
 
     #[cfg(windows)]
-    pub extern "C" fn on_close_uv(watcher: *mut c_void) {
+    pub unsafe extern "C" fn on_close_uv(watcher: *mut libuv::uv_handle_t) {
+        // SAFETY: libuv invokes the close cb with the same handle pointer passed
+        // to `uv_close`, which was `&mut UvDnsPoll::poll` (a `uv_poll_t` whose
+        // header is `uv_handle_t`); `from_poll` recovers the containing struct.
         let poll = UvDnsPoll::from_poll(watcher.cast());
         UvDnsPoll::destroy(poll);
     }
 
+    /// POSIX `FilePoll` callback (kqueue/epoll). Windows drives c-ares via
+    /// libuv (`on_dns_poll_uv`) instead, and the only caller
+    /// (`dispatch::__bun_run_file_poll`) is itself `#[cfg(not(windows))]`.
+    #[cfg(not(windows))]
     pub fn on_dns_poll(&mut self, poll: &mut FilePoll) {
         // Drop to a raw pointer immediately: `Channel::process` (== `ares_process_fd`)
         // synchronously fires c-ares completion callbacks which re-enter this

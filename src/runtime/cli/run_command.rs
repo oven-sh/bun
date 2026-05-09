@@ -4180,7 +4180,7 @@ impl BunXFastPath {
         };
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
+            let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

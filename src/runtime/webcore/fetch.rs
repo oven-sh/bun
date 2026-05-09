@@ -1445,8 +1445,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 #[cfg(windows)]
                 let mut cwd_buf = PathBuffer::uninit();
                 #[cfg(windows)]
-                let cwd = match bun_sys::getcwd(&mut cwd_buf) {
-                    Ok(c) => c,
+                // `bun_sys::getcwd` returns the byte length written into `cwd_buf`
+                // (Zig `bun.getcwd` returns the slice directly); slice it here.
+                let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
+                    Ok(len) => &cwd_buf[..len],
                     Err(err) => {
                         return Err(
                             global_this.throw_error(err.into(), "Failed to resolve file url")

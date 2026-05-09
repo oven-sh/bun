@@ -5980,7 +5980,10 @@ impl NodeFS {
         let mut outbuf = PathBuffer::uninit();
         let inbuf = &mut self.sync_error_buf;
         let path = args.path.slice_z(inbuf);
-        let link_len = match Syscall::readlink(path, &mut outbuf[..]) {
+        // PORT: `Syscall` (= `sys_uv` on Windows) returns the link slice
+        // directly there but `usize` on POSIX. `bun_sys::readlink` is the
+        // length-normalised wrapper on every platform.
+        let link_len = match sys::readlink(path, &mut outbuf[..]) {
             Err(err) => return Err(err.with_path(args.path.slice())),
             Ok(result) => result,
         };
@@ -6025,10 +6028,14 @@ impl NodeFS {
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
             }
-            let result_ptr: Option<*const c_char> = req.ptr_as::<Option<*const c_char>>();
-            let Some(ptr) = result_ptr else {
+            // Zig: `req.ptrAs(?[*:0]u8)` — `fs_t.ptr` *is* the nullable C
+            // string pointer (libuv stores the realpath result directly), so
+            // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
+            // SAFETY: `rc.errno()` was None ⇒ libuv populated `req.ptr`.
+            let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
+            if ptr.is_null() {
                 return Err(sys::Error { errno: E::ENOENT as _, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
-            };
+            }
             let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash

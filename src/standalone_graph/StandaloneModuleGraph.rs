@@ -1523,6 +1523,198 @@ pub fn inject(
 pub use bun_options_types::CompileTarget::CompileTarget;
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
 
+/// Port of `CompileTarget.downloadToPath` (CompileTarget.zig). Moved up from
+/// `bun_options_types` (T3) so it can name `bun_http::AsyncHTTP` directly
+/// instead of routing through `extern "Rust"` shims; the only callers are the
+/// two `download*` fns below in this crate.
+pub fn download_to_path(
+    target: &CompileTarget,
+    env: &mut bun_dotenv::Loader<'_>,
+    dest_z: &ZStr,
+) -> Result<(), BunError> {
+    bun_http::http_thread::init(&Default::default());
+    let mut refresher = bun_core::Progress::Progress::default();
+
+    {
+        refresher.refresh();
+
+        // TODO: This is way too much code necessary to send a single HTTP request...
+        let mut compressed_archive_bytes =
+            Box::new(bun_string::MutableString::init(24 * 1024 * 1024)?);
+        let mut url_buffer = [0u8; 2048];
+        let url_str = match target.to_npm_registry_url(&mut url_buffer) {
+            Ok(s) => s,
+            Err(err) => {
+                // Return error without printing - let caller decide how to handle
+                return Err(err);
+            }
+        };
+        let url_str_copy: Box<[u8]> = Box::from(url_str);
+        let url = bun_url::URL::parse(&url_str_copy);
+        {
+            // TODO(port): errdefer progress.end() — `start` returns `&mut Node`
+            // borrowing `refresher`, so a scopeguard capturing it would alias.
+            // Phase B: reshape with a guard that re-borrows on drop.
+            // PORT NOTE: reshaped for borrowck — `get_http_proxy_for` borrows
+            // `env` for the proxy URL lifetime; read the bool first.
+            let reject_unauthorized = env.get_tls_reject_unauthorized();
+            let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
+            let progress = refresher.start(b"Downloading", 0);
+
+            let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
+                bun_http::Method::GET,
+                url,
+                Default::default(),
+                b"",
+                &raw mut *compressed_archive_bytes,
+                b"",
+                http_proxy,
+                None,
+                bun_http::FetchRedirect::Follow,
+            ));
+            async_http.client.progress_node =
+                core::ptr::NonNull::new(core::ptr::from_mut(progress));
+            async_http.client.flags.reject_unauthorized = reject_unauthorized;
+            let send_result = async_http.send_sync();
+
+            progress.end();
+            let status_code = send_result?.status_code as u16;
+
+            match status_code {
+                404 => {
+                    // Return error without printing - let caller handle the messaging
+                    return Err(err!("TargetNotFound"));
+                }
+                403 | 429 | 499..=599 => {
+                    // Return error without printing - let caller handle the messaging
+                    return Err(err!("NetworkError"));
+                }
+                200 => {}
+                _ => return Err(err!("NetworkError")),
+            }
+        }
+
+        let mut tarball_bytes: Vec<u8> = Vec::new();
+        {
+            refresher.refresh();
+            // defer compressed_archive_bytes.list.deinit(allocator) — handled by Drop
+
+            if compressed_archive_bytes.list.is_empty() {
+                // Return error without printing - let caller handle the messaging
+                return Err(err!("InvalidResponse"));
+            }
+
+            {
+                // PORT NOTE: reshaped for borrowck — `refresher.start` borrows
+                // `refresher` mutably; do gunzip work first, drive progress around it.
+                refresher.start(b"Decompressing", 0);
+                let gunzip_result = (|| -> Result<(), BunError> {
+                    let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
+                        compressed_archive_bytes.list.as_slice(),
+                        &mut tarball_bytes,
+                    )
+                    .map_err(|_| err!("InvalidResponse"))?;
+                    gunzip
+                        .read_all(true)
+                        .map_err(|_| err!("InvalidResponse"))?;
+                    Ok(())
+                })();
+                refresher.root.end();
+                if let Err(e) = gunzip_result {
+                    // Return error without printing - let caller handle the messaging
+                    return Err(e);
+                }
+            }
+            refresher.refresh();
+
+            {
+                refresher.start(b"Extracting", 0);
+                // defer node.end() — see explicit calls below
+
+                // Inlined `bun.fs.FileSystem.tmpname` (lives in bun_resolver).
+                // Produces `.{hex(hash|nano)}-{hex(counter)}.tmp\0`.
+                let mut tmpname_buf = [0u8; 1024];
+                let tempdir_name: &ZStr = {
+                    use core::sync::atomic::{AtomicU32, Ordering};
+                    static TMPNAME_ID: AtomicU32 = AtomicU32::new(0);
+                    let hash = bun_core::fast_random();
+                    let hex_value: u64 = (u128::from(hash)
+                        | u128::try_from(bun_core::time::nano_timestamp()).unwrap_or(0))
+                        as u64;
+                    let mut cursor = std::io::Cursor::new(&mut tmpname_buf[..]);
+                    write!(
+                        &mut cursor,
+                        ".{:x}-{:X}.tmp",
+                        hex_value,
+                        TMPNAME_ID.fetch_add(1, Ordering::Relaxed),
+                    )
+                    .map_err(|_| err!("NoSpaceLeft"))?;
+                    let written = cursor.position() as usize;
+                    tmpname_buf[written] = 0;
+                    // SAFETY: tmpname_buf[written] == 0 written above
+                    unsafe { ZStr::from_raw(tmpname_buf.as_ptr(), written) }
+                };
+                let tmpdir = bun_sys::Dir::cwd()
+                    .make_open_path(tempdir_name.as_bytes(), Default::default())?;
+                scopeguard::defer! {
+                    let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
+                }
+                let extract_res = bun_libarchive::Archiver::extract_to_dir(
+                    tarball_bytes.as_slice(),
+                    tmpdir.fd(),
+                    None,
+                    &mut (),
+                    bun_libarchive::ExtractOptions {
+                        // "package/bin"
+                        depth_to_skip: 2,
+                        ..Default::default()
+                    },
+                );
+                if extract_res.is_err() {
+                    refresher.root.end();
+                    // Return error without printing - let caller handle the messaging
+                    return Err(err!("ExtractionFailed"));
+                }
+
+                let mut did_retry = false;
+                loop {
+                    let src_name: &ZStr = if target.os == CompileTargetOs::Windows {
+                        bun_core::zstr!("bun.exe")
+                    } else {
+                        bun_core::zstr!("bun")
+                    };
+                    let mv = bun_sys::move_file_z(
+                        tmpdir.fd(),
+                        src_name,
+                        Fd::INVALID,
+                        dest_z,
+                    );
+                    if mv.is_err() {
+                        if !did_retry {
+                            did_retry = true;
+                            let dirname = path::dirname_simple(dest_z.as_bytes());
+                            if !dirname.is_empty() {
+                                let _ = bun_sys::Dir::cwd().make_path(dirname);
+                                continue;
+                            }
+
+                            // fallthrough, failed for another reason
+                        }
+                        refresher.root.end();
+                        // Return error without printing - let caller handle the messaging
+                        return Err(err!("ExtractionFailed"));
+                    }
+                    break;
+                }
+                tmpdir.close();
+                refresher.root.end();
+            }
+            refresher.refresh();
+        }
+    }
+    Ok(())
+}
+
 pub fn download(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader<'_>,
@@ -1541,7 +1733,7 @@ pub fn download(
     let mut needs_download: bool = true;
     let dest_z = target.exe_path(&mut exe_path_buf, version_str, env, &mut needs_download);
     if needs_download {
-        if let Err(e) = target.download_to_path(env, dest_z) {
+        if let Err(e) = download_to_path(target, env, dest_z) {
             // For CLI, provide detailed error messages and exit
             // TODO(port): `err!()` is a Phase-A stub (all variants compare equal);
             // branch dispatch is correct once `bun_core::Error::from_name` interns.
@@ -1631,7 +1823,7 @@ pub fn to_executable(
         let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
 
         if needs_download {
-            if let Err(e) = target.download_to_path(env, dest_z) {
+            if let Err(e) = download_to_path(target, env, dest_z) {
                 return Ok(if e == err!("TargetNotFound") {
                     CompileResult::fail_fmt(format_args!("Target platform '{}' is not available for download. Check if this version of Bun supports this target.", target))
                 } else if e == err!("NetworkError") {

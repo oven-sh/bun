@@ -4887,43 +4887,4 @@ pub fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys:
     bun_core::heap::into_raw(store).cast()
 }
 
-/// `bun_options_types::__bun_http_sync_download_init_thread` body —
-/// `bun_http::HTTPThread::init(&Default::default())`. Spec
-/// CompileTarget.zig:165. Declared `extern "Rust"` in
-/// `bun_options_types::CompileTarget`; link-time resolved.
-#[unsafe(no_mangle)]
-pub fn __bun_http_sync_download_init_thread() {
-    bun_http::http_thread::init(&Default::default());
-}
-
-/// `bun_options_types::__bun_http_sync_download_get` body — synchronous GET
-/// for `bun build --compile` cross-target binary download. Spec
-/// CompileTarget.zig:187-202. Declared `extern "Rust"` in
-/// `bun_options_types::CompileTarget`; link-time resolved.
-#[unsafe(no_mangle)]
-pub fn __bun_http_sync_download_get<'a>(
-    url: bun_url::URL<'a>,
-    http_proxy: Option<bun_url::URL<'a>>,
-    reject_unauthorized: bool,
-    progress_node: *mut (), // erased *mut bun_core::Progress::Node
-    out: *mut bun_string::MutableString,
-) -> Result<u16, bun_core::Error> {
-    let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
-        bun_http::Method::GET,
-        url,
-        Default::default(),
-        b"",
-        out,
-        b"",
-        http_proxy,
-        None,
-        bun_http::FetchRedirect::Follow,
-    ));
-    async_http.client.progress_node =
-        core::ptr::NonNull::new(progress_node.cast::<bun_core::Progress::Node>());
-    async_http.client.flags.reject_unauthorized = reject_unauthorized;
-    let response = async_http.send_sync()?;
-    Ok(response.status_code as u16)
-}
-
 // ported from: src/jsc/VirtualMachine.zig

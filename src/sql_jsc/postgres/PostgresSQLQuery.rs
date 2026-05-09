@@ -456,13 +456,13 @@ impl PostgresSQLQuery {
         let connection: &mut PostgresSQLConnection = unsafe { &mut *connection_ptr };
 
         // Zig: `connection.poll_ref.ref(globalObject.bunVM())`. In the Rust port,
-        // `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable in `bun_aio`), not a
+        // `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable in `bun_io`), not a
         // `*mut VirtualMachine`. `global_object.bun_vm()` and `get_vm_ctx(.Js)` both
         // resolve to the same singleton JS VM, so route through the global hook —
         // identical to `PostgresSQLConnection::vm_ctx`.
         connection
             .poll_ref
-            .ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            .ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         let query = arguments[1];
 
         if !query.is_object() {

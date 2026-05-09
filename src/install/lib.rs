@@ -946,7 +946,7 @@ impl RunCommand {
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
-        if bun_aio::parent_death_watchdog::is_enabled() {
+        if bun_io::parent_death_watchdog::is_enabled() {
             let _ = env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
         }
 

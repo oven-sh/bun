@@ -107,30 +107,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
-name = "bun_aio"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_collections",
- "bun_core",
- "bun_ptr",
- "bun_spawn_sys",
- "bun_string",
- "bun_sys",
- "bun_threading",
- "bun_uws_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "parking_lot",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
@@ -219,10 +195,10 @@ dependencies = [
 name = "bun_bin"
 version = "0.0.0"
 dependencies = [
- "bun_aio",
  "bun_alloc",
  "bun_core",
  "bun_crash_handler",
+ "bun_io",
  "bun_mimalloc_sys",
  "bun_platform",
  "bun_runtime",
@@ -311,7 +287,6 @@ dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
- "bun_aio",
  "bun_alloc",
  "bun_base64",
  "bun_collections",
@@ -361,10 +336,10 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_aio",
  "bun_alloc",
  "bun_bundler",
  "bun_core",
+ "bun_io",
  "bun_jsc",
  "bun_logger",
  "bun_options_types",
@@ -391,7 +366,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_aio",
  "bun_alloc",
  "bun_analytics",
  "bun_bundler",
@@ -400,6 +374,7 @@ dependencies = [
  "bun_core",
  "bun_install_types",
  "bun_interchange",
+ "bun_io",
  "bun_js_parser",
  "bun_logger",
  "bun_options_types",
@@ -637,6 +612,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_dispatch"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "bun_dns"
 version = "0.0.0"
 dependencies = [
@@ -710,7 +694,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_aio",
  "bun_collections",
  "bun_core",
  "bun_dotenv",
@@ -845,7 +828,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_aio",
  "bun_alloc",
  "bun_analytics",
  "bun_base64",
@@ -933,7 +915,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_aio",
  "bun_alloc",
  "bun_analytics",
  "bun_base64",
@@ -1071,11 +1052,13 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_aio",
  "bun_collections",
  "bun_core",
+ "bun_dispatch",
  "bun_errno",
  "bun_paths",
+ "bun_ptr",
+ "bun_spawn_sys",
  "bun_string",
  "bun_sys",
  "bun_threading",
@@ -1206,7 +1189,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_aio",
  "bun_alloc",
  "bun_analytics",
  "bun_api",
@@ -1764,7 +1746,6 @@ dependencies = [
  "bitflags",
  "blake2",
  "bstr",
- "bun_aio",
  "bun_alloc",
  "bun_analytics",
  "bun_base64",
@@ -2066,10 +2047,10 @@ name = "bun_spawn"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_aio",
  "bun_analytics",
  "bun_core",
  "bun_crash_handler",
+ "bun_dispatch",
  "bun_event_loop",
  "bun_io",
  "bun_output",
@@ -2126,13 +2107,13 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_aio",
  "bun_base64",
  "bun_boringssl",
  "bun_boringssl_sys",
  "bun_collections",
  "bun_core",
  "bun_event_loop",
+ "bun_io",
  "bun_jsc",
  "bun_ptr",
  "bun_sha_hmac",

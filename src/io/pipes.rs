@@ -2,19 +2,15 @@ use core::ffi::c_void;
 
 use bun_sys::{Fd, FdExt};
 
-use crate::{FilePoll, FilePollFlag};
+use crate::{FilePollFlag, FilePollRef, Owner};
 
 pub enum PollOrFd {
-    /// When it's a pipe/fifo. Opaque `bun_aio::FilePoll` handle; ownership is
-    /// released via `FilePoll::deinit_force_unregister` (vtable), not `Drop`.
-    Poll(FilePoll),
-
+    Poll(FilePollRef),
     Fd(Fd),
     Closed,
 }
 
 impl PollOrFd {
-    /// `@tagName(this.handle)` — for debug logging.
     pub fn tag_name(&self) -> &'static str {
         match self {
             PollOrFd::Poll(_) => "poll",
@@ -23,11 +19,9 @@ impl PollOrFd {
         }
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig took `*const PollOrFd` and mutated
-    // through the `*FilePoll` pointer.
-    pub fn set_owner(&mut self, owner_tag: u8, owner: *mut c_void) {
+    pub fn set_owner(&mut self, owner: Owner) {
         if let PollOrFd::Poll(poll) = self {
-            poll.set_owner(owner_tag, owner);
+            poll.set_owner(owner);
         }
     }
 
@@ -39,15 +33,14 @@ impl PollOrFd {
         }
     }
 
-    pub fn get_poll(&self) -> Option<FilePoll> {
+    pub fn get_poll(&self) -> Option<FilePollRef> {
         match self {
-            PollOrFd::Closed => None,
-            PollOrFd::Fd(_) => None,
             PollOrFd::Poll(poll) => Some(*poll),
+            _ => None,
         }
     }
 
-    pub fn get_poll_mut(&mut self) -> Option<FilePoll> {
+    pub fn get_poll_mut(&mut self) -> Option<FilePollRef> {
         match self {
             PollOrFd::Poll(poll) => Some(*poll),
             _ => None,
@@ -133,9 +126,9 @@ impl PollOrFd {
     }
 }
 
-// Sunk to `bun_aio` so `FilePoll::file_type()` needs no aio→io edge; re-export
+// Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export
 // keeps the historical `bun_io::FileType` / `bun_io::pipes::FileType` paths.
-pub use bun_aio::FileType;
+pub use crate::posix_event_loop::FileType;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ReadState {

@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePoll, FilePollFlag, FilePollKind};
+use crate::{EventLoopHandle, FilePollRef, Owner, PollTag, FilePollFlag, FilePollKind};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
-// `uv_loop_t` (`bun_aio::Loop` is the cfg-aliased nominal that picks the
+// `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
 // can hand it to libuv/uws without a cross-crate cast.
 //
@@ -19,11 +19,10 @@ pub type Loop = bun_uws_sys::Loop;
 #[cfg(windows)]
 pub type Loop = bun_sys::windows::libuv::Loop;
 
-/// `bun_aio::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
+/// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
 /// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
-/// from this constant. T2 cannot name `bun_aio`, so the value is mirrored.
-const BUFFERED_READER_POLL_TAG: u8 = 5;
+/// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
 
 use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
@@ -285,7 +284,7 @@ impl PosixBufferedReader {
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(BUFFERED_READER_POLL_TAG, owner);
+        self.handle.set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
 
         // note: the caller is supposed to drain the buffer themselves
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
@@ -295,7 +294,7 @@ impl PosixBufferedReader {
         self.vtable.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle.set_owner(BUFFERED_READER_POLL_TAG, owner);
+        self.handle.set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
     }
 
     pub fn start_memfd(&mut self, fd: Fd) {
@@ -469,12 +468,12 @@ impl PosixBufferedReader {
             if !self.flags.contains(PosixFlags::POLLABLE) {
                 return;
             }
-            self.handle = PollOrFd::Poll(FilePoll::init(ev, fd, BUFFERED_READER_POLL_TAG, owner_ptr));
+            self.handle = PollOrFd::Poll(FilePollRef::init(ev, fd, Owner::new(PollTag::BufferedReader, owner_ptr.cast())));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
             return;
         };
-        poll.set_owner(BUFFERED_READER_POLL_TAG, owner_ptr);
+        poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
         if !poll.has_flag(FilePollFlag::WasEverRegistered) {
             poll.enable_keeping_process_alive(ev);

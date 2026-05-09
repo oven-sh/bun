@@ -306,7 +306,7 @@ pub struct Interpreter {
 
     pub has_pending_activity: AtomicU32,
     pub started: AtomicBool,
-    pub keep_alive: bun_aio::KeepAlive,
+    pub keep_alive: bun_io::KeepAlive,
 
     pub async_commands_executing: u32,
 
@@ -589,7 +589,7 @@ impl Interpreter {
             },
             has_pending_activity: AtomicU32::new(0),
             started: AtomicBool::new(false),
-            keep_alive: bun_aio::KeepAlive::default(),
+            keep_alive: bun_io::KeepAlive::default(),
             async_commands_executing: 0,
             global_this: core::ptr::null_mut(),
             flags: InterpreterFlags::default(),
@@ -2735,7 +2735,7 @@ pub struct ShellTask {
     /// no-op`).
     pub task: WorkPoolTask,
     pub event_loop: EventLoopHandle,
-    pub keep_alive: bun_aio::KeepAlive,
+    pub keep_alive: bun_io::KeepAlive,
     /// Back-ref to the owning [`Interpreter`]. The Zig original threaded the
     /// interpreter through each builtin's parent-ptr chain; the Rust port uses
     /// a NodeId arena, so the high-tier dispatch (`runtime::dispatch::run_task`)

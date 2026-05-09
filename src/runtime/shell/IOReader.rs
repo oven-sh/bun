@@ -182,10 +182,7 @@ impl IOReader {
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; vtable consumers treat the pointee as read-only
-        // (`*const bun_event_loop::EventLoopHandle`) and never write through
-        // it. The pointee lives inside `Arc<IOReader>` and outlives every
-        // FilePoll callback.
-        bun_io::EventLoopHandle(&raw const self.state().evtloop as *mut c_void)
+        self.state().evtloop.as_event_loop_ctx()
     }
 
     /// Only does things on windows. Spec: IOReader.zig `setReading`.

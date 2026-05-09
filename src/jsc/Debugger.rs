@@ -12,8 +12,8 @@ use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_aio::posix_event_loop::{get_vm_ctx, AllocatorType};
-use bun_aio::KeepAlive;
+use bun_io::posix_event_loop::{get_vm_ctx, AllocatorType};
+use bun_io::KeepAlive;
 use bun_string::String as BunString;
 
 use crate::virtual_machine::{runtime_hooks, VirtualMachine};

@@ -15,15 +15,15 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
-use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
+use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// `bun_aio::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
+// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects through the uws wrapper
 // (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
 // `BufferedReaderParent::loop_` expects.
-use bun_aio::Loop as AsyncLoop;
+use bun_io::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
 
@@ -318,7 +318,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub fn loop_(&self) -> *mut AsyncLoop {
         // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`. On POSIX
-        // `bun_aio::Loop` *is* `PosixLoop` (identity). On Windows the uws
+        // `bun_io::Loop` *is* `PosixLoop` (identity). On Windows the uws
         // wrapper (`WindowsLoop`) embeds the `*mut uv_loop_t` as a field —
         // project it so the `BufferedReaderParent::loop_` consumer (which
         // feeds `uv_fs_read`/`Source::open`) sees a real `uv_loop_t*`.
@@ -703,10 +703,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         debug_assert!((*this).process.is_null(), "forgot to call `resetPolls`");
         (*this).process = process;
-        // Store the allocation-rooted `this` as the exit-handler owner. We hold no
-        // live `&mut Self` here, so the synchronous `on_exit` dispatch below may
-        // reenter `on_process_exit` through `this` without aliasing.
-        (*process).set_exit_handler(this.cast::<()>(), &LIFECYCLE_SCRIPT_EXIT_VTABLE);
+        // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
+        // we hold no live `&mut Self` here, so the synchronous `on_exit`
+        // dispatch below may reenter `on_process_exit` through it without
+        // aliasing. It outlives `process`.
+        (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
         if let Err(err) = (*process).watch_or_reap() {
             if !(*process).has_exited() {
@@ -1144,24 +1145,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// §Dispatch: ProcessExitVTable instance for `LifecycleScriptSubprocess`.
-// Replaces the Zig `bun.TaggedPointerUnion` `inline switch` arm in
-// `ProcessExitHandler.call`; the low-tier `bun_spawn` crate defines the vtable
-// shape and each high-tier handler supplies its own static instance.
-// ──────────────────────────────────────────────────────────────────────────
-
-static LIFECYCLE_SCRIPT_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
-    on_process_exit: |owner, process, status, rusage| {
-        // SAFETY: `owner` is the `LifecycleScriptSubprocess<'a>` allocation-rooted
-        // pointer registered via `set_exit_handler` in `spawn_next_script`; `bun_spawn`
-        // guarantees `process`/`rusage` are live for the duration of the callback.
-        unsafe {
-            (*owner.cast::<LifecycleScriptSubprocess<'_>>())
-                .on_process_exit(process, status, &*rusage);
-        }
-    },
-};
+bun_spawn::link_impl_ProcessExit! {
+    LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
+        on_process_exit(process, status, rusage) =>
+            (*this).on_process_exit(process, status, &*rusage),
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReaderParent — wires the stdout/stderr OutputReaders back to
@@ -1182,17 +1171,17 @@ impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
         unsafe { (*this).on_reader_error(err) }
     }
     unsafe fn loop_(this: *mut Self) -> *mut AsyncLoop {
-        // SAFETY: as above. `AsyncLoop` (= `bun_aio::Loop`) is a type alias for
+        // SAFETY: as above. `AsyncLoop` (= `bun_io::Loop`) is a type alias for
         // `bun_uws_sys::Loop` on POSIX, matching the trait's nominal return type.
         unsafe { (*this).loop_() }
     }
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
-        // SAFETY: as above. Erase `&AnyEventLoop` → opaque handle (see
-        // note on `bun_io::EventLoopHandle`).
+        // SAFETY: as above. `manager.event_loop` is an `AnyEventLoop`; convert
+        // through `EventLoopHandle::from_any` so the by-value `EventLoopCtx`
+        // carries the right `kind`.
         unsafe {
-            EventLoopHandle(
-                std::ptr::from_ref::<AnyEventLoop<'static>>((*this).event_loop()).cast_mut().cast::<c_void>(),
-            )
+            bun_event_loop::EventLoopHandle::from_any(&mut (*(*this).manager).event_loop)
+                .as_event_loop_ctx()
         }
     }
 }

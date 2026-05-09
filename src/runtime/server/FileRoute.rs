@@ -2,7 +2,7 @@ use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::mem::size_of;
 
-use bun_aio::Closer;
+use bun_io::Closer;
 use bun_http::headers::{AnyBlobRef, AnyBlobVTable, Options as HeadersFromOptions};
 use bun_http::{Headers, HeadersExt, Method};
 use bun_http_types::ETag::{StringPointer};

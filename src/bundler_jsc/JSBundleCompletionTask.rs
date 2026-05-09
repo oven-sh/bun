@@ -6,7 +6,7 @@ use core::ptr;
 use core::sync::atomic::AtomicU32;
 use std::io::Write as _;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_alloc::AllocError;
 use bun_bundler::bundle_v2::{self as bv2, BundleThread, BundleV2};
 use bun_bundler::options::{self, OutputFile};

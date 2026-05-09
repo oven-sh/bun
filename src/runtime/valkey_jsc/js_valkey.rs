@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 use core::ptr::NonNull;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef,
@@ -53,8 +53,8 @@ fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
 /// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
 /// `KeepAlive::ref_/unref`. Valkey always runs on the JS event loop.
 #[inline]
-fn vm_event_loop_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 /// `AnySocket::isClosed` — dispatches to the inner handler.

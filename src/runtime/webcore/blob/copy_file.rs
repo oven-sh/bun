@@ -6,7 +6,7 @@ use core::marker::ConstParamTy;
 use core::mem::offset_of;
 
 #[cfg(windows)]
-use bun_aio as aio;
+use bun_io as aio;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_paths::PathBuffer;
 use crate::node::fs as node_fs;

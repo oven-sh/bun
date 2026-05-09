@@ -11,7 +11,7 @@
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
     dispatch, BundleThread, BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,

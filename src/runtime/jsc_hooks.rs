@@ -331,7 +331,7 @@ unsafe fn init_runtime_state(
     // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`.
     // The low-tier `VirtualMachine::init` doc-comment delegates this here; not
     // arming it means a child Bun process won't exit when its parent dies.
-    // Gate on `opts.is_main_thread` once `bun_aio::parent_death_watchdog`
+    // Gate on `opts.is_main_thread` once `bun_io::parent_death_watchdog`
     // un-gates.
 
     // Spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)` —
@@ -4863,19 +4863,19 @@ pub static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
 // `__bun_run_wtf_timer`) live in [`crate::dispatch`] alongside the other
 // §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_file_poll`).
 
-/// `bun_aio::__bun_get_vm_ctx` body — recover the global event-loop context
+/// `bun_io::__bun_get_vm_ctx` body — recover the global event-loop context
 /// for the requested arm. Zig had no crate split here: callers reached
 /// `VirtualMachine.get()` / `MiniEventLoop.global` directly. Declared
-/// `extern "Rust"` in `bun_aio::posix_event_loop`; link-time resolved.
+/// `extern "Rust"` in `bun_io::posix_event_loop`; link-time resolved.
 #[unsafe(no_mangle)]
-pub fn __bun_get_vm_ctx(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
+pub fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
     match kind {
-        bun_aio::AllocatorType::Js => {
+        bun_io::AllocatorType::Js => {
             bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr(),
             )
         }
-        bun_aio::AllocatorType::Mini => {
+        bun_io::AllocatorType::Mini => {
             // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
             // any caller asks for `AllocatorType::Mini` (Zig: `MiniEventLoop.
             // global` is the only mini loop and is init-once).

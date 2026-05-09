@@ -12,7 +12,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
@@ -119,12 +119,6 @@ pub struct WebSocket<const SSL: bool> {
     pub proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
 }
 
-/// `bun_aio::KeepAlive::{ref,unref}` take an erased `EventLoopCtx` (manual
-/// vtable to break the T3→T6 cycle). The canonical fully-populated instance
-/// lives in `bun_jsc` — re-export so `WebSocketUpgradeClient` keeps its
-/// existing path.
-pub(crate) use jsc::virtual_machine::VM_EVENT_LOOP_CTX_VTABLE as WS_VM_EVENT_LOOP_CTX_VTABLE;
-
 impl<const SSL: bool> WebSocket<SSL> {
     /// Zig `@typeName(@This())` — tests grep for this exact shape under `BUN_DEBUG_alloc=1`.
     const ALLOC_TYPE_NAME: &'static str = if SSL {
@@ -134,7 +128,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     };
 
     #[inline]
-    fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_aio::EventLoopCtx {
+    fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_io::EventLoopCtx {
         // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot. Source
         // it from `bun_vm_ptr()` (FFI `*mut VirtualMachine`, see
         // `JSGlobalObject.zig:617`) rather than `bun_vm()`'s `&VirtualMachine`

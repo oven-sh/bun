@@ -1,6 +1,6 @@
 use core::mem::offset_of;
 
-use bun_aio::{self as Async, KeepAlive};
+use bun_io::{self as Async, KeepAlive};
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, Taskable, TaskTag};
 use bun_threading::{work_pool::WorkPool, WorkPoolTask};
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_aio::{self as Async};
+use bun_io::{self as Async};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::{Mutex, Output};

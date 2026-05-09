@@ -3,7 +3,7 @@
 //! All core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
 //! `JsResult`, `JSObject`, `JSCell`, `JSType`, [`VirtualMachine`],
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
-//! `bun_aio`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
+//! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
 //! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
 //! this tier are provided as extension traits ([`JSValueSqlExt`],
 //! [`JSGlobalObjectSqlExt`], [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
@@ -255,7 +255,7 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
 
 pub use bun_jsc::virtual_machine::VirtualMachine;
 pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
-pub use bun_aio::KeepAlive;
+pub use bun_io::KeepAlive;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SqlRuntimeHooks — manual cold-path vtable (CYCLEBREAK §Dispatch).
@@ -343,8 +343,8 @@ pub trait VirtualMachineSqlExt {
     fn timer(&mut self) -> &mut TimerHeap;
     /// RareData.ssl_ctx_cache — owned by RuntimeState.
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
-    /// bun_aio::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
-    fn vm_ctx(&self) -> bun_aio::EventLoopCtx;
+    /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
+    fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// &mut *self.event_loop() — EventLoop::{enter,exit,run_callback} take
     /// &mut self; bun_jsc returns the raw pointer. Unbounded lifetime so the
     /// returned &mut does not borrow *self (the loop is a disjoint heap
@@ -374,8 +374,8 @@ impl VirtualMachineSqlExt for VirtualMachine {
         unsafe { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
     }
     #[inline]
-    fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
-        bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
+        bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
     }
     #[inline]
     unsafe fn event_loop_mut<'a>(&self) -> &'a mut EventLoop {

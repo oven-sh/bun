@@ -1,7 +1,7 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::MaybeUninit;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -30,8 +30,8 @@ bun_output::declare_scope!(UdpSocket, visible);
 /// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
 /// the aio hook registered by `crate::init()`.
 #[inline]
-fn vm_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 /// Local shim for Zig `bun.sys.Maybe(void).errnoSys(rc, tag)` — `bun_sys::Result`

@@ -19,7 +19,7 @@ use crate::Command;
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under src/runtime/api/bun/process.zig → crate::api::bun::process.
 use crate::api::bun::process::{
-    self as spawn, event_loop_handle_to_ctx, Process, ProcessExitVTable, Rusage, SpawnOptions,
+    self as spawn, event_loop_handle_to_ctx, Process, Rusage, SpawnOptions,
     SpawnProcessResult, SpawnResultExt as _, Status,
 };
 // TODO(port): crate path for `bun.DotEnv.Loader`
@@ -88,20 +88,16 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
 
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_event_loop::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: backref; see on_read_chunk. State outlives all handles.
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of!((*(*(*this).handle).state).event_loop_handle).cast_mut().cast::<c_void>()
-        })
+        unsafe { (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx() }
     }
 
-    unsafe fn loop_(this: *mut Self) -> *mut bun_aio::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
         // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is the
-        // platform's uws wrapper; on POSIX `bun_aio::Loop` *is* that wrapper
+        // platform's uws wrapper; on POSIX `bun_io::Loop` *is* that wrapper
         // (identity cast); on Windows project the embedded `uv_loop_t*`.
         #[cfg(not(windows))]
-        { unsafe { (*(*this).event_loop_ptr()).loop_.cast::<c_void>().cast::<bun_aio::Loop>() } }
+        { unsafe { (*(*this).event_loop_ptr()).loop_.cast::<c_void>().cast::<bun_io::Loop>() } }
         #[cfg(windows)]
         // SAFETY: `loop_` is the live `us_loop`; `uv_loop` set once at init.
         { unsafe { (*(*(*this).event_loop_ptr()).loop_).uv_loop } }
@@ -220,7 +216,14 @@ impl<'a> ProcessHandle<'a> {
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // owner backref set before any reap callback can fire.
         let process = unsafe { &mut *process };
-        process.set_exit_handler(std::ptr::from_mut::<Self>(self).cast::<()>(), &PROCESS_HANDLE_EXIT_VTABLE);
+        // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
+        // it lives for the whole event loop and outlives `process`.
+        process.set_exit_handler(unsafe {
+            bun_spawn::ProcessExit::new(
+                bun_spawn::ProcessExitKind::MultiRunHandle,
+                std::ptr::from_mut::<Self>(self),
+            )
+        });
 
         match process.watch_or_reap() {
             Ok(_) => {}
@@ -237,24 +240,15 @@ impl<'a> ProcessHandle<'a> {
     }
 }
 
-static PROCESS_HANDLE_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
-    on_process_exit: process_handle_on_process_exit,
-};
-
-unsafe fn process_handle_on_process_exit(
-    owner: *mut (),
-    _process: *mut Process,
-    status: Status,
-    _rusage: *const Rusage,
-) {
-    // SAFETY: owner is the `*mut ProcessHandle` registered in `start()`; it
-    // lives in `State.handles` for the whole event loop.
-    let this = unsafe { &mut *owner.cast::<ProcessHandle>() };
-    this.process.as_mut().unwrap().status = status;
-    this.end_time = Instant::now().into();
-    // SAFETY: state backref; see start()
-    let state = unsafe { &mut *this.state.cast_mut() };
-    let _ = state.process_exit(this);
+bun_spawn::link_impl_ProcessExit! {
+    MultiRunHandle for ProcessHandle<'static> => |this| {
+        on_process_exit(_process, status, _rusage) => {
+            (*this).process.as_mut().unwrap().status = status;
+            (*this).end_time = Instant::now().into();
+            let state = &mut *(*this).state.cast_mut();
+            let _ = state.process_exit(&mut *this);
+        },
+    }
 }
 
 const COLORS: [&[u8]; 6] = [
@@ -806,7 +800,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_aio::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
+    bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
         EventLoopHandle::init_mini(event_loop),
     ));
     // shell_bin is NUL-terminated ([:0]const u8) for argv use.

@@ -12,7 +12,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
-use bun_aio::{self as Async, Waker};
+use bun_io::{self as Async, Waker};
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;

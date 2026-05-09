@@ -8,8 +8,8 @@ use core::mem::offset_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
-use bun_aio::{AllocatorType, KeepAlive};
-use bun_aio::posix_event_loop::get_vm_ctx;
+use bun_io::{AllocatorType, KeepAlive};
+use bun_io::posix_event_loop::get_vm_ctx;
 use bun_alloc::Arena;
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::{self, Loader, ModuleType};

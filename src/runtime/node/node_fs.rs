@@ -7,7 +7,7 @@ use core::mem::offset_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_sys::FdExt as _;
 use bun_jsc::EventLoopTaskPtr;
 use crate::api::bun::process::event_loop_handle_to_ctx;
@@ -198,12 +198,12 @@ use bun_jsc::SysErrorJsc as _;
 use bun_sys_jsc::ErrorJsc as _;
 
 /// JS-thread `EventLoopCtx` for `KeepAlive::ref_`/`unref`. Zig passed
-/// `*jsc.VirtualMachine` directly; the Rust `bun_aio::KeepAlive` API now takes
+/// `*jsc.VirtualMachine` directly; the Rust `bun_io::KeepAlive` API now takes
 /// the type-erased `EventLoopCtx`. All async-FS tasks always run against the
 /// JS event loop (never the Mini loop), so the global Js ctx is correct.
 #[inline]
-fn js_event_loop_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn js_event_loop_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 /// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
@@ -2053,7 +2053,7 @@ impl AsyncReaddirRecursiveTask {
             pending_err: None,
             pending_err_mutex: bun_threading::Mutex::default(),
         });
-        task.r#ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+        task.r#ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();
         WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
@@ -2265,7 +2265,7 @@ impl AsyncReaddirRecursiveTask {
         let _ = this_ref.pending_err.take();
         // Zig passed `bunVM()`; Rust `KeepAlive::unref` takes the type-erased
         // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
-        this_ref.r#ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+        this_ref.r#ref.unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
         this_ref.free_root_path();
         this_ref.clear_result_list();
@@ -4799,7 +4799,7 @@ impl NodeFS {
         {
             let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
             let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_mkdtemp(bun_aio::Loop::get(), req, prefix_buf.as_ptr().cast(), None) };
+            let rc = unsafe { uv::uv_fs_mkdtemp(bun_io::Loop::get(), req, prefix_buf.as_ptr().cast(), None) };
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::mkdtemp, path: prefix_buf[..len + 6].into(), ..Default::default() });
             }
@@ -5969,7 +5969,7 @@ impl NodeFS {
         {
             let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
             let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_realpath(bun_aio::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), None) };
+            let rc = unsafe { uv::uv_fs_realpath(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), None) };
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
             }
@@ -6356,7 +6356,7 @@ impl NodeFS {
         {
             let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
             let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_utime(bun_aio::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
+            let rc = unsafe { uv::uv_fs_utime(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Ok(()) };
@@ -6377,7 +6377,7 @@ impl NodeFS {
         {
             let mut _d = scopeguard::guard(uv::fs_t::uninitialized(), |mut r| r.deinit());
             let req = &mut *_d;
-            let rc = unsafe { uv::uv_fs_lutime(bun_aio::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
+            let rc = unsafe { uv::uv_fs_lutime(bun_io::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Ok(()) };

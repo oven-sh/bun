@@ -16,7 +16,7 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
 
-use bun_aio as Async;
+use bun_io as Async;
 use bun_bundler::Transpiler;
 use bun_logger as logger;
 use bun_uws as uws;
@@ -1671,7 +1671,7 @@ pub struct RuntimeHooks {
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
-/// half of `bun_aio`'s cycle-break manual vtable. Every slot is implementable
+/// half of `bun_io`'s cycle-break manual vtable. Every slot is implementable
 /// from in-crate data (spec posix_event_loop.zig:100-104 / RareData.zig:441),
 /// so this is the single fully-populated instance; `aio::get_vm_ctx(.Js)` and
 /// the websocket-client adapters resolve to it. PORT NOTE: in Zig the
@@ -1686,108 +1686,54 @@ fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
     unsafe { &mut *owner.cast::<VirtualMachine>() }
 }
 
-pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::EventLoopCtxVTable {
-    platform_event_loop: {
-        // PORT NOTE: the vtable slot is typed `*mut bun_uws::Loop` (the uws
-        // wrapper — `posix_event_loop::Loop`), not `*mut bun_aio::Loop`
-        // (= `uv_loop_t` on Windows). `uws_loop()` already returns the right
-        // pointer on both platforms.
-        unsafe fn f(owner: *mut ()) -> *mut bun_uws::Loop {
-            vm_from_owner(owner).uws_loop()
-        }
-        f
-    },
-    file_polls: {
-        unsafe fn f(owner: *mut ()) -> *mut bun_aio::Store {
-            // `rare_data()` lazily boxes the per-VM `RareData` and
-            // `file_polls_` lazily boxes the hive store (spec RareData.zig:441
-            // `vm.rareData().filePolls(vm)`).
-            let rare = vm_from_owner(owner).rare_data();
-            &raw mut **rare
-                .file_polls_
-                .get_or_insert_with(|| Box::new(bun_aio::Store::init()))
-        }
-        f
-    },
-    alloc_file_poll: {
-        unsafe fn f(owner: *mut ()) -> *mut bun_aio::FilePoll {
-            // Spec posix_event_loop.zig:716 `vm.filePolls().get()`.
-            let rare = vm_from_owner(owner).rare_data();
-            rare.file_polls_
-                .get_or_insert_with(|| Box::new(bun_aio::Store::init()))
-                .get()
-        }
-        f
-    },
-    is_js: { unsafe fn f(_: *mut ()) -> bool { true } f },
-    increment_pending_unref_counter: {
-        unsafe fn f(owner: *mut ()) {
-            // CROSS-THREAD: reached via KeepAlive::unref_on_next_tick_concurrently
-            // (posix_event_loop.rs "From another thread"). Do NOT route through
-            // `vm_from_owner()` — that mints `&mut VirtualMachine`, which would
-            // alias the JS thread's `&mut`. Raw place RMW only (the field-level
-            // non-atomic race is pre-existing; TODO: make `pending_unref_counter`
-            // an `AtomicI32` with `fetch_add`).
-            // SAFETY: `owner` is `*mut VirtualMachine` (erased in `event_loop_ctx`).
-            unsafe { (*owner.cast::<VirtualMachine>()).pending_unref_counter += 1 };
-        }
-        f
-    },
-    ref_concurrently: {
-        unsafe fn f(owner: *mut ()) {
-            // CROSS-THREAD: reached via KeepAlive::ref_concurrently. Do NOT use
-            // `vm_from_owner()` / `event_loop_mut()` here — those mint `&mut VM`
-            // / `&mut EventLoop`, which would alias the JS thread's `&mut` and
-            // is UB. `event_loop()` takes `&self` (Sync) and `ref_concurrently`
-            // takes `&self` (atomic fetch_add + wakeup), so shared-only access
-            // is sufficient. Spec posix_event_loop.zig:100
-            // `vm.event_loop.refConcurrently()`.
-            // SAFETY: `owner` is `*mut VirtualMachine`; `event_loop()` is the
-            // self-pointer into the sibling `regular_event_loop` field.
-            unsafe { (*(*owner.cast::<VirtualMachine>()).event_loop()).ref_concurrently() };
-        }
-        f
-    },
-    unref_concurrently: {
-        unsafe fn f(owner: *mut ()) {
-            // CROSS-THREAD: see `ref_concurrently` — shared-only access.
-            // SAFETY: see `ref_concurrently`.
-            unsafe { (*(*owner.cast::<VirtualMachine>()).event_loop()).unref_concurrently() };
-        }
-        f
-    },
-    after_event_loop_callback: {
-        unsafe fn f(owner: *mut ()) -> Option<bun_aio::OpaqueCallback> {
-            vm_from_owner(owner).after_event_loop_callback
-        }
-        f
-    },
-    set_after_event_loop_callback: {
-        unsafe fn f(owner: *mut (), cb: Option<bun_aio::OpaqueCallback>, ctx: *mut c_void) {
-            let vm = vm_from_owner(owner);
+bun_io::link_impl_EventLoopCtx! {
+    Js for VirtualMachine => |this| {
+        platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
+        file_polls_ptr() => {
+            let rare = vm_from_owner(this.cast()).rare_data();
+            &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
+        },
+        alloc_file_poll() => {
+            let rare = vm_from_owner(this.cast()).rare_data();
+            rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init())).get()
+        },
+        // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
+        // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
+        // would alias the JS thread's `&mut`. Raw place RMW only (the
+        // field-level non-atomic race is pre-existing; TODO: make
+        // `pending_unref_counter` an `AtomicI32` with `fetch_add`).
+        increment_pending_unref_counter() => (*this).pending_unref_counter += 1,
+        // CROSS-THREAD: reached via `KeepAlive::{,un}ref_concurrently`. Do NOT
+        // use `vm_from_owner()` / `event_loop_mut()` — both mint `&mut`, UB
+        // against the JS thread's borrow. `event_loop()` takes `&self` (Sync)
+        // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
+        ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
+        unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
+        after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
+        set_after_event_loop_callback(cb, ctx) => {
+            let vm = vm_from_owner(this.cast());
             vm.after_event_loop_callback = cb;
             vm.after_event_loop_callback_ctx = (!ctx.is_null()).then_some(ctx);
-        }
-        f
-    },
-};
+        },
+        pipe_read_buffer() => {
+            core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
+        },
+    }
+}
 
 impl VirtualMachine {
-    /// Erase `self` into the cycle-break `EventLoopCtx` shape so `bun_aio`
-    /// types (`KeepAlive`, `FilePoll`) can ref/unref this SPECIFIC VM's loop.
-    /// Distinct from `bun_aio::get_vm_ctx(AllocatorType::Js)` which returns the
-    /// thread-local VM's ctx — `set_ref` / `release_parent_poll_ref` need the
-    /// PARENT's loop, not the worker thread's.
     #[inline]
-    pub fn event_loop_ctx(this: *mut Self) -> bun_aio::EventLoopCtx {
-        bun_aio::EventLoopCtx { owner: this.cast(), vtable: &VM_EVENT_LOOP_CTX_VTABLE }
+    pub fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
+        // SAFETY: `this` is a live VM (per-thread or a worker's parent ref);
+        // it outlives every ctx derived from it.
+        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
     }
 
     /// `&self` overload of [`event_loop_ctx`]. Routes through
     /// [`Self::get_mut_ptr`] for write provenance (the vtable callbacks
     /// dereference `owner` as `*mut VirtualMachine`).
     #[inline]
-    pub fn loop_ctx(&self) -> bun_aio::EventLoopCtx {
+    pub fn loop_ctx(&self) -> bun_io::EventLoopCtx {
         debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
         Self::event_loop_ctx(Self::get_mut_ptr())
     }

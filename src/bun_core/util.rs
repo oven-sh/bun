@@ -1376,20 +1376,17 @@ pub mod fd {
     }
     #[cfg(windows)]
     pub unsafe fn windows_current_directory_handle() -> *mut c_void {
-        // Zig `std.fs.cwd().fd` on Windows reads
-        // `peb().ProcessParameters.CurrentDirectory.Handle`. The
-        // `ProcessParameters` view in `crate::windows_sys` keeps the CURDIR
-        // block as opaque padding (`_current_directory: [u8; 24]` at offset
-        // 0x38 = `UNICODE_STRING DosPath` (16) + `HANDLE Handle` (8)), so
-        // read the handle at fixed offset 0x48. The two `offset_of!` asserts
-        // in `windows_sys` (`hStdInput == 0x20`, `ImagePathName == 0x60`) pin
-        // the surrounding layout, so 0x48 is stable.
-        // SAFETY: PEB and ProcessParameters are process-lifetime; reading a
-        // pointer-sized field at a fixed, layout-asserted offset.
+        // Zig spec (`fd.zig:70`): `FD.cwd() = .fromNative(std.fs.cwd().fd)`,
+        // and Zig's `std.fs.cwd()` on Windows reads
+        // `peb().ProcessParameters.CurrentDirectory.Handle`. Offset 0x48 on
+        // x64, asserted in `bun_core::windows_sys`. The OS updates this handle
+        // on `SetCurrentDirectoryW`, so re-read on every call rather than
+        // caching.
+        // SAFETY: PEB and ProcessParameters are process-lifetime; raw-pointer
+        // read because the OS mutates the struct out-of-band (see `peb()` doc).
         unsafe {
             let pp = (*crate::windows_sys::peb()).ProcessParameters;
-            let base = pp as *const u8;
-            core::ptr::read(base.add(0x48) as *const *mut c_void)
+            (*pp).CurrentDirectory.Handle
         }
     }
 }

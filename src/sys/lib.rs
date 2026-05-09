@@ -2593,25 +2593,6 @@ mod windows_impl {
     pub fn close(fd: Fd) -> Maybe<()> {
         match sys_uv::close(fd) { Some(e) => Err(e), None => Ok(()) }
     }
-    // `kernel32.ReadFile`/`WriteFile` — declared locally because
-    // `bun_windows_sys::kernel32` does not (yet) export them.
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn ReadFile(
-            hFile: w::HANDLE,
-            lpBuffer: *mut u8,
-            nNumberOfBytesToRead: w::DWORD,
-            lpNumberOfBytesRead: *mut w::DWORD,
-            lpOverlapped: *mut core::ffi::c_void,
-        ) -> w::BOOL;
-        fn WriteFile(
-            hFile: w::HANDLE,
-            lpBuffer: *const u8,
-            nNumberOfBytesToWrite: w::DWORD,
-            lpNumberOfBytesWritten: *mut w::DWORD,
-            lpOverlapped: *mut core::ffi::c_void,
-        ) -> w::BOOL;
-    }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         // sys.zig:2161-2183 — `.windows => if (fd.kind == .uv) sys_uv.read(fd,
         // buf) else { kernel32.ReadFile(fd.native(), …) }`. The libuv path
@@ -2624,7 +2605,7 @@ mod windows_impl {
         let mut amount_read: w::DWORD = 0;
         // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
         let rc = unsafe {
-            ReadFile(
+            w::kernel32::ReadFile(
                 fd.cast(),
                 buf.as_mut_ptr(),
                 adjusted_len,
@@ -2648,7 +2629,7 @@ mod windows_impl {
         let mut bytes_written: w::DWORD = 0;
         // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
         let rc = unsafe {
-            WriteFile(
+            w::kernel32::WriteFile(
                 fd.cast(),
                 buf.as_ptr(),
                 adjusted_len,
@@ -3272,12 +3253,11 @@ impl File {
         let _ = self.close(); // close error is non-actionable (Zig parity: discarded)
         result
     }
-    /// `File.getEndPos()` — file size via fstat.
+    /// `File.getEndPos()` (File.zig:209) — `getFileSize(self.handle)`.
+    /// On Windows that's `GetFileSizeEx` directly on the HANDLE (NOT via
+    /// libuv `fstat`, which would require a uv-kind fd).
     pub fn get_end_pos(&self) -> Maybe<usize> {
-        #[cfg(unix)]
-        { Ok(fstat(self.handle)?.st_size as usize) }
-        #[cfg(windows)]
-        { Ok(fstat(self.handle)?.st_size as usize) }
+        get_file_size(self.handle).map(|n| n as usize)
     }
     /// `File.readToEndWithArrayList(buf, hint)` — like `read_all` but takes a
     /// `SizeHint` so callers can pre-reserve. Returns the borrowed slice.

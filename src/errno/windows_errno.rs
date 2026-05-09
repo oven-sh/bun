@@ -427,7 +427,7 @@ pub fn get_errno<T>(_rc: T) -> E {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, strum::FromRepr, enum_map::Enum)]
 pub enum SystemErrno {
     SUCCESS = 0,
     EPERM = 1,
@@ -822,7 +822,19 @@ impl SystemErrnoInit for i64 {
         // direct discriminant cast, NOT the Win32Error mapper. Routing i64
         // through `init_c_int` would mis-map e.g. 13 → EINVAL (Win32
         // ERROR_INVALID_DATA) instead of EACCES (discriminant 13).
-        u16::try_from(self.unsigned_abs()).ok().map(SystemErrno::from_raw)
+        //
+        // CHECKED, not `from_raw`: the Rust i64 impl is a cross-platform shim
+        // and some Windows-reachable callers (`Listener.rs`, `udp_socket.rs`)
+        // widened a `c_int` holding `WSAGetLastError()` (e.g. 10048). Those are
+        // NOT valid `SystemErrno` discriminants, so an unchecked transmute is
+        // immediate UB. Validate first; on miss, fall through to the Win32/uv
+        // mapper so WSA codes still resolve (10048 → EADDRINUSE) instead of
+        // silently degrading to `None`.
+        let n = u16::try_from(self.unsigned_abs()).ok()?;
+        if let Some(e) = SystemErrno::from_repr(n) {
+            return Some(e);
+        }
+        SystemErrno::init_c_int(self as c_int)
     }
 }
 impl SystemErrnoInit for i32 {

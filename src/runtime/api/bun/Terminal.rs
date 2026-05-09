@@ -27,6 +27,8 @@ use bun_sys::{self as sys, Fd, FdExt};
 
 #[cfg(windows)]
 use bun_sys::windows;
+#[cfg(windows)]
+use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 bun_output::declare_scope!(Terminal, hidden);
 
@@ -1146,7 +1148,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // Do not .take() until after success — on Err the cleanup! must still see
     // Some(h) so the HANDLE isn't leaked (matches Zig: `out_server = null` only
     // after the fallible call succeeds).
-    let read_fd = match Fd::from_native(out_server.unwrap()).make_libuv_owned() {
+    let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
         Ok(fd) => {
             out_server = None;
             fd
@@ -1159,7 +1161,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // errdefer read_fd.close()
     let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
 
-    let write_fd = match Fd::from_native(in_server.unwrap()).make_libuv_owned() {
+    let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
         Ok(fd) => {
             in_server = None;
             fd
@@ -1206,7 +1208,7 @@ impl Terminal {
     fn get_termios_flag<const FIELD: TermiosField>(&self) -> JSValue {
         #[cfg(not(unix))]
         {
-            return JSValue::js_number(0);
+            return JSValue::js_number(0.0);
         }
         #[cfg(unix)]
         {

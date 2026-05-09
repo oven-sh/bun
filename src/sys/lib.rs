@@ -6195,6 +6195,14 @@ pub mod freebsd {}
 #[derive(Clone, Copy)]
 pub struct Dir { pub fd: Fd }
 
+/// Options for `Dir::copy_file` (Zig: `std.fs.Dir.CopyFileOptions`).
+#[derive(Clone, Copy, Default)]
+pub struct CopyFileOptions {
+    /// When set, the destination is created with this mode instead of the
+    /// source file's mode (Zig: `override_mode: ?File.Mode`).
+    pub override_mode: Option<Mode>,
+}
+
 /// Options for `Dir::make_open_path` (Zig: `std.fs.Dir.OpenOptions`).
 #[derive(Clone, Copy, Default)]
 pub struct OpenDirOptions {
@@ -6504,6 +6512,48 @@ impl Dir {
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
         unlinkat(self.fd, sub_path).map_err(Into::into)
+    }
+
+    /// `std.fs.Dir.copyFile` — open `source_path` (relative to `self`), create
+    /// `dest_path` (relative to `dest_dir`) with `O_CREAT|O_TRUNC`, then stream
+    /// the contents via [`copy_file`]. Mode is taken from the source's `fstat`
+    /// unless `options.override_mode` is set (Zig stdlib semantics, minus the
+    /// `AtomicFile` rename — Bun's only call site is `gitignore` → `.gitignore`
+    /// where atomicity isn't required).
+    pub fn copy_file(
+        &self,
+        source_path: &[u8],
+        dest_dir: &Dir,
+        dest_path: &[u8],
+        options: CopyFileOptions,
+    ) -> core::result::Result<(), bun_core::Error> {
+        let in_fd = openat_a(self.fd, source_path, O::RDONLY | O::CLOEXEC, 0)?;
+        let mode = match options.override_mode {
+            Some(m) => m,
+            None => match fstat(in_fd) {
+                Ok(st) => st.st_mode as Mode,
+                Err(e) => {
+                    let _ = close(in_fd);
+                    return Err(e.into());
+                }
+            },
+        };
+        let out_fd = match openat_a(
+            dest_dir.fd,
+            dest_path,
+            O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC,
+            mode,
+        ) {
+            Ok(fd) => fd,
+            Err(e) => {
+                let _ = close(in_fd);
+                return Err(e.into());
+            }
+        };
+        let r = copy_file(in_fd, out_fd);
+        let _ = close(in_fd);
+        let _ = close(out_fd);
+        r.map_err(Into::into)
     }
 
     /// `std.fs.Dir.openDirZ` — open `sub_path` (NUL-terminated) relative to

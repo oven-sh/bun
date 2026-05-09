@@ -33,10 +33,12 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
+use bun_libuv_sys::{UvHandle as _, UvStream as _};
 use bun_sys::{self, Fd};
 use bun_uws::us_bun_verify_error_t;
 
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::socket::SSLConfig;
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
 
@@ -156,18 +158,17 @@ impl WindowsNamedPipe {
         unsafe { core::slice::from_raw_parts_mut(available.as_mut_ptr().cast::<u8>(), suggested_size) }
     }
 
-    fn on_read(&mut self, buffer: &[u8]) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", buffer.len());
-        unsafe { self.incoming.set_len(self.incoming.len() + buffer.len()) };
+    // PORT NOTE: takes `nread` (not the libuv `buffer` slice) because that
+    // slice points *into* `self.incoming` — see `StreamReader::on_read` below
+    // for the Stacked-Borrows split. The Zig `is_slice_in_buffer` debug assert
+    // is dropped: libuv guarantees the read buffer is the one returned from
+    // `on_read_alloc`, and we no longer hold the original pointer here.
+    fn on_read(&mut self, nread: usize) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
+        // SAFETY: `nread` bytes were just written by libuv into the
+        // unused-capacity tail handed out by `on_read_alloc`.
+        unsafe { self.incoming.set_len(self.incoming.len() + nread) };
         debug_assert!(self.incoming.len() <= self.incoming.capacity());
-        debug_assert!({
-            let alloc = self.incoming.allocated_slice();
-            // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; only used for
-            // a pointer-range containment check, never read.
-            let alloc_bytes =
-                unsafe { core::slice::from_raw_parts(alloc.as_ptr().cast::<u8>(), alloc.len()) };
-            bun_core::is_slice_in_buffer(buffer, alloc_bytes)
-        });
 
         // PORT NOTE: reordered before `incoming.slice()` for borrowck — `reset_timeout`
         // only touches timer fields, never `self.incoming`.

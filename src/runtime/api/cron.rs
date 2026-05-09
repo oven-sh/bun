@@ -252,11 +252,19 @@ impl CronRegisterJob {
                     && !(s.state == RegisterState::ReadingCrontab && exited.code == 1)
                     && s.state != RegisterState::BootingOut
                 {
+                    // Materialize the trimmed stderr into an owned buffer:
+                    // `final_buffer()` borrows `s` mutably, and `set_err`
+                    // below needs another `&mut s` — copy out so the two
+                    // borrows do not overlap (Windows only; POSIX ignores
+                    // stderr here).
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = bun_string::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_string::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
-                    );
+                    )
+                    .to_vec();
+                    #[cfg(windows)]
+                    let stderr_output: &[u8] = stderr_owned.as_slice();
                     #[cfg(not(windows))]
                     let stderr_output: &[u8] = b"";
                     // On Windows, detect the SID resolution error and provide

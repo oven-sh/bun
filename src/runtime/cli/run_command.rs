@@ -343,15 +343,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             copy_script.clone().into_boxed_slice(),
         ];
 
-        let ipc_fd: Option<bun_sys::Fd> = if !cfg!(windows) {
+        #[cfg(not(windows))]
+        let ipc_fd: Option<bun_sys::Fd> =
             bun_core::env_var::NODE_CHANNEL_FD.get().and_then(|s| {
                 ::core::str::from_utf8(s).ok()?.parse::<u32>().ok().and_then(|fd| {
                     i32::try_from(fd).ok().map(bun_sys::Fd::from_native)
                 })
-            })
-        } else {
-            None // TODO: implement on Windows
-        };
+            });
+        #[cfg(windows)]
+        let ipc_fd: Option<bun_sys::Fd> = None; // TODO: implement on Windows
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.

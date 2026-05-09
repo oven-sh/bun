@@ -877,7 +877,7 @@ impl RunCommand {
             strings::to_utf8_append_to_list(
                 path,
                 &target_path_buffer[prefix.len()..dir_slice_len],
-            )?;
+            );
             path.push(bun_paths::DELIMITER);
             let _ = optional_bun_path;
             Ok(())

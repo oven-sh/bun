@@ -1457,19 +1457,6 @@ fn on_not_found(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
     not_found(resp);
 }
 
-// `WatcherHandle[Watcher]` impl lives in `bun_jsc::hot_reloader` (single
-// `bun_watcher::Watcher` owner type for both `bun build --watch` and bake).
-#[inline]
-fn bake_watcher_handle(w: &mut Watcher) -> bun_bundler::dispatch::WatcherHandle {
-    // SAFETY: `w` is `&mut *dev.bun_watcher`; valid for the BundleV2 lifetime.
-    unsafe {
-        bun_bundler::dispatch::WatcherHandle::new(
-            bun_bundler::dispatch::WatcherHandleKind::Watcher,
-            w,
-        )
-    }
-}
-
 fn not_found(resp: AnyResponse) {
     resp.corked(move || on_not_found_corked(resp));
 }
@@ -3006,7 +2993,7 @@ impl DevServer {
             )),
             heap,
         )?;
-        bv2.bun_watcher = Some(bake_watcher_handle(&mut self.bun_watcher));
+        bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut *self.bun_watcher));
         bv2.asynchronous = true;
         // Zig: `linker.dev_server = transpiler.options.dev_server` inside init.
         let dev_handle = self.bundler_handle();

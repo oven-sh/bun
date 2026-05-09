@@ -1250,15 +1250,13 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
         // Zig: `else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .optional)
         //          return this.ctx.bun_watcher.?;` (hot_reloader.zig:373).
-        // The handle's `owner` is the `*mut Watcher` we leaked in
-        // `install_bun_watcher` below.
-        let handle = self
+        let mut handle = self
             .bun_watcher
             .expect("bun_watcher_mut on un-enabled BundleV2 reloader");
-        // SAFETY: `owner` is the `Box<Watcher>` leaked via `into_raw` in
-        // `install_bun_watcher`; live for the process (the BundleV2 itself is
-        // leaked under --watch — see `generate_from_cli`).
-        unsafe { &mut *handle.owner.cast::<Watcher>() }
+        // SAFETY: `Box<Watcher>` leaked via `into_raw` in `install_bun_watcher`;
+        // live for the process (BundleV2 is leaked under --watch — see
+        // `generate_from_cli`).
+        unsafe { &mut *handle.as_ptr() }
     }
 
     fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
@@ -1299,18 +1297,10 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         // Zig (the non-ImportWatcher arm, hot_reloader.zig:330):
         //   this.bun_watcher = Watcher.init(...);
         //   this.transpiler.resolver.watcher = ResolveWatcher(...).init(this.bun_watcher.?);
-        // The bundler stores the watcher type-erased as a `WatcherHandle`
-        // (`owner` = `*mut Watcher`, `vtable` = `&BUNDLER_WATCHER_VTABLE`) so
-        // `on_load_complete` can `add_file` without naming `bun_watcher::Watcher`.
         let watcher_ptr: *mut Watcher = bun_core::heap::into_raw(watcher);
         // SAFETY: `watcher_ptr` is a fresh non-null heap allocation; live for
         // the process (BundleV2 is leaked under --watch — see `generate_from_cli`).
-        self.bun_watcher = Some(unsafe {
-            bun_bundler::dispatch::WatcherHandle::new(
-                bun_bundler::dispatch::WatcherHandleKind::Watcher,
-                watcher_ptr,
-            )
-        });
+        self.bun_watcher = Some(unsafe { core::ptr::NonNull::new_unchecked(watcher_ptr) });
         // SAFETY: `watcher_ptr` was just installed; live for the process.
         self.transpiler.resolver.watcher =
             Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
@@ -1324,28 +1314,6 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
             (*self.transpiler.env)
                 .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
         }
-    }
-}
-
-// `WatcherHandle[Watcher]` arm — both `bun build --watch` and bake register
-// the same bare `*mut bun_watcher::Watcher` owner.
-bun_bundler::link_impl_WatcherHandle! {
-    Watcher for Watcher => |this| {
-        add_file(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path) => {
-            let w = &mut *this;
-            // `package_json` is an erased `*const PackageJSON` owned by the
-            // resolver's package-json cache (process lifetime); Watcher only stores it.
-            let pj = package_json.map(|p| &*p.cast::<bun_watcher::PackageJSON>());
-            // `bun_watcher::Loader` is a `#[repr(transparent)]` u8 newtype
-            // mirroring `bun_options_types::Loader` (`#[repr(u8)]`).
-            let loader = bun_watcher::Loader(loader as u8);
-            let r = if copy_file_path {
-                w.add_file::<true>(fd, file_path, hash, loader, dir_fd, pj)
-            } else {
-                w.add_file::<false>(fd, file_path, hash, loader, dir_fd, pj)
-            };
-            r.map_err(bun_core::Error::from)
-        },
     }
 }
 

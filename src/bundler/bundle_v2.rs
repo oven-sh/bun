@@ -83,11 +83,9 @@ pub struct BundleV2<'a> {
     // Real `LinkerContext<'a>` (un-gated B-2). Borrows the same arena lifetime
     // as `transpiler` (Zig stored both as raw pointers into the bundler heap).
     pub linker: LinkerContext<'a>,
-    // CYCLEBREAK GENUINE: `jsc::hot_reloader::NewHotReloader<BundleV2, …>` is a
-    // T6 generic instantiated over a T5 type. Stored as an erased owner +
-    // `&'static WatcherVTable` pair so `add_file` is callable without naming
-    // the concrete reloader.
-    pub bun_watcher: Option<dispatch::WatcherHandle>,
+    // The hot reloader (`jsc::hot_reloader::NewHotReloader<BundleV2, …>`) owns the
+    // boxed `Watcher`; bundler only ever calls `Watcher::add_file` on it.
+    pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle>,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
@@ -1334,7 +1332,7 @@ pub type MangledProps = ArrayHashMap<Ref, Box<[u8]>>;
 // static instances and registers hooks at init. See PORTING.md §Dispatch.
 // ══════════════════════════════════════════════════════════════════════════
 pub mod dispatch {
-    pub use crate::{DevServerHandle, DevServerHandleKind, WatcherHandle, WatcherHandleKind};
+    pub use crate::{DevServerHandle, DevServerHandleKind};
 
     impl DevServerHandle {
         #[inline]
@@ -1436,11 +1434,6 @@ pub mod dispatch {
         }
     }
 }
-
-// CYCLEBREAK GENUINE: jsc::hot_reloader::NewHotReloader<BundleV2, EventLoop, true>
-// is a T6 generic type instantiated over a T5 type. bundler stores it opaquely;
-// runtime constructs/drives it. SAFETY: erased — never dereferenced in bundler.
-pub type Watcher = dispatch::WatcherHandle;
 
 /// `bun.jsc.AnyEventLoop` — re-export the linker's alias
 /// (`Option<NonNull<bun_event_loop::AnyEventLoop>>`).
@@ -3942,7 +3935,7 @@ impl<'a> BundleV2<'a> {
                 parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                 this.graph.pool().schedule(parse_task);
 
-                if let Some(watcher_ptr) = this.bun_watcher {
+                if let Some(mut watcher_ptr) = this.bun_watcher {
                     'add_watchers: {
                         if !this.should_add_watcher_plugin(&load.namespace, &load.path) {
                             break 'add_watchers;
@@ -3966,17 +3959,16 @@ impl<'a> BundleV2<'a> {
                             bun_sys::Fd::INVALID
                         };
 
-                        // CYCLEBREAK GENUINE: `bun_watcher` carries the
-                        // `&'static WatcherVTable` alongside the erased owner.
                         // Zig: `_ = this.bun_watcher.?.addFile(...) catch {};`
-                        let _ = watcher_ptr.add_file(
+                        // SAFETY: hot_reloader-owned heap Watcher; live for the
+                        // process under --watch (see `install_bun_watcher`).
+                        let _ = unsafe { watcher_ptr.as_mut() }.add_file::<true>(
                             fd,
                             &load.path,
                             bun_wyhash::hash(load.path.as_ref()) as u32,
-                            code.loader,
+                            bun_watcher::Loader(code.loader as u8),
                             bun_sys::Fd::INVALID,
                             None,
-                            true,
                         );
                     }
                 }
@@ -5928,7 +5920,7 @@ impl<'a> BundleV2<'a> {
         }
 
         // To minimize contention, watchers are appended on the bundle thread.
-        if let Some(bun_watcher) = this.bun_watcher {
+        if let Some(mut bun_watcher) = this.bun_watcher {
             if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
                 let source_index = match &parse_result.value {
                     parse_task::ResultValue::Empty { source_index } => source_index.get(),
@@ -5942,14 +5934,17 @@ impl<'a> BundleV2<'a> {
                     .text;
                 let loader = this.graph.input_files.items_loader()[source_index as usize];
                 if this.should_add_watcher(&source_path) {
-                    let _ = bun_watcher.add_file(
+                    // SAFETY: hot_reloader-owned heap Watcher; live for the
+                    // process under --watch (see `install_bun_watcher`).
+                    // PORT NOTE: const generic `CLONE_FILE_PATH = isWindows`
+                    // matches `cfg!(windows)` at compile time.
+                    let _ = unsafe { bun_watcher.as_mut() }.add_file::<{ cfg!(windows) }>(
                         parse_result.watcher_data.fd,
                         &source_path,
                         bun_wyhash::hash(source_path.as_ref()) as u32,
-                        loader,
+                        bun_watcher::Loader(loader as u8),
                         parse_result.watcher_data.dir_fd,
                         None,
-                        cfg!(windows),
                     );
                 }
             }

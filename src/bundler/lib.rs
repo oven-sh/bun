@@ -324,26 +324,6 @@ pub use bundle_v2::dispatch;
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
 // Re-exported through `bundle_v2::dispatch` for existing call sites.
 
-// `bun.jsc.hot_reloader.NewHotReloader<BundleV2, …>` is a T6 generic
-// instantiated over a T5 type. Both `bun_jsc::hot_reloader` and
-// `bun_runtime::bake::DevServer` register the same `bun_watcher::Watcher`
-// owner; one variant.
-bun_dispatch::link_interface! {
-    pub WatcherHandle[Watcher] {
-        fn add_file(
-            fd: bun_sys::Fd,
-            file_path: &[u8],
-            hash: u32,
-            loader: bun_options_types::Loader,
-            dir_fd: bun_sys::Fd,
-            package_json: Option<*const ()>,
-            copy_file_path: bool,
-        ) -> Result<(), bun_core::Error>;
-    }
-}
-unsafe impl Send for WatcherHandle {}
-unsafe impl Sync for WatcherHandle {}
-
 // Erased handle to `bake::DevServer`. PORT NOTE: Zig takes
 // `*const DevServerOutput` but mutates through the `chunks: []Chunk` slice it
 // holds; in Rust the struct stores `&'a mut [Chunk]`, hence `*mut`.

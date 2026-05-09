@@ -345,6 +345,7 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_url",
+ "bun_watcher",
  "bun_wyhash",
  "const_format",
  "enum-map",

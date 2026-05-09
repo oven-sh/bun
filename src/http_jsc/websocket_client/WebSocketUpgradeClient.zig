@@ -780,8 +780,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             };
 
             const result = socks.receive(data, p.getTargetHost(), p.target_port) catch |err| {
-                this.terminate(socksErrorCode(err));
-                return;
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    else => {
+                        this.terminate(socksErrorCode(err));
+                        return;
+                    },
+                }
             };
             switch (result) {
                 .needs_dns_resolve => {
@@ -906,9 +911,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.terminate(ErrorCode.proxy_tunnel_failed);
                 return;
             };
-            socks.writeConnectResolved(address, target_port) catch {
-                this.terminate(ErrorCode.proxy_tunnel_failed);
-                return;
+            socks.writeConnectResolved(address, target_port) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    else => {
+                        this.terminate(ErrorCode.proxy_tunnel_failed);
+                        return;
+                    },
+                }
             };
             socks.flush(this.tcp) catch {
                 this.terminate(ErrorCode.failed_to_write);

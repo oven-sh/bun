@@ -889,13 +889,23 @@ describe("WebSocket through SOCKS5 proxy", () => {
 
   test("ws:// through socks5 proxy rejects username without password", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let sawError = false;
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `socks5://proxy_user@127.0.0.1:${socksAuthPort}`,
     });
 
     ws.onopen = () => reject(new Error("Expected SOCKS credential validation to fail before connect"));
-    ws.onerror = () => resolve();
-    ws.onclose = () => resolve();
+    ws.onerror = () => {
+      sawError = true;
+      resolve();
+    };
+    ws.onclose = () => {
+      if (sawError) {
+        resolve();
+      } else {
+        reject(new Error("Expected SOCKS credential validation to emit an error event"));
+      }
+    };
 
     await promise;
   });

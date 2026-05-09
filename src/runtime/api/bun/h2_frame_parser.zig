@@ -4324,10 +4324,21 @@ pub const H2FrameParser = struct {
                 const old_state = stream.state;
                 stream.state = .CLOSED;
                 stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
+                const stream_id = stream.id;
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
+                // Detach before freeResources: freeResources → cleanQueue
+                // dispatches queued DATA write callbacks, and a user
+                // callback that calls session.destroy() would re-enter
+                // emitErrorToAllStreams whose leading
+                // removeAllClosedStreams() would see this CLOSED-in-map
+                // entry and free it, leaving the outer freeResources
+                // touching this.signal on freed heap. Mirror abortStream/
+                // endStream's detach-then-destroy pattern.
+                this.detachStreamFromMap(stream_id);
                 stream.freeResources(this, false);
                 this.dispatchWith2Extra(.onAborted, identifier, .js_undefined, jsc.JSValue.jsNumber(@intFromEnum(old_state)));
+                this.destroyDetachedStream(stream);
             }
         }
         this.removeAllClosedStreams();
@@ -4351,10 +4362,15 @@ pub const H2FrameParser = struct {
             if (stream.state != .CLOSED) {
                 stream.state = .CLOSED;
                 stream.rstCode = args_list.ptr[0].to(u32);
+                const stream_id = stream.id;
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
+                // Detach before freeResources — same re-entrancy hazard as
+                // emitAbortToAllStreams above.
+                this.detachStreamFromMap(stream_id);
                 stream.freeResources(this, false);
                 this.dispatchWithExtra(.onStreamError, identifier, args_list.ptr[0]);
+                this.destroyDetachedStream(stream);
             }
         }
         this.removeAllClosedStreams();
@@ -4582,7 +4598,7 @@ pub const H2FrameParser = struct {
         const encoded_data = encoded_headers.items;
         const encoded_size = encoded_data.len;
 
-        const stream = this.handleReceivedStreamID(stream_id) orelse {
+        var stream = this.handleReceivedStreamID(stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
         if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
@@ -4606,7 +4622,16 @@ pub const H2FrameParser = struct {
                 return jsc.JSValue.jsNumber(stream_id);
             }
 
+            // Every `options.get(globalObject, ...)` below can invoke a
+            // user getter / Proxy trap that synchronously calls
+            // `session.destroy()` → `emitErrorToAllStreams` →
+            // `removeAllClosedStreams()` → `bun.destroy(stream)`. Any
+            // subsequent `stream.*` access would then hit freed heap.
+            // Re-resolve from the map after each `options.get`, bail out
+            // if the stream was destroyed. Same pattern as
+            // setStreamPriority / sendTrailers.
             if (try options.get(globalObject, "paddingStrategy")) |padding_js| {
+                stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                 if (padding_js.isNumber()) {
                     stream.paddingStrategy = switch (padding_js.to(u32)) {
                         1 => .aligned,
@@ -4617,6 +4642,7 @@ pub const H2FrameParser = struct {
             }
 
             if (try options.get(globalObject, "waitForTrailers")) |trailes_js| {
+                stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                 if (trailes_js.isBoolean()) {
                     waitForTrailers = trailes_js.asBoolean();
                     stream.waitForTrailers = waitForTrailers;
@@ -4648,6 +4674,7 @@ pub const H2FrameParser = struct {
             if (try options.get(globalObject, "exclusive")) |exclusive_js| {
                 if (exclusive_js.isBoolean()) {
                     if (exclusive_js.asBoolean()) {
+                        stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                         exclusive = true;
                         stream.exclusive = true;
                         has_priority = true;
@@ -4659,6 +4686,7 @@ pub const H2FrameParser = struct {
 
             if (try options.get(globalObject, "parent")) |parent_js| {
                 if (parent_js.isNumber() or parent_js.isInt32()) {
+                    stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                     has_priority = true;
                     parent = parent_js.toInt32();
                     if (parent <= 0 or parent > MAX_STREAM_ID) {
@@ -4677,6 +4705,7 @@ pub const H2FrameParser = struct {
 
             if (try options.get(globalObject, "weight")) |weight_js| {
                 if (weight_js.isNumber() or weight_js.isInt32()) {
+                    stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                     has_priority = true;
                     weight = weight_js.toInt32();
                     if (weight < 1 or weight > std.math.maxInt(u8)) {
@@ -4703,6 +4732,7 @@ pub const H2FrameParser = struct {
             }
 
             if (try options.get(globalObject, "signal")) |signal_arg| {
+                stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                 if (signal_arg.as(jsc.WebCore.AbortSignal)) |signal_| {
                     if (signal_.aborted()) {
                         stream.state = .IDLE;
@@ -4714,6 +4744,12 @@ pub const H2FrameParser = struct {
                     return globalObject.throwInvalidArgumentTypeValue("options.signal", "AbortSignal", signal_arg);
                 }
             }
+
+            // Final re-resolve after the options block — covers the
+            // subsequent stream.* accesses (getSessionMemoryUsage gate,
+            // encoded_size check, frame writes). If a trailing options.get
+            // above wiped the stream out, bail.
+            stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
         }
 
         // too much memory being use

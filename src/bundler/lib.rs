@@ -303,8 +303,8 @@ pub mod options {
 pub use cache::Set as Cache;
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
 /// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). B-3: the
-/// struct is canonical in `bun_js_parser`; the bundler-tier `put`/`disabled`/
-/// `as_printer_ref` live on `RuntimeTranspilerCacheExt`.
+/// struct is canonical in `bun_js_parser`; the bundler-tier `disabled`/
+/// `set_disabled` live on `RuntimeTranspilerCacheExt`.
 pub use cache::{RuntimeTranspilerCache, RuntimeTranspilerCacheExt};
 
 // ──────────────────────────────────────────────────────────────────────────

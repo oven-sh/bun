@@ -2061,7 +2061,7 @@ fn transpile_source_code_inner(
             // dropped those fields per PORTING.md §Allocators (cache buffers use
             // global mimalloc), so `Default::default()` matches.
             let mut cache = bun_bundler::cache::RuntimeTranspilerCache {
-                vtable: Some(&bun_jsc::runtime_transpiler_cache::JSC_PARSER_CACHE_VTABLE),
+                r#impl: Some(bun_js_parser::TranspilerCacheImplKind::Jsc),
                 ..Default::default()
             };
 

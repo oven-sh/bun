@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_io::Closer;
-use bun_http::headers::{AnyBlobRef, AnyBlobVTable, Options as HeadersFromOptions};
+use bun_http::headers::Options as HeadersFromOptions;
 use bun_http::{Headers, HeadersExt, Method};
 use bun_http_types::ETag::{StringPointer};
 use bun_io::FileType;
@@ -57,78 +57,7 @@ impl<'a> Default for InitOptions<'a> {
 }
 
 // ─── cycle-break vtables: FetchHeaders/Blob → bun_http::headers refs ─────────
-// `Headers::from` (T5 bun_http) takes vtable-erased refs because it cannot
-// name `webcore::FetchHeaders`/`Blob` (T6). The Zig call site passes the
-// concrete types directly; here we erase them through the vtable.
-
-unsafe fn fh_count(owner: *const (), header_count: &mut u32, buf_len: &mut u32) {
-    // SAFETY: `owner` is `&FetchHeaders` erased; `count` mutates only internal
-    // scratch state on the C++ side, hence the const→mut cast.
-    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).count(header_count, buf_len) }
-}
-unsafe fn fh_fast_has(owner: *const (), name: bun_http::headers::HeaderName) -> bool {
-    // SAFETY: see `fh_count`. `bun_http::headers::HeaderName` re-exports
-    // `bun_http_types::Method::HeaderName`, which is `#[repr(u8)]` with
-    // discriminants identical to `bun_jsc::HTTPHeaderName` (both mirror
-    // WebCore's `HTTPHeaderNames.in`); `fast_has_` takes the raw `u8`.
-    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).fast_has_(name as u8) }
-}
-unsafe fn fh_copy_to(
-    owner: *const (),
-    names: *mut StringPointer,
-    values: *mut StringPointer,
-    buf: *mut u8,
-) {
-    // SAFETY: see `fh_count`. `bun_http::headers::api::StringPointer` and
-    // `bun_jsc`'s `StringPointer` param are the same `bun_core::StringPointer`.
-    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).copy_to(names, values, buf) }
-}
-
-static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
-    bun_http::headers::FetchHeadersVTable {
-        count: fh_count,
-        fast_has: fh_fast_has,
-        copy_to: fh_copy_to,
-    };
-
-#[inline]
-fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
-    bun_http::headers::FetchHeadersRef {
-        owner: std::ptr::from_ref::<FetchHeaders>(h).cast::<()>(),
-        vtable: &FETCH_HEADERS_VTABLE,
-        _phantom: core::marker::PhantomData,
-    }
-}
-
-// The Zig call site wraps the blob in a stack-temporary `&.{ .Blob = blob }`
-// (an `AnyBlob`); here we erase `&Blob` directly — `Any::content_type`/
-// `Any::has_content_type_from_user` for the `.Blob` arm just forward to the
-// same Blob methods.
-
-unsafe fn blob_has_content_type_from_user(owner: *const ()) -> bool {
-    // SAFETY: `owner` is `&Blob` erased via `blob_body_ref`.
-    unsafe { (*owner.cast::<Blob>()).has_content_type_from_user() }
-}
-unsafe fn blob_content_type(owner: *const ()) -> (*const u8, usize) {
-    // SAFETY: `owner` is `&Blob` erased; the returned slice borrows blob
-    // storage that outlives the `AnyBlobRef`.
-    let s = unsafe { (*owner.cast::<Blob>()).content_type_slice() };
-    (s.as_ptr(), s.len())
-}
-
-static BLOB_BODY_VTABLE: AnyBlobVTable = AnyBlobVTable {
-    has_content_type_from_user: blob_has_content_type_from_user,
-    content_type: blob_content_type,
-};
-
-#[inline]
-fn blob_body_ref(b: &Blob) -> AnyBlobRef<'_> {
-    AnyBlobRef {
-        owner: std::ptr::from_ref::<Blob>(b).cast::<()>(),
-        vtable: &BLOB_BODY_VTABLE,
-        _phantom: core::marker::PhantomData,
-    }
-}
+use crate::webcore::headers_ref::{blob_body_ref, fetch_headers_ref};
 
 #[inline]
 fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {

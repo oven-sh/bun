@@ -1689,11 +1689,10 @@ fn on_incremental_visualizer(_: &mut DevServer, _: &mut Request, resp: AnyRespon
 }
 
 fn on_incremental_visualizer_corked(resp: AnyResponse) {
-    let code = if Environment::CODEGEN_EMBED {
-        include_bytes!("incremental_visualizer.html").as_slice()
-    } else {
-        bun_core::runtime_embed_file!(bun_core::EmbedKind::SrcEager, "bake/incremental_visualizer.html").as_bytes()
-    };
+    #[cfg(bun_codegen_embed)]
+    let code = include_bytes!("incremental_visualizer.html").as_slice();
+    #[cfg(not(bun_codegen_embed))]
+    let code = bun_core::runtime_embed_file!(bun_core::EmbedKind::SrcEager, "bake/incremental_visualizer.html").as_bytes();
     resp.end(code, false);
 }
 
@@ -1702,11 +1701,10 @@ fn on_memory_visualizer(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
 }
 
 fn on_memory_visualizer_corked(resp: AnyResponse) {
-    let code = if Environment::CODEGEN_EMBED {
-        include_bytes!("memory_visualizer.html").as_slice()
-    } else {
-        bun_core::runtime_embed_file!(bun_core::EmbedKind::SrcEager, "bake/memory_visualizer.html").as_bytes()
-    };
+    #[cfg(bun_codegen_embed)]
+    let code = include_bytes!("memory_visualizer.html").as_slice();
+    #[cfg(not(bun_codegen_embed))]
+    let code = bun_core::runtime_embed_file!(bun_core::EmbedKind::SrcEager, "bake/memory_visualizer.html").as_bytes();
     resp.end(code, false);
 }
 
@@ -5019,13 +5017,13 @@ impl DevServer {
         // PORT NOTE: split into `#[cfg]` branches so the `include_bytes!` arm
         // is not typechecked when `codegen_embed` is off (the codegen output
         // dir does not exist during a non-embed build).
-        #[cfg(feature = "codegen_embed")]
+        #[cfg(bun_codegen_embed)]
         {
             buf.extend_from_slice(pre.as_bytes());
-            buf.extend_from_slice(include_bytes!("bake-codegen/bake.error.js"));
+            buf.extend_from_slice(include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bake.error.js")));
             buf.extend_from_slice(post.as_bytes());
         }
-        #[cfg(not(feature = "codegen_embed"))]
+        #[cfg(not(bun_codegen_embed))]
         {
             buf.extend_from_slice(pre.as_bytes());
             buf.extend_from_slice(

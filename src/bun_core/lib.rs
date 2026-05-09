@@ -132,7 +132,6 @@ pub mod build_options {
         Some(v) => v.as_bytes(),
         None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../build/debug/codegen").as_bytes(),
     };
-    pub const CODEGEN_EMBED: bool = true;
     /// `cfg.version` from package.json, split by `scripts/build/rust.ts`.
     pub const VERSION: crate::Version = {
         // const-parse a "u32" string — `str::parse` isn't const.

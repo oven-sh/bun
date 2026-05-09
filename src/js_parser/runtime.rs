@@ -1,4 +1,4 @@
-#![allow(unexpected_cfgs)] // `feature = "codegen_embed"` is wired by build.rs in Phase C; not yet a declared cargo feature.
+#![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
 use core::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -58,11 +58,11 @@ impl Fallback {
         // TODO(port): `Environment.codegen_embed` build option → cfg feature
         // NOTE: must use `#[cfg]` (not `if cfg!()`) so `include_bytes!`/`env!` in the
         // disabled branch are not evaluated when the file/env-var is absent.
-        #[cfg(feature = "codegen_embed")]
+        #[cfg(bun_codegen_embed)]
         {
             return include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-error/index.js"));
         }
-        #[cfg(not(feature = "codegen_embed"))]
+        #[cfg(not(bun_codegen_embed))]
         {
             return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bun-error/index.js").as_bytes();
         }
@@ -70,11 +70,11 @@ impl Fallback {
 
     #[inline]
     pub fn error_css() -> &'static [u8] {
-        #[cfg(feature = "codegen_embed")]
+        #[cfg(bun_codegen_embed)]
         {
             return include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-error/bun-error.css"));
         }
-        #[cfg(not(feature = "codegen_embed"))]
+        #[cfg(not(bun_codegen_embed))]
         {
             return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bun-error/bun-error.css").as_bytes();
         }
@@ -82,11 +82,11 @@ impl Fallback {
 
     #[inline]
     pub fn fallback_decoder_js() -> &'static [u8] {
-        #[cfg(feature = "codegen_embed")]
+        #[cfg(bun_codegen_embed)]
         {
             return include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/fallback-decoder.js"));
         }
-        #[cfg(not(feature = "codegen_embed"))]
+        #[cfg(not(bun_codegen_embed))]
         {
             return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "fallback-decoder.js").as_bytes();
         }
@@ -236,11 +236,11 @@ pub struct Runtime;
 
 impl Runtime {
     pub fn source_code() -> &'static [u8] {
-        #[cfg(feature = "codegen_embed")]
+        #[cfg(bun_codegen_embed)]
         {
             return include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/runtime.out.js"));
         }
-        #[cfg(not(feature = "codegen_embed"))]
+        #[cfg(not(bun_codegen_embed))]
         {
             return bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "runtime.out.js").as_bytes();
         }

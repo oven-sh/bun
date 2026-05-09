@@ -1,4 +1,4 @@
-#![allow(unexpected_cfgs)] // `feature = "tinycc"` / `feature = "codegen_embed"` are wired by build.rs in Phase C; not yet declared cargo features.
+#![allow(unexpected_cfgs)] // `feature = "tinycc"` is a Phase-C placeholder; `bun_codegen_embed` is set via RUSTFLAGS in scripts/build/rust.ts.
 
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt::{self, Write as _};
@@ -2067,12 +2067,12 @@ impl Function {
 
     pub fn ffi_header() -> &'static [u8] {
         // Port of `Function.ffiHeader` (ffi.zig:1517).
-        // `Environment.codegen_embed` is a build-time const, not a Cargo feature —
-        // the previous `cfg!(feature = "codegen_embed")` was always-false and fell
-        // through to the panicking fn-form `runtime_embed_file`.
-        if bun_core::Environment::CODEGEN_EMBED {
+        #[cfg(bun_codegen_embed)]
+        {
             include_bytes!("./FFI.h")
-        } else {
+        }
+        #[cfg(not(bun_codegen_embed))]
+        {
             bun_core::runtime_embed_file!(bun_core::EmbedKind::Src, "runtime/ffi/FFI.h").as_bytes()
         }
     }

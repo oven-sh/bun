@@ -339,6 +339,18 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Zsanitizer=address");
     rustflags.push("--cfg=bun_asan");
   }
+  // `bun_codegen_embed`: embed codegen-output `.js` (`include_bytes!`) instead
+  // of reading them from `BUN_CODEGEN_DIR` at runtime. Mirrors Zig
+  // `BunBuildOptions.shouldEmbedCode() = optimize != .Debug or codegen_embed`.
+  // Debug builds skip it for faster iteration (and the dir always exists
+  // locally); anything else needs it for the binary to be portable across
+  // machines — without it `bun_runtime::bake`/`bun_resolver::node_fallbacks`
+  // panic with `Failed to load '<build-machine-path>/codegen/...'` when a CI
+  // test runner runs an artifact built on a different agent.
+  rustflags.push("--check-cfg=cfg(bun_codegen_embed)");
+  if (!cfg.debug) {
+    rustflags.push("--cfg=bun_codegen_embed");
+  }
   // Force lld for any link rustc itself performs (the cdylib/staticlib deps
   // like `lol_html_c_api`; the `bun_bin` staticlib has no link step). The
   // default `cc` driver picks BFD `/usr/bin/ld`, which doesn't match the

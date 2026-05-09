@@ -29,16 +29,21 @@ pub struct FallbackModule {
 // this is expressed as a macro that expands to a local `fn get()` and yields its pointer.
 macro_rules! create_source_code_getter {
     ($code_path:literal) => {{
-        // TODO(port): `bun.Environment.codegen_embed` — wire the Cargo feature in Phase B.
-        // The feature is not yet declared in Cargo.toml, so the cfg is gated behind
-        // `allow(unexpected_cfgs)` to keep the per-macro-expansion warnings (23×2) quiet.
+        // `$code_path` is relative to `BUN_CODEGEN_DIR` (codegen output, not the
+        // source tree). On embed builds, `include_str!` it at compile time; on
+        // debug builds, defer to `runtime_embed_file!` for fast iteration.
+        // `#[cfg]` (not `if cfg!()`) so the disabled arm's macros don't get
+        // expanded — `include_str!` would hard-fail when the codegen output
+        // dir doesn't exist. `bun_codegen_embed` is set via RUSTFLAGS by
+        // scripts/build/rust.ts; plain `cargo check` doesn't get `--check-cfg`
+        // for it, so suppress the unexpected_cfgs lint here.
         #[allow(unexpected_cfgs)]
         fn get() -> &'static str {
-            #[cfg(feature = "codegen_embed")]
+            #[cfg(bun_codegen_embed)]
             {
-                include_str!($code_path)
+                include_str!(concat!(env!("BUN_CODEGEN_DIR"), "/", $code_path))
             }
-            #[cfg(not(feature = "codegen_embed"))]
+            #[cfg(not(bun_codegen_embed))]
             {
                 ::bun_core::runtime_embed_file!(::bun_core::EmbedDir::Codegen, $code_path)
             }

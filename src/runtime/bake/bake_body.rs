@@ -2,7 +2,7 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
-#![allow(unexpected_cfgs)] // `feature = "codegen_embed"` is wired by build.rs in Phase C; not yet a declared cargo feature.
+#![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
 use bun_alloc::ArenaVecExt as _;
 use core::ptr::NonNull;
@@ -532,13 +532,13 @@ impl Framework {
         // PORT NOTE: split into `#[cfg]` branches so the `include_bytes!` arm
         // is not typechecked when `codegen_embed` is off (the codegen output
         // dir does not exist during a non-embed build).
-        #[cfg(feature = "codegen_embed")]
+        #[cfg(bun_codegen_embed)]
         let built_in_values: &[BuiltInModule] = &[
             BuiltInModule::Code(include_bytes!("./bun-framework-react/client.tsx")),
             BuiltInModule::Code(include_bytes!("./bun-framework-react/server.tsx")),
             BuiltInModule::Code(include_bytes!("./bun-framework-react/ssr.tsx")),
         ];
-        #[cfg(not(feature = "codegen_embed"))]
+        #[cfg(not(bun_codegen_embed))]
         let built_in_values: &[BuiltInModule] = &[
             // Cannot use .import because resolution must happen from the user's POV
             BuiltInModule::Code(
@@ -629,10 +629,12 @@ impl Framework {
             fw.react_fast_refresh = Some(ReactFastRefresh {
                 import_source: b"react-refresh/runtime/index.js",
             });
-            #[cfg(feature = "codegen_embed")]
-            let react_refresh_code =
-                BuiltInModule::Code(include_bytes!("node-fallbacks/react-refresh.js"));
-            #[cfg(not(feature = "codegen_embed"))]
+            #[cfg(bun_codegen_embed)]
+            let react_refresh_code = BuiltInModule::Code(include_bytes!(concat!(
+                env!("BUN_CODEGEN_DIR"),
+                "/node-fallbacks/react-refresh.js"
+            )));
+            #[cfg(not(bun_codegen_embed))]
             let react_refresh_code = BuiltInModule::Code(
                 bun_core::runtime_embed_file!(
                     bun_core::EmbedKind::Codegen,
@@ -1494,21 +1496,21 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // PORT NOTE: split into `#[cfg]` branches so the `include_bytes!` arm is
     // not typechecked when `codegen_embed` is off (the codegen output dir
     // does not exist during a non-embed build).
-    #[cfg(feature = "codegen_embed")]
+    #[cfg(bun_codegen_embed)]
     {
+        // Zig `@embedFile` yields `[:0]const u8`; `include_str!` yields `&str`
+        // with no trailing NUL — append one at compile time via `concat!` so
+        // `ZStr::from_static` (which asserts a NUL terminator) accepts it.
         match side {
-            // TODO(port): @embedFile yields [:0]const u8; include_bytes! lacks NUL
-            Side::Client => hmr_runtime_init(
-                // SAFETY: codegen emits NUL-terminated bytes (verify in Phase B)
-                unsafe { ZStr::from_bytes_unchecked(include_bytes!("bake-codegen/bake.client.js")) },
-            ),
-            Side::Server => hmr_runtime_init(
-                // SAFETY: codegen emits NUL-terminated bytes (verify in Phase B)
-                unsafe { ZStr::from_bytes_unchecked(include_bytes!("bake-codegen/bake.server.js")) },
-            ),
+            Side::Client => hmr_runtime_init(ZStr::from_static(
+                concat!(include_str!(concat!(env!("BUN_CODEGEN_DIR"), "/bake.client.js")), "\0").as_bytes(),
+            )),
+            Side::Server => hmr_runtime_init(ZStr::from_static(
+                concat!(include_str!(concat!(env!("BUN_CODEGEN_DIR"), "/bake.server.js")), "\0").as_bytes(),
+            )),
         }
     }
-    #[cfg(not(feature = "codegen_embed"))]
+    #[cfg(not(bun_codegen_embed))]
     {
         // `runtime_embed_file!` returns `&'static str` (no NUL). The Zig
         // `runtimeEmbedFile` (bun.zig:2938) returns `[:0]const u8` from a

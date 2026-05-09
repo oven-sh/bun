@@ -756,11 +756,18 @@ impl WindowsNamedPipe {
                 return false;
             }
             self.pipe.as_mut().unwrap().unref();
-            self.writer.set_parent(self);
-            // TODO(port): start_with_pipe takes the pipe pointer; Box<uv::Pipe> must yield a stable *mut uv::Pipe.
-            let start_pipe_result = self
-                .writer
-                .start_with_pipe(self.pipe.as_mut().unwrap().as_mut() as *mut uv::Pipe);
+            // raw self-ptr first to dodge the &mut self.writer / &mut *self overlap
+            // (Zig: `this.writer.setParent(this)` — `this` is already `*WindowsNamedPipe`).
+            let this: *mut Self = core::ptr::from_mut(self);
+            self.writer.set_parent(this);
+            // SAFETY: FFI ownership hand-off — `pipe` is the `Box<uv::Pipe>`-backed
+            // allocation in `self.pipe`; `start_with_pipe` adopts it as the writer's
+            // `Source::Pipe` (Zig: `this.writer.startWithPipe(this.pipe.?)`). The
+            // `self.pipe` slot continues to alias the same heap object for
+            // `pause_stream`/`get_name`; `on_pipe_close` nulls it before the writer's
+            // `close_and_destroy` frees, so no double-free.
+            let pipe_ptr: *mut uv::Pipe = self.pipe.as_mut().unwrap().as_mut();
+            let start_pipe_result = unsafe { self.writer.start_with_pipe(pipe_ptr) };
             if let bun_sys::Result::Err(err) = start_pipe_result {
                 self.on_error(err);
                 return false;

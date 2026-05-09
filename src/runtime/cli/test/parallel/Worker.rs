@@ -234,9 +234,10 @@ impl Worker {
                 unsafe { this.err.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
                     .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
-            // SAFETY: `ipc_pipe` was Box-allocated via heap::into_raw above and
-            // initialised by spawn_process; ownership transfers to the Channel.
-            if !this.ipc.adopt_pipe(coord.vm, unsafe { bun_core::heap::take(ipc_pipe) }) {
+            // `ipc_pipe` was Box-allocated via heap::into_raw above and
+            // initialised by spawn_process; ownership of the *mut Pipe transfers
+            // to the Channel on success (it does the Box::from_raw internally).
+            if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
                 return Err(bun_core::err!("ChannelAdoptFailed"));
             }
         }

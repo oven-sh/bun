@@ -273,12 +273,9 @@ fn make_kevent(ident: usize, filter: i16, flags: u16, fflags: u32, udata: *mut c
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const EV_EOF: u16 = 0x8000;
 
-// PORT NOTE: Zig `kqueue_or_epoll` is a comptime string literal spliced via `++`; concat! only
-// accepts literal tokens, so expose it as a macro that expands to the literal.
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
-macro_rules! kqueue_or_epoll { () => { "kevent" } }
-#[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-macro_rules! kqueue_or_epoll { () => { "epoll" } }
+// PORT NOTE: Zig's `kqueue_or_epoll` comptime literal was only spliced into a
+// `panicLog` that the Rust port routes through `bun_output::panic!` (which
+// already names the syscall via `Tag`). No remaining call site → dropped.
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).

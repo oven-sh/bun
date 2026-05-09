@@ -2738,17 +2738,31 @@ pub const H2FrameParser = struct {
             return stream;
         }
 
-        // Stale stream: an id at or below the high-water mark that isn't in the
-        // map was closed and removed. RFC 7540 Section 5.1 allows frames to
-        // arrive for a short window after the stream closes (peer hasn't
-        // processed our RST/END_STREAM yet). Signal to callers by returning
-        // null; frame handlers below distinguish "stream-level stale" from
-        // "connection-level (id=0)" using the streamIdentifier itself.
-        if (streamIdentifier <= this.lastStreamID) {
+        // Stale-stream detection applies only to the client side. Client
+        // stream ids are allocated monotonically via getNextStream() (and the
+        // even-id push-promise space is updated the same way), so any id
+        // <= lastStreamID that isn't in the map was closed and removed.
+        // RFC 7540 §5.1 permits late frames from the peer during the brief
+        // window before it sees our RST/END_STREAM. Signal to callers by
+        // returning null; frame handlers below distinguish "stream-level
+        // stale" from "connection-level (id=0)" using streamIdentifier.
+        //
+        // On the server, the peer chooses ids. A new id <= lastStreamID may
+        // be a stale removed stream OR an out-of-order stream from a
+        // misbehaving client. We can't distinguish without tracking every
+        // removed id, so keep the pre-PR "create a fresh stream" behavior
+        // and avoid rejecting out-of-order clients more strictly than before.
+        // The memory leak this PR targets (#30415) is client-side only
+        // (AWS SDK pooled `http2.connect()` sessions) — server-side map
+        // growth still bounds to the total lifetime request count, which is
+        // the prior behavior.
+        if (!this.isServer and streamIdentifier <= this.lastStreamID) {
             return null;
         }
 
-        this.lastStreamID = streamIdentifier;
+        if (streamIdentifier > this.lastStreamID) {
+            this.lastStreamID = streamIdentifier;
+        }
 
         // new stream open
         // Per RFC 7540 Section 6.5.1: The sender of SETTINGS can only rely on the

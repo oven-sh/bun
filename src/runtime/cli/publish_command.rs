@@ -295,8 +295,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         #[cfg(not(windows))]
                         let filename_utf8: Vec<u8> = filename.to_vec();
                         #[cfg(windows)]
-                        let filename_utf8: Vec<u8> =
-                            strings::to_utf8_alloc(filename).map_err(|_| AllocError)?;
+                        let filename_utf8: Vec<u8> = strings::to_utf8_alloc(filename);
                         maybe_readme = Some(ReadmeInfo {
                             filename: filename_utf8,
                             contents: bytes.into_vec(),

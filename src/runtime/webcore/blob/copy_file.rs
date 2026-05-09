@@ -1024,15 +1024,20 @@ impl ReadWriteLoop {
         // we've finished writing all the previous chunks.
         this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
 
-        let rc = libuv::uv_fs_read(
-            loop_,
-            &mut this.io_request,
-            self.source_fd.uv(),
-            core::ptr::from_mut(&mut self.uv_buf),
-            1,
-            -1,
-            Some(on_read),
-        );
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is a zeroed/cleaned
+        // `fs_t` owned by `this`, `uv_buf` points into `read_buf`'s capacity, and
+        // `on_read` is a valid `uv_fs_cb`.
+        let rc = unsafe {
+            libuv::uv_fs_read(
+                loop_,
+                &mut this.io_request,
+                self.source_fd.uv(),
+                core::ptr::from_mut(&mut self.uv_buf),
+                1,
+                -1,
+                Some(on_read),
+            )
+        };
 
         if let Some(err) = rc.to_error(bun_sys::Tag::read) {
             return bun_sys::Result::Err(err);

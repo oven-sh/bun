@@ -3280,10 +3280,10 @@ impl BlobExt for Blob {
             PathOrFileDescriptor::Path(_) => {
                 #[cfg(windows)]
                 if path_or_fd.path().slice() == b"/dev/null" {
-                    // Release the caller-owned path before overwriting (Zig:
-                    // `path_or_fd.deinit()`); the assignment also runs
-                    // PathLike's Drop, but the explicit call keeps Zig parity.
-                    path_or_fd.deinit();
+                    // Zig: `path_or_fd.deinit()` then re-assign. In Rust the
+                    // assignment below drops the old `PathLike` (releasing the
+                    // caller-owned path), so the explicit deinit is folded into
+                    // the `*path_or_fd = …` write.
                     *path_or_fd = PathOrFileDescriptor::Path(
                         crate::webcore::node_types::PathLike::String(
                             // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.

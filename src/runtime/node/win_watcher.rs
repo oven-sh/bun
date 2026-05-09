@@ -259,11 +259,16 @@ impl PathWatcher {
                 let ctx: *mut FSWatcher = self.handlers.keys()[i].cast::<FSWatcher>();
                 // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
                 let encoding = unsafe { (*ctx).encoding };
+                // Zig builds the tagged payload `{ .string | .bytes_to_free }` then calls
+                // `event_type.toEvent(..)` — `EventPathString` on Windows is `StringOrBytesToDecode`.
                 let payload = match encoding {
-                    crate::node::Encoding::Utf8 => Event::path_string(BunString::clone_utf8(path)),
-                    _ => Event::path_bytes_to_free(ZStr::from_bytes(path).into_boxed()),
-                    // TODO(port): exact `Event`/`EventType::to_event` shape — Zig builds a tagged
-                    // payload `{ .string | .bytes_to_free }` then calls `event_type.toEvent(...)`.
+                    crate::node::Encoding::Utf8 => {
+                        StringOrBytesToDecode::String(BunString::clone_utf8(path))
+                    }
+                    // Zig: `bun.default_allocator.dupeZ(u8, path)` — owned copy; the trailing NUL is
+                    // a sentinel only (slice `.len` excludes it), so `Box<[u8]>::from(path)` is the
+                    // semantic equivalent for the Rust `BytesToFree` payload.
+                    _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
                 };
                 on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
                 #[cfg(debug_assertions)]

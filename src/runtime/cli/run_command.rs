@@ -4131,7 +4131,7 @@ impl BunXFastPath {
                 // runs if `try_startup_from_bun_js` is reached. Close it
                 // explicitly so the slow-path fallback doesn't inherit a
                 // dangling open HANDLE for the process lifetime.
-                Fd::from_native(handle).close();
+                Fd::from_native(handle as bun_sys::NativeFd).close();
                 return;
             }
         };

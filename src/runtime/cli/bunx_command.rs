@@ -1126,7 +1126,13 @@ impl BunxCommand {
 
             #[cfg(windows)]
             windows: proc_sync::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(&this_transpiler.env, None)),
+                loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+                    // SAFETY: `this_transpiler.env` is the process-lifetime `*mut Loader`
+                    // singleton populated during transpiler init; reborrowed `'static` here
+                    // for the Windows MiniEventLoop singleton (Zig: `initGlobal(this_transpiler.env, null)`).
+                    Some(unsafe { &mut *this_transpiler.env }),
+                    None,
+                )),
                 ..Default::default()
             },
             ..Default::default()

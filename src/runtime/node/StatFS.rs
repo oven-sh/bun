@@ -1,23 +1,14 @@
 //! StatFS and BigIntStatFS classes from node:fs
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-// TODO(b2-blocked): swap to `bun_sys::StatFS` once exported. On POSIX this is
-// `libc::statfs`; on Windows it's a uv-shaped struct populated from
-// `GetDiskFreeSpace`.
+// On POSIX this is `libc::statfs`; on Windows it's `uv_statfs_t` (the value
+// `sys_uv::statfs` returns / `uv_fs_statfs` writes into `req.ptr`). Field
+// names match (`f_type`/`f_bsize`/…); widths differ (u64 vs platform-specific)
+// but `init` does an explicit `as i64`/`as $Int` truncate so either shape works.
 #[cfg(unix)]
 pub type RawStatFS = libc::statfs;
 #[cfg(not(unix))]
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct RawStatFS {
-    pub f_type: i64,
-    pub f_bsize: i64,
-    pub f_blocks: i64,
-    pub f_bfree: i64,
-    pub f_bavail: i64,
-    pub f_files: i64,
-    pub f_ffree: i64,
-}
+pub type RawStatFS = bun_sys::StatFS;
 
 // PORT NOTE: Zig `pub fn StatFSType(comptime big: bool) type` picks the field
 // integer type via `const Int = if (big) i64 else i32;`. Stable Rust const

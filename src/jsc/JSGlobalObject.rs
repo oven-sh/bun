@@ -1514,10 +1514,34 @@ pub extern "C" fn Zig__GlobalObject__resolve(
     // SAFETY: C++ passes valid non-null pointers. `BunString` is `Copy`, so
     // `*specifier` / `*source` is the bitwise load Zig spells as `specifier.*`
     // — no refcount bump (the caller still owns the ref).
-    let (res, global, specifier, source, query) =
-        unsafe { (&mut *res, &*global, *specifier, *source, &mut *query) };
-    if VirtualMachine::resolve(res, global, specifier, source, Some(query), true).is_err() {
-        debug_assert!(!res.success);
+    let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
+    // PORT NOTE: route through the same panic→JS-exception barrier the
+    // codegen-emitted thunks use (see host_fn.rs). Unwinding across
+    // `extern "C"` is UB — on Windows the abort shim fires
+    // `panic_cannot_unwind` and tears down the process. C++
+    // (`moduleLoaderImportModule`) checks `scope.exception()` immediately
+    // after this call, so a panic-turned-exception is handled identically
+    // to a thrown `ResolveMessage`.
+    match crate::host_fn::catch_panic(|| {
+        // SAFETY: C++ passes valid non-null pointers; raw `res`/`query` are
+        // `Copy` so they remain valid for the `Err` arm below.
+        let (res, query) = unsafe { (&mut *res, &mut *query) };
+        VirtualMachine::resolve(res, global, specifier, source, Some(query), true)
+    }) {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            // SAFETY: C++ passes a valid non-null pointer.
+            debug_assert!(!unsafe { (*res).success });
+        }
+        Err(payload) => {
+            crate::host_fn::throw_panic_as_js_error(global, payload);
+            // SAFETY: C++ passes a valid non-null pointer. Ensure the
+            // stack-allocated `ErrorableString` on the C++ side isn't left
+            // uninitialized when the panic fired before `*res` was written.
+            unsafe {
+                *res = ErrorableString::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED);
+            }
+        }
     }
 }
 

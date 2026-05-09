@@ -1589,7 +1589,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     global_this,
                     global_this.create_error_instance(format_args!("Failed to start s3 stream")),
                 );
-            drop(body);
+            // PORT NOTE: Zig fetch.zig calls `body.detach()` here. HTTPRequestBody has no
+            // Drop impl, so a bare `drop(body)` would leak the S3 Blob.Store ref.
+            body.detach();
             return Ok(rejected_value);
         }
     }

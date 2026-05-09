@@ -286,6 +286,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   const ctx: Ctx = { n, cfg, sources, o, dirStamp };
 
   emitBunError(ctx);
+  emitStringMaps(ctx);
   emitFallbackDecoder(ctx);
   emitRuntimeJs(ctx);
   emitNodeFallbacks(ctx);
@@ -526,6 +527,34 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(rrOut);
   o.rustInputs.push(rrOut);
+}
+
+/**
+ * `*.string-map.ts` → length-bucketed lookup fns (`generate-string-map.ts`).
+ * One ninja edge per source file so editing one map doesn't invalidate them
+ * all. Output is `include!`d by Rust, so it goes into `rustInputs` to order
+ * the cargo edge after this.
+ */
+function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-string-map.ts");
+  for (const src of sources.stringMaps) {
+    // `src/js_parser/defines_table.string-map.ts` → `defines_table_generated.rs`
+    const stem = basename(src).replace(/\.string-map\.ts$/, "");
+    const out = resolve(cfg.codegenDir, `${stem}_generated.rs`);
+    n.build({
+      outputs: [out],
+      rule: "codegen",
+      inputs: [script, src],
+      orderOnlyInputs: [dirStamp],
+      vars: {
+        cwd: cfg.cwd,
+        desc: `string-map ${stem}`,
+        args: shJoin(cfg, ["run", script, src, out]),
+      },
+    });
+    o.all.push(out);
+    o.rustInputs.push(out);
+  }
 }
 
 function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {

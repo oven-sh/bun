@@ -59,10 +59,14 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
             return None;
         }
         // rc == 0 → fall through to `sys.getErrno(rc)` in Zig, which on
-        // Windows reads CRT `_errno()`.
+        // Windows reads CRT `_errno()`. Zig then matches `.SUCCESS => null`,
+        // so a zero errno must still yield `None`.
         // SAFETY: `errno_location()` (`_errno()` on Windows) returns a valid
         // pointer to thread-local errno.
         let errno_val = unsafe { *bun_sys::c::errno_location() };
+        if errno_val == 0 {
+            return None;
+        }
         return Some(bun_sys::Error::from_code_int(errno_val, tag));
     }
     #[cfg(not(windows))]
@@ -1600,10 +1604,10 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         }
 
         if USE_WSA {
-            // Zig: `bun.windows.WSAGetLastError()` returns `?SystemErrno`
-            // (`SUCCESS` filtered out by `init`); map to `E` at the call site.
+            // Zig: `bun.windows.WSAGetLastError()` returns `?SystemErrno`; the
+            // Rust wrapper (src/sys/windows/mod.rs) already maps `SystemErrno`
+            // → `E` for us, so `e` is `bun_sys::E` here.
             if let Some(e) = bun_sys::windows::WSAGetLastError() {
-                let e = e.to_e();
                 if e != bun_sys::E::SUCCESS {
                     // SAFETY: WSASetLastError is a thread-local errno write.
                     unsafe { bun_sys::windows::ws2_32::WSASetLastError(0) };

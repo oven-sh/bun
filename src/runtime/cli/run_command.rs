@@ -1968,7 +1968,7 @@ impl RunCommand {
                             }
 
                             if sys::windows::CreateHardLinkW(
-                                file_slice.as_ptr(),
+                                target_path_buffer.as_ptr(),
                                 image_path.as_ptr(),
                                 None,
                             ) == 0

@@ -7151,8 +7151,17 @@ impl NodeFS {
             if mode.is_force_clone() {
                 // Windows has no copy-on-write `clonefile` equivalent surfaced
                 // here; `COPYFILE_FICLONE_FORCE` must fail rather than silently
-                // fall back to a non-CoW `CopyFileW` (node_fs.zig:6831-6834).
-                return Maybe::<ret::CopyFile>::todo();
+                // fall back to a non-CoW `CopyFileW`. NOTE: the Zig Windows
+                // block (node_fs.zig:6836+) has no such guard and falls through
+                // to `CopyFileW`; this is an intentional divergence to match
+                // Node.js' documented FICLONE_FORCE contract and the
+                // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
+                // than `Maybe::todo()` so debug builds do not panic.
+                return Err(sys::Error {
+                    errno: SystemErrno::ENOSYS as _,
+                    syscall: sys::Tag::copyfile,
+                    ..Default::default()
+                });
             }
             // Spec (node_fs.zig:6837-6838) precomputes both ENOENT fallbacks once,
             // before any branch. Re-deriving them inline inside `unwrap_or_else`

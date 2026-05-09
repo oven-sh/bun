@@ -3471,8 +3471,10 @@ impl<'a> BundleV2<'a> {
         // SAFETY: `LinkerContext::link` takes `bundle` as a raw `*mut BundleV2` and only
         // touches fields disjoint from `this.linker` (`graph`, `transpiler`,
         // `dynamic_import_entry_points`, scalar reads) via `addr_of_mut!`/place
-        // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
-        // overlapping `&mut`. (Zig stored all as raw ptrs — bundle_v2.zig:1939.)
+        // projection, so the `&mut .linker` receiver and `*bundle_ptr` never produce
+        // overlapping `&mut`. All projections go through the single `bundle_ptr` so
+        // no second `Box::deref_mut` retag occurs while `ep`/`scbs` are live (Stacked
+        // Borrows). (Zig stored all as raw ptrs — bundle_v2.zig:1939.)
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &raw mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
@@ -3482,7 +3484,7 @@ impl<'a> BundleV2<'a> {
             // is layout-identical.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-            this.linker.link(
+            (*bundle_ptr).linker.link(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
@@ -3632,14 +3634,15 @@ impl<'a> BundleV2<'a> {
 
         // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
         // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
-        // from `this.linker`.
+        // from `.linker`. Project `.linker` through `bundle_ptr` (not `this`) so
+        // no second `Box::deref_mut` retag invalidates `ep`/`scbs`.
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &raw mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-            this.linker.link(
+            (*bundle_ptr).linker.link(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,

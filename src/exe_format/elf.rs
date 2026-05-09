@@ -12,6 +12,8 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use bun_core::env_var;
 use bun_string::{slice_to_nul, strings};
 
+use crate::{align_up, read_struct, write_struct};
+
 bun_core::declare_scope!(elf, visible);
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
@@ -527,14 +529,6 @@ fn read_ehdr(data: &[u8]) -> Elf64_Ehdr {
     read_struct(&data[..size_of::<Elf64_Ehdr>()])
 }
 
-fn align_up(value: u64, alignment: u64) -> u64 {
-    if alignment == 0 {
-        return value;
-    }
-    let mask = alignment - 1;
-    (value + mask) & !mask
-}
-
 /// True iff the host bun is running on is managed by Nix or Guix — in which
 /// case the "generic" FHS linker path `/lib64/ld-linux-x86-64.so.2` is a stub
 /// that rejects generic binaries, and rewriting PT_INTERP to it would break
@@ -673,8 +667,7 @@ const EI_DATA: usize = 5;
 const ELFCLASS64: u8 = 2;
 const ELFDATA2LSB: u8 = 1;
 
-const PT_LOAD: u32 = 1;
-const PT_INTERP: u32 = 3;
+use bun_sys::elf::{PT_INTERP, PT_LOAD};
 const PF_W: u32 = 2;
 const SHT_NOBITS: u32 = 8;
 
@@ -744,24 +737,7 @@ pub struct Elf64_Shdr {
     pub sh_entsize: u64,
 }
 
-// --- byte helpers (Zig std.mem.bytesAsValue / asBytes / writeInt) ---
-
-#[inline]
-fn read_struct<T: Copy>(bytes: &[u8]) -> T {
-    debug_assert!(bytes.len() >= size_of::<T>());
-    // SAFETY: T is #[repr(C)] POD (Elf64_* headers); all bit patterns are
-    // valid; bytes.len() >= size_of::<T>() asserted above. read_unaligned
-    // tolerates arbitrary alignment of the source slice.
-    unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<T>()) }
-}
-
-#[inline]
-fn write_struct<T: Copy>(bytes: &mut [u8], value: &T) {
-    debug_assert!(bytes.len() >= size_of::<T>());
-    // SAFETY: T is #[repr(C)] POD; bytes.len() >= size_of::<T>() asserted
-    // above; write_unaligned tolerates arbitrary alignment of dest.
-    unsafe { core::ptr::write_unaligned(bytes.as_mut_ptr().cast::<T>(), *value) }
-}
+// --- byte helpers (Zig std.mem.writeInt) ---
 
 #[inline]
 fn write_u64_le(bytes: &mut [u8], value: u64) {

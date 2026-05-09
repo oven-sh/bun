@@ -25,46 +25,10 @@ pub mod posix {
 
     /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
     /// Values are POSIX-standard octal; identical across linux/darwin/freebsd.
-    pub mod S {
-        use super::mode_t;
-
-        pub const IFMT:   mode_t = 0o170000;
-        pub const IFSOCK: mode_t = 0o140000;
-        pub const IFLNK:  mode_t = 0o120000;
-        pub const IFREG:  mode_t = 0o100000;
-        pub const IFBLK:  mode_t = 0o060000;
-        pub const IFDIR:  mode_t = 0o040000;
-        pub const IFCHR:  mode_t = 0o020000;
-        pub const IFIFO:  mode_t = 0o010000;
-        pub const IFWHT:  mode_t = 0o160000; // Darwin whiteout
-
-        pub const ISUID: mode_t = 0o4000;
-        pub const ISGID: mode_t = 0o2000;
-        pub const ISVTX: mode_t = 0o1000;
-        pub const IRWXU: mode_t = 0o0700;
-        pub const IRUSR: mode_t = 0o0400;
-        pub const IWUSR: mode_t = 0o0200;
-        pub const IXUSR: mode_t = 0o0100;
-        pub const IRWXG: mode_t = 0o0070;
-        pub const IRGRP: mode_t = 0o0040;
-        pub const IWGRP: mode_t = 0o0020;
-        pub const IXGRP: mode_t = 0o0010;
-        pub const IRWXO: mode_t = 0o0007;
-        pub const IROTH: mode_t = 0o0004;
-        pub const IWOTH: mode_t = 0o0002;
-        pub const IXOTH: mode_t = 0o0001;
-
-        // Predicates take `u32` (== `bun_core::Mode`) so cross-platform call
-        // sites that normalize `st_mode as u32` compile uniformly. Darwin's
-        // kernel `mode_t` is u16; the upper 16 bits are always zero.
-        #[inline] pub const fn ISREG(m: u32)  -> bool { m & IFMT as u32 == IFREG as u32 }
-        #[inline] pub const fn ISDIR(m: u32)  -> bool { m & IFMT as u32 == IFDIR as u32 }
-        #[inline] pub const fn ISCHR(m: u32)  -> bool { m & IFMT as u32 == IFCHR as u32 }
-        #[inline] pub const fn ISBLK(m: u32)  -> bool { m & IFMT as u32 == IFBLK as u32 }
-        #[inline] pub const fn ISFIFO(m: u32) -> bool { m & IFMT as u32 == IFIFO as u32 }
-        #[inline] pub const fn ISLNK(m: u32)  -> bool { m & IFMT as u32 == IFLNK as u32 }
-        #[inline] pub const fn ISSOCK(m: u32) -> bool { m & IFMT as u32 == IFSOCK as u32 }
-    }
+    /// Constants are typed `u32` (== `bun_core::Mode`); Darwin's kernel
+    /// `mode_t` is u16 so the upper 16 bits are always zero — every call site
+    /// already casts (`as i32`/`as u32`/`as _`) so the wider type is harmless.
+    pub use bun_core::S;
 
     /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
     /// Canonical impl lives in `bun_core::ffi` (single target_os→symbol ladder).
@@ -270,11 +234,6 @@ pub mod uv_e {
 
 use super::GetErrno;
 
-#[inline]
-pub fn get_errno<T: GetErrno>(rc: T) -> E {
-    rc.get_errno()
-}
-
 // On Darwin every libc wrapper returns a signed int sentinel (-1) and sets
 // thread-local errno; there is no Linux-style raw-syscall `usize` errno-in-retval
 // convention. We still impl `usize` for callers that uniformly cast.
@@ -292,25 +251,6 @@ impl GetErrno for usize {
     }
 }
 
-macro_rules! impl_get_errno_libc {
-    ($($t:ty),+ $(,)?) => {$(
-        impl GetErrno for $t {
-            #[inline]
-            fn get_errno(self) -> E {
-                // Zig `getErrno` compares with @bitCast semantics: an unsigned
-                // sentinel of all-ones (e.g. 0xFFFF_FFFF_u32) must read errno.
-                // `(-1i64 as $t as i64)` yields -1 for signed $t and the
-                // zero-extended all-ones value for unsigned $t.
-                if self as i64 == (-1i64 as $t as i64) {
-                    // errno is always a valid E discriminant on Darwin
-                    E::from_raw(crate::posix::errno() as u16)
-                } else {
-                    E::SUCCESS
-                }
-            }
-        }
-    )+};
-}
 impl_get_errno_libc!(i32, u32, isize, i64);
 
 // ported from: src/errno/darwin_errno.zig

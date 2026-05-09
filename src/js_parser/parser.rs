@@ -29,170 +29,14 @@ pub use bun_paths::fs;
 pub mod options {
     use std::borrow::Cow;
     pub use bun_options_types::*;
-    // TODO(b2-blocked): bun_options_types::{JSX, ServerComponents, OutputFormat,
+    // TODO(b2-blocked): bun_options_types::{ServerComponents, OutputFormat,
     // AllowUnresolved, Format, Framework} — missing from lower-tier surface.
     pub use bun_options_types::BundleEnums::ModuleType;
+    // D042: canonical `JSX::{Pragma, Runtime, ImportSource, Defaults, ...}`
+    // lives in `bun_options_types::jsx`. The glob above already brings in
+    // `jsx`/`JSX`; explicit re-export keeps the path stable for callers.
     #[allow(non_snake_case)]
-    pub mod JSX {
-        use bun_wyhash::Wyhash;
-
-        /// Port of `bundler/options.zig` `JSX.Pragma`.
-        ///
-        /// Zig: `[]const string` for `factory`/`fragment` — either the static
-        /// `Defaults.Factory` slice or a heap slice from
-        /// `memberListToComponentsIfDifferent`. Modeled here as
-        /// `Box<[Box<[u8]>]>` (owned) so the alloc path doesn't leak; mirrors
-        /// the canonical port in `bundler/options.rs::jsx::Pragma`.
-        // TODO(b2-blocked): collapse with bun_bundler::options_impl::jsx::Pragma
-        // once bun_options_types grows the JSX surface.
-        #[derive(Clone)]
-        pub struct Pragma {
-            // these need to be arrays
-            pub factory: Box<[Box<[u8]>]>,
-            pub fragment: Box<[Box<[u8]>]>,
-            pub runtime: Runtime,
-            pub import_source: ImportSource,
-
-            /// Facilitates automatic JSX importing
-            /// Set on a per file basis like this:
-            /// /** @jsxImportSource @emotion/core */
-            pub classic_import_source: Box<[u8]>,
-            pub package_name: Box<[u8]>,
-
-            /// Configuration Priority:
-            /// - `--define=process.env.NODE_ENV=...`
-            /// - `NODE_ENV=...`
-            /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
-            pub development: bool,
-            pub parse: bool,
-            pub side_effects: bool,
-        }
-        #[derive(Clone, Copy, Default, PartialEq, Eq)]
-        pub enum Runtime { #[default] Automatic, Classic, Solid }
-        #[derive(Clone)]
-        pub struct ImportSource {
-            pub development: Box<[u8]>,
-            pub production: Box<[u8]>,
-        }
-        impl Default for ImportSource {
-            fn default() -> Self {
-                ImportSource {
-                    development: Box::from(Defaults::IMPORT_SOURCE_DEV),
-                    production: Box::from(Defaults::IMPORT_SOURCE),
-                }
-            }
-        }
-        impl Default for Pragma {
-            fn default() -> Self {
-                Pragma {
-                    factory: Defaults::FACTORY.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-                    fragment: Defaults::FRAGMENT.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-                    runtime: Runtime::Automatic,
-                    import_source: ImportSource::default(),
-                    classic_import_source: Box::from(b"react".as_slice()),
-                    package_name: Box::from(b"react".as_slice()),
-                    development: true,
-                    parse: true,
-                    side_effects: false,
-                }
-            }
-        }
-        impl Pragma {
-            pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
-                for factory in self.factory.iter() { hasher.update(factory); }
-                for fragment in self.fragment.iter() { hasher.update(fragment); }
-                hasher.update(&self.import_source.development);
-                hasher.update(&self.import_source.production);
-                hasher.update(&self.classic_import_source);
-                hasher.update(&self.package_name);
-            }
-
-            pub fn import_source(&self) -> &[u8] {
-                if self.development { &self.import_source.development } else { &self.import_source.production }
-            }
-
-            pub fn is_react_like(&self) -> bool {
-                &*self.package_name == b"react"
-                    || &*self.package_name == b"@emotion/jsx"
-                    || &*self.package_name == b"@emotion/react"
-            }
-
-            pub fn set_production(&mut self, is_production: bool) {
-                self.development = !is_production;
-            }
-
-            pub fn set_import_source<A>(&mut self, _arena: A) {
-                // Zig: strings.concatIfNeeded — re-derive {dev,prod} from package_name.
-                // The `arena` arg is kept for call-site shape parity with Zig;
-                // owned `Box<[u8]>` makes it unused here.
-                if &*self.package_name == b"react" {
-                    self.import_source = ImportSource::default();
-                    return;
-                }
-                let mut dev = Vec::with_capacity(self.package_name.len() + b"/jsx-dev-runtime".len());
-                dev.extend_from_slice(&self.package_name);
-                dev.extend_from_slice(b"/jsx-dev-runtime");
-                let mut prod = Vec::with_capacity(self.package_name.len() + b"/jsx-runtime".len());
-                prod.extend_from_slice(&self.package_name);
-                prod.extend_from_slice(b"/jsx-runtime");
-                self.import_source.development = dev.into_boxed_slice();
-                self.import_source.production = prod.into_boxed_slice();
-            }
-
-            // "React.createElement" => ["React", "createElement"]
-            // ...unless new is "React.createElement" and original is ["React", "createElement"]
-            // saves an allocation for the majority case
-            pub fn member_list_to_components_if_different<A>(
-                _arena: A,
-                original: Box<[Box<[u8]>]>,
-                new: &[u8],
-            ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
-                let mut needs_alloc = false;
-                let mut current_i: usize = 0;
-                for str_ in new.split(|&c| c == b'.') {
-                    if str_.is_empty() { continue; }
-                    if current_i >= original.len() || &*original[current_i] != str_ {
-                        needs_alloc = true;
-                        break;
-                    }
-                    current_i += 1;
-                }
-                if !needs_alloc {
-                    return Ok(original);
-                }
-                let out: Vec<Box<[u8]>> = new
-                    .split(|&c| c == b'.')
-                    .filter(|s| !s.is_empty())
-                    .map(Box::<[u8]>::from)
-                    .collect();
-                Ok(out.into_boxed_slice())
-            }
-        }
-        #[allow(non_snake_case)]
-        pub mod Defaults {
-            pub const FACTORY: &[&[u8]] = &[b"React", b"createElement"];
-            pub const FRAGMENT: &[&[u8]] = &[b"React", b"Fragment"];
-            pub const IMPORT_SOURCE_DEV: &[u8] = b"react/jsx-dev-runtime";
-            pub const IMPORT_SOURCE: &[u8] = b"react/jsx-runtime";
-            pub const JSX_FUNCTION: &[u8] = b"jsx";
-            pub const JSX_STATIC_FUNCTION: &[u8] = b"jsxs";
-            pub const JSX_FUNCTION_DEV: &[u8] = b"jsxDEV";
-        }
-        /// Port of `bundler/options.zig` `JSX::RuntimeDevelopmentPair`.
-        #[derive(Clone, Copy)]
-        pub struct RuntimeDevelopmentPair {
-            pub runtime: Runtime,
-            pub development: Option<bool>,
-        }
-        /// Port of `bundler/options.zig` `JSX.RuntimeMap`.
-        pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::phf_map! {
-            b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-            b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-            b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-            b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-            b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-        };
-    }
+    pub use bun_options_types::jsx as JSX;
     pub use JSX::Runtime as JSXRuntime;
     /// Zig: `bundler/options.zig` `ServerComponents` — same enum surface as
     /// `Runtime.Features.ServerComponentsMode`. Aliased so call sites that
@@ -1424,88 +1268,16 @@ impl<'a> JSXTag<'a> {
 /// collide with a user's name. This is the easiest way to do so
 //
 // Zig: `comptime { name ++ "_" ++ truncatedHash32(std.hash.Wyhash.hash(0, name)) }`.
-// `bun_wyhash::Wyhash::hash` and `bun_core::fmt::truncated_hash32` are not `const fn`,
-// so we keep a self-contained const-fn re-implementation here so the suffix is
-// computed at compile time and matches the Zig output byte-for-byte.
+// `bun_core::fmt::truncated_hash32` is not `const fn`, so a const-fn copy of
+// the suffix encoder lives here; the const-fn Wyhash one-shot now lives in
+// `bun_wyhash::hash_const` next to the runtime impl it must stay in lock-step
+// with.
 #[doc(hidden)]
 pub mod __generated_symbol_hash {
-    // ── std.hash.Wyhash (final4 variant), seed 0 — const-fn port of
-    //    `bun_wyhash::Wyhash::hash`. Keep in lock-step with src/wyhash/lib.rs. ──
-    const SECRET: [u64; 4] = [
-        0xa0761d6478bd642f,
-        0xe7037ed1a0b428db,
-        0x8ebc6af09c88c6e3,
-        0x589965cc75374cc3,
-    ];
-
-    #[inline]
-    const fn mix(a: u64, b: u64) -> u64 {
-        let x = (a as u128).wrapping_mul(b as u128);
-        (x as u64) ^ ((x >> 64) as u64)
-    }
-
-    #[inline]
-    const fn read4(d: &[u8], o: usize) -> u64 {
-        u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as u64
-    }
-
-    #[inline]
-    const fn read8(d: &[u8], o: usize) -> u64 {
-        u64::from_le_bytes([
-            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
-        ])
-    }
-
     /// `std.hash.Wyhash.hash(0, input)`.
+    #[inline]
     pub const fn wyhash0(input: &[u8]) -> u64 {
-        let s0 = mix(SECRET[0], SECRET[1]); // seed=0 ⇒ 0 ^ mix(0 ^ S[0], S[1])
-        let mut state = [s0, s0, s0];
-        let len = input.len();
-        let a: u64;
-        let b: u64;
-
-        if len <= 16 {
-            // small_key
-            if len >= 4 {
-                let end = len - 4;
-                let quarter = (len >> 3) << 2;
-                a = (read4(input, 0) << 32) | read4(input, quarter);
-                b = (read4(input, end) << 32) | read4(input, end - quarter);
-            } else if len > 0 {
-                a = ((input[0] as u64) << 16)
-                    | ((input[len >> 1] as u64) << 8)
-                    | (input[len - 1] as u64);
-                b = 0;
-            } else {
-                a = 0;
-                b = 0;
-            }
-        } else {
-            let mut i: usize = 0;
-            if len >= 48 {
-                while i + 48 < len {
-                    // round
-                    state[0] = mix(read8(input, i) ^ SECRET[1], read8(input, i + 8) ^ state[0]);
-                    state[1] = mix(read8(input, i + 16) ^ SECRET[2], read8(input, i + 24) ^ state[1]);
-                    state[2] = mix(read8(input, i + 32) ^ SECRET[3], read8(input, i + 40) ^ state[2]);
-                    i += 48;
-                }
-                // final0
-                state[0] ^= state[1] ^ state[2];
-            }
-            // final1
-            let mut j = i;
-            while j + 16 < len {
-                state[0] = mix(read8(input, j) ^ SECRET[1], read8(input, j + 8) ^ state[0]);
-                j += 16;
-            }
-            a = read8(input, len - 16);
-            b = read8(input, len - 8);
-        }
-
-        // final2 (mum_ inlined)
-        let x = ((a ^ SECRET[1]) as u128).wrapping_mul((b ^ state[0]) as u128);
-        mix((x as u64) ^ SECRET[0] ^ (len as u64), ((x >> 64) as u64) ^ SECRET[1])
+        bun_wyhash::hash_const(0, input)
     }
 
     /// `bun.fmt.truncatedHash32` — 8-byte base32-ish suffix (native-endian, matches Zig).
@@ -1522,14 +1294,6 @@ pub mod __generated_symbol_hash {
             CHARS[(b[6] & 31) as usize],
             CHARS[(b[7] & 31) as usize],
         ]
-    }
-
-    #[cfg(test)]
-    #[test]
-    fn const_wyhash0_matches_runtime() {
-        for s in [&b""[..], b"a", b"abc", b"__require", b"0123456789abcdef0", b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"] {
-            assert_eq!(wyhash0(s), bun_wyhash::Wyhash::hash(0, s), "input: {s:?}");
-        }
     }
 }
 

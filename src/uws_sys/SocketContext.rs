@@ -158,7 +158,8 @@ impl BunSocketContextOptions {
 
         let feed_arr = |hp: &mut Sha256, arr: *const *const c_char, n: u32| {
             hp.update(&[(!arr.is_null()) as u8]);
-            hp.update(as_bytes(&n));
+            // SAFETY: u32 is POD, no padding.
+            hp.update(unsafe { bun_core::bytes_of(&n) });
             if !arr.is_null() {
                 // SAFETY: `arr` points to `n` (possibly null) C strings.
                 let slice = unsafe { bun_core::ffi::slice(arr, n as usize) };
@@ -193,7 +194,8 @@ impl BunSocketContextOptions {
                         meta = m;
                     }
                 }
-                hp.update(as_bytes(&meta));
+                // SAFETY: [i64; 3] is POD, no padding.
+                hp.update(unsafe { bun_core::bytes_of(&meta) });
             }
             hp.update(&[0]);
         };
@@ -204,15 +206,16 @@ impl BunSocketContextOptions {
         feed_path(&mut h, self.dh_params_file_name);
         feed_path(&mut h, self.ca_file_name);
         feed_z(&mut h, self.ssl_ciphers);
-        h.update(as_bytes(&self.ssl_prefer_low_memory_usage));
+        // SAFETY: all fed fields are POD integers, no padding.
+        h.update(unsafe { bun_core::bytes_of(&self.ssl_prefer_low_memory_usage) });
         feed_arr(&mut h, self.key, self.key_count);
         feed_arr(&mut h, self.cert, self.cert_count);
         feed_arr(&mut h, self.ca, self.ca_count);
-        h.update(as_bytes(&self.secure_options));
-        h.update(as_bytes(&self.reject_unauthorized));
-        h.update(as_bytes(&self.request_cert));
-        h.update(as_bytes(&self.client_renegotiation_limit));
-        h.update(as_bytes(&self.client_renegotiation_window));
+        h.update(unsafe { bun_core::bytes_of(&self.secure_options) });
+        h.update(unsafe { bun_core::bytes_of(&self.reject_unauthorized) });
+        h.update(unsafe { bun_core::bytes_of(&self.request_cert) });
+        h.update(unsafe { bun_core::bytes_of(&self.client_renegotiation_limit) });
+        h.update(unsafe { bun_core::bytes_of(&self.client_renegotiation_window) });
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out
@@ -270,13 +273,6 @@ impl Sha256 {
         // SAFETY: ctx was initialized in `init`; out has room for 32 bytes.
         unsafe { bun_boringssl_sys::SHA256_Final(out.as_mut_ptr(), self.0.as_mut_ptr()) };
     }
-}
-
-/// `std.mem.asBytes` equivalent: view a `#[repr(C)]`/POD value as a byte slice.
-#[inline]
-fn as_bytes<T: Copy>(v: &T) -> &[u8] {
-    // SAFETY: `T: Copy` (POD), reading `size_of::<T>()` bytes from `&T` is valid.
-    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
 }
 
 pub mod c {

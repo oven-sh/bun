@@ -42,11 +42,7 @@ pub enum ScanImportsAndExportsError {
     #[error("import resolution failed")]
     ImportResolutionFailed,
 }
-impl From<AllocError> for ScanImportsAndExportsError {
-    fn from(_: AllocError) -> Self {
-        ScanImportsAndExportsError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ScanImportsAndExportsError);
 impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
     fn from(e: ScanImportsAndExportsError) -> Self {
         use crate::linker_context_mod::LinkError;
@@ -56,11 +52,7 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
         }
     }
 }
-impl From<ScanImportsAndExportsError> for bun_core::Error {
-    fn from(e: ScanImportsAndExportsError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ScanImportsAndExportsError);
 
 /// Short-lived `&mut [T]` deref of a `split_raw()` column pointer at a single
 /// use site.

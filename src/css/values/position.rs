@@ -289,17 +289,8 @@ impl Position {
         }
     }
 
-    pub fn eql(&self, other: &Position) -> bool {
-        self == other
-    }
-
     pub fn is_zero(&self) -> bool {
         self.x.is_zero() && self.y.is_zero()
-    }
-
-    pub fn deep_clone(&self, _arena: &Arena) -> Self {
-        // TODO(port): css::implement_deep_clone is comptime-reflection; relies on Clone/arena semantics in Phase B
-        self.clone()
     }
 }
 
@@ -319,17 +310,6 @@ pub struct PositionComponentSide<S> {
     pub side: S,
     /// Offset from the side.
     pub offset: Option<LengthPercentage>,
-}
-
-impl<S: Clone + PartialEq> PositionComponentSide<S> {
-    pub fn deep_clone(&self, _arena: &Arena) -> Self {
-        // TODO(port): implement_deep_clone is comptime reflection — replace with arena-aware DeepClone trait/derive in Phase B
-        self.clone()
-    }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
-    }
 }
 
 /// A component of a CSS `<position>` value (horizontal or vertical).
@@ -354,15 +334,6 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
             }
         }
         false
-    }
-
-    pub fn deep_clone(&self, _arena: &Arena) -> Self {
-        // TODO(port): implement_deep_clone is comptime reflection — replace with arena-aware DeepClone trait/derive in Phase B
-        self.clone()
-    }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
     }
 
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
@@ -460,15 +431,6 @@ pub enum HorizontalPositionKeyword {
 }
 
 impl HorizontalPositionKeyword {
-    pub fn deep_clone(&self, _arena: &Arena) -> HorizontalPositionKeyword {
-        // Copy enum — comptime-reflection deep_clone reduces to bitwise copy.
-        *self
-    }
-
-    pub fn eql(&self, other: &HorizontalPositionKeyword) -> bool {
-        *self == *other
-    }
-
     pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
@@ -501,15 +463,6 @@ pub enum VerticalPositionKeyword {
 }
 
 impl VerticalPositionKeyword {
-    pub fn deep_clone(&self, _arena: &Arena) -> Self {
-        // Copy enum — comptime-reflection deep_clone reduces to bitwise copy.
-        *self
-    }
-
-    pub fn eql(&self, other: &VerticalPositionKeyword) -> bool {
-        *self == *other
-    }
-
     pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }

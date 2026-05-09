@@ -53,11 +53,7 @@ impl core::fmt::Display for AnyPostgresError {
 
 impl std::error::Error for AnyPostgresError {}
 
-impl From<AnyPostgresError> for bun_core::Error {
-    fn from(e: AnyPostgresError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(AnyPostgresError);
 
 // Reverse of the above: `bun_core::Error` is just an interned name; recover the
 // matching variant by name (or `JSError` as a catch-all). Needed because the

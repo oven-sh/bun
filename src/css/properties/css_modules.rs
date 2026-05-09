@@ -178,10 +178,7 @@ impl Specifier {
                 // which outlives the `serialize_string` call. Detach so `dest`
                 // is reborrowable as the `WriteAll` sink.
                 let url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
-                if css::serializer::serialize_string(url, dest).is_err() {
-                    return Err(dest.add_fmt_error());
-                }
-                Ok(())
+                dest.serialize_string(url)
             }
             // .source_index => {},
         }

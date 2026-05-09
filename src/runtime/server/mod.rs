@@ -2261,7 +2261,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .config
                 .ssl_config
                 .as_ref()
-                .and_then(|c| c.server_name.as_deref())
+                .and_then(|c| c.server_name_cstr())
                 .filter(|n| !n.to_bytes().is_empty())
                 .map(|n| (n.as_ptr(), n.to_bytes().len()));
             if let Some((name_ptr, name_len)) = server_name_raw {
@@ -2310,7 +2310,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let (name_ptr, name_len, sni_opts) = {
                     let cfg = unsafe { &*this };
                     let sni_ssl_config = &cfg.config.sni.as_ref().unwrap().slice()[i];
-                    let Some(sni_name) = sni_ssl_config.server_name.as_deref() else { continue };
+                    let Some(sni_name) = sni_ssl_config.server_name_cstr() else { continue };
                     if sni_name.to_bytes().is_empty() {
                         continue;
                     }

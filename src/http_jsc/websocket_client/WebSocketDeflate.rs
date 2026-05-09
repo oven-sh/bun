@@ -152,17 +152,7 @@ pub enum CompressError {
     OutOfMemory,
 }
 
-impl From<DecompressError> for bun_core::Error {
-    fn from(e: DecompressError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
-
-impl From<CompressError> for bun_core::Error {
-    fn from(e: CompressError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(DecompressError, CompressError);
 
 impl PerMessageDeflate {
     pub fn init(params: Params, rare_data: &mut JscRareData) -> Result<Box<Self>, bun_core::Error> {

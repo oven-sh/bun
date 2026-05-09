@@ -68,7 +68,7 @@ impl KeyframesName {
         match self {
             KeyframesName::Ident(ident) => {
                 // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-                write_ident(dest, unsafe { &*ident.v }, css_module_animation_enabled)?;
+                write_ident(dest, unsafe { crate::arena_str(ident.v) }, css_module_animation_enabled)?;
             }
             KeyframesName::Custom(s) => {
                 // todo_stuff.match_ignore_ascii_case
@@ -81,9 +81,7 @@ impl KeyframesName {
                     || strings::eql_case_insensitive_ascii_check_length(s, b"revert")
                     || strings::eql_case_insensitive_ascii_check_length(s, b"revert-layer")
                 {
-                    if css::serializer::serialize_string(s, dest).is_err() {
-                        return Err(dest.add_fmt_error());
-                    }
+                    dest.serialize_string(s)?;
                 } else {
                     write_ident(dest, s, css_module_animation_enabled)?;
                 }

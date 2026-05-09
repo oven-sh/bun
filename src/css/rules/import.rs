@@ -298,17 +298,15 @@ impl ImportRule {
         if let Some(d) = dep {
             // SAFETY: `placeholder` is arena-allocated by `css_modules::hash`
             // and outlives this print call.
-            let placeholder = unsafe { &*d.placeholder };
-            css::serializer::serialize_string(placeholder, dest)
-                .map_err(|_| dest.add_fmt_error())?;
+            let placeholder = unsafe { crate::arena_str(d.placeholder) };
+            dest.serialize_string(placeholder)?;
 
             if let Some(deps) = &mut dest.dependencies {
                 // PERF(port): was `catch unreachable` (alloc cannot fail under arena)
                 deps.push(css::Dependency::Import(d));
             }
         } else {
-            css::serializer::serialize_string(self.url, dest)
-                .map_err(|_| dest.add_fmt_error())?;
+            dest.serialize_string(self.url)?;
         }
 
         if let Some(lyr) = &self.layer {

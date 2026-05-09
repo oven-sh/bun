@@ -46,7 +46,7 @@ pub use DeferredTaskQueue as deferred_task_queue;
 pub use any_event_loop::{
     AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
 };
-pub use MiniEventLoop::{EventLoopKind, PlatformEventLoop};
+pub use MiniEventLoop::{EventLoopKind, PipeReadBuffer, PlatformEventLoop, PIPE_READ_BUFFER_SIZE};
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is
 // a lower tier than `bun_jsc`, so it cannot name `jsc::EventLoop` /

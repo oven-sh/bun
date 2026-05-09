@@ -337,50 +337,8 @@ macro_rules! impl_fallbacks {
 // ──────────────────────────────────────────────────────────────────────────
 // Rect shorthand structs (top/right/bottom/left)
 // ──────────────────────────────────────────────────────────────────────────
-
-macro_rules! define_rect_shorthand {
-    (
-        $(#[$meta:meta])*
-        $name:ident, $inner:ty,
-        top: $top_id:ident,
-        right: $right_id:ident,
-        bottom: $bottom_id:ident,
-        left: $left_id:ident
-        $(, fallbacks)?
-    ) => {
-        $(#[$meta])*
-        #[derive(Clone, PartialEq)]
-        pub struct $name {
-            pub top: $inner,
-            pub right: $inner,
-            pub bottom: $inner,
-            pub left: $inner,
-        }
-
-        impl $name {
-            // TODO(port): bring this back
-            // (old using name space) css::DefineShorthand(@This(), PropertyIdTag::$shorthand_id);
-
-            pub const PROPERTY_FIELD_MAP: &[(&str, PropertyIdTag)] = &[
-                ("top", PropertyIdTag::$top_id),
-                ("right", PropertyIdTag::$right_id),
-                ("bottom", PropertyIdTag::$bottom_id),
-                ("left", PropertyIdTag::$left_id),
-            ];
-
-            pub fn deep_clone(&self, _arena: &Bump) -> Self {
-                self.clone()
-            }
-
-            pub fn eql(&self, rhs: &Self) -> bool {
-                self == rhs
-            }
-        }
-        // Zig `css.DefineRectShorthand(@This(), V)` — parse/to_css via `Rect<V>`.
-        // Shared impl macro lives in `properties/mod.rs`.
-        impl_rect_shorthand!($name, $inner);
-    };
-}
+// `define_rect_shorthand!` lives in `properties/mod.rs` (shared with
+// `margin_padding.rs`).
 
 // TODO: fallbacks
 define_rect_shorthand! {
@@ -439,14 +397,6 @@ macro_rules! define_size_shorthand {
                 ("start", PropertyIdTag::$start_id),
                 ("end", PropertyIdTag::$end_id),
             ];
-
-            pub fn deep_clone(&self, _arena: &Bump) -> Self {
-                self.clone()
-            }
-
-            pub fn eql(&self, rhs: &Self) -> bool {
-                self == rhs
-            }
         }
         // Zig `css.DefineSizeShorthand(@This(), V)` — parse/to_css via `Size2D<V>`.
         // Shared impl macro lives in `properties/mod.rs`.

@@ -1233,7 +1233,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let _node_gyp_tempdir_guard = scopeguard::guard(node_gyp_tempdir, |d| d.close());
+    let _node_gyp_tempdir_guard = bun_sys::CloseOnDrop::dir(node_gyp_tempdir);
     // PORT NOTE: reshaped for borrowck — `defer node_gyp_tempdir.close()`
 
     #[cfg(windows)]
@@ -1250,7 +1250,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     // `bun_sys::Dir` has no `create_file`; route through `File::openat` with the
     // same flags `std.fs.Dir.createFile` uses (`O_WRONLY|O_CREAT|O_TRUNC`).
     let node_gyp_file = match bun_sys::File::openat(
-        _node_gyp_tempdir_guard.fd,
+        node_gyp_tempdir.fd,
         FILE_NAME.as_bytes(),
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
         MODE,
@@ -1264,7 +1264,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let mut node_gyp_file = scopeguard::guard(node_gyp_file, |f| { let _ = f.close(); });
+    let _close_node_gyp_file = bun_sys::CloseOnDrop::file(&node_gyp_file);
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";

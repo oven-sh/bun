@@ -398,7 +398,7 @@ impl ImageSetOption {
             .ok()
         {
             // SAFETY: see above — `url` borrows the parser's source/arena.
-            let url: &[u8] = unsafe { &*url };
+            let url: &[u8] = unsafe { crate::arena_str(url) };
             let record_idx = input.add_import_record(url, start_position, ImportKind::Url)?;
             Image::Url(Url {
                 import_record_idx: record_idx,
@@ -451,10 +451,8 @@ impl ImageSetOption {
 
             if let Some(dep) = dep_ {
                 // SAFETY: placeholder borrows the printer arena.
-                let placeholder = unsafe { &*dep.placeholder };
-                if let Err(_) = css::serializer::serialize_string(placeholder, dest) {
-                    return Err(dest.add_fmt_error());
-                }
+                let placeholder = unsafe { crate::arena_str(dep.placeholder) };
+                dest.serialize_string(placeholder)?;
                 if let Some(dependencies) = &mut dest.dependencies {
                     // PERF(port): was `catch |err| bun.handleOom(err)` — Vec::push aborts on OOM by default
                     dependencies.push(css::Dependency::Url(dep));
@@ -464,9 +462,7 @@ impl ImageSetOption {
                 // SAFETY: `record_url` borrows arena-backed `import_info` data
                 // valid for the printer's `'a`; detach so `dest` is reusable.
                 let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };
-                if let Err(_) = css::serializer::serialize_string(record_url, dest) {
-                    return Err(dest.add_fmt_error());
-                }
+                dest.serialize_string(record_url)?;
             }
         } else {
             self.image.to_css(dest)?;
@@ -492,10 +488,8 @@ impl ImageSetOption {
             dest.write_str(" type(")?;
             // SAFETY: file_type points into the arena-owned parser input which outlives printing.
             // TODO(port): replace raw slice with proper arena-lifetime borrow in Phase B.
-            let file_type_slice = unsafe { &*file_type };
-            if let Err(_) = css::serializer::serialize_string(file_type_slice, dest) {
-                return Err(dest.add_fmt_error());
-            }
+            let file_type_slice = unsafe { crate::arena_str(file_type) };
+            dest.serialize_string(file_type_slice)?;
             dest.write_char(b')')?;
         }
 
@@ -518,7 +512,7 @@ impl ImageSetOption {
             && match (self.file_type, rhs.file_type) {
                 (None, None) => true,
                 // SAFETY: both point into the parser arena which outlives the parse session.
-                (Some(a), Some(b)) => unsafe { &*a == &*b },
+                (Some(a), Some(b)) => unsafe { crate::arena_str(a) == crate::arena_str(b) },
                 _ => false,
             }
     }

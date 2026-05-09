@@ -11,6 +11,7 @@ use crate::{WStr, ZStr};
 use crate::immutable::CodePoint; // i32
 use crate::immutable::paths::wstr_in_buf;
 use crate::lexer as js_lexer;
+use bun_core::strings::{is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii};
 use bun_simdutf_sys::simdutf;
 
 bun_core::declare_scope!(strings, hidden);
@@ -792,7 +793,7 @@ pub(super) fn allocate_latin1_into_utf8_with_list(
             buf = unsafe {
                 core::slice::from_raw_parts_mut(list.as_mut_ptr().add(i), list.capacity() - i)
             };
-            let two = latin1_to_codepoint_bytes_assume_not_ascii(u32::from(latin1[0]));
+            let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[0]);
             buf[..2].copy_from_slice(&two);
             latin1 = &latin1[1..];
             buf = &mut buf[2..];
@@ -965,7 +966,7 @@ pub fn replace_latin1_with_utf8(buf_: &mut [u8]) {
     let mut latin1: &mut [u8] = buf_;
     while let Some(i) = first_non_ascii(latin1) {
         let i = i as usize;
-        let two = latin1_to_codepoint_bytes_assume_not_ascii(u32::from(latin1[i]));
+        let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[i]);
         latin1[i..i + 2].copy_from_slice(&two);
 
         latin1 = &mut latin1[i + 2..];
@@ -1290,9 +1291,7 @@ pub enum ToUTF16Error {
     InvalidByteSequence,
 }
 
-impl From<AllocError> for ToUTF16Error {
-    fn from(_: AllocError) -> Self { ToUTF16Error::OutOfMemory }
-}
+bun_core::oom_from_alloc!(ToUTF16Error);
 
 /// Convert a UTF-8 string to a UTF-16 string IF there are any non-ascii characters
 /// If there are no non-ascii characters, this returns null
@@ -1651,12 +1650,6 @@ pub(super) fn is_valid_utf8(slice: &[u8]) -> bool {
     is_valid_utf8_without_simd(slice)
 }
 
-pub(super) fn is_all_ascii(slice: &[u8]) -> bool {
-    // PORT NOTE: Zig's `@inComptime()` branch dropped — Rust const-eval can't call simdutf anyway,
-    // and runtime callers always go through simdutf.
-    simdutf::validate::ascii(slice)
-}
-
 const UTF8_ACCEPT: u8 = 0;
 const UTF8_REJECT: u8 = 12;
 
@@ -1838,12 +1831,6 @@ static CP1252_TO_UTF16_CONVERSION_TABLE: [u16; 256] = [
     0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, // F0-F7
     0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF
 ];
-
-pub(super) fn latin1_to_codepoint_bytes_assume_not_ascii(char: u32) -> [u8; 2] {
-    let mut bytes = [0u8; 4];
-    let _ = bun_core::strings::encode_wtf8_rune(&mut bytes, char);
-    [bytes[0], bytes[1]]
-}
 
 pub(super) fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
     CP1252_TO_UTF16_CONVERSION_TABLE[(char as u8) as usize]

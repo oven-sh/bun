@@ -465,6 +465,31 @@ impl From<core::fmt::Error> for Error {
     fn from(_: core::fmt::Error) -> Self { Self::WRITE_FAILED }
 }
 
+/// Extension for `?`-propagating non-`fmt::Error` write failures (e.g.
+/// `std::io::Error` from `write!(&mut Vec<u8>, …)` / `Cursor` / `BufWriter`)
+/// as the spec's `error.WriteFailed` tag. Bare `?` on those would route through
+/// [`From<std::io::Error>`] → errno/`Unexpected`, which diverges from the Zig
+/// `try writer.print(…)` contract. Replaces the open-coded
+/// `.map_err(|_| err!("WriteFailed"))` pattern at ~20 call sites.
+pub trait OrWriteFailed<T> {
+    fn or_write_failed(self) -> core::result::Result<T, Error>;
+}
+impl<T, E> OrWriteFailed<T> for core::result::Result<T, E> {
+    #[inline]
+    fn or_write_failed(self) -> core::result::Result<T, Error> {
+        self.map_err(|_| Error::WRITE_FAILED)
+    }
+}
+impl<T, E> OrWriteFailed<T> for Result<T, E> {
+    #[inline]
+    fn or_write_failed(self) -> core::result::Result<T, Error> {
+        match self {
+            Result::Ok(v) => Ok(v),
+            Result::Err(_) => Err(Error::WRITE_FAILED),
+        }
+    }
+}
+
 /// Stamp out `impl From<$t> for bun_core::Error` for one or more
 /// `strum::IntoStaticStr`-deriving error enums, routing each variant through
 /// [`Error::from_name`]. Expansion is byte-identical to the hand-written
@@ -500,7 +525,15 @@ pub mod coreutils_error_map {
     /// Returns the GNU-coreutils-style short label for an errno, if known.
     #[inline]
     pub fn get(errno: i32) -> Option<&'static str> {
-        super::system_errno_name(errno).and_then(|name| MESSAGES.get(name).copied())
+        super::system_errno_name(errno).and_then(get_by_name)
+    }
+
+    /// Look up by `SystemErrno` variant name (e.g. `"ENOENT"`). Used by
+    /// `bun_sys::coreutils_error_map` to populate its typed `EnumMap` without
+    /// duplicating the per-OS string tables.
+    #[inline]
+    pub fn get_by_name(name: &str) -> Option<&'static str> {
+        MESSAGES.get(name).copied()
     }
 
     // macOS and Linux have slightly different error messages.

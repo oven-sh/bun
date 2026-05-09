@@ -375,9 +375,8 @@ mod ident_eql {
             impl CssEql for $t {
                 #[inline]
                 fn eql(&self, other: &Self) -> bool {
-                    // SAFETY: `.v` borrows the parser arena, which outlives
-                    // every CssEql comparison (callers hold the arena).
-                    unsafe { bun_string::strings::eql(&*self.v, &*other.v) }
+                    // `.v()` borrows the parser arena (see `crate::arena_str`).
+                    bun_string::strings::eql(self.v(), other.v())
                 }
             }
         )*};
@@ -488,15 +487,6 @@ mod inherent_bridge {
             }
         )*};
     }
-    /// Types whose inherent `deep_clone` takes no arena (`fn deep_clone(&self) -> Self`).
-    macro_rules! bridge_deep_clone_noarg {
-        ($($t:ty),* $(,)?) => {$(
-            impl<'bump> DeepClone<'bump> for $t {
-                #[inline]
-                fn deep_clone(&self, _bump: &'bump Arena) -> Self { <$t>::deep_clone(self) }
-            }
-        )*};
-    }
     /// Combo: `Clone` → `DeepClone`, `PartialEq` → `CssEql`.
     macro_rules! bridge_clone_partialeq {
         ($($t:ty),* $(,)?) => {
@@ -524,13 +514,9 @@ mod inherent_bridge {
     use crate::values::position::{
         HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
     };
-    bridge_eql!(Position, HorizontalPositionKeyword, VerticalPositionKeyword);
-    bridge_deep_clone!(Position, HorizontalPositionKeyword, VerticalPositionKeyword);
-    // The inherent `PositionComponent::{eql,deep_clone}` live in an impl block
-    // bounded on `S: protocol::Parse + protocol::ToCss + …`, so a generic
-    // bridge that only has `S: Clone + PartialEq` would resolve back to the
-    // trait method (infinite recursion). Inline the trivial bodies — the
-    // inherent methods are `self == other` / `self.clone()` anyway.
+    bridge_clone_partialeq!(Position, HorizontalPositionKeyword, VerticalPositionKeyword);
+    // `PositionComponent<S>` is generic, so `bridge_clone_partialeq!` (which
+    // takes concrete `ty`s) can't cover it — spell the trivial impls out.
     impl<S: Clone + PartialEq> CssEql for PositionComponent<S> {
         #[inline]
         fn eql(&self, other: &Self) -> bool { PartialEq::eq(self, other) }
@@ -573,12 +559,7 @@ mod inherent_bridge {
     bridge_deep_clone!(BorderSideWidth);
     bridge_deep_clone_copy!(LineStyle);
     bridge_is_compatible!(BorderSideWidth, LineStyle);
-    bridge_eql!(
-        BorderColor, BorderStyle, BorderWidth,
-        BorderBlockColor, BorderBlockStyle, BorderBlockWidth,
-        BorderInlineColor, BorderInlineStyle, BorderInlineWidth,
-    );
-    bridge_deep_clone!(
+    bridge_clone_partialeq!(
         BorderColor, BorderStyle, BorderWidth,
         BorderBlockColor, BorderBlockStyle, BorderBlockWidth,
         BorderInlineColor, BorderInlineStyle, BorderInlineWidth,
@@ -651,7 +632,7 @@ mod inherent_bridge {
 
     // ── properties/font ──
     use crate::properties::font::{
-        Font, FontFamily, FontSize, FontStretch, FontStyle, FontVariantCaps, FontWeight,
+        FontFamily, FontSize, FontStretch, FontStyle, FontVariantCaps, FontWeight,
         LineHeight,
     };
     bridge_clone_partialeq!(
@@ -660,33 +641,8 @@ mod inherent_bridge {
     bridge_is_compatible!(
         FontWeight, FontSize, FontStretch, FontStyle, FontVariantCaps, LineHeight, FontFamily,
     );
-    bridge_deep_clone!(FontFamily);
-    bridge_eql_partialeq!(FontFamily);
-    // `Font` carries a `Vec<FontFamily>` so derives don't apply — field-wise impl.
-    impl<'bump> DeepClone<'bump> for Font {
-        fn deep_clone(&self, bump: &'bump Arena) -> Self {
-            Font {
-                family: self.family.deep_clone(bump),
-                size: self.size.deep_clone(bump),
-                style: self.style.deep_clone(bump),
-                weight: self.weight.deep_clone(bump),
-                stretch: self.stretch.deep_clone(bump),
-                line_height: self.line_height.deep_clone(bump),
-                variant_caps: self.variant_caps.deep_clone(bump),
-            }
-        }
-    }
-    impl CssEql for Font {
-        fn eql(&self, other: &Self) -> bool {
-            self.family.eql(&other.family)
-                && self.size.eql(&other.size)
-                && self.style.eql(&other.style)
-                && self.weight.eql(&other.weight)
-                && self.stretch.eql(&other.stretch)
-                && self.line_height.eql(&other.line_height)
-                && self.variant_caps.eql(&other.variant_caps)
-        }
-    }
+    bridge_clone_partialeq!(FontFamily);
+    // `Font` DeepClone/CssEql now via `#[derive]` on the struct (properties/font.rs).
 
     // ── properties/size ──
     use crate::properties::size::{AspectRatio, BoxSizing, MaxSize, Size};
@@ -741,62 +697,15 @@ mod inherent_bridge {
 
     // ── properties/masking ──
     use crate::properties::masking::{
-        GeometryBox, Mask, MaskBorder, MaskBorderMode, MaskClip, MaskComposite, MaskMode,
+        GeometryBox, MaskBorderMode, MaskClip, MaskComposite, MaskMode,
         MaskType, WebKitMaskComposite, WebKitMaskSourceType,
     };
     bridge_clone_partialeq!(
         GeometryBox, MaskMode, MaskClip, MaskComposite, MaskType, MaskBorderMode,
         WebKitMaskComposite, WebKitMaskSourceType,
     );
-    // `Mask`/`MaskBorder` derives are gated on Image/Rect derives — field-wise impl.
-    impl<'bump> DeepClone<'bump> for Mask {
-        fn deep_clone(&self, bump: &'bump Arena) -> Self {
-            Mask {
-                image: self.image.deep_clone(bump),
-                position: self.position.deep_clone(bump),
-                size: self.size.deep_clone(bump),
-                repeat: self.repeat.deep_clone(bump),
-                clip: self.clip.deep_clone(bump),
-                origin: self.origin.deep_clone(bump),
-                composite: self.composite.deep_clone(bump),
-                mode: self.mode.deep_clone(bump),
-            }
-        }
-    }
-    impl CssEql for Mask {
-        fn eql(&self, other: &Self) -> bool {
-            self.image.eql(&other.image)
-                && self.position.eql(&other.position)
-                && self.size.eql(&other.size)
-                && self.repeat.eql(&other.repeat)
-                && self.clip.eql(&other.clip)
-                && self.origin.eql(&other.origin)
-                && self.composite.eql(&other.composite)
-                && self.mode.eql(&other.mode)
-        }
-    }
-    impl<'bump> DeepClone<'bump> for MaskBorder {
-        fn deep_clone(&self, bump: &'bump Arena) -> Self {
-            MaskBorder {
-                source: self.source.deep_clone(bump),
-                slice: self.slice.deep_clone(bump),
-                width: self.width.deep_clone(bump),
-                outset: self.outset.deep_clone(bump),
-                repeat: self.repeat.deep_clone(bump),
-                mode: self.mode.deep_clone(bump),
-            }
-        }
-    }
-    impl CssEql for MaskBorder {
-        fn eql(&self, other: &Self) -> bool {
-            self.source.eql(&other.source)
-                && self.slice.eql(&other.slice)
-                && self.width.eql(&other.width)
-                && self.outset.eql(&other.outset)
-                && self.repeat.eql(&other.repeat)
-                && self.mode.eql(&other.mode)
-        }
-    }
+    // `Mask`/`MaskBorder` DeepClone/CssEql now via `#[derive]` on the structs
+    // (properties/masking.rs).
 
     // ── properties/ui ──
     use crate::properties::ui::ColorScheme;
@@ -814,12 +723,7 @@ mod inherent_bridge {
         PaddingInline, ScrollMargin, ScrollMarginBlock, ScrollMarginInline, ScrollPadding,
         ScrollPaddingBlock, ScrollPaddingInline,
     };
-    bridge_deep_clone_noarg!(
-        Margin, MarginBlock, MarginInline, Padding, PaddingBlock, PaddingInline,
-        ScrollMargin, ScrollMarginBlock, ScrollMarginInline, ScrollPadding, ScrollPaddingBlock,
-        ScrollPaddingInline, Inset, InsetBlock, InsetInline,
-    );
-    bridge_eql!(
+    bridge_clone_partialeq!(
         Margin, MarginBlock, MarginInline, Padding, PaddingBlock, PaddingInline,
         ScrollMargin, ScrollMarginBlock, ScrollMarginInline, ScrollPadding, ScrollPaddingBlock,
         ScrollPaddingInline, Inset, InsetBlock, InsetInline,
@@ -1531,13 +1435,15 @@ impl TryMap for CSSNumber {
     }
 }
 
-pub trait TryOpTo<R>: Sized {
+pub trait TryOpTo: Sized {
     // Zig: `comptime op_fn: *const fn(...)` — generic param preserves monomorphization.
-    fn try_op_to<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R>;
+    // `R` is method-generic (not trait-generic) so `TryOpTo` can appear as a
+    // supertrait bound without committing to a result type.
+    fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R>;
 }
 
 #[inline]
-pub fn try_op_to<T: TryOpTo<R>, R, C>(
+pub fn try_op_to<T: TryOpTo, R, C>(
     lhs: &T,
     rhs: &T,
     ctx: C,
@@ -1546,11 +1452,16 @@ pub fn try_op_to<T: TryOpTo<R>, R, C>(
     lhs.try_op_to(rhs, ctx, op_fn)
 }
 
-impl<R> TryOpTo<R> for CSSNumber {
+impl TryOpTo for CSSNumber {
     #[inline]
-    fn try_op_to<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R> {
+    fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R> {
         Some(op_fn(ctx, *self, *rhs))
     }
+}
+
+impl IsCompatible for CSSNumber {
+    #[inline]
+    fn is_compatible(&self, _: crate::targets::Browsers) -> bool { true }
 }
 
 pub trait TryOp: Sized {
@@ -1606,6 +1517,31 @@ impl PartialCmp for CSSInteger {
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
         Some(Ord::cmp(self, rhs))
     }
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// Zero / MulF32 / TryAdd — numeric protocol traits used by `DimensionPercentage<D>`
+// and the `CalcValue` supertrait set. Formerly duplicated in `values::protocol`;
+// that module now re-exports from here.
+// ───────────────────────────────────────────────────────────────────────────────
+
+/// `D::zero()` / `d.is_zero()` — additive identity.
+pub trait Zero: Sized {
+    fn zero() -> Self;
+    fn is_zero(&self) -> bool;
+}
+/// `d.mul_f32(rhs)` — scalar multiplication.
+pub trait MulF32: Sized {
+    fn mul_f32(self, rhs: f32) -> Self;
+}
+/// `d.try_add(&rhs)` — same-unit addition, `None` if incompatible.
+pub trait TryAdd: Sized {
+    fn try_add(&self, rhs: &Self) -> Option<Self>;
+}
+
+impl MulF32 for CSSNumber {
+    #[inline]
+    fn mul_f32(self, rhs: f32) -> Self { self * rhs }
 }
 
 // ported from: src/css/generics.zig

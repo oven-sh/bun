@@ -32,11 +32,7 @@ pub enum CSSResolveError {
     #[error("ResolveMessage")]
     ResolveMessage,
 }
-impl From<CSSResolveError> for bun_core::Error {
-    fn from(e: CSSResolveError) -> Self {
-        bun_core::err!(e)
-    }
-}
+bun_core::named_error_set!(CSSResolveError);
 
 pub type OnImportCallback =
     fn(resolve_result: &resolver::Result, import_record: &mut ImportRecord, origin: &URL<'_>);

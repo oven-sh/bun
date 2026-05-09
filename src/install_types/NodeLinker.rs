@@ -158,9 +158,7 @@ impl core::fmt::Display for FromExprError {
 }
 impl std::error::Error for FromExprError {}
 
-impl From<AllocError> for FromExprError {
-    fn from(_: AllocError) -> Self { Self::OutOfMemory }
-}
+bun_core::oom_from_alloc!(FromExprError);
 
 impl From<CreateMatcherError> for FromExprError {
     fn from(e: CreateMatcherError) -> Self {
@@ -171,15 +169,7 @@ impl From<CreateMatcherError> for FromExprError {
     }
 }
 
-impl From<FromExprError> for bun_core::Error {
-    fn from(e: FromExprError) -> Self {
-        match e {
-            FromExprError::OutOfMemory => bun_core::err!(OutOfMemory),
-            FromExprError::InvalidRegExp => bun_core::err!(InvalidRegExp),
-            FromExprError::UnexpectedExpr => bun_core::err!(UnexpectedExpr),
-        }
-    }
-}
+bun_core::named_error_set!(FromExprError);
 
 impl PnpmMatcher {
     // B-2 UN-GATED: bun_logger::ast::ExprData now exposes the real value-shaped
@@ -369,18 +359,9 @@ impl core::fmt::Display for CreateMatcherError {
 }
 impl std::error::Error for CreateMatcherError {}
 
-impl From<AllocError> for CreateMatcherError {
-    fn from(_: AllocError) -> Self { Self::OutOfMemory }
-}
+bun_core::oom_from_alloc!(CreateMatcherError);
 
-impl From<CreateMatcherError> for bun_core::Error {
-    fn from(e: CreateMatcherError) -> Self {
-        match e {
-            CreateMatcherError::OutOfMemory => bun_core::err!(OutOfMemory),
-            CreateMatcherError::InvalidRegExp => bun_core::err!(InvalidRegExp),
-        }
-    }
-}
+bun_core::named_error_set!(CreateMatcherError);
 
 pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatcherError> {
     buf.clear();

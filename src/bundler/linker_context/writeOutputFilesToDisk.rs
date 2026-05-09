@@ -19,7 +19,7 @@ use crate::output_file::{
 use crate::chunk::{Content, Flags as ChunkFlags};
 use crate::{cheap_prefix_normalizer, BundleV2, Chunk};
 use crate::LinkerContext;
-use crate::linker_context_mod::LinkerCtx;
+use crate::linker_context_mod::debug;
 use crate::linker_context::output_file_list_builder::OutputFileList;
 
 // TODO(b0): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
@@ -30,10 +30,6 @@ use bun_sys::{
 
 /// Zig: `bun.bytecode_extension` (".jsc"). Mirror of `src/bun.zig:bytecode_extension`.
 const BYTECODE_EXTENSION: &str = ".jsc";
-
-macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
-}
 
 pub fn write_output_files_to_disk(
     c: &mut LinkerContext,
@@ -530,7 +526,7 @@ pub fn write_output_files_to_disk(
                 Content::Javascript(js) => {
                     // Zig: `@ptrCast(dupe(u32, js.css_chunks))` — `Index` is
                     // `#[repr(transparent)]` over u32.
-                    js.css_chunks.iter().map(|&i| OutputFileIndex(i)).collect()
+                    js.css_chunks.iter().map(|&i| OutputFileIndex::init(i)).collect()
                 }
                 Content::Css(_) => Box::default(),
                 Content::Html => Box::default(),

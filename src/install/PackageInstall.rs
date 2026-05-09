@@ -490,7 +490,7 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn run(&mut self) -> Option<bun_core::Error> {
-        use bun_sys::windows;
+        use bun_sys::windows::{self, Win32ErrorExt as _};
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
         let src_len = self.src_len;
@@ -614,7 +614,7 @@ impl UninstallTask {
                 return;
             }
         };
-        let _close = scopeguard::guard(dir, |d| d.close());
+        let _close = sys::CloseOnDrop::dir(dir);
 
         if let Err(err) = dir.delete_tree(basename) {
             if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
@@ -795,7 +795,7 @@ impl<'a> PackageInstall<'a> {
             .open_file(root_node_modules_dir, package_json_path)
             .ok()?;
         // defer package_json_file.close()
-        let package_json_file = scopeguard::guard(package_json_file, |f| { let _ = f.close(); });
+        let _close_pkg_json = sys::CloseOnDrop::file(&package_json_file);
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         read = package_json_file.read(&mut mutable.list[total..]).ok()?;
@@ -939,7 +939,7 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
         };
-        let _close_cache = scopeguard::guard(cached_package_dir, |d| d.close());
+        let _close_cache = sys::CloseOnDrop::dir(cached_package_dir);
 
         let mut walker_ = match walker_skippable::walk(
             cached_package_dir.fd(),
@@ -1013,7 +1013,7 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningDestDir, None)),
         };
-        let _close_subdir = scopeguard::guard(subdir, |d| d.close());
+        let _close_subdir = sys::CloseOnDrop::dir(subdir);
 
         self.file_count = match copy(subdir, &mut walker_) {
             Ok(n) => n,
@@ -1145,7 +1145,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(windows)]
         {
-            use bun_sys::windows;
+            use bun_sys::windows::{self, Win32ErrorExt as _};
 
             // SAFETY: FFI — destbase.fd() is an open handle; state.buf is a valid writable
             // WPathBuffer of the passed length.
@@ -1280,7 +1280,7 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 #[cfg(windows)]
                 {
-                    use bun_sys::windows;
+                    use bun_sys::windows::{self, Win32ErrorExt as _};
                     match entry.kind {
                         EntryKind::Directory | EntryKind::File => {}
                         _ => continue,
@@ -1360,7 +1360,7 @@ impl<'a> PackageInstall<'a> {
                     real_file_count += 1;
 
                     let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
-                    let _close_in = scopeguard::guard(in_file, |f| f.close());
+                    let _close_in = sys::CloseOnDrop::new(in_file);
 
                     bun_output::scoped_log!(
                         install,
@@ -1409,7 +1409,7 @@ impl<'a> PackageInstall<'a> {
                             }
                         }
                     };
-                    let _close_out = scopeguard::guard(outfile, |f| f.close());
+                    let _close_out = sys::CloseOnDrop::new(outfile);
 
                     #[cfg(unix)]
                     {
@@ -1982,7 +1982,7 @@ impl<'a> PackageInstall<'a> {
             let Ok(fd) = sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0) else {
                 return true;
             };
-            let _close = scopeguard::guard(fd, |f| f.close());
+            let _close = sys::CloseOnDrop::new(fd);
             let Ok(size) = sys::File::from_fd(fd).read_all(temp_buffer) else {
                 return true;
             };
@@ -2061,7 +2061,7 @@ impl<'a> PackageInstall<'a> {
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
-            use bun_sys::windows;
+            use bun_sys::windows::{self, Win32ErrorExt as _};
             let mut wbuf = WPathBuffer::uninit();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.

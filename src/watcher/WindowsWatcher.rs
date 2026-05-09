@@ -114,10 +114,8 @@ impl DirWatcher {
             );
             // TODO(b2-blocked): bun_sys::Tag::watch — full syscall enum not yet in subset.
             return Err(bun_sys::Error {
-                // `bun_sys::windows::Win32Error` and `bun_errno::Win32Error`
-                // are distinct u16 newtypes (consolidate in Phase B); route the
-                // raw code through the `u32` `SystemErrnoInit` impl, which maps
-                // via the same Win32→errno table.
+                // Route the raw code through the `u32` `SystemErrnoInit` impl
+                // (same Win32→errno table as `Win32ErrorExt::to_system_errno`).
                 errno: bun_sys::SystemErrno::init(err.0 as u32)
                     .unwrap_or(bun_sys::SystemErrno::EINVAL) as _,
                 syscall: bun_sys::Tag::TODO,

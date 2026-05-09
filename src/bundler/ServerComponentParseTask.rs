@@ -7,7 +7,6 @@ use std::fmt::Write as _;
 
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::VecExt;
-use bun_core::fmt as bun_fmt;
 
 use bun_logger::{Loc, Log, Source};
 use bun_threading::thread_pool::Task as ThreadPoolTask;
@@ -269,9 +268,12 @@ fn generate_client_reference_proxy(
             let mut buf = bun_alloc::ArenaString::new_in(b.bump);
             write!(
                 &mut buf,
-                "{}S{:08}",
-                bun_fmt::hex_int_lower::<16>(ctx.unique_key),
-                data.other_source.index.0,
+                "{}",
+                crate::chunk::UniqueKey {
+                    prefix: ctx.unique_key,
+                    kind: crate::chunk::QueryKind::Scb,
+                    index: data.other_source.index.0,
+                },
             )
             .map_err(|_| OOM)?;
             buf.into_bump_str().as_bytes()

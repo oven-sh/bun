@@ -23,6 +23,7 @@ use crate::css_properties::border_image::BorderImageSideWidth;
 use crate::css_properties::border_image::BorderImageRepeat;
 use crate::css_properties::border_image::BorderImage;
 
+use crate::generics::{CssEql, DeepClone};
 use crate::VendorPrefix;
 use crate::properties::PropertyId;
 use crate::properties::PropertyIdTag;
@@ -233,6 +234,7 @@ pub enum MaskType {
 // PORT NOTE: Debug/Clone/PartialEq derives gated on `Image`/`Position`/
 // `BackgroundSize`/`BackgroundRepeat` gaining those derives upstream.
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
+#[derive(DeepClone, CssEql)]
 pub struct Mask {
     /// The mask image.
     pub image: Image,
@@ -434,6 +436,7 @@ impl Default for MaskBorderMode {
 // PORT NOTE: Debug/Clone/PartialEq derives gated on `Image`/`Rect<_>` gaining
 // those derives upstream.
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
+#[derive(DeepClone, CssEql)]
 pub struct MaskBorder {
     /// The mask image.
     pub source: Image,

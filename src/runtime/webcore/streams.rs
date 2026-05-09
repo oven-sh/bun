@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_collections::{VecExt, ByteVecExt};
 use crate::webcore::jsc::{
-    self as jsc, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSPromise, JSPromiseStrong,
+    self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSPromise, JSPromiseStrong,
     JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_sys::{self as sys, Error as SysError, Fd};

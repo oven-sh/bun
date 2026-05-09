@@ -1237,12 +1237,8 @@ pub fn release() -> BunString {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let value: &[u8] = {
-        let uts = bun_sys::posix::uname();
-        // SAFETY: c_char[] reinterpreted as u8[]
-        let release = unsafe {
-            core::slice::from_raw_parts(uts.release.as_ptr().cast::<u8>(), uts.release.len())
-        };
-        let result = bun_str::slice_to_nul(release);
+        let uts = bun_core::ffi::uname();
+        let result = bun_core::ffi::c_field_bytes(&uts.release);
         name_buffer[..result.len()].copy_from_slice(result);
         &name_buffer[0..result.len()]
     };
@@ -1459,12 +1455,8 @@ pub fn version() -> JsResult<BunString> {
     };
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let slice: &[u8] = {
-        let uts = bun_sys::posix::uname();
-        // SAFETY: c_char[] reinterpreted as u8[]
-        let version = unsafe {
-            core::slice::from_raw_parts(uts.version.as_ptr().cast::<u8>(), uts.version.len())
-        };
-        let result = bun_str::slice_to_nul(version);
+        let uts = bun_core::ffi::uname();
+        let result = bun_core::ffi::c_field_bytes(&uts.version);
         name_buffer[..result.len()].copy_from_slice(result);
         &name_buffer[0..result.len()]
     };

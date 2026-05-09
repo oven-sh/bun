@@ -20,6 +20,18 @@ impl ExampleArgIterator {
     }
 }
 
+/// Pop the first element of `remain`, advancing the slice. Shared body for
+/// `SliceIterator::next` / `OsIterator::next` (the .zig spec duplicates them).
+#[inline]
+fn pop_first<'a>(remain: &mut &'a [&'a [u8]]) -> Option<&'a [u8]> {
+    if remain.is_empty() {
+        return None;
+    }
+    let res = remain[0];
+    *remain = &remain[1..];
+    Some(res)
+}
+
 /// An argument iterator which iterates over a slice of arguments.
 /// This implementation does not allocate.
 pub struct SliceIterator<'a> {
@@ -32,12 +44,7 @@ impl<'a> SliceIterator<'a> {
     }
 
     pub fn next(&mut self) -> Option<&'a [u8]> {
-        if !self.remain.is_empty() {
-            let res = self.remain[0];
-            self.remain = &self.remain[1..];
-            return Some(res);
-        }
-        None
+        pop_first(&mut self.remain)
     }
 }
 
@@ -80,13 +87,7 @@ impl OsIterator {
     // PORT NOTE: `deinit` dropped — it only freed the arena, which no longer exists.
 
     pub fn next(&mut self) -> Option<&'static [u8]> {
-        if !self.remain.is_empty() {
-            let res = self.remain[0];
-            self.remain = &self.remain[1..];
-            return Some(res);
-        }
-
-        None
+        pop_first(&mut self.remain)
     }
 }
 

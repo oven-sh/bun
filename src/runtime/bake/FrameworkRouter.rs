@@ -1109,11 +1109,7 @@ pub enum InsertError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-impl From<AllocError> for InsertError {
-    fn from(_: AllocError) -> Self {
-        InsertError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(InsertError);
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum InsertKind {

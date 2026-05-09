@@ -59,8 +59,8 @@ unsafe extern "Rust" {
 }
 // ────────────────────────────────────────────────────────────────────────────
 
-const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
-type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
+pub const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
+pub type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
 
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
 pub type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
@@ -264,12 +264,11 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
-        if self.pipe_read_buffer.is_none() {
-            // PERF(port): Zig used allocator.create([256*1024]u8); Box::new of large array may
-            // blow the stack on debug builds — Phase B: use Box::new_uninit / boxed zeroed.
-            self.pipe_read_buffer = Some(Box::new([0u8; PIPE_READ_BUFFER_SIZE]));
-        }
-        &mut self.pipe_read_buffer.as_mut().unwrap()[..]
+        &mut self.pipe_read_buffer.get_or_insert_with(|| {
+            // SAFETY: zeroed [u8; N] is valid. Avoids a 256 KiB stack temporary
+            // that `Box::new([0u8; N])` would create in debug builds.
+            unsafe { Box::<PipeReadBuffer>::new_zeroed().assume_init() }
+        })[..]
     }
 
     pub fn on_after_event_loop(&mut self) {
@@ -503,44 +502,41 @@ impl<'a> MiniEventLoop<'a> {
         unsafe { (*self.loop_ptr()).wakeup() };
     }
 
-    /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
-    pub fn stderr(&mut self) -> *mut () {
-        if self.stderr_store.is_none() {
+    /// Lazy-init helper shared by [`stderr`]/[`stdout`]: `fstat → __bun_stdio_blob_store_new → cache`.
+    /// Zig builds Blob.Store with intrusive `ref_count = 2` and
+    /// `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`.
+    #[inline]
+    fn lazy_stdio_store(slot: &mut Option<NonNull<()>>, fd: Fd, is_atty: bool) -> *mut () {
+        if slot.is_none() {
             let mut mode: Mode = 0;
-            let fd = Fd::from_uv(2);
-
             if let Ok(stat) = sys::fstat(fd) {
                 mode = stat.st_mode as Mode;
             }
-
-            // Zig builds Blob.Store with intrusive `ref_count = 2` and
-            // `.data = .file{ pathlike = .{ .fd }, is_atty, mode }`.
-            let is_atty =
-                Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             // SAFETY: link-time extern; allocates a fresh Store.
             let store = unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode) };
-            self.stderr_store = NonNull::new(store);
+            *slot = NonNull::new(store);
         }
-        self.stderr_store.unwrap().as_ptr()
+        slot.unwrap().as_ptr()
+    }
+
+    /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
+    pub fn stderr(&mut self) -> *mut () {
+        // NB: spec (MiniEventLoop.zig:243) deliberately uses `FD.fromUV(2)` here, not
+        // `Fd::stderr()` — Windows uv-fd vs native-handle distinction. Do not "tidy".
+        Self::lazy_stdio_store(
+            &mut self.stderr_store,
+            Fd::from_uv(2),
+            Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal,
+        )
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
     pub fn stdout(&mut self) -> *mut () {
-        if self.stdout_store.is_none() {
-            let mut mode: Mode = 0;
-            let fd = Fd::stdout();
-
-            if let Ok(stat) = sys::fstat(fd) {
-                mode = stat.st_mode as Mode;
-            }
-
-            let is_atty =
-                Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
-            // SAFETY: link-time extern; allocates a fresh Store.
-            let store = unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode) };
-            self.stdout_store = NonNull::new(store);
-        }
-        self.stdout_store.unwrap().as_ptr()
+        Self::lazy_stdio_store(
+            &mut self.stdout_store,
+            Fd::stdout(),
+            Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal,
+        )
     }
 }
 

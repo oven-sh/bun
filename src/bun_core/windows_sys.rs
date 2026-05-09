@@ -1,9 +1,9 @@
 //! Minimal Win32 ABI surface for `bun_core`'s `#[cfg(windows)]` paths.
 //!
 //! `bun_core` is tier-0 and may not depend on `bun_sys` (cycle). Shared Win32
-//! POD typedefs/structs are re-exported from the tier-0 leaf `bun_windows_sys`
-//! (which has zero `bun_*` deps, so no cycle); only the `bun_core`-specific
-//! console consts, PEB view, and kernel32 externs live here. All declarations
+//! POD typedefs/structs and kernel32 externs are re-exported from the tier-0
+//! leaf `bun_windows_sys` (which has zero `bun_*` deps, so no cycle); only the
+//! `bun_core`-specific console consts and PEB view live here. All declarations
 //! are zero-cost FFI (`extern "system"` = `__stdcall`, which on x64 is the
 //! same as `extern "C"`).
 #![cfg(windows)]
@@ -96,48 +96,10 @@ pub unsafe fn peb() -> &'static PebView {
     }
 }
 
-pub mod kernel32 {
-    use super::*;
-    unsafe extern "system" {
-        /// No preconditions; returns the cached console/std handle.
-        pub safe fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
-        pub fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: *mut DWORD) -> BOOL;
-        pub fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
-        /// No preconditions.
-        pub safe fn GetConsoleOutputCP() -> u32;
-        /// No preconditions; returns 0 on failure.
-        pub safe fn SetConsoleOutputCP(wCodePageID: u32) -> BOOL;
-        /// No preconditions.
-        pub safe fn GetConsoleCP() -> u32;
-        /// No preconditions; returns 0 on failure.
-        pub safe fn SetConsoleCP(wCodePageID: u32) -> BOOL;
-        /// No preconditions; terminates the process (cf. `std::process::exit`).
-        pub safe fn ExitProcess(uExitCode: u32) -> !;
-        /// No preconditions; terminates the calling thread.
-        pub safe fn ExitThread(dwExitCode: u32) -> !;
-        pub fn GetConsoleScreenBufferInfo(
-            hConsoleOutput: HANDLE,
-            lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
-        ) -> BOOL;
-        pub fn FillConsoleOutputAttribute(
-            hConsoleOutput: HANDLE,
-            wAttribute: WORD,
-            nLength: DWORD,
-            dwWriteCoord: COORD,
-            lpNumberOfAttrsWritten: *mut DWORD,
-        ) -> BOOL;
-        pub fn FillConsoleOutputCharacterW(
-            hConsoleOutput: HANDLE,
-            cCharacter: WCHAR,
-            nLength: DWORD,
-            dwWriteCoord: COORD,
-            lpNumberOfCharsWritten: *mut DWORD,
-        ) -> BOOL;
-        pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;
-    }
-}
-// Re-export the console fns at module root under the `c::` alias used by
-// `output.rs` (Zig's `bun.c` namespace).
+// kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
+// so existing `crate::windows_sys::kernel32::*` / `c::*` callers resolve.
+pub use bun_windows_sys::kernel32;
+// `c::` alias used by `output.rs` (Zig's `bun.c` namespace).
 pub use kernel32 as c;
 
 /// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from

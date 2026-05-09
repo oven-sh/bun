@@ -4,6 +4,7 @@ use crate::css_values::angle::Angle;
 use crate::css_values::size::Size2D;
 use crate::css_values::url::Url;
 use crate::{PrintErr, Printer};
+use crate::generics::DeepClone as _;
 
 use super::ArrayList;
 

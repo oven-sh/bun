@@ -34,17 +34,6 @@ use bun_core::OSPathChar;
 
 use crate::api::bun_process::sync as spawn_sync;
 
-// Local hex-lower Display shim — `bun_fmt::bytes_to_hex_lower` writes into a
-// caller buf; the Zig spec used it as a formatter (`{x}`).
-struct HexLower<'a>(&'a [u8]);
-impl core::fmt::Display for HexLower<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for b in self.0 {
-            write!(f, "{:02x}", b)?;
-        }
-        Ok(())
-    }
-}
 // `json_mod::parse_utf8` returns `bun_logger::js_ast::Expr` (the value-shaped
 // JSON-only `Expr`), not `bun_js_parser::Expr`, so `Expr::get_string_cloned`
 // can't be applied. Mirror the lookup as a free fn over the JSON `Expr` using
@@ -158,11 +147,7 @@ pub enum FromTarballError {
     #[error("RestrictedUnscopedPackage")]
     RestrictedUnscopedPackage,
 }
-impl From<AllocError> for FromTarballError {
-    fn from(_: AllocError) -> Self {
-        FromTarballError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(FromTarballError);
 
 // TODO(port): Zig defined this as a nested type alias on the Context struct;
 // inherent associated types are unstable (rust#8995) so hoist to module scope.
@@ -1329,7 +1314,7 @@ impl PublishCommand {
         };
         let shasum_fmt = {
             let mut v = Vec::new();
-            write!(&mut v, "{}", HexLower(&shasum)).map_err(|_| AllocError)?;
+            write!(&mut v, "{}", bun_fmt::hex_lower(&shasum)).map_err(|_| AllocError)?;
             leak!(v)
         };
 
@@ -1942,22 +1927,14 @@ pub enum PublishError {
     #[error("NeedAuth")]
     NeedAuth,
 }
-impl From<AllocError> for PublishError {
-    fn from(_: AllocError) -> Self {
-        PublishError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(PublishError);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum GetOTPError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-impl From<AllocError> for GetOTPError {
-    fn from(_: AllocError) -> Self {
-        GetOTPError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(GetOTPError);
 impl From<GetOTPError> for PublishError {
     fn from(_: GetOTPError) -> Self {
         PublishError::OutOfMemory

@@ -173,8 +173,11 @@ impl fmt::Display for Base64FallbackMessage<'_> {
         let mut encoder = schema::Writer::new(&mut bb);
         self.msg.encode(&mut encoder); // catch {}
         // Zig: `Fallback.Base64FallbackMessage.Base64Encoder` (standard alphabet, no '=' padding)
-        let _ = bun_base64::zig_base64::STANDARD_NO_PAD.encoder.encode_to_fmt(&bb, f); // catch {}
-        Ok(())
+        let enc = &bun_base64::zig_base64::STANDARD_NO_PAD.encoder;
+        let mut out = vec![0u8; enc.calc_size(bb.len())];
+        let s = enc.encode(&mut out, &bb); // catch {}
+        // SAFETY: STANDARD_ALPHABET_CHARS is pure ASCII; encoder output contains only those bytes.
+        f.write_str(unsafe { core::str::from_utf8_unchecked(s) })
     }
 }
 

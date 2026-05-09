@@ -105,18 +105,9 @@ impl core::fmt::Display for ParseError {
 }
 impl core::error::Error for ParseError {}
 
-impl From<bun_alloc::AllocError> for ParseError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        ParseError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ParseError);
 
-impl From<ParseError> for bun_core::Error {
-    fn from(e: ParseError) -> Self {
-        // IntoStaticStr yields the exact @errorName tag; intern into the global table.
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseError);
 
 #[derive(Clone, Copy)]
 pub enum Error {

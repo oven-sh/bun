@@ -265,11 +265,6 @@ pub mod uv_e {
 
 use super::GetErrno;
 
-#[inline]
-pub fn get_errno<T: GetErrno>(rc: T) -> E {
-    rc.get_errno()
-}
-
 // raw system calls from std.os.linux.* will return usize
 // the errno is stored in this value
 impl GetErrno for usize {
@@ -287,25 +282,6 @@ impl GetErrno for usize {
 // the errno is stored in a thread local variable
 //
 // TODO: the inclusion of  'u32' and 'isize' seems suspicious
-macro_rules! impl_get_errno_libc {
-    ($($t:ty),+ $(,)?) => {$(
-        impl GetErrno for $t {
-            #[inline]
-            fn get_errno(self) -> E {
-                // Zig bitcasts unsigned → SAME-width signed before `== -1`.
-                // `as i64` would zero-extend u32, never matching -1. Compare
-                // against the type's own all-ones value instead (== -1 for
-                // signed, == MAX for unsigned — both are libc's failure rc).
-                if self == !(0 as $t) {
-                    // errno value is a valid E discriminant on Linux
-                    E::from_raw(crate::posix::errno() as u16)
-                } else {
-                    E::SUCCESS
-                }
-            }
-        }
-    )+};
-}
 impl_get_errno_libc!(i32, u32, isize, i64);
 // c_int == i32 on all our targets; Zig listed both explicitly but Rust impl coherence forbids the duplicate.
 // may need to drop one or cfg-gate it. Zig listed both explicitly.

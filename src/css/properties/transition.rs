@@ -170,6 +170,7 @@ macro_rules! handler_property {
 mod transition_handler_body {
 use super::*;
 use crate::generics::DeepClone;
+use crate::generics::CssEql as _;
 impl TransitionHandler {
     pub fn handle_property(
         &mut self,

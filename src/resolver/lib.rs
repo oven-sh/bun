@@ -611,30 +611,10 @@ pub mod fs {
     }
 
     /// Port of `options.JSX.Pragma.parsePackageName` (a pure byte-slice helper).
-    // Inlined from bun_bundler. The
-    // bundler copy remains; both should converge to `bun_string::strings` in Phase B.
+    /// D042: canonical body lives in `bun_options_types::jsx::Pragma`.
+    #[inline]
     pub fn parse_package_name(str: &[u8]) -> &[u8] {
-        use bun_string::strings;
-        if str.is_empty() {
-            return str;
-        }
-        if str[0] == b'@' {
-            if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
-                let first_slash = first_slash as usize;
-                let remainder = &str[1 + first_slash + 1..];
-
-                if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
-                    let last_slash = last_slash as usize;
-                    return &str[0..first_slash + 1 + last_slash + 1];
-                }
-            }
-        }
-
-        if let Some(first_slash) = strings::index_of_char(str, b'/') {
-            return &str[0..first_slash as usize];
-        }
-
-        str
+        bun_options_types::jsx::Pragma::parse_package_name(str)
     }
 
     // ── Entry / DirEntry / EntryKind ─────────────────────────────────────

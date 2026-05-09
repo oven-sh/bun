@@ -2,7 +2,7 @@ use std::io::Write as _;
 
 use crate::cli::command::Context;
 use bun_collections::{VecExt, StringArrayHashMap};
-use bun_core::{err, Error, Global, Output};
+use bun_core::{err, Error, Global, OrWriteFailed as _, Output};
 use bun_install::PackageManager;
 use bun_interchange::json;
 use bun_js_parser::{self as js_ast, E, Expr, ExprData, G};
@@ -239,7 +239,7 @@ impl PmPkgCommand {
                                 bstr::BStr::new(&value[..last_index]),
                                 bstr::BStr::new(&value[last_index..])
                             )
-                            .map_err(|_| err!("WriteFailed"))?;
+                            .or_write_failed()?;
                             results.put(key, new_value.into_boxed_slice())?;
                             continue;
                         }
@@ -457,9 +457,9 @@ impl PmPkgCommand {
             ExprData::ENumber(n) => {
                 let mut v = Vec::new();
                 if n.value.floor() == n.value {
-                    write!(&mut v, "{:.0}", n.value).map_err(|_| err!("WriteFailed"))?;
+                    write!(&mut v, "{:.0}", n.value).or_write_failed()?;
                 } else {
-                    write!(&mut v, "{}", n.value).map_err(|_| err!("WriteFailed"))?;
+                    write!(&mut v, "{}", n.value).or_write_failed()?;
                 }
                 Ok(v.into_boxed_slice())
             }

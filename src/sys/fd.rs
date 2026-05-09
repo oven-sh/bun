@@ -151,7 +151,7 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                use sys::windows::{libuv as uv, Win32Error, NTSTATUS};
+                use sys::windows::{libuv as uv, Win32Error, Win32ErrorExt as _, NTSTATUS};
                 match self.decode_windows() {
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
@@ -420,9 +420,8 @@ unsafe extern "C" {
 
 #[cfg(windows)]
 pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
-    unsafe extern "C" { fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int; }
-    // SAFETY: FFI call into libuv.
-    let out = unsafe { uv_open_osfhandle(in_) };
+    // SAFETY: FFI call into libuv. Raw extern lives in `bun_core::fd` (T0).
+    let out = unsafe { bun_core::fd::uv_open_osfhandle(in_) };
     debug_assert!(out >= -1);
     if out == -1 { return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded); }
     Ok(out)

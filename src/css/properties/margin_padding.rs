@@ -10,18 +10,15 @@ use crate::compat::Feature;
 
 // `RectShorthand`/`SizeShorthand` mirror Zig's `css.DefineRectShorthand` /
 // `css.DefineSizeShorthand` comptime mixins. The marker traits stay (some
-// callers name `<T as RectShorthand>::Value`); the actual `parse`/`to_css`
-// inherent methods + `generic::{Parse,ToCss}` impls are generated per-struct
-// by the `impl_rect_shorthand!` / `impl_size_shorthand!` macros defined in
-// the parent `properties/mod.rs` (shared with `border.rs`).
+// callers name `<T as RectShorthand>::Value`). The rect-shorthand structs
+// below are stamped out by `define_rect_shorthand!` (struct + PROPERTY_FIELD_MAP
+// + deep_clone/eql + parse/to_css + RectShorthand impl); the size-shorthand
+// structs keep hand-written bodies and get parse/to_css from
+// `impl_size_shorthand!`. Both macros live in the parent `properties/mod.rs`
+// (shared with `border.rs`).
 pub trait RectShorthand { type Value; }
 pub trait SizeShorthand { type Value; }
 
-impl_rect_shorthand!(Inset, LengthPercentageOrAuto);
-impl_rect_shorthand!(Margin, LengthPercentageOrAuto);
-impl_rect_shorthand!(Padding, LengthPercentageOrAuto);
-impl_rect_shorthand!(ScrollMargin, LengthPercentageOrAuto);
-impl_rect_shorthand!(ScrollPadding, LengthPercentageOrAuto);
 impl_size_shorthand!(InsetBlock, LengthPercentageOrAuto, block_start, block_end);
 impl_size_shorthand!(InsetInline, LengthPercentageOrAuto, inline_start, inline_end);
 impl_size_shorthand!(MarginBlock, LengthPercentageOrAuto, block_start, block_end);
@@ -44,46 +41,21 @@ impl_size_shorthand!(ScrollPaddingInline, LengthPercentageOrAuto, inline_start, 
 // replace the manual impls in Phase B.
 //
 // `implementDeepClone` / `implementEql` are field-wise reflection helpers →
-// `#[derive(Clone, PartialEq)]`. Thin inherent `deep_clone`/`eql` wrappers are
-// kept so cross-file callers (`x.deepClone(...)` → `x.deep_clone()`) keep
-// diffing 1:1.
+// `#[derive(Clone, PartialEq)]`; the `DeepClone`/`CssEql` trait impls are
+// bridged via `bridge_clone_partialeq!` in `generics.rs`.
 //
 // `PropertyFieldMap` (an anonymous struct mapping field-name → PropertyIdTag)
 // becomes an associated const slice; consumers that did `@field(map, name)`
 // will look up by name. // TODO(port): if consumers need O(1) by-field access,
 // switch to per-type associated consts.
 
-/// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
-#[derive(Clone, PartialEq)]
-pub struct Inset {
-    pub top: LengthPercentageOrAuto,
-    pub right: LengthPercentageOrAuto,
-    pub bottom: LengthPercentageOrAuto,
-    pub left: LengthPercentageOrAuto,
-}
-
-impl Inset {
-    // TODO: bring this back
-    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.inset);
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("top", PropertyIdTag::Top),
-        ("right", PropertyIdTag::Right),
-        ("bottom", PropertyIdTag::Bottom),
-        ("left", PropertyIdTag::Left),
-    ];
-
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-}
-// `pub const toCss = css_impl.toCss; pub const parse = css_impl.parse;`
-// → provided by the RectShorthand trait's default methods.
-impl RectShorthand for Inset {
-    type Value = LengthPercentageOrAuto;
+define_rect_shorthand! {
+    /// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
+    Inset, LengthPercentageOrAuto,
+    top: Top,
+    right: Right,
+    bottom: Bottom,
+    left: Left
 }
 
 /// A value for the [inset-block](https://drafts.csswg.org/css-logical/#propdef-inset-block) shorthand property.
@@ -104,12 +76,6 @@ impl InsetBlock {
         ("block_end", PropertyIdTag::InsetBlockEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for InsetBlock {
     type Value = LengthPercentageOrAuto;
@@ -133,12 +99,6 @@ impl InsetInline {
     // TODO: bring this back
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for InsetInline {
     type Value = LengthPercentageOrAuto;
@@ -162,12 +122,6 @@ impl MarginBlock {
         ("block_end", PropertyIdTag::MarginBlockEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for MarginBlock {
     type Value = LengthPercentageOrAuto;
@@ -191,46 +145,18 @@ impl MarginInline {
         ("inline_end", PropertyIdTag::MarginInlineEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for MarginInline {
     type Value = LengthPercentageOrAuto;
 }
 
-/// A value for the [margin](https://drafts.csswg.org/css-box-4/#propdef-margin) shorthand property.
-#[derive(Clone, PartialEq)]
-pub struct Margin {
-    pub top: LengthPercentageOrAuto,
-    pub right: LengthPercentageOrAuto,
-    pub bottom: LengthPercentageOrAuto,
-    pub left: LengthPercentageOrAuto,
-}
-
-impl Margin {
-    // TODO: bring this back
-    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.margin);
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("top", PropertyIdTag::MarginTop),
-        ("right", PropertyIdTag::MarginRight),
-        ("bottom", PropertyIdTag::MarginBottom),
-        ("left", PropertyIdTag::MarginLeft),
-    ];
-
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-}
-impl RectShorthand for Margin {
-    type Value = LengthPercentageOrAuto;
+define_rect_shorthand! {
+    /// A value for the [margin](https://drafts.csswg.org/css-box-4/#propdef-margin) shorthand property.
+    Margin, LengthPercentageOrAuto,
+    top: MarginTop,
+    right: MarginRight,
+    bottom: MarginBottom,
+    left: MarginLeft
 }
 
 /// A value for the [padding-block](https://drafts.csswg.org/css-logical/#propdef-padding-block) shorthand property.
@@ -251,12 +177,6 @@ impl PaddingBlock {
         ("block_end", PropertyIdTag::PaddingBlockEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for PaddingBlock {
     type Value = LengthPercentageOrAuto;
@@ -280,46 +200,18 @@ impl PaddingInline {
         ("inline_end", PropertyIdTag::PaddingInlineEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for PaddingInline {
     type Value = LengthPercentageOrAuto;
 }
 
-/// A value for the [padding](https://drafts.csswg.org/css-box-4/#propdef-padding) shorthand property.
-#[derive(Clone, PartialEq)]
-pub struct Padding {
-    pub top: LengthPercentageOrAuto,
-    pub right: LengthPercentageOrAuto,
-    pub bottom: LengthPercentageOrAuto,
-    pub left: LengthPercentageOrAuto,
-}
-
-impl Padding {
-    // TODO: bring this back
-    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.padding);
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("top", PropertyIdTag::PaddingTop),
-        ("right", PropertyIdTag::PaddingRight),
-        ("bottom", PropertyIdTag::PaddingBottom),
-        ("left", PropertyIdTag::PaddingLeft),
-    ];
-
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-}
-impl RectShorthand for Padding {
-    type Value = LengthPercentageOrAuto;
+define_rect_shorthand! {
+    /// A value for the [padding](https://drafts.csswg.org/css-box-4/#propdef-padding) shorthand property.
+    Padding, LengthPercentageOrAuto,
+    top: PaddingTop,
+    right: PaddingRight,
+    bottom: PaddingBottom,
+    left: PaddingLeft
 }
 
 /// A value for the [scroll-margin-block](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-margin-block) shorthand property.
@@ -340,12 +232,6 @@ impl ScrollMarginBlock {
         ("block_end", PropertyIdTag::ScrollMarginBlockEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for ScrollMarginBlock {
     type Value = LengthPercentageOrAuto;
@@ -369,46 +255,18 @@ impl ScrollMarginInline {
         ("inline_end", PropertyIdTag::ScrollMarginInlineEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for ScrollMarginInline {
     type Value = LengthPercentageOrAuto;
 }
 
-/// A value for the [scroll-margin](https://drafts.csswg.org/css-scroll-snap/#scroll-margin) shorthand property.
-#[derive(Clone, PartialEq)]
-pub struct ScrollMargin {
-    pub top: LengthPercentageOrAuto,
-    pub right: LengthPercentageOrAuto,
-    pub bottom: LengthPercentageOrAuto,
-    pub left: LengthPercentageOrAuto,
-}
-
-impl ScrollMargin {
-    // TODO: bring this back
-    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("top", PropertyIdTag::ScrollMarginTop),
-        ("right", PropertyIdTag::ScrollMarginRight),
-        ("bottom", PropertyIdTag::ScrollMarginBottom),
-        ("left", PropertyIdTag::ScrollMarginLeft),
-    ];
-
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-}
-impl RectShorthand for ScrollMargin {
-    type Value = LengthPercentageOrAuto;
+define_rect_shorthand! {
+    /// A value for the [scroll-margin](https://drafts.csswg.org/css-scroll-snap/#scroll-margin) shorthand property.
+    ScrollMargin, LengthPercentageOrAuto,
+    top: ScrollMarginTop,
+    right: ScrollMarginRight,
+    bottom: ScrollMarginBottom,
+    left: ScrollMarginLeft
 }
 
 /// A value for the [scroll-padding-block](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-padding-block) shorthand property.
@@ -429,12 +287,6 @@ impl ScrollPaddingBlock {
         ("block_end", PropertyIdTag::ScrollPaddingBlockEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for ScrollPaddingBlock {
     type Value = LengthPercentageOrAuto;
@@ -458,46 +310,18 @@ impl ScrollPaddingInline {
         ("inline_end", PropertyIdTag::ScrollPaddingInlineEnd),
     ];
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 impl SizeShorthand for ScrollPaddingInline {
     type Value = LengthPercentageOrAuto;
 }
 
-/// A value for the [scroll-padding](https://drafts.csswg.org/css-scroll-snap/#scroll-padding) shorthand property.
-#[derive(Clone, PartialEq)]
-pub struct ScrollPadding {
-    pub top: LengthPercentageOrAuto,
-    pub right: LengthPercentageOrAuto,
-    pub bottom: LengthPercentageOrAuto,
-    pub left: LengthPercentageOrAuto,
-}
-
-impl ScrollPadding {
-    // TODO: bring this back
-    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding");
-
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("top", PropertyIdTag::ScrollPaddingTop),
-        ("right", PropertyIdTag::ScrollPaddingRight),
-        ("bottom", PropertyIdTag::ScrollPaddingBottom),
-        ("left", PropertyIdTag::ScrollPaddingLeft),
-    ];
-
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-}
-impl RectShorthand for ScrollPadding {
-    type Value = LengthPercentageOrAuto;
+define_rect_shorthand! {
+    /// A value for the [scroll-padding](https://drafts.csswg.org/css-scroll-snap/#scroll-padding) shorthand property.
+    ScrollPadding, LengthPercentageOrAuto,
+    top: ScrollPaddingTop,
+    right: ScrollPaddingRight,
+    bottom: ScrollPaddingBottom,
+    left: ScrollPaddingLeft
 }
 
 // ──────────────────────────────────────────────────────────────────────────

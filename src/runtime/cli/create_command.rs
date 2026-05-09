@@ -1802,6 +1802,7 @@ fn file_copier_copy(
                             }
                         }
 
+                        use bun_sys::windows::Win32ErrorExt as _;
                         if let Some(err) = bun_sys::windows::Win32Error::get().to_system_errno() {
                             Output::err(
                                 err,
@@ -2596,25 +2597,9 @@ impl Example {
 
         Output::pretty_errorln(format_args!(
             "Corrupt examples data: expected object but received {}",
-            expr_data_tag_name(&examples_object.data),
+            examples_object.data.tag_name(),
         ));
         Global::exit(1);
-    }
-}
-
-// Local shim: `bun_logger::js_ast::ExprData` has no `tag()` accessor yet.
-// Zig used `@tagName(examples_object.data)`.
-fn expr_data_tag_name(data: &logger::js_ast::ExprData) -> &'static str {
-    use logger::js_ast::ExprData as D;
-    match data {
-        D::EArray(_) => "e_array",
-        D::EObject(_) => "e_object",
-        D::EString(_) => "e_string",
-        D::EBoolean(_) => "e_boolean",
-        D::ENumber(_) => "e_number",
-        D::ENull(_) => "e_null",
-        D::EUndefined(_) => "e_undefined",
-        D::EMissing(_) => "e_missing",
     }
 }
 

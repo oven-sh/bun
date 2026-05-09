@@ -3,21 +3,8 @@ use super::debug_socket_monitor_writer;
 
 bun_core::declare_scope!(SocketMonitor, visible);
 
-// Zig `{x}` on `[]const u8` prints contiguous lowercase hex. `bun_core::fmt`
-// only has `hex_int*` for scalar ints, so inline a tiny slice formatter here
-// (debug-log-only; no allocation).
-struct HexBytes<'a>(&'a [u8]);
-impl core::fmt::Display for HexBytes<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for b in self.0 {
-            write!(f, "{:02x}", b)?;
-        }
-        Ok(())
-    }
-}
-
 pub fn write(data: &[u8]) {
-    bun_core::scoped_log!(SocketMonitor, "SocketMonitor: write {}", HexBytes(data));
+    bun_core::scoped_log!(SocketMonitor, "SocketMonitor: write {}", bun_core::fmt::hex_lower(data));
     #[cfg(debug_assertions)]
     {
         debug_socket_monitor_writer::CHECK.call_once(debug_socket_monitor_writer::load);
@@ -28,7 +15,7 @@ pub fn write(data: &[u8]) {
 }
 
 pub fn read(data: &[u8]) {
-    bun_core::scoped_log!(SocketMonitor, "SocketMonitor: read {}", HexBytes(data));
+    bun_core::scoped_log!(SocketMonitor, "SocketMonitor: read {}", bun_core::fmt::hex_lower(data));
     #[cfg(debug_assertions)]
     {
         debug_socket_monitor_reader::CHECK.call_once(debug_socket_monitor_reader::load);

@@ -30,6 +30,7 @@ bun_core.workspace = true
 bun_bundler.workspace = true
 bun_clap.workspace = true
 bun_collections.workspace = true
+bun_crash_handler.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
 bun_hash.workspace = true

@@ -15,6 +15,8 @@ use core::mem;
 
 use bun_alloc::AllocError;
 
+use super::vec_ext::VecExt;
+
 /// Managed `ArrayList` using an arbitrary allocator.
 /// Prefer using a concrete type, like `ArrayListDefault`.
 ///
@@ -467,20 +469,15 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn ensure_total_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
-        self.unmanaged
-            .reserve(new_capacity.saturating_sub(self.unmanaged.len()));
-        Ok(())
+        self.unmanaged.ensure_total_capacity(new_capacity)
     }
 
     pub fn ensure_total_capacity_precise(&mut self, new_capacity: usize) -> Result<(), AllocError> {
-        self.unmanaged
-            .reserve_exact(new_capacity.saturating_sub(self.unmanaged.len()));
-        Ok(())
+        self.unmanaged.ensure_total_capacity_precise(new_capacity)
     }
 
     pub fn ensure_unused_capacity(&mut self, additional_count: usize) -> Result<(), AllocError> {
-        self.unmanaged.reserve(additional_count);
-        Ok(())
+        self.unmanaged.ensure_unused_capacity(additional_count)
     }
 
     /// Note that this creates copies of `init_value`.

@@ -5722,24 +5722,20 @@ impl Token {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            Token::Ident(value) => {
-                serializer::serialize_identifier(value, dest).map_err(|_| dest.add_fmt_error())
-            }
+            Token::Ident(value) => dest.serialize_identifier(value),
             Token::AtKeyword(value) => {
                 dest.write_str("@")?;
-                serializer::serialize_identifier(value, dest).map_err(|_| dest.add_fmt_error())
+                dest.serialize_identifier(value)
             }
             Token::UnrestrictedHash(value) => {
                 dest.write_str("#")?;
-                serializer::serialize_name(value, dest).map_err(|_| dest.add_fmt_error())
+                dest.serialize_name(value)
             }
             Token::IdHash(value) => {
                 dest.write_str("#")?;
-                serializer::serialize_identifier(value, dest).map_err(|_| dest.add_fmt_error())
+                dest.serialize_identifier(value)
             }
-            Token::QuotedString(value) => {
-                serializer::serialize_string(value, dest).map_err(|_| dest.add_fmt_error())
-            }
+            Token::QuotedString(value) => dest.serialize_string(value),
             Token::UnquotedUrl(value) => {
                 dest.write_str("url(")?;
                 serializer::serialize_unquoted_url(value, dest)
@@ -5764,11 +5760,9 @@ impl Token {
                 if unit == b"e" || unit == b"E" || unit.starts_with(b"e-") || unit.starts_with(b"E-")
                 {
                     dest.write_str("\\65 ")?;
-                    serializer::serialize_name(&unit[1..], dest)
-                        .map_err(|_| dest.add_fmt_error())
+                    dest.serialize_name(&unit[1..])
                 } else {
-                    serializer::serialize_identifier(unit, dest)
-                        .map_err(|_| dest.add_fmt_error())
+                    dest.serialize_identifier(unit)
                 }
             }
             Token::Whitespace(content) => dest.write_bytes(content),
@@ -5788,7 +5782,7 @@ impl Token {
             Token::Cdo => dest.write_str("<!--"),
             Token::Cdc => dest.write_str("-->"),
             Token::Function(name) => {
-                serializer::serialize_identifier(name, dest).map_err(|_| dest.add_fmt_error())?;
+                dest.serialize_identifier(name)?;
                 dest.write_str("(")
             }
             Token::OpenParen => dest.write_str("("),
@@ -6511,39 +6505,16 @@ pub fn parse_important(input: &mut Parser) -> CssResult<()> {
 }
 
 pub mod signfns {
-    #[inline]
-    pub fn is_sign_positive(x: f32) -> bool {
-        !is_sign_negative(x)
-    }
-    #[inline]
-    pub fn is_sign_negative(x: f32) -> bool {
-        // SAFETY: This is just transmuting to get the sign bit, it's fine.
-        x.to_bits() & 0x8000_0000 != 0
-    }
-    /// Returns a number that represents the sign of `self`.
-    pub fn signum(x: f32) -> f32 {
-        if x.is_nan() {
-            return f32::NAN;
-        }
-        super::copysign(1.0, x)
-    }
-
+    /// Spec-faithful port of `css_parser.zig:7086` — note the ±0.0 sign FLIP is
+    /// intentional (do NOT "fix" it). Distinct from `f32::signum` and from
+    /// `calc::std_math_sign` / `CSSNumberFns::sign`.
     #[inline]
     pub fn sign_f32(x: f32) -> f32 {
         if x == 0.0 {
-            return if is_sign_negative(x) { 0.0 } else { -0.0 };
+            return if x.is_sign_negative() { 0.0 } else { -0.0 };
         }
-        signum(x)
+        x.signum()
     }
-}
-
-/// Copies the sign of `sign` to `self`, returning a new f32 value.
-#[inline]
-pub fn copysign(self_: f32, sign: f32) -> f32 {
-    let self_bits = self_.to_bits();
-    let sign_bits = sign.to_bits();
-    let result_bits = (self_bits & 0x7FFFFFFF) | (sign_bits & 0x80000000);
-    f32::from_bits(result_bits)
 }
 
 pub fn deep_deinit<V>(_list: &mut Vec<V>) {

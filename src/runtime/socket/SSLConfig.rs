@@ -1,110 +1,32 @@
+//! DEDUP(D202): the `SSLConfig` struct, its `Clone`/`Drop`/`Default`/hash/
+//! equality/registry impls, and `as_usockets*`/`for_client_verification` were
+//! double-ported (here and in `bun_http::ssl_config`). The lower-tier
+//! `bun_http` copy is canonical (JSC-free, matches the Zig `?[*:0]const u8`
+//! field layout); this module now re-exports it and keeps ONLY the
+//! JSC-dependent constructors (`from_js` / `from_generated` / blob+path
+//! readers) plus the WebSocket C-ABI exports, which need `bun_jsc` /
+//! `webcore::Blob` / `node_fs` (tier-6).
+//!
+//! `from_js`/`from_generated` cannot be inherent `impl SSLConfig` (orphan
+//! rule on a foreign type), so they're provided via the [`SSLConfigFromJs`]
+//! extension trait. Import that trait to call `SSLConfig::from_js(..)`.
+
 use core::ffi::c_char;
-use std::ffi::CString;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
-use bun_uws as uws;
-use bun_wyhash::Wyhash;
 
 use crate::node::fs as node_fs;
 use crate::webcore::Blob;
 use crate::webcore::blob::store::Data as StoreData;
 
 // ──────────────────────────────────────────────────────────────────────────
-// SSLConfig
+// Canonical re-exports (struct + registry live in bun_http now)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct SSLConfig {
-    pub server_name: Option<CString>,
-
-    pub key_file_name: Option<CString>,
-    pub cert_file_name: Option<CString>,
-
-    pub ca_file_name: Option<CString>,
-    pub dh_params_file_name: Option<CString>,
-
-    pub passphrase: Option<CString>,
-
-    pub key: Option<CStringList>,
-    pub cert: Option<CStringList>,
-    pub ca: Option<CStringList>,
-
-    pub secure_options: u32,
-    pub request_cert: i32,
-    pub reject_unauthorized: i32,
-    pub ssl_ciphers: Option<CString>,
-    pub protos: Option<CString>,
-    pub client_renegotiation_limit: u32,
-    pub client_renegotiation_window: u32,
-    pub requires_custom_request_ctx: bool,
-    pub is_using_default_ciphers: bool,
-    pub low_memory_mode: bool,
-    /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
-    /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
-    /// context. Zig used a plain `u64` mutated via `*SSLConfig` (Zig pointers
-    /// freely alias); Rust needs `UnsafeCell`-backed storage here.
-    pub cached_hash: AtomicU64,
-}
-
-/// Owned list of NUL-terminated strings paired with a contiguous
-/// `[*const c_char]` side-buffer. The side-buffer is what uSockets'
-/// `us_bun_socket_context_options_t.{key,cert,ca}` expects (a `**const char`
-/// with thin-pointer stride), matching the Zig `?[][*:0]const u8` layout.
-///
-/// `ptrs[i]` always equals `strings[i].as_ptr()`. The pointed-to buffers are
-/// the `CString` heap allocations, which are stable for the lifetime of
-/// `strings` (moving a `CString` does not move its backing `Box<[u8]>`).
-pub struct CStringList {
-    strings: Vec<CString>,
-    ptrs: Vec<*const c_char>,
-}
-
-impl CStringList {
-    pub fn from_vec(strings: Vec<CString>) -> Self {
-        let ptrs: Vec<*const c_char> = strings.iter().map(|s| s.as_ptr()).collect();
-        Self { strings, ptrs }
-    }
-
-    #[inline]
-    pub fn as_ptr_array(&self) -> *const *const c_char {
-        self.ptrs.as_ptr()
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        debug_assert_eq!(self.strings.len(), self.ptrs.len());
-        self.strings.len()
-    }
-
-    #[inline]
-    pub fn iter(&self) -> core::slice::Iter<'_, CString> {
-        self.strings.iter()
-    }
-}
-
-// SAFETY: `ptrs` only ever points into the heap allocations owned by
-// `strings` in the same struct; those allocations move with the struct and
-// are freed by its Drop. No shared mutable state is exposed.
-unsafe impl Send for CStringList {}
-unsafe impl Sync for CStringList {}
-
-/// Atomic shared pointer with weak support. Refcounting and allocation are
-/// managed non-intrusively by `Arc`; the SSLConfig struct itself has no
-/// refcount field.
-pub type SharedPtr = Arc<SSLConfig>;
-
-type WeakPtr = Weak<SSLConfig>;
-
-impl SSLConfig {
-    /// Extract the raw `*const SSLConfig` from an optional SharedPtr for
-    /// pointer-equality comparison (interned configs have stable addresses).
-    #[inline]
-    pub fn raw_ptr(maybe_shared: Option<&SharedPtr>) -> Option<*const SSLConfig> {
-        maybe_shared.map(|s| Arc::as_ptr(s))
-    }
-}
+pub use bun_http::ssl_config::{
+    global_registry, GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFromBlobError
@@ -127,20 +49,42 @@ impl From<JsError> for ReadFromBlobError {
     }
 }
 
-/// Convert a `ZBox` (NUL-terminated owned byte buffer) into a `CString`
-/// without re-allocating. Matches Zig `toOwnedSliceZ` semantics (no
-/// interior-NUL check).
+// ──────────────────────────────────────────────────────────────────────────
+// Allocation helpers
+//
+// Every owned C-string field on `bun_http::SSLConfig` is freed via
+// `bun_core::free_sensitive` (== `mi_free` after secure-zero). Allocate via
+// `bun_core::dupe_z` (== `mi_malloc`) so the allocator pairing is exact, OR
+// leak a `Box<[u8]>` allocation directly (the process-global
+// `#[global_allocator]` is mimalloc, so `mi_free` pairs with `Box`-owned
+// memory too — same invariant the previous `into_http()` bridge relied on
+// via `CString::into_raw`).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Transfer ownership of a `ZBox` (NUL-terminated `Box<[u8]>`) to a raw
+/// `*const c_char`. No reallocation. Freed by `bun_core::free_sensitive`
+/// (mimalloc) in `SSLConfig::deinit`.
 #[inline]
-fn zbox_into_cstring(z: bun_core::ZBox) -> CString {
-    // SAFETY: `ZBox` guarantees a single trailing NUL; we hand the bytes
-    // (including the sentinel) to `CString` without re-allocating.
-    unsafe { CString::from_vec_with_nul_unchecked(z.into_vec_with_nul()) }
+fn zbox_into_raw(z: bun_core::ZBox) -> *const c_char {
+    let mut b = z.into_vec_with_nul().into_boxed_slice();
+    debug_assert_eq!(b.last(), Some(&0));
+    let p = b.as_mut_ptr() as *const c_char;
+    core::mem::forget(b);
+    p
 }
+
+/// `dupeZ` a byte slice into a fresh mimalloc allocation.
+#[inline]
+fn dupe_z(bytes: &[u8]) -> *const c_char {
+    bun_core::dupe_z(bytes)
+}
+
+type CStrSlice = Option<Box<[*const c_char]>>;
 
 fn read_from_blob(
     global: &JSGlobalObject,
     blob: &Blob,
-) -> Result<CString, ReadFromBlobError> {
+) -> Result<*const c_char, ReadFromBlobError> {
     let store = blob.store.as_ref().ok_or(ReadFromBlobError::NullStore)?;
     let file = match &store.data {
         StoreData::File(f) => f,
@@ -171,584 +115,31 @@ fn read_from_blob(
     if zbox.is_empty() {
         return Err(ReadFromBlobError::EmptyFile);
     }
-    Ok(zbox_into_cstring(zbox))
+    Ok(zbox_into_raw(zbox))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// asUSockets / forClientVerification
+// fromJS / fromGenerated — extension trait (orphan-rule workaround)
 // ──────────────────────────────────────────────────────────────────────────
 
-impl SSLConfig {
-    pub fn as_usockets(&self) -> uws::SocketContext::BunSocketContextOptions {
-        let mut ctx_opts = uws::SocketContext::BunSocketContextOptions::default();
+/// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
+/// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
+pub trait SSLConfigFromJs: Sized {
+    fn from_js(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<Self>>;
 
-        if let Some(v) = &self.key_file_name {
-            ctx_opts.key_file_name = v.as_ptr();
-        }
-        if let Some(v) = &self.cert_file_name {
-            ctx_opts.cert_file_name = v.as_ptr();
-        }
-        if let Some(v) = &self.ca_file_name {
-            ctx_opts.ca_file_name = v.as_ptr();
-        }
-        if let Some(v) = &self.dh_params_file_name {
-            ctx_opts.dh_params_file_name = v.as_ptr();
-        }
-        if let Some(v) = &self.passphrase {
-            ctx_opts.passphrase = v.as_ptr();
-        }
-        ctx_opts.ssl_prefer_low_memory_usage = self.low_memory_mode as core::ffi::c_int;
-
-        if let Some(key) = &self.key {
-            ctx_opts.key = key.as_ptr_array();
-            ctx_opts.key_count = u32::try_from(key.len()).expect("int cast");
-        }
-        if let Some(cert) = &self.cert {
-            ctx_opts.cert = cert.as_ptr_array();
-            ctx_opts.cert_count = u32::try_from(cert.len()).expect("int cast");
-        }
-        if let Some(ca) = &self.ca {
-            ctx_opts.ca = ca.as_ptr_array();
-            ctx_opts.ca_count = u32::try_from(ca.len()).expect("int cast");
-        }
-
-        if let Some(v) = &self.ssl_ciphers {
-            ctx_opts.ssl_ciphers = v.as_ptr();
-        }
-        ctx_opts.request_cert = self.request_cert;
-        ctx_opts.reject_unauthorized = self.reject_unauthorized;
-
-        ctx_opts
-    }
-
-    /// Returns socket options for client-side TLS with manual verification.
-    /// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
-    /// (to handle verification manually in handshake callback).
-    pub fn as_usockets_for_client_verification(
-        &self,
-    ) -> uws::SocketContext::BunSocketContextOptions {
-        let mut opts = self.as_usockets();
-        opts.request_cert = 1;
-        opts.reject_unauthorized = 0;
-        opts
-    }
-
-    /// Returns a copy of this config for client-side TLS with manual verification.
-    /// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
-    /// (to handle verification manually in handshake callback).
-    // PORT NOTE: reshaped for borrowck — Zig took `this: SSLConfig` by value
-    // (shallow bitwise copy of raw pointers). With owned CString fields that
-    // would be a double-free, so we take &self and deep-clone.
-    pub fn for_client_verification(&self) -> SSLConfig {
-        let mut copy = self.clone();
-        copy.request_cert = 1;
-        copy.reject_unauthorized = 0;
-        copy
-    }
+    fn from_generated(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+    ) -> JsResult<Option<Self>>;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// isSame / stringsEqual
-// ──────────────────────────────────────────────────────────────────────────
-
-impl SSLConfig {
-    // PORT NOTE: Zig used `inline for (std.meta.fields(SSLConfig))` reflection.
-    // Rust has no field reflection; expanded by hand. Keep field order in sync
-    // with the struct definition above.
-    pub fn is_same(&self, other: &SSLConfig) -> bool {
-        opt_str_eq(&self.server_name, &other.server_name)
-            && opt_str_eq(&self.key_file_name, &other.key_file_name)
-            && opt_str_eq(&self.cert_file_name, &other.cert_file_name)
-            && opt_str_eq(&self.ca_file_name, &other.ca_file_name)
-            && opt_str_eq(&self.dh_params_file_name, &other.dh_params_file_name)
-            && opt_str_eq(&self.passphrase, &other.passphrase)
-            && opt_strs_eq(&self.key, &other.key)
-            && opt_strs_eq(&self.cert, &other.cert)
-            && opt_strs_eq(&self.ca, &other.ca)
-            && self.secure_options == other.secure_options
-            && self.request_cert == other.request_cert
-            && self.reject_unauthorized == other.reject_unauthorized
-            && opt_str_eq(&self.ssl_ciphers, &other.ssl_ciphers)
-            && opt_str_eq(&self.protos, &other.protos)
-            && self.client_renegotiation_limit == other.client_renegotiation_limit
-            && self.client_renegotiation_window == other.client_renegotiation_window
-            && self.requires_custom_request_ctx == other.requires_custom_request_ctx
-            && self.is_using_default_ciphers == other.is_using_default_ciphers
-            && self.low_memory_mode == other.low_memory_mode
-        // cached_hash intentionally skipped
-    }
-}
-
-fn opt_str_eq(first: &Option<CString>, second: &Option<CString>) -> bool {
-    match (first, second) {
-        (Some(a), Some(b)) => strings_equal(a, b),
-        (None, None) => true,
-        _ => false,
-    }
-}
-
-fn opt_strs_eq(first: &Option<CStringList>, second: &Option<CStringList>) -> bool {
-    match (first, second) {
-        (Some(slice1), Some(slice2)) => {
-            if slice1.len() != slice2.len() {
-                return false;
-            }
-            debug_assert_eq!(slice1.len(), slice2.len());
-            for (a, b) in slice1.iter().zip(slice2.iter()) {
-                if !strings_equal(a, b) {
-                    return false;
-                }
-            }
-            true
-        }
-        (None, None) => true,
-        _ => false,
-    }
-}
-
-fn strings_equal(a: &CString, b: &CString) -> bool {
-    let lhs = a.as_bytes();
-    let rhs = b.as_bytes();
-    bun_str::strings::eql_long(lhs, rhs, true)
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// freeStrings / freeString / Drop
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Port of `bun.freeSensitive` for owned NUL-terminated byte buffers.
-/// Zeros the allocation before freeing (defence-in-depth for keys/passphrases).
-// PORT NOTE: `bun_core::free_sensitive` takes a raw `*const c_char` and frees via
-// `mi_free`; for Rust-allocated `CString`/`Vec<u8>` we instead zero in-place and
-// let Drop return the allocation to the (mimalloc-backed) global allocator.
-fn free_sensitive_bytes(mut bytes: Vec<u8>) {
-    let len = bytes.len();
-    // SAFETY: `bytes` is exclusively owned; `as_mut_ptr()` is valid for
-    // writes of `len` bytes.
-    unsafe { bun_core::secure_zero(bytes.as_mut_ptr(), len) };
-    drop(bytes);
-}
-
-fn free_strings(slice: &mut Option<CStringList>) {
-    let Some(inner) = slice.take() else { return };
-    let CStringList { strings, ptrs } = inner;
-    drop(ptrs);
-    for string in strings {
-        free_sensitive_bytes(string.into_bytes_with_nul());
-    }
-    // outer Vecs freed by drop
-}
-
-fn free_string(string: &mut Option<CString>) {
-    let Some(inner) = string.take() else { return };
-    free_sensitive_bytes(inner.into_bytes_with_nul());
-}
-
-/// Destructor. Called by `Arc` on strong 1->0 for interned configs, and
-/// directly on value-type configs (e.g. `ServerConfig.ssl_config`).
-///
-/// For interned configs, we MUST remove from the registry before freeing the
-/// string fields, since concurrent `intern()` calls may read those fields for
-/// content comparison while we're still in the map. For non-interned configs,
-/// `remove()` is a cheap no-op (pointer-identity check fails).
-impl Drop for SSLConfig {
-    fn drop(&mut self) {
-        GlobalRegistry::remove(self);
-        // PORT NOTE: Zig used `bun.meta.useAllFields` to enforce exhaustiveness.
-        // Keep this list in sync with the struct definition.
-        free_string(&mut self.server_name);
-        free_string(&mut self.key_file_name);
-        free_string(&mut self.cert_file_name);
-        free_string(&mut self.ca_file_name);
-        free_string(&mut self.dh_params_file_name);
-        free_string(&mut self.passphrase);
-        free_strings(&mut self.key);
-        free_strings(&mut self.cert);
-        free_strings(&mut self.ca);
-        // secure_options: no-op
-        // request_cert: no-op
-        // reject_unauthorized: no-op
-        free_string(&mut self.ssl_ciphers);
-        free_string(&mut self.protos);
-        // client_renegotiation_limit: no-op
-        // client_renegotiation_window: no-op
-        // requires_custom_request_ctx: no-op
-        // is_using_default_ciphers: no-op
-        // low_memory_mode: no-op
-        // cached_hash: no-op
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// clone
-// ──────────────────────────────────────────────────────────────────────────
-
-fn clone_strings(slice: &Option<CStringList>) -> Option<CStringList> {
-    let inner = slice.as_ref()?;
-    let mut result = Vec::with_capacity(inner.len());
-    for string in inner.iter() {
-        result.push(string.clone());
-    }
-    Some(CStringList::from_vec(result))
-}
-
-fn clone_string(string: &Option<CString>) -> Option<CString> {
-    string.clone()
-}
-
-impl Clone for SSLConfig {
-    fn clone(&self) -> SSLConfig {
-        SSLConfig {
-            server_name: clone_string(&self.server_name),
-            key_file_name: clone_string(&self.key_file_name),
-            cert_file_name: clone_string(&self.cert_file_name),
-            ca_file_name: clone_string(&self.ca_file_name),
-            dh_params_file_name: clone_string(&self.dh_params_file_name),
-            passphrase: clone_string(&self.passphrase),
-            key: clone_strings(&self.key),
-            cert: clone_strings(&self.cert),
-            ca: clone_strings(&self.ca),
-            secure_options: self.secure_options,
-            request_cert: self.request_cert,
-            reject_unauthorized: self.reject_unauthorized,
-            ssl_ciphers: clone_string(&self.ssl_ciphers),
-            protos: clone_string(&self.protos),
-            client_renegotiation_limit: self.client_renegotiation_limit,
-            client_renegotiation_window: self.client_renegotiation_window,
-            requires_custom_request_ctx: self.requires_custom_request_ctx,
-            is_using_default_ciphers: self.is_using_default_ciphers,
-            low_memory_mode: self.low_memory_mode,
-            cached_hash: AtomicU64::new(0),
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// into_http — bridge to lower-tier `bun_http::ssl_config::SSLConfig`
-// ──────────────────────────────────────────────────────────────────────────
-
-impl SSLConfig {
-    /// Move into the lower-tier `bun_http::ssl_config::SSLConfig` shape.
-    /// `bun_http` cannot name this T6 type (cycle), and `from_js` lives here
-    /// (it walks a `JSValue`), so callers that need an interned `bun_http`
-    /// `SharedPtr` (e.g. `fetch()` → `AsyncHTTP`) convert at the boundary.
-    ///
-    /// Ownership of every string allocation is *transferred* (no deep copy).
-    /// The Zig spec has a single `SSLConfig` type so the bridge is identity;
-    /// the previous deep-copy via `dupe_z` doubled the alloc + secure-zero
-    /// cost per field, which under ASAN inflated quarantine RSS and pushed
-    /// the WebSocket SSLConfig leak test (1200 × 256 KiB CA) past its
-    /// 5-second timeout in debug builds. `CString::into_raw` yields a
-    /// mimalloc pointer (the process-global `#[global_allocator]`), and
-    /// `bun_http::ssl_config`'s `free_sensitive` frees via `mi_free`, so the
-    /// allocator pairing is exact.
-    pub fn into_http(mut self) -> bun_http::ssl_config::SSLConfig {
-        fn mv(s: &mut Option<CString>) -> *const c_char {
-            s.take()
-                .map(|c| c.into_raw() as *const c_char)
-                .unwrap_or(core::ptr::null())
-        }
-        fn mvs(l: &mut Option<CStringList>) -> Option<Box<[*const c_char]>> {
-            l.take().map(|list| {
-                let CStringList { strings, ptrs } = list;
-                drop(ptrs);
-                strings
-                    .into_iter()
-                    .map(|c| c.into_raw() as *const c_char)
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice()
-            })
-        }
-        let out = bun_http::ssl_config::SSLConfig {
-            server_name: mv(&mut self.server_name),
-            key_file_name: mv(&mut self.key_file_name),
-            cert_file_name: mv(&mut self.cert_file_name),
-            ca_file_name: mv(&mut self.ca_file_name),
-            dh_params_file_name: mv(&mut self.dh_params_file_name),
-            passphrase: mv(&mut self.passphrase),
-            key: mvs(&mut self.key),
-            cert: mvs(&mut self.cert),
-            ca: mvs(&mut self.ca),
-            secure_options: self.secure_options,
-            request_cert: self.request_cert,
-            reject_unauthorized: self.reject_unauthorized,
-            ssl_ciphers: mv(&mut self.ssl_ciphers),
-            protos: mv(&mut self.protos),
-            client_renegotiation_limit: self.client_renegotiation_limit,
-            client_renegotiation_window: self.client_renegotiation_window,
-            requires_custom_request_ctx: self.requires_custom_request_ctx,
-            is_using_default_ciphers: self.is_using_default_ciphers,
-            low_memory_mode: self.low_memory_mode,
-            cached_hash: 0,
-        };
-        // `self` drops here with every owned field already taken — Drop's
-        // `free_string`/`free_strings` calls are no-ops, and
-        // `GlobalRegistry::remove` runs (cheap pointer-identity miss for
-        // never-interned configs).
-        out
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// contentHash
-// ──────────────────────────────────────────────────────────────────────────
-
-impl SSLConfig {
-    // PORT NOTE: Zig used `inline for (std.meta.fields(SSLConfig))` reflection.
-    // Expanded by hand; keep field order in sync with struct definition.
-    //
-    // Takes `&self` (not `&mut`) because the intern registry calls this through
-    // a pointer derived from `Arc::as_ptr`, which only grants shared provenance.
-    // The memoization write goes through `AtomicU64` (interior mutability).
-    pub fn content_hash(&self) -> u64 {
-        let cached = self.cached_hash.load(Ordering::Relaxed);
-        if cached != 0 {
-            return cached;
-        }
-        // Zig: `std.hash.Wyhash` (final4 variant). NOT `Wyhash11`.
-        let mut hasher = Wyhash::init(0);
-
-        hash_opt_str(&mut hasher, &self.server_name);
-        hash_opt_str(&mut hasher, &self.key_file_name);
-        hash_opt_str(&mut hasher, &self.cert_file_name);
-        hash_opt_str(&mut hasher, &self.ca_file_name);
-        hash_opt_str(&mut hasher, &self.dh_params_file_name);
-        hash_opt_str(&mut hasher, &self.passphrase);
-        hash_opt_strs(&mut hasher, &self.key);
-        hash_opt_strs(&mut hasher, &self.cert);
-        hash_opt_strs(&mut hasher, &self.ca);
-        hash_scalar(&mut hasher, &self.secure_options);
-        hash_scalar(&mut hasher, &self.request_cert);
-        hash_scalar(&mut hasher, &self.reject_unauthorized);
-        hash_opt_str(&mut hasher, &self.ssl_ciphers);
-        hash_opt_str(&mut hasher, &self.protos);
-        hash_scalar(&mut hasher, &self.client_renegotiation_limit);
-        hash_scalar(&mut hasher, &self.client_renegotiation_window);
-        hash_scalar(&mut hasher, &self.requires_custom_request_ctx);
-        hash_scalar(&mut hasher, &self.is_using_default_ciphers);
-        hash_scalar(&mut hasher, &self.low_memory_mode);
-        // cached_hash intentionally skipped
-
-        let hash = hasher.final_();
-        // Avoid 0 since it's the sentinel for "not computed"
-        let hash = if hash == 0 { 1 } else { hash };
-        // Relaxed: idempotent pure cache; racing writers store the same value.
-        self.cached_hash.store(hash, Ordering::Relaxed);
-        hash
-    }
-}
-
-fn hash_opt_str(hasher: &mut Wyhash, value: &Option<CString>) {
-    if let Some(s) = value {
-        hasher.update(s.as_bytes());
-    }
-    hasher.update(&[0]);
-}
-
-fn hash_opt_strs(hasher: &mut Wyhash, value: &Option<CStringList>) {
-    if let Some(slice) = value {
-        for s in slice.iter() {
-            hasher.update(s.as_bytes());
-            hasher.update(&[0]);
-        }
-    }
-    hasher.update(&[0]);
-}
-
-fn hash_scalar<T: Copy>(hasher: &mut Wyhash, value: &T) {
-    // SAFETY: T is Copy/POD; reading its raw bytes is sound (matches Zig
-    // `std.mem.asBytes(&value)`).
-    let bytes = unsafe {
-        core::slice::from_raw_parts(
-            std::ptr::from_ref::<T>(value).cast::<u8>(),
-            core::mem::size_of::<T>(),
-        )
-    };
-    hasher.update(bytes);
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// GlobalRegistry
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Weak dedup cache. Each map entry stores a weak pointer on its key's
-/// backing allocation. `upgrade()` on that weak pointer is memory-safe
-/// because the weak ref keeps the allocation alive (even if strong==0 and
-/// `drop()` is running on another thread). The mutex only protects map
-/// structure and the invariant that entry content is intact while in the map.
-#[allow(non_snake_case)]
-pub mod GlobalRegistry {
-    use super::*;
-
-    // PORT NOTE: Zig used `ArrayHashMapUnmanaged<*SSLConfig, WeakPtr, MapContext>`
-    // where `MapContext` hashes/compares by *content* through the raw-pointer
-    // key. That shape is UB in Rust: when an interned `Arc`'s strong count hits
-    // 0, std `Arc` materializes a `&mut SSLConfig` (via `drop_in_place`)
-    // *before* `Drop::drop` reaches `remove()`'s mutex; a concurrent `intern()`
-    // probing the map would then form a `&SSLConfig` to the same allocation via
-    // the raw key, aliasing that live `&mut`. Zig's model tolerates
-    // read-while-deinit-blocked (.zig:336-341/.zig:356); Rust's does not.
-    //
-    // The Rust shape stores `(u64 content_hash, Weak)` and probes by:
-    //   1. fast u64 hash filter,
-    //   2. `Weak::upgrade()` (so the comparand is a fresh strong `Arc`),
-    //   3. `is_same()` on the upgraded value.
-    // `remove()` matches by `Weak::as_ptr` identity, never dereferencing.
-    //
-    // Backed by a flat `Vec` (linear scan): the number of distinct SSL configs
-    // per process is tiny (typically <16) and `ArrayHashMap` is also linear
-    // for `eql` collisions, so this is the same complexity class.
-    // PERF(port): was ArrayHashMapUnmanaged — profile in Phase B.
-    static REGISTRY: parking_lot::Mutex<Vec<(u64, WeakPtr)>> =
-        parking_lot::Mutex::new(Vec::new());
-
-    /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
-    /// either returns an existing equivalent (upgraded) or the new one. Either
-    /// way, caller owns exactly one strong ref on the result.
-    ///
-    /// The returned `SharedPtr` is dropped normally.
-    pub fn intern(config: SSLConfig) -> SharedPtr {
-        // Compute hash on the owned value *before* `Arc::new`, so the cached
-        // hash is stored before any other thread can observe this config.
-        let hash = config.content_hash();
-        let new_shared: SharedPtr = Arc::new(config);
-
-        // Deferred cleanup MUST run after the mutex is released (Drop re-locks
-        // the registry mutex via `SSLConfig::drop -> remove`).
-        let mut dispose_new: Option<SharedPtr> = None;
-        let mut dispose_old_weak: Option<WeakPtr> = None;
-
-        // PORT NOTE: reshaped for borrowck — Zig returned directly while holding
-        // the mutex, then ran `defer`s. We compute `result` in a block, drop
-        // the guard, then dispose deferred values.
-        let result = {
-            let mut configs = REGISTRY.lock();
-
-            // Zig: `getOrPutContext` — probe by content hash + content equality.
-            let mut found_idx: Option<usize> = None;
-            for (i, (h, weak)) in configs.iter().enumerate() {
-                if *h != hash {
-                    continue;
-                }
-                if let Some(existing_shared) = weak.upgrade() {
-                    if existing_shared.is_same(&new_shared) {
-                        // Existing config is still alive; dispose the new
-                        // duplicate (after unlock).
-                        dispose_new = Some(new_shared);
-                        drop(configs);
-                        drop(dispose_new);
-                        drop(dispose_old_weak);
-                        return existing_shared;
-                    }
-                    // Hash collision, different content — keep scanning.
-                } else if Weak::as_ptr(weak).cast::<()>() != core::ptr::null() {
-                    // strong==0: existing is dying. Its `drop()` is blocked in
-                    // `remove()` waiting for this mutex, so its slot is still
-                    // here. We can't `is_same()` it (would alias `&mut`), but
-                    // a hash match with a dying entry is a strong hint this is
-                    // the same config — replace the slot. The dying config's
-                    // `remove()` will pointer-mismatch and no-op when it runs.
-                    found_idx = Some(i);
-                    break;
-                }
-            }
-
-            if let Some(idx) = found_idx {
-                dispose_old_weak = Some(core::mem::replace(
-                    &mut configs[idx].1,
-                    Arc::downgrade(&new_shared),
-                ));
-                configs[idx].0 = hash;
-            } else {
-                configs.push((hash, Arc::downgrade(&new_shared)));
-            }
-            new_shared
-        };
-        // guard dropped here; now safe to drop dispose_new / dispose_old_weak.
-        drop(dispose_new);
-        drop(dispose_old_weak);
-        result
-    }
-
-    /// Called from `SSLConfig::drop()` on strong 1->0. If `intern()` replaced
-    /// our slot while we blocked on the mutex, the pointer-identity check
-    /// fails and we skip (intern already disposed our weak ref).
-    ///
-    /// No-op for configs that were never interned.
-    pub(super) fn remove(config: &SSLConfig) {
-        // Read memoized hash via the atomic — never recompute here (we're
-        // inside `Drop::drop`, holding `&mut SSLConfig`, and recomputation
-        // would race with nothing but is wasted work for non-interned configs).
-        let hash = config.cached_hash.load(Ordering::Relaxed);
-        let self_ptr: *const SSLConfig = config;
-
-        let mut configs = REGISTRY.lock();
-        if configs.is_empty() {
-            return;
-        }
-        // Zig: `getIndexContext` then pointer-identity check. We never
-        // dereference stored weaks here — only compare `Weak::as_ptr`.
-        let Some(idx) = configs.iter().position(|(h, weak)| {
-            // Hash filter only applies if this config was hashed (interned
-            // configs always are; non-interned configs have hash==0 and won't
-            // match any stored entry's nonzero hash, but check identity anyway
-            // for robustness).
-            (hash == 0 || *h == hash) && Weak::as_ptr(weak) == self_ptr
-        }) else {
-            return;
-        };
-        let (_, weak) = configs.swap_remove(idx);
-        // Drop the weak after unlock isn't strictly necessary (Weak::drop
-        // doesn't re-enter), but matches Zig ordering.
-        drop(configs);
-        drop(weak);
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Default / zero
-// ──────────────────────────────────────────────────────────────────────────
-
-impl Default for SSLConfig {
-    fn default() -> Self {
-        SSLConfig {
-            server_name: None,
-            key_file_name: None,
-            cert_file_name: None,
-            ca_file_name: None,
-            dh_params_file_name: None,
-            passphrase: None,
-            key: None,
-            cert: None,
-            ca: None,
-            secure_options: 0,
-            request_cert: 0,
-            reject_unauthorized: 0,
-            ssl_ciphers: None,
-            protos: None,
-            client_renegotiation_limit: 0,
-            client_renegotiation_window: 0,
-            requires_custom_request_ctx: false,
-            is_using_default_ciphers: true,
-            low_memory_mode: false,
-            cached_hash: AtomicU64::new(0),
-        }
-    }
-}
-
-impl SSLConfig {
-    #[inline]
-    pub fn zero() -> Self {
-        Self::default()
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// fromJS / fromGenerated
-// ──────────────────────────────────────────────────────────────────────────
-
-impl SSLConfig {
-    pub fn from_js(
+impl SSLConfigFromJs for SSLConfig {
+    fn from_js(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
@@ -758,7 +149,7 @@ impl SSLConfig {
         Self::from_generated(vm, global, &generated)
     }
 
-    pub fn from_generated(
+    fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
@@ -768,15 +159,15 @@ impl SSLConfig {
         let mut any = false;
 
         if let Some(passphrase) = generated.passphrase.get() {
-            result.passphrase = Some(zbox_into_cstring(passphrase.to_owned_slice_z()));
+            result.passphrase = zbox_into_raw(passphrase.to_owned_slice_z());
             any = true;
         }
         if let Some(dh_params_file) = generated.dh_params_file.get() {
-            result.dh_params_file_name = Some(handle_path(global, "dhParamsFile", &dh_params_file)?);
+            result.dh_params_file_name = handle_path(global, "dhParamsFile", &dh_params_file)?;
             any = true;
         }
         if let Some(server_name) = generated.server_name.get() {
-            result.server_name = Some(zbox_into_cstring(server_name.to_owned_slice_z()));
+            result.server_name = zbox_into_raw(server_name.to_owned_slice_z());
             result.requires_custom_request_ctx = true;
         }
 
@@ -793,49 +184,45 @@ impl SSLConfig {
             || generated.request_cert
             || result.secure_options != 0;
 
-        result.ca = handle_file_for_field(global, "ca", &generated.ca)?.map(CStringList::from_vec);
-        result.cert = handle_file_for_field(global, "cert", &generated.cert)?.map(CStringList::from_vec);
-        result.key = handle_file_for_field(global, "key", &generated.key)?.map(CStringList::from_vec);
+        result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
+        result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
+        result.key = handle_file_for_field(global, "key", &generated.key)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
             || result.ca.is_some()
             || result.cert.is_some()
             || result.key.is_some();
 
         if let Some(key_file) = generated.key_file.get() {
-            result.key_file_name = Some(handle_path(global, "keyFile", &key_file)?);
+            result.key_file_name = handle_path(global, "keyFile", &key_file)?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(cert_file) = generated.cert_file.get() {
-            result.cert_file_name = Some(handle_path(global, "certFile", &cert_file)?);
+            result.cert_file_name = handle_path(global, "certFile", &cert_file)?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(ca_file) = generated.ca_file.get() {
-            result.ca_file_name = Some(handle_path(global, "caFile", &ca_file)?);
+            result.ca_file_name = handle_path(global, "caFile", &ca_file)?;
             result.requires_custom_request_ctx = true;
         }
 
-        let protocols: Option<CString> = match &generated.alpn_protocols {
-            jsc::generated::SSLConfigAlpnProtocols::None => None,
+        let protocols: *const c_char = match &generated.alpn_protocols {
+            jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
             jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                Some(zbox_into_cstring(val.get().to_owned_slice_z()))
+                zbox_into_raw(val.get().to_owned_slice_z())
             }
             jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
                 // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
                 // owned by the GenVal for the duration of `generated`.
                 let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
-                let mut v = buffer.byte_slice().to_vec();
-                v.push(0);
-                // SAFETY: we just appended the only NUL we rely on; matches Zig
-                // `dupeZ` (no interior-NUL check).
-                Some(unsafe { CString::from_vec_with_nul_unchecked(v) })
+                dupe_z(buffer.byte_slice())
             }
         };
-        if let Some(some_protocols) = protocols {
-            result.protos = Some(some_protocols);
+        if !protocols.is_null() {
+            result.protos = protocols;
             result.requires_custom_request_ctx = true;
         }
         if let Some(ciphers) = generated.ciphers.get() {
-            result.ssl_ciphers = Some(zbox_into_cstring(ciphers.to_owned_slice_z()));
+            result.ssl_ciphers = zbox_into_raw(ciphers.to_owned_slice_z());
             result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
         }
@@ -852,6 +239,25 @@ impl SSLConfig {
     }
 }
 
+/// Free-function aliases for callers that prefer module-path syntax.
+#[inline]
+pub fn from_js(
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<SSLConfig>> {
+    <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
+}
+
+#[inline]
+pub fn from_generated(
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+    generated: &jsc::generated::SSLConfig,
+) -> JsResult<Option<SSLConfig>> {
+    <SSLConfig as SSLConfigFromJs>::from_generated(vm, global, generated)
+}
+
 // ── handlePath / handleFile helpers ──────────────────────────────────
 
 // PERF(port): was comptime monomorphization (comptime field: []const u8) —
@@ -860,26 +266,27 @@ fn handle_path(
     global: &JSGlobalObject,
     field: &'static str,
     string: &bun_str::String,
-) -> JsResult<CString> {
+) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
     // Zig: `std.posix.system.access(name, F_OK) != 0`. `bun_sys::access`
     // routes to `access(2)` on POSIX and `GetFileAttributesW` on Windows
     // (via `sys_uv`), so this is the cross-platform existence probe.
     if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
-        // errdefer: free_sensitive(name) — zero before drop.
-        free_sensitive_bytes(name.into_vec_with_nul());
+        // errdefer: free_sensitive(name) — zero before drop. Route through
+        // the canonical helper so the secure-zero core stays single-sourced.
+        bun_core::free_sensitive(zbox_into_raw(name));
         return Err(global.throw_invalid_arguments(
             format_args!("Unable to access {} path", field),
         ));
     }
-    Ok(zbox_into_cstring(name))
+    Ok(zbox_into_raw(name))
 }
 
 fn handle_file_for_field(
     global: &JSGlobalObject,
     field: &'static str,
     file: &jsc::generated::SSLConfigFile,
-) -> JsResult<Option<Vec<CString>>> {
+) -> JsResult<CStrSlice> {
     match handle_file(global, file) {
         Ok(v) => Ok(v),
         Err(ReadFromBlobError::Js(e)) => Err(e),
@@ -900,7 +307,7 @@ fn handle_file_for_field(
 fn handle_file(
     global: &JSGlobalObject,
     file: &jsc::generated::SSLConfigFile,
-) -> Result<Option<Vec<CString>>, ReadFromBlobError> {
+) -> Result<CStrSlice, ReadFromBlobError> {
     let single = handle_single_file(
         global,
         match file {
@@ -923,23 +330,21 @@ fn handle_file(
     )?;
     // errdefer free_sensitive(single) — on the only fallible op below (alloc),
     // Rust aborts on OOM, so no errdefer needed.
-    let mut result = Vec::with_capacity(1);
-    result.push(single);
-    Ok(Some(result))
+    Ok(Some(vec![single].into_boxed_slice()))
 }
 
 fn handle_file_array(
     global: &JSGlobalObject,
     elements: &[jsc::generated::SSLConfigSingleFile],
-) -> Result<Option<Vec<CString>>, ReadFromBlobError> {
+) -> Result<CStrSlice, ReadFromBlobError> {
     if elements.is_empty() {
         return Ok(None);
     }
-    let mut result: Vec<CString> = Vec::with_capacity(elements.len());
+    let mut result: Vec<*const c_char> = Vec::with_capacity(elements.len());
     // errdefer { free_sensitive each; drop result } — need zeroing on error:
     let mut guard = scopeguard::guard(&mut result, |r| {
-        for string in r.drain(..) {
-            free_sensitive_bytes(string.into_bytes_with_nul());
+        for p in r.drain(..) {
+            bun_core::free_sensitive(p);
         }
     });
     for elem in elements {
@@ -962,7 +367,7 @@ fn handle_file_array(
         )?);
     }
     let result = scopeguard::ScopeGuard::into_inner(guard);
-    Ok(Some(core::mem::take(result)))
+    Ok(Some(core::mem::take(result).into_boxed_slice()))
 }
 
 // PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
@@ -975,36 +380,14 @@ enum SingleFile<'a> {
 fn handle_single_file(
     global: &JSGlobalObject,
     file: SingleFile<'_>,
-) -> Result<CString, ReadFromBlobError> {
+) -> Result<*const c_char, ReadFromBlobError> {
     match file {
-        SingleFile::String(string) => Ok(zbox_into_cstring(string.to_owned_slice_z())),
+        SingleFile::String(string) => Ok(zbox_into_raw(string.to_owned_slice_z())),
         SingleFile::Buffer(jsc_buffer) => {
             let buffer: jsc::ArrayBuffer = jsc_buffer.as_array_buffer();
-            let mut v = buffer.byte_slice().to_vec();
-            v.push(0);
-            // SAFETY: we just appended the only NUL we rely on; matches Zig
-            // `dupeZ` (no interior-NUL check).
-            Ok(unsafe { CString::from_vec_with_nul_unchecked(v) })
+            Ok(dupe_z(buffer.byte_slice()))
         }
         SingleFile::File(blob) => read_from_blob(global, blob),
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// takeProtos / takeServerName
-// ──────────────────────────────────────────────────────────────────────────
-
-impl SSLConfig {
-    pub fn take_protos(&mut self) -> Option<Box<[u8]>> {
-        let protos = self.protos.take()?;
-        // bun.memory.dropSentinel: convert NUL-terminated owned buffer to a
-        // plain owned slice (drops the trailing NUL).
-        Some(protos.into_bytes().into_boxed_slice())
-    }
-
-    pub fn take_server_name(&mut self) -> Option<Box<[u8]>> {
-        let server_name = self.server_name.take()?;
-        Some(server_name.into_bytes().into_boxed_slice())
     }
 }
 
@@ -1015,9 +398,9 @@ impl SSLConfig {
 // WebSocketUpgradeClient.zig::parseSSLConfig`, but `SSLConfig::from_js`
 // dereferences Blob / JSCArrayBuffer / node_fs values (tier-6) and lives in
 // this crate. `bun_runtime → bun_http_jsc`, so hosting the export here breaks
-// the cycle without an opaque stub. The boxed payload is the lower-tier
-// `bun_http::ssl_config::SSLConfig` (what `HTTPClient::connect` consumes),
-// bridged via `into_http()`. C++ (JSWebSocket.cpp) links by symbol name only.
+// the cycle without an opaque stub. The boxed payload is the canonical
+// `bun_http::ssl_config::SSLConfig` (what `HTTPClient::connect` consumes).
+// C++ (JSWebSocket.cpp) links by symbol name only.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Parse SSLConfig from a JavaScript TLS options object.
@@ -1041,7 +424,7 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
     // No TLS options provided or all defaults → null
     let config = config_opt?;
     // Allocate on heap and return pointer (ownership transferred to caller).
-    Some(Box::new(config.into_http()))
+    Some(Box::new(config))
 }
 
 /// Free an SSLConfig previously returned by `parseSSLConfig`.

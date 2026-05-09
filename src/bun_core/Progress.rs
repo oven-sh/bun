@@ -59,7 +59,7 @@ impl File {
     }
 }
 
-const NS_PER_MS: u64 = 1_000_000;
+use crate::time::NS_PER_MS;
 
 pub struct Progress {
     /// `None` if the current node (and its children) should

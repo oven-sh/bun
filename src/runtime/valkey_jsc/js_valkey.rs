@@ -10,7 +10,7 @@ use bun_jsc::{
     JsResult,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
-use crate::socket::SSLConfig;
+use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_str::{self as strings, String as BunString};
 use bun_uws as uws;

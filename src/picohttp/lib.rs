@@ -72,16 +72,7 @@ mod c {
     }
 }
 
-// TODO(b1): bun_str crate missing — local stub for the few helpers used here.
-mod strings {
-    #[inline] pub(crate) fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], _check_len: bool) -> bool {
-        a.eq_ignore_ascii_case(b)
-    }
-    #[inline] pub(crate) fn has_prefix(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
-    #[inline] pub(crate) fn contains(h: &[u8], n: &[u8]) -> bool {
-        ::bstr::ByteSlice::find(h, n).is_some()
-    }
-}
+use bun_string::strings;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Header
@@ -282,11 +273,7 @@ impl fmt::Display for ParseRequestError {
     }
 }
 impl std::error::Error for ParseRequestError {}
-impl From<ParseRequestError> for bun_core::Error {
-    fn from(e: ParseRequestError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseRequestError);
 
 pub struct Request<'a> {
     pub method: &'a [u8],
@@ -514,11 +501,7 @@ impl fmt::Display for ParseResponseError {
     }
 }
 impl std::error::Error for ParseResponseError {}
-impl From<ParseResponseError> for bun_core::Error {
-    fn from(e: ParseResponseError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseResponseError);
 
 #[derive(Clone, Copy)]
 pub struct Response<'a> {
@@ -682,11 +665,7 @@ impl fmt::Display for ParseHeadersError {
     }
 }
 impl std::error::Error for ParseHeadersError {}
-impl From<ParseHeadersError> for bun_core::Error {
-    fn from(e: ParseHeadersError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseHeadersError);
 
 pub struct Headers<'a> {
     pub headers: &'a [Header],

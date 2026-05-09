@@ -10,7 +10,7 @@ use bun_uws as uws;
 
 use super::Listener as SocketListener;
 use super::listener::ListenerType;
-use super::SSLConfig;
+use super::{SSLConfig, SSLConfigFromJs};
 use super::SocketMode;
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────

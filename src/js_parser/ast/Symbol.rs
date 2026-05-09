@@ -331,9 +331,8 @@ impl Kind {
     // JSON string value (with quotes). Verify the Rust JSON writer trait used in Phase B.
     pub fn json_stringify<W: core::fmt::Write>(self, writer: &mut W) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        writer
-            .write_str(<&'static str>::from(self))
-            .map_err(|_| bun_core::err!("WriteFailed"))
+        writer.write_str(<&'static str>::from(self))?;
+        Ok(())
     }
 
     #[inline]

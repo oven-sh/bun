@@ -7,105 +7,14 @@ use bun_logger as logger;
 use bun_string::strings;
 use enumset::{EnumSet, EnumSetType};
 
-// `bun_bundler::options::jsx::Pragma` lives in a higher-tier crate, so the
-// resolver carries the structural definition it
-// needs (the five fields read/written by `merge_jsx` + `parse`). bun_bundler
-// re-exports this on its side once the move-in pass runs.
-// TODO(b0): bun_bundler::options::jsx::Pragma arrives from move-in (or moves to bun_options_types).
+// D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
+// the canonical `bun_options_types::jsx` module. The previous local `Pragma`
+// (with `Vec` factory/fragment + empty defaults) diverged from spec — Zig
+// `JSX.Pragma{}` defaults to `["React","createElement"]`/`["React","Fragment"]`.
+// Unification corrects that; `merge_jsx` already uses `JsxFieldSet` (not
+// emptiness) to track was-set, so behavior is preserved.
 pub mod options {
-    pub mod jsx {
-        /// Port of `options.JSX.Runtime` (= `api.JsxRuntime`).
-        #[repr(u8)]
-        #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-        pub enum Runtime {
-            #[default]
-            Automatic = 0,
-            Classic = 1,
-            Solid = 2,
-        }
-
-        /// Port of `options.JSX.ImportSource`.
-        #[derive(Clone)]
-        pub struct ImportSource {
-            pub development: Box<[u8]>,
-            pub production: Box<[u8]>,
-        }
-
-        impl Default for ImportSource {
-            fn default() -> Self {
-                ImportSource {
-                    development: Box::from(b"react/jsx-dev-runtime".as_slice()),
-                    production: Box::from(b"react/jsx-runtime".as_slice()),
-                }
-            }
-        }
-
-        /// Port of `options.JSX.Pragma`. Carries the full field set so the
-        /// resolver `Result.jsx` round-trips losslessly into `ParseTask.jsx`.
-        #[derive(Clone)]
-        pub struct Pragma {
-            pub factory: Vec<Box<[u8]>>,
-            pub fragment: Vec<Box<[u8]>>,
-            pub runtime: Runtime,
-            pub import_source: ImportSource,
-            /// Facilitates automatic JSX importing
-            /// Set on a per file basis like this:
-            /// /** @jsxImportSource @emotion/core */
-            pub classic_import_source: Box<[u8]>,
-            pub package_name: Box<[u8]>,
-            pub development: bool,
-            pub parse: bool,
-            pub side_effects: bool,
-        }
-
-        impl Default for Pragma {
-            fn default() -> Self {
-                Pragma {
-                    factory: Vec::new(),
-                    fragment: Vec::new(),
-                    runtime: Runtime::default(),
-                    import_source: ImportSource::default(),
-                    classic_import_source: Box::from(b"react".as_slice()),
-                    package_name: Box::from(b"react".as_slice()),
-                    development: true,
-                    parse: true,
-                    side_effects: false,
-                }
-            }
-        }
-
-        impl Pragma {
-            /// Port of `options.JSX.Pragma.setImportSource` (options.zig:1254).
-            pub fn set_import_source(&mut self) {
-                let _ = bun_string::strings::concat_if_needed(
-                    &mut self.import_source.development,
-                    &[&self.package_name, b"/jsx-dev-runtime"],
-                    &[b"react/jsx-dev-runtime"],
-                );
-                let _ = bun_string::strings::concat_if_needed(
-                    &mut self.import_source.production,
-                    &[&self.package_name, b"/jsx-runtime"],
-                    &[b"react/jsx-runtime"],
-                );
-            }
-        }
-
-        /// Port of `options.JSX.RuntimeDevelopmentPair`.
-        #[derive(Clone, Copy)]
-        pub struct RuntimeDevelopmentPair {
-            pub runtime: Runtime,
-            pub development: Option<bool>,
-        }
-
-        /// Port of `options.JSX.RuntimeMap` (`bun.ComptimeStringMap`, options.zig:1179).
-        pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::phf_map! {
-            b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-            b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-            b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-            b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-            b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-        };
-    }
+    pub use bun_options_types::jsx;
 }
 
 /// Port of the anonymous `enum { json, jsonc }` parameter to
@@ -734,10 +643,10 @@ impl TSConfigJSON {
         source: &logger::Source,
         loc: logger::Loc,
         text: &[u8],
-    ) -> Result<Vec<Box<[u8]>>, bun_core::Error> {
+    ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
         // TODO(port): narrow error set
         if text.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Box::default());
         }
         // foo.bar == 2
         // foo.bar. == 2
@@ -759,13 +668,13 @@ impl TSConfigJSON {
                         bstr::BStr::new(text)
                     ),
                 );
-                return Ok(Vec::new());
+                return Ok(Box::default());
             }
 
             // PERF(port): was appendAssumeCapacity
             // PERF(port): Zig stored a borrowed slice into `text`; Rust clones into Box<[u8]>.
             parts.push(Box::from(text));
-            return Ok(parts);
+            return Ok(parts.into_boxed_slice());
         }
 
         let iter = text.split(|b| *b == b'.').filter(|s| !s.is_empty());
@@ -781,13 +690,13 @@ impl TSConfigJSON {
                         bstr::BStr::new(part)
                     ),
                 );
-                return Ok(Vec::new());
+                return Ok(Box::default());
             }
             // PERF(port): was appendAssumeCapacity
             parts.push(Box::from(part));
         }
 
-        Ok(parts)
+        Ok(parts.into_boxed_slice())
     }
 
     #[inline]

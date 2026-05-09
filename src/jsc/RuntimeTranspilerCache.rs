@@ -116,40 +116,6 @@ impl Default for Metadata {
     }
 }
 
-// ── local I/O cursors ─────────────────────────────────────────────────────
-// `bun_io` only ships the `Write` half of Zig's `std.Io` surface today; the
-// matching `Read::read_int_le` lands with the io round. `decode` is only ever
-// driven from a fixed in-memory buffer (`std.io.fixedBufferStream`), so a
-// borrowed-slice cursor is all we need here. For `encode`, `bun_io::Write`
-// has no `&mut [u8]` impl yet, so a tiny local `SliceWriter` (the
-// `fixedBufferStream().writer()` shape) covers the one call site.
-#[inline]
-fn read_int_le<const N: usize>(cur: &mut &[u8]) -> Result<[u8; N], bun_core::Error> {
-    if cur.len() < N {
-        return Err(bun_core::err!(EndOfStream));
-    }
-    let mut out = [0u8; N];
-    out.copy_from_slice(&cur[..N]);
-    *cur = &cur[N..];
-    Ok(out)
-}
-
-struct SliceWriter<'a> {
-    buf: &'a mut [u8],
-    pos: usize,
-}
-impl bun_io::Write for SliceWriter<'_> {
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        let end = self.pos + bytes.len();
-        if end > self.buf.len() {
-            return Err(bun_core::err!(NoSpaceLeft));
-        }
-        self.buf[self.pos..end].copy_from_slice(bytes);
-        self.pos = end;
-        Ok(())
-    }
-}
-
 impl Metadata {
     // Zig computed this via @typeInfo field iteration; in Rust we sum it by hand.
     // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
@@ -181,10 +147,13 @@ impl Metadata {
 
     /// PORT NOTE: Zig took `anytype reader`; both call sites
     /// (`from_file_with_cache_file_path`, the debug round-trip in `Entry::save`)
-    /// drive it from a `fixedBufferStream`, so we accept a slice cursor
-    /// directly until `bun_io::Read` lands.
-    pub fn decode(&mut self, reader: &mut &[u8]) -> Result<(), bun_core::Error> {
-        self.cache_version = u32::from_le_bytes(read_int_le::<4>(reader)?);
+    /// drive it from a `fixedBufferStream`, so we accept the concrete
+    /// `bun_io::FixedBufferStream` over a borrowed slice.
+    pub fn decode(
+        &mut self,
+        reader: &mut bun_io::FixedBufferStream<&[u8]>,
+    ) -> Result<(), bun_core::Error> {
+        self.cache_version = reader.read_int_le::<u32>()?;
         if self.cache_version != EXPECTED_VERSION {
             return Err(bun_core::err!(StaleCache));
         }
@@ -192,25 +161,25 @@ impl Metadata {
         // PORT NOTE: reshaped for borrowck/enum-safety — Zig stored raw @enumFromInt then
         // validated at the end; here we validate immediately so ModuleType never holds an
         // out-of-range discriminant.
-        let [module_type_raw] = read_int_le::<1>(reader)?;
-        let [output_encoding_raw] = read_int_le::<1>(reader)?;
+        let module_type_raw = reader.read_int_le::<u8>()?;
+        let output_encoding_raw = reader.read_int_le::<u8>()?;
 
-        self.features_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.features_hash = reader.read_int_le::<u64>()?;
 
-        self.input_byte_length = u64::from_le_bytes(read_int_le::<8>(reader)?);
-        self.input_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.input_byte_length = reader.read_int_le::<u64>()?;
+        self.input_hash = reader.read_int_le::<u64>()?;
 
-        self.output_byte_offset = u64::from_le_bytes(read_int_le::<8>(reader)?);
-        self.output_byte_length = u64::from_le_bytes(read_int_le::<8>(reader)?);
-        self.output_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.output_byte_offset = reader.read_int_le::<u64>()?;
+        self.output_byte_length = reader.read_int_le::<u64>()?;
+        self.output_hash = reader.read_int_le::<u64>()?;
 
-        self.sourcemap_byte_offset = u64::from_le_bytes(read_int_le::<8>(reader)?);
-        self.sourcemap_byte_length = u64::from_le_bytes(read_int_le::<8>(reader)?);
-        self.sourcemap_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.sourcemap_byte_offset = reader.read_int_le::<u64>()?;
+        self.sourcemap_byte_length = reader.read_int_le::<u64>()?;
+        self.sourcemap_hash = reader.read_int_le::<u64>()?;
 
-        self.esm_record_byte_offset = u64::from_le_bytes(read_int_le::<8>(reader)?);
-        self.esm_record_byte_length = u64::from_le_bytes(read_int_le::<8>(reader)?);
-        self.esm_record_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.esm_record_byte_offset = reader.read_int_le::<u64>()?;
+        self.esm_record_byte_length = reader.read_int_le::<u64>()?;
+        self.esm_record_hash = reader.read_int_le::<u64>()?;
 
         self.module_type = match module_type_raw {
             1 => ModuleType::Esm,
@@ -358,13 +327,14 @@ impl Entry {
                     metadata.esm_record_hash = hash(esm_record);
                 }
 
-                let mut metadata_stream = SliceWriter { buf: &mut metadata_buf[..], pos: 0 };
+                let mut metadata_stream = bun_io::FixedBufferStream::new_mut(&mut metadata_buf[..]);
                 metadata.encode(&mut metadata_stream)?;
                 let pos = metadata_stream.pos;
 
                 #[cfg(debug_assertions)]
                 {
-                    let mut reader: &[u8] = &metadata_buf[0..Metadata::SIZE];
+                    let mut reader =
+                        bun_io::FixedBufferStream::new(&metadata_buf[0..Metadata::SIZE]);
                     let mut metadata2 = Metadata::default();
                     if let Err(err) = metadata2.decode(&mut reader) {
                         bun_core::Output::panic(format_args!(
@@ -794,7 +764,7 @@ impl RuntimeTranspilerCache {
         {
             file.seek_to(0)?;
         }
-        let mut reader: &[u8] = &metadata_bytes_buf[0..metadata_bytes];
+        let mut reader = bun_io::FixedBufferStream::new(&metadata_bytes_buf[0..metadata_bytes]);
 
         let mut entry = Entry {
             metadata: Metadata::default(),

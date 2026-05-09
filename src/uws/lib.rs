@@ -324,11 +324,7 @@ pub mod ssl_wrapper {
         OutOfMemory,
         InvalidOptions,
     }
-    impl From<InitError> for bun_core::Error {
-        fn from(e: InitError) -> Self {
-            bun_core::Error::from_name(<&'static str>::from(e))
-        }
-    }
+    bun_core::named_error_set!(InitError);
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum WriteDataError {
@@ -336,11 +332,7 @@ pub mod ssl_wrapper {
         WantRead,
         WantWrite,
     }
-    impl From<WriteDataError> for bun_core::Error {
-        fn from(e: WriteDataError) -> Self {
-            bun_core::Error::from_name(<&'static str>::from(e))
-        }
-    }
+    bun_core::named_error_set!(WriteDataError);
 
     impl<T: Copy> SSLWrapper<T> {
         /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to

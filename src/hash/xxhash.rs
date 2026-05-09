@@ -132,42 +132,20 @@ mod tests {
         }
     }
 
-    /// SMHasher verification — mirrors `vendor/zig/lib/std/hash/verify.zig`
-    /// for the (seed, bytes) argument order.
-    fn smhasher_32(hash: impl Fn(u32, &[u8]) -> u32) -> u32 {
-        let mut buf = [0u8; 256];
-        let mut buf_all = [0u8; 256 * 4];
-        for i in 0..256u32 {
-            buf[i as usize] = i as u8;
-            let h = hash(256 - i, &buf[..i as usize]);
-            buf_all[i as usize * 4..i as usize * 4 + 4].copy_from_slice(&h.to_le_bytes());
-        }
-        hash(0, &buf_all)
-    }
-
-    fn smhasher_64(hash: impl Fn(u64, &[u8]) -> u64) -> u32 {
-        let mut buf = [0u8; 256];
-        let mut buf_all = [0u8; 256 * 8];
-        for i in 0..256u64 {
-            buf[i as usize] = i as u8;
-            let h = hash(256 - i, &buf[..i as usize]);
-            buf_all[i as usize * 8..i as usize * 8 + 8].copy_from_slice(&h.to_le_bytes());
-        }
-        hash(0, &buf_all) as u32
-    }
+    use crate::verify::{smhasher_32, smhasher_64};
 
     #[test]
     fn xxhash32_smhasher() {
-        assert_eq!(smhasher_32(XxHash32::hash), 0xBA88B743);
+        assert_eq!(smhasher_32(|b, s| XxHash32::hash(s, b)), 0xBA88B743);
     }
 
     #[test]
     fn xxhash64_smhasher() {
-        assert_eq!(smhasher_64(XxHash64::hash), 0x024B7CF4);
+        assert_eq!(smhasher_64(|b, s| XxHash64::hash(s, b)), 0x024B7CF4);
     }
 
     #[test]
     fn xxhash3_smhasher() {
-        assert_eq!(smhasher_64(XxHash3::hash), 0x9A636405);
+        assert_eq!(smhasher_64(|b, s| XxHash3::hash(s, b)), 0x9A636405);
     }
 }

@@ -153,17 +153,9 @@ pub enum SubtreeError {
     DependencyLoop,
 }
 
-impl From<AllocError> for SubtreeError {
-    fn from(_: AllocError) -> Self {
-        SubtreeError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(SubtreeError);
 
-impl From<SubtreeError> for bun_core::Error {
-    fn from(e: SubtreeError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(SubtreeError);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Iterator

@@ -127,15 +127,6 @@ impl FlexFlow {
 
         Ok(())
     }
-
-    pub fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
-        // Both fields are Copy enum-property keywords.
-        self.clone()
-    }
-
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        lhs == rhs
-    }
 }
 
 /// A value for the [flex](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-property) shorthand property.
@@ -245,14 +236,6 @@ impl Flex {
         }
 
         Ok(())
-    }
-
-    pub fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
-        self.clone()
-    }
-
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        lhs == rhs
     }
 }
 

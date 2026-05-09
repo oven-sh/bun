@@ -897,11 +897,7 @@ impl core::fmt::Display for SetError {
     }
 }
 impl core::error::Error for SetError {}
-impl From<AllocError> for SetError {
-    fn from(_: AllocError) -> Self {
-        SetError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(SetError);
 impl From<SetError> for bun_core::Error {
     fn from(e: SetError) -> Self {
         match e {

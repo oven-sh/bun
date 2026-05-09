@@ -19,5 +19,6 @@ libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
 bun_libuv_sys.workspace = true
+bun_windows_sys.workspace = true
 
 thiserror.workspace = true

@@ -37,10 +37,9 @@ impl ContainerName {
             Err(e) => return Err(e),
         };
 
-        // SAFETY: CustomIdent.v points into the parser source/arena; deref
-        // yields an unbounded borrow which coerces to `'static` (Phase A
+        // SAFETY: CustomIdent.v points into the parser source/arena (Phase A
         // lifetime erasure — see PORTING.md §AST crates).
-        let v: &'static [u8] = unsafe { &*ident.v };
+        let v: &'static [u8] = unsafe { crate::arena_str(ident.v) };
         // todo_stuff.match_ignore_ascii_case;
         if strings::eql_case_insensitive_ascii_check_length(b"none", v)
             || strings::eql_case_insensitive_ascii_check_length(b"and", v)

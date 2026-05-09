@@ -60,13 +60,10 @@ impl Data {
     pub fn zdeinit(&mut self) {
         match self {
             Data::Owned(owned) => {
-                // Zero bytes before deinit
-                // TODO(b2-blocked): bun_alloc::free_sensitive — Zig `bun.freeSensitive`
-                // zeroes the buffer (mimalloc secure-free). Fall back to a plain
-                // zero-fill until the lower-tier helper lands.
-                for b in owned.slice_mut() {
-                    *b = 0;
-                }
+                // Zero bytes before deinit — Zig `bun.freeSensitive`.
+                let s = owned.slice_mut();
+                // SAFETY: `s` is an exclusive `&mut [u8]`; `len` bytes valid for writes.
+                unsafe { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
                 owned.clear_and_free();
             }
             Data::Temporary(_) => {}

@@ -1029,6 +1029,63 @@ pub enum QueryKind {
     HtmlImport = 4,
 }
 
+impl QueryKind {
+    /// Single-ASCII-letter tag used in the [`UniqueKey`] wire format.
+    /// `None` has no on-the-wire encoding.
+    #[inline]
+    pub const fn letter(self) -> u8 {
+        match self {
+            QueryKind::Asset => b'A',
+            QueryKind::Chunk => b'C',
+            QueryKind::Scb => b'S',
+            QueryKind::HtmlImport => b'H',
+            QueryKind::None => unreachable!(),
+        }
+    }
+
+    /// Inverse of [`letter`]; used by the output-piece scanner.
+    #[inline]
+    pub const fn from_letter(b: u8) -> Option<Self> {
+        match b {
+            b'A' => Some(QueryKind::Asset),
+            b'C' => Some(QueryKind::Chunk),
+            b'S' => Some(QueryKind::Scb),
+            b'H' => Some(QueryKind::HtmlImport),
+            _ => None,
+        }
+    }
+}
+
+/// Length of the lowercase-hex `unique_key` prefix (16 nibbles of a `u64`).
+pub const UNIQUE_KEY_PREFIX_LEN: usize = 16;
+/// Total byte length of a [`UniqueKey`] on the wire: `hex16 + KIND + idx08`.
+pub const UNIQUE_KEY_LEN: usize = UNIQUE_KEY_PREFIX_LEN + 1 + 8;
+
+/// 25-byte unique-key wire format `{hex16(prefix)}{KIND}{index:08}` shared by
+/// every emitter (ParseTask file/napi/sqlite loaders, server-component
+/// boundaries, HTML-import manifest, chunk IDs) and consumed by exactly one
+/// scanner (`LinkerContext::break_output_into_pieces`). Mirrors Zig
+/// `"{f}{LETTER}{d:0>8}"` with `bun.fmt.hexIntLower` byte-for-byte.
+#[derive(Clone, Copy)]
+pub struct UniqueKey {
+    pub prefix: u64,
+    pub kind: QueryKind,
+    pub index: u32,
+}
+
+impl fmt::Display for UniqueKey {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}{}{:08}",
+            bun_core::fmt::hex_int_lower::<16>(self.prefix),
+            self.kind.letter() as char,
+            self.index,
+        )
+    }
+}
+
 pub type OutputPieceIndex = Query;
 
 /// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, is_html: bool }

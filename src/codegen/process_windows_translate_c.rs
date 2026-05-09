@@ -82,7 +82,8 @@ pub fn main() -> Result<(), bun_core::Error> {
     out.extend_from_slice(&in_bytes[i..]);
 
     let out_path = args.next().unwrap_or_else(|| panic!("missing argument"));
-    std::fs::write(&out_path, &out).map_err(|_| bun_core::err!("WriteFailed"))?;
+    use bun_core::OrWriteFailed as _;
+    std::fs::write(&out_path, &out).or_write_failed()?;
     Ok(())
 }
 

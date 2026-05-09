@@ -1205,7 +1205,7 @@ unsafe fn bake_per_thread_source_map(
     // stored opaquely; only this crate knows its layout.
     let pt = unsafe { &*pt.cast::<crate::bake::production::PerThread>() };
     let idx = pt.source_maps.get(source_filename)?;
-    Some(std::ptr::from_ref::<[u8]>(pt.bundled_outputs[idx.0 as usize].value.as_slice()))
+    Some(std::ptr::from_ref::<[u8]>(pt.bundled_outputs[idx.get() as usize].value.as_slice()))
 }
 
 /// `node_cluster_binding.handleInternalMessageChild(global, data)` — Spec

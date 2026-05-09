@@ -290,7 +290,7 @@ pub fn write_sourcemap_to_disk(
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
     source_maps.put(
         &key,
-        OutputFileIndex(u32::try_from(source_map_index).expect("int cast")),
+        OutputFileIndex::init(u32::try_from(source_map_index).expect("int cast")),
     )?;
     Ok(())
 }
@@ -724,7 +724,7 @@ pub fn build_with_vm(
             if let Some(entry_point) = file.entry_point_index {
                 if (entry_point as usize) < output_indexes.len() {
                     output_indexes[entry_point as usize] =
-                        OutputFileIndex(u32::try_from(i).expect("int cast"));
+                        OutputFileIndex::init(u32::try_from(i).expect("int cast"));
                 }
             }
 
@@ -805,7 +805,7 @@ pub fn build_with_vm(
                             write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
                             output_module_map.put(
                                 &key,
-                                OutputFileIndex(u32::try_from(i).expect("int cast")),
+                                OutputFileIndex::init(u32::try_from(i).expect("int cast")),
                             )?;
                         }
                         OutputKind::Asset => {}
@@ -1064,7 +1064,7 @@ pub fn build_with_vm(
             styles.put_index(
                 global,
                 css_file_count,
-                css_chunk_js_strings[r#ref.0 as usize - css_chunks_first],
+                css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
             ).map_err(js_err)?;
             css_file_count += 1;
         }
@@ -1074,7 +1074,7 @@ pub fn build_with_vm(
                 styles.put_index(
                     global,
                     css_file_count,
-                    css_chunk_js_strings[r#ref.0 as usize - css_chunks_first],
+                    css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
                 ).map_err(js_err)?;
                 css_file_count += 1;
             }
@@ -1089,7 +1089,7 @@ pub fn build_with_vm(
                     styles.put_index(
                         global,
                         css_file_count,
-                        css_chunk_js_strings[r#ref.0 as usize - css_chunks_first],
+                        css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
                     ).map_err(js_err)?;
                     css_file_count += 1;
                 }
@@ -1556,7 +1556,7 @@ impl PerThread {
     }
 
     pub fn output_file(&self, id: OpaqueFileId) -> &OutputFile {
-        &self.bundled_outputs[self.output_index(id).0 as usize]
+        &self.bundled_outputs[self.output_index(id).get() as usize]
     }
 
     // Must be run at the top of the event loop
@@ -1619,7 +1619,7 @@ pub extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString 
         log!("  found in module_map: {}\n", BStr::new(utf8.slice()));
         // Zero-copy: alias the chunk bytes; `pt.bundled_outputs` owns them for
         // the lifetime of the attached `PerThread` (see `Value::to_bun_string_ref`).
-        return pt.bundled_outputs[value.0 as usize].value.to_bun_string_ref();
+        return pt.bundled_outputs[value.get() as usize].value.to_bun_string_ref();
     }
     BunString::dead()
 }
@@ -1632,7 +1632,7 @@ pub extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunSt
     let pt = unsafe { &*pt };
     let utf8 = key.to_utf8();
     if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.0 as usize].value.to_bun_string_ref();
+        return pt.bundled_outputs[value.get() as usize].value.to_bun_string_ref();
     }
     BunString::dead()
 }

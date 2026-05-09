@@ -28,11 +28,7 @@ pub enum RegularExpressionError {
     InvalidRegExp,
 }
 
-impl From<RegularExpressionError> for bun_core::Error {
-    fn from(e: RegularExpressionError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(RegularExpressionError);
 
 // TODO(port): move to bun_jsc_sys
 //

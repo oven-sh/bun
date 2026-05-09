@@ -570,10 +570,7 @@ impl<V: fmt::Debug> fmt::Display for SortedEntry<V> {
     }
 }
 
-pub struct SortedGetOrPutResult<'a, V> {
-    pub value_ptr: &'a mut V,
-    pub found_existing: bool,
-}
+pub type SortedGetOrPutResult<'a, V> = crate::hash_map::GetOrPutResult<'a, V>;
 
 pub struct SortedHashMap<V, const MAX_LOAD_PERCENTAGE: u64> {
     pub entries: Box<[SortedEntry<V>]>,

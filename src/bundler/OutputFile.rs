@@ -82,26 +82,8 @@ pub struct BakeExtra {
 }
 
 // Zig: `pub const Index = bun.GenericIndex(u32, OutputFile);`
-// TODO(b2-blocked): bun_core::GenericIndex — local newtype mirror until the
-// generic index helper lands in bun_core.
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Index(pub u32);
-
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct IndexOptional(u32);
-impl IndexOptional {
-    pub const NONE: IndexOptional = IndexOptional(u32::MAX);
-    #[inline]
-    pub fn get(self) -> Option<Index> {
-        if self.0 == u32::MAX { None } else { Some(Index(self.0)) }
-    }
-    #[inline]
-    pub fn some(i: Index) -> IndexOptional {
-        IndexOptional(i.0)
-    }
-}
+pub type Index = bun_core::GenericIndex<u32, OutputFile>;
+pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
 // Zig `deinit` only freed owned fields (value / src_path.text / dest_path /
 // referenced_css_chunks); all are now owned types that drop automatically, so no

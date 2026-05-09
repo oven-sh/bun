@@ -134,15 +134,26 @@ where
         self.get(str).is_some()
     }
 
-    // PORT NOTE: `comptime len: usize` → runtime `len: usize`. The Zig used the comptime
-    // value to compute `end` at comptime and `inline for` the range; we loop at runtime.
-    // PERF(port): was comptime monomorphization — profile in Phase B.
-    pub fn get_with_length(&self, str: &[K], len: usize) -> Option<V> {
+    /// Contiguous range in `kvs` whose keys have exactly `len`.
+    ///
+    /// PORT NOTE: the .zig spec open-coded this at every lookup site because `len` was
+    /// `comptime` there and each needed its own `comptime brk:` block. In the Rust port
+    /// `len` is runtime, so the duplication is vestigial — extract once and inline.
+    #[inline(always)]
+    fn len_bucket(&self, len: usize) -> core::ops::Range<usize> {
         let start = self.len_indexes[len];
         let mut end = start;
         while end < N && self.kvs[end].key.len() == len {
             end += 1;
         }
+        start..end
+    }
+
+    // PORT NOTE: `comptime len: usize` → runtime `len: usize`. The Zig used the comptime
+    // value to compute `end` at comptime and `inline for` the range; we loop at runtime.
+    // PERF(port): was comptime monomorphization — profile in Phase B.
+    pub fn get_with_length(&self, str: &[K], len: usize) -> Option<V> {
+        let core::ops::Range { start, end } = self.len_bucket(len);
 
         // This benchmarked faster for both small and large lists of strings than using a big switch statement
         // But only so long as the keys are a sorted list.
@@ -167,11 +178,7 @@ where
     where
         I: Copy,
     {
-        let start = self.len_indexes[len];
-        let mut end = start;
-        while end < N && self.kvs[end].key.len() == len {
-            end += 1;
-        }
+        let core::ops::Range { start, end } = self.len_bucket(len);
 
         // This benchmarked faster for both small and large lists of strings than using a big switch statement
         // But only so long as the keys are a sorted list.
@@ -191,11 +198,7 @@ where
         len: usize,
         eqls: impl Fn(I, &[&'static [K]]) -> Option<usize>,
     ) -> Option<V> {
-        let start = self.len_indexes[len];
-        let mut end = start;
-        while end < N && self.kvs[end].key.len() == len {
-            end += 1;
-        }
+        let core::ops::Range { start, end } = self.len_bucket(len);
 
         let range = &self.keys()[start..end];
         if let Some(k) = eqls(str, range) {
@@ -222,11 +225,7 @@ where
         }
 
         let len = str.len();
-        let start = self.len_indexes[len];
-        let mut end = start;
-        while end < N && self.kvs[end].key.len() == len {
-            end += 1;
-        }
+        let core::ops::Range { start, end } = self.len_bucket(len);
 
         // This benchmarked faster for both small and large lists of strings than using a big switch statement
         // But only so long as the keys are a sorted list.
@@ -306,31 +305,22 @@ where
 
     pub fn get_asciii_case_insensitive(&self, input: &[u8]) -> Option<V> {
         // PORT NOTE: Zig name has triple-I (`getASCIIICaseInsensitive`); preserved per
-        // "match fn names" rule.
-        self.get_with_eql_lowercase(input, strings::eql_comptime_ignore_len)
+        // "match fn names" rule. Body is identical to `get_any_case` — both lowercase
+        // ASCII into a stack buffer then dispatch via eql_comptime_ignore_len. Zig
+        // duplicates them too (comptime_string_map.zig:212/256); we dedup here.
+        self.get_any_case(input)
     }
 
+    #[inline]
     pub fn get_with_eql_lowercase(
         &self,
         input: &[u8],
         eql: impl Fn(&[u8], &'static [u8]) -> bool,
     ) -> Option<V> {
-        let length = input.len();
-        if length < self.min_len || length > self.max_len {
-            return None;
-        }
-
-        // PERF(port): Zig built a `[i]u8` stack buffer per comptime length; we use a
-        // bounded stack buffer sized to max_len. Profile in Phase B.
-        // TODO(port): if max_len can exceed a small bound at any call site, revisit.
-        let mut buf = [0u8; 256];
-        debug_assert!(length <= buf.len());
-        let lowerbuf = &mut buf[..length];
-        for (c, j) in input.iter().zip(lowerbuf.iter_mut()) {
-            *j = c.to_ascii_lowercase();
-        }
-
-        self.get_with_length_and_eql(&*lowerbuf, length, eql)
+        // PORT NOTE: identical to `get_case_insensitive_with_eql` — Zig has both
+        // (`std.ascii.toLower` vs manual `'A'..'Z' => c+32`, byte-equivalent on u8).
+        // Kept as a named forwarder to honor the "match Zig fn names" rule.
+        self.get_case_insensitive_with_eql(input, eql)
     }
 
     pub fn get_any_case(&self, input: &[u8]) -> Option<V> {
@@ -347,18 +337,14 @@ where
             return None;
         }
 
-        // PERF(port): see get_with_eql_lowercase.
+        // PERF(port): Zig built a `[i]u8` stack buffer per comptime length; we use a
+        // bounded stack buffer sized to max_len. Profile in Phase B.
+        // TODO(port): if max_len can exceed a small bound at any call site, revisit.
         let mut buf = [0u8; 256];
         debug_assert!(length <= buf.len());
-        let lowercased = &mut buf[..length];
-        for (c, b) in input[..length].iter().zip(lowercased.iter_mut()) {
-            *b = match c {
-                b'A'..=b'Z' => c + 32,
-                _ => *c,
-            };
-        }
+        let lowercased = bun_core::strings::copy_lowercase(input, &mut buf[..length]);
 
-        self.get_with_length_and_eql(&*lowercased, length, eql)
+        self.get_with_length_and_eql(lowercased, length, eql)
     }
 }
 

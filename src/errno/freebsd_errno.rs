@@ -231,31 +231,9 @@ pub use uv_e as UV_E;
 
 use super::GetErrno;
 
-#[inline]
-pub fn get_errno<T: GetErrno>(rc: T) -> E {
-    rc.get_errno()
-}
-
 // FreeBSD has no raw-syscall return convention (unlike Linux's `-errno` in
 // `usize`); every kernel entry goes through libc, so all widths route to the
 // thread-local `__error()` slot.
-macro_rules! impl_get_errno_libc {
-    ($($t:ty),+ $(,)?) => {$(
-        impl GetErrno for $t {
-            #[inline]
-            fn get_errno(self) -> E {
-                // Zig bitcasts unsigned → SAME-width signed before `== -1`.
-                // `as i64` would zero-extend u32, never matching -1. Compare
-                // against the type's own all-ones value instead (== -1 for
-                // signed, == MAX for unsigned — both are libc's failure rc).
-                if self == !(0 as $t) {
-                    return E::from_raw(crate::posix::errno() as u16);
-                }
-                E::SUCCESS
-            }
-        }
-    )+};
-}
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
 
 // ported from: src/errno/freebsd_errno.zig

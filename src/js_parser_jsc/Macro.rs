@@ -528,11 +528,7 @@ impl From<JsError> for MacroError {
     }
 }
 
-impl From<bun_alloc::AllocError> for MacroError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        MacroError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(MacroError);
 
 impl From<MacroError> for Error {
     fn from(e: MacroError) -> Self {

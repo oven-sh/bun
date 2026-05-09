@@ -79,20 +79,11 @@ impl BackendError {
     }
 }
 
-impl From<BackendError> for bun_core::Error {
-    fn from(e: BackendError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(BackendError);
 
 // Zig: `dupGlobal` is `error{OutOfMemory}!?[]u8`, flat-unioned into
 // `clipboard()`'s `error{BackendUnavailable, OutOfMemory}` set.
-impl From<bun_alloc::AllocError> for BackendError {
-    #[inline]
-    fn from(_: bun_alloc::AllocError) -> Self {
-        BackendError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(BackendError);
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let f = factory()?;

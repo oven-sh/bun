@@ -639,8 +639,7 @@ impl Stringifier {
                                         extern_strings,
                                         &mut FmtBridge(writer),
                                         write_indent_fmt,
-                                    )
-                                    .map_err(|_| bun_core::err!("WriteFailed"))?;
+                                    )?;
 
                                 writer.write_all(b" }]")?;
                             } else {
@@ -990,8 +989,7 @@ impl Stringifier {
                 any = true;
             }
             writer.write_all(b" \"os\": ")?;
-            Negatable::<Npm::OperatingSystem>::to_json(meta.os, &mut FmtBridge(writer))
-                .map_err(|_| bun_core::err!("WriteFailed"))?;
+            Negatable::<Npm::OperatingSystem>::to_json(meta.os, &mut FmtBridge(writer))?;
         }
 
         if meta.arch != Npm::Architecture::ALL {
@@ -1001,8 +999,7 @@ impl Stringifier {
                 any = true;
             }
             writer.write_all(b" \"cpu\": ")?;
-            Negatable::<Npm::Architecture>::to_json(meta.arch, &mut FmtBridge(writer))
-                .map_err(|_| bun_core::err!("WriteFailed"))?;
+            Negatable::<Npm::Architecture>::to_json(meta.arch, &mut FmtBridge(writer))?;
         }
 
         if bin.tag != BinTag::None {
@@ -1022,8 +1019,7 @@ impl Stringifier {
                 extern_strings,
                 &mut FmtBridge(writer),
                 write_indent_fmt,
-            )
-            .map_err(|_| bun_core::err!("WriteFailed"))?;
+            )?;
         }
 
         if any {
@@ -1114,8 +1110,7 @@ impl Stringifier {
                     extern_strings,
                     &mut FmtBridge(writer),
                     write_indent_fmt,
-                )
-                .map_err(|_| bun_core::err!("WriteFailed"))?;
+                )?;
             }
 
             any = true;
@@ -1273,18 +1268,9 @@ pub enum ParseError {
     UnexpectedResolution,
 }
 
-impl From<bun_alloc::AllocError> for ParseError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        ParseError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ParseError);
 
-impl From<ParseError> for bun_core::Error {
-    fn from(e: ParseError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-        // TODO(port): confirm bun_core::Error construction API
-    }
-}
+bun_core::named_error_set!(ParseError);
 
 pub type PkgPathSet = PkgMap<()>;
 

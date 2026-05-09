@@ -390,7 +390,7 @@ pub fn watch(
             }
         }
     };
-    let _close_probe = scopeguard::guard(probe_fd, |fd| fd.close());
+    let _close_probe = sys::CloseOnDrop::new(probe_fd);
     let resolved: &ZStr = match sys::get_fd_path(probe_fd, &mut resolve_buf) {
         Err(_) => path, // fall back to the caller's path; best effort
         Ok(r) => {
@@ -515,7 +515,7 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         Err(_) => return,
         Ok(f) => f,
     };
-    let _close = scopeguard::guard(dfd, |f| f.close());
+    let _close = sys::CloseOnDrop::new(dfd);
     let mut it = sys::dir_iterator::iterate(dfd);
     let mut abs_buf = path::path_buffer_pool::get();
     let mut rel_buf = path::path_buffer_pool::get();

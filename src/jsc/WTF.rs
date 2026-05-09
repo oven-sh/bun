@@ -12,8 +12,6 @@ unsafe extern "C" {
     fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
 
     safe fn WTF__numberOfProcessorCores() -> c_int;
-
-    fn Bun__writeHTTPDate(buffer: *mut [u8; 32], length: usize, timestamp_ms: u64) -> c_int;
 }
 
 /// On Linux, this is min(sysconf(_SC_NPROCESSORS_ONLN), sched_getaffinity count, cgroup cpu.max quota).
@@ -32,11 +30,7 @@ pub enum ParseDoubleError {
     #[error("InvalidCharacter")]
     InvalidCharacter,
 }
-impl From<ParseDoubleError> for bun_core::Error {
-    fn from(e: ParseDoubleError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(ParseDoubleError);
 
 pub fn parse_double(buf: &[u8]) -> Result<f64, ParseDoubleError> {
     if buf.is_empty() {
@@ -58,19 +52,10 @@ pub use bun_core::wtf::{parse_es5_date, parse_es5_date_raw, InvalidDate};
 /// Back-compat alias for the Zig namespace shape.
 pub type ParseDateError = bun_core::wtf::InvalidDate;
 
-pub fn write_http_date(buffer: &mut [u8; 32], timestamp_ms: u64) -> &mut [u8] {
-    if timestamp_ms == 0 {
-        return &mut buffer[..0];
-    }
-
-    // SAFETY: buffer is a valid `*mut [u8; 32]`; length 32 matches.
-    let res = unsafe { Bun__writeHTTPDate(buffer, 32, timestamp_ms) };
-    if res < 1 {
-        return &mut buffer[..0];
-    }
-
-    &mut buffer[..usize::try_from(res).expect("int cast")]
-}
+// MOVE_DOWN(b0): canonical lives in bun_http_types (T3) so bun_resolver can call
+// it without a bun_jsc dep. Re-exported here to keep the Zig namespace shape
+// (src/jsc/WTF.zig:52).
+pub use bun_http_types::ETag::wtf::write_http_date;
 
 pub use crate::string_builder::StringBuilder;
 

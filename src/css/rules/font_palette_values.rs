@@ -3,6 +3,7 @@ use crate::css_rules::Location;
 use crate::css_values::color::CssColor;
 use crate::css_values::ident::DashedIdent;
 use crate::{PrintErr, Printer};
+use crate::generics::DeepClone as _;
 
 use super::ArrayList;
 
@@ -155,7 +156,6 @@ impl OverrideColors {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        use crate::generics::DeepClone as _;
         Self { index: self.index, color: self.color.deep_clone(bump) }
     }
 }

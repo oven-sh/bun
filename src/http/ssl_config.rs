@@ -4,12 +4,12 @@
 //! handle_path / handle_file*) stay in bun_runtime (tier-6, Pass C).
 
 use core::ffi::{c_char, CStr};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use bun_uws as uws;
-// TODO(port): Zig used `std.hash.Wyhash`; routed to Wyhash11 until std Wyhash
-// is ported (see bun_wyhash TODO). Only affects content_hash (cache key).
-use bun_wyhash::Wyhash11 as Wyhash;
+// Zig: `std.hash.Wyhash` (final4 variant). NOT `Wyhash11`.
+use bun_wyhash::Wyhash;
 use parking_lot::Mutex;
 
 /// Owned, NUL-terminated C-string slice (`?[*:0]const u8` in Zig). The
@@ -44,7 +44,11 @@ pub struct SSLConfig {
     pub requires_custom_request_ctx: bool,
     pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
-    pub cached_hash: u64,
+    /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
+    /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
+    /// context. Zig used a plain `u64` mutated via `*SSLConfig` (Zig pointers
+    /// freely alias); Rust needs `UnsafeCell`-backed storage here.
+    pub cached_hash: AtomicU64,
 }
 
 /// Casing alias for callers that snake_cased the type name.
@@ -115,8 +119,37 @@ impl SSLConfig {
         requires_custom_request_ctx: false,
         is_using_default_ciphers: true,
         low_memory_mode: false,
-        cached_hash: 0,
+        cached_hash: AtomicU64::new(0),
     };
+
+    #[inline]
+    pub fn zero() -> Self {
+        Self::default()
+    }
+
+    /// Borrow `server_name` as a `&CStr` (None if null). Convenience accessor
+    /// for callers that previously pattern-matched `Option<CString>`.
+    #[inline]
+    pub fn server_name_cstr(&self) -> Option<&CStr> {
+        if self.server_name.is_null() {
+            None
+        } else {
+            // SAFETY: see `cstr_bytes` invariant — heap-owned, NUL-terminated.
+            Some(unsafe { CStr::from_ptr(self.server_name) })
+        }
+    }
+
+    /// Borrow `server_name` as bytes (no trailing NUL). None if null.
+    #[inline]
+    pub fn server_name_bytes(&self) -> Option<&[u8]> {
+        if self.server_name.is_null() { None } else { Some(cstr_bytes(self.server_name)) }
+    }
+
+    /// Borrow `protos` as bytes (no trailing NUL). None if null.
+    #[inline]
+    pub fn protos_bytes(&self) -> Option<&[u8]> {
+        if self.protos.is_null() { None } else { Some(cstr_bytes(self.protos)) }
+    }
 
     /// Extract the raw `*const SSLConfig` from an optional shared handle for
     /// pointer-equality comparison (interned configs have stable addresses).
@@ -256,9 +289,13 @@ impl SSLConfig {
         true
     }
 
-    pub fn content_hash(&mut self) -> u64 {
-        if self.cached_hash != 0 {
-            return self.cached_hash;
+    // Takes `&self` (not `&mut`) because the intern registry calls this through
+    // a pointer derived from `Arc::as_ptr`, which only grants shared provenance.
+    // The memoization write goes through `AtomicU64` (interior mutability).
+    pub fn content_hash(&self) -> u64 {
+        let cached = self.cached_hash.load(Ordering::Relaxed);
+        if cached != 0 {
+            return cached;
         }
         let mut hasher = Wyhash::init(0);
         macro_rules! hash_cstr {
@@ -301,8 +338,10 @@ impl SSLConfig {
         hasher.update(&[u8::from(self.low_memory_mode)]);
         let hash = hasher.final_();
         // Avoid 0 since it's the sentinel for "not computed"
-        self.cached_hash = if hash == 0 { 1 } else { hash };
-        self.cached_hash
+        let hash = if hash == 0 { 1 } else { hash };
+        // Relaxed: idempotent pure cache; racing writers store the same value.
+        self.cached_hash.store(hash, Ordering::Relaxed);
+        hash
     }
 
     /// Destructor. Called by `Arc` on strong 1->0 for interned configs,
@@ -381,7 +420,7 @@ impl Clone for SSLConfig {
             requires_custom_request_ctx: self.requires_custom_request_ctx,
             is_using_default_ciphers: self.is_using_default_ciphers,
             low_memory_mode: self.low_memory_mode,
-            cached_hash: 0,
+            cached_hash: AtomicU64::new(0),
         }
     }
 }
@@ -458,100 +497,126 @@ fn clone_string(s: CStrPtr) -> CStrPtr {
 /// map.
 pub mod global_registry {
     use super::*;
-    use bun_collections::ArrayHashMap;
 
-    /// Newtype over `*const SSLConfig` so the static `Mutex<ArrayHashMap<K,_>>`
-    /// is `Send`. The pointer is only used for identity comparison; the
-    /// allocation is kept alive by the paired `WeakPtr` value while in the map.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-    #[repr(transparent)]
-    struct ConfigKey(*const SSLConfig);
-    // SAFETY: pointer is identity-only; backing allocation lifetime is
-    // guaranteed by the `WeakPtr` paired with each key (see `intern`).
-    unsafe impl Send for ConfigKey {}
-    unsafe impl Sync for ConfigKey {}
+    // PORT NOTE: Zig used `ArrayHashMapUnmanaged<*SSLConfig, WeakPtr, MapContext>`
+    // where `MapContext` hashes/compares by *content* through the raw-pointer
+    // key. That shape is UB in Rust: when an interned `Arc`'s strong count hits
+    // 0, std `Arc` materializes a `&mut SSLConfig` (via `drop_in_place`)
+    // *before* `Drop::drop` reaches `remove()`'s mutex; a concurrent `intern()`
+    // probing the map would then form a `&SSLConfig` to the same allocation via
+    // the raw key, aliasing that live `&mut`. Zig's model tolerates
+    // read-while-deinit-blocked (.zig:336-341/.zig:356); Rust's does not.
+    //
+    // The Rust shape stores `(u64 content_hash, Weak)` and probes by:
+    //   1. fast u64 hash filter,
+    //   2. `Weak::upgrade()` (so the comparand is a fresh strong `Arc`),
+    //   3. `is_same()` on the upgraded value.
+    // `remove()` matches by `Weak::as_ptr` identity, never dereferencing.
+    //
+    // Backed by a flat `Vec` (linear scan): the number of distinct SSL configs
+    // per process is tiny (typically <16) and `ArrayHashMap` is also linear
+    // for `eql` collisions, so this is the same complexity class.
+    // PERF(port): was ArrayHashMapUnmanaged — profile in Phase B.
+    static REGISTRY: Mutex<Vec<(u64, WeakPtr)>> = Mutex::new(Vec::new());
 
-    // PERF(port): was Lock-guarded — Mutex<T> owns the map.
-    static CONFIGS: Mutex<Option<ArrayHashMap<ConfigKey, WeakPtr>>> =
-        Mutex::new(None);
-
-    /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1),
-    /// and either returns an existing equivalent (upgraded) or the new
-    /// one. Either way, caller owns exactly one strong ref on the result.
+    /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
+    /// either returns an existing equivalent (upgraded) or the new one. Either
+    /// way, caller owns exactly one strong ref on the result.
     pub fn intern(config: SSLConfig) -> SharedPtr {
+        // Compute hash on the owned value *before* `Arc::new`, so the cached
+        // hash is stored before any other thread can observe this config.
+        let hash = config.content_hash();
         let new_shared = SharedPtr::new(config);
-        let new_ptr: *const SSLConfig = new_shared.get();
 
-        // Deferred cleanup MUST run after `unlock` (Drop re-locks the
-        // registry mutex via `SSLConfig::deinit -> remove`).
+        // Deferred cleanup MUST run after the mutex is released (Drop re-locks
+        // the registry mutex via `SSLConfig::drop -> remove`).
         let mut dispose_new: Option<SharedPtr> = None;
         let mut dispose_old_weak: Option<WeakPtr> = None;
 
+        // PORT NOTE: reshaped for borrowck — Zig returned directly while holding
+        // the mutex, then ran `defer`s. We compute `result` in a block, drop
+        // the guard, then dispose deferred values.
         let result = {
-            let mut guard = CONFIGS.lock();
-            let map = guard.get_or_insert_with(ArrayHashMap::default);
+            let mut configs = REGISTRY.lock();
 
-            // TODO(port): Zig used content-hash + is_same as map context.
-            // ArrayHashMap here is keyed by pointer; emulate content
-            // lookup by linear scan over the (small) map.
-            let mut found_slot: Option<usize> = None;
-            // PORT NOTE: reshaped for borrowck — iterate keys() slice instead of (k,v) iter.
-            for (idx, k) in map.keys().iter().enumerate() {
-                // SAFETY: map keys are interned config addresses; backing
-                // allocation kept alive by the weak ref while in the map.
-                if unsafe { (*k.0).is_same(&*new_ptr) } {
-                    found_slot = Some(idx);
+            // Zig: `getOrPutContext` — probe by content hash + content equality.
+            let mut found_idx: Option<usize> = None;
+            for (i, (h, weak)) in configs.iter().enumerate() {
+                if *h != hash {
+                    continue;
+                }
+                if let Some(existing_shared) = weak.upgrade() {
+                    if existing_shared.is_same(&new_shared) {
+                        // Existing config is still alive; dispose the new
+                        // duplicate (after unlock).
+                        dispose_new = Some(new_shared);
+                        drop(configs);
+                        drop(dispose_new);
+                        drop(dispose_old_weak);
+                        return SharedPtr(existing_shared);
+                    }
+                    // Hash collision, different content — keep scanning.
+                } else {
+                    // strong==0: existing is dying. Its `drop()` is blocked in
+                    // `remove()` waiting for this mutex, so its slot is still
+                    // here. We can't `is_same()` it (would alias `&mut`), but
+                    // a hash match with a dying entry is a strong hint this is
+                    // the same config — replace the slot. The dying config's
+                    // `remove()` will pointer-mismatch and no-op when it runs.
+                    found_idx = Some(i);
                     break;
                 }
             }
-            if let Some(idx) = found_slot {
-                if let Some(existing) = map.get_index_mut(idx).unwrap().1.upgrade() {
-                    // Existing config is still alive; dispose the new duplicate.
-                    dispose_new = Some(new_shared);
-                    SharedPtr(existing)
-                } else {
-                    // strong==0: existing is dying. Its `Drop` is blocked
-                    // in `remove()` waiting for this mutex, so content is
-                    // still intact (fields not yet freed). Replace the
-                    // slot; the dying config's `remove()` will
-                    // pointer-mismatch and no-op when it runs.
-                    //
-                    // NOTE: cannot mutate the key in-place — `ArrayHashMap`
-                    // stores a parallel `hashes[idx]` derived from the key
-                    // (pointer address) which `get_index_mut` does NOT
-                    // refresh. Remove the stale slot and re-insert so the
-                    // new pointer's hash is stored and `remove(new_ptr)`
-                    // can find it later. (Zig's MapContext is content-
-                    // hashed so in-place key replacement is safe there.)
-                    let (_, old_weak) = map.swap_remove_at(idx);
-                    dispose_old_weak = Some(old_weak);
-                    map.insert(ConfigKey(new_ptr), new_shared.clone_weak());
-                    new_shared
-                }
+
+            if let Some(idx) = found_idx {
+                dispose_old_weak = Some(core::mem::replace(
+                    &mut configs[idx].1,
+                    new_shared.clone_weak(),
+                ));
+                configs[idx].0 = hash;
             } else {
-                map.insert(ConfigKey(new_ptr), new_shared.clone_weak());
-                new_shared
+                configs.push((hash, new_shared.clone_weak()));
             }
+            new_shared
         };
-        drop(dispose_old_weak);
+        // guard dropped here; now safe to drop dispose_new / dispose_old_weak.
         drop(dispose_new);
+        drop(dispose_old_weak);
         result
     }
 
-    /// Called from `SSLConfig::deinit()` on strong 1->0. If `intern()`
-    /// replaced our slot while we blocked on the mutex, the
-    /// pointer-identity check fails and we skip (intern already disposed
-    /// our weak ref).
+    /// Called from `SSLConfig::deinit()` on strong 1->0. If `intern()` replaced
+    /// our slot while we blocked on the mutex, the pointer-identity check
+    /// fails and we skip (intern already disposed our weak ref).
     ///
     /// No-op for configs that were never interned.
-    pub(super) fn remove(config: *const SSLConfig) {
-        let mut guard = CONFIGS.lock();
-        let Some(map) = guard.as_mut() else { return };
-        if map.is_empty() {
+    pub(super) fn remove(config: &SSLConfig) {
+        // Read memoized hash via the atomic — never recompute here (we're
+        // inside `Drop::drop`, holding `&mut SSLConfig`, and recomputation
+        // would race with nothing but is wasted work for non-interned configs).
+        let hash = config.cached_hash.load(Ordering::Relaxed);
+        let self_ptr: *const SSLConfig = config;
+
+        let mut configs = REGISTRY.lock();
+        if configs.is_empty() {
             return;
         }
-        // Pointer-identity removal.
-        map.swap_remove(&ConfigKey(config));
+        // Zig: `getIndexContext` then pointer-identity check. We never
+        // dereference stored weaks here — only compare `Weak::as_ptr`.
+        let Some(idx) = configs.iter().position(|(h, weak)| {
+            // Hash filter only applies if this config was hashed (interned
+            // configs always are; non-interned configs have hash==0 and won't
+            // match any stored entry's nonzero hash, but check identity anyway
+            // for robustness).
+            (hash == 0 || *h == hash) && Weak::as_ptr(weak) == self_ptr
+        }) else {
+            return;
+        };
+        let (_, weak) = configs.swap_remove(idx);
+        // Drop the weak after unlock isn't strictly necessary (Weak::drop
+        // doesn't re-enter), but matches Zig ordering.
+        drop(configs);
+        drop(weak);
     }
 }
 

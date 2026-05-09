@@ -154,13 +154,10 @@ pub struct ZlibReader<'a, W, const BUFFER_SIZE: usize> {
     pub state: ZlibReaderState,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ZlibReaderState {
-    Uninitialized,
-    Inflating,
-    End,
-    Error,
-}
+pub use bun_core::compress::State;
+pub type ZlibReaderState = State;
+pub type ZlibReaderArrayListState = State;
+pub type ZlibCompressorArrayListState = State;
 
 impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
@@ -409,14 +406,6 @@ pub struct ZlibReaderArrayList<'a> {
     pub zlib: zStream_struct,
     // PORT NOTE: allocator field dropped (global mimalloc)
     pub state: ZlibReaderArrayListState,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ZlibReaderArrayListState {
-    Uninitialized,
-    Inflating,
-    End,
-    Error,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -911,14 +900,6 @@ pub struct ZlibCompressorArrayList<'a> {
     pub zlib: zStream_struct,
     // PORT NOTE: allocator field dropped (global mimalloc)
     pub state: ZlibCompressorArrayListState,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ZlibCompressorArrayListState {
-    Uninitialized,
-    Inflating,
-    End,
-    Error,
 }
 
 impl<'a> ZlibCompressorArrayList<'a> {

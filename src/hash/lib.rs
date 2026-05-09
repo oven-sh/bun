@@ -37,3 +37,33 @@ pub use rapidhash::RapidHash;
 pub use xxhash::{XxHash3, XxHash32, XxHash64, XxHash64Streaming};
 
 // ported from: src/runtime/api/HashObject.zig
+
+#[cfg(test)]
+pub(crate) mod verify {
+    //! SMHasher verification routine — mirrors `vendor/zig/lib/std/hash/verify.zig`.
+    //!
+    //! Fill `buf[i] = i`; hash each prefix with `seed = 256 - i`; concat the
+    //! little-endian bytes; hash the concat with `seed = 0`; truncate to u32.
+
+    pub(crate) fn smhasher_32(hash: impl Fn(&[u8], u32) -> u32) -> u32 {
+        let mut buf = [0u8; 256];
+        let mut buf_all = [0u8; 256 * 4];
+        for i in 0..256u32 {
+            buf[i as usize] = i as u8;
+            let h = hash(&buf[..i as usize], 256 - i);
+            buf_all[i as usize * 4..i as usize * 4 + 4].copy_from_slice(&h.to_le_bytes());
+        }
+        hash(&buf_all, 0)
+    }
+
+    pub(crate) fn smhasher_64(hash: impl Fn(&[u8], u64) -> u64) -> u32 {
+        let mut buf = [0u8; 256];
+        let mut buf_all = [0u8; 256 * 8];
+        for i in 0..256u64 {
+            buf[i as usize] = i as u8;
+            let h = hash(&buf[..i as usize], 256 - i);
+            buf_all[i as usize * 8..i as usize * 8 + 8].copy_from_slice(&h.to_le_bytes());
+        }
+        hash(&buf_all, 0) as u32 // @truncate
+    }
+}

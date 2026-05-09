@@ -37,6 +37,7 @@ use css_values::percentage::{DimensionPercentage, Percentage};
 use bun_collections::VecExt;
 use bun_string::strings;
 
+use crate::generics::{CssEql, DeepClone};
 use css::CssResult;
 
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
@@ -387,14 +388,14 @@ impl FontFamily {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
                 // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { &*value });
+                s.extend_from_slice(unsafe { crate::arena_str(value) });
                 string = Some(s);
             }
 
             if let Some(s) = string.as_mut() {
                 s.push(b' ');
                 // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { &*ident });
+                s.extend_from_slice(unsafe { crate::arena_str(ident) });
             }
         }
 
@@ -411,7 +412,7 @@ impl FontFamily {
             FontFamily::Generic(val) => val.to_css(dest),
             FontFamily::FamilyName(val_ptr) => {
                 // SAFETY: arena-owned slice valid for 'bump (parser/printer arena outlives FontFamily)
-                let val: &[u8] = unsafe { &**val_ptr };
+                let val: &[u8] = unsafe { crate::arena_str(*val_ptr) };
                 // Generic family names such as sans-serif must be quoted if parsed as a string.
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
@@ -433,18 +434,14 @@ impl FontFamily {
                         } else {
                             id.push(b' ');
                         }
-                        if css::serializer::serialize_identifier(slice, &mut id).is_err() {
-                            return Err(dest.add_fmt_error());
-                        }
+                        // `ArenaVec<u8>: WriteAll<Error = Infallible>` — cannot fail.
+                        let _ = css::serializer::serialize_identifier(slice, &mut id);
                     }
                     if id.len() < val.len() + 2 {
                         return dest.write_str(&id[..]);
                     }
                 }
-                match css::serializer::serialize_string(val, dest) {
-                    Ok(()) => Ok(()),
-                    Err(_) => Err(dest.add_fmt_error()),
-                }
+                dest.serialize_string(val)
             }
         }
     }
@@ -456,15 +453,8 @@ impl FontFamily {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: Zig's `css.implementDeepClone` re-allocs the slice in the
-        // target arena. Phase A: shallow pointer copy (arena-owned slice
-        // outlives both source and clone in the bundler's per-file arena
-        // model). Phase B threads `bump.dupe(slice)` once 'bump is plumbed.
-        self.clone()
-    }
-
-    // eql / hash / deepClone — see manual impls below
+    // eql / hash / deepClone — `PartialEq`/`Clone` hand-impls below; bridged to
+    // `CssEql`/`DeepClone` via `bridge_clone_partialeq!` in `generics.rs`.
 }
 
 // PORT NOTE: Zig's `css.implementEql` / `css.implementHash` walked fields by
@@ -719,9 +709,11 @@ impl LineHeight {
 }
 
 /// A value for the [font](https://www.w3.org/TR/css-fonts-4/#font-prop) shorthand property.
-// PORT NOTE: no `#[derive(Clone, PartialEq)]` — `Vec<T>` derives neither.
-// Zig's `eql`/`deepClone` were reflection-based (`css.implementEql` / `css.
-// implementDeepClone`); Phase B provides those via the generics blanket.
+// PORT NOTE: Zig's `eql`/`deepClone` were reflection-based (`css.implementEql`
+// / `css.implementDeepClone`); the field-wise `#[derive(DeepClone, CssEql)]`
+// is the Rust equivalent — every field type carries the trait via the
+// blankets/bridges in `generics.rs`.
+#[derive(DeepClone, CssEql)]
 pub struct Font {
     /// The font family.
     pub family: Vec<FontFamily>,

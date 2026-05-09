@@ -439,20 +439,9 @@ pub enum FromPnpmLockfileError {
     InvalidPnpmLockfile,
 }
 
-impl From<AllocError> for FromPnpmLockfileError {
-    fn from(_: AllocError) -> Self {
-        FromPnpmLockfileError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(FromPnpmLockfileError);
 
-impl From<FromPnpmLockfileError> for bun_core::Error {
-    fn from(e: FromPnpmLockfileError) -> Self {
-        match e {
-            FromPnpmLockfileError::OutOfMemory => bun_core::err!(OutOfMemory),
-            FromPnpmLockfileError::InvalidPnpmLockfile => bun_core::err!(InvalidPnpmLockfile),
-        }
-    }
-}
+bun_core::named_error_set!(FromPnpmLockfileError);
 
 fn put_entries_from_pnpm_lockfile(
     catalog_map: &mut Map,

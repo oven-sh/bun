@@ -31,13 +31,7 @@ impl CityHash32 {
     // A 32-bit to 32-bit integer hash copied from Murmur3.
     #[inline(always)]
     fn fmix(h: u32) -> u32 {
-        let mut h1 = h;
-        h1 ^= h1 >> 16;
-        h1 = h1.wrapping_mul(0x85ebca6b);
-        h1 ^= h1 >> 13;
-        h1 = h1.wrapping_mul(0xc2b2ae35);
-        h1 ^= h1 >> 16;
-        h1
+        crate::murmur::fmix32(h)
     }
 
     #[inline(always)]
@@ -376,34 +370,13 @@ impl CityHash64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn smhasher_32_ignore_seed(hash: impl Fn(&[u8]) -> u32) -> u32 {
-        let mut buf = [0u8; 256];
-        let mut buf_all = [0u8; 256 * 4];
-        for i in 0..256usize {
-            buf[i] = i as u8;
-            let h = hash(&buf[..i]);
-            buf_all[i * 4..i * 4 + 4].copy_from_slice(&h.to_le_bytes());
-        }
-        hash(&buf_all)
-    }
-
-    fn smhasher_64(hash: impl Fn(&[u8], u64) -> u64) -> u32 {
-        let mut buf = [0u8; 256];
-        let mut buf_all = [0u8; 256 * 8];
-        for i in 0..256u64 {
-            buf[i as usize] = i as u8;
-            let h = hash(&buf[..i as usize], 256 - i);
-            buf_all[i as usize * 8..i as usize * 8 + 8].copy_from_slice(&h.to_le_bytes());
-        }
-        hash(&buf_all, 0) as u32
-    }
+    use crate::verify::{smhasher_32, smhasher_64};
 
     #[test]
     fn cityhash32_smhasher() {
         // SMHasher doesn't provide a 32bit version of the algorithm.
         // The implementation was verified against the Google Abseil version.
-        assert_eq!(smhasher_32_ignore_seed(CityHash32::hash), 0x68254F81);
+        assert_eq!(smhasher_32(|b, _seed| CityHash32::hash(b)), 0x68254F81);
     }
 
     #[test]

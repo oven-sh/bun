@@ -17,7 +17,7 @@ use bun_boringssl_sys as boringssl;
 use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use crate::crypto::boringssl_jsc::err_to_js;
-use crate::socket::SSLConfig;
+use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use bun_uws as uws;
 

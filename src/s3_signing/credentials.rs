@@ -50,16 +50,7 @@ macro_rules! alloc_print {
     }};
 }
 
-// TODO(b2-blocked): bun_core::fmt::bytes_to_hex_lower — local Display shim until it lands.
-struct HexLower<'a>(&'a [u8]);
-impl core::fmt::Display for HexLower<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for b in self.0 {
-            write!(f, "{:02x}", b)?;
-        }
-        Ok(())
-    }
-}
+use bun_core::fmt::hex_lower as HexLower;
 
 #[inline]
 fn pico_header_empty() -> PicoHeader { PicoHeader::ZERO }
@@ -1116,7 +1107,6 @@ impl Default for SignResult {
 impl Drop for SignResult {
     fn drop(&mut self) {
         // Zig used bun.freeSensitive (zero-before-free) for secrets.
-        // TODO(port): wire bun_core::free_sensitive once available; for now zero manually.
         zero_sensitive(&mut self.amz_date);
         zero_sensitive(&mut self.session_token);
         zero_sensitive(&mut self.content_disposition);
@@ -1130,12 +1120,8 @@ impl Drop for SignResult {
 
 #[inline]
 fn zero_sensitive(b: &mut Box<[u8]>) {
-    if !b.is_empty() {
-        for byte in b.iter_mut() {
-            // SAFETY: plain volatile zero to prevent the compiler from eliding the write.
-            unsafe { core::ptr::write_volatile(byte, 0) };
-        }
-    }
+    // SAFETY: `b` is exclusively borrowed; `len` bytes are valid for writes.
+    unsafe { bun_core::secure_zero(b.as_mut_ptr(), b.len()) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

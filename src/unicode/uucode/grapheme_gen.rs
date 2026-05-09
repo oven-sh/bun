@@ -11,6 +11,8 @@
 
 use std::io::{self, BufWriter, Write};
 
+use bun_core::OrWriteFailed as _;
+
 use crate::uucode::lut;
 // TODO(port): `uucode` is the vendored Zig dep at src/deps/uucode/ — Phase B
 // must decide whether to wrap it via FFI or replace with a Rust UCD source.
@@ -110,27 +112,27 @@ pub fn main() -> Result<(), bun_core::Error> {
               };\n\
               \n",
         )
-        .map_err(|_| bun_core::err!("WriteFailed"))?;
+        .or_write_failed()?;
 
     // Write stage1
     write!(stdout, "const stage1: [{}]u16 = .{{", t.stage1.len())
-        .map_err(|_| bun_core::err!("WriteFailed"))?;
+        .or_write_failed()?;
     for entry in t.stage1.iter() {
-        write!(stdout, "{},", entry).map_err(|_| bun_core::err!("WriteFailed"))?;
+        write!(stdout, "{},", entry).or_write_failed()?;
     }
     stdout
         .write_all(b"};\n\n")
-        .map_err(|_| bun_core::err!("WriteFailed"))?;
+        .or_write_failed()?;
 
     // Write stage2
     write!(stdout, "const stage2: [{}]u8 = .{{", t.stage2.len())
-        .map_err(|_| bun_core::err!("WriteFailed"))?;
+        .or_write_failed()?;
     for entry in t.stage2.iter() {
-        write!(stdout, "{},", entry).map_err(|_| bun_core::err!("WriteFailed"))?;
+        write!(stdout, "{},", entry).or_write_failed()?;
     }
     stdout
         .write_all(b"};\n\n")
-        .map_err(|_| bun_core::err!("WriteFailed"))?;
+        .or_write_failed()?;
 
     // Write stage3
     write!(
@@ -138,15 +140,15 @@ pub fn main() -> Result<(), bun_core::Error> {
         "const stage3: [{}]GraphemeBreakNoControl = .{{",
         t.stage3.len()
     )
-    .map_err(|_| bun_core::err!("WriteFailed"))?;
+    .or_write_failed()?;
     for entry in t.stage3.iter() {
         write!(stdout, ".{},", <&'static str>::from(*entry))
-            .map_err(|_| bun_core::err!("WriteFailed"))?;
+            .or_write_failed()?;
     }
     stdout
         .write_all(b"};\n")
-        .map_err(|_| bun_core::err!("WriteFailed"))?;
-    stdout.flush().map_err(|_| bun_core::err!("WriteFailed"))?;
+        .or_write_failed()?;
+    stdout.flush().or_write_failed()?;
 
     Ok(())
 }

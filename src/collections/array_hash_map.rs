@@ -109,18 +109,13 @@ impl CaseInsensitiveAsciiStringContext {
             // Output equals the incremental loop below (init(0)+update+finish ≡
             // one-shot) — kept only as the perf shortcut the spec spells out.
             let n = s.len();
-            for (dst, &src) in buf[..n].iter_mut().zip(s) {
-                *dst = src.to_ascii_lowercase();
-            }
-            return bun_wyhash::hash(&buf[..n]) as u32; // @truncate
+            let lowered = bun_core::strings::copy_lowercase(s, &mut buf[..n]);
+            return bun_wyhash::hash(lowered) as u32; // @truncate
         }
         let mut h = bun_wyhash::Wyhash::init(0);
         while !s.is_empty() {
             let n = s.len().min(buf.len());
-            for (dst, &src) in buf[..n].iter_mut().zip(&s[..n]) {
-                *dst = src.to_ascii_lowercase();
-            }
-            h.update(&buf[..n]);
+            h.update(bun_core::strings::copy_lowercase(&s[..n], &mut buf[..n]));
             s = &s[n..];
         }
         h.finish() as u32 // @truncate
@@ -1568,9 +1563,7 @@ pub mod string_hash_map {
     impl PrehashedCaseInsensitive {
         pub fn init(input: &[u8]) -> Self {
             let mut out = vec![0u8; input.len()].into_boxed_slice();
-            for (dst, &src) in out.iter_mut().zip(input) {
-                *dst = src.to_ascii_lowercase();
-            }
+            bun_core::strings::copy_lowercase(input, &mut out);
             Self { value: hash(&out), input: out }
         }
         #[inline]

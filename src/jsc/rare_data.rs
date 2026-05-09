@@ -295,7 +295,7 @@ pub struct RareData {
     pub fs_watchers_for_isolation: Vec<IsolationWatcher>,
     pub stat_watchers_for_isolation: Vec<IsolationWatcher>,
 
-    pub temp_pipe_read_buffer: Option<Box<[u8; 256 * 1024]>>,
+    pub temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
     // PORT NOTE: `aws_signature_cache` field dropped — storage moved DOWN to
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static). The
@@ -413,7 +413,10 @@ impl PathBuf {
 // PipeReadBuffer / constants
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type PipeReadBuffer = [u8; 256 * 1024];
+// Canonical definition lives in the lower-tier `bun_event_loop` crate (shared
+// with `MiniEventLoop`'s scratch buffer). Re-export so `rare_data::PipeReadBuffer`
+// remains a stable path for existing callers.
+pub use bun_event_loop::PipeReadBuffer;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage

@@ -45,11 +45,7 @@ pub enum CronError {
     TooFewFields,
 }
 
-impl From<CronError> for bun_core::Error {
-    fn from(e: CronError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(CronError);
 
 impl CronExpression {
     pub fn error_message(e: CronError) -> &'static [u8] {

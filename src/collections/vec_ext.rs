@@ -39,7 +39,16 @@ pub trait VecExt<T>: Sized {
     /// adopted as `Borrowed`); in the Rust port the linker always called
     /// `transfer_ownership` afterwards (full copy), so doing the copy up-front
     /// here is no worse and lets the arena round-trip disappear.
-    fn from_bump_slice(items: &mut [T]) -> Self;
+    ///
+    /// # Safety
+    /// Bitwise-**moves** every element out of `items` into a fresh allocation.
+    /// `items` must be a leaked bump-arena slice (`into_bump_slice_mut` /
+    /// `alloc_slice_*`) that will *never* have its elements read or dropped
+    /// again — i.e. no live `Vec<T>`/`BumpVec<T>` may still own them. Passing
+    /// a slice borrowed from a container that runs element destructors yields
+    /// a double-drop (PTR_AUDIT.md class #1: bitwise-copy of Drop-carrying
+    /// type while source is still live).
+    unsafe fn from_bump_slice(items: &mut [T]) -> Self;
     /// Arena pre-reservation: `Vec` cannot allocate from a bump arena, so this
     /// becomes a global-allocator `with_capacity`.  The arena is ignored.
     fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self;
@@ -157,10 +166,11 @@ impl<T> VecExt<T> for Vec<T> {
         buffer
     }
     #[inline]
-    fn from_bump_slice(items: &mut [T]) -> Self {
-        // SAFETY: `items` is a leaked bump-arena slice (`into_bump_slice_mut`);
-        // bitwise-move elements into a fresh global allocation, leaving the
-        // arena bytes abandoned (they were already leaked into the bump).
+    unsafe fn from_bump_slice(items: &mut [T]) -> Self {
+        // SAFETY: caller contract — `items` is a leaked bump-arena slice
+        // (`into_bump_slice_mut`); bitwise-move elements into a fresh global
+        // allocation, leaving the arena bytes abandoned (they were already
+        // leaked into the bump and will never be element-dropped).
         let mut v = Vec::with_capacity(items.len());
         unsafe {
             core::ptr::copy_nonoverlapping(items.as_ptr(), v.as_mut_ptr(), items.len());

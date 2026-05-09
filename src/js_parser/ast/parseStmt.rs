@@ -1723,7 +1723,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         }
                                         // Leak into the bump arena and wrap as a borrowed Vec.
                                         let leaked: &'a mut [G::Decl] = _decls.into_bump_slice_mut();
-                                        decls = G::DeclList::from_bump_slice(leaked);
+                                        decls = unsafe { G::DeclList::from_bump_slice(leaked) };
                                     }
                                     _ => {}
                                 }

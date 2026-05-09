@@ -436,14 +436,31 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             as usize;
                         let export_part = &ast.parts.slice()[part_idx];
                         if export_part.is_live {
-                            *prop = G::Property {
-                                key: prop.key,
-                                value: Some(Expr::init_identifier(
-                                    export_ref,
-                                    prop.value.as_ref().expect("infallible: prop has value").loc,
-                                )),
-                                ..Default::default()
-                            };
+                            // PTR_AUDIT(#1): `*prop` is a bitwise copy of
+                            // `e_object.properties[i]` (see `copy_nonoverlapping`
+                            // above). A plain `*prop = …` would run `Drop` on the
+                            // aliased old value — specifically `prop.ts_decorators:
+                            // Vec<Expr>`, which (if non-empty) would free the
+                            // *original AST's* allocation. The "JSON ⇒ ts_decorators
+                            // empty" invariant makes that drop a no-op today, but
+                            // `ptr::write` enforces it structurally (matches the
+                            // ThreadPool.rs `clone_for_worker` post-write rule).
+                            let key = prop.key;
+                            let value_loc =
+                                prop.value.as_ref().expect("infallible: prop has value").loc;
+                            // SAFETY: `prop` is a valid `&mut G::Property` slot;
+                            // the overwritten old value aliases AST-owned data and
+                            // MUST NOT be dropped (PTR_AUDIT.md class #1).
+                            unsafe {
+                                core::ptr::write(
+                                    prop,
+                                    G::Property {
+                                        key,
+                                        value: Some(Expr::init_identifier(export_ref, value_loc)),
+                                        ..Default::default()
+                                    },
+                                );
+                            }
                         }
                     }
                 }

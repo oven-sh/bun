@@ -242,7 +242,7 @@ impl Binding {
                 }
                 Expr::init(
                     E::Array {
-                        items: ExprNodeList::from_bump_slice(exprs.into_bump_slice_mut()),
+                        items: unsafe { ExprNodeList::from_bump_slice(exprs.into_bump_slice_mut()) },
                         is_single_line: b.is_single_line,
                         ..Default::default()
                     },
@@ -272,7 +272,7 @@ impl Binding {
                 Expr::init(
                     E::Object {
                         properties:
-                            G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()),
+                            unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) },
                         is_single_line: b.is_single_line,
                         ..Default::default()
                     },

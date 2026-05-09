@@ -106,7 +106,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
                     if !hoisted_decl_list.is_empty() {
                         let decls =
-                            G::DeclList::from_bump_slice(hoisted_decl_list.into_bump_slice_mut());
+                            unsafe { G::DeclList::from_bump_slice(hoisted_decl_list.into_bump_slice_mut()) };
                         hoisted_stmts.push(self.s(
                             S::Local { kind, decls, ..Default::default() },
                             stmt.loc,
@@ -607,7 +607,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             ..Default::default()
         });
         let prop_list =
-            G::PropertyList::from_bump_slice(properties.into_bump_slice_mut());
+            unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
         self.new_expr(E::Object { properties: prop_list, ..Default::default() }, expr.loc)
     }
 
@@ -690,7 +690,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     }
                 }
                 let item_list =
-                    ExprNodeList::from_bump_slice(items.into_bump_slice_mut());
+                    unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
                 self.new_expr(
                     E::Array {
                         items: item_list,
@@ -721,7 +721,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     });
                 }
                 let prop_list =
-                    G::PropertyList::from_bump_slice(properties.into_bump_slice_mut());
+                    unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
                 self.new_expr(
                     E::Object {
                         properties: prop_list,
@@ -741,7 +741,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     let slice: &mut [G::Decl] =
         bump.alloc_slice_fill_with(1, |_| G::Decl { binding, value: None });
-    G::DeclList::from_bump_slice(slice)
+    unsafe { G::DeclList::from_bump_slice(slice) }
 }
 
 // ported from: src/js_parser/ast/repl_transforms.zig

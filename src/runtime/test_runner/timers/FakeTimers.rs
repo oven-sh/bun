@@ -114,6 +114,20 @@ fn timer_all() -> *mut timer::All {
     unsafe { &raw mut (*state).timer }
 }
 
+/// RAII `lock()`/`unlock()` for the per-thread `timer::All.lock`. Centralises
+/// the single raw-pointer deref so call sites read `let _g = timers_lock_guard();`
+/// with no `unsafe`. The returned [`bun_threading::MutexGuard`] holds the mutex
+/// by raw pointer (no borrow), so it does not pin a `&timer::All` across the
+/// re-entrant heap accesses documented on `execute_*` below.
+#[inline]
+fn timers_lock_guard() -> bun_threading::MutexGuard {
+    // SAFETY: `timer_all()` returns the boxed per-thread `RuntimeState.timer`,
+    // never null while a VM is installed (asserted above). `lock` is accessed
+    // via shared `&Mutex` only (interior mutability), so this forms no aliased
+    // `&mut` with the surrounding `fake_timers` writes.
+    unsafe { &(*timer_all()).lock }.lock_guard()
+}
+
 /// Convert `bun_core::Timespec` → the low-tier `bun_event_loop` Timespec stub
 /// (same `{sec,nsec}` shape, different nominal type until B-2 unifies them).
 #[inline]
@@ -199,12 +213,10 @@ impl FakeTimers {
         let timers = timer_all();
 
         let next = {
-            // SAFETY: per-thread `timer::All`; lock()/unlock() are non-RAII.
-            unsafe { (*timers).lock.lock() };
+            let _g = timers_lock_guard();
             // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`;
             // single-threaded JS heap so no concurrent `&mut` to `.fake_timers`.
             let n = unsafe { (*timers).fake_timers.timers.delete_min() };
-            unsafe { (*timers).lock.unlock() };
             match n {
                 Some(n) => n,
                 None => return false,
@@ -237,19 +249,16 @@ impl FakeTimers {
 
         'outer: loop {
             let next = 'blk: {
-                // SAFETY: per-thread `timer::All`; lock()/unlock() are non-RAII.
-                unsafe { (*timers).lock.lock() };
+                let _g = timers_lock_guard();
 
                 // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`;
                 // single-threaded JS heap. Re-derive each iteration so the
                 // re-entrant `insert` from setInterval rescheduling is observed.
                 let Some(peek) = (unsafe { (*timers).fake_timers.timers.peek() }) else {
-                    unsafe { (*timers).lock.unlock() };
                     break 'outer;
                 };
                 // SAFETY: `peek` is the heap root; live while locked.
                 if from_el_timespec(unsafe { &(*peek).next }).greater(&until) {
-                    unsafe { (*timers).lock.unlock() };
                     break 'outer;
                 }
                 // bun.assert always evaluates its arg; debug_assert! does NOT in release.
@@ -257,7 +266,6 @@ impl FakeTimers {
                 // SAFETY: as above.
                 let min = unsafe { (*timers).fake_timers.timers.delete_min() }.expect("unreachable");
                 debug_assert!(core::ptr::eq(min, peek));
-                unsafe { (*timers).lock.unlock() };
                 break 'blk min;
             };
             Self::fire(global, next);
@@ -268,11 +276,10 @@ impl FakeTimers {
         let timers = timer_all();
 
         let until = {
-            // SAFETY: per-thread `timer::All`; lock()/unlock() are non-RAII.
-            unsafe { (*timers).lock.lock() };
+            let _g = timers_lock_guard();
             // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`.
             let target = unsafe { (*timers).fake_timers.timers.find_max() };
-            unsafe { (*timers).lock.unlock() };
+            drop(_g);
             match target {
                 Some(t) => {
                     // SAFETY: `t` was reachable in the heap under the lock.
@@ -299,9 +306,9 @@ fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
     let this = unsafe { &(*timers).fake_timers };
 
     {
-        unsafe { (*timers).lock.lock() };
+        let _g = timers_lock_guard();
         let active = this.is_active();
-        unsafe { (*timers).lock.unlock() };
+        drop(_g);
         if active {
             return Ok(());
         }
@@ -366,9 +373,8 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     }
 
     {
-        unsafe { (*timers).lock.lock() };
+        let _g = timers_lock_guard();
         this.activate(js_now, global);
-        unsafe { (*timers).lock.unlock() };
     }
 
     // Set setTimeout.clock = true to signal that fake timers are enabled.
@@ -385,9 +391,8 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let this = unsafe { &mut (*timers).fake_timers };
 
     {
-        unsafe { (*timers).lock.lock() };
+        let _g = timers_lock_guard();
         this.deactivate(global);
-        unsafe { (*timers).lock.unlock() };
     }
 
     // Remove the setTimeout.clock marker when switching back to real timers.
@@ -466,10 +471,8 @@ fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     error_unless_fake_timers(global)?;
 
     let count = {
-        unsafe { (*timers).lock.lock() };
-        let c = this.timers.count();
-        unsafe { (*timers).lock.unlock() };
-        c
+        let _g = timers_lock_guard();
+        this.timers.count()
     };
 
     Ok(JSValue::js_number(count as f64))
@@ -483,9 +486,8 @@ fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     error_unless_fake_timers(global)?;
 
     {
-        unsafe { (*timers).lock.lock() };
+        let _g = timers_lock_guard();
         this.clear();
-        unsafe { (*timers).lock.unlock() };
     }
 
     Ok(frame.this())
@@ -498,10 +500,8 @@ fn is_fake_timers(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVal
     let this = unsafe { &(*timers).fake_timers };
 
     let is_active = {
-        unsafe { (*timers).lock.lock() };
-        let a = this.is_active();
-        unsafe { (*timers).lock.unlock() };
-        a
+        let _g = timers_lock_guard();
+        this.is_active()
     };
 
     Ok(JSValue::from(is_active))

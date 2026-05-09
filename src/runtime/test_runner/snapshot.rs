@@ -259,7 +259,7 @@ impl<'a> Snapshots<'a> {
         pos += b".snap".len();
         buf[pos] = 0;
         // SAFETY: buf[pos] == 0 written above
-        let snapshot_file_path = unsafe { ZStr::from_raw(buf.as_ptr(), pos) };
+        let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
         let source = logger::Source::init_path_string(snapshot_file_path.as_bytes(), self.file_buf.as_slice());
 
@@ -429,7 +429,7 @@ impl<'a> Snapshots<'a> {
             };
             // SAFETY: NUL appended above
             let test_filename_z =
-                unsafe { ZStr::from_raw(test_filename.as_ptr(), test_filename.len() - 1) };
+                ZStr::from_slice_with_nul(&test_filename[..]);
 
             let fd = match bun_sys::open(test_filename_z, bun_sys::O::RDWR, 0o644) {
                 bun_sys::Result::Ok(r) => r,
@@ -881,7 +881,7 @@ impl<'a> Snapshots<'a> {
             if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
                 buf[pos] = 0;
                 // SAFETY: buf[pos] == 0 written above
-                let snapshot_dir_path = unsafe { ZStr::from_raw(buf.as_ptr(), pos) };
+                let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);
                 match bun_sys::mkdir(snapshot_dir_path, 0o777) {
                     bun_sys::Result::Ok(()) => {
                         // SAFETY: read-only backref into Jest::RUNNER.files[..].source.path
@@ -906,7 +906,7 @@ impl<'a> Snapshots<'a> {
             pos += b".snap".len();
             buf[pos] = 0;
             // SAFETY: buf[pos] == 0 written above
-            let snapshot_file_path = unsafe { ZStr::from_raw(buf.as_ptr(), pos) };
+            let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
             let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             if self.update_snapshots {

@@ -60,8 +60,7 @@ impl ClientContext {
                 core::mem::size_of::<*mut Stream>() as c_uint,
             )
         }?;
-        // SAFETY: create_client returns non-null on Some.
-        let mut qctx = unsafe { NonNull::new_unchecked(qctx) };
+        let mut qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
         // SAFETY: qctx is a fresh live us_quic_socket_context_t.
         callbacks::register(unsafe { qctx.as_mut() });
 

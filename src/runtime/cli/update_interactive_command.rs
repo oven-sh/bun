@@ -621,8 +621,7 @@ impl UpdateInteractiveCommand {
             let workspace_resolution =
                 manager.lockfile.packages.items_resolution()[pkg.workspace_pkg_id as usize];
             let workspace_path: &[u8] = if workspace_resolution.tag == resolution::Tag::Workspace {
-                // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
-                unsafe { &workspace_resolution.value.workspace }.slice(string_buf)
+                workspace_resolution.workspace().slice(string_buf)
             } else {
                 b"" // Root workspace
             };
@@ -788,8 +787,7 @@ impl UpdateInteractiveCommand {
                             let res = &pkg_resolutions[workspace_pkg_id as usize];
                             let res_path: &[u8] = match res.tag {
                                 resolution::Tag::Workspace => {
-                                    // SAFETY: tag == Workspace ⇒ `value.workspace` active.
-                                    unsafe { &res.value.workspace }.slice(string_buf)
+                                    res.workspace().slice(string_buf)
                                 }
                                 resolution::Tag::Root => top_level_dir,
                                 _ => unreachable!(),
@@ -982,10 +980,9 @@ impl UpdateInteractiveCommand {
                 // In interactive mode, show the constrained update version as "Target"
                 // but always include packages (don't filter out breaking changes)
                 let update_version = if resolved_version.tag == dependency::Tag::Npm {
-                    // SAFETY: tag == Npm ⇒ `value.npm` active.
                     manifest
                         .find_best_version_with_filter(
-                            unsafe { &resolved_version.value.npm.version },
+                            &resolved_version.npm().version,
                             string_buf,
                             min_age_ms,
                             excludes,
@@ -993,12 +990,9 @@ impl UpdateInteractiveCommand {
                         .unwrap()
                         .unwrap_or(latest)
                 } else {
-                    // SAFETY: tag == DistTag ⇒ `value.dist_tag` active.
                     manifest
                         .find_by_dist_tag_with_filter(
-                            unsafe { resolved_version.value.dist_tag }
-                                .tag
-                                .slice(string_buf),
+                            resolved_version.dist_tag().tag.slice(string_buf),
                             min_age_ms,
                             excludes,
                         )
@@ -1008,8 +1002,7 @@ impl UpdateInteractiveCommand {
 
                 // Skip only if both the constrained update AND the latest version are the same as current
                 // This ensures we show packages where latest is newer even if constrained update isn't
-                // SAFETY: resolution.tag == Npm ⇒ `value.npm` active.
-                let current_ver = unsafe { resolution.value.npm }.version;
+                let current_ver = resolution.npm().version;
                 let update_ver = update_version.version;
                 let latest_ver = latest.version;
 
@@ -1202,7 +1195,7 @@ impl UpdateInteractiveCommand {
         {
             // TODO(port): replace std.posix.system.ioctl with bun_sys
             // SAFETY: all-zero is a valid Winsize (#[repr(C)] POD, no NonNull/NonZero fields).
-            let mut size: bun_core::Winsize = unsafe { bun_core::ffi::zeroed() };
+            let mut size: bun_core::Winsize = bun_core::ffi::zeroed();
             // SAFETY: ioctl with TIOCGWINSZ on stdout fd; size is a valid out-ptr.
             if unsafe {
                 libc::ioctl(
@@ -1229,7 +1222,7 @@ impl UpdateInteractiveCommand {
             };
 
             // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = unsafe { bun_core::ffi::zeroed() };
+            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: handle is valid; csbi is a valid out-ptr.
             if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
                 != windows::FALSE

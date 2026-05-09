@@ -1142,8 +1142,7 @@ pub mod waiter_thread_posix {
                                     })
                                     .cast(),
                                 ));
-                                // SAFETY: `owner` is the live erased `*mut jsc::EventLoop`.
-                                unsafe { bun_event_loop::any_event_loop::js::enqueue_task_concurrent(owner, ct) };
+                                owner.enqueue_task_concurrent(ct);
                             }
                             EventLoopHandle::Mini(mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
@@ -1295,9 +1294,7 @@ pub mod waiter_thread_posix {
 
     pub fn loop_() {
         // SAFETY: NUL-terminated literal.
-        Output::Source::configure_named_thread(unsafe {
-            bun_core::ZStr::from_raw(b"Waitpid\0".as_ptr(), 7)
-        });
+        Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
         WaiterThreadPosix::reload_handlers();
         // Keep the singleton as a raw pointer and dereference per-use. We must
         // NOT materialize a long-lived `&mut WaiterThreadPosix` here: the JS
@@ -1506,7 +1503,7 @@ impl Default for WindowsOptions {
             hide_window: true,
             // TODO(port): EventLoopHandle has no Default; Phase B must require it as a ctor arg.
             // SAFETY: placeholder — Zig field is `= undefined`; never read before assignment.
-            loop_: unsafe { bun_core::ffi::zeroed() },
+            loop_: unsafe { bun_core::ffi::zeroed_unchecked() },
         }
     }
 }
@@ -1649,7 +1646,7 @@ pub fn spawn_process_windows(
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
     // SAFETY: all-zero is a valid uv_process_options_t
-    let mut uv_process_options: uv::uv_process_options_t = unsafe { bun_core::ffi::zeroed() };
+    let mut uv_process_options: uv::uv_process_options_t = unsafe { bun_core::ffi::zeroed_unchecked() };
 
     uv_process_options.args = argv;
     uv_process_options.env = envp;
@@ -1665,7 +1662,7 @@ pub fn spawn_process_windows(
     cwd_buf[..options.cwd.len()].copy_from_slice(&options.cwd);
     cwd_buf[options.cwd.len()] = 0;
     // SAFETY: cwd_buf[options.cwd.len()] == 0 written above
-    let cwd = unsafe { bun_str::ZStr::from_raw(cwd_buf.as_ptr(), options.cwd.len()) };
+    let cwd = bun_str::ZStr::from_buf(&cwd_buf[..], options.cwd.len());
 
     uv_process_options.cwd = cwd.as_ptr().cast::<c_char>();
 
@@ -1694,7 +1691,7 @@ pub fn spawn_process_windows(
     let mut stdio_containers: Vec<uv::uv_stdio_container_t> =
         Vec::with_capacity(3 + options.extra_fds.len());
     // SAFETY: all-zero is valid uv_stdio_container_t
-    stdio_containers.resize_with(3 + options.extra_fds.len(), || unsafe { bun_core::ffi::zeroed() });
+    stdio_containers.resize_with(3 + options.extra_fds.len(), || unsafe { bun_core::ffi::zeroed_unchecked() });
 
     let stdio_options: [&WindowsStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
 
@@ -1903,7 +1900,7 @@ pub fn spawn_process_windows(
     // SAFETY: process is freshly allocated
     unsafe {
         // SAFETY: all-zero is valid uv::Process
-        (*process).poller = Poller::Uv(bun_core::ffi::zeroed());
+        (*process).poller = Poller::Uv(bun_core::ffi::zeroed_unchecked());
         // Back-pointer for `on_exit_uv` / `on_close_uv` (replaces Zig
         // `@fieldParentPtr`, which has no sound Rust equivalent for default-repr
         // enum variant payloads). Every libuv handle starts with `data: *mut c_void`.
@@ -2991,7 +2988,7 @@ pub mod sync {
 
                 let mut poll_fds_buf: [libc::pollfd; 2] =
                     // SAFETY: zeroed pollfd is valid
-                    unsafe { bun_core::ffi::zeroed() };
+                    unsafe { bun_core::ffi::zeroed_unchecked() };
                 let mut poll_len: usize = 0;
                 for &fd in &out_fds_to_wait_for {
                     if fd == Fd::INVALID {
@@ -3115,7 +3112,7 @@ pub mod sync {
         const TAG_PPID: usize = 2;
 
         // SAFETY: zeroed kevent is valid
-        let mut changes_buf: [libc::kevent; 5] = unsafe { bun_core::ffi::zeroed() };
+        let mut changes_buf: [libc::kevent; 5] = bun_core::ffi::zeroed();
         let mut changes_len: usize = 0;
         let add = |list: &mut [libc::kevent; 5], len: &mut usize, ident: usize, filter: i16, fflags: u32, udata: usize| {
             list[*len] = libc::kevent {
@@ -3155,7 +3152,7 @@ pub mod sync {
         }
 
         // SAFETY: zeroed kevent is valid
-        let mut receipts: [libc::kevent; 5] = unsafe { bun_core::ffi::zeroed() };
+        let mut receipts: [libc::kevent; 5] = bun_core::ffi::zeroed();
         match bun_sys::kevent(kq_fd, &changes_buf[..changes_len], &mut receipts[..changes_len], None) {
             Err(err) => return Some(Err(err)),
             Ok(_) => {}
@@ -3200,7 +3197,7 @@ pub mod sync {
         unsafe { Bun__noOrphans_onFork() };
 
         // SAFETY: zeroed kevent is valid
-        let mut events: [libc::kevent; 16] = unsafe { bun_core::ffi::zeroed() };
+        let mut events: [libc::kevent; 16] = bun_core::ffi::zeroed();
         let mut child_exited = false;
         let mut child_status: Option<Status> = None;
         loop {
@@ -3428,7 +3425,7 @@ pub mod sync {
             }
 
             // SAFETY: zeroed pollfd is valid
-            let mut buf: [libc::pollfd; 4] = unsafe { bun_core::ffi::zeroed() };
+            let mut buf: [libc::pollfd; 4] = bun_core::ffi::zeroed();
             let mut pfds_len: usize = 0;
             let push = |l: &mut [libc::pollfd; 4], len: &mut usize, fd: Fd| {
                 l[*len] = libc::pollfd {
@@ -3472,7 +3469,7 @@ pub mod sync {
             // happens at the top of the next iteration.
             if chld_fd.fd() != Fd::INVALID && buf[chld_idx].revents != 0 {
                 // SAFETY: zeroed signalfd_siginfo is valid for read target
-                let mut si: libc::signalfd_siginfo = unsafe { bun_core::ffi::zeroed() };
+                let mut si: libc::signalfd_siginfo = bun_core::ffi::zeroed();
                 let si_bytes = unsafe {
                     core::slice::from_raw_parts_mut(
                         (&raw mut si).cast::<u8>(),

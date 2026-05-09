@@ -1049,7 +1049,7 @@ pub(crate) mod limit {
     #[cfg(unix)]
     pub(crate) static HANDLES_BEFORE: bun_core::RacyCell<bun_sys::posix::Rlimit> =
         // SAFETY: all-zero is a valid Rlimit (POD)
-        bun_core::RacyCell::new(unsafe { bun_core::ffi::zeroed() });
+        bun_core::RacyCell::new(bun_core::ffi::zeroed());
     #[cfg(not(unix))]
     pub static HANDLES_BEFORE: () = ();
 }
@@ -2328,7 +2328,7 @@ impl RealFS {
 
             let mut info: w::BY_HANDLE_FILE_INFORMATION =
                 // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD)
-                unsafe { bun_core::ffi::zeroed() };
+                unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: `handle` is a valid file handle for the scope.
             if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
                 cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {

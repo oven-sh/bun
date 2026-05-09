@@ -95,7 +95,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_core:
     if let Some(path) = get_home_config_path(&mut config_buf) {
         let len = path.len();
         // SAFETY: NUL written at `len` by `join_abs_string_buf_z`.
-        let path = unsafe { ZStr::from_raw(config_buf.as_ptr(), len) };
+        let path = ZStr::from_buf(&config_buf[..], len);
         load_bunfig(cmd, true, path, ctx)?;
     }
     Ok(())
@@ -166,7 +166,7 @@ pub fn load_config(
             if let Some(path) = get_home_config_path(&mut config_buf) {
                 let len = path.len();
                 // SAFETY: NUL written at `len` by `join_abs_string_buf_z`.
-                let path = unsafe { ZStr::from_raw(config_buf.as_ptr(), len) };
+                let path = ZStr::from_buf(&config_buf[..], len);
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
                     report_bunfig_load_failure(ctx.log, err);
                 }
@@ -228,7 +228,7 @@ pub fn load_config(
     }
     // SAFETY: `config_buf[config_path_len] == 0` (written above on both arms);
     // `config_buf` outlives the call.
-    let config_path = unsafe { ZStr::from_raw(config_buf.as_ptr(), config_path_len) };
+    let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
         report_bunfig_load_failure(ctx.log, err);

@@ -86,8 +86,8 @@ impl Default for File {
         // (PORTING.md forbids blanket zeroed() over enums). FileState::Deinitialized == 0.
         Self {
             // SAFETY: uv_fs_t / uv_buf_t are #[repr(C)] libuv POD; all-zero is the valid pre-init state.
-            fs: unsafe { bun_core::ffi::zeroed() },
-            iov: unsafe { bun_core::ffi::zeroed() },
+            fs: unsafe { bun_core::ffi::zeroed_unchecked() },
+            iov: unsafe { bun_core::ffi::zeroed_unchecked() },
             file: 0,
             state: FileState::Deinitialized,
             close_after_operation: false,
@@ -339,8 +339,7 @@ impl Source {
     }
 
     pub fn open(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Source> {
-        // SAFETY: pure FFI lookup; `fd.uv()` is a CRT fd or 0/1/2.
-        let rc = unsafe { uv::uv_guess_handle(fd.uv()) };
+        let rc = uv::uv_guess_handle(fd.uv());
         bun_core::scoped_log!(
             PipeSource,
             "open(fd: {}, type: {})",

@@ -424,10 +424,7 @@ impl Value {
                     };
                 }
 
-                if let Some(blob) = value.as_::<Blob>() {
-                    // SAFETY: `as_` returned non-null; the Blob native is owned
-                    // by the JS cell rooted below for the lifetime of `Value`.
-                    let blob = unsafe { &*blob };
+                if let Some(blob) = value.as_class_ref::<Blob>() {
                     if blob.needs_to_read_file() {
                         return Err(js_error_to_mysql(
                             global_object

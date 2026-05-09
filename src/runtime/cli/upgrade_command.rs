@@ -98,8 +98,7 @@ impl Version {
             if &*self.tag == b"canary" {
                 use crate::cli as Cli;
                 let mut out = Vec::new();
-                // SAFETY: written once during single-threaded startup.
-                let start_time = unsafe { Cli::START_TIME.read() };
+                let start_time = Cli::start_time();
                 let bytes = &start_time.to_ne_bytes()[..];
                 write!(
                     &mut out,
@@ -786,11 +785,11 @@ impl UpgradeCommand {
             let tmpdir_path_len = tmpdir_path.len();
             tmpdir_path_buf[tmpdir_path_len] = 0;
             // SAFETY: buf[tmpdir_path_len] == 0 written above
-            let tmpdir_z = unsafe { ZStr::from_raw(tmpdir_path_buf.as_ptr(), tmpdir_path_len) };
+            let tmpdir_z = ZStr::from_buf(&tmpdir_path_buf[..], tmpdir_path_len);
             let _ = sys::chdir(tmpdir_z);
 
             // SAFETY: literal ends with NUL.
-            let tmpname: &ZStr = unsafe { ZStr::from_raw(b"bun.zip\0".as_ptr(), 7) };
+            let tmpname: &ZStr = ZStr::from_static(b"bun.zip\0");
             let exe: &[u8] = if use_profile {
                 Self::PROFILE_EXE_SUBPATH.as_bytes()
             } else {
@@ -1129,7 +1128,12 @@ impl UpgradeCommand {
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
             current_executable_buf[target_dir_len] = 0;
-            // SAFETY: buf[target_dir_len] == 0 written above
+            // SAFETY: buf[target_dir_len]==0 (just written). `from_raw` (NOT
+            // `from_buf`) because this buffer is mutated and re-NUL-terminated
+            // at lines 1252/1273 below while `target_dirname` is still live —
+            // a borrow tied to `&current_executable_buf` would be E0502. The
+            // detached pointer is sound: each mutation re-establishes the NUL
+            // at `target_dir_len` before `target_dirname` is read again.
             let target_dirname =
                 unsafe { ZStr::from_raw(current_executable_buf.as_ptr(), target_dir_len) };
             let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
@@ -1151,7 +1155,7 @@ impl UpgradeCommand {
             exe_z_buf[..exe.len()].copy_from_slice(exe);
             exe_z_buf[exe.len()] = 0;
             // SAFETY: NUL written above.
-            let exe_z: &ZStr = unsafe { ZStr::from_raw(exe_z_buf.as_ptr(), exe.len()) };
+            let exe_z: &ZStr = ZStr::from_buf(&exe_z_buf[..], exe.len());
 
             if use_canary {
                 // Check if the versions are the same
@@ -1481,7 +1485,7 @@ pub mod upgrade_js_bindings {
 
             let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
             // SAFETY: zeroed IO_STATUS_BLOCK is valid for output
-            let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+            let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
 
             // SAFETY: FFI call to NtCreateFile with valid pointers
             let rc = unsafe {

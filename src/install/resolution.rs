@@ -173,10 +173,22 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         unsafe { &(*core::ptr::from_ref(&self.value)).git }
     }
     #[inline]
+    pub fn git_mut(&mut self) -> &mut Repository {
+        debug_assert_eq!(self.tag, Tag::Git);
+        // SAFETY: tag-guarded; `Value` is a `Copy` POD union.
+        unsafe { &mut (*core::ptr::from_mut(&mut self.value)).git }
+    }
+    #[inline]
     pub fn github(&self) -> &Repository {
         debug_assert_eq!(self.tag, Tag::Github);
         // SAFETY: tag-guarded.
         unsafe { &(*core::ptr::from_ref(&self.value)).github }
+    }
+    #[inline]
+    pub fn github_mut(&mut self) -> &mut Repository {
+        debug_assert_eq!(self.tag, Tag::Github);
+        // SAFETY: tag-guarded; `Value` is a `Copy` POD union.
+        unsafe { &mut (*core::ptr::from_mut(&mut self.value)).github }
     }
     /// `git` or `github` payload — they share the [`Repository`] shape.
     #[inline]
@@ -881,7 +893,7 @@ impl<SemverInt: VersionInt> Value<SemverInt> {
         // SAFETY: all-zero is a valid Value — every variant is POD with a valid
         // all-zero representation (Semver String, Repository, VersionedURLType are
         // all #[repr(C)] with no NonNull/NonZero fields).
-        unsafe { bun_core::ffi::zeroed() }
+        unsafe { bun_core::ffi::zeroed_unchecked() }
     }
 
     /// To avoid undefined memory between union values, we must zero initialize the union first.

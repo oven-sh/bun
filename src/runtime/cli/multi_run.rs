@@ -251,7 +251,7 @@ impl<'a> ProcessHandle<'a> {
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = unsafe { core::mem::zeroed::<Rusage>() };
+                    let rusage = bun_core::ffi::zeroed::<Rusage>();
                     process.on_exit(Status::Err(err), &rusage);
                 }
             }

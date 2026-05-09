@@ -148,10 +148,7 @@ impl<'a> ImportRecordList<'a> {
     /// the bump-backed and externally-borrowed variants.
     pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> Vec<ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
-            Self::Owned(v) => {
-                let leaked: &'a mut [ImportRecord] = v.into_bump_slice_mut();
-                unsafe { Vec::from_bump_slice(leaked) }
-            }
+            Self::Owned(v) => Vec::from_bump_vec(v),
             Self::Borrowed(v) => core::mem::take(v),
         }
     }
@@ -6071,7 +6068,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         );
                         full.extend_from_slice(prop.ts_decorators.slice());
                         full.extend_from_slice(&array);
-                        let full_items = unsafe { ExprNodeList::from_bump_slice(full.into_bump_slice_mut()) };
+                        let full_items = ExprNodeList::from_bump_vec(full);
                         let array_expr = self.new_expr(E::Array { items: full_items, ..Default::default() }, loc);
                         let args_slice = self.arena.alloc_slice_copy(&[array_expr, target, descriptor_key, descriptor_kind]);
                         let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
@@ -7536,15 +7533,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // `import_record_indices`) and aliasing the live BumpVec slice (the old
         // `as_mut_slice()` shape) double-dropped them once the parser fell out
         // of scope. Same fix `ImportRecordList::move_to_baby_list` applies.
-        let symbols_slice: &'a mut [js_ast::Symbol] =
-            core::mem::replace(&mut self.symbols, BumpVec::new_in(arena)).into_bump_slice_mut();
-        // SAFETY: bump-arena storage lives for 'a, which outlives the Ast;
-        // Borrowed origin → Vec::drop is a no-op.
-        let symbols = unsafe { js_ast::symbol::List::from_bump_slice(symbols_slice) };
-        let parts_slice: &'a mut [js_ast::Part] =
-            core::mem::replace(parts, BumpVec::new_in(arena)).into_bump_slice_mut();
-        // SAFETY: same — `parts` was a BumpVec<'a, Part>; now leaked into the arena.
-        let parts_list = unsafe { Vec::<js_ast::Part>::from_bump_slice(parts_slice) };
+        let symbols = js_ast::symbol::List::from_bump_vec(
+            core::mem::replace(&mut self.symbols, BumpVec::new_in(arena)),
+        );
+        let parts_list = Vec::<js_ast::Part>::from_bump_vec(
+            core::mem::replace(parts, BumpVec::new_in(arena)),
+        );
         // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
         // Round-G fix: use the dedicated adapter so the parser-side list is
         // left empty (Zig move-and-zero) and the BumpVec is leaked into the

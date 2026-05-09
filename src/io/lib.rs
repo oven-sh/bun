@@ -406,7 +406,7 @@ impl IoRequestLoop {
 
             {
                 // SAFETY: all-zero is a valid epoll_event (POD).
-                let mut epoll: linux::epoll_event = unsafe { bun_core::ffi::zeroed() };
+                let mut epoll: linux::epoll_event = bun_core::ffi::zeroed();
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
                 epoll.u64 = std::ptr::from_mut::<IoRequestLoop>(loop_) as usize as u64;
@@ -442,7 +442,7 @@ impl IoRequestLoop {
             // the kevent() wait so the pending queue gets drained). EV_CLEAR
             // makes it edge-triggered so we never need to read() the eventfd.
             // SAFETY: all-zero is a valid kevent (POD).
-            let mut change: KEvent = unsafe { bun_core::ffi::zeroed() };
+            let mut change: KEvent = bun_core::ffi::zeroed();
             change.ident = usize::try_from(loop_.waker.get_fd().native()).expect("int cast");
             change.filter = libc::EVFILT_READ;
             change.flags = libc::EV_ADD | libc::EV_CLEAR;
@@ -502,7 +502,7 @@ impl IoRequestLoop {
 
     pub fn tick(&mut self) {
         // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        let name = unsafe { bun_core::ZStr::from_raw(b"IO Watcher\0".as_ptr(), 10) };
+        let name = bun_core::ZStr::from_static(b"IO Watcher\0");
         bun_core::Output::Source::configure_named_thread(name);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1153,7 +1153,7 @@ impl Poll {
             }
         };
         // SAFETY: all-zero is a valid KEvent (POD).
-        *kqueue_event = unsafe { bun_core::ffi::zeroed() };
+        *kqueue_event = bun_core::ffi::zeroed();
         // `ident` is `u64` on Darwin's `kevent64_s`, `usize` on FreeBSD `kevent`.
         // Zig `@intCast` would trap on a negative fd in safe builds — keep that
         // safety net so a stray -1 doesn't silently register ident=u64::MAX.
@@ -1595,7 +1595,7 @@ pub mod waker {
     #[cfg(target_os = "macos")]
     impl KEventWaker {
         // SAFETY: all-zero is a valid kevent64_s array (POD).
-        const ZEROED: [Kevent64; 16] = unsafe { bun_core::ffi::zeroed() };
+        const ZEROED: [Kevent64; 16] = bun_core::ffi::zeroed();
 
         /// Stand-in until `init()` runs. To be overwritten via `ptr::write`
         /// (no `Drop` of the empty `machport_buf` is required, but dropping
@@ -1780,7 +1780,7 @@ pub mod closer {
     impl Closer {
         pub fn close(fd: Fd, loop_: *mut uv::Loop) {
             // SAFETY: all-zero is a valid uv::fs_t (libuv C struct, zero-init by convention).
-            let io_request: uv::fs_t = unsafe { bun_core::ffi::zeroed() };
+            let io_request: uv::fs_t = unsafe { bun_core::ffi::zeroed_unchecked() };
             let closer = bun_core::heap::into_raw(Box::new(Closer { io_request }));
             // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
             // SAFETY: closer is a freshly-boxed valid pointer.

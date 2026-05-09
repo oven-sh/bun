@@ -123,6 +123,7 @@ type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
 declare_scope!(S3MultiPartUpload, hidden);
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct MultiPartUpload {
     pub queue: Option<Box<[UploadPart]>>,
     pub available: IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>,
@@ -184,23 +185,15 @@ impl MultiPartUpload {
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
 
     // bun.ptr.RefCount(Self, "ref_count", deinit, .{}) — intrusive refcount.
-    // PORT NOTE: inherent associated types (`pub type Ref = ...` inside `impl`) are
-    // unstable; the alias lives at module scope as `MultiPartUploadRef` instead.
-    // TODO(port): replace inherent ref_/deref_ with bun_ptr::IntrusiveRefCounted impl and use MultiPartUploadRef at call sites.
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
+    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; `deref_`
+    // is kept as a safe-signature alias so existing call sites keep working.
+    // PORT NOTE: inherent associated types (`pub type Ref = ...` inside `impl`)
+    // are unstable; the alias lives at module scope as `MultiPartUploadRef`.
+    #[inline]
     pub fn deref_(this: *mut Self) {
-        // SAFETY: `this` is a live heap-allocated MultiPartUpload created via heap::alloc
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 {
-                // deinit() in Zig ends with bun.destroy(this); here Drop runs field cleanup
-                // and heap::take deallocates.
-                drop(bun_core::heap::take(this));
-            }
-        }
+        // SAFETY: `this` is a live heap-allocated MultiPartUpload created via
+        // heap::alloc; forwarded to the derived intrusive-rc decrement.
+        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 }
 

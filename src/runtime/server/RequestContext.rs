@@ -655,8 +655,7 @@ where
         if ctx.method == Method::HEAD {
             if let Some(resp) = ctx.resp {
                 let mut pair = HeaderResponsePair { this: ctx, response };
-                // SAFETY: FFI handle
-                unsafe { resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair) };
+                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
             }
             return;
         }
@@ -839,8 +838,7 @@ where
 
     pub fn render_missing(&mut self) {
         if let Some(resp) = self.resp {
-            // SAFETY: FFI handle
-            unsafe { resp.run_corked_with_type(Self::render_missing_corked, self) };
+            resp.run_corked_with_type(Self::render_missing_corked, self);
         }
     }
 
@@ -1674,8 +1672,7 @@ where
             }
         }
 
-        // SAFETY: FFI handle
-        unsafe { resp.run_corked_with_type(Self::render_metadata_corked, self) };
+        resp.run_corked_with_type(Self::render_metadata_corked, self);
 
         if (is_regular && self.sendfile.remain == 0) || !self.method.has_body() {
             if auto_close {
@@ -2174,13 +2171,10 @@ where
                 S3::simple_request::S3StatResult::Success(stat) => stat.size,
             };
             let mut pair = HeaderResponseSizePair { this, size };
-            // SAFETY: FFI handle
-            unsafe {
-                resp.run_corked_with_type(
-                    Self::do_render_head_response_after_s3_size_resolved,
-                    &raw mut pair,
-                )
-            };
+            resp.run_corked_with_type(
+                Self::do_render_head_response_after_s3_size_resolved,
+                &raw mut pair,
+            );
         }
         // No early returns above; explicit deref instead of a scopeguard that
         // would alias `&mut Self` through a captured raw pointer.
@@ -2384,10 +2378,7 @@ where
             if ctx.method == Method::HEAD {
                 if let Some(resp) = ctx.resp {
                     let mut pair = HeaderResponsePair { this: ctx, response };
-                    // SAFETY: FFI handle
-                    unsafe {
-                        resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair)
-                    };
+                    resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
                 }
                 return;
             } else {
@@ -2455,13 +2446,10 @@ where
                     if ctx.method == Method::HEAD {
                         if let Some(resp) = ctx.resp {
                             let mut pair = HeaderResponsePair { this: ctx, response };
-                            // SAFETY: FFI handle
-                            unsafe {
-                                resp.run_corked_with_type(
-                                    Self::do_render_head_response,
-                                    &raw mut pair,
-                                )
-                            };
+                            resp.run_corked_with_type(
+                                Self::do_render_head_response,
+                                &raw mut pair,
+                            );
                         }
                         return;
                     }
@@ -2774,10 +2762,7 @@ where
                         | readable_stream::Source::Direct => {
                             if let Some(resp) = this.resp {
                                 let mut pair = StreamPair { stream, this };
-                                // SAFETY: FFI handle
-                                unsafe {
-                                    resp.run_corked_with_type(Self::do_render_stream, &raw mut pair)
-                                };
+                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
                             }
                             return;
                         }
@@ -2824,19 +2809,13 @@ where
 
                             // if we've received metadata and part of the body, send everything we can and drain
                             if !this.response_buf_owned.is_empty() {
-                                // SAFETY: FFI handle
-                                unsafe {
-                                    resp.run_corked_with_type(
-                                        Self::drain_response_buffer_and_metadata_corked,
-                                        this,
-                                    )
-                                };
+                                resp.run_corked_with_type(
+                                    Self::drain_response_buffer_and_metadata_corked,
+                                    this,
+                                );
                             } else {
                                 // if we only have metadata to send, send it now
-                                // SAFETY: FFI handle
-                                unsafe {
-                                    resp.run_corked_with_type(Self::render_metadata_corked, this)
-                                };
+                                resp.run_corked_with_type(Self::render_metadata_corked, this);
                             }
                             return;
                         }
@@ -2922,8 +2901,7 @@ where
         // This is an important performance optimization
         if self.flags.has_abort_handler() && self.blob.fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp {
-                // SAFETY: FFI handle
-                unsafe { resp.run_corked_with_type(Self::do_render_blob_corked, self) };
+                resp.run_corked_with_type(Self::do_render_blob_corked, self);
             }
         } else {
             Self::do_render_blob_corked(std::ptr::from_mut::<Self>(self));

@@ -998,7 +998,7 @@ impl<'a> ReadFileUV<'a> {
             on_complete_fn,
             is_regular_file: false,
             // SAFETY: all-zero is a valid libuv fs_t (matches std.mem.zeroes).
-            req: unsafe { bun_core::ffi::zeroed() },
+            req: unsafe { bun_core::ffi::zeroed_unchecked() },
             open_callback: Self::on_file_open,
         });
         // Keep the event loop alive while the async operation is pending

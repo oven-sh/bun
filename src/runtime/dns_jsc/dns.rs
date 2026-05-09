@@ -450,7 +450,7 @@ pub mod lib_uv_backend {
         let port_len = bun_fmt::print_int(&mut port_buf, query.port);
         port_buf[port_len] = 0;
         // SAFETY: port_buf[port_len] == 0 written above
-        let port_z = unsafe { ZStr::from_raw(port_buf.as_ptr(), port_len) };
+        let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
         let mut hostname = PathBuffer::uninit();
         // Reserve the last byte for the NUL terminator so the index below can never
@@ -461,7 +461,7 @@ pub mod lib_uv_backend {
         let copied_len = strings::copy(&mut hostname[..cap], query.name.as_ref()).len();
         hostname[copied_len] = 0;
         // SAFETY: hostname[copied_len] == 0 written above
-        let host = unsafe { ZStr::from_raw(hostname.as_ptr(), copied_len) };
+        let host = ZStr::from_buf(&hostname[..], copied_len);
 
         // SAFETY: request lives until completion; backend.libc.uv is the embedded uv_getaddrinfo_t
         let promise = unsafe {
@@ -1197,7 +1197,7 @@ pub mod get_addr_info_request {
             let port_len = bun_fmt::print_int(&mut port_buf, query.port);
             port_buf[port_len] = 0;
             // SAFETY: NUL written at port_buf[port_len]
-            let port_z = unsafe { ZStr::from_raw(port_buf.as_ptr(), port_len) };
+            let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
             let mut hostname = PathBuffer::uninit();
             // Reserve the last byte for the NUL terminator so the index below
@@ -1208,7 +1208,7 @@ pub mod get_addr_info_request {
             hostname[copied_len] = 0;
             let mut addrinfo: *mut AddrInfo = ptr::null_mut();
             // SAFETY: hostname[copied_len] == 0
-            let host = unsafe { ZStr::from_raw(hostname.as_ptr(), copied_len) };
+            let host = ZStr::from_buf(&hostname[..], copied_len);
             let debug_timer = Output::DebugTimer::start();
             // SAFETY: FFI; all pointers valid for the call duration
             let err = unsafe {
@@ -1249,7 +1249,7 @@ pub mod get_addr_info_request {
     impl LibcBackend {
         pub fn uv_uninit() -> Self {
             // SAFETY: uv_getaddrinfo_t is C-POD initialized by uv_getaddrinfo
-            Self { uv: unsafe { bun_core::ffi::zeroed() } }
+            Self { uv: unsafe { bun_core::ffi::zeroed_unchecked() } }
         }
         pub fn run(&mut self) {
             unreachable!("This path should never be reached on Windows");
@@ -2265,7 +2265,7 @@ pub mod internal {
 
     fn default_hints() -> AddrInfo {
         // SAFETY: POD, zero-valid — addrinfo with null ptrs / 0 ints is a valid hints struct.
-        let mut h: AddrInfo = unsafe { bun_core::ffi::zeroed() };
+        let mut h: AddrInfo = unsafe { bun_core::ffi::zeroed_unchecked() };
         h.ai_family = netc::AF_UNSPEC;
         // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
         // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
@@ -2398,7 +2398,7 @@ pub mod internal {
                     }
                 } else {
                     // SAFETY: POD, zero-valid — sockaddr_storage is all-integers.
-                    (*entry).addr = bun_core::ffi::zeroed();
+                    (*entry).addr = bun_core::ffi::zeroed_unchecked();
                 }
                 i += 1;
                 info_ = (*info_).ai_next;
@@ -2497,7 +2497,7 @@ pub mod internal {
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
             // SAFETY: POD, zero-valid — Win32 addrinfo with null ptrs / 0 ints.
-            let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed();
+            let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed_unchecked();
             wsa_hints.ai_family = wsa::AF_UNSPEC;
             wsa_hints.ai_socktype = wsa::SOCK_STREAM;
 
@@ -3217,7 +3217,7 @@ impl UvDnsPoll {
             parent,
             socket,
             // SAFETY: POD, zero-valid — uv_poll_t is C POD; uv_poll_init writes it before use.
-            poll: unsafe { bun_core::ffi::zeroed() },
+            poll: unsafe { bun_core::ffi::zeroed_unchecked() },
         }))
     }
 
@@ -4891,7 +4891,7 @@ impl Resolver {
             // SAFETY: all-zero is a valid `struct_ares_addr_port_node` (POD: ptr, ints,
             // and the in_addr/in6_addr union). Public fields written below; the private
             // `addr` union stays zeroed until `ares_inet_pton` fills it.
-            let mut node: c_ares::struct_ares_addr_port_node = unsafe { bun_core::ffi::zeroed() };
+            let mut node: c_ares::struct_ares_addr_port_node = unsafe { bun_core::ffi::zeroed_unchecked() };
             node.next = ptr::null_mut();
             node.family = af;
             node.udp_port = port;
@@ -4997,7 +4997,7 @@ impl Resolver {
         let port: u16 = port_value.to_port_number(global_this)?;
 
         // SAFETY: all-zero is a valid sockaddr_storage
-        let mut sa: SockaddrStorage = unsafe { bun_core::ffi::zeroed() };
+        let mut sa: SockaddrStorage = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
         // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
         // `&mut sockaddr` view into that storage.

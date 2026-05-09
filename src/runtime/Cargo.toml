@@ -16,6 +16,7 @@ getrandom.workspace = true
 sha3 = { version = "0.10", default-features = false }
 blake2 = { version = "0.10", default-features = false }
 parking_lot.workspace = true
+bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true
 phf.workspace = true

@@ -40,7 +40,7 @@ impl Default for Context {
             avail_out: 0,
             flush: Op::process,
             // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
-            last_result: unsafe { bun_core::ffi::zeroed() },
+            last_result: unsafe { bun_core::ffi::zeroed_unchecked() },
             error_: c::BrotliDecoderErrorCode2::NO_ERROR,
         }
     }
@@ -72,6 +72,8 @@ use crate::node::util::validators;
 // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
 // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
 #[bun_jsc::JsClass]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::destroy_on_zero)]
 pub struct NativeBrotli {
     pub ref_count: Cell<u32>,
     // TODO(port): lifetime — JSC_BORROW backref; global outlives this m_ctx payload.
@@ -227,6 +229,19 @@ impl NativeBrotli {
         let _ = callframe;
         // intentionally left empty
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `CellRefCounted::destroy` target (refcount hit zero). Runs `deinit`
+    /// then frees the Box-allocated payload — matches Zig
+    /// `bun.ptr.RefCount(.., deinit, .{}).deref()` → `deinit()` + `bun.destroy(this)`.
+    ///
+    /// # Safety
+    /// `this` is the sole live owner of a Box-allocated `Self`.
+    unsafe fn destroy_on_zero(this: *mut Self) {
+        // SAFETY: refcount hit zero ⇒ no other borrow remains.
+        unsafe { (*this).deinit() };
+        // SAFETY: allocated via `Box::new` in `constructor`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// RefCount destructor body (called when ref_count → 0).
@@ -564,22 +579,13 @@ impl CompressionStreamImpl for NativeBrotli {
     }
 
     fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+        <Self as bun_ptr::CellRefCounted>::ref_(self)
     }
 
     unsafe fn deref(this: *mut Self) {
-        // SAFETY: `this` is live per the trait contract; `ref_count` is a `Cell`.
-        let n = unsafe { (*this).ref_count.get() } - 1;
-        unsafe { (*this).ref_count.set(n) };
-        if n == 0 {
-            // SAFETY: `this` was allocated via `Box::new` in `constructor`; the
-            // intrusive refcount has reached zero so no other references remain.
-            // Mirrors Zig `bun.ptr.RefCount(..).deref()` → `deinit()` + `bun.destroy(this)`.
-            unsafe {
-                (*this).deinit();
-                drop(bun_core::heap::take(this));
-            }
-        }
+        // SAFETY: forwarded trait contract — `this` is live; the derived
+        // `CellRefCounted::deref` routes zero to `Self::destroy_on_zero`.
+        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 
     fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue> {

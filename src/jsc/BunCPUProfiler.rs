@@ -48,12 +48,12 @@ impl Default for CPUProfilerConfig {
 unsafe extern "C" {
     fn Bun__startCPUProfiler(vm: *mut VM);
     fn Bun__stopCPUProfiler(vm: *mut VM, out_json: *mut BunString, out_text: *mut BunString);
-    fn Bun__setSamplingInterval(interval_microseconds: c_int);
+    /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
+    safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
 }
 
 pub fn set_sampling_interval(interval: u32) {
-    // SAFETY: FFI call with plain integer; no invariants beyond C++ side.
-    unsafe { Bun__setSamplingInterval(c_int::try_from(interval).expect("int cast")) };
+    Bun__setSamplingInterval(c_int::try_from(interval).expect("int cast"));
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {

@@ -1177,51 +1177,60 @@ pub struct NewSocketHandler<const SSL: bool> {
     pub socket: InternalSocket,
 }
 
-// ── FFI surface used by the method bodies below. Signatures verified against
-//    `src/uws_sys/us_socket_t.zig` / `ConnectingSocket.zig` `extern fn` blocks.
+// ── Safe deref helpers for `InternalSocket` payloads ────────────────────────
+// All four payload types are `#[repr(C)] UnsafeCell<[u8; 0]>` opaque ZSTs
+// (see `bun_uws_sys::opaque!` / `us_socket_t` / `ConnectingSocket`): zero-
+// sized, align-1, no `noalias`/`readonly`. Materializing `&mut T` from a
+// `*mut T` therefore has exactly one validity requirement — non-null — which
+// uSockets guarantees for every pointer it stores in `Connected` /
+// `Connecting` / `UpgradedDuplex` / `Pipe`. Centralizing the deref here keeps
+// the proof local instead of repeating `unsafe { &mut *s }` at ~50 match arms,
+// and routes every operation through the typed `safe fn` inherent methods on
+// the opaque handles.
+
+/// Reborrow the `InternalSocket::Connected` payload as `&mut us_socket_t`.
+#[inline(always)]
+fn sock<'a>(p: *mut us_socket_t) -> &'a mut us_socket_t {
+    debug_assert!(!p.is_null());
+    // SAFETY: opaque-ZST + UnsafeCell, uSockets-guaranteed non-null (see block doc).
+    unsafe { &mut *p }
+}
+/// Reborrow the `InternalSocket::Connecting` payload as `&mut ConnectingSocket`.
+#[inline(always)]
+fn conn<'a>(p: *mut ConnectingSocket) -> &'a mut ConnectingSocket {
+    debug_assert!(!p.is_null());
+    // SAFETY: opaque-ZST + UnsafeCell, uSockets-guaranteed non-null (see block doc).
+    unsafe { &mut *p }
+}
+/// Reborrow the `InternalSocket::UpgradedDuplex` payload. This is the
+/// `bun_uws_sys` cycle-break shim (opaque ZST), NOT the full runtime struct.
+#[inline(always)]
+fn duplex<'a>(p: *mut bun_uws_sys::UpgradedDuplex) -> &'a mut bun_uws_sys::UpgradedDuplex {
+    debug_assert!(!p.is_null());
+    // SAFETY: `bun_uws_sys::UpgradedDuplex` is `opaque!`-declared (see block doc).
+    unsafe { &mut *p }
+}
+/// Reborrow the `InternalSocket::Pipe` payload (Windows only).
+#[cfg(windows)]
+#[inline(always)]
+fn pipe<'a>(p: *mut bun_uws_sys::WindowsNamedPipe) -> &'a mut bun_uws_sys::WindowsNamedPipe {
+    debug_assert!(!p.is_null());
+    // SAFETY: `bun_uws_sys::WindowsNamedPipe` is `opaque!`-declared (see block doc).
+    unsafe { &mut *p }
+}
+
+// ── Residual raw FFI ────────────────────────────────────────────────────────
+// Only the externs that have no clean `safe fn` inherent-method equivalent
+// remain: `close` (local `CloseKind` vs `bun_uws_sys::CloseCode` type split)
+// and `adopt` (takes a raw `*mut SocketGroup` from a caller that already
+// holds it as raw). Everything else routes through `sock()/conn()` above.
 #[allow(non_snake_case, dead_code)]
 mod sock_c {
-    use super::{us_socket_t, us_bun_verify_error_t, ConnectingSocket, SocketGroup, LIBUS_SOCKET_DESCRIPTOR};
-    use core::ffi::{c_int, c_uint, c_void};
+    use super::{us_socket_t, SocketGroup};
+    use core::ffi::c_void;
     unsafe extern "C" {
-        // ── us_socket_t ──────────────────────────────────────────────────────
         pub(crate) fn us_socket_close(s: *mut us_socket_t, code: i32, reason: *mut c_void) -> *mut us_socket_t;
-        pub(crate) fn us_socket_is_closed(s: *mut us_socket_t) -> i32;
-        pub(crate) fn us_socket_is_shut_down(s: *mut us_socket_t) -> i32;
-        pub(crate) fn us_socket_is_established(s: *mut us_socket_t) -> i32;
-        pub(crate) fn us_socket_shutdown(s: *mut us_socket_t);
-        pub(crate) fn us_socket_shutdown_read(s: *mut us_socket_t);
-        pub(crate) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
-        #[cfg(not(windows))]
-        pub(crate) fn us_socket_ipc_write_fd(s: *mut us_socket_t, data: *const u8, length: i32, fd: i32) -> i32;
-        pub(crate) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
-        pub(crate) fn us_socket_flush(s: *mut us_socket_t);
-        pub(crate) fn us_socket_timeout(s: *mut us_socket_t, seconds: c_uint);
-        pub(crate) fn us_socket_long_timeout(s: *mut us_socket_t, minutes: c_uint);
-        pub(crate) fn us_socket_get_native_handle(s: *mut us_socket_t) -> *mut c_void;
-        pub(crate) fn us_socket_ext(s: *mut us_socket_t) -> *mut c_void;
-        pub(crate) fn us_socket_group(s: *mut us_socket_t) -> *mut SocketGroup;
-        pub(crate) fn us_socket_get_fd(s: *mut us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
-        pub(crate) fn us_socket_local_port(s: *mut us_socket_t) -> i32;
-        pub(crate) fn us_socket_remote_port(s: *mut us_socket_t) -> i32;
-        pub(crate) fn us_socket_verify_error(s: *mut us_socket_t) -> us_bun_verify_error_t;
-        pub(crate) fn us_socket_get_error(s: *mut us_socket_t) -> c_int;
-        pub(crate) fn us_socket_sendfile_needs_more(s: *mut us_socket_t);
-        pub(crate) fn us_socket_open(s: *mut us_socket_t, is_client: i32, ip: *const u8, ip_length: i32) -> *mut us_socket_t;
         pub(crate) fn us_socket_adopt(s: *mut us_socket_t, group: *mut SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) -> *mut us_socket_t;
-
-        // ── us_connecting_socket_t ───────────────────────────────────────────
-        pub(crate) fn us_connecting_socket_close(s: *mut ConnectingSocket);
-        pub(crate) fn us_connecting_socket_is_closed(s: *mut ConnectingSocket) -> i32;
-        pub(crate) fn us_connecting_socket_is_shut_down(s: *mut ConnectingSocket) -> i32;
-        pub(crate) fn us_connecting_socket_shutdown(s: *mut ConnectingSocket);
-        pub(crate) fn us_connecting_socket_shutdown_read(s: *mut ConnectingSocket);
-        pub(crate) fn us_connecting_socket_timeout(s: *mut ConnectingSocket, seconds: c_uint);
-        pub(crate) fn us_connecting_socket_long_timeout(s: *mut ConnectingSocket, minutes: c_uint);
-        pub(crate) fn us_connecting_socket_get_native_handle(s: *mut ConnectingSocket) -> *mut c_void;
-        pub(crate) fn us_connecting_socket_ext(s: *mut ConnectingSocket) -> *mut c_void;
-        pub(crate) fn us_connecting_socket_group(s: *mut ConnectingSocket) -> *mut SocketGroup;
-        pub(crate) fn us_connecting_socket_get_error(s: *mut ConnectingSocket) -> i32;
     }
 }
 
@@ -1275,13 +1284,12 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn is_closed(&self) -> bool {
         match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_closed(s) > 0 },
-            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_is_closed(s) > 0 },
+            InternalSocket::Connected(s) => sock(s).is_closed(),
+            InternalSocket::Connecting(s) => conn(s).is_closed(),
             InternalSocket::Detached => true,
-            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.is_closed(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).is_closed(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &*s }.is_closed(),
+            InternalSocket::Pipe(s) => pipe(s).is_closed(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => true,
         }
@@ -1289,13 +1297,12 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn is_shutdown(&self) -> bool {
         match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_shut_down(s) > 0 },
-            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_is_shut_down(s) > 0 },
+            InternalSocket::Connected(s) => sock(s).is_shutdown(),
+            InternalSocket::Connecting(s) => conn(s).is_shutdown(),
             InternalSocket::Detached => true,
-            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.is_shutdown(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).is_shutdown(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &*s }.is_shutdown(),
+            InternalSocket::Pipe(s) => pipe(s).is_shutdown(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => false,
         }
@@ -1303,11 +1310,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn is_established(&self) -> bool {
         match self.socket {
-            // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_established(s) > 0 },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.is_established(),
+            InternalSocket::Connected(s) => sock(s).is_established(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).is_established(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &*s }.is_established(),
+            InternalSocket::Pipe(s) => pipe(s).is_established(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => false,
             InternalSocket::Connecting(_) | InternalSocket::Detached => false,
@@ -1316,12 +1322,11 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn shutdown_read(&self) {
         match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_shutdown_read(s) },
-            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_shutdown_read(s) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.shutdown_read(),
+            InternalSocket::Connected(s) => sock(s).shutdown_read(),
+            InternalSocket::Connecting(s) => conn(s).shutdown_read(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).shutdown_read(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.shutdown_read(),
+            InternalSocket::Pipe(s) => pipe(s).shutdown_read(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1330,14 +1335,16 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn close(&self, code: CloseKind) {
         match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
+            // SAFETY: `s` is a non-null live us_socket_t (see `sock()` doc);
+            // kept raw because `us_socket_t::close` takes the sys-crate
+            // `CloseCode`, not this crate's `CloseKind`.
             InternalSocket::Connected(s) => unsafe {
                 let _ = sock_c::us_socket_close(s, code as i32, core::ptr::null_mut());
             },
-            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_close(s) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.close(),
+            InternalSocket::Connecting(s) => conn(s).close(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).close(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.close(),
+            InternalSocket::Pipe(s) => pipe(s).close(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1346,15 +1353,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn write(&self, data: &[u8]) -> i32 {
         match self.socket {
-            InternalSocket::Connected(s) => {
-                // PERF(port): @intCast — profile in Phase B
-                let len = core::cmp::min(data.len(), i32::MAX as usize) as i32;
-                // SAFETY: `s` is a non-null FFI handle; data.as_ptr()/len describe a valid slice.
-                unsafe { sock_c::us_socket_write(s, data.as_ptr(), len) }
-            }
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.encode_and_write(data),
+            InternalSocket::Connected(s) => sock(s).write(data),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).encode_and_write(data),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.encode_and_write(data),
+            InternalSocket::Pipe(s) => pipe(s).encode_and_write(data),
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
@@ -1371,11 +1373,7 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     pub fn write_fd(&self, data: &[u8], file_descriptor: core::ffi::c_int) -> i32 {
         match self.socket {
             InternalSocket::Connected(s) => {
-                let len = core::cmp::min(data.len(), i32::MAX as usize) as i32;
-                // SAFETY: `s` is a live us_socket_t handle; `data` is a valid
-                // slice for the call; `file_descriptor` is a raw fd copied
-                // into the cmsg buffer by usockets.
-                unsafe { sock_c::us_socket_ipc_write_fd(s, data.as_ptr(), len, file_descriptor) }
+                sock(s).write_fd(data, bun_core::Fd::from_native(file_descriptor))
             }
             // Mirror Zig `socket.writeFd`: duplex/pipe fall back to a plain
             // write (the fd is silently dropped).
@@ -1387,15 +1385,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     /// Bypass TLS — raw bytes to the fd even on a TLS socket.
     pub fn raw_write(&self, data: &[u8]) -> i32 {
         match self.socket {
-            InternalSocket::Connected(s) => {
-                // PERF(port): @intCast — profile in Phase B
-                let len = core::cmp::min(data.len(), i32::MAX as usize) as i32;
-                // SAFETY: `s` is a non-null FFI handle; data.as_ptr()/len describe a valid slice.
-                unsafe { sock_c::us_socket_raw_write(s, data.as_ptr(), len) }
-            }
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.raw_write(data),
+            InternalSocket::Connected(s) => sock(s).raw_write(data),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).raw_write(data),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.raw_write(data),
+            InternalSocket::Pipe(s) => pipe(s).raw_write(data),
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
@@ -1404,11 +1397,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn flush(&self) {
         match self.socket {
-            // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_flush(s) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.flush(),
+            InternalSocket::Connected(s) => sock(s).flush(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).flush(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.flush(),
+            InternalSocket::Pipe(s) => pipe(s).flush(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Connecting(_) | InternalSocket::Detached => {}
@@ -1417,12 +1409,11 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn shutdown(&self) {
         match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_shutdown(s) },
-            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_shutdown(s) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.shutdown(),
+            InternalSocket::Connected(s) => sock(s).shutdown(),
+            InternalSocket::Connecting(s) => conn(s).shutdown(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).shutdown(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.shutdown(),
+            InternalSocket::Pipe(s) => pipe(s).shutdown(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1432,12 +1423,11 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     /// Direct seconds timeout (no long-timeout split). Mirrors Zig `timeout`.
     pub fn timeout(&self, seconds: c_uint) {
         match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_timeout(s, seconds) },
-            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_timeout(s, seconds) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.set_timeout(seconds),
+            InternalSocket::Connected(s) => sock(s).set_timeout(seconds),
+            InternalSocket::Connecting(s) => conn(s).timeout(seconds),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).set_timeout(seconds),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.set_timeout(seconds),
+            InternalSocket::Pipe(s) => pipe(s).set_timeout(seconds),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1448,32 +1438,28 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     pub fn set_timeout(&self, seconds: c_uint) {
         match self.socket {
             InternalSocket::Connected(s) => {
-                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-                unsafe {
-                    if seconds > 240 {
-                        sock_c::us_socket_timeout(s, 0);
-                        sock_c::us_socket_long_timeout(s, seconds / 60);
-                    } else {
-                        sock_c::us_socket_timeout(s, seconds);
-                        sock_c::us_socket_long_timeout(s, 0);
-                    }
+                let s = sock(s);
+                if seconds > 240 {
+                    s.set_timeout(0);
+                    s.set_long_timeout(seconds / 60);
+                } else {
+                    s.set_timeout(seconds);
+                    s.set_long_timeout(0);
                 }
             }
             InternalSocket::Connecting(s) => {
-                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-                unsafe {
-                    if seconds > 240 {
-                        sock_c::us_connecting_socket_timeout(s, 0);
-                        sock_c::us_connecting_socket_long_timeout(s, seconds / 60);
-                    } else {
-                        sock_c::us_connecting_socket_timeout(s, seconds);
-                        sock_c::us_connecting_socket_long_timeout(s, 0);
-                    }
+                let s = conn(s);
+                if seconds > 240 {
+                    s.timeout(0);
+                    s.long_timeout(seconds / 60);
+                } else {
+                    s.timeout(seconds);
+                    s.long_timeout(0);
                 }
             }
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.set_timeout(seconds),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).set_timeout(seconds),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.set_timeout(seconds),
+            InternalSocket::Pipe(s) => pipe(s).set_timeout(seconds),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1483,22 +1469,18 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     pub fn set_timeout_minutes(&self, minutes: c_uint) {
         match self.socket {
             InternalSocket::Connected(s) => {
-                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-                unsafe {
-                    sock_c::us_socket_timeout(s, 0);
-                    sock_c::us_socket_long_timeout(s, minutes);
-                }
+                let s = sock(s);
+                s.set_timeout(0);
+                s.set_long_timeout(minutes);
             }
             InternalSocket::Connecting(s) => {
-                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-                unsafe {
-                    sock_c::us_connecting_socket_timeout(s, 0);
-                    sock_c::us_connecting_socket_long_timeout(s, minutes);
-                }
+                let s = conn(s);
+                s.timeout(0);
+                s.long_timeout(minutes);
             }
-            InternalSocket::UpgradedDuplex(s) => unsafe { &mut *s }.set_timeout(minutes * 60),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).set_timeout(minutes * 60),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &mut *s }.set_timeout(minutes * 60),
+            InternalSocket::Pipe(s) => pipe(s).set_timeout(minutes * 60),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
             InternalSocket::Detached => {}
@@ -1508,8 +1490,7 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     /// Kick TLS open (ClientHello / accept) on an already-connected socket.
     pub fn start_tls(&self, is_client: bool) {
         if let InternalSocket::Connected(s) = self.socket {
-            // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-            unsafe { let _ = sock_c::us_socket_open(s, is_client as i32, core::ptr::null(), 0); }
+            sock(s).open(is_client, None);
         }
     }
 
@@ -1524,11 +1505,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {
         match self.socket {
-            // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_verify_error(s) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.ssl_error(),
+            InternalSocket::Connected(s) => sock(s).get_verify_error(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).ssl_error(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &*s }.ssl_error(),
+            InternalSocket::Pipe(s) => pipe(s).ssl_error(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => us_bun_verify_error_t::default(),
             InternalSocket::Connecting(_) | InternalSocket::Detached => us_bun_verify_error_t::default(),
@@ -1537,12 +1517,11 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
 
     pub fn get_error(&self) -> i32 {
         match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_get_error(s) },
-            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_get_error(s) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.ssl_error().error_no,
+            InternalSocket::Connected(s) => sock(s).get_error(),
+            InternalSocket::Connecting(s) => conn(s).get_error(),
+            InternalSocket::UpgradedDuplex(s) => duplex(s).ssl_error().error_no,
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &*s }.ssl_error().error_no,
+            InternalSocket::Pipe(s) => pipe(s).ssl_error().error_no,
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
             InternalSocket::Detached => 0,
@@ -1552,9 +1531,12 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     /// Typed ext storage. `None` for non-uSockets transports.
     pub fn ext<T>(&self) -> Option<*mut T> {
         match self.socket {
-            // SAFETY: ext storage is LIBUS_EXT_ALIGNMENT-aligned and sized for T at creation.
-            InternalSocket::Connected(s) => Some(unsafe { sock_c::us_socket_ext(s).cast::<T>() }),
-            InternalSocket::Connecting(s) => Some(unsafe { sock_c::us_connecting_socket_ext(s).cast::<T>() }),
+            // Raw `*mut T` only — do NOT route through `ext::<T>()` (which
+            // materializes `&mut T` and would assert validity invariants).
+            InternalSocket::Connected(s) => Some(sock(s).ext_ptr().cast::<T>()),
+            InternalSocket::Connecting(s) => Some(
+                bun_uws_sys::connecting_socket::us_connecting_socket_ext(conn(s)).cast::<T>(),
+            ),
             InternalSocket::UpgradedDuplex(_) | InternalSocket::Detached => None,
             #[cfg(windows)]
             InternalSocket::Pipe(_) => None,
@@ -1566,9 +1548,8 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     /// Group this socket is linked into. `None` for non-uSockets transports.
     pub fn group(&self) -> Option<*mut SocketGroup> {
         match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
-            InternalSocket::Connected(s) => Some(unsafe { sock_c::us_socket_group(s) }),
-            InternalSocket::Connecting(s) => Some(unsafe { sock_c::us_connecting_socket_group(s) }),
+            InternalSocket::Connected(s) => Some(sock(s).group() as *mut SocketGroup),
+            InternalSocket::Connecting(s) => Some(conn(s).group()),
             InternalSocket::UpgradedDuplex(_) | InternalSocket::Detached => None,
             #[cfg(windows)]
             InternalSocket::Pipe(_) => None,
@@ -1581,34 +1562,21 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     #[inline]
     pub fn fd(&self) -> bun_core::Fd {
         match self.socket {
-            InternalSocket::Connected(s) => {
-                // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
-                let raw = unsafe { sock_c::us_socket_get_fd(s) };
-                // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`)
-                // on Windows. Tag kind=system explicitly — `from_native` would
-                // store raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as
-                // kind=uv.
-                #[cfg(windows)]
-                { bun_core::Fd::from_system(raw as *mut core::ffi::c_void) }
-                #[cfg(not(windows))]
-                { bun_core::Fd::from_native(raw) }
-            }
+            InternalSocket::Connected(s) => sock(s).get_fd(),
             _ => bun_core::Fd::INVALID,
         }
     }
 
     pub fn local_port(&self) -> i32 {
         match self.socket {
-            // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_local_port(s) },
+            InternalSocket::Connected(s) => sock(s).local_port(),
             _ => 0,
         }
     }
 
     pub fn remote_port(&self) -> i32 {
         match self.socket {
-            // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_remote_port(s) },
+            InternalSocket::Connected(s) => sock(s).remote_port(),
             _ => 0,
         }
     }
@@ -1617,8 +1585,7 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         // Zig: `if (comptime is_ssl) @compileError(...)` — keep as a const assert.
         const { assert!(!SSL, "SSL sockets do not support sendfile yet") };
         if let InternalSocket::Connected(s) = self.socket {
-            // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-            unsafe { sock_c::us_socket_sendfile_needs_more(s) };
+            sock(s).send_file_needs_more();
         }
     }
 
@@ -1640,12 +1607,10 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         if raw.is_null() {
             return None;
         }
-        // SAFETY: ext storage was sized for `?*This` above; `raw` is a
-        // freshly-created live socket.
-        unsafe {
-            *sock_c::us_socket_ext(raw).cast::<Option<core::ptr::NonNull<This>>>() =
-                core::ptr::NonNull::new(this)
-        };
+        // ext storage was sized for `?*This` above; `raw` is a freshly-created
+        // live socket. `ext::<T>()` is sound here because we immediately
+        // overwrite the slot, never reading the prior (zeroed) bit pattern.
+        *sock(raw).ext::<Option<core::ptr::NonNull<This>>>() = core::ptr::NonNull::new(this);
         Some(Self { socket: InternalSocket::Connected(raw) })
     }
 
@@ -1699,19 +1664,13 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         match g.connect(kind, ssl_ctx, host_z, port, opts, ext_size) {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             ConnectResult::Socket(s) => {
-                // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-                unsafe {
-                    *sock_c::us_socket_ext(s).cast::<Option<core::ptr::NonNull<Owner>>>() =
-                        core::ptr::NonNull::new(owner)
-                };
+                *sock(s).ext::<Option<core::ptr::NonNull<Owner>>>() =
+                    core::ptr::NonNull::new(owner);
                 Ok(Self { socket: InternalSocket::Connected(s) })
             }
             ConnectResult::Connecting(cs) => {
-                // SAFETY: ext storage is sized for `?*Owner` and `cs` is live.
-                unsafe {
-                    *sock_c::us_connecting_socket_ext(cs).cast::<Option<core::ptr::NonNull<Owner>>>() =
-                        core::ptr::NonNull::new(owner)
-                };
+                *conn(cs).ext::<Option<core::ptr::NonNull<Owner>>>() =
+                    core::ptr::NonNull::new(owner);
                 Ok(Self { socket: InternalSocket::Connecting(cs) })
             }
         }
@@ -1732,11 +1691,7 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         if s.is_null() {
             return Err(ConnectError::FailedToOpenSocket);
         }
-        // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-        unsafe {
-            *sock_c::us_socket_ext(s).cast::<Option<core::ptr::NonNull<Owner>>>() =
-                core::ptr::NonNull::new(owner)
-        };
+        *sock(s).ext::<Option<core::ptr::NonNull<Owner>>>() = core::ptr::NonNull::new(owner);
         Ok(Self { socket: InternalSocket::Connected(s) })
     }
 
@@ -1745,21 +1700,22 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     /// (`NativeSocketHandleType(is_ssl)`) is unsupported in stable Rust;
     /// callers `cast()` immediately anyway.
     pub fn get_native_handle(&self) -> Option<*mut c_void> {
-        let h = match self.socket {
-            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
-            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_get_native_handle(s) },
-            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_get_native_handle(s) },
-            InternalSocket::UpgradedDuplex(s) if SSL => return unsafe { &*s }.ssl().map(|p| p.cast()),
-            InternalSocket::UpgradedDuplex(_) => return None,
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).get_native_handle(),
+            InternalSocket::Connecting(s) => {
+                let h = conn(s).get_native_handle();
+                if h.is_null() { None } else { Some(h) }
+            }
+            InternalSocket::UpgradedDuplex(s) if SSL => duplex(s).ssl().map(|p| p.cast()),
+            InternalSocket::UpgradedDuplex(_) => None,
             #[cfg(windows)]
-            InternalSocket::Pipe(s) if SSL => return unsafe { &*s }.ssl().map(|p| p.cast()),
+            InternalSocket::Pipe(s) if SSL => pipe(s).ssl().map(|p| p.cast()),
             #[cfg(windows)]
-            InternalSocket::Pipe(_) => return None,
+            InternalSocket::Pipe(_) => None,
             #[cfg(not(windows))]
-            InternalSocket::Pipe => return None,
-            InternalSocket::Detached => return None,
-        };
-        if h.is_null() { None } else { Some(h) }
+            InternalSocket::Pipe => None,
+            InternalSocket::Detached => None,
+        }
     }
 
     /// Move an open socket into a new group/kind, stashing `owner` in the ext.
@@ -1790,8 +1746,7 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         if new_s.is_null() {
             return false;
         }
-        // SAFETY: ext storage is sized for `*mut c_void` and `new_s` is live.
-        unsafe { *sock_c::us_socket_ext(new_s).cast::<*mut c_void>() = owner.cast::<c_void>() };
+        *sock(new_s).ext::<*mut c_void>() = owner.cast::<c_void>();
         // Forward the raw pointer — do NOT materialize `&mut *owner` here:
         // callers (e.g. websocket_client) hold a live `&mut Owner` across this
         // call, so creating a second one would be aliased UB. The closure

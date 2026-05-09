@@ -43,6 +43,12 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 /// `UNICODE_STRING` (`ntdef.h`).
 pub use bun_windows_sys::UNICODE_STRING as UnicodeString;
 
+// SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
+// for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in
+// `bun_windows_sys`) because the `Zeroable` trait is owned by `bun_core`.
+#[cfg(windows)]
+unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
+
 #[repr(C)]
 pub struct ProcessParameters {
     // {MaximumLength, Length, Flags, DebugFlags} — 4 × ULONG.

@@ -563,7 +563,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             stack[..host.len()].copy_from_slice(host);
             stack[host.len()] = 0;
             // SAFETY: stack[host.len()] == 0 written above
-            unsafe { ZStr::from_raw(stack.as_ptr(), host.len()) }
+            ZStr::from_buf(&stack[..], host.len())
         } else {
             heap = {
                 let mut v = Vec::with_capacity(host.len() + 1);
@@ -572,7 +572,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
                 v
             };
             // SAFETY: heap[host.len()] == 0 written above
-            unsafe { ZStr::from_raw(heap.as_ptr(), host.len()) }
+            ZStr::from_buf(&heap[..], host.len())
         };
 
         // PERF(port): @intCast — profile in Phase B

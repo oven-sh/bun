@@ -40,6 +40,7 @@ mod logger {
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::FileSystem;
 use bun_resolver::DirInfo;
+use bun_resolver::DirInfoRef;
 
 // peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
 // the route-config pair lives in `bun_options_types::schema::api`.
@@ -860,13 +861,10 @@ impl<'a> RouteLoader<'a> {
                         }
 
                         let abs_parts = [entry.dir(), entry.base()];
-                        if let Some(_dir_info) =
+                        if let Some(dir_info) =
                             resolver.read_dir_info_ignore_error(&fs.abs(&abs_parts))
                         {
-                            // SAFETY: resolver's BSSMap-owned DirInfo outlives the route walk.
-                            let dir_info: &DirInfo = unsafe { &*_dir_info };
-
-                            self.load(resolver, dir_info, base_dir);
+                            self.load(resolver, &dir_info, base_dir);
                         }
                     }
 
@@ -1192,9 +1190,7 @@ impl Route {
                     };
                     route_file_buf[abs_len] = 0;
                     // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
-                    let buf = unsafe {
-                        bun_core::ZStr::from_raw(route_file_buf.as_ptr(), abs_len)
-                    };
+                    let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
                     match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
                         Ok(f) => {
                             *file = Some(f);
@@ -1514,9 +1510,9 @@ pub trait ResolverLike {
     /// Zig: `&fs.fs` — the resolver's `Implementation` field, passed to
     /// `Entry.kind` for lazy stat.
     fn fs_impl(&self) -> *mut Fs::Implementation;
-    /// Returns a raw pointer (not a borrow) so the resolver's `&mut self`
+    /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
     /// borrow ends before the recursive `load()` re-borrows it.
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<*const DirInfo>;
+    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
 }
 
 pub trait WatcherLike {
@@ -2142,7 +2138,7 @@ mod tests {
             // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
             unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
         }
-        fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<*const DirInfo> {
+        fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
             self.0.read_dir_info_ignore_error(path)
         }
     }
@@ -2221,8 +2217,7 @@ mod tests {
                 router.config.clone(),
                 unsafe { &mut *core::ptr::from_mut(&mut log) },
                 &mut resolver,
-                // SAFETY: resolver-owned DirInfo, valid for process lifetime.
-                unsafe { &*root_dir },
+                &root_dir,
                 top_level_dir,
             );
             scopeguard::ScopeGuard::into_inner(_err_dump);
@@ -2286,8 +2281,7 @@ mod tests {
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             router.load_routes(
                 unsafe { &mut *core::ptr::from_mut(&mut log) },
-                // SAFETY: resolver-owned DirInfo, valid for process lifetime.
-                unsafe { &*root_dir },
+                &root_dir,
                 &mut resolver,
                 top_level_dir,
             )?;

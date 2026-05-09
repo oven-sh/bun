@@ -988,8 +988,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 .insert_stale_extra(&fsr.entry_server, false, true)?;
 
             types.push(framework_router::Type {
-                // SAFETY: `read_dir_info_ignore_error` returns a live `*const DirInfo`.
-                abs_root: strings::without_trailing_slash(unsafe { &(*entry).abs_path }).into(),
+                abs_root: strings::without_trailing_slash(entry.abs_path).into(),
                 prefix: fsr.prefix.clone().into(),
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
@@ -1345,17 +1344,19 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 }
 
 fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+    use bun_uws_sys::thunk::OpaqueHandle as _;
     match resp {
-        AnyResponse::SSL(r) => ErrorReportRequest::run(dev, req, unsafe { &mut *r }),
-        AnyResponse::TCP(r) => ErrorReportRequest::run(dev, req, unsafe { &mut *r }),
+        AnyResponse::SSL(r) => ErrorReportRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r)),
+        AnyResponse::TCP(r) => ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r)),
         AnyResponse::H3(_) => not_found(resp),
     }
 }
 
 fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+    use bun_uws_sys::thunk::OpaqueHandle as _;
     match resp {
-        AnyResponse::SSL(r) => UnrefSourceMapRequest::run(dev, req, unsafe { &mut *r }),
-        AnyResponse::TCP(r) => UnrefSourceMapRequest::run(dev, req, unsafe { &mut *r }),
+        AnyResponse::SSL(r) => UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r)),
+        AnyResponse::TCP(r) => UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r)),
         AnyResponse::H3(_) => not_found(resp),
     }
 }

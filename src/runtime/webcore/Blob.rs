@@ -3022,13 +3022,12 @@ impl BlobExt for Blob {
                             } else {
                                 return Ok(blob.dupe());
                             }
-                        } else if let Some(artifact_ptr) = top_value.as_::<crate::api::BuildArtifact>() {
+                        } else if let Some(artifact) = top_value.as_class_ref::<crate::api::BuildArtifact>() {
                             // The previous "move" path here only nulled the store on a
                             // local copy and left `build.blob` fully intact, so it was
                             // never a real move. Share the store and deep-copy owned
                             // buffers instead — regardless of `MOVE`.
-                            // SAFETY: `as_` returns a live `*mut BuildArtifact` rooted by `top_value`.
-                            return Ok(unsafe { &(*artifact_ptr).blob }.dupe());
+                            return Ok(artifact.blob.dupe());
                         } else {
                             // PORT NOTE: Zig checked `sliced.allocator.get()` to
                             // detect an owned (heap) slice; `ZigStringSlice`
@@ -3123,9 +3122,7 @@ impl BlobExt for Blob {
                                     break;
                                 }
                                 jsc::JSType::DOMWrapper => {
-                                    if let Some(blob_ptr) = item.as_::<Blob>() {
-                                        // SAFETY: JS-heap pointer; single-threaded JS execution.
-                                        let blob = unsafe { &*blob_ptr };
+                                    if let Some(blob) = item.as_class_ref::<Blob>() {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset != strings::AsciiStatus::AllAscii;
                                         joiner.push_static(blob.shared_view());
@@ -3146,9 +3143,7 @@ impl BlobExt for Blob {
                 }
 
                 jsc::JSType::DOMWrapper => {
-                    if let Some(blob_ptr) = current.as_::<Blob>() {
-                        // SAFETY: JS-heap pointer; single-threaded JS execution.
-                        let blob = unsafe { &*blob_ptr };
+                    if let Some(blob) = current.as_class_ref::<Blob>() {
                         could_have_non_ascii =
                             could_have_non_ascii || blob.charset != strings::AsciiStatus::AllAscii;
                         joiner.push_static(blob.shared_view());
@@ -4664,9 +4659,8 @@ pub fn write_file_internal(
         }
 
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
-        if let Some(archive) = data.as_::<Archive>() {
-            // SAFETY: `as_` returns a non-null `*mut Archive` owned by the live JS wrapper.
-            break 'brk Blob::init_with_store(unsafe { (*archive).store_ref().clone() }, global_this);
+        if let Some(archive) = data.as_class_ref::<Archive>() {
+            break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
         }
 
         break 'brk Blob::get::<false, false>(global_this, data)?;
@@ -6302,9 +6296,8 @@ pub extern "C" fn JSDOMFile__hasInstance(
     value: JSValue,
 ) -> bool {
     jsc::mark_binding();
-    let Some(blob) = value.as_::<Blob>() else { return false };
-    // SAFETY: `as_::<Blob>` returns a live `*mut Blob` rooted by `value`.
-    unsafe { (*blob).is_jsdom_file }
+    let Some(blob) = value.as_class_ref::<Blob>() else { return false };
+    blob.is_jsdom_file
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -22,9 +22,7 @@ extern crate bun_standalone_graph as bun_standalone_module_graph;
 /// `crate::cli::START_TIME` (written once in `Cli::start`).
 #[inline]
 fn cli_start_time() -> i128 {
-    // SAFETY: `START_TIME` is written exactly once during single-threaded
-    // CLI startup before any command body runs; read-only thereafter.
-    unsafe { crate::cli::START_TIME.read() }
+    crate::cli::start_time()
 }
 
 /// Local shim for `writer.splatByteAll(b, n)` — `bun_core::io::Writer` has no
@@ -797,7 +795,7 @@ impl BuildCommand {
                     zbuf.0[..n].copy_from_slice(&outfile[..n]);
                     zbuf.0[n] = 0;
                     // SAFETY: NUL-terminated above.
-                    let z = unsafe { bun_str::ZStr::from_raw(zbuf.0.as_ptr(), n) };
+                    let z = bun_str::ZStr::from_buf(&zbuf.0[..], n);
                     if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
                         outfile = b"index";
                     }

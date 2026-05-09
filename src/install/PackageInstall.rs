@@ -2097,7 +2097,7 @@ impl<'a> PackageInstall<'a> {
                 i += 1;
                 wbuf[i] = 0;
                 // SAFETY: NUL written at [i].
-                let fullpath = unsafe { bun_str::WStr::from_raw(wbuf.as_ptr(), i) };
+                let fullpath = bun_str::WStr::from_buf(&wbuf[..], i);
 
                 let _ = mkdir_recursive_os_path(fullpath);
             }
@@ -2243,9 +2243,7 @@ impl<'a> PackageInstall<'a> {
                             buf[subpath_len + 1..subpath_len + 1 + b"package.json\0".len()]
                                 .copy_from_slice(b"package.json\0");
                             // SAFETY: NUL written above.
-                            let subpath = unsafe {
-                                ZStr::from_raw(buf.as_ptr(), subpath_len + 1 + b"package.json".len())
-                            };
+                            let subpath = ZStr::from_buf(&buf[..], subpath_len + 1 + b"package.json".len());
                             break 'package_json_exists sys::exists_at(
                                 self.cache_dir.fd(),
                                 subpath,
@@ -2274,9 +2272,7 @@ impl<'a> PackageInstall<'a> {
                     .copy_from_slice(cache_dir_subpath_without_patch_hash);
                 join_buf[cache_dir_subpath_without_patch_hash.len()] = 0;
                 // SAFETY: NUL written above.
-                let subpath = unsafe {
-                    ZStr::from_raw(join_buf.as_ptr(), cache_dir_subpath_without_patch_hash.len())
-                };
+                let subpath = ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
                 let exists =
                     sys::directory_exists_at(self.cache_dir.fd(), subpath).unwrap_or(false);
                 if exists {

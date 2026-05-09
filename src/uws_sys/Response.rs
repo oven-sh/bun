@@ -15,6 +15,7 @@ use core::marker::{PhantomData, PhantomPinned};
 
 use bun_core::Fd;
 use crate::thunk;
+use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
@@ -549,6 +550,13 @@ impl<const SSL: bool> Response<SSL> {
 pub type TCPResponse = Response<false>;
 pub type TLSResponse = Response<true>;
 
+// SAFETY: `Response<SSL>` is a `#[repr(C)]` ZST (`UnsafeCell<[u8; 0]>`) with
+// align 1; C++ owns the real bytes.
+unsafe impl<const SSL: bool> OpaqueHandle for Response<SSL> {}
+// SAFETY: `h3::Response` is a `#[repr(C)]` ZST (`UnsafeCell<[u8; 0]>`) with
+// align 1; C++ owns the real bytes.
+unsafe impl OpaqueHandle for H3Response {}
+
 #[derive(Clone, Copy)]
 pub enum AnyResponse {
     SSL(*mut TLSResponse),
@@ -559,29 +567,16 @@ pub enum AnyResponse {
 // Helper: dispatch to the underlying response, calling the same-named method on each
 // variant. The Zig `switch (this) { inline else => |resp| resp.method(args...) }`
 // monomorphizes per variant; we write the three arms out by hand.
+//
+// The per-variant `*mut → &mut` deref is internalized via `OpaqueHandle`
+// (S019): each variant payload is a ZST opaque, so the deref is sound by
+// construction and needs no `unsafe` at the dispatch site.
 macro_rules! any_dispatch {
     ($self:expr, |$r:ident| $body:expr) => {
         match $self {
-            AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle valid while the
-                // caller holds it. The pointee is a zero-sized opaque (C++ owns
-                // the real bytes; Rust only ever passes the pointer back through
-                // FFI), so materializing `&mut` here cannot alias any
-                // Rust-visible memory, and no other `&mut` to it is live in
-                // this scope.
-                let $r = unsafe { &mut *ptr };
-                $body
-            }
-            AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                let $r = unsafe { &mut *ptr };
-                $body
-            }
-            AnyResponse::H3(ptr) => {
-                // SAFETY: see above.
-                let $r = unsafe { &mut *ptr };
-                $body
-            }
+            AnyResponse::SSL(ptr) => { let $r = TLSResponse::as_handle(ptr); $body }
+            AnyResponse::TCP(ptr) => { let $r = TCPResponse::as_handle(ptr); $body }
+            AnyResponse::H3(ptr)  => { let $r = H3Response::as_handle(ptr);  $body }
         }
     };
 }
@@ -622,14 +617,8 @@ impl AnyResponse {
     pub fn socket(self) -> *mut c::uws_res {
         match self {
             AnyResponse::H3(_) => panic!("socket() is not available for HTTP/3 responses"),
-            AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                unsafe { (&mut *ptr).downcast() }
-            }
-            AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { (&mut *ptr).downcast() }
-            }
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).downcast(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).downcast(),
         }
     }
 
@@ -711,12 +700,9 @@ impl AnyResponse {
             (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), d, l)
         }
         match self {
-            // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-            AnyResponse::SSL(ptr) => unsafe { &mut *ptr }.on_data(ssl::<U, H>, optional_data),
-            // SAFETY: see above.
-            AnyResponse::TCP(ptr) => unsafe { &mut *ptr }.on_data(tcp::<U, H>, optional_data),
-            // SAFETY: see above.
-            AnyResponse::H3(ptr) => unsafe { &mut *ptr }.on_data(h3::<U, H>, optional_data),
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_data(ssl::<U, H>, optional_data),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).on_data(tcp::<U, H>, optional_data),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).on_data(h3::<U, H>, optional_data),
         }
     }
 
@@ -762,33 +748,27 @@ impl AnyResponse {
 
     pub fn force_close(self) {
         match self {
-            AnyResponse::SSL(ptr) => unsafe {
-                // SAFETY: live FFI socket handle.
+            AnyResponse::SSL(ptr) => {
                 // TODO(port): crate::us_socket_t::close signature / CloseCode::Failure
-                (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket::CloseCode::failure);
-            },
-            AnyResponse::TCP(ptr) => unsafe {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                (&mut *(&mut *ptr).downcast_socket()).close(crate::us_socket::CloseCode::failure);
-            },
-            AnyResponse::H3(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                unsafe { (&mut *ptr).force_close() }
+                // SAFETY: live FFI socket handle (us_socket_t deref; not an
+                // OpaqueHandle impl yet — out of S019 scope).
+                unsafe { &mut *TLSResponse::as_handle(ptr).downcast_socket() }
+                    .close(crate::us_socket::CloseCode::failure);
             }
+            AnyResponse::TCP(ptr) => {
+                // SAFETY: see above.
+                unsafe { &mut *TCPResponse::as_handle(ptr).downcast_socket() }
+                    .close(crate::us_socket::CloseCode::failure);
+            }
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).force_close(),
         }
     }
 
     pub fn get_native_handle(self) -> Fd {
         match self {
             AnyResponse::H3(_) => bun_core::Fd::INVALID,
-            AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                unsafe { (&mut *ptr).get_native_handle() }
-            }
-            AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { (&mut *ptr).get_native_handle() }
-            }
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_native_handle(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_native_handle(),
         }
     }
 
@@ -822,12 +802,9 @@ impl AnyResponse {
             (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), off, AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
-            // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-            AnyResponse::SSL(ptr) => unsafe { &mut *ptr }.on_writable(ssl::<U, H>, optional_data),
-            // SAFETY: see above.
-            AnyResponse::TCP(ptr) => unsafe { &mut *ptr }.on_writable(tcp::<U, H>, optional_data),
-            // SAFETY: see above.
-            AnyResponse::H3(ptr) => unsafe { &mut *ptr }.on_writable(h3::<U, H>, optional_data),
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_writable(ssl::<U, H>, optional_data),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).on_writable(tcp::<U, H>, optional_data),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).on_writable(h3::<U, H>, optional_data),
         }
     }
 
@@ -849,12 +826,9 @@ impl AnyResponse {
             (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
-            // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-            AnyResponse::SSL(ptr) => unsafe { &mut *ptr }.on_timeout(ssl::<U, H>, optional_data),
-            // SAFETY: see above.
-            AnyResponse::TCP(ptr) => unsafe { &mut *ptr }.on_timeout(tcp::<U, H>, optional_data),
-            // SAFETY: see above.
-            AnyResponse::H3(ptr) => unsafe { &mut *ptr }.on_timeout(h3::<U, H>, optional_data),
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_timeout(ssl::<U, H>, optional_data),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).on_timeout(tcp::<U, H>, optional_data),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).on_timeout(h3::<U, H>, optional_data),
         }
     }
 
@@ -876,12 +850,9 @@ impl AnyResponse {
             (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
-            // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-            AnyResponse::SSL(ptr) => unsafe { &mut *ptr }.on_aborted(ssl::<U, H>, optional_data),
-            // SAFETY: see above.
-            AnyResponse::TCP(ptr) => unsafe { &mut *ptr }.on_aborted(tcp::<U, H>, optional_data),
-            // SAFETY: see above.
-            AnyResponse::H3(ptr) => unsafe { &mut *ptr }.on_aborted(h3::<U, H>, optional_data),
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_aborted(ssl::<U, H>, optional_data),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).on_aborted(tcp::<U, H>, optional_data),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).on_aborted(h3::<U, H>, optional_data),
         }
     }
 
@@ -938,26 +909,20 @@ impl AnyResponse {
             // (request_context.get(RequestContext) is null — the H3 ctx is a
             // different type and upgrade_context is never set).
             AnyResponse::H3(_) => unreachable!(),
-            AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
-                unsafe { &mut *ptr }.upgrade(
-                    data,
-                    sec_web_socket_key,
-                    sec_web_socket_protocol,
-                    sec_web_socket_extensions,
-                    ctx,
-                )
-            }
-            AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *ptr }.upgrade(
-                    data,
-                    sec_web_socket_key,
-                    sec_web_socket_protocol,
-                    sec_web_socket_extensions,
-                    ctx,
-                )
-            }
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).upgrade(
+                data,
+                sec_web_socket_key,
+                sec_web_socket_protocol,
+                sec_web_socket_extensions,
+                ctx,
+            ),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).upgrade(
+                data,
+                sec_web_socket_key,
+                sec_web_socket_protocol,
+                sec_web_socket_extensions,
+                ctx,
+            ),
         }
     }
 }

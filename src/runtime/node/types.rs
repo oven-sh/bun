@@ -708,14 +708,7 @@ impl Encoding {
                     vec![0u8; bun_core::base64::standard_encoder_calc_size(MAX_SIZE * 4)];
                 let encoded_len = bun_core::base64::encode(&mut base64_buf, input);
                 let (mut encoded, bytes) = bun_str::String::create_uninitialized_latin1(encoded_len);
-                // SAFETY: `bytes` is a freshly-allocated Latin-1 buffer of `encoded_len` bytes.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        base64_buf.as_ptr(),
-                        bytes.as_mut_ptr(),
-                        encoded_len,
-                    );
-                }
+                bytes.copy_from_slice(&base64_buf[..encoded_len]);
                 encoded.transfer_to_js(global_object)
             }
             Self::Base64url => {
@@ -888,7 +881,7 @@ impl PathLikeExt for PathLike {
                     let n = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(sliced, &mut buf[4..]).len();
                     buf[4 + n] = 0;
                     // SAFETY: buf[4+n] == 0 written above.
-                    return unsafe { ZStr::from_raw(buf.as_ptr(), 4 + n) };
+                    return ZStr::from_buf(&buf[..], 4 + n);
                 }
                 return path_handler::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced)
                     .unwrap_or_else(|_| panic!("Error while resolving path."));
@@ -902,13 +895,13 @@ impl PathLikeExt for PathLike {
 
             buf[0] = 0;
             // SAFETY: buf[0] == 0 written above.
-            return unsafe { ZStr::from_raw(buf.as_ptr(), 0) };
+            return ZStr::from_buf(&buf[..], 0);
         }
 
         if !FORCE {
             if sliced[sliced.len() - 1] == 0 {
                 // SAFETY: last byte is NUL.
-                return unsafe { ZStr::from_raw(sliced.as_ptr(), sliced.len() - 1) };
+                return ZStr::from_slice_with_nul(&sliced[..]);
             }
         }
 
@@ -924,13 +917,13 @@ impl PathLikeExt for PathLike {
 
             buf[0] = 0;
             // SAFETY: buf[0] == 0 written above.
-            return unsafe { ZStr::from_raw(buf.as_ptr(), 0) };
+            return ZStr::from_buf(&buf[..], 0);
         }
 
         buf[..sliced.len()].copy_from_slice(sliced);
         buf[sliced.len()] = 0;
         // SAFETY: buf[sliced.len()] == 0 written above.
-        unsafe { ZStr::from_raw(buf.as_ptr(), sliced.len()) }
+        ZStr::from_buf(&buf[..], sliced.len())
     }
 
     #[inline]

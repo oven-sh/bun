@@ -1498,7 +1498,11 @@ pub fn init(
     original_package_json_path_buf.push(0);
 
     let path_len = top_level_dir_no_trailing_slash.len() + SEP_PACKAGE_JSON.len();
-    // SAFETY: NUL written at path_len above
+    // SAFETY: NUL written at `path_len` above. Not `from_buf`: this borrow is
+    // intentionally detached — `original_package_json_path_buf` is mutated and
+    // re-sliced below (the directory-walk rewrites the tail in place), and
+    // borrowck cannot see that `original_package_json_path` is reassigned
+    // before the next use after each mutation.
     let mut original_package_json_path =
         unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
     let original_cwd =
@@ -1536,12 +1540,7 @@ pub fn init(
                     .copy_from_slice(b"/package.json");
                 package_json_path_buf[this_cwd.len() + b"/package.json".len()] = 0;
                 // SAFETY: NUL written above
-                let package_json_path = unsafe {
-                    ZStr::from_raw(
-                        package_json_path_buf.as_ptr(),
-                        this_cwd.len() + b"/package.json".len(),
-                    )
-                };
+                let package_json_path = ZStr::from_buf(&package_json_path_buf[..], this_cwd.len() + b"/package.json".len(),);
 
                 match bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
@@ -1620,7 +1619,7 @@ pub fn init(
         let new_path_len = this_cwd.len() + "/package.json".len();
         // SAFETY: NUL written above
         original_package_json_path =
-            unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), new_path_len) };
+            ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
         let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
         // PORT NOTE: reshaped — Zig uses withoutSuffixComptime(.., sep_str ++ "package.json")
 

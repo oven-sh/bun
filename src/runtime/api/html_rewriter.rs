@@ -642,9 +642,9 @@ impl lolhtml::OutputSink for HTMLRewriterLoader {
 
 // ───────────────────────── BufferOutputSink ──────────────────────────────
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct BufferOutputSink {
-    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
-    // per PORTING.md (intrusive RefCount; *Self crosses FFI as lol-html userdata).
+    // Intrusive RefCount; *Self crosses FFI as lol-html userdata.
     ref_count: Cell<u32>,
     pub global: GlobalRef, // JSC_BORROW
     pub bytes: MutableString,
@@ -657,20 +657,7 @@ pub struct BufferOutputSink {
 }
 
 impl BufferOutputSink {
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount; `this` is a valid heap allocation from heap::alloc.
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 {
-                drop(bun_core::heap::take(this));
-            }
-        }
-    }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
     pub fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
@@ -690,7 +677,8 @@ impl BufferOutputSink {
             tmp_sync_error: None,
         }));
         // defer sink.deref();
-        let _sink_guard = scopeguard::guard(sink, |s| BufferOutputSink::deref(s));
+        // SAFETY: `s` is the `heap::into_raw` allocation above; refcount >= 1.
+        let _sink_guard = scopeguard::guard(sink, |s| unsafe { BufferOutputSink::deref(s) });
         // PORT NOTE: do not hold a long-lived `&mut *sink` here — the same
         // allocation is also written through the raw pointer by the lol-html
         // output-sink callback during `bufferer.run()` and by `deref(sink)`
@@ -842,7 +830,9 @@ impl BufferOutputSink {
             (*bufferer).run(value, owned_readable_stream)
         };
         if let Err(buffering_error) = buffering_result {
-            BufferOutputSink::deref(sink);
+            // SAFETY: `sink` is a live `heap::into_raw` allocation; release the
+            // ref taken for the in-flight bufferer.
+            unsafe { BufferOutputSink::deref(sink) };
             return Ok(match buffering_error {
                 e if e == bun_core::err!("StreamAlreadyUsed") => {
                     let err = system_error(
@@ -887,7 +877,9 @@ impl BufferOutputSink {
         js_err: Option<webcore::body::ValueError>,
         is_async: bool,
     ) {
-        let _g = scopeguard::guard(sink, |s| BufferOutputSink::deref(s));
+        // SAFETY: `sink` was ref'd in `init()` before scheduling this callback;
+        // refcount > 0 so the allocation is live.
+        let _g = scopeguard::guard(sink, |s| unsafe { BufferOutputSink::deref(s) });
         // PORT NOTE: do not materialise `&mut *sink` here — the lol-html
         // write/end FFI calls below re-enter `<BufferOutputSink as
         // OutputSink>::write/done` through the userdata pointer, which forms
@@ -1468,24 +1460,15 @@ fn html_string_value(input: lolhtml::HTMLString, global_object: &JSGlobalObject)
 // ─────────────────────────── TextChunk ───────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
 pub struct TextChunk {
-    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
-    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
+    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     pub text_chunk: *mut lolhtml_sys::TextChunk,
 }
 
 impl TextChunk {
-    pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount — `this` is a live heap::alloc allocation
-        // with ref_count >= 1; freed exactly once when it reaches 0.
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 { drop(bun_core::heap::take(this)); }
-        }
-    }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
     pub fn init(text_chunk: *mut lolhtml::TextChunk) -> *mut TextChunk {
         bun_core::heap::into_raw(Box::new(TextChunk {
@@ -1602,7 +1585,9 @@ impl TextChunk {
 
     pub fn finalize(self: Box<Self>) {
         // Refcounted: release the JS wrapper's +1.
-        Self::deref(Box::into_raw(self));
+        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
+        // held one ref, which this call releases.
+        unsafe { Self::deref(Box::into_raw(self)) };
     }
 }
 
@@ -1610,7 +1595,11 @@ impl WrapperLike for TextChunk {
     type Raw = lolhtml::TextChunk;
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) { Self::deref(this) }
+    fn deref(this: *mut Self) {
+        // SAFETY: `WrapperLike::deref` contract — `this` is a live
+        // `heap::alloc` allocation with refcount >= 1.
+        unsafe { Self::deref(this) }
+    }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
         // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
         // ownership is shared with the GC wrapper via the intrusive refcount
@@ -1622,28 +1611,21 @@ impl WrapperLike for TextChunk {
 // ──────────────────────────── DocType ────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
 pub struct DocType {
-    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
-    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
+    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     pub doctype: *mut lolhtml_sys::DocType,
 }
 
 impl DocType {
-    pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount — `this` is a live heap::alloc allocation
-        // with ref_count >= 1; freed exactly once when it reaches 0.
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 { drop(bun_core::heap::take(this)); }
-        }
-    }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
     pub fn finalize(self: Box<Self>) {
         // Refcounted: release the JS wrapper's +1.
-        Self::deref(Box::into_raw(self));
+        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
+        // held one ref, which this call releases.
+        unsafe { Self::deref(Box::into_raw(self)) };
     }
 
     pub fn init(doctype: *mut lolhtml::DocType) -> *mut DocType {
@@ -1715,7 +1697,11 @@ impl WrapperLike for DocType {
     type Raw = lolhtml::DocType;
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) { Self::deref(this) }
+    fn deref(this: *mut Self) {
+        // SAFETY: `WrapperLike::deref` contract — `this` is a live
+        // `heap::alloc` allocation with refcount >= 1.
+        unsafe { Self::deref(this) }
+    }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
         // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
         // ownership is shared with the GC wrapper via the intrusive refcount.
@@ -1726,24 +1712,15 @@ impl WrapperLike for DocType {
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
 pub struct DocEnd {
-    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
-    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
+    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     pub doc_end: *mut lolhtml_sys::DocEnd,
 }
 
 impl DocEnd {
-    pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount — `this` is a live heap::alloc allocation
-        // with ref_count >= 1; freed exactly once when it reaches 0.
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 { drop(bun_core::heap::take(this)); }
-        }
-    }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
     pub fn init(doc_end: *mut lolhtml::DocEnd) -> *mut DocEnd {
         bun_core::heap::into_raw(Box::new(DocEnd {
@@ -1797,7 +1774,9 @@ impl DocEnd {
 
     pub fn finalize(self: Box<Self>) {
         // Refcounted: release the JS wrapper's +1.
-        Self::deref(Box::into_raw(self));
+        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
+        // held one ref, which this call releases.
+        unsafe { Self::deref(Box::into_raw(self)) };
     }
 }
 
@@ -1805,7 +1784,11 @@ impl WrapperLike for DocEnd {
     type Raw = lolhtml::DocEnd;
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) { Self::deref(this) }
+    fn deref(this: *mut Self) {
+        // SAFETY: `WrapperLike::deref` contract — `this` is a live
+        // `heap::alloc` allocation with refcount >= 1.
+        unsafe { Self::deref(this) }
+    }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
         // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
         // ownership is shared with the GC wrapper via the intrusive refcount.
@@ -1816,24 +1799,15 @@ impl WrapperLike for DocEnd {
 // ──────────────────────────── Comment ────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
 pub struct Comment {
-    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
-    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
+    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     pub comment: *mut lolhtml_sys::Comment,
 }
 
 impl Comment {
-    pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount — `this` is a live heap::alloc allocation
-        // with ref_count >= 1; freed exactly once when it reaches 0.
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 { drop(bun_core::heap::take(this)); }
-        }
-    }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
     pub fn init(comment: *mut lolhtml::Comment) -> *mut Comment {
         bun_core::heap::into_raw(Box::new(Comment {
@@ -1957,7 +1931,9 @@ impl Comment {
 
     pub fn finalize(self: Box<Self>) {
         // Refcounted: release the JS wrapper's +1.
-        Self::deref(Box::into_raw(self));
+        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
+        // held one ref, which this call releases.
+        unsafe { Self::deref(Box::into_raw(self)) };
     }
 }
 
@@ -1965,7 +1941,11 @@ impl WrapperLike for Comment {
     type Raw = lolhtml::Comment;
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) { Self::deref(this) }
+    fn deref(this: *mut Self) {
+        // SAFETY: `WrapperLike::deref` contract — `this` is a live
+        // `heap::alloc` allocation with refcount >= 1.
+        unsafe { Self::deref(this) }
+    }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
         // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
         // ownership is shared with the GC wrapper via the intrusive refcount.
@@ -1976,9 +1956,9 @@ impl WrapperLike for Comment {
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
 pub struct EndTag {
-    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
-    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
+    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     pub end_tag: *mut lolhtml_sys::EndTag,
 }
@@ -2014,16 +1994,7 @@ impl lolhtml::DirectiveCallback<lolhtml::EndTag> for EndTagHandler {
 }
 
 impl EndTag {
-    pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount — `this` is a live heap::alloc allocation
-        // with ref_count >= 1; freed exactly once when it reaches 0.
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 { drop(bun_core::heap::take(this)); }
-        }
-    }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
     pub fn init(end_tag: *mut lolhtml::EndTag) -> *mut EndTag {
         bun_core::heap::into_raw(Box::new(EndTag {
@@ -2034,7 +2005,9 @@ impl EndTag {
 
     pub fn finalize(self: Box<Self>) {
         // Refcounted: release the JS wrapper's +1.
-        Self::deref(Box::into_raw(self));
+        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
+        // held one ref, which this call releases.
+        unsafe { Self::deref(Box::into_raw(self)) };
     }
 
     fn content_handler(
@@ -2146,7 +2119,11 @@ impl WrapperLike for EndTag {
     type Raw = lolhtml::EndTag;
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) { Self::deref(this) }
+    fn deref(this: *mut Self) {
+        // SAFETY: `WrapperLike::deref` contract — `this` is a live
+        // `heap::alloc` allocation with refcount >= 1.
+        unsafe { Self::deref(this) }
+    }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
         // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
         // ownership is shared with the GC wrapper via the intrusive refcount.
@@ -2157,26 +2134,26 @@ impl WrapperLike for EndTag {
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = AttributeIterator::destroy_on_zero)]
 pub struct AttributeIterator {
-    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
-    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
+    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     pub iterator: *mut lolhtml_sys::AttributeIterator,
 }
 
 impl AttributeIterator {
-    pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount — `this` is a live heap::alloc allocation
-        // with ref_count >= 1; freed exactly once when it reaches 0.
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 {
-                (*this).detach();
-                drop(bun_core::heap::take(this));
-            }
-        }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
+
+    /// `CellRefCounted::destroy` target — detach the lol-html iterator before
+    /// freeing the Box.
+    ///
+    /// # Safety
+    /// `this` is the sole live owner of a `heap::alloc`'d `Self`.
+    unsafe fn destroy_on_zero(this: *mut Self) {
+        // SAFETY: refcount hit zero; sole owner.
+        unsafe { (*this).detach() };
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn init(iterator: *mut lolhtml::AttributeIterator) -> *mut AttributeIterator {
@@ -2199,7 +2176,9 @@ impl AttributeIterator {
         // siblings.
         let this = bun_core::heap::release(self);
         this.detach();
-        Self::deref(this);
+        // SAFETY: `this` is the Box-allocated m_ctx payload; the JS wrapper
+        // held one ref, which this call releases.
+        unsafe { Self::deref(this) };
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2253,9 +2232,10 @@ impl AttributeIterator {
 // ──────────────────────────── Element ────────────────────────────────────
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Element::destroy_on_zero)]
 pub struct Element {
-    // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
-    // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
+    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     pub element: *mut lolhtml_sys::Element,
     /// AttributeIterator instances created by `getAttributes()` that borrow
@@ -2266,18 +2246,17 @@ pub struct Element {
 }
 
 impl Element {
-    pub fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount — `this` is a live heap::alloc allocation
-        // with ref_count >= 1; freed exactly once when it reaches 0.
-        unsafe {
-            let rc = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(rc);
-            if rc == 0 {
-                (*this).invalidate();
-                drop(bun_core::heap::take(this));
-            }
-        }
+    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
+
+    /// `CellRefCounted::destroy` target — invalidate borrowed sub-objects
+    /// before freeing the Box.
+    ///
+    /// # Safety
+    /// `this` is the sole live owner of a `heap::alloc`'d `Self`.
+    unsafe fn destroy_on_zero(this: *mut Self) {
+        // SAFETY: refcount hit zero; sole owner.
+        unsafe { (*this).invalidate() };
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn init(element: *mut lolhtml::Element) -> *mut Element {
@@ -2290,7 +2269,9 @@ impl Element {
 
     pub fn finalize(self: Box<Self>) {
         // Refcounted: release the JS wrapper's +1.
-        Self::deref(Box::into_raw(self));
+        // SAFETY: `self` is the Box-allocated m_ctx payload; the JS wrapper
+        // held one ref, which this call releases.
+        unsafe { Self::deref(Box::into_raw(self)) };
     }
 
     /// Detach every `AttributeIterator` we handed to JS. Called when the
@@ -2302,7 +2283,9 @@ impl Element {
             // SAFETY: iter is a live AttributeIterator we ref'd in get_attributes();
             // ref_count >= 1 so the allocation is valid here.
             unsafe { (*iter).detach() };
-            AttributeIterator::deref(iter);
+            // SAFETY: `iter` is a live AttributeIterator we ref'd in
+            // `get_attributes()`; release that ref.
+            unsafe { AttributeIterator::deref(iter) };
         }
     }
 
@@ -2657,7 +2640,11 @@ impl WrapperLike for Element {
     type Raw = lolhtml::Element;
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
-    fn deref(this: *mut Self) { Self::deref(this) }
+    fn deref(this: *mut Self) {
+        // SAFETY: `WrapperLike::deref` contract — `this` is a live
+        // `heap::alloc` allocation with refcount >= 1.
+        unsafe { Self::deref(this) }
+    }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
         // SAFETY: `this` is a live `heap::alloc` allocation (refcount >= 1);
         // ownership is shared with the GC wrapper via the intrusive refcount.

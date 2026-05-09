@@ -68,7 +68,7 @@ macro_rules! new_hasher {
                 boringssl::load();
                 // SAFETY: BoringSSL *_Init fully initialises the context; we never
                 // read `hasher` before the call below writes it.
-                let mut this: Self = unsafe { bun_core::ffi::zeroed() };
+                let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
                 let rc: c_int = unsafe { $init(&mut this.hasher) };
                 debug_assert!(rc == 1);
                 this
@@ -120,7 +120,7 @@ macro_rules! new_evp {
                 // EVP md getters are infallible `safe fn` returning static singletons.
                 let md = ffi::$md_fn();
                 // SAFETY: EVP_MD_CTX_init zero-initialises; reading zeroed POD is fine.
-                let mut this: Self = unsafe { bun_core::ffi::zeroed() };
+                let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
 
                 // ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
                 ffi::EVP_MD_CTX_init(&mut this.ctx);

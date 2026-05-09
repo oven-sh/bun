@@ -26,6 +26,9 @@ pub struct PosixStat {
     /// Birth time (creation time) - may be zero if not supported
     pub birthtim: Timespec,
 }
+// SAFETY: ten `u64` + four `Timespec{i64,i64}` fields; all-zero is the
+// documented "no stat yet" value (see `node:fs` StatWatcher initial emit).
+unsafe impl bun_core::ffi::Zeroable for PosixStat {}
 
 /// C's implicit integer → `uint64_t` conversion, i.e. what libuv does
 /// when copying platform `struct stat` fields into `uv_stat_t`.

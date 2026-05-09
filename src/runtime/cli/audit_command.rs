@@ -381,9 +381,8 @@ fn collect_packages_for_audit(
         }
 
         let mut ver_str: Vec<u8> = Vec::new();
-        // SAFETY: `res.tag == ResolutionTag::Npm` checked above, so the `.npm`
-        // arm of the value union is active.
-        let npm = unsafe { res.value.npm };
+        // `res.tag == ResolutionTag::Npm` checked above.
+        let npm = *res.npm();
         write!(&mut ver_str, "{}", npm.version.fmt(buf)).expect("unreachable");
         let ver_str: Box<[u8]> = ver_str.into_boxed_slice();
 

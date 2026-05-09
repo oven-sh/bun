@@ -540,7 +540,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     let pathz_owned = dupe_z(path_without_special_syntax);
                     // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
                     let pathz =
-                        unsafe { ZStr::from_raw(pathz_owned.as_ptr(), pathz_owned.len() - 1) };
+                        ZStr::from_slice_with_nul(&pathz_owned[..]);
                     let fd = match A::open(pathz)? {
                         Err(e) => {
                             if e.get_errno() == E::ENOTDIR {
@@ -738,7 +738,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         // SAFETY: dir_path_buf[dir_path_len] == 0 written above (or by collapse_dots)
-        let dir_path = unsafe { ZStr::from_raw(dir_path_buf.as_ptr(), dir_path_len) };
+        let dir_path = ZStr::from_buf(&dir_path_buf[..], dir_path_len);
 
         let mut at_cwd = false;
         let fd: A::Handle = 'fd: {
@@ -794,7 +794,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     .to_vec();
                 let pathz = dupe_z(&pat_slice);
                 // SAFETY: dupe_z NUL-terminates
-                let pathz_ref = unsafe { ZStr::from_raw(pathz.as_ptr(), pathz.len() - 1) };
+                let pathz_ref = ZStr::from_slice_with_nul(&pathz[..]);
                 let stat_result: Stat = match A::statat(fd, pathz_ref) {
                     Err(e_) => {
                         let e: SysError = e_;
@@ -1208,7 +1208,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let name_z = dupe_z(entry_name);
                             // SAFETY: dupe_z NUL-terminates
                             let name_z_ref =
-                                unsafe { ZStr::from_raw(name_z.as_ptr(), name_z.len() - 1) };
+                                ZStr::from_slice_with_nul(&name_z[..]);
                             let stat_result = A::lstatat(dir_fd, name_z_ref);
                             let real_kind = match stat_result {
                                 Ok(st) => bun_sys::kind_from_mode(st.st_mode as u32),

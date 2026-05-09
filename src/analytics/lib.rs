@@ -439,7 +439,7 @@ pub mod generate_header {
                 // SAFETY: `uname(2)` fills the struct on success; zero-init
                 // beforehand so a (theoretical) failure leaves a valid
                 // all-zero utsname.
-                let mut name: libc::utsname = unsafe { bun_core::ffi::zeroed() };
+                let mut name: libc::utsname = bun_core::ffi::zeroed();
                 // SAFETY: `name` is a valid, exclusive pointer to a utsname.
                 let _ = unsafe { libc::uname(&raw mut name) };
                 name
@@ -609,7 +609,7 @@ pub mod generate_header {
         fn for_freebsd() -> analytics::Platform {
             let name = FREEBSD_OS_NAME.get_or_init(|| {
                 // SAFETY: see linux_os_name().
-                let mut name: libc::utsname = unsafe { bun_core::ffi::zeroed() };
+                let mut name: libc::utsname = bun_core::ffi::zeroed();
                 // SAFETY: `name` is a valid, exclusive pointer to a utsname.
                 let _ = unsafe { libc::uname(&mut name) };
                 name

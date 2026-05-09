@@ -1064,10 +1064,11 @@ fn get_ast(
                     // This is to ensure that we generate a JavaScript bundle containing all the user's code.
                     let mut import_record_indices =
                         Vec::<u32>::init_capacity(import_records_len as usize)?;
-                    unsafe { import_record_indices.set_len((import_records_len) as usize) };
-                    for (index, import_record) in import_record_indices.slice_mut().iter_mut().enumerate() {
-                        *import_record = u32::try_from(index).expect("int cast");
-                    }
+                    bun_core::vec::extend_from_fn(
+                        &mut import_record_indices,
+                        import_records_len as usize,
+                        |i| u32::try_from(i).expect("int cast"),
+                    );
                     break 'brk2 import_record_indices;
                 },
                 ..Default::default()
@@ -2624,16 +2625,12 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     // SAFETY: BACKREF — `any_loop` outlives this parse task.
     match unsafe { &mut *any_loop.as_ptr() } {
         bun_event_loop::AnyEventLoop::Js { owner } => {
-            // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
-            unsafe {
-                bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
-                    *owner,
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        result,
-                        |p| { on_complete(p); Ok(()) },
-                    ),
-                );
-            }
+            owner.enqueue_task_concurrent(
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                    result,
+                    |p| { on_complete(p); Ok(()) },
+                ),
+            );
         }
         bun_event_loop::AnyEventLoop::Mini(mini) => {
             mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(

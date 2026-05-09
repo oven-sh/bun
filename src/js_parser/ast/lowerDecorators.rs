@@ -664,7 +664,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             }
                             e.target = call_target;
                             e.args =
-                                unsafe { ExprNodeList::from_bump_slice(new_args.into_bump_slice_mut()) };
+                                ExprNodeList::from_bump_vec(new_args);
                             return;
                         }
                     }
@@ -1553,7 +1553,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             let dec_args_list =
-                unsafe { ExprNodeList::from_bump_slice(dec_args.into_bump_slice_mut()) };
+                ExprNodeList::from_bump_vec(dec_args);
             let raw_element = p.call_runtime(loc, b"__decorateElement", dec_args_list);
             let element = if let Some(fn_ref) = private_method_fn_ref {
                 p.assign_to(fn_ref, raw_element, loc)
@@ -1726,7 +1726,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             });
 
             let cls_dec_list =
-                unsafe { ExprNodeList::from_bump_slice(cls_dec_args.into_bump_slice_mut()) };
+                ExprNodeList::from_bump_vec(cls_dec_args);
             let dec_call = p.call_runtime(loc, b"__decorateElement", cls_dec_list);
             suffix_exprs.push(p.assign_to(class_name_ref, dec_call, class_name_loc));
         }
@@ -1808,7 +1808,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             run_args.push(init_val);
                         }
                         let run_args_list =
-                            unsafe { ExprNodeList::from_bump_slice(run_args.into_bump_slice_mut()) };
+                            ExprNodeList::from_bump_vec(run_args);
                         let run_init_call =
                             p.call_runtime(loc, b"__runInitializers", run_args_list);
 
@@ -1890,7 +1890,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     run_args.push(init_val);
                 }
                 let run_args_list =
-                    unsafe { ExprNodeList::from_bump_slice(run_args.into_bump_slice_mut()) };
+                    ExprNodeList::from_bump_vec(run_args);
                 let run_init_call = p.call_runtime(loc, b"__runInitializers", run_args_list);
 
                 if entry.is_accessor || entry.is_private {
@@ -2096,8 +2096,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // Emit var declarations
             if !expr_var_decls.is_empty() {
-                let decls_slice = expr_var_decls.into_bump_slice_mut();
-                let decls = unsafe { DeclList::from_bump_slice(decls_slice) };
+                let decls = DeclList::from_bump_vec(expr_var_decls);
                 let var_decl_stmt = p.s(S::Local { decls, ..Default::default() }, loc);
                 if let Some(mut stmt_list) = p.nearest_stmt_list {
                     // SAFETY: arena-owned BumpVec valid for 'a; exclusive during visit.

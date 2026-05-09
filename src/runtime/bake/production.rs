@@ -586,9 +586,6 @@ pub fn build_with_vm(
         else {
             continue;
         };
-        // SAFETY: read_dir_info_ignore_error returns a *const DirInfo into the
-        // resolver's cache, which outlives this loop body.
-        let entry = unsafe { &*entry };
         let server_file = entry_points
             .get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?;
         let client_file = if let Some(client) = fsr.entry_client {

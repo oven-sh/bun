@@ -1360,7 +1360,7 @@ impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Pare
             parent: core::ptr::null_mut(), // Zig: undefined
             is_done: false,
             // SAFETY: all-zero is a valid uv_write_t (Zig: std.mem.zeroes)
-            write_req: unsafe { bun_core::ffi::zeroed() },
+            write_req: unsafe { bun_core::ffi::zeroed_unchecked() },
             write_buffer: uv::uv_buf_t::init(b""),
             pending_payload_size: 0,
         }
@@ -1786,7 +1786,7 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
             parent: core::ptr::null_mut(), // Zig: undefined
             is_done: false,
             // SAFETY: all-zero is a valid uv_write_t (Zig: std.mem.zeroes)
-            write_req: unsafe { bun_core::ffi::zeroed() },
+            write_req: unsafe { bun_core::ffi::zeroed_unchecked() },
             write_buffer: uv::uv_buf_t::init(b""),
             outgoing: StreamBuffer::default(),
             current_payload: StreamBuffer::default(),

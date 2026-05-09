@@ -28,6 +28,7 @@ unsafe fn unset_task_callback(_: *mut WorkPoolTask) {
 }
 
 #[bun_jsc::JsClass]
+#[derive(bun_ptr::CellRefCounted)]
 pub struct NativeZstd {
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
     pub ref_count: Cell<u32>,
@@ -482,18 +483,13 @@ impl CompressionStreamImpl for NativeZstd {
     }
 
     fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+        <Self as bun_ptr::CellRefCounted>::ref_(self)
     }
     unsafe fn deref(this: *mut Self) {
-        // SAFETY: `this` is live per the trait contract; `ref_count` is a `Cell`.
-        let n = unsafe { (*this).ref_count.get() } - 1;
-        unsafe { (*this).ref_count.set(n) };
-        if n == 0 {
-            // SAFETY: `this` was Box-allocated by `constructor()`; refcount hit zero so
-            // no other borrow exists. Reconstitute the Box to run Drop + free.
-            // PORT NOTE: matches Zig `bun.destroy(this)` via RefCount.deinit.
-            unsafe { drop(bun_core::heap::take(this)) };
-        }
+        // SAFETY: forwarded trait contract — `this` is live; allocated via
+        // `constructor()`. The derived `CellRefCounted::deref` runs the default
+        // `Box::from_raw` destroy on zero (matches Zig `bun.destroy(this)`).
+        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 
     // Per-class codegen accessors (`jsc.Codegen.JSNativeZstd.*GetCached/SetCached`).

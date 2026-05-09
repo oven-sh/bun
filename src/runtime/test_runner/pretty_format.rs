@@ -1868,10 +1868,7 @@ impl<'a> Formatter<'a> {
                             to_json_function.call(self.global_this, value, &[])?,
                             JSType::Object,
                         );
-                    } else if let Some(timer) = value.as_::<crate::timer::TimeoutObject>() {
-                        // SAFETY: `as_` returned non-null; the GC keeps the cell alive
-                        // while `value` is on the stack (conservative scan).
-                        let timer = unsafe { &*timer };
+                    } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
                                 + bun_fmt::fast_digit_count(
@@ -1912,10 +1909,8 @@ impl<'a> Formatter<'a> {
 
                         return Ok(());
                     } else if let Some(immediate) =
-                        value.as_::<crate::timer::ImmediateObject>()
+                        value.as_class_ref::<crate::timer::ImmediateObject>()
                     {
-                        // SAFETY: see TimeoutObject branch above.
-                        let immediate = unsafe { &*immediate };
                         self.add_for_new_line(
                             b"Immediate(# ) ".len()
                                 + bun_fmt::fast_digit_count(
@@ -1935,19 +1930,13 @@ impl<'a> Formatter<'a> {
                         ));
 
                         return Ok(());
-                    } else if let Some(build_log) = value.as_::<crate::api::BuildMessage>() {
-                        // SAFETY: non-null JsClass cell, GC-rooted via `value`.
+                    } else if let Some(build_log) = value.as_class_ref::<crate::api::BuildMessage>() {
                         let mut bridge = IoFmt(&mut *writer.ctx);
-                        let _ = unsafe { &*build_log }
-                            .msg
-                            .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
+                        let _ = build_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
-                    } else if let Some(resolve_log) = value.as_::<crate::api::ResolveMessage>() {
-                        // SAFETY: non-null JsClass cell, GC-rooted via `value`.
+                    } else if let Some(resolve_log) = value.as_class_ref::<crate::api::ResolveMessage>() {
                         let mut bridge = IoFmt(&mut *writer.ctx);
-                        let _ = unsafe { &*resolve_log }
-                            .msg
-                            .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
+                        let _ = resolve_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
                     } else if NAME_BUF.with_borrow(|name_buf| {
                         JestPrettyFormat::print_asymmetric_matcher::<_, W, ENABLE_ANSI_COLORS>(
@@ -3082,9 +3071,8 @@ impl JestPrettyFormat {
         // (UB / borrowck violation), so we accept only the wrapped writer and reach the
         // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.
 
-        if let Some(matcher) = value.as_::<expect::ExpectAnything>() {
-            // SAFETY: `as_` returned non-null; GC keeps the cell alive while `value` is on stack.
-            let flags = unsafe { (*matcher).flags };
+        if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAnything".len());
@@ -3093,14 +3081,13 @@ impl JestPrettyFormat {
                 this.amf_add_for_new_line(b"Anything".len());
                 writer.write_all(b"Anything");
             }
-        } else if let Some(matcher) = value.as_::<expect::ExpectAny>() {
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAny>() {
             let Some(constructor_value) = expect_js::any::constructor_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            // SAFETY: see ExpectAnything branch.
-            let flags = unsafe { (*matcher).flags };
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAny<".len());
@@ -3121,7 +3108,7 @@ impl JestPrettyFormat {
             ));
             this.amf_add_for_new_line(1);
             writer.write_all(b">");
-        } else if let Some(matcher) = value.as_::<expect::ExpectCloseTo>() {
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
             let Some(number_value) = expect_js::close_to::number_value_get_cached(value)
             else {
                 return Ok(true);
@@ -3134,8 +3121,7 @@ impl JestPrettyFormat {
             let number = number_value.to_int32();
             let digits = digits_value.to_int32();
 
-            // SAFETY: see ExpectAnything branch.
-            let flags = unsafe { (*matcher).flags };
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NumberNotCloseTo".len());
@@ -3150,15 +3136,14 @@ impl JestPrettyFormat {
                 digits,
                 if digits == 1 { "" } else { "s" },
             ));
-        } else if let Some(matcher) = value.as_::<expect::ExpectObjectContaining>() {
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
             let Some(object_value) =
                 expect_js::object_containing::object_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            // SAFETY: see ExpectAnything branch.
-            let flags = unsafe { (*matcher).flags };
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"ObjectNotContaining ".len());
@@ -3170,15 +3155,14 @@ impl JestPrettyFormat {
             this.amf_print_as::<ENABLE_ANSI_COLORS>(
                 bun_jsc::FormatTag::Object, &mut *writer.ctx, object_value, JSType::Object,
             )?;
-        } else if let Some(matcher) = value.as_::<expect::ExpectStringContaining>() {
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
                 expect_js::string_containing::string_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            // SAFETY: see ExpectAnything branch.
-            let flags = unsafe { (*matcher).flags };
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotContaining ".len());
@@ -3190,14 +3174,13 @@ impl JestPrettyFormat {
             this.amf_print_as::<ENABLE_ANSI_COLORS>(
                 bun_jsc::FormatTag::String, &mut *writer.ctx, substring_value, JSType::String,
             )?;
-        } else if let Some(matcher) = value.as_::<expect::ExpectStringMatching>() {
+        } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
             let Some(test_value) = expect_js::string_matching::test_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            // SAFETY: see ExpectAnything branch.
-            let flags = unsafe { (*matcher).flags };
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotMatching ".len());
@@ -3215,16 +3198,14 @@ impl JestPrettyFormat {
                 bun_jsc::FormatTag::String, &mut *writer.ctx, test_value, JSType::String,
             )?;
             *this.amf_quote_strings() = original_quote_strings;
-        } else if let Some(instance) = value.as_::<expect::ExpectCustomAsymmetricMatcher>() {
-            // SAFETY: `as_` returns the live m_ctx payload owned by `value`.
+        } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
-                unsafe { &*instance }, value, this.amf_global_this(), &mut *writer.ctx, true,
+                instance, value, this.amf_global_this(), &mut *writer.ctx, true,
             )
             .expect("unreachable");
             if !printed {
                 // default print (non-overridden by user)
-                // SAFETY: see above.
-                let flags = unsafe { (*instance).flags };
+                let flags = instance.flags;
                 let Some(args_value) =
                     expect_js::custom::captured_args_get_cached(value)
                 else {

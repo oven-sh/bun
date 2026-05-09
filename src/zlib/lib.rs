@@ -192,7 +192,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             input,
             buf: [0u8; BUFFER_SIZE],
             // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (matches Zig `undefined` then full assign).
-            zlib: unsafe { bun_core::ffi::zeroed() },
+            zlib: unsafe { bun_core::ffi::zeroed_unchecked() },
             state: ZlibReaderState::Uninitialized,
         });
 
@@ -466,7 +466,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             input,
             list_ptr: list,
             // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (overwritten below).
-            zlib: unsafe { bun_core::ffi::zeroed() },
+            zlib: unsafe { bun_core::ffi::zeroed_unchecked() },
             state: ZlibReaderArrayListState::Uninitialized,
         });
 
@@ -962,7 +962,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
             input,
             list_ptr: list,
             // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (overwritten below).
-            zlib: unsafe { bun_core::ffi::zeroed() },
+            zlib: unsafe { bun_core::ffi::zeroed_unchecked() },
             state: ZlibCompressorArrayListState::Uninitialized,
         });
 

@@ -757,7 +757,7 @@ impl ZigString {
         }
         buf[written] = 0;
         // SAFETY: buf[written] == 0 written above; bytes [0..written] initialized.
-        Ok(unsafe { ZStr::from_raw(buf.as_ptr(), written) })
+        Ok(ZStr::from_buf(&buf[..], written))
     }
 
     #[inline]

@@ -1053,9 +1053,7 @@ fn add_bundled_dep(
                                             dep_subpath_buf[node_modules_end + 1 + dep_name.len()] = 0;
                                             let parent_len = node_modules_end + 1 + dep_name.len();
                                             // SAFETY: NUL at parent_len written above
-                                            let parent_dep_subpath: &ZStr = unsafe {
-                                                ZStr::from_raw(dep_subpath_buf.as_ptr(), parent_len)
-                                            };
+                                            let parent_dep_subpath: &ZStr = ZStr::from_buf(&dep_subpath_buf[..], parent_len);
                                             remain_end = node_modules_start;
 
                                             let parent_dep_dir = match dir_open_dir_z(root_dir, parent_dep_subpath, bun_sys::OpenDirOptions { iterate: true, ..Default::default() }) {
@@ -1514,8 +1512,8 @@ impl PackExprExt for Expr {
 /// `ZStr::from_lit`).
 #[inline]
 const fn zstr_lit(s: &'static [u8]) -> &'static ZStr {
-    // SAFETY: caller guarantees `s` ends with a NUL byte.
-    unsafe { ZStr::from_raw(s.as_ptr(), s.len() - 1) }
+    // `from_static` is the const-eval-safe form of `from_slice_with_nul`.
+    ZStr::from_static(s)
 }
 
 /// Extension trait wrapping `*mut Archive` so existing `archive.method()` call
@@ -2001,7 +1999,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         path_buf[..abs_workspace_path.len()].copy_from_slice(abs_workspace_path);
         path_buf[abs_workspace_path.len()] = 0;
         // SAFETY: NUL written above
-        let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), abs_workspace_path.len()) };
+        let z = ZStr::from_buf(&path_buf[..], abs_workspace_path.len());
         match dir_open_dir_z(&Dir::cwd(), z, bun_sys::OpenDirOptions { iterate: true, ..Default::default() }) {
             Ok(d) => break 'root_dir d,
             Err(err) => {
@@ -2214,7 +2212,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let compression_level: &[u8] = opt_pack_gzip_level(manager).unwrap_or(b"9");
     write!(&mut print_buf, "{}\x00", bstr::BStr::new(compression_level)).expect("OOM");
     // SAFETY: print_buf[compression_level.len()] == 0 written above
-    let level_z = unsafe { ZStr::from_raw(print_buf.as_ptr(), compression_level.len()) };
+    let level_z = ZStr::from_buf(&print_buf[..], compression_level.len());
     match archive.write_set_filter_option(None, zstr_lit(b"compression-level\0"), level_z) {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic("compression level must be between 0 and 9, received {}", format_args!("{}", bstr::BStr::new(compression_level)));
@@ -2257,13 +2255,13 @@ pub fn pack<const FOR_PUBLISH: bool>(
         let most_likely_a_slash = dest_buf[abs_tarball_dest_dir_end];
         dest_buf[abs_tarball_dest_dir_end] = 0;
         // SAFETY: NUL written above
-        let abs_tarball_dest_dir = unsafe { ZStr::from_raw(dest_buf.as_ptr(), abs_tarball_dest_dir_end) };
+        let abs_tarball_dest_dir = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_dir_end);
         let _ = bun_sys::make_path(Dir::cwd(), abs_tarball_dest_dir.as_bytes());
         dest_buf[abs_tarball_dest_dir_end] = most_likely_a_slash;
     }
 
     // SAFETY: dest_buf[abs_tarball_dest_len] == 0 (written by tarball_destination)
-    let abs_tarball_dest = unsafe { ZStr::from_raw(dest_buf.as_ptr(), abs_tarball_dest_len) };
+    let abs_tarball_dest = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_len);
 
     // TODO: experiment with `archive.writeOpenMemory()`
     match archive.write_open_filename(abs_tarball_dest) {
@@ -2661,7 +2659,7 @@ fn tarball_destination<'a>(
 
         // SAFETY: NUL written at pack_filename.len()
         return (
-            unsafe { ZStr::from_raw(dest_buf.as_ptr(), tarball_name_len - 1) },
+            ZStr::from_buf(&dest_buf[..], tarball_name_len - 1),
             0,
         );
     } else {
@@ -2699,7 +2697,7 @@ fn tarball_destination<'a>(
 
         // SAFETY: NUL is the final byte written
         return (
-            unsafe { ZStr::from_raw(dest_buf.as_ptr(), dir_len_trimmed + tarball_name_len - 1) },
+            ZStr::from_buf(&dest_buf[..], dir_len_trimmed + tarball_name_len - 1),
             dir_len_full,
         );
     }
@@ -2826,7 +2824,7 @@ fn add_archive_entry(
     write!(print_buf, "{}{}\x00", bstr::BStr::new(PACKAGE_PREFIX), bstr::BStr::new(filename.as_bytes())).expect("OOM");
     let pathname_len = PACKAGE_PREFIX.len() + filename.as_bytes().len();
     // SAFETY: print_buf[pathname_len] == 0 written above
-    let pathname = unsafe { ZStr::from_raw(print_buf.as_ptr(), pathname_len) };
+    let pathname = ZStr::from_buf(&print_buf[..], pathname_len);
     entry.set_pathname(pathname);
     print_buf.clear();
 

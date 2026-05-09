@@ -504,7 +504,7 @@ impl Value {
     #[inline]
     pub fn init_none() -> Value {
         // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-        unsafe { bun_core::ffi::zeroed() }
+        unsafe { bun_core::ffi::zeroed_unchecked() }
     }
     #[inline]
     pub fn init_file(file: String) -> Value {
@@ -792,16 +792,12 @@ impl<'a> Linker<'a> {
             let bunx_suffix = w!(".bunx\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
             // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-            let abs_bunx_file = unsafe {
-                bun_str::WStr::from_raw(dest_buf.as_ptr(), abs_dest_w_len + b".bunx".len())
-            };
+            let abs_bunx_file = bun_str::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
             let _ = sys::unlink_w(abs_bunx_file);
             let exe_suffix = w!(".exe\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
             // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
-            let abs_exe_file = unsafe {
-                bun_str::WStr::from_raw(dest_buf.as_ptr(), abs_dest_w_len + b".exe".len())
-            };
+            let abs_exe_file = bun_str::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
             let _ = sys::unlink_w(abs_exe_file);
         }
     }
@@ -1044,9 +1040,7 @@ impl<'a> Linker<'a> {
         dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
 
         // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-        let abs_bunx_file = unsafe {
-            bun_str::WStr::from_raw(dest_buf.as_ptr(), abs_dest_w_len + b".bunx".len())
-        };
+        let abs_bunx_file = bun_str::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
 
         let bunx_file = 'bunx_file: {
             match sys::File::openat_os_path(
@@ -1153,9 +1147,7 @@ impl<'a> Linker<'a> {
         let exe_suffix = w!(".exe\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
         // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
-        let abs_exe_file = unsafe {
-            bun_str::WStr::from_raw(dest_buf.as_ptr(), abs_dest_w_len + b".exe".len())
-        };
+        let abs_exe_file = bun_str::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
 
         if let Err(err) = sys::File::write_file_os_path(
             Fd::invalid(),

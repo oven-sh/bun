@@ -253,7 +253,7 @@ impl<'a> CopyFile<'a> {
                     n
                 };
                 // SAFETY: path_buf1[dest_len] == 0 written above.
-                let dest: &bun_str::ZStr = unsafe { bun_str::ZStr::from_raw(path_buf1.as_ptr(), dest_len) };
+                let dest: &bun_str::ZStr = bun_str::ZStr::from_buf(&path_buf1[..], dest_len);
                 let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
                 match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                     bun_sys::Result::Ok(result) => {
@@ -573,7 +573,7 @@ impl<'a> CopyFile<'a> {
                 .slice_z(&mut dest_buf)
                 .len();
             // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
-            let dest = unsafe { bun_str::ZStr::from_raw(dest_buf.as_ptr(), dest_len) };
+            let dest = bun_str::ZStr::from_buf(&dest_buf[..], dest_len);
             match bun_sys::clonefile(
                 self.source_file_store.pathlike.path().slice_z(&mut source_buf),
                 dest,
@@ -1420,9 +1420,7 @@ impl<'a> CopyFileWindows<'a> {
                                 let len = out.len();
                                 pathbuf1[len] = 0;
                                 // SAFETY: pathbuf1[len] == 0 written above
-                                break 'brk unsafe {
-                                    bun_str::ZStr::from_raw(pathbuf1.as_ptr(), len)
-                                };
+                                break 'brk bun_str::ZStr::from_buf(&pathbuf1[..], len);
                             }
                         },
                     }
@@ -1467,9 +1465,7 @@ impl<'a> CopyFileWindows<'a> {
                                 let len = out.len();
                                 pathbuf2[len] = 0;
                                 // SAFETY: pathbuf2[len] == 0 written above
-                                break 'brk unsafe {
-                                    bun_str::ZStr::from_raw(pathbuf2.as_ptr(), len)
-                                };
+                                break 'brk bun_str::ZStr::from_buf(&pathbuf2[..], len);
                             }
                         },
                     }

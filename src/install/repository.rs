@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 use core::fmt;
-use std::sync::Once;
+use std::sync::OnceLock;
 
 use bstr::BStr;
 
@@ -81,26 +81,17 @@ struct SloppyGlobalGitConfig {
     has_ssh_command: bool,
 }
 
-// PORTING.md §Global mutable state: written exactly once under `Once`, then
-// read-only. RacyCell over the `Copy` POD (not `OnceLock` because
-// `load_and_parse` may early-return without writing yet must mark Once done).
-static SLOPPY_HOLDER: bun_core::RacyCell<SloppyGlobalGitConfig> =
-    bun_core::RacyCell::new(SloppyGlobalGitConfig {
-        has_askpass: false,
-        has_ssh_command: false,
-    });
-static LOAD_AND_PARSE_ONCE: Once = Once::new();
+// Written exactly once on first `get()`, then read-only.
+static SLOPPY_HOLDER: OnceLock<SloppyGlobalGitConfig> = OnceLock::new();
 
 impl SloppyGlobalGitConfig {
     pub fn get() -> SloppyGlobalGitConfig {
-        LOAD_AND_PARSE_ONCE.call_once(Self::load_and_parse);
-        // SAFETY: written exactly once under `Once` above; read-only thereafter.
-        unsafe { SLOPPY_HOLDER.read() }
+        *SLOPPY_HOLDER.get_or_init(Self::load_and_parse)
     }
 
-    pub fn load_and_parse() {
+    fn load_and_parse() -> SloppyGlobalGitConfig {
         let Some(home_dir) = bun_core::env_var::HOME.get() else {
-            return;
+            return SloppyGlobalGitConfig::default();
         };
 
         let mut config_file_path_buf = PathBuffer::uninit();
@@ -113,7 +104,7 @@ impl SloppyGlobalGitConfig {
             config_file_path,
             bun_logger::ToSourceOptions { convert_bom: true },
         ) else {
-            return;
+            return SloppyGlobalGitConfig::default();
         };
         // `defer allocator.free(source.contents)` — handled by Drop on `source`.
 
@@ -192,12 +183,9 @@ impl SloppyGlobalGitConfig {
             }
         }
 
-        // SAFETY: only called once via `Once::call_once`.
-        unsafe {
-            SLOPPY_HOLDER.write(SloppyGlobalGitConfig {
-                has_askpass: found_askpass,
-                has_ssh_command: found_ssh_command,
-            });
+        SloppyGlobalGitConfig {
+            has_askpass: found_askpass,
+            has_ssh_command: found_ssh_command,
         }
     }
 }

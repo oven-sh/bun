@@ -391,7 +391,7 @@ impl File {
 
     pub fn stat(&self) -> Stat {
         // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-        let mut result: Stat = unsafe { bun_core::ffi::zeroed() };
+        let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
         result.st_size = self.contents.len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
@@ -1650,7 +1650,7 @@ pub fn download_to_path(
                     let written = cursor.position() as usize;
                     tmpname_buf[written] = 0;
                     // SAFETY: tmpname_buf[written] == 0 written above
-                    unsafe { ZStr::from_raw(tmpname_buf.as_ptr(), written) }
+                    ZStr::from_buf(&tmpname_buf[..], written)
                 };
                 let tmpdir = bun_sys::Dir::cwd()
                     .make_open_path(tempdir_name.as_bytes(), Default::default())?;
@@ -1727,7 +1727,7 @@ pub fn download(
     };
     version_str_buf[written] = 0;
     // SAFETY: version_str_buf[written] == 0 written above; buffer outlives the borrow.
-    let version_str = unsafe { ZStr::from_raw(version_str_buf.as_ptr(), written) };
+    let version_str = ZStr::from_buf(&version_str_buf[..], written);
     let mut needs_download: bool = true;
     let dest_z = target.exe_path(&mut exe_path_buf, version_str, env, &mut needs_download);
     if needs_download {
@@ -1815,7 +1815,7 @@ pub fn to_executable(
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
         // SAFETY: trailing 0 byte appended above.
-        let version_zstr = unsafe { ZStr::from_raw(version_str.as_ptr(), version_str.len() - 1) };
+        let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
         let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);

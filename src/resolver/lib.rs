@@ -39,6 +39,7 @@ pub use package_json::PackageJSON;
 pub use tsconfig_json::TSConfigJSON;
 /// Re-export real `DirInfo`.
 pub use dir_info::DirInfo;
+pub use dir_info::DirInfoRef;
 /// Re-export real filesystem `Path`.
 pub use fs::Path;
 /// Re-export real `GlobalCache`.
@@ -896,6 +897,21 @@ pub mod fs {
     }
 
     impl<'a> EntryLookup<'a> {
+        /// Shared borrow of the looked-up `Entry`.
+        ///
+        /// # Safety (encapsulated)
+        /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSMap
+        /// singleton (see `dir_entry::EntryStore`); never freed. `Entry`'s
+        /// only mutable state (`cache`) is behind `UnsafeCell`, so interior
+        /// writes via `cache_mut()` do not alias this `&Entry`. The
+        /// `PhantomData<&'a Entry>` ties the borrow to the `DirEntry` it was
+        /// looked up from.
+        #[inline(always)]
+        pub fn entry(&self) -> &'a Entry {
+            // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
+            unsafe { &*self.entry }
+        }
+
         /// # Safety
         /// `entry` is an EntryStore-owned slot; caller holds `RealFS.entries_mutex`
         /// and must not let the returned `&mut Entry` overlap any other live
@@ -1730,7 +1746,7 @@ pub mod fs {
                 }
 
                 // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD).
-                let mut info: w::BY_HANDLE_FILE_INFORMATION = unsafe { bun_core::ffi::zeroed() };
+                let mut info: w::BY_HANDLE_FILE_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
                 // SAFETY: `handle` is valid; `info` is a valid out-param.
                 if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
                     cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
@@ -2179,7 +2195,7 @@ pub mod dir_entry_accessor {
                     let len = slice.len();
                     buf[len] = 0;
                     // SAFETY: buf[len] == 0 written above
-                    unsafe { ZStr::from_raw(buf.as_ptr(), len) }
+                    ZStr::from_buf(&buf[..], len)
                 } else {
                     path_
                 }
@@ -2205,7 +2221,7 @@ pub mod dir_entry_accessor {
                     let len = slice.len();
                     buf[len] = 0;
                     // SAFETY: buf[len] == 0 written above
-                    unsafe { ZStr::from_raw(buf.as_ptr(), len) }
+                    ZStr::from_buf(&buf[..], len)
                 } else {
                     path_
                 }
@@ -3417,6 +3433,7 @@ use crate::tsconfig_json::TSConfigJSON;
 
 pub use crate::data_url::DataURL;
 pub use crate::dir_info as DirInfo;
+pub use crate::dir_info::DirInfoRef;
 pub use ::bun_options_types::GlobalCache::GlobalCache;
 
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
@@ -3956,7 +3973,7 @@ pub struct MatchResult {
     pub is_node_module: bool,
     pub package_json: Option<*const PackageJSON>,
     pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
-    pub dir_info: Option<*const DirInfo::DirInfo>,
+    pub dir_info: Option<DirInfoRef>,
     pub module_type: options::ModuleType,
     pub is_external: bool,
 }
@@ -4049,7 +4066,7 @@ pub struct LoadResult {
     pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
     pub dirname_fd: FD,
     pub file_fd: FD,
-    pub dir_info: Option<*const DirInfo::DirInfo>,
+    pub dir_info: Option<DirInfoRef>,
 }
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
@@ -4617,8 +4634,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
         let dir_info = self.dir_info_cached(source_dir).ok().flatten()?;
-        // SAFETY: ARENA — DirInfo ptr is a slot in the BSSMap singleton (`dir_cache`) and outlives the resolver (see LIFETIMES.tsv).
-        let tsconfig = unsafe { &*dir_info }.enclosing_tsconfig_json?;
+        let tsconfig = dir_info.enclosing_tsconfig_json?;
         if tsconfig.paths.count() == 0 {
             return None;
         }
@@ -5090,12 +5106,6 @@ impl<'a> Resolver<'a> {
         let mut module_type = result.module_type;
         while let Some(path) = iter.next() {
             let Ok(Some(dir)) = self.read_dir_info(path.name.dir) else { continue };
-            // SAFETY: ARENA — DirInfo ptr is a slot in the BSSMap singleton (`dir_cache`) and outlives
-            // the resolver (see LIFETIMES.tsv). Shared borrow only — `dir` is read-only in this loop
-            // body; a `&mut DirInfo` here would assert unique access to the slot while
-            // `dir.get_entries()` (which internally re-borrows the entries singleton) and the next
-            // iteration's `read_dir_info` run, which is unnecessary and SB-fragile.
-            let dir: &DirInfo::DirInfo = unsafe { &*dir };
             let mut needs_side_effects = true;
             if let Some(existing_ptr) = result.package_json {
                 // SAFETY: ARENA — PackageJSON ptrs are interned in the global allocator-backed cache and outlive the resolver (see LIFETIMES.tsv).
@@ -5193,11 +5203,11 @@ impl<'a> Resolver<'a> {
                 // Read-only `.get()` lookup — shared borrow only (no `&mut DirEntry` materialized).
                 let entries = unsafe { &*entries };
                 if let Some(query) = entries.get(path.name.filename) {
-                    let symlink_path = unsafe { &*query.entry }.symlink(self.rfs_ptr(), self.store_fd);
+                    let symlink_path = query.entry().symlink(self.rfs_ptr(), self.store_fd);
                     if !symlink_path.is_empty() {
                         path.set_realpath(symlink_path);
                         if !result.file_fd.is_valid() {
-                            result.file_fd = unsafe { &*query.entry }.cache().fd;
+                            result.file_fd = query.entry().cache().fd;
                         }
 
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -5209,7 +5219,7 @@ impl<'a> Resolver<'a> {
                         }
                     } else if !dir.abs_real_path.is_empty() {
                         // When the directory is a symlink, we don't need to call getFdPath.
-                        let parts = [dir.abs_real_path.as_ref(), unsafe { &*query.entry }.base()];
+                        let parts = [dir.abs_real_path.as_ref(), query.entry().base()];
                         let mut buf = bun_paths::PathBuffer::uninit();
 
                         // PORT NOTE: `abs_buf` returns a borrow of `buf`; capture only the
@@ -5218,10 +5228,10 @@ impl<'a> Resolver<'a> {
 
                         let store_fd = self.store_fd;
 
-                        if !unsafe { &*query.entry }.cache().fd.is_valid() && store_fd {
+                        if !query.entry().cache().fd.is_valid() && store_fd {
                             buf[out_len] = 0;
                             // SAFETY: buf[out_len] == 0 written above
-                            let span = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), out_len) };
+                            let span = bun_core::ZStr::from_buf(&buf[..], out_len);
                             // Spec resolver.zig:1099 uses `try std.fs.openFileAbsoluteZ`,
                             // which propagates I/O errors so `resolveAndAutoInstall` can
                             // return them as `Result.Union.failure`. Mirror that — never
@@ -5264,7 +5274,7 @@ impl<'a> Resolver<'a> {
                         // SAFETY: `entries_mutex` held by resolver mutex; sole writer.
                         unsafe { (*query.entry).cache_mut() }.symlink = PathString::init(symlink);
                         if !result.file_fd.is_valid() && store_fd {
-                            result.file_fd = unsafe { &*query.entry }.cache().fd;
+                            result.file_fd = query.entry().cache().fd;
                         }
 
                         path.set_realpath(symlink);
@@ -5344,9 +5354,7 @@ impl<'a> Resolver<'a> {
             }
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
-            if let Ok(Some(dir_info_ptr)) = self.dir_info_cached(source_dir) {
-                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                let dir_info: &DirInfo::DirInfo = unsafe { &*dir_info_ptr };
+            if let Ok(Some(dir_info)) = self.dir_info_cached(source_dir) {
                 if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
                     if tsconfig.paths.count() > 0 {
                         if let Some(res) = self.match_tsconfig_paths(tsconfig, import_path, kind) {
@@ -5570,14 +5578,10 @@ impl<'a> Resolver<'a> {
         // Check the "browser" map
         if self.care_about_browser_field {
             let dirname = bun_paths::dirname(abs_path).expect("unreachable");
-            if let Ok(Some(import_dir_info_ptr)) = self.dir_info_cached(dirname) {
-                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                let import_dir_info_outer = unsafe { &*import_dir_info_ptr };
-                // SAFETY: resolver mutex held; raw ptr re-borrowed narrowly below.
-                if let Some(import_dir_info) = unsafe { import_dir_info_outer.get_enclosing_browser_scope() } {
-                    // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                    let pkg = unsafe { &*import_dir_info }.package_json().unwrap();
-                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*import_dir_info }, abs_path) {
+            if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(dirname) {
+                if let Some(import_dir_info) = import_dir_info_outer.get_enclosing_browser_scope() {
+                    let pkg = import_dir_info.package_json().unwrap();
+                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(&import_dir_info, abs_path) {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let mut _path = Path::init(self.fs_ref().dirname_store.append_slice(abs_path).expect("unreachable"));
@@ -5640,7 +5644,7 @@ impl<'a> Resolver<'a> {
         global_cache: GlobalCache,
     ) -> ResultUnion {
         let mut import_path = unremapped_import_path;
-        let mut source_dir_info: *mut DirInfo::DirInfo = match self.dir_info_cached(source_dir) {
+        let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
             Err(_) => return ResultUnion::NotFound,
             Ok(Some(d)) => d,
             Ok(None) => 'dir: {
@@ -5688,12 +5692,9 @@ impl<'a> Resolver<'a> {
 
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
-            // SAFETY: ARENA — `source_dir_info` is a BSSMap-backed DirInfo slot that outlives the resolver (see LIFETIMES.tsv).
-            // SAFETY: resolver mutex held; raw ptr re-borrowed narrowly below.
-            if let Some(browser_scope) = unsafe { (*source_dir_info).get_enclosing_browser_scope() } {
-                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                if let Some(package_json) = unsafe { &*browser_scope }.package_json() {
-                    if let Some(remapped) = self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(unsafe { &*browser_scope }, import_path) {
+            if let Some(browser_scope) = source_dir_info.get_enclosing_browser_scope() {
+                if let Some(package_json) = browser_scope.package_json() {
+                    if let Some(remapped) = self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(&browser_scope, import_path) {
                         if remapped.is_empty() {
                             // "browser": {"module": false}
                             // does the module exist in the filesystem?
@@ -5762,17 +5763,14 @@ impl<'a> Resolver<'a> {
 
                 if res.package_json.is_some() && self.care_about_browser_field {
                     let base_dir_info = match res.dir_info {
-                        Some(d) => d.cast_mut(),
+                        Some(d) => d,
                         None => match self.read_dir_info(result.path_pair.primary.name.dir) {
                             Ok(Some(d)) => d,
                             _ => return ResultUnion::Success(result),
                         },
                     };
-                    // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                    // SAFETY: resolver mutex held; raw ptr re-borrowed narrowly below.
-                    if let Some(browser_scope) = unsafe { (*base_dir_info).get_enclosing_browser_scope() } {
-                        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                        if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*browser_scope }, result.path_pair.primary.text()) {
+                    if let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope() {
+                        if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(&browser_scope, result.path_pair.primary.text()) {
                             if remap.is_empty() {
                                 result.path_pair.primary.is_disabled = true;
                                 result.path_pair.primary = Fs::Path::init_with_namespace(remap, b"file");
@@ -5816,16 +5814,14 @@ impl<'a> Resolver<'a> {
     ) -> Option<*const PackageJSON> {
         let mut dir_info = self.dir_info_cached(result.path_pair.primary.name.dir).ok().flatten()?;
         loop {
-            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-            let di = unsafe { &*dir_info };
-            if let Some(pkg) = di.package_json() {
+            if let Some(pkg) = dir_info.package_json() {
                 // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
                 // In that case, we really would like the top-level package that you download from NPM
                 // so we ignore any unnamed packages
                 return Some(std::ptr::from_ref(pkg));
             }
 
-            dir_info = di.get_parent()?;
+            dir_info = dir_info.get_parent()?;
         }
     }
 
@@ -5878,11 +5874,9 @@ impl<'a> Resolver<'a> {
 
         {
             let dir_info = self.dir_info_cached(slice).ok().flatten()?;
-            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-            let di = unsafe { &*dir_info };
             Some(RootPathPair {
                 base_path: slice,
-                package_json: std::ptr::from_ref(di.package_json()?),
+                package_json: std::ptr::from_ref(dir_info.package_json()?),
             })
         }
     }
@@ -5966,26 +5960,22 @@ impl<'a> Resolver<'a> {
         &mut self,
         import_path: &[u8],
         kind: ast::ImportKind,
-        // PORT NOTE: raw `*mut` (not `&mut`) — body re-enters `dir_cache` via
+        // PORT NOTE: `DirInfoRef` (not `&mut`) — body re-enters `dir_cache` via
         // `dir_info_cached()` which, in the self-reference branch, returns the
         // SAME BSSMap slot. A `&mut` param carries an FnEntry protector under
         // Stacked Borrows; the inner retag would pop it (aliased-&mut UB).
-        // Spec resolver.zig:1761 takes raw `*DirInfo`; re-borrow narrowly.
-        _dir_info: *mut DirInfo::DirInfo,
+        // Spec resolver.zig:1761 takes raw `*DirInfo`; the arena handle Derefs
+        // to `&DirInfo` per use so overlapping shared reads are sound.
+        _dir_info: DirInfoRef,
         global_cache: GlobalCache,
         forbid_imports: bool,
     ) -> MatchResultUnion {
-        // SAFETY: (function-wide) every `unsafe { &*dir_info }` / `&*_dir_info_package_json` /
-        // `&*pkg_dir_info_ptr` deref below targets an ARENA-backed DirInfo/PackageJSON slot in
-        // the BSSMap singleton (`dir_cache`/`DirnameStore`), which outlives the resolver
-        // (see LIFETIMES.tsv). Raw ptrs are used only to sidestep borrowck across `&mut self` calls.
-        let mut dir_info: *mut DirInfo::DirInfo = _dir_info;
+        let mut dir_info: DirInfoRef = _dir_info;
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Searching for {} in \"node_modules\" directories starting from \"{}\"",
                 bstr::BStr::new(import_path),
-                // SAFETY: see function-wide note above.
-                bstr::BStr::new(unsafe { &*dir_info }.abs_path)
+                bstr::BStr::new(dir_info.abs_path)
             ));
             debug.increase_indent();
         }
@@ -5994,8 +5984,7 @@ impl<'a> Resolver<'a> {
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
-        // SAFETY: see function-wide note above.
-        if let Some(tsconfig) = unsafe { &*dir_info }.enclosing_tsconfig_json {
+        if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
                 if let Some(res) = self.match_tsconfig_paths(tsconfig, import_path, kind) {
@@ -6019,20 +6008,17 @@ impl<'a> Resolver<'a> {
         let mut is_self_reference = false;
 
         // Find the parent directory with the "package.json" file
-        let mut dir_info_package_json: Option<*mut DirInfo::DirInfo> = Some(dir_info);
+        let mut dir_info_package_json: Option<DirInfoRef> = Some(dir_info);
         while let Some(d) = dir_info_package_json {
-            // SAFETY: see function-wide note above.
-            if unsafe { &*d }.package_json.is_some() {
+            if d.package_json.is_some() {
                 break;
             }
-            // SAFETY: see function-wide note above.
-            dir_info_package_json = unsafe { &*d }.get_parent();
+            dir_info_package_json = d.get_parent();
         }
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
         if let Some(_dir_info_package_json) = dir_info_package_json {
-            // SAFETY: see function-wide note above.
-            let package_json = unsafe { &*_dir_info_package_json }.package_json().unwrap();
+            let package_json = _dir_info_package_json.package_json().unwrap();
 
             if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
                 let r = self.load_package_imports(import_path, _dir_info_package_json, kind, global_cache);
@@ -6065,18 +6051,15 @@ impl<'a> Resolver<'a> {
             // Skip directories that are themselves called "node_modules", since we
             // don't ever want to search for "node_modules/node_modules"
             'node_modules: {
-                // SAFETY: see function-wide note above.
-                if !(unsafe { &*dir_info }.has_node_modules() || is_self_reference) {
+                if !(dir_info.has_node_modules() || is_self_reference) {
                     break 'node_modules;
                 }
                 any_node_modules_folder = true;
                 let abs_path: &[u8] = if is_self_reference {
-                    // SAFETY: see function-wide note above.
-                    unsafe { &*dir_info }.abs_path
+                    dir_info.abs_path
                 } else {
                     match self.fs_ref().abs_buf_checked(
-                        // SAFETY: see function-wide note above.
-                        &[unsafe { &*dir_info }.abs_path, b"node_modules", import_path],
+                        &[dir_info.abs_path, b"node_modules", import_path],
                         bufs!(node_modules_check),
                     ) {
                         Some(p) => p,
@@ -6095,17 +6078,13 @@ impl<'a> Resolver<'a> {
 
                 if let Some(ref esm) = esm_ {
                     let abs_package_path: &[u8] = if is_self_reference {
-                        // SAFETY: see function-wide note above.
-                        unsafe { &*dir_info }.abs_path
+                        dir_info.abs_path
                     } else {
-                        // SAFETY: see function-wide note above.
-                        let parts = [unsafe { &*dir_info }.abs_path, b"node_modules".as_slice(), esm.name];
+                        let parts = [dir_info.abs_path, b"node_modules".as_slice(), esm.name];
                         self.fs_ref().abs_buf(&parts, bufs!(esm_absolute_package_path))
                     };
 
-                    if let Ok(Some(pkg_dir_info_ptr)) = self.dir_info_cached(abs_package_path) {
-                        // SAFETY: see function-wide note above.
-                        let pkg_dir_info = unsafe { &*pkg_dir_info_ptr };
+                    if let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path) {
                         self.extension_order = match kind {
                             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
                                 options::ExtOrder::Css
@@ -6208,7 +6187,7 @@ impl<'a> Resolver<'a> {
                                         // `Path` (already done one line up for `path_pair.primary`).
                                         is_node_module: Path::init(package_json.source.path.text).is_node_module(),
                                         package_json: Some(std::ptr::from_ref(package_json)),
-                                        dir_info: Some(dir_info.cast_const()),
+                                        dir_info: Some(dir_info),
                                         ..Default::default()
                                     });
                                 }
@@ -6229,8 +6208,7 @@ impl<'a> Resolver<'a> {
                 self.extension_order = prev_extension_order;
             }
 
-            // SAFETY: see function-wide note above.
-            match unsafe { &*dir_info }.get_parent() {
+            match dir_info.get_parent() {
                 Some(p) => dir_info = p,
                 None => break,
             }
@@ -6296,8 +6274,7 @@ impl<'a> Resolver<'a> {
                 let mut resolved_package_id: Install::PackageID = 'brk: {
                     // check if the package.json in the source directory was already added to the lockfile
                     // and try to look up the dependency from there
-                    // SAFETY: see function-wide note above.
-                    if let Some(package_json) = unsafe { &*dir_info }.package_json_for_dependencies() {
+                    if let Some(package_json) = dir_info.package_json_for_dependencies() {
                         let mut dependencies_list: &[Dependency::Dependency] = &[];
                         let resolve_from_lockfile = package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID;
 
@@ -6356,8 +6333,7 @@ impl<'a> Resolver<'a> {
                         if dependency_version.tag == Dependency::version::Tag::Uninitialized {
                             let sliced_string = Semver::SlicedString::init(esm.version, esm.version);
                             if !esm_.as_ref().unwrap().version.is_empty()
-                                // SAFETY: see function-wide note above.
-                                && unsafe { &*dir_info }.enclosing_package_json.is_some()
+                                && dir_info.enclosing_package_json.is_some()
                                 && global_cache.allow_version_specifier()
                             {
                                 if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
@@ -6387,13 +6363,13 @@ impl<'a> Resolver<'a> {
 
                     // unsupported or not found dependency, we might need to install it to the cache
                     match self.enqueue_dependency_to_resolve(
-                        // SAFETY: see function-wide note above. Read the raw
-                        // `NonNull` fields directly (NOT the `&'static`-yielding
-                        // accessors) so mut-provenance from `intern_package_json`
-                        // survives to the write inside (Zig: resolver.zig:2074).
-                        unsafe { &*dir_info }
+                        // Read the raw `NonNull` fields directly (NOT the
+                        // `&'static`-yielding accessors) so mut-provenance from
+                        // `intern_package_json` survives to the write inside
+                        // (Zig: resolver.zig:2074).
+                        dir_info
                             .package_json_for_dependencies
-                            .or(unsafe { &*dir_info }.package_json),
+                            .or(dir_info.package_json),
                         &esm,
                         dependency_behavior,
                         &mut resolved_package_id,
@@ -6486,9 +6462,7 @@ impl<'a> Resolver<'a> {
 
                 match self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id) {
                     Ok(dir_info_to_use_) => {
-                        if let Some(pkg_dir_info_ptr) = dir_info_to_use_ {
-                            // SAFETY: see function-wide note above.
-                            let pkg_dir_info = unsafe { &*pkg_dir_info_ptr };
+                        if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;
                             let mut module_type = options::ModuleType::Unknown;
                             if let Some(package_json) = pkg_dir_info.package_json() {
@@ -6553,7 +6527,7 @@ impl<'a> Resolver<'a> {
                                             file_fd: FD::INVALID,
                                             is_node_module: package_json.source.path.is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
-                                            dir_info: Some(dir_info.cast_const()),
+                                            dir_info: Some(dir_info),
                                             ..Default::default()
                                         });
                                     }
@@ -6597,7 +6571,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         dir_path_maybe_trail_slash: &[u8],
         package_id: Install::PackageID,
-    ) -> core::result::Result<Option<*mut DirInfo::DirInfo>, bun_core::Error> {
+    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
         // TODO(port): narrow error set
         debug_assert!(self.package_manager.is_some());
 
@@ -6612,7 +6586,8 @@ impl<'a> Resolver<'a> {
         let mut dir_cache_info_result = dc.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::Status::Exists {
             // we've already looked up this package before
-            return Ok(dc.at_index(dir_cache_info_result.index).map(|d| std::ptr::from_mut(d)));
+            // SAFETY: `at_index` yields a BSSMap slot ptr — `DirInfoRef::from_raw` contract.
+            return Ok(dc.at_index(dir_cache_info_result.index).map(|d| unsafe { DirInfoRef::from_raw(std::ptr::from_mut(d)) }));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -6738,7 +6713,8 @@ impl<'a> Resolver<'a> {
             open_dir,
             Some(package_id),
         )?;
-        Ok(Some(dir_info_ptr))
+        // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
+        Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
     }
 
     fn enqueue_dependency_to_resolve(
@@ -6881,15 +6857,13 @@ impl<'a> Resolver<'a> {
 
         match esm_resolution.status {
             Status::Exact | Status::ExactEndsWithStar => {
-                let resolved_dir_info_ptr = match self.dir_info_cached(bun_paths::dirname(abs_esm_path).unwrap()).ok().flatten() {
+                let resolved_dir_info = match self.dir_info_cached(bun_paths::dirname(abs_esm_path).unwrap()).ok().flatten() {
                     Some(d) => d,
                     None => {
                         esm_resolution.status = Status::ModuleNotFound;
                         return None;
                     }
                 };
-                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                let resolved_dir_info = unsafe { &*resolved_dir_info_ptr };
                 let entries = match resolved_dir_info.get_entries(self.generation) {
                     // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton;
                     // outlives the resolver. Read-only (`.get()` / `.fd`) — shared borrow only,
@@ -6941,15 +6915,14 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                if unsafe { &*entry_query.entry }.kind(self.rfs_ptr(), self.store_fd) == Fs::file_system::EntryKind::Dir {
+                if entry_query.entry().kind(self.rfs_ptr(), self.store_fd) == Fs::file_system::EntryKind::Dir {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     esm_resolution.status = Status::UnsupportedDirectoryImport;
 
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if ends_with_star {
-                        if let Ok(Some(dir_info_ptr)) = self.dir_info_cached(abs_esm_path) {
-                            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                            if let Some(dir_entries) = unsafe { &*dir_info_ptr }.get_entries(self.generation) {
+                        if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
+                            if let Some(dir_entries) = dir_info_ref.get_entries(self.generation) {
                                 // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
                                 // Read-only `.get()` lookup — shared borrow only.
                                 let dir_entries = unsafe { &*dir_entries };
@@ -6962,7 +6935,7 @@ impl<'a> Resolver<'a> {
                                     file_name[index.len()..].copy_from_slice(ext);
                                     let index_query = dir_entries.get(&file_name[..]);
                                     if let Some(iq) = index_query {
-                                        if unsafe { &*iq.entry }.kind(self.rfs_ptr(), self.store_fd) == Fs::file_system::EntryKind::File {
+                                        if iq.entry().kind(self.rfs_ptr(), self.store_fd) == Fs::file_system::EntryKind::File {
                                             if let Some(debug) = self.debug_logs.as_mut() {
                                                 let mut ms = Vec::with_capacity(1 + file_name.len());
                                                 ms.push(b'/');
@@ -6986,13 +6959,13 @@ impl<'a> Resolver<'a> {
                 }
 
                 let absolute_out_path: &[u8] = {
-                    if unsafe { &*entry_query.entry }.abs_path.is_empty() {
+                    if entry_query.entry().abs_path.is_empty() {
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
                         unsafe { &mut *entry_query.entry }.abs_path =
                             PathString::init(self.fs_ref().dirname_store.append_slice(abs_esm_path).expect("unreachable"));
                     }
-                    unsafe { &*entry_query.entry }.abs_path.slice()
+                    entry_query.entry().abs_path.slice()
                 };
                 let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
                     pkg.module_type
@@ -7003,8 +6976,8 @@ impl<'a> Resolver<'a> {
                 Some(MatchResult {
                     path_pair: PathPair { primary: Path::init_with_namespace(absolute_out_path, b"file"), secondary: None },
                     dirname_fd: entries.fd,
-                    file_fd: unsafe { &*entry_query.entry }.cache().fd,
-                    dir_info: Some(std::ptr::from_ref(resolved_dir_info)),
+                    file_fd: entry_query.entry().cache().fd,
+                    dir_info: Some(resolved_dir_info),
                     diff_case: entry_query.diff_case,
                     is_node_module: true,
                     package_json: Some(resolved_dir_info.package_json().map(|p| std::ptr::from_ref(p)).unwrap_or(std::ptr::from_ref(package_json))),
@@ -7031,10 +7004,10 @@ impl<'a> Resolver<'a> {
 
     pub fn resolve_without_remapping(
         &mut self,
-        // PORT NOTE: raw `*mut` (not `&mut`) — forwards into `load_node_modules`
+        // PORT NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
         // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
-        // Spec resolver.zig:2584 takes raw `*DirInfo`; re-borrow narrowly.
-        source_dir_info: *mut DirInfo::DirInfo,
+        // Spec resolver.zig:2584 takes raw `*DirInfo`.
+        source_dir_info: DirInfoRef,
         import_path: &[u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
@@ -7042,8 +7015,7 @@ impl<'a> Resolver<'a> {
         if is_package_path(import_path) {
             self.load_node_modules(import_path, kind, source_dir_info, global_cache, false)
         } else {
-            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-            let Some(resolved) = self.fs_ref().abs_buf_checked(&[unsafe { &*source_dir_info }.abs_path, import_path], bufs!(resolve_without_remapping)) else {
+            let Some(resolved) = self.fs_ref().abs_buf_checked(&[source_dir_info.abs_path, import_path], bufs!(resolve_without_remapping)) else {
                 return MatchResultUnion::NotFound;
             };
             if let Some(result) = self.load_as_file_or_directory(resolved, kind) {
@@ -7163,23 +7135,23 @@ impl<'a> Resolver<'a> {
         Ok(Some(intern_package_json(pkg)))
     }
 
-    fn dir_info_cached(&mut self, path: &[u8]) -> core::result::Result<Option<*mut DirInfo::DirInfo>, bun_core::Error> {
+    fn dir_info_cached(&mut self, path: &[u8]) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
         self.dir_info_cached_maybe_log::<true, true>(path)
     }
 
-    pub fn read_dir_info(&mut self, path: &[u8]) -> core::result::Result<Option<*mut DirInfo::DirInfo>, bun_core::Error> {
+    pub fn read_dir_info(&mut self, path: &[u8]) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
         self.dir_info_cached_maybe_log::<false, true>(path)
     }
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
-    pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<*const DirInfo::DirInfo> {
-        self.dir_info_cached_maybe_log::<false, true>(path).ok().flatten().map(|p| p.cast_const())
+    pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
+        self.dir_info_cached_maybe_log::<false, true>(path).ok().flatten()
     }
 
     fn dir_info_cached_maybe_log<const ENABLE_LOGGING: bool, const FOLLOW_SYMLINKS: bool>(
         &mut self,
         raw_input_path: &[u8],
-    ) -> core::result::Result<Option<*mut DirInfo::DirInfo>, bun_core::Error> {
+    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
         // TODO(port): narrow error set
         // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
         // doesn't keep `self` borrowed across the body.
@@ -7233,7 +7205,8 @@ impl<'a> Resolver<'a> {
         Self::assert_valid_cache_key(path_without_trailing_slash);
         let top_result = self.dir_cache_mut().get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::Status::Unknown {
-            return Ok(self.dir_cache_mut().at_index(top_result.index).map(|d| std::ptr::from_mut(d)));
+            // SAFETY: `at_index` yields a BSSMap slot ptr — `DirInfoRef::from_raw` contract.
+            return Ok(self.dir_cache_mut().at_index(top_result.index).map(|d| unsafe { DirInfoRef::from_raw(std::ptr::from_mut(d)) }));
         }
 
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
@@ -7648,7 +7621,8 @@ impl<'a> Resolver<'a> {
             let dc = self.dir_cache_mut();
             let dir_info_ptr: *mut DirInfo::DirInfo =
                 dc.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            let parent_dir_ptr = dc.at_index(top_parent.index).map(|d| std::ptr::from_mut(d));
+            // SAFETY: `at_index` yields a BSSMap slot ptr — `DirInfoRef::from_raw` contract.
+            let parent_dir_ptr = dc.at_index(top_parent.index).map(|d| unsafe { DirInfoRef::from_raw(std::ptr::from_mut(d)) });
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -7666,7 +7640,8 @@ impl<'a> Resolver<'a> {
             top_parent = queue_top.result;
 
             if queue_slice_len == 0 {
-                return Ok(Some(dir_info_ptr));
+                // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
+                return Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }));
 
                 // Is the directory we're searching for actually a file?
             } else if queue_slice_len == 1 {
@@ -7829,18 +7804,17 @@ impl<'a> Resolver<'a> {
     pub fn load_package_imports(
         &mut self,
         import_path: &[u8],
-        // PORT NOTE: raw `*mut` (not `&mut`) — `handle_esm_resolution` re-enters
+        // PORT NOTE: `DirInfoRef` (not `&mut`) — `handle_esm_resolution` re-enters
         // `dir_cache` via `dir_info_cached(dirname(abs_esm_path))`; for any
         // imports-map entry resolving to `./<file>` that dirname equals
         // `dir_info.abs_path`, re-deriving `&mut` to the SAME slot while a
         // `&mut` param's FnEntry protector is live is aliased-&mut UB.
-        // Spec resolver.zig:3182 takes raw `*DirInfo`; re-borrow narrowly.
-        dir_info: *mut DirInfo::DirInfo,
+        // Spec resolver.zig:3182 takes raw `*DirInfo`.
+        dir_info: DirInfoRef,
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> MatchResultUnion {
-        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-        let package_json = unsafe { &*dir_info }.package_json().unwrap();
+        let package_json = dir_info.package_json().unwrap();
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Looking for {} in \"imports\" map in {}",
@@ -7983,8 +7957,7 @@ impl<'a> Resolver<'a> {
                     // is disallowed if there is a "node_modules" folder in between the child
                     // package and the parent package.
                     let is_in_same_package = match dir_info.get_parent() {
-                        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                        Some(parent) => !unsafe { &*parent }.is_node_modules(),
+                        Some(parent) => !parent.is_node_modules(),
                         None => true,
                     };
 
@@ -8006,10 +7979,10 @@ impl<'a> Resolver<'a> {
     pub fn load_from_main_field(
         &mut self,
         path: &[u8],
-        // PORT NOTE: raw `*mut` (not `&mut`) — `get_enclosing_browser_scope()` may
-        // return `dir_info` itself (resolver.zig:4161 self-browser-scope), which
-        // would alias a live `&mut`. Spec uses raw `*DirInfo`; re-borrow narrowly.
-        dir_info: *mut DirInfo::DirInfo,
+        // PORT NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
+        // may return `dir_info` itself (resolver.zig:4161 self-browser-scope),
+        // which would alias a live `&mut`. Spec uses raw `*DirInfo`.
+        dir_info: DirInfoRef,
         _field_rel_path: &[u8],
         field: &[u8],
         extension_order: options::ExtOrder,
@@ -8035,12 +8008,9 @@ impl<'a> Resolver<'a> {
 
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
-            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; narrow re-borrow ends
-            // before `browser_scope` (which may alias `dir_info`) is held.
-            if let Some(browser_scope) = unsafe { (*dir_info).get_enclosing_browser_scope() } {
-                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                if let Some(browser_json) = unsafe { &*browser_scope }.package_json() {
-                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*browser_scope }, field_rel_path) {
+            if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
+                if let Some(browser_json) = browser_scope.package_json() {
+                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(&browser_scope, field_rel_path) {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let paths = [path, field_rel_path];
@@ -8064,8 +8034,7 @@ impl<'a> Resolver<'a> {
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
-            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot (see LIFETIMES.tsv).
-            if let Some(package_json) = unsafe { &*dir_info }.package_json() {
+            if let Some(package_json) = dir_info.package_json() {
                 dec_ret!(Some(MatchResult {
                     path_pair: PathPair { primary: Fs::Path::init(result.path), secondary: None },
                     package_json: Some(std::ptr::from_ref(package_json)),
@@ -8095,9 +8064,9 @@ impl<'a> Resolver<'a> {
     // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.zig
     // (no Zig callers; exported to C++ only)
 
-    // PORT NOTE: `dir_info` is raw `*mut` (matching spec `*DirInfo`) so
+    // PORT NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
-    pub fn load_as_index(&mut self, dir_info: *mut DirInfo::DirInfo, extension_order: options::ExtOrder) -> Option<MatchResult> {
+    pub fn load_as_index(&mut self, dir_info: DirInfoRef, extension_order: options::ExtOrder) -> Option<MatchResult> {
         // Try the "index" file with extensions
         // PORT NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
@@ -8127,10 +8096,7 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    fn load_index_with_extension(&mut self, dir_info: *mut DirInfo::DirInfo, ext: &[u8]) -> Option<MatchResult> {
-        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver;
-        // narrow re-borrow scoped to this fn body, no other live `&mut` to this slot.
-        let dir_info: &DirInfo::DirInfo = unsafe { &*dir_info };
+    fn load_index_with_extension(&mut self, dir_info: DirInfoRef, ext: &[u8]) -> Option<MatchResult> {
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field so the `&mut *self.fs()` calls below (`abs_buf`/`dirname_store.append_slice`)
         // don't pop its provenance. Re-borrow `&mut *rfs` at the single use site.
@@ -8147,9 +8113,9 @@ impl<'a> Resolver<'a> {
             // Read-only `.get()` lookup — shared borrow only.
             let entries = unsafe { &*entries };
             if let Some(lookup) = entries.get(&base[..]) {
-                if unsafe { &*lookup.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+                if lookup.entry().kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                     let out_buf: &[u8] = {
-                        if unsafe { &*lookup.entry }.abs_path.is_empty() {
+                        if lookup.entry().abs_path.is_empty() {
                             let parts = [dir_info.abs_path, &base[..]];
                             let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
@@ -8157,7 +8123,7 @@ impl<'a> Resolver<'a> {
                             unsafe { &mut *lookup.entry }.abs_path =
                                 PathString::init(self.fs_ref().dirname_store.append_slice(out_buf_).expect("unreachable"));
                         }
-                        unsafe { &*lookup.entry }.abs_path.slice()
+                        lookup.entry().abs_path.slice()
                     };
 
                     if let Some(debug) = self.debug_logs.as_mut() {
@@ -8197,10 +8163,10 @@ impl<'a> Resolver<'a> {
 
     pub fn load_as_index_with_browser_remapping(
         &mut self,
-        // PORT NOTE: raw `*mut` (not `&mut`) — `get_enclosing_browser_scope()` may
-        // return `dir_info` itself (resolver.zig:4161 self-browser-scope), which
-        // would alias a live `&mut`. Spec uses raw `*DirInfo`; re-borrow narrowly.
-        dir_info: *mut DirInfo::DirInfo,
+        // PORT NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
+        // may return `dir_info` itself (resolver.zig:4161 self-browser-scope),
+        // which would alias a live `&mut`. Spec uses raw `*DirInfo`.
+        dir_info: DirInfoRef,
         path_: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<MatchResult> {
@@ -8216,14 +8182,11 @@ impl<'a> Resolver<'a> {
         }
 
         if self.care_about_browser_field {
-            // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; narrow re-borrow ends
-            // before `browser_scope` (which may alias `dir_info`) is held.
-            if let Some(browser_scope) = unsafe { (*dir_info).get_enclosing_browser_scope() } {
+            if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
-                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
-                if let Some(browser_json) = unsafe { &*browser_scope }.package_json() {
-                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*browser_scope }, FIELD_REL_PATH) {
+                if let Some(browser_json) = browser_scope.package_json() {
+                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(&browser_scope, FIELD_REL_PATH) {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let paths = [path, FIELD_REL_PATH];
@@ -8277,9 +8240,8 @@ impl<'a> Resolver<'a> {
                 let node_modules_folder_offset = last_node_modules_folder + nm_seg.len();
                 // Determine the package name by looking at the next separator
                 if let Some(package_name_length) = strings::index_of_char(&file.path[node_modules_folder_offset..], SEP) {
-                    if let Ok(Some(package_dir_info_ptr)) = self.dir_info_cached(&file.path[0..node_modules_folder_offset + package_name_length as usize]) {
-                        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-                        if let Some(package_json) = unsafe { &*package_dir_info_ptr }.package_json() {
+                    if let Ok(Some(package_dir_info)) = self.dir_info_cached(&file.path[0..node_modules_folder_offset + package_name_length as usize]) {
+                        if let Some(package_json) = package_dir_info.package_json() {
                             return Some(MatchResult {
                                 path_pair: PathPair { primary: Path::init(file.path), secondary: None },
                                 diff_case: file.diff_case,
@@ -8319,11 +8281,10 @@ impl<'a> Resolver<'a> {
             }};
         }
 
-        // PORT NOTE: keep `dir_info` as raw `*mut` (matching spec resolver.zig:3674
-        // raw `*DirInfo`) and re-borrow narrowly. The callees fetch
-        // `get_enclosing_browser_scope()` which can resolve back to this same
-        // BSSMap slot — holding a long-lived `&mut` here would alias.
-        let dir_info: *mut DirInfo::DirInfo = match self.dir_info_cached(path) {
+        // PORT NOTE: `DirInfoRef` (matching spec resolver.zig:3674 raw `*DirInfo`).
+        // The callees fetch `get_enclosing_browser_scope()` which can resolve
+        // back to this same BSSMap slot — holding a `&mut` here would alias.
+        let dir_info: DirInfoRef = match self.dir_info_cached(path) {
             Ok(Some(d)) => d,
             Ok(None) => dec_ret!(None),
             Err(err) => {
@@ -8335,8 +8296,7 @@ impl<'a> Resolver<'a> {
         let mut package_json: Option<*const PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
-        // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-        if let Some(pkg_json) = unsafe { &*dir_info }.package_json() {
+        if let Some(pkg_json) = dir_info.package_json() {
             package_json = Some(std::ptr::from_ref(pkg_json));
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
@@ -8533,14 +8493,14 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = entries!().get(base) {
-            if unsafe { &*query.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+            if query.entry().kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
                 let abs_path: &'static [u8] = {
-                    if unsafe { &*query.entry }.abs_path.is_empty() {
-                        let abs_path_parts = [unsafe { &*query.entry }.dir, unsafe { &*query.entry }.base()];
+                    if query.entry().abs_path.is_empty() {
+                        let abs_path_parts = [query.entry().dir, query.entry().base()];
                         let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
@@ -8548,14 +8508,14 @@ impl<'a> Resolver<'a> {
                             self.fs_ref().dirname_store.append_slice(joined).expect("unreachable"),
                         );
                     }
-                    crate::path_string_static(&unsafe { &*query.entry }.abs_path)
+                    crate::path_string_static(&query.entry().abs_path)
                 };
 
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
                     diff_case: query.diff_case,
                     dirname_fd: entries!().fd,
-                    file_fd: unsafe { &*query.entry }.cache().fd,
+                    file_fd: query.entry().cache().fd,
                     dir_info: None,
                 }));
             }
@@ -8628,18 +8588,18 @@ impl<'a> Resolver<'a> {
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
                     if let Some(query) = entries!().get(&buffer[..]) {
-                        if unsafe { &*query.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+                        if query.entry().kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!("Rewrote to \"{}\" ", bstr::BStr::new(&buffer[..])));
                             }
 
                             dec_ret!(Some(LoadResult {
                                 path: {
-                                    if unsafe { &*query.entry }.abs_path.is_empty() {
+                                    if query.entry().abs_path.is_empty() {
                                         // SAFETY: `dir` is `&'static [u8]` (DirnameStore-interned),
                                         // copied out so no `&Entry` borrow survives into the
                                         // `&mut Entry` write below.
-                                        let entry_dir = unsafe { &*query.entry }.dir;
+                                        let entry_dir = query.entry().dir;
                                         let new_abs = if !entry_dir.is_empty() && entry_dir[entry_dir.len() - 1] == SEP {
                                             let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
                                             PathString::init(self.fs_ref().filename_store.append_parts(&parts).expect("unreachable"))
@@ -8652,11 +8612,11 @@ impl<'a> Resolver<'a> {
                                         // fully evaluated above — sole `&mut Entry` for this write.
                                         unsafe { &mut *query.entry }.abs_path = new_abs;
                                     }
-                                    crate::path_string_static(&unsafe { &*query.entry }.abs_path)
+                                    crate::path_string_static(&query.entry().abs_path)
                                 },
                                 diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
-                                file_fd: unsafe { &*query.entry }.cache().fd,
+                                file_fd: query.entry().cache().fd,
                                 dir_info: None,
                             }));
                         }
@@ -8703,7 +8663,7 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = unsafe { &*entries }.get(file_name) {
-            if unsafe { &*query.entry }.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+            if query.entry().kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(&buffer[..])));
                 }
@@ -8714,16 +8674,16 @@ impl<'a> Resolver<'a> {
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
                         // evaluated (shared reads) before the LHS `&mut Entry` is
                         // materialized for the write — no overlapping unique borrow.
-                        unsafe { &mut *query.entry }.abs_path = if unsafe { &*query.entry }.abs_path.is_empty() {
+                        unsafe { &mut *query.entry }.abs_path = if query.entry().abs_path.is_empty() {
                             PathString::init(self.fs_ref().dirname_store.append_slice(&buffer[..]).expect("unreachable"))
                         } else {
-                            unsafe { &*query.entry }.abs_path
+                            query.entry().abs_path
                         };
-                        crate::path_string_static(&unsafe { &*query.entry }.abs_path)
+                        crate::path_string_static(&query.entry().abs_path)
                     },
                     diff_case: query.diff_case,
                     dirname_fd: unsafe { &*entries }.fd,
-                    file_fd: unsafe { &*query.entry }.cache().fd,
+                    file_fd: query.entry().cache().fd,
                     dir_info: None,
                 });
             }
@@ -8739,7 +8699,7 @@ impl<'a> Resolver<'a> {
         _entries: *mut Fs::file_system::real_fs::EntriesOption,
         _result: allocators::Result,
         dir_entry_index: allocators::IndexType,
-        parent: Option<*mut DirInfo::DirInfo>,
+        parent: Option<DirInfoRef>,
         parent_index: allocators::IndexType,
         fd: FD,
         package_id: Option<Install::PackageID>,
@@ -8793,7 +8753,7 @@ impl<'a> Resolver<'a> {
         // if (entries != null) {
         if !info.is_node_modules() {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
-                info.flags.set_present(DirInfo::Flag::HasNodeModules, unsafe { &*entry.entry }.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir);
+                info.flags.set_present(DirInfo::Flag::HasNodeModules, entry.entry().kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir);
             }
         }
 
@@ -8836,7 +8796,7 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        if unsafe { &*q.entry }.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir {
+                        if q.entry().kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                             if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                                 // SAFETY: callers hold RESOLVER_MUTEX; first init.
@@ -8873,9 +8833,7 @@ impl<'a> Resolver<'a> {
         }
         // }
 
-        if let Some(parent_ptr) = parent {
-            // SAFETY: ARENA — parent DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
-            let parent_ = unsafe { &*parent_ptr };
+        if let Some(parent_) = parent {
             // Propagate the browser scope into child directories
             info.enclosing_browser_scope = parent_.enclosing_browser_scope;
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;
@@ -8909,13 +8867,13 @@ impl<'a> Resolver<'a> {
                     if let Some(lookup) = parent_entries.get(base) {
                         // SAFETY: entries_ptr is a slot in the BSSMap-backed entries singleton.
                         let entries_fd = unsafe { &*entries_ptr }.fd;
-                        if entries_fd.is_valid() && !unsafe { &*lookup.entry }.cache().fd.is_valid() && self.store_fd {
+                        if entries_fd.is_valid() && !lookup.entry().cache().fd.is_valid() && self.store_fd {
                             // SAFETY: `entries_mutex` held by caller; sole writer.
                             unsafe { (*lookup.entry).cache_mut() }.fd = entries_fd;
                         }
                         // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
-                let entry = unsafe { &*lookup.entry };
+                let entry = lookup.entry();
 
                         let mut symlink = entry.symlink(rfs!(), self.store_fd);
                         if !symlink.is_empty() {
@@ -8956,7 +8914,7 @@ impl<'a> Resolver<'a> {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
-                let entry = unsafe { &*lookup.entry };
+                let entry = lookup.entry();
                 if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                     info.package_json = if self.use_package_manager() && !info.has_node_modules() && !info.is_node_modules() {
                         self.parse_package_json::<true>(path, if FeatureFlags::STORE_FILE_DESCRIPTORS { fd } else { FD::INVALID }, package_id).ok().flatten()
@@ -8996,7 +8954,7 @@ impl<'a> Resolver<'a> {
                 if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
                     // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
-                let entry = unsafe { &*lookup.entry };
+                let entry = lookup.entry();
                     if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                         let parts = [path, b"tsconfig.json".as_slice()];
                         tsconfig_path = Some(self.fs_ref().abs_buf(&parts, bufs!(dir_info_uncached_filename)));
@@ -9006,7 +8964,7 @@ impl<'a> Resolver<'a> {
                     if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
                         // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
-                let entry = unsafe { &*lookup.entry };
+                let entry = lookup.entry();
                         if entry.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::File {
                             let parts = [path, b"jsconfig.json".as_slice()];
                             tsconfig_path = Some(self.fs_ref().abs_buf(&parts, bufs!(dir_info_uncached_filename)));

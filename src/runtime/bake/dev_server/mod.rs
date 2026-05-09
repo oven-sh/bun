@@ -1333,8 +1333,7 @@ impl DirectoryWatchStore {
             .read_dir_info(dir_name_to_watch)
         {
             Ok(Some(cache)) => {
-                // SAFETY: read_dir_info returns a live *mut DirInfo on Some.
-                let fd = unsafe { (*cache).get_file_descriptor() };
+                let fd = cache.get_file_descriptor();
                 if fd.is_valid() { Some(fd) } else { None }
             }
             Ok(None) | Err(_) => None,

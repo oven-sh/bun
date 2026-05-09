@@ -85,7 +85,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
         unsafe { &raw mut (*self.0.fs()).fs }
     }
     #[inline]
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<*const bun_resolver::DirInfo> {
+    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
         self.0.read_dir_info_ignore_error(path)
     }
 }
@@ -283,8 +283,7 @@ impl FileSystemRouter {
             if router
                 .load_routes(
                     &mut log,
-                    // SAFETY: resolver-owned DirInfo, valid for process lifetime.
-                    unsafe { &*root_dir_info },
+                    &root_dir_info,
                     &mut RouterResolver(&mut vm.transpiler.resolver),
                     &config_dir,
                 )
@@ -309,13 +308,10 @@ impl FileSystemRouter {
             return Err(global_this.throw_value(err_value?));
         }
 
-        // SAFETY: `root_dir_info` is a live `*mut DirInfo` returned by `read_dir_info`.
-        let base_dir_str = unsafe {
-            if !(&(*root_dir_info).abs_real_path).is_empty() {
-                (*root_dir_info).abs_real_path
-            } else {
-                (*root_dir_info).abs_path
-            }
+        let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {
+            root_dir_info.abs_real_path
+        } else {
+            root_dir_info.abs_path
         };
 
         // PORT NOTE: `vm.refCountedString` is an interning cache — on a cache HIT it
@@ -385,10 +381,7 @@ impl FileSystemRouter {
                 Err(_) => return,
             };
 
-        if let Some(dir) = root_dir_info {
-            // SAFETY: `dir` points into the resolver's BSSMap singleton; valid until
-            // `bust_dir_cache(path)` for THIS path runs (after the loop).
-            let dir_ref = unsafe { &*dir };
+        if let Some(dir_ref) = root_dir_info {
             if let Some(entries) = dir_ref.get_entries_const() {
                 'outer: for &entry_ptr in entries.data.values() {
                     // SAFETY: `entry_ptr` is a `*mut Entry` into the process-static
@@ -495,8 +488,7 @@ impl FileSystemRouter {
             if router
                 .load_routes(
                     &mut log,
-                    // SAFETY: resolver-owned DirInfo, valid for process lifetime.
-                    unsafe { &*root_dir_info },
+                    &root_dir_info,
                     &mut RouterResolver(&mut vm.transpiler.resolver),
                     &config_dir,
                 )

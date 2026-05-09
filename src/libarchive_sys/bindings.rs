@@ -1177,9 +1177,7 @@ impl ArchiveIterator {
         }
 
         // SAFETY: byte literal is NUL-terminated and 'static.
-        match a.read_set_options(unsafe {
-            ZStr::from_raw(b"read_concatenated_archives\0".as_ptr(), 26)
-        }) {
+        match a.read_set_options(ZStr::from_static(b"read_concatenated_archives\0")) {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return IteratorResult::init_err(
                     archive,

@@ -181,9 +181,8 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     } else if input_value.is_string() {
         input_slice = input_value.to_slice_or_null(global)?;
         input = input_slice.slice();
-    } else if let Some(blob) = input_value.as_::<Blob>() {
-        // SAFETY: `blob` is a live JSC-owned cell while `input_value` is rooted.
-        input = unsafe { (*blob).shared_view() };
+    } else if let Some(blob) = input_value.as_class_ref::<Blob>() {
+        input = blob.shared_view();
     } else {
         return Err(global
             .throw_invalid_arguments(format_args!("input must be a string or ArrayBufferView")));

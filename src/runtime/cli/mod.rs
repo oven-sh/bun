@@ -330,16 +330,22 @@ pub use crate::__cli_concat_params as concat_params;
 
 // ─── process-lifetime globals ────────────────────────────────────────────────
 // Zig `var start_time: i128 = undefined;` — written once in `Cli::start`
-// during single-threaded startup. `i128` has no atomic; `RacyCell` is the
-// alias-safe static cell (read freely after init).
-pub static START_TIME: bun_core::RacyCell<i128> = bun_core::RacyCell::new(0);
+// during single-threaded startup, read freely after init.
+pub static START_TIME: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
+
+/// Safe accessor for [`START_TIME`]. Returns 0 if not yet set.
+#[inline]
+pub fn start_time() -> i128 {
+    START_TIME.get().copied().unwrap_or(0)
+}
 
 #[allow(non_upper_case_globals)]
 // PORT NOTE: Zig `?string` (borrowed slice) → owned `Box<[u8]>` so
 // `process.title = "..."` (set_title) drops the previous value instead of
-// leaking. Guarded by `node::process::TITLE_MUTEX`.
-pub static Bun__Node__ProcessTitle: bun_core::RacyCell<Option<Box<[u8]>>> =
-    bun_core::RacyCell::new(None);
+// leaking. The mutex provides exclusion between `get_title`/`set_title`
+// (Zig: `var title_mutex = bun.Mutex{}`).
+pub static Bun__Node__ProcessTitle: parking_lot::Mutex<Option<Box<[u8]>>> =
+    parking_lot::Mutex::new(None);
 
 /// Process-lifetime arena for one-shot CLI commands. Zig passed
 /// `bun.default_allocator` (or a per-command `ArenaAllocator` never `deinit`'d)
@@ -451,9 +457,9 @@ pub mod cli {
         // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
         // directly, so it compares against a stored OS tid instead.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
-        // SAFETY: single-threaded process startup; no other reader yet
-        unsafe { START_TIME.write(bun_core::time::nano_timestamp()) };
-        bun_core::set_start_time(unsafe { START_TIME.read() });
+        let now = bun_core::time::nano_timestamp();
+        let _ = START_TIME.set(now);
+        bun_core::set_start_time(now);
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(logger::Log::init()) };
 
@@ -476,10 +482,10 @@ pub mod debug_flags {
     // PORT NOTE: `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
     // hand off ownership of the argv-borrowed list without leaking the backing
     // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
-    pub static RESOLVE_BREAKPOINTS: bun_core::RacyCell<Vec<&'static [u8]>> =
-        bun_core::RacyCell::new(Vec::new());
-    pub static PRINT_BREAKPOINTS: bun_core::RacyCell<Vec<&'static [u8]>> =
-        bun_core::RacyCell::new(Vec::new());
+    pub static RESOLVE_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
+        std::sync::OnceLock::new();
+    pub static PRINT_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
+        std::sync::OnceLock::new();
 }
 
 // ─── HelpCommand ─────────────────────────────────────────────────────────────
@@ -854,7 +860,7 @@ pub mod command {
             (*CONTEXT_DATA.get()).write(ContextData {
                 args: bun_options_types::schema::api::TransformOptions::default(),
                 log: std::ptr::from_mut::<logger::Log>(log),
-                start_time: START_TIME.read(),
+                start_time: crate::cli::start_time(),
                 ..Default::default()
             });
             let ctx = (*CONTEXT_DATA.get()).assume_init_mut();
@@ -1524,7 +1530,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
                 path_buf[entry.len()] = 0;
                 // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
                 let lockfile_path =
-                    unsafe { bun_core::ZStr::from_raw(path_buf.as_ptr(), entry.len()) };
+                    bun_core::ZStr::from_buf(&path_buf[..], entry.len());
                 let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
                     Ok(f) => f,
                     Err(err) => {

@@ -1555,16 +1555,16 @@ pub mod windows {
     pub struct NTSTATUS(pub u32);
 
     unsafe extern "system" {
-        fn GetLastError() -> u32;
-        fn WSAGetLastError() -> i32;
+        // No preconditions; both read thread-local OS error state.
+        safe fn GetLastError() -> u32;
+        safe fn WSAGetLastError() -> i32;
     }
 
     impl Win32Error {
         #[inline]
         pub fn get() -> Win32Error {
-            // SAFETY: GetLastError has no preconditions.
             // Zig truncates the DWORD to u16 (`@truncate`); never panic on >0xFFFF.
-            Win32Error(unsafe { GetLastError() } as u16)
+            Win32Error(GetLastError() as u16)
         }
         #[inline] pub const fn from_raw(n: u16) -> Win32Error { Win32Error(n) }
         #[inline] pub const fn int(self) -> u16 { self.0 }
@@ -1683,8 +1683,7 @@ pub mod windows {
     /// `None` when no error pending (`0`).
     #[inline]
     pub fn wsa_get_last_error() -> Option<Win32Error> {
-        // SAFETY: WSAGetLastError has no preconditions.
-        let e = unsafe { WSAGetLastError() };
+        let e = WSAGetLastError();
         if e == 0 { None } else { Some(Win32Error(e as u16)) }
     }
 

@@ -802,10 +802,7 @@ pub fn handle_template_value(
             return Ok(());
         }
 
-        if let Some(blob) = template_value.as_::<crate::webcore::Blob>() {
-            // SAFETY: `as_` returns a live JSC-owned `*mut Blob` for the duration of this
-            // call; `template_value` is rooted in `marked_argument_buffer` below before any GC.
-            let blob = unsafe { &*blob };
+        if let Some(blob) = template_value.as_class_ref::<crate::webcore::Blob>() {
             if let Some(store) = blob.store.as_deref() {
                 if let crate::webcore::blob::store::Data::File(file) = &store.data {
                     if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {

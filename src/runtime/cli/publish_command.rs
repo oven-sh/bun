@@ -1135,7 +1135,7 @@ impl PublishCommand {
                         crate::cli::cli_arena().alloc_slice_fill_default(len + 1);
                     buf[..len].copy_from_slice(auth_url_str);
                     // SAFETY: `buf[len] == 0`; arena-backed `'static`.
-                    unsafe { ZStr::from_raw(buf.as_ptr(), len) }
+                    ZStr::from_buf(&buf[..], len)
                 };
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
@@ -1690,7 +1690,7 @@ impl PublishCommand {
                             // Dupe into the process-lifetime CLI arena (bytes flow into long-lived `E::String` nodes).
                             let interned: &'static [u8] = crate::cli::cli_dupe(&join);
                             // SAFETY: NUL terminator at interned[join_len] (copied from `join`).
-                            let join_z = unsafe { ZStr::from_raw(interned.as_ptr(), join_len) };
+                            let join_z = ZStr::from_buf(&interned[..], join_len);
                             let name_slice_start = join_len - name.len();
                             // SAFETY: name is the trailing segment of `interned`, NUL-terminated
                             let name_z = unsafe { ZStr::from_raw(interned.as_ptr().add(name_slice_start), name.len()) };

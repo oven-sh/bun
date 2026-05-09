@@ -260,8 +260,8 @@ pub fn set_max_http_header_size(v: usize) {
 }
 
 /// Set once during single-threaded CLI parsing; read from the HTTP thread.
-pub static OVERRIDDEN_DEFAULT_USER_AGENT: bun_core::RacyCell<&'static [u8]> =
-    bun_core::RacyCell::new(b"");
+pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
+    std::sync::OnceLock::new();
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
@@ -717,8 +717,7 @@ const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRE
 };
 
 fn get_user_agent_header() -> picohttp::Header {
-    // SAFETY: OVERRIDDEN_DEFAULT_USER_AGENT is set once at startup before HTTP thread spawns
-    let ua = unsafe { OVERRIDDEN_DEFAULT_USER_AGENT.read() };
+    let ua = OVERRIDDEN_DEFAULT_USER_AGENT.get().copied().unwrap_or(b"");
     picohttp::Header::new(
         b"User-Agent",
         if !ua.is_empty() { ua } else { Global::user_agent.as_bytes() },

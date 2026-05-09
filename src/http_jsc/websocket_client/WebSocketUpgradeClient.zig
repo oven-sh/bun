@@ -786,6 +786,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             };
+            if (socks.hasPendingWrite()) {
+                return;
+            }
             switch (result) {
                 .connected => {
                     this.body.clearRetainingCapacity();
@@ -805,6 +808,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         return;
                     }
                     this.to_send = this.input_body_buf[@as(usize, @intCast(wrote))..];
+
+                    const remain_buf = socks.read_buffer.slice();
+                    if (remain_buf.len > 0) {
+                        this.handleData(socket, remain_buf);
+                    }
                 },
                 .pending => {},
                 .needs_dns_resolve => unreachable,
@@ -1308,6 +1316,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     };
                     this.to_send = this.to_send[@min(wrote, this.to_send.len)..];
                     return;
+                }
+
+                if (p.socks) |*socks| {
+                    if (socks.hasPendingWrite()) {
+                        socks.flush(socket) catch {
+                            this.terminate(ErrorCode.failed_to_write);
+                            return;
+                        };
+                        if (socks.hasPendingWrite()) return;
+                    }
                 }
             }
 

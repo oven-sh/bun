@@ -214,7 +214,7 @@ pub fn init(
 
     if (options.http_proxy) |proxy| {
         const is_socks = strings.eqlComptime(proxy.protocol, "socks5") or strings.eqlComptime(proxy.protocol, "socks5h");
-        this.client.flags.disable_keepalive = this.url.isHTTPS() or is_socks;
+        this.client.flags.disable_keepalive = this.client.flags.disable_keepalive or this.url.isHTTPS() or is_socks;
         if (!is_socks and proxy.username.len > 0) {
             // Use stack fallback allocator - stack for small credentials, heap for large ones
             var username_sfb = std.heap.stackFallback(4096, allocator);
@@ -285,6 +285,7 @@ pub fn initSync(
 }
 
 fn reset(this: *AsyncHTTP) !void {
+    const disable_keepalive = this.client.flags.disable_keepalive;
     const aborted = this.client.aborted;
     this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
     this.client.http_proxy = this.http_proxy;
@@ -292,7 +293,7 @@ fn reset(this: *AsyncHTTP) !void {
     if (this.http_proxy) |proxy| {
         const is_socks = strings.eqlComptime(proxy.protocol, "socks5") or strings.eqlComptime(proxy.protocol, "socks5h");
         //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
-        this.client.flags.disable_keepalive = this.url.isHTTPS() or is_socks;
+        this.client.flags.disable_keepalive = disable_keepalive or this.url.isHTTPS() or is_socks;
         if (!is_socks and proxy.username.len > 0) {
             // Use stack fallback allocator - stack for small credentials, heap for large ones
             var username_sfb = std.heap.stackFallback(4096, this.allocator);

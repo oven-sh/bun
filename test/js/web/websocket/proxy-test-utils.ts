@@ -291,7 +291,14 @@ export function createSocksProxy(options: SocksProxyOptions = {}): net.Server {
             if (remaining.length > 0) targetSocket!.write(remaining);
             targetSocket!.on("data", chunk => clientSocket.write(chunk));
           });
-          targetSocket.on("error", () => fail(0x05));
+          targetSocket.on("error", () => {
+            if (stage !== "tunnel") {
+              fail(0x05);
+              return;
+            }
+            targetSocket?.destroy();
+            clientSocket.destroy();
+          });
           targetSocket.on("close", () => clientSocket.destroy());
           clientSocket.on("close", () => targetSocket?.destroy());
           return;

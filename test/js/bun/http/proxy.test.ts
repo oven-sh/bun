@@ -310,6 +310,48 @@ async function createAuthCapturingProxy() {
   };
 }
 
+async function createConnectionCountingHttpProxy() {
+  let connections = 0;
+  const sockets = new Set<net.Socket>();
+  const upstreamSockets = new Set<net.Socket>();
+  const server = net.createServer((clientSocket: net.Socket) => {
+    connections++;
+    sockets.add(clientSocket);
+    clientSocket.once("data", data => {
+      const request = data.toString();
+      const [method, path] = request.split(" ");
+      const url = new URL(path);
+      const serverSocket = net.connect(Number(url.port || "80"), url.hostname, () => {
+        serverSocket.write(`${method} ${url.pathname}${url.search || ""} HTTP/1.1\r\n`);
+        serverSocket.write(data.slice(request.indexOf("\r\n") + 2));
+        serverSocket.pipe(clientSocket);
+      });
+      upstreamSockets.add(serverSocket);
+      clientSocket.on("error", () => {});
+      clientSocket.on("close", () => sockets.delete(clientSocket));
+      serverSocket.on("close", () => upstreamSockets.delete(serverSocket));
+      serverSocket.on("error", () => clientSocket.end());
+    });
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as net.AddressInfo).port;
+
+  return {
+    port,
+    get connections() {
+      return connections;
+    },
+    async close() {
+      for (const socket of sockets) socket.destroy();
+      for (const socket of upstreamSockets) socket.destroy();
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
 test("proxy with long password (> 4096 chars) sends correct authorization", async () => {
   const proxy = await createAuthCapturingProxy();
 
@@ -418,6 +460,40 @@ test("HTTPS proxy tunnel keep-alive reuses CONNECT across sequential requests", 
 
   const connects = httpProxyServer.log.filter(l => l.startsWith("CONNECT"));
   expect(connects).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+});
+
+test("HTTP proxy honors keepalive: false across sequential requests and redirects", async () => {
+  const proxy = await createConnectionCountingHttpProxy();
+  using redirectServer = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname === "/redirect") {
+        return Response.redirect("/final", 302);
+      }
+      return new Response("ok");
+    },
+  });
+
+  try {
+    const targetURL = `http://127.0.0.1:${redirectServer.port}/redirect`;
+    const proxyURL = `http://127.0.0.1:${proxy.port}`;
+
+    const first = await fetch(targetURL, {
+      proxy: proxyURL,
+      keepalive: false,
+    });
+    expect(await first.text()).toBe("ok");
+
+    const second = await fetch(targetURL, {
+      proxy: proxyURL,
+      keepalive: false,
+    });
+    expect(await second.text()).toBe("ok");
+
+    expect(proxy.connections).toBe(4);
+  } finally {
+    await proxy.close();
+  }
 });
 
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different targets", async () => {
@@ -1074,7 +1150,15 @@ describe("fetch through SOCKS5 proxy", () => {
       fetch(`http://127.0.0.1:${httpServer.port}/`, {
         proxy: `socks5://:proxy_pass@127.0.0.1:${socksPort}`,
       }),
-    ).rejects.toThrow("SOCKS proxy credentials must include a username");
+    ).rejects.toThrow("SOCKS proxy credentials must include both username and password.");
+  });
+
+  test("socks5:// with username but no password rejects request", async () => {
+    await expect(
+      fetch(`http://127.0.0.1:${httpServer.port}/`, {
+        proxy: `socks5://proxy_user@127.0.0.1:${socksPort}`,
+      }),
+    ).rejects.toThrow("SOCKS proxy credentials must include both username and password.");
   });
 
   test("socks5:// maps general proxy failure", async () => {
@@ -1086,6 +1170,20 @@ describe("fetch through SOCKS5 proxy", () => {
           proxy: `socks5://127.0.0.1:${failingPort}`,
         }),
       ).rejects.toThrow("SOCKS proxy reported a general failure.");
+    } finally {
+      failingProxy.close();
+    }
+  });
+
+  test("socks5:// maps connection not allowed proxy failure", async () => {
+    const failingProxy = createSocksProxy({ connectFailureCode: 0x02 });
+    const failingPort = await startProxy(failingProxy);
+    try {
+      await expect(
+        fetch(`http://127.0.0.1:${httpServer.port}/`, {
+          proxy: `socks5://127.0.0.1:${failingPort}`,
+        }),
+      ).rejects.toThrow("SOCKS proxy reported that the connection is not allowed.");
     } finally {
       failingProxy.close();
     }

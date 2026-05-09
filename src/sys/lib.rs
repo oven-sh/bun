@@ -2663,21 +2663,94 @@ mod windows_impl {
         Ok(bytes_written as usize)
     }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
-        // sys.zig:2083 — `pread_sym = syscall.pread` where `syscall` is
-        // `@compileError("not implemented")` on Windows. Only the libuv path
-        // exists; route uv-backed fds through it and surface ENOTSUP for
-        // HANDLE-backed fds instead of panicking inside `fd.uv()`.
+        // sys.zig:2083 — `pread_sym = syscall.pread` (`@compileError` on
+        // Windows), so `bun.sys.pread` itself is uncallable there. The Zig
+        // call sites that need positioned I/O on a HANDLE-backed fd go via
+        // `fd.stdFile().preadAll()` → `std.os.windows.ReadFile` with an
+        // `OVERLAPPED.Offset`. The Rust port has no `stdFile()` escape hatch
+        // (`File::pread_all` routes back here), so do that lowering inline:
+        // libuv path for uv-kind fds, kernel32 ReadFile+OVERLAPPED for system
+        // (HANDLE) fds — matching `std.os.windows.ReadFile`'s error mapping.
         if fd.kind() == FdKind::Uv {
             return sys_uv::pread(fd, buf, off);
         }
-        Err(Error::new(E::ENOTSUP, Tag::pread).with_fd(fd))
+        let off = off as u64;
+        let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
+        loop {
+            let mut overlapped = w::OVERLAPPED {
+                Internal: 0,
+                InternalHigh: 0,
+                Offset: off as w::DWORD,
+                OffsetHigh: (off >> 32) as w::DWORD,
+                hEvent: core::ptr::null_mut(),
+            };
+            let mut amount_read: w::DWORD = 0;
+            // SAFETY: FFI; `fd.cast()` is a valid HANDLE for the System-kind
+            // arm, `buf` valid for `adjusted_len`, `overlapped` lives for the
+            // synchronous call (handle was not opened FILE_FLAG_OVERLAPPED).
+            let rc = unsafe {
+                w::kernel32::ReadFile(
+                    fd.cast(),
+                    buf.as_mut_ptr(),
+                    adjusted_len,
+                    &mut amount_read,
+                    core::ptr::from_mut(&mut overlapped).cast(),
+                )
+            };
+            if rc == 0 {
+                let er = w::Win32Error::get();
+                match er {
+                    // std.os.windows.ReadFile: BROKEN_PIPE/HANDLE_EOF → 0.
+                    w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
+                    w::Win32Error::OPERATION_ABORTED => continue,
+                    _ => return Err(Error::new(er.to_e(), Tag::pread).with_fd(fd)),
+                }
+            }
+            return Ok(amount_read as usize);
+        }
     }
     pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
-        // sys.zig:2108 — same `@compileError` story as `pread`.
+        // sys.zig:2108 — same `@compileError` story as `pread`. Zig callers
+        // (e.g. updatePackageJSONAndInstall.zig:426 `…stdFile().pwriteAll()`)
+        // reach `std.os.windows.WriteFile` with an `OVERLAPPED.Offset`; do
+        // that here for HANDLE-kind fds since `File::pwrite_all` routes back.
         if fd.kind() == FdKind::Uv {
             return sys_uv::pwrite(fd, buf, off);
         }
-        Err(Error::new(E::ENOTSUP, Tag::pwrite).with_fd(fd))
+        let off = off as u64;
+        let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
+        let mut overlapped = w::OVERLAPPED {
+            Internal: 0,
+            InternalHigh: 0,
+            Offset: off as w::DWORD,
+            OffsetHigh: (off >> 32) as w::DWORD,
+            hEvent: core::ptr::null_mut(),
+        };
+        let mut bytes_written: w::DWORD = 0;
+        // SAFETY: FFI; `fd.cast()` is a valid HANDLE for the System-kind arm,
+        // `buf` valid for `adjusted_len`, `overlapped` lives for the
+        // synchronous call (handle was not opened FILE_FLAG_OVERLAPPED).
+        let rc = unsafe {
+            w::kernel32::WriteFile(
+                fd.cast(),
+                buf.as_ptr(),
+                adjusted_len,
+                &mut bytes_written,
+                core::ptr::from_mut(&mut overlapped).cast(),
+            )
+        };
+        if rc == 0 {
+            let er = w::Win32Error::get();
+            // std.os.windows.WriteFile maps INVALID_HANDLE → NotOpenForWriting;
+            // keep parity with `write()` above and surface the raw errno.
+            let errno = if er == w::Win32Error::ACCESS_DENIED {
+                E::EBADF
+            } else {
+                er.to_e()
+            };
+            return Err(Error::new(errno, Tag::pwrite).with_fd(fd));
+        }
+        Ok(bytes_written as usize)
     }
     pub fn stat(path: &ZStr) -> Maybe<Stat> { sys_uv::stat(path) }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {

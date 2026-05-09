@@ -1401,9 +1401,13 @@ impl FetchTasklet {
 
         fetch_tasklet.tracker.did_schedule(global_this);
 
-        if let Some(store) = fetch_tasklet.request_body.store() {
-            store.ref_();
-        }
+        // PORT NOTE: Zig followed with `if (request_body.store()) |store| store.ref()`.
+        // That +1 balanced fetch.zig's local `body` (bitwise-copied into `http_body`)
+        // calling `body.detach()` after `queue()` returned. In Rust, `body` is *moved*
+        // through `FetchOptions` into `request_body` (no shallow alias, no post-queue
+        // detach), so the StoreRef already carries the caller's +1 — bumping it again
+        // here leaked one ref per Blob/FormData/URLSearchParams body (issue: fetch-leak
+        // fixture #5 RSS growth). `clear_data() → request_body.detach()` releases it.
 
         let mut url = fetch_options.url;
         let mut proxy: Option<ZigURL> = None;

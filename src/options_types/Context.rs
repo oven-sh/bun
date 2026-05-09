@@ -109,39 +109,41 @@ impl ContextData {
         unsafe { &mut *self.log }
     }
 
-    /// Safe accessor for the process-lifetime CLI `Log`.
+    /// Mutable accessor for the process-lifetime CLI `Log`.
     ///
     /// `self.log` is the `*mut logger::Log` written exactly once by
     /// `create_context_data()` during single-threaded CLI startup, pointing at
-    /// the static `Cli::LOG_` storage. CLI command bodies are single-threaded
-    /// and never hold two `&mut Log` simultaneously — the same invariant every
-    /// prior `unsafe { &mut *ctx.log }` call site relied on. Other subsystems
-    /// that copy the same `*mut Log` (transpiler, install) reborrow it via
-    /// their own raw-pointer accessors and never hold a live `&mut Log` across
-    /// a call back into a CLI body. Centralizing the deref here removes ~20
-    /// identical `unsafe` blocks.
+    /// the static `Cli::LOG_` storage. Other subsystems that copy the same
+    /// `*mut Log` (transpiler, install) reborrow it via their own raw-pointer
+    /// accessors. Centralizing the deref here removes ~20 identical
+    /// `unsafe { &mut *ctx.log }` blocks at call sites.
     ///
     /// Takes `&self` (not `&mut self`) because several CLI entry points hold
-    /// `&Context<'_>` (= `&&mut ContextData`) and the `&mut self` receiver
-    /// could not prove exclusivity over the `Log` anyway — the pointer is
-    /// aliased outside `ContextData` (see `Transpiler::log_mut`,
-    /// `PackageManager::log_mut`, which use the same `&self → &mut Log`
-    /// pattern). The returned borrow's lifetime is tied to `&self` so callers
-    /// still cannot statically interleave two `log_mut()` results from the
-    /// same `&ContextData`.
+    /// `&Context<'_>` (= `&&mut ContextData`) and a `&mut self` receiver could
+    /// not prove exclusivity over the `Log` anyway — the pointer is aliased
+    /// outside `ContextData` (see `Transpiler::log_mut`,
+    /// `PackageManager::log_mut`). Note that a `&self` receiver provides **no**
+    /// static guarantee against interleaving two `log_mut()` results — shared
+    /// borrows do not exclude one another — hence this function is `unsafe`.
+    ///
+    /// # Safety
+    /// The caller must ensure that for the lifetime of the returned `&mut Log`
+    /// no other reference to the same `Log` exists: no second `log_mut()`
+    /// borrow, no overlapping [`log_ref`] borrow, and no live `&mut Log`
+    /// obtained via any other aliasing path (`Transpiler::log_mut`,
+    /// `PackageManager::log_mut`, etc.). CLI dispatch is single-threaded, so
+    /// this reduces to "do not hold the result across a call that may itself
+    /// reborrow the log".
     ///
     /// # Panics
     /// If `self.log` is null (i.e. `create_context_data()` has not run).
     #[track_caller]
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn log_mut(&self) -> &mut logger::Log {
+    pub unsafe fn log_mut(&self) -> &mut logger::Log {
         assert!(!self.log.is_null(), "ContextData::log_mut() before create_context_data()");
         // SAFETY: `self.log` is non-null (asserted) and points at the
-        // process-static `Cli::LOG_` (`'static`); CLI dispatch is
-        // single-threaded and callers do not hold an overlapping `&mut Log`
-        // — the same contract as the open-coded `unsafe { &mut *ctx.log }`
-        // this accessor replaces.
+        // process-static `Cli::LOG_` (`'static`); the caller's `# Safety`
+        // contract guarantees no overlapping borrow of the same `Log`.
         unsafe { &mut *self.log }
     }
 
@@ -151,7 +153,10 @@ impl ContextData {
     #[inline]
     pub fn log_ref(&self) -> &logger::Log {
         assert!(!self.log.is_null(), "ContextData::log_ref() before create_context_data()");
-        // SAFETY: see `log_mut`; shared `&` aliases freely.
+        // SAFETY: `self.log` is non-null (asserted) and points at the
+        // process-static `Cli::LOG_`; shared `&` may freely alias other
+        // shared borrows. Callers of `log_mut` are obligated not to hold a
+        // live `&mut Log` overlapping this.
         unsafe { &*self.log }
     }
 

@@ -21,8 +21,8 @@ test("fuzzilli REPRL catch block does not let string coercion escape the loop", 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("UNCAUGHT:");
-  expect(stdout).toContain("STATUS_WRITES=2");
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n").at(-1)).toBe("STATUS_WRITES=2");
   expect(exitCode).toBe(0);
 });
 

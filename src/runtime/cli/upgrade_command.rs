@@ -1240,7 +1240,7 @@ impl UpgradeCommand {
             }
 
             #[cfg(windows)]
-            let mut outdated_filename: Option<Box<ZStr>> = None;
+            let mut outdated_filename: Option<bun_core::ZBox> = None;
             #[cfg(not(windows))]
             let outdated_filename: Option<()> = None;
 
@@ -1259,18 +1259,15 @@ impl UpgradeCommand {
                         bstr::BStr::new(target_filename.as_bytes())
                     )
                     .expect("oom");
-                    buf.push(0);
-                    // SAFETY: buf[buf.len()-1] == 0
-                    outdated_filename = Some(unsafe {
-                        ZStr::from_bytes_with_nul_unchecked(buf.into_boxed_slice())
-                    });
+                    // Zig: `std.fmt.allocPrintSentinel(..., 0)` — owned NUL-terminated string.
+                    outdated_filename = Some(bun_core::ZBox::from_vec(buf));
                     if let Err(err) =
-                        sys::rename(destination_executable, outdated_filename.as_ref().unwrap().as_bytes())
+                        sys::rename(destination_executable_z, outdated_filename.as_deref().unwrap())
                     {
                         let _ = save_dir_.delete_tree(&version_name);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to rename current executable {}",
-                            err.name()
+                            bstr::BStr::new(err.name())
                         ));
                         Global::exit(1);
                     }
@@ -1291,20 +1288,22 @@ impl UpgradeCommand {
                     {
                         // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
                         if sys::rename(
-                            outdated_filename.as_ref().unwrap().as_bytes(),
-                            destination_executable,
+                            outdated_filename.as_deref().unwrap(),
+                            destination_executable_z,
                         )
                         .is_err()
                         {
-                            Output::err_generic(format_args!(
+                            Output::err_generic(
                                 "Failed to move new version of Bun to {} due to {}",
-                                bstr::BStr::new(destination_executable),
-                                err.name()
-                            ));
-                            Output::err_generic(format_args!(
+                                (
+                                    bstr::BStr::new(destination_executable),
+                                    bstr::BStr::new(err.name()),
+                                ),
+                            );
+                            Output::err_generic(
                                 "Failed to restore the working copy of Bun. The installation is now corrupt.\n\nPlease reinstall Bun manually with the following command:\n   {}\n",
-                                Self::MANUAL_UPGRADE_COMMAND
-                            ));
+                                (Self::MANUAL_UPGRADE_COMMAND,),
+                            );
                             Global::exit(1);
                         }
                     }
@@ -1446,7 +1445,7 @@ pub mod upgrade_js_bindings {
             use sys::windows as w;
 
             let mut buf = bun_paths::WPathBuffer::uninit();
-            let tmpdir_path = fs::FileSystem::RealFS::get_default_temp_dir();
+            let tmpdir_path = fs::RealFS::get_default_temp_dir();
             let mut wtmp = bun_paths::WPathBuffer::uninit();
             let tmpdir_w = bun_string::strings::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(
@@ -1505,7 +1504,8 @@ pub mod upgrade_js_bindings {
 
             match sys::windows::Win32Error::from_nt_status(rc) {
                 sys::windows::Win32Error::SUCCESS => {
-                    TEMPDIR_FD.with(|f| f.set(Some(sys::Fd::from_native(fd))));
+                    // `Fd` backing on Windows is `u64`; HANDLE is `*mut c_void`.
+                    TEMPDIR_FD.with(|f| f.set(Some(sys::Fd::from_native(fd as u64))));
                 }
                 _ => {}
             }

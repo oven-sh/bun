@@ -999,6 +999,36 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
     }
 }
 
+/// Port of the three `comptime` fn-pointer args to Zig `stream.readStart(this,
+/// onReadAlloc, onReadError, onRead)` — Rust bakes them into a trait so the
+/// `extern "C"` libuv trampoline is monomorphised over `WindowsNamedPipe`.
+#[cfg(windows)]
+impl uv::StreamReader for WindowsNamedPipe {
+    #[inline]
+    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
+        WindowsNamedPipe::on_read_alloc(this, suggested_size)
+    }
+    #[inline]
+    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+        // Zig: `errEnum() orelse bun.sys.E.CANCELED` — promote raw libuv errno.
+        let e = bun_sys::windows::translate_uv_error_to_e(err);
+        WindowsNamedPipe::on_read_error(this, e);
+    }
+    #[inline]
+    unsafe fn on_read(this: *mut Self, data: &[u8]) {
+        // `data` points into `(*this).incoming` (it was returned from
+        // `on_read_alloc`). Forming `&mut *this` would retag every byte of
+        // `*this` Unique and pop the SharedRW tag `data` descends from — UB
+        // under Stacked Borrows. Capture the only thing the body needs (length),
+        // drop the slice, *then* reborrow `*this`.
+        let nread = data.len();
+        let _ = data;
+        // SAFETY: `this` is the live context stashed in `handle.data` by
+        // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
+        WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
+    }
+}
+
 // `StreamingWriter<P>` resolves to `PosixStreamingWriter<P>` on non-Windows
 // targets, which carries a `P: PosixStreamingWriterParent` bound. This type is
 // Windows-only at runtime, but the struct field still needs to type-check on

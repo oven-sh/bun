@@ -45,7 +45,8 @@ pub struct FSWatcher {
     global_this: GlobalRef,
     // TODO(port): bare JSValue heap field — self-wrapper; consider JsRef in Phase B
     pub(super) js_this: JSValue,
-    encoding: Encoding,
+    // pub(super): read directly by `win_watcher::PathWatcher::emit` (matches Zig `ctx.encoding`).
+    pub(super) encoding: Encoding,
 
     /// User can call close and pre-detach so we need to track this
     closed: bool,

@@ -658,6 +658,9 @@ mod windows_impl {
         }
 
         pub fn open(&mut self) -> Result<(), WriteFileWindowsError> {
+            // Set req.data first so the subsequent shared borrow of `file_blob`
+            // for `path` doesn't overlap a `&mut self` (borrowck split).
+            self.io_request.data = (core::ptr::from_mut(self)).cast::<c_void>();
             let path = self
                 .file_blob
                 .store
@@ -668,7 +671,6 @@ mod windows_impl {
                 .pathlike
                 .path()
                 .slice();
-            self.io_request.data = (core::ptr::from_mut(self)).cast::<c_void>();
             let posix_path = match sys::to_posix_path(path) {
                 Ok(p) => p,
                 Err(_) => {
@@ -804,10 +806,13 @@ mod windows_impl {
             crate::node::fs::async_::AsyncMkdirp::new(crate::node::fs::async_::AsyncMkdirp {
                 completion: Self::on_mkdirp_complete_concurrent,
                 completion_ctx: (core::ptr::from_mut(self)).cast::<()>(),
+                // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
+                // points into `self.file_blob.store`, which outlives the mkdirp
+                // task (it's released only in `deinit()`).
                 path: bun_core::dirname(path)
                     // this shouldn't happen
-                    .unwrap_or(path)
-                    .into(),
+                    .unwrap_or(path) as *const [u8],
+                ..Default::default()
             })
             .schedule();
         }
@@ -830,6 +835,17 @@ mod windows_impl {
                     WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
                 }
             }
+        }
+
+        /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
+        /// `*mut Self` and returns the event-loop `JsResult<()>` (always `Ok`;
+        /// the inner body already swallows `JSTerminated` per the Zig spec).
+        fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
+            // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
+            // pointer was stashed in `on_mkdirp_complete_concurrent` below;
+            // the JS thread is the sole accessor at this point.
+            unsafe { (*this).on_mkdirp_complete() };
+            Ok(())
         }
 
         fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {

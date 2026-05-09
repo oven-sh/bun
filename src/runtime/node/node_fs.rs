@@ -399,6 +399,23 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
+/// `bun.sys.directoryExistsAt` — Zig dispatches on `anytype` element width
+/// (sys.zig:3601 → `existsAtType` picks `toNTPath16` for `[*]const u16`). The
+/// Rust `sys::directory_exists_at` only accepts `&ZStr` and re-widens
+/// internally, so for `OSPathSliceZ` callers we narrow the already-wide
+/// Windows path through a pooled UTF-8 buffer first. POSIX is a forwarder.
+#[inline]
+fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
+    #[cfg(not(windows))]
+    { sys::directory_exists_at(dir, path) }
+    #[cfg(windows)]
+    {
+        let mut tmp = paths::path_buffer_pool::get();
+        let narrow = strings::from_wpath(&mut tmp[..], path.as_slice());
+        sys::directory_exists_at(dir, narrow)
+    }
+}
+
 type ReadPosition = i64;
 type Buffer = super::types::Buffer;
 type ArrayBuffer = bun_jsc::MarkedArrayBuffer;
@@ -4654,7 +4671,7 @@ impl NodeFS {
                 // it is unclear if macOS lies about if the existing item is
                 // a directory or not, so it is checked.
                 E::EISDIR | E::EEXIST => {
-                    return match sys::directory_exists_at(FD::INVALID, path) {
+                    return match directory_exists_at_os_path(FD::INVALID, path) {
                         Err(_) => Err(sys::Error {
                             errno: err.errno, syscall: sys::Tag::mkdir,
                             path: self.os_path_into_sync_error_buf(without_nt_prefix((&path[..]))).into(),
@@ -4714,7 +4731,7 @@ impl NodeFS {
                                 // On Windows, this may happen if trying to mkdir replacing a file
                                 #[cfg(windows)]
                                 {
-                                    if let Ok(res) = sys::directory_exists_at(FD::INVALID, parent) {
+                                    if let Ok(res) = directory_exists_at_os_path(FD::INVALID, parent) {
                                         // is a directory. break.
                                         if !res {
                                             // SAFETY: `working_mem` is not used after this return; re-derive
@@ -4835,7 +4852,10 @@ impl NodeFS {
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error { errno, syscall: sys::Tag::mkdtemp, path: prefix_buf[..len + 6].into(), ..Default::default() });
             }
-            return Ok(ZigString::dupe_for_js(unsafe { bun_string::slice_to_nul(req.path) }).expect("oom"));
+            // SAFETY: on success libuv populates `req.path` with a NUL-terminated
+            // UTF-8 string owned by the request; `req.deinit()` (the scopeguard)
+            // releases it after we've copied the bytes out.
+            return Ok(ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes()).expect("oom"));
         }
 
         #[cfg(not(windows))]

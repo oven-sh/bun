@@ -159,7 +159,9 @@ fn get_dl_error() -> Result<Box<[u8]>, bun_core::Error> {
     #[cfg(windows)]
     {
         // On Windows, we need to use GetLastError() and FormatMessageW()
-        let err = bun_sys::windows::GetLastError();
+        // SAFETY: GetLastError() is a Win32 API that reads thread-local state and
+        // takes no arguments; it has no preconditions and is always safe to call.
+        let err = unsafe { bun_sys::windows::GetLastError() };
         let err_int = err as u32;
 
         // For now, just return the error code as we'd need to implement FormatMessageW in Zig

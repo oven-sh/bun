@@ -1103,7 +1103,7 @@ impl VirtualMachine {
         extern "C" fn call<F: FnOnce() -> R, R>(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut Trampoline<F, R>` on the caller's stack;
             // `JSC__VM__holdAPILock` invokes us exactly once with that pointer.
-            let t = unsafe { &mut *ctx.cast::<Trampoline<F, R>>() };
+            let t = unsafe { bun_ptr::callback_ctx::<Trampoline<F, R>>(ctx) };
             // SAFETY: single-shot — `f` is taken exactly once.
             let f = unsafe { ManuallyDrop::take(&mut t.f) };
             t.result.write(f());
@@ -4549,7 +4549,7 @@ impl VirtualMachine {
                 next_value: JSValue,
             ) {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { &mut *ctx.cast::<AggCtx<'_>>() };
+                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
                 // SAFETY: per-thread VM.
                 let vm = VirtualMachine::get().as_mut();
                 // SAFETY: `formatter`/`writer`/`exception_list` borrow the
@@ -5827,11 +5827,9 @@ impl VirtualMachine {
         for &err in &errors_to_append {
             // Circular-ref guard for cause chains.
             if formatter.map_node.is_none() {
-                // SAFETY: `get_node()` always returns a valid heap node;
                 // `data` is initialized because `Map::INIT` is `Some`.
-                let mut node = unsafe {
-                    NonNull::new_unchecked(console_object::formatter::visited::Pool::get_node())
-                };
+                let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
+                    .expect("ObjectPool::get_node always returns a valid heap node");
                 unsafe { node.as_mut().data.assume_init_mut().clear() };
                 formatter.map = core::mem::take(unsafe {
                     node.as_mut().data.assume_init_mut()

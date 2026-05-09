@@ -588,9 +588,8 @@ pub fn execute_simple_s3_request(
     } else {
         None
     };
-    // SAFETY: `task.vm` is the live per-thread VM pointer from `VirtualMachine::get()`.
-    let vm = unsafe { &mut *task.vm };
-    let verbose = vm.get_verbose_fetch();
+    let vm = VirtualMachine::get();
+    let verbose = vm.as_mut().get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
     task.http.write(AsyncHTTP::init(
         options.method,

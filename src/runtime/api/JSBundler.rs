@@ -1248,8 +1248,7 @@ pub mod js_bundler {
         // 2. During parsing, it encounters a macro and evaluates it
         // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
         // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
-        // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-        if unsafe { (*vm).macro_mode } {
+        if vm.macro_mode {
             return Err(global_this.throw(format_args!("Bun.build cannot be called from within a macro during bundling.\n\n\
                  This would cause a deadlock because the bundler is waiting for the macro to complete,\n\
                  but the macro's Bun.build call is waiting for the bundler.\n\n\
@@ -1711,7 +1710,7 @@ pub mod js_bundler {
         let plugin = unsafe { &mut *plugin };
         match which.as_int32() {
             0 => {
-                let resolve = unsafe { &mut *ctx.cast::<Resolve>() };
+                let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
                 let msg =
                     plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
@@ -1719,7 +1718,7 @@ pub mod js_bundler {
                 unsafe { (*resolve.bv2).on_resolve_async(resolve) };
             }
             1 => {
-                let load = unsafe { &mut *ctx.cast::<Load>() };
+                let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 // SAFETY: bv2 backref is valid

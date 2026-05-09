@@ -374,8 +374,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn path_with_pretty_initialized(&mut self, path: Logger::fs::Path) -> Result<Logger::fs::Path, BunError> {
-        // SAFETY: `resolver.fs` is a `*mut Fs::FileSystem` backref into the singleton FS.
-        let top_level_dir = unsafe { (*self.resolver().fs).top_level_dir };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.arena())
     }
 
@@ -468,26 +467,15 @@ impl<'a> LinkerContext<'a> {
         }
 
         if self.options.output_format == Format::Cjs || self.options.output_format == Format::Iife {
-            // PORT NOTE: reshaped for borrowck — `items_*_mut()` columns are
-            // physically disjoint SoA slabs but Rust can't see that through
-            // `&mut MultiArrayList`. Route through raw column pointers.
-            let ast_len = self.graph.ast.len();
-            let ast_slice = self.graph.ast.slice();
-            // SAFETY: SoA columns are disjoint; the underlying slab does not
-            // reallocate for the duration of this loop. Both derefs share the
-            // same invariant (root-provenance column ptrs from `items_raw`).
-            let (exports_kind, ast_flags_list): (&mut [ExportsKind], &mut [AstFlags]) = unsafe {
-                (
-                    core::slice::from_raw_parts_mut(
-                        ast_slice.items_raw::<"exports_kind", ExportsKind>(),
-                        ast_len,
-                    ),
-                    core::slice::from_raw_parts_mut(
-                        ast_slice.items_raw::<"flags", AstFlags>(),
-                        ast_len,
-                    ),
-                )
-            };
+            // PORT NOTE: reshaped for borrowck — `Slice<T>` is a value-type
+            // snapshot of column pointers (does not borrow `self.graph.ast`),
+            // so `split_mut()` on the local can coexist with the
+            // `self.graph.meta` borrow below. The slab does not reallocate for
+            // the duration of this loop.
+            let mut ast_slice = self.graph.ast.slice();
+            let ast_cols = ast_slice.split_mut();
+            let exports_kind: &mut [ExportsKind] = ast_cols.exports_kind;
+            let ast_flags_list: &mut [AstFlags] = ast_cols.flags;
             let meta_flags_list = self.graph.meta.items_flags_mut();
 
             for entry_point in entry_points.iter() {

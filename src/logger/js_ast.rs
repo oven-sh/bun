@@ -88,12 +88,11 @@ impl<T> StoreRef<T> {
     /// no paired `destroy`. Prefer `from_bump` for arena-backed nodes.
     #[inline]
     pub fn from_box(b: Box<T>) -> Self {
-        // `heap::alloc` → `NonNull`: expresses an FFI-style ownership hand-
-        // off (the allocation is intentionally process-lifetime; `StoreRef`
-        // never reconstitutes the `Box`). No `&'static mut` is forged, so no
-        // aliasing hazard at use sites — deref goes through `as_ptr()`.
-        // SAFETY: `heap::alloc` never returns null.
-        StoreRef(unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(b)) })
+        // `heap::into_raw_nn`: expresses an FFI-style ownership hand-off (the
+        // allocation is intentionally process-lifetime; `StoreRef` never
+        // reconstitutes the `Box`). No `&'static mut` is forged, so no aliasing
+        // hazard at use sites — deref goes through `as_ptr()`.
+        StoreRef(bun_core::heap::into_raw_nn(b))
     }
     #[inline]
     pub const fn as_ptr(self) -> *mut T {

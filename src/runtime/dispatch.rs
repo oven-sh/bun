@@ -1019,12 +1019,11 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // `&bun_core::Timespec`; the low-tier `EventLoopTimer::Timespec` is
             // a layout-identical local stub (see EventLoopTimer.rs TODO(b1)).
             let now_core = unsafe { bun_core::Timespec { sec: (*now).sec, nsec: (*now).nsec } };
-            BunTest::bun_test_timeout_callback(strong, &now_core, unsafe { &*vm });
+            BunTest::bun_test_timeout_callback(strong, &now_core, VirtualMachine::get());
         }
         EventLoopTimerTag::CronJob => {
             let container = owner!(CronJob, event_loop_timer);
-            // SAFETY: per fn contract.
-            CronJob::on_timer_fire(container, unsafe { &*vm });
+            CronJob::on_timer_fire(container, VirtualMachine::get());
         }
     }
 }

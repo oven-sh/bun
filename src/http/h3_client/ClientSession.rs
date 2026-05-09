@@ -100,8 +100,7 @@ impl ClientSession {
 
         let stream = Stream::new(self, client);
         let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
-        // SAFETY: `stream` was just allocated by Stream::new; non-null.
-        client.h3 = Some(unsafe { NonNull::new_unchecked(stream) });
+        client.h3 = Some(NonNull::new(stream).expect("Stream::new returns a fresh allocation"));
         self.pending.push(stream);
         self.ref_();
 

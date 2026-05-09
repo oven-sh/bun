@@ -964,12 +964,9 @@ impl Fd {
                 // the live `GetStdHandle` result panics if the process std
                 // handle was swapped after startup via `SetStdHandle`,
                 // `AllocConsole`, `AttachConsole`, etc.
-                // SAFETY: cached statics written once at startup.
-                unsafe {
-                    if self == fd::WINDOWS_CACHED_STDIN.read() { return 0; }
-                    if self == fd::WINDOWS_CACHED_STDOUT.read() { return 1; }
-                    if self == fd::WINDOWS_CACHED_STDERR.read() { return 2; }
-                }
+                if Some(self) == fd::WINDOWS_CACHED_STDIN.get().copied() { return 0; }
+                if Some(self) == fd::WINDOWS_CACHED_STDOUT.get().copied() { return 1; }
+                if Some(self) == fd::WINDOWS_CACHED_STDERR.get().copied() { return 2; }
                 if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) { return 0; }
                 if fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle) { return 1; }
                 if fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle) { return 2; }
@@ -988,10 +985,9 @@ impl Fd {
     #[cfg(not(windows))] #[inline] pub const fn stderr() -> Fd { Fd(2) }
     #[cfg(not(windows))] #[inline] pub fn cwd() -> Fd { Fd(libc::AT_FDCWD) }
 
-    // SAFETY: cached statics written once at startup before any reader.
-    #[cfg(windows)] #[inline] pub fn stdin()  -> Fd { unsafe { fd::WINDOWS_CACHED_STDIN.read() } }
-    #[cfg(windows)] #[inline] pub fn stdout() -> Fd { unsafe { fd::WINDOWS_CACHED_STDOUT.read() } }
-    #[cfg(windows)] #[inline] pub fn stderr() -> Fd { unsafe { fd::WINDOWS_CACHED_STDERR.read() } }
+    #[cfg(windows)] #[inline] pub fn stdin()  -> Fd { fd::WINDOWS_CACHED_STDIN.get().copied().unwrap_or(Fd::INVALID) }
+    #[cfg(windows)] #[inline] pub fn stdout() -> Fd { fd::WINDOWS_CACHED_STDOUT.get().copied().unwrap_or(Fd::INVALID) }
+    #[cfg(windows)] #[inline] pub fn stderr() -> Fd { fd::WINDOWS_CACHED_STDERR.get().copied().unwrap_or(Fd::INVALID) }
     #[cfg(windows)] #[inline] pub fn cwd() -> Fd {
         // SAFETY: PEB is process-global; only reading the cached cwd handle.
         Fd::from_system(unsafe { fd::windows_current_directory_handle() })
@@ -1314,10 +1310,11 @@ pub mod fd {
     use super::Fd;
     use core::ffi::{c_int, c_void};
 
-    // Written once in windows_stdio::init() during single-threaded startup.
-    pub static WINDOWS_CACHED_STDIN: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
-    pub static WINDOWS_CACHED_STDOUT: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
-    pub static WINDOWS_CACHED_STDERR: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
+    // Written once in windows_stdio::init() during single-threaded startup
+    // (S015: write-once → `OnceLock`; readers fall back to `Fd::INVALID`).
+    pub static WINDOWS_CACHED_STDIN: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
+    pub static WINDOWS_CACHED_STDOUT: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
+    pub static WINDOWS_CACHED_STDERR: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
     #[cfg(debug_assertions)]
     pub static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
@@ -2330,19 +2327,19 @@ impl<H: core::hash::Hasher> Hasher for H {
     #[inline] fn update(&mut self, bytes: &[u8]) { self.write(bytes) }
 }
 
+/// Re-export so downstream crates can write `T: bun_core::NoUninit` without a
+/// direct `bytemuck` dep.
+pub use bytemuck::NoUninit;
+
 /// Port of Zig `std.mem.asBytes(&v)`: reinterpret a value's storage as a
 /// borrowed byte slice.
 ///
-/// # Safety
-/// Caller must guarantee `T` is plain-old-data with no uninitialized padding
-/// bytes (or that the returned bytes are never *read* through a path that
-/// observes padding). Serializing/hashing the result for a type with padding
-/// is UB.
+/// Safe: the [`bytemuck::NoUninit`] bound statically guarantees `T` is `Copy`,
+/// `'static`, and contains no uninitialized (padding) bytes, so every byte of
+/// the returned slice is initialized and reading it is defined behaviour.
 #[inline]
-pub unsafe fn bytes_of<T>(v: &T) -> &[u8] {
-    // SAFETY: `&T` is valid for `size_of::<T>()` readable bytes; caller upholds
-    // the no-uninit-padding contract above.
-    unsafe { core::slice::from_raw_parts(core::ptr::from_ref(v).cast::<u8>(), core::mem::size_of::<T>()) }
+pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
+    bytemuck::bytes_of(v)
 }
 
 /// Port of `bun.writeAnyToHasher`. Zig fed `std.mem.asBytes(&thing)`; Rust
@@ -3074,7 +3071,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
             return Err(std::io::Error::last_os_error().into());
         }
         let len = libc::strlen(p);
-        Ok(ZStr::from_raw(buf.0.as_ptr(), len))
+        Ok(ZStr::from_buf(&buf.0, len))
     }
     #[cfg(windows)]
     {
@@ -3572,6 +3569,9 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
 pub struct Timespec { pub sec: i64, pub nsec: i64 }
 // SAFETY: two `i64` fields; all-zero is the epoch.
 unsafe impl crate::ffi::Zeroable for Timespec {}
+// SAFETY: `#[repr(C)]` with two `i64` fields → size 16, align 8, no padding,
+// no interior mutability, `Copy + 'static`. Every byte is initialized.
+unsafe impl bytemuck::NoUninit for Timespec {}
 
 /// Lowercase alias (Zig spells it `bun.timespec`).
 #[allow(non_camel_case_types)]

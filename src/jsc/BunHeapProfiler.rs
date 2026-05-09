@@ -16,19 +16,19 @@ pub struct HeapProfilerConfig {
 
 // C++ function declarations
 unsafe extern "C" {
-    fn Bun__generateHeapProfile(vm: *mut VM) -> BunString;
-    fn Bun__generateHeapSnapshotV8(vm: *mut VM) -> BunString;
+    // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is ABI-identical
+    // to a non-null `*mut VM` and C++ mutation is interior to the opaque cell.
+    safe fn Bun__generateHeapProfile(vm: &mut VM) -> BunString;
+    safe fn Bun__generateHeapSnapshotV8(vm: &mut VM) -> BunString;
 }
 
 pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Result<(), Error> {
     // `defer profile_string.deref()` — `bun_string::String` is `Copy` (no Drop);
     // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
     let profile_string = OwnedString::new(if config.text_format {
-        // SAFETY: vm is a valid &mut VM; FFI returns a +1-ref bun_string::String.
-        unsafe { Bun__generateHeapProfile(std::ptr::from_mut::<VM>(vm)) }
+        Bun__generateHeapProfile(vm)
     } else {
-        // SAFETY: vm is a valid &mut VM; FFI returns a +1-ref bun_string::String.
-        unsafe { Bun__generateHeapSnapshotV8(std::ptr::from_mut::<VM>(vm)) }
+        Bun__generateHeapSnapshotV8(vm)
     });
 
     if profile_string.is_empty() {

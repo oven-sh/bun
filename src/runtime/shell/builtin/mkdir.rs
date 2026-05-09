@@ -334,11 +334,8 @@ impl ShellMkdirTask {
     }
 
     /// Spec: mkdir.zig `runFromThreadPool`.
-    pub fn run_from_thread_pool(this: *mut ShellMkdirTask) {
+    pub fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{platform, resolve_path, Platform};
-        // SAFETY: `this` is a live heap-allocated task.
-        let this = unsafe { &mut *this };
-
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let filepath: &bun_str::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
@@ -433,7 +430,7 @@ impl MkdirCtx for MkdirVerboseVTable {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
         Self::run_from_main_thread(this, interp)
     }

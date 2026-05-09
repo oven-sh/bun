@@ -7,7 +7,7 @@ use crate::shell::ExitCode;
 
 pub struct Binary {
     pub base: Base,
-    pub node: *const ast::Binary,
+    pub node: bun_ptr::BackRef<ast::Binary>,
     pub io: IO,
     /// Once `left` is done, this holds its exit code; `None` while running left.
     pub left: Option<ExitCode>,
@@ -19,13 +19,13 @@ impl Binary {
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Binary,
+        node: &ast::Binary,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Binary(Binary {
             base: Base::new(StateKind::Binary, parent, shell),
-            node,
+            node: bun_ptr::BackRef::new(node),
             io,
             left: None,
             right: None,
@@ -43,9 +43,7 @@ impl Binary {
             let me = interp.as_binary(this);
             (me.left, me.right, me.base.parent, me.base.shell, me.node)
         };
-        // SAFETY: `node` points into the AST arena which outlives every state
-        // node.
-        let n = unsafe { &*node };
+        let n = node.get();
 
         if let Some(right) = right_exit {
             return interp.child_done(parent, this, right);

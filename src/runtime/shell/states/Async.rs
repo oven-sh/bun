@@ -11,7 +11,7 @@ use crate::shell::ExitCode;
 
 pub struct Async {
     pub base: Base,
-    pub node: *const ast::Expr,
+    pub node: bun_ptr::BackRef<ast::Expr>,
     pub io: IO,
     pub state: AsyncState,
     pub event_loop: EventLoopHandle,
@@ -33,7 +33,7 @@ impl Async {
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Expr,
+        node: &ast::Expr,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
@@ -41,7 +41,7 @@ impl Async {
         let evtloop = interp.event_loop;
         interp.alloc_node(Node::Async(Async {
             base: Base::new(StateKind::Async, parent, shell),
-            node,
+            node: bun_ptr::BackRef::new(node),
             io,
             state: AsyncState::Idle,
             event_loop: evtloop,
@@ -93,10 +93,7 @@ impl Async {
                 // via the `StartChild` arm above. Restricted to
                 // pipeline/cmd/if/condexpr — other Expr variants panic
                 // (Async.zig:102-104).
-                //
-                // SAFETY: `node` points into the AST arena which outlives every
-                // state node.
-                let child = match unsafe { &*node } {
+                let child = match node.get() {
                     ast::Expr::Pipeline(p) => Pipeline::init(interp, shell, *p, this, io),
                     ast::Expr::Cmd(c) => Cmd::init(interp, shell, *c, this, io),
                     ast::Expr::If(i) => If::init(interp, shell, *i, this, io),

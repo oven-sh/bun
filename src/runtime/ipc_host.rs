@@ -194,7 +194,7 @@ pub fn emit_handle_ipc_message(
     let [target, message, handle] = callframe.arguments_as_array::<3>();
     if target.is_null() {
         // mutable); `get_ipc_instance` writes `self.ipc` on first call.
-        let vm = unsafe { &mut *global_this.bun_vm_ptr() };
+        let vm = global_this.bun_vm().as_mut();
         let Some(ipc) = vm.get_ipc_instance() else { return Ok(JSValue::UNDEFINED) };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
         unsafe { (*ipc).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };

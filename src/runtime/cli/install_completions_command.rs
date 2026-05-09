@@ -562,13 +562,10 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
                                 .copy_from_slice(b"/.zshrc");
                             zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                            // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                            let filepath = unsafe {
-                                bun_str::ZStr::from_raw(
-                                    zshrc_filepath.as_ptr(),
-                                    zdot_dir.len() + b"/.zshrc".len(),
-                                )
-                            };
+                            let filepath = bun_str::ZStr::from_buf(
+                                &zshrc_filepath,
+                                zdot_dir.len() + b"/.zshrc".len(),
+                            );
                             match bun_sys::open_file_absolute_z(filepath, bun_sys::OpenFlags::READ_WRITE) {
                                 Ok(f) => break 'zshrc f,
                                 Err(_) => break 'first,
@@ -582,13 +579,10 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
                                 .copy_from_slice(b"/.zshrc");
                             zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                            // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                            let filepath = unsafe {
-                                bun_str::ZStr::from_raw(
-                                    zshrc_filepath.as_ptr(),
-                                    zdot_dir.len() + b"/.zshrc".len(),
-                                )
-                            };
+                            let filepath = bun_str::ZStr::from_buf(
+                                &zshrc_filepath,
+                                zdot_dir.len() + b"/.zshrc".len(),
+                            );
                             match bun_sys::open_file_absolute_z(filepath, bun_sys::OpenFlags::READ_WRITE) {
                                 Ok(f) => break 'zshrc f,
                                 Err(_) => break 'second,
@@ -602,13 +596,10 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshenv".len()]
                                 .copy_from_slice(b"/.zshenv");
                             zshrc_filepath[zdot_dir.len() + b"/.zshenv".len()] = 0;
-                            // SAFETY: NUL written at zdot_dir.len() + "/.zshenv".len() above
-                            let filepath = unsafe {
-                                bun_str::ZStr::from_raw(
-                                    zshrc_filepath.as_ptr(),
-                                    zdot_dir.len() + b"/.zshenv".len(),
-                                )
-                            };
+                            let filepath = bun_str::ZStr::from_buf(
+                                &zshrc_filepath,
+                                zdot_dir.len() + b"/.zshenv".len(),
+                            );
                             match bun_sys::open_file_absolute_z(filepath, bun_sys::OpenFlags::READ_WRITE) {
                                 Ok(f) => break 'zshrc f,
                                 Err(_) => break 'third,
@@ -704,13 +695,8 @@ pub(crate) fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>)
     let remaining = cursor.len();
     let written = total - remaining;
     debug_assert!(written < total, "buf_print_z overflow");
-    // SAFETY: `written` bytes were just written contiguously from buf[0]; we
-    // place a NUL at buf[written] (in bounds: written < total) and reinterpret
-    // as a length-carrying NUL-terminated slice.
-    unsafe {
-        *buf.as_mut_ptr().add(written) = 0;
-        ZStr::from_raw(buf.as_ptr(), written)
-    }
+    buf[written] = 0;
+    ZStr::from_buf(buf, written)
 }
 
 // ported from: src/cli/install_completions_command.zig

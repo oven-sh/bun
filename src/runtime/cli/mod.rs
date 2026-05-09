@@ -403,8 +403,8 @@ thread_local! {
 
 /// `Cli.cmd` — set in `create_context_data` so crash reports / debug logging
 /// can ask "which subcommand are we in". Set once during single-threaded
-/// startup; read freely thereafter.
-pub static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
+/// startup; read freely thereafter (S015: write-once → `OnceLock`).
+pub static CMD: std::sync::OnceLock<command::Tag> = std::sync::OnceLock::new();
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
@@ -884,9 +884,9 @@ pub mod command {
         cmd: Tag,
         log: &mut logger::Log,
     ) -> Result<&'static mut ContextData, bun_core::Error> {
-        // SAFETY: single-threaded CLI startup; `CMD` is read by crash-reporter
-        // and debug logging only.
-        unsafe { CMD.write(Some(cmd)) };
+        // Single-threaded CLI startup; `CMD` is read by crash-reporter and
+        // debug logging only. Write-once — ignore the (impossible) second-set Err.
+        let _ = CMD.set(cmd);
 
         let ctx = write_context_no_parse(log);
 
@@ -1514,10 +1514,8 @@ To create a project with the official Next.js scaffolding tool, run\n\
             }
         }
 
-        // SAFETY: `ctx.log` is set by `create_context_data` to the process-static
-        // `Cli::LOG_` and outlives this call.
-        let log = unsafe { &mut *ctx.log };
-        Printer::print(log, &ctx.args.entry_points[0], PrinterFormat::Yarn)
+        let entry = ctx.args.entry_points[0].clone();
+        Printer::print(ctx.log_mut(), &entry, PrinterFormat::Yarn)
     }
 
     fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {

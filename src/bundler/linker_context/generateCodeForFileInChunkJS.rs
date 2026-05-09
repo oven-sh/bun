@@ -189,8 +189,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             let mut source_storage: logger::Source;
             let source: &logger::Source =
                 if core::ptr::eq(source_ref.path.text.as_ptr(), source_ref.path.pretty.as_ptr()) {
-                    // SAFETY: `resolver.fs` points at the singleton FS.
-                    let top_level_dir = unsafe { (*c.resolver().fs).top_level_dir };
+                    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
                     let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
                         source_ref.path.clone(),
                         c.options.target,
@@ -648,7 +647,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
                     fn wrap_trampoline(ctx: *mut core::ffi::c_void, loc: logger::Loc, ref_: Ref) -> Expr {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
-                        let this = unsafe { &mut *ctx.cast::<ExportHoist>() };
+                        let this = unsafe { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
                         this.wrap_identifier(loc, ref_)
                     }
                 }

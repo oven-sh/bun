@@ -127,10 +127,10 @@ mod io_thread_pool {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    // SAFETY: REF_COUNT != 0 ⇒ THREAD_POOL is initialized (set under MUTEX below).
-                    return unsafe {
-                        NonNull::new_unchecked(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
-                    };
+                    // REF_COUNT != 0 ⇒ THREAD_POOL is initialized (set under MUTEX below).
+                    // `UnsafeCell::get` never returns null.
+                    return NonNull::new(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
+                        .expect("UnsafeCell::get is non-null");
                 }
                 Err(actual) => count = actual,
             }
@@ -156,8 +156,9 @@ mod io_thread_pool {
             // bumping the ref count here, which is a latent bug in the source
             // (the racing acquirer's reference isn't counted). Mirrored.
         }
-        // SAFETY: just initialized (or observed initialized) above.
-        unsafe { NonNull::new_unchecked(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>()) }
+        // Just initialized (or observed initialized) above. `UnsafeCell::get` never returns null.
+        NonNull::new(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
+            .expect("UnsafeCell::get is non-null")
     }
 
     pub fn release() {

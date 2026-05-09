@@ -1093,14 +1093,10 @@ pub fn edit(
                             // store, vestigial from the earlier `editUpdateNoArgs` copy).
                             // The Rust port omits the variable entirely.
                             let new_version: Vec<u8> = 'new_version: {
-                                // SAFETY: `tag == Npm` matched above.
-                                let version_fmt = unsafe {
-                                    resolutions[request.package_id as usize]
-                                        .value
-                                        .npm
-                                        .version
-                                        .fmt(manager.lockfile.buffers.string_bytes.as_slice())
-                                };
+                                let version_fmt = resolutions[request.package_id as usize]
+                                    .npm()
+                                    .version
+                                    .fmt(manager.lockfile.buffers.string_bytes.as_slice());
                                 if options.exact_versions {
                                     let mut v = Vec::new();
                                     write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");

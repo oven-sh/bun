@@ -1343,6 +1343,18 @@ pub struct FromBunRunContext {
     pub environment: Option<*const u16>,
 }
 
+impl FromBunRunContext {
+    /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
+    /// → slice reconstruction so callers don't open-code `from_raw_parts`.
+    #[inline]
+    pub fn base_path_slice(&self) -> &[u16] {
+        // SAFETY: caller of `try_startup_from_bun_js` (run_command.rs) sets
+        // `base_path`/`base_path_len` from a live `[u16]` buffer it owns for
+        // the duration of the call. Borrow tied to `&self`.
+        unsafe { bun_core::ffi::slice(self.base_path, self.base_path_len) }
+    }
+}
+
 impl BunCtx for &FromBunRunContext {
     fn base_path(&self) -> *mut u16 { self.base_path }
     fn base_path_len(&self) -> usize { self.base_path_len }
@@ -1376,10 +1388,7 @@ impl BunCtx for &FromBunRunContext {
 /// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
 #[cfg(not(feature = "shim_standalone"))]
 pub fn try_startup_from_bun_js(context: FromBunRunContext) {
-    debug_assert!(!unsafe {
-        bun_core::ffi::slice(context.base_path, context.base_path_len)
-    }
-    .starts_with(&NT_OBJECT_PREFIX));
+    debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
     // TODO(port): `comptime assert(bun.FeatureFlags.windows_bunx_fast_path)` — wire up FeatureFlags const.
     match launcher::<{ LauncherMode::Launch }, _>(&context) {
@@ -1408,6 +1417,18 @@ pub struct FromBunShellContext {
 }
 
 pub type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
+
+impl FromBunShellContext {
+    /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
+    /// → slice reconstruction so callers don't open-code `from_raw_parts`.
+    #[inline]
+    pub fn base_path_slice(&self) -> &[u16] {
+        // SAFETY: caller of `read_without_launch` sets `base_path`/`base_path_len`
+        // from a live `[u16]` buffer it owns for the duration of the call.
+        // Borrow tied to `&self`.
+        unsafe { bun_core::ffi::slice(self.base_path, self.base_path_len) }
+    }
+}
 
 impl BunCtx for &FromBunShellContext {
     fn base_path(&self) -> *mut u16 { self.base_path }
@@ -1440,10 +1461,7 @@ pub enum ReadWithoutLaunchResult {
 /// faster than that, so this is a huge win.
 #[cfg(not(feature = "shim_standalone"))]
 pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchResult {
-    debug_assert!(!unsafe {
-        bun_core::ffi::slice(context.base_path, context.base_path_len)
-    }
-    .starts_with(&NT_OBJECT_PREFIX));
+    debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
     // TODO(port): `comptime assert(bun.FeatureFlags.windows_bunx_fast_path)` — wire up FeatureFlags const.
     match launcher::<{ LauncherMode::ReadWithoutLaunch }, _>(&context) {

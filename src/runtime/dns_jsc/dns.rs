@@ -82,23 +82,18 @@ unsafe fn os_freeaddrinfo(ai: *mut AddrInfo) {
 /// and the cast back to `*mut GlobalData`.
 #[inline]
 pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver {
-    let vm_ptr = global_this.bun_vm().as_mut();
+    let vm = global_this.bun_vm();
     // PORT NOTE: reshaped for borrowck — `GlobalData::init` needs
     // `&VirtualMachine` while `rare_data()` needs `&mut VirtualMachine`. Read
     // the slot, drop the borrow, init if empty, then re-acquire the slot to
-    // store. The two `&mut *vm_ptr` derefs are sequenced (no overlap).
-    // SAFETY: `bun_vm()` returns the live VM back-ptr; RareData is owned by it
-    // and outlives this call.
-    let existing = *unsafe { &mut *vm_ptr }.rare_data().global_dns_data_slot();
+    // store. The two `as_mut()` borrows are sequenced (no overlap).
+    let existing = *vm.as_mut().rare_data().global_dns_data_slot();
     let data: *mut GlobalData = match existing {
         Some(nn) => nn.as_ptr().cast::<GlobalData>(),
         None => {
-            // SAFETY: `vm_ptr` is live; the prior `&mut` borrow ended above.
-            let gd = bun_core::heap::into_raw(GlobalData::init(unsafe { &*vm_ptr }));
-            // SAFETY: `vm_ptr` is live; re-acquire the slot to publish `gd`.
-            *unsafe { &mut *vm_ptr }.rare_data().global_dns_data_slot() =
-                // SAFETY: `gd` was just `heap::alloc`'d (non-null).
-                Some(unsafe { NonNull::new_unchecked(gd.cast::<c_void>()) });
+            let gd_nn = bun_core::heap::into_raw_nn(GlobalData::init(vm));
+            let gd = gd_nn.as_ptr();
+            *vm.as_mut().rare_data().global_dns_data_slot() = Some(gd_nn.cast::<c_void>());
             // SAFETY: `gd` points to a live, freshly-allocated GlobalData.
             unsafe { (*gd).resolver.ref_() }; // live forever
             gd

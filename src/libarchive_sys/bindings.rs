@@ -1703,7 +1703,7 @@ impl GrowingBuffer {
 
     pub unsafe extern "C" fn open_callback(_a: *mut struct_archive, client_data: *mut c_void) -> c_int {
         // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open*.
-        let this = unsafe { &mut *client_data.cast::<GrowingBuffer>() };
+        let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
         this.list.clear();
         this.had_error = false;
         0
@@ -1716,7 +1716,7 @@ impl GrowingBuffer {
         length: usize,
     ) -> la_ssize_t {
         // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open*.
-        let this = unsafe { &mut *client_data.cast::<GrowingBuffer>() };
+        let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
         if buff.is_null() || length == 0 {
             return 0;
         }

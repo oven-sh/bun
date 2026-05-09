@@ -737,8 +737,7 @@ impl<C: TaskContext> AsyncTask<C> {
         // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
         // exit (ctx implements Drop).
 
-        // SAFETY: vm points to the live owning VM for this global's lifetime.
-        let vm = unsafe { &mut *owned.vm };
+        let vm = VirtualMachine::get();
         if vm.is_shutting_down() {
             return Ok(());
         }

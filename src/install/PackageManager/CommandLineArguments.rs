@@ -1202,13 +1202,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 )
                 .len();
                 buf2[len] = 0;
-                // SAFETY: buf2[len] == 0 written above
-                final_path = unsafe { bun_str::ZStr::from_raw_mut(buf2.as_mut_ptr(), len) };
+                final_path = bun_str::ZStr::from_buf_mut(&mut buf2[..], len);
             } else {
                 buf[..cwd_.len()].copy_from_slice(cwd_);
                 buf[cwd_.len()] = 0;
-                // SAFETY: buf[cwd_.len()] == 0 written above
-                final_path = unsafe { bun_str::ZStr::from_raw_mut(buf.as_mut_ptr(), cwd_.len()) };
+                final_path = bun_str::ZStr::from_buf_mut(&mut buf[..], cwd_.len());
             }
             if let Err(err) = bun_sys::chdir(final_path) {
                 Output::err_generic(

@@ -126,24 +126,22 @@ impl ReplCommand {
         b.options.dead_code_elimination = false; // REPL needs all code
 
         if let Err(_) = b.configure_defines() {
-            Self::dump_build_error(unsafe { &*vm });
+            Self::dump_build_error(VirtualMachine::get());
             Global::exit(1);
         }
 
-        // SAFETY: vm.log is set by VirtualMachine::init.
         bun_http::async_http::load_env(
-            unsafe { (*vm).log.unwrap().as_mut() },
+            VirtualMachine::get().log_mut().unwrap(),
             b.env(),
         );
-        unsafe { (&mut *vm).load_extra_env_and_source_code_printer() };
+        VirtualMachine::get().as_mut().load_extra_env_and_source_code_printer();
 
-        unsafe { (*vm).is_main_thread = true };
+        VirtualMachine::get().as_mut().is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
         // Store VM reference in REPL (safe - no JS allocation)
-        // SAFETY: vm/global outlive the REPL (process-lifetime).
-        repl.vm = Some(unsafe { &*vm });
-        repl.global = Some(unsafe { &*(*vm).global });
+        repl.vm = Some(VirtualMachine::get());
+        repl.global = Some(VirtualMachine::get().global());
 
         // Create the ReplRunner and execute within the API lock
         // NOTE: JS-allocating operations like ExposeNodeModuleGlobals must
@@ -171,7 +169,7 @@ impl ReplCommand {
         // the trivial thunk locally.
         extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
             // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
-            let runner = unsafe { &mut *ctx.cast::<ReplRunner<'_, '_>>() };
+            let runner = unsafe { bun_ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
             ReplRunner::start(runner);
         }
         // SAFETY: vm.global is valid; runner is pinned on stack for the lock duration.
@@ -214,9 +212,8 @@ struct ReplRunner<'a, 'r> {
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
     pub fn start(this: &mut ReplRunner<'a, 'r>) {
-        let vm_ptr = this.vm;
-        // SAFETY: vm_ptr is a valid heap-allocated VirtualMachine for the API-lock scope.
-        let vm = unsafe { &mut *vm_ptr };
+        let _ = this.vm;
+        let vm = VirtualMachine::get().as_mut();
 
         // Set up the REPL environment (now inside API lock)
         if let Err(_) = this.setup_repl_environment() {
@@ -245,7 +242,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         } else {
             // Interactive: run the REPL loop
-            if let Err(err) = this.repl.run_with_vm(Some(unsafe { &*vm_ptr })) {
+            if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
                 // TODO(port): Output.prettyErrorln color-tag formatting macro
                 Output::pretty_errorln(format_args!("<r><red>REPL error: {}<r>", err.name()));
             }
@@ -257,8 +254,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
     }
 
     fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
-        // SAFETY: self.vm is valid for the API-lock scope.
-        let vm = unsafe { &mut *self.vm };
+        let vm = VirtualMachine::get().as_mut();
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects
@@ -268,18 +264,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         }
 
         // Set up require(), module, __filename, __dirname relative to cwd
-        // SAFETY: transpiler.fs is a valid *mut FileSystem set during VM init.
-        // PORT NOTE: `bun_resolver::fs::FileSystem` (the inline stub re-exported as
-        // `bun_bundler::bun_fs`) doesn't expose `top_level_dir_without_trailing_slash()`
-        // yet — inline the trivial trailing-sep strip here.
-        let cwd = unsafe {
-            let tld = (*vm.transpiler.fs).top_level_dir;
-            if tld.len() > 1 && tld[tld.len() - 1] == bun_paths::SEP {
-                &tld[..tld.len() - 1]
-            } else {
-                tld
-            }
-        };
+        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
         // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.
         // C++ is `[[ZIG_EXPORT(check_slow)]]` → use the generated `bun_jsc::cpp` wrapper,
         // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`

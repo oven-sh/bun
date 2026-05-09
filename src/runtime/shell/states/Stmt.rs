@@ -7,7 +7,7 @@ use crate::shell::ExitCode;
 
 pub struct Stmt {
     pub base: Base,
-    pub node: *const ast::Stmt,
+    pub node: bun_ptr::BackRef<ast::Stmt>,
     pub idx: usize,
     pub last_exit_code: Option<ExitCode>,
     pub currently_executing: Option<NodeId>,
@@ -24,7 +24,12 @@ impl Stmt {
     ) -> NodeId {
         let id = interp.alloc_node(Node::Stmt(Stmt {
             base: Base::new(StateKind::Stmt, parent, shell),
-            node,
+            // SAFETY: `node` is non-null and points into the AST arena
+            // (`ShellArgs::__arena`), which the interpreter holds for its
+            // entire lifetime — strictly outliving every state node (the
+            // BackRef invariant). Callers pass `&raw const` only to escape
+            // borrowck across the `&mut Interpreter` reborrow.
+            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Stmt) },
             idx: 0,
             last_exit_code: None,
             currently_executing: None,
@@ -50,9 +55,7 @@ impl Stmt {
         if idx >= len {
             return interp.child_done(parent, this, last.unwrap_or(0));
         }
-        // SAFETY: `node` points into the AST arena (lives for the interpreter's
-        // lifetime); `idx` was bounds-checked against `expr_count` above.
-        let expr: ast::Expr = unsafe { (*interp.as_stmt(this).node).exprs[idx] };
+        let expr: ast::Expr = interp.as_stmt(this).node.exprs[idx];
         let io = interp.as_stmt(this).io.clone();
         let (child, y) = interp.spawn_expr(shell, &expr, this, io);
         interp.as_stmt_mut(this).currently_executing = child;
@@ -91,9 +94,7 @@ impl Stmt {
 
     #[inline]
     fn expr_count(me: &Stmt) -> usize {
-        // SAFETY: `node` points into the AST arena which outlives every state
-        // node.
-        unsafe { (&*(*me.node).exprs).len() }
+        me.node.exprs.len()
     }
 }
 

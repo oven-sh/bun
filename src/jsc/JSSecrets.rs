@@ -87,8 +87,7 @@ impl SecretsJob {
         let this = unsafe { bun_core::heap::take(this) };
         let vm = this.vm;
 
-        // SAFETY: `vm` is process-lifetime.
-        if unsafe { (*vm).is_shutting_down() } {
+        if VirtualMachine::get().is_shutting_down() {
             return;
         }
 

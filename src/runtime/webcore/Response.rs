@@ -268,8 +268,7 @@ impl BodyMixin for Response {
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
         self.init.headers.as_ref().map(|h| {
-            // SAFETY: HeadersRef wraps a non-null `*mut FetchHeaders`.
-            unsafe { core::ptr::NonNull::new_unchecked(h.as_ptr()) }
+            core::ptr::NonNull::new(h.as_ptr()).expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
     }
     #[inline]

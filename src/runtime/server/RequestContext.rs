@@ -908,8 +908,7 @@ where
 
         let mut message: Vec<u8> = Vec::new();
         let _ = write!(&mut message, "{}", Output::pretty_fmt::<false>(fmt));
-        // SAFETY: VirtualMachine::get() returns the live VM raw ptr.
-        let cwd = unsafe { (*VirtualMachine::get().as_mut().transpiler.fs).top_level_dir };
+        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
         let fallback_container = Box::new(Api::FallbackMessageContainer {
             message: Some(message.into_boxed_slice()),
             router: None,
@@ -1202,15 +1201,13 @@ where
         let any_js_calls = core::cell::Cell::new(false);
         // SAFETY: BACKREF, just asserted Some
         let server = this.server();
-        let vm = std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut();
+        let _ = server.vm();
         let global_this = server.global_this();
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
         scopeguard::defer! {
             if any_js_calls.get() {
-                // SAFETY: vm is live for the request duration; drain_microtasks
-                // needs &mut.
-                unsafe { (*vm).drain_microtasks() };
+                VirtualMachine::get().as_mut().drain_microtasks();
             }
         }
 
@@ -1382,7 +1379,7 @@ where
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
         // SAFETY: ctx is a *RequestContext registered with FileResponseStream
-        let this: &mut Self = unsafe { &mut *ctx.cast::<Self>() };
+        let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
         this.detach_response();
         this.end_request_streaming_and_drain();
         this.deref();
@@ -1719,7 +1716,7 @@ where
 
     pub fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         // SAFETY: this is a *RequestContext registered as lock.task
-        Self::do_render_with_body(unsafe { &mut *this.cast::<Self>() }, value, None);
+        Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
     }
 
     fn render_with_blob_from_body_value(&mut self) {
@@ -1752,7 +1749,7 @@ where
         let Some(ctx) = ctx else { return };
         // SAFETY: ctx is the *mut Self stashed in `sink.ctx` by do_render_stream;
         // the sink only fires this once before any concurrent borrow of `self`.
-        Self::handle_first_stream_write(unsafe { &mut *ctx.cast::<Self>() });
+        Self::handle_first_stream_write(unsafe { bun_ptr::callback_ctx::<Self>(ctx) });
     }
 
     /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
@@ -1809,8 +1806,7 @@ where
         });
         // PORT NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
         // local `response_stream` view can coexist with `&mut *this` calls below.
-        let response_stream_ptr =
-            unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(response_stream_box)) };
+        let response_stream_ptr = bun_core::heap::into_raw_nn(response_stream_box);
         this.sink = Some(response_stream_ptr);
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
@@ -2161,7 +2157,7 @@ where
         this: *mut c_void,
     ) -> Result<(), jsc::JsTerminated> {
         // SAFETY: this is the *mut Self registered with stat().
-        Self::on_s3_size_resolved(result, unsafe { &mut *this.cast::<Self>() });
+        Self::on_s3_size_resolved(result, unsafe { bun_ptr::callback_ctx::<Self>(this) });
         Ok(())
     }
 
@@ -2640,8 +2636,7 @@ where
                         }
 
                         // Create error message for the stream rejection
-                        // SAFETY: vm/transpiler/fs are live raw pointers.
-                        let cwd = unsafe { (*server.vm().transpiler.fs).top_level_dir };
+                        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
                         let fallback_container = Box::new(Api::FallbackMessageContainer {
                             message: Some(
                                 b"Stream error during server-side rendering"
@@ -2800,8 +2795,9 @@ where
                             this.response_body_readable_stream_ref =
                                 readable_stream::Strong::init(stream, global_this);
 
-                            // SAFETY: byte_stream_ptr came from Source::Bytes
-                            this.byte_stream = Some(unsafe { NonNull::new_unchecked(byte_stream_ptr) });
+                            this.byte_stream = Some(
+                                NonNull::new(byte_stream_ptr).expect("byte_stream_ptr from Source::Bytes"),
+                            );
                             let mut response_buf = byte_stream.drain();
                             this.response_buf_owned = response_buf.move_to_list();
 
@@ -3434,9 +3430,9 @@ where
             debug_assert!(this.request_body_buf.is_empty());
             let _exit = vm.enter_event_loop_scope();
 
-            // SAFETY: from_borrowed_slice_dangerous returns a ManuallyDrop
-            // wrapper; ownership of `chunk` stays with the caller.
-            let borrowed = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(chunk) };
+            // `RawSlice` is non-owning; ownership of `chunk` stays with the
+            // caller for the duration of the synchronous `on_data` call.
+            let borrowed = bun_ptr::RawSlice::new(chunk);
             if !last {
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
@@ -3535,12 +3531,8 @@ where
                     // } else {
                     // TODO(port): ensureTotalCapacityPrecise can OOM in Zig; Rust Vec aborts.
                     bytes.reserve_exact(total.saturating_sub(bytes.len()));
-
-                    let prev_len = bytes.len();
-                    // SAFETY: capacity reserved above; bytes are written immediately below
-                    unsafe { bytes.set_len(total) };
-                    let slice = &mut bytes[prev_len..];
-                    slice[..chunk.len()].copy_from_slice(chunk);
+                    bytes.extend_from_slice(chunk);
+                    debug_assert_eq!(bytes.len(), total);
                     *body = Body::Value::InternalBlob(WebCore::InternalBlob {
                         bytes: core::mem::take(bytes),
                         was_string: false,
@@ -3628,7 +3620,7 @@ where
         readable: WebCore::ReadableStream,
     ) {
         // SAFETY: ptr is a *RequestContext
-        let this = unsafe { &mut *ptr.cast::<Self>() };
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(ptr) };
         debug_assert!(!this.request_body_readable_stream_ref.has());
         this.request_body_readable_stream_ref =
             readable_stream::Strong::init(readable, global_this);
@@ -3636,12 +3628,12 @@ where
 
     pub fn on_start_buffering_callback(this: *mut c_void) {
         // SAFETY: this is a *RequestContext
-        unsafe { &mut *this.cast::<Self>() }.on_start_buffering();
+        unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_buffering();
     }
 
     pub fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
         // SAFETY: this is a *RequestContext
-        unsafe { &mut *this.cast::<Self>() }.on_start_streaming_request_body()
+        unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
     }
 
     pub fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {

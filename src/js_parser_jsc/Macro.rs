@@ -59,7 +59,7 @@ pub struct MacroContext {
     pub resolver: *mut Resolver<'static>,
     pub env: *mut DotEnvLoader<'static>,
     pub macros: MacroMap,
-    pub remap: *const MacroRemap,
+    pub remap: bun_ptr::BackRef<MacroRemap>,
     pub javascript_object: JSValue,
     /// PORT NOTE: Zig threads `default_allocator` (mimalloc, process-lifetime)
     /// through `Runner::run` → `Run.allocator`; the slices it backs (property
@@ -85,9 +85,9 @@ pub type MacroMap = ArrayHashMap<i32, Macro>;
 
 impl MacroContext {
     pub fn get_remap(&self, path: &[u8]) -> Option<&MacroRemapEntry> {
-        // SAFETY: `remap` points into `Transpiler.options`, which outlives
+        // `remap` is a `BackRef` into `Transpiler.options`, which outlives
         // every `MacroContext` (see struct PORT NOTE).
-        let remap = unsafe { &*self.remap };
+        let remap = self.remap.get();
         if remap.is_empty() {
             return None;
         }
@@ -101,7 +101,7 @@ impl MacroContext {
             macros: MacroMap::new(),
             resolver: &raw mut transpiler.resolver,
             env: transpiler.env,
-            remap: &raw const transpiler.options.macro_remap,
+            remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
             javascript_object: JSValue::ZERO,
             // Deferred until `call()` — see field doc.
             bump: None,
@@ -245,8 +245,7 @@ impl MacroContext {
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
         let bump: *const bun_alloc::Arena =
             &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
-        // SAFETY: `vm` is the per-thread VM, live for this call.
-        let ret = unsafe { &*vm }.run_with_api_lock(|| {
+        let ret = VirtualMachine::get().run_with_api_lock(|| {
             // SAFETY: `macro_` points into `self.macros` which is not mutated
             // for the duration of this closure; `bump` points into `*self`,
             // which outlives the closure and is not otherwise borrowed.
@@ -576,9 +575,9 @@ impl<'a> Run<'a> {
         source: &Source,
         id: i32,
     ) -> Result<Expr, MacroError> {
-        let vm = macro_.vm();
-        // SAFETY: `vm` is the per-thread VM; `macros` is its owned table.
-        let Some(&macro_callback) = (unsafe { (*vm).macros.get(&id) }) else {
+        let _ = macro_.vm();
+        let vm = VirtualMachine::get();
+        let Some(&macro_callback) = vm.macros.get(&id) else {
             return Ok(caller);
         };
 
@@ -588,7 +587,7 @@ impl<'a> Run<'a> {
         // the C-API `JSObjectRef` (same encoded value).
         let result = unsafe {
             js::JSObjectCallAsFunctionReturnValueHoldingAPILock(
-                (*vm).global,
+                vm.global,
                 macro_callback,
                 core::ptr::null_mut(),
                 args.len(),
@@ -600,8 +599,7 @@ impl<'a> Run<'a> {
             caller,
             function_name,
             macro_,
-            // SAFETY: `vm.global` is set during init and live for the VM lifetime.
-            global: unsafe { &*(*vm).global },
+            global: VirtualMachine::get().global(),
             bump,
             id,
             log,
@@ -908,12 +906,11 @@ impl<'a> Run<'a> {
 
                 let promise = value.as_any_promise().expect("Unexpected promise type");
 
-                let vm = self.macro_.vm();
-                // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-                unsafe { (*vm).wait_for_promise(promise) };
+                let _ = self.macro_.vm();
+                let vm = VirtualMachine::get();
+                vm.as_mut().wait_for_promise(promise);
 
-                // SAFETY: `jsc_vm` is the live JSC VM for this thread.
-                let promise_result = promise.result(unsafe { &*(*vm).jsc_vm });
+                let promise_result = promise.result(vm.jsc_vm());
                 let rejected = promise.status() == jsc::js_promise::Status::Rejected;
 
                 if promise_result.is_undefined() && self.is_top_level {
@@ -930,10 +927,8 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
-                    // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-                    unsafe {
-                        (*vm).unhandled_rejection(self.global, promise_result, promise.as_value())
-                    };
+                    vm.as_mut()
+                        .unhandled_rejection(self.global, promise_result, promise.as_value());
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;

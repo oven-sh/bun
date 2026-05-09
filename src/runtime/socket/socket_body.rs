@@ -2769,9 +2769,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Zig: `bun.default_allocator.create(Handlers)` — client-mode
         // `Handlers` is a standalone heap allocation that
         // `Handlers::mark_inactive` later frees via `heap::take`.
-        // SAFETY: `Box::new` never returns null.
-        let handlers_ptr =
-            unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(Box::new(handlers_taken))) };
+        let handlers_ptr = bun_core::heap::into_raw_nn(Box::new(handlers_taken));
 
         // Ownership of the +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx`
         // below; defuse the errdefer so a later `?` doesn't double-free.
@@ -3604,9 +3602,7 @@ pub fn js_upgrade_duplex_to_tls(
     // Zig: `bun.default_allocator.create(Handlers)` — client-mode `Handlers`
     // is a standalone heap allocation that `Handlers::mark_inactive` later
     // frees via `heap::take`.
-    // SAFETY: `Box::new` never returns null.
-    let handlers_ptr =
-        unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(Box::new(handlers_taken))) };
+    let handlers_ptr = bun_core::heap::into_raw_nn(Box::new(handlers_taken));
     let tls = TLSSocket::new(TLSSocket {
         ref_count: bun_ptr::RefCount::init(),
         handlers: Some(handlers_ptr),
@@ -3657,7 +3653,7 @@ pub fn js_upgrade_duplex_to_tls(
             ctx: NonNull::new(duplex_context.cast::<c_void>()),
             callback: |p| {
                 // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in `ctx`.
-                unsafe { (&mut *p.cast::<DuplexUpgradeContext>()).run_event() };
+                unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(p).run_event() };
                 Ok(())
             },
         });
@@ -3682,16 +3678,16 @@ pub fn js_upgrade_duplex_to_tls(
             global,
             duplex,
             UpgradedDuplexHandlers {
-                on_open: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_open() },
-                on_data: |c, d| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_data(d) },
-                on_handshake: |c, ok, err| unsafe {
-                    (&mut *c.cast::<DuplexUpgradeContext>()).on_handshake(ok, err)
+                on_open: |c: *mut ()| unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_open() },
+                on_data: |c: *mut (), d| unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_data(d) },
+                on_handshake: |c: *mut (), ok, err| unsafe {
+                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_handshake(ok, err)
                 },
-                on_close: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_close() },
-                on_end: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_end() },
-                on_writable: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_writable() },
-                on_error: |c, e| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_error(e) },
-                on_timeout: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_timeout() },
+                on_close: |c: *mut ()| unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_close() },
+                on_end: |c: *mut ()| unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_end() },
+                on_writable: |c: *mut ()| unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_writable() },
+                on_error: |c: *mut (), e| unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_error(e) },
+                on_timeout: |c: *mut ()| unsafe { bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_timeout() },
                 ctx: duplex_context.cast::<()>(),
             },
         ));

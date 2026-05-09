@@ -265,7 +265,7 @@ pub extern "C" fn bun_ssl_ctx_cache_on_free(
     }
     // SAFETY: non-null ptr is the *Entry we stored via SSL_CTX_set_ex_data; the
     // owning cache outlives every SSL_CTX it hands out (Drop clears ex_data first).
-    let entry: &mut Entry = unsafe { &mut *ptr.cast::<Entry>() };
+    let entry: &mut Entry = unsafe { bun_ptr::callback_ctx::<Entry>(ptr) };
     let _guard = entry.owner.mutex.lock_guard();
     entry.ctx = ptr::null_mut();
 }

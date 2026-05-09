@@ -234,8 +234,7 @@ impl BodyMixin for Request {
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
         self.headers.as_ref().map(|h| {
-            // SAFETY: HeadersRef wraps a non-null `*mut FetchHeaders`.
-            unsafe { core::ptr::NonNull::new_unchecked(h.as_ptr()) }
+            core::ptr::NonNull::new(h.as_ptr()).expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
     }
     #[inline]
@@ -844,8 +843,8 @@ impl Request {
         // Lazy create default signal
         let js_signal = AbortSignal::create(global_this);
         js_signal.ensure_still_alive();
-        if let Some(signal) = AbortSignalRef::from_js(js_signal) {
-            // `from_js` already bumped the C++ refcount (Zig: `signal.ref()`).
+        if let Some(signal) = AbortSignal::ref_from_js(js_signal) {
+            // `ref_from_js` already bumped the C++ refcount (Zig: `signal.ref()`).
             self.signal = Some(signal);
         }
         js_signal
@@ -1407,10 +1406,10 @@ impl Request {
                 match value.get_truthy(global_this, b"signal") {
                     Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
-                        if let Some(signal) = AbortSignalRef::from_js(signal_) {
+                        if let Some(signal) = AbortSignal::ref_from_js(signal_) {
                             // Keep it alive
                             signal_.ensure_still_alive();
-                            // `from_js` already ref'd (Zig: `signal.ref()`).
+                            // `ref_from_js` already ref'd (Zig: `signal.ref()`).
                             req.signal = Some(signal);
                         } else {
                             if !global_this.has_exception() {

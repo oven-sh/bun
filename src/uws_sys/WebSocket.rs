@@ -108,7 +108,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         unsafe extern "C" fn wrap<C>(user_data: *mut c_void) {
             // SAFETY: user_data is &mut (ptr, fn) on the caller's stack frame,
             // which outlives the synchronous uws_ws_cork call.
-            let data = unsafe { &mut *user_data.cast::<(*mut C, fn(&mut C))>() };
+            let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
             // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
             (data.1)(unsafe { &mut *data.0 });
         }
@@ -332,7 +332,7 @@ impl AnyWebSocket {
         unsafe extern "C" fn wrap<C>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack tuple alive for the duration
             // of the synchronous uws_ws_cork call.
-            let data = unsafe { &mut *user_data.cast::<(*mut C, fn(&mut C))>() };
+            let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
             // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
             (data.1)(unsafe { &mut *data.0 });
         }

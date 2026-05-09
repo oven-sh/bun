@@ -189,9 +189,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     // promotion; the raw-pointer route sidesteps that lint while keeping both
     // call sites (which pass `&`/`&mut` and coerce) unchanged.
     pub fn adopt(&mut self, vm: *const VirtualMachine, fd: Fd) -> bool {
-        // SAFETY: see PORT NOTE — VM is process-singleton and accessed only
-        // from the main thread here; `vm` is non-null and live for the call.
-        let vm: &mut VirtualMachine = unsafe { &mut *vm.cast_mut() };
+        // PORT NOTE — VM is process-singleton and accessed only from the main
+        // thread here; route through the safe singleton accessor.
+        let _ = vm;
+        let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
         #[cfg(windows)]
         {
             // ipc=true matches ipc.zig windowsConfigureClient. With ipc=true

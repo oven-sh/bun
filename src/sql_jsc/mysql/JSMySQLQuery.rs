@@ -130,9 +130,8 @@ impl JSMySQLQuery {
         let this = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsRef::empty(),
             ref_count: Cell::new(1),
-            // SAFETY: `sql_vm_ptr()` is non-null (asserted in debug builds);
-            // stored with full write provenance for later `&mut *p` at use sites.
-            vm: unsafe { NonNull::new_unchecked(global_this.sql_vm_ptr()) },
+            // Stored with full write provenance for later `&mut *p` at use sites.
+            vm: NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
             global_object: BackRef::new(global_this),
             query: MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple),
         }));

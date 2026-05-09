@@ -172,9 +172,7 @@ impl PmPkgCommand {
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // SAFETY: ctx.log is set by `command::create_context_data()` before any
-        // subcommand runs (single-threaded CLI startup invariant).
-        let log: &mut Log = unsafe { &mut *ctx.log };
+        let log: &mut Log = ctx.log_mut();
         // const generics mirror Zig `.{ .is_json, .allow_comments,
         // .allow_trailing_commas, .guess_indentation = true }` with the
         // remaining JSONOptions fields at their defaults (false).

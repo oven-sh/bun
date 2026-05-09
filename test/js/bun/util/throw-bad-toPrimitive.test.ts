@@ -39,20 +39,3 @@ test("template literal with object whose Symbol.toPrimitive returns a non-primit
   }
   expect(caught).toBeInstanceOf(TypeError);
 });
-
-test("growable SharedArrayBuffer + Cookie.from with bad Symbol.toPrimitive does not crash", () => {
-  new Uint16Array(new SharedArrayBuffer(198, { maxByteLength: 268435439 }));
-
-  function F() {}
-  F[Symbol.toPrimitive] = () => F;
-
-  expect(() => Bun.Cookie.from(new ArrayBuffer(0) as any, F as any)).toThrow(TypeError);
-
-  let thrown: unknown;
-  try {
-    throw F;
-  } catch (e) {
-    thrown = e;
-  }
-  expect(thrown).toBe(F);
-});

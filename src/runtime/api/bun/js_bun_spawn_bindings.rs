@@ -1401,17 +1401,29 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
         #[cfg(not(unix))]
         {
-            if let Some(err) = ipc_data
-                .windows_configure_server(
-                    subprocess.stdio_pipes[usize::try_from(ipc_channel).expect("int cast")].buffer,
-                )
-                .as_err()
-            {
+            use crate::node::MaybeExt as _;
+            let idx = usize::try_from(ipc_channel).expect("int cast");
+            // Zig: `stdio_pipes.items[ipc_channel].buffer` — direct union-field
+            // access (the IPC channel is always a `buffer` pipe on Windows).
+            // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
+            // neutralize the slot up front so `finalizeStreams` can't
+            // double-close it (the Box would otherwise drop on reassignment).
+            let ipc_pipe: *mut bun_libuv_sys::Pipe =
+                match core::mem::take(&mut subprocess.stdio_pipes[idx]) {
+                    spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
+                    other => {
+                        // Restore and fall through with null — matches Zig's
+                        // safety-checked `.buffer` access on a non-buffer slot.
+                        subprocess.stdio_pipes[idx] = other;
+                        debug_assert!(false, "IPC channel stdio is not a buffer pipe");
+                        core::ptr::null_mut()
+                    }
+                };
+            if let Some(err) = ipc_data.windows_configure_server(ipc_pipe).as_err() {
+                let err_js = err.to_js(global_this);
                 subprocess.deref();
-                return Err(global_this.throw_value(err.to_js(global_this)?));
+                return Err(global_this.throw_value(err_js));
             }
-            subprocess.stdio_pipes[usize::try_from(ipc_channel).expect("int cast")] =
-                ExtraPipe::Unavailable;
         }
         ipc_data.write_version_packet(global_this);
     }

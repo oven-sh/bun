@@ -1572,15 +1572,10 @@ pub extern "system" fn handle_segfault_windows(info: *mut bun_sys::windows::EXCE
 
         _ => return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH,
     };
-    // Zig spec (crash_handler.zig:960-976) passes `@returnAddress()` here —
-    // the VEH dispatch frame's return address — so capture_stack_trace() skips
-    // the handler/ntdll frames. `ExceptionAddress` (the faulting RIP) is NOT a
-    // return address on the unwinder's frame chain and would fail the
-    // skip-until-match search once Windows backtrace capture is wired.
     crash_handler(
         reason,
         None,
-        Some(debug::return_address()),
+        Some(unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize),
     );
 }
 

@@ -426,11 +426,10 @@ impl WindowsNamedPipe {
             ssl_error: CertError::default(),
             // SAFETY: all-zero is a valid uv_connect_t (#[repr(C)] POD, libuv expects zeroed)
             connect_req: unsafe { core::mem::zeroed::<uv::uv_connect_t>() },
-            event_loop_timer: EventLoopTimer {
-                next: timespec::EPOCH,
-                tag: EventLoopTimer::Tag::WindowsNamedPipe,
-                ..Default::default()
-            },
+            // Zig: `.{ .next = .epoch, .tag = .WindowsNamedPipe }` with field
+            // defaults `state = .PENDING`, `heap = .{}`, `in_heap = .none` —
+            // exactly what `init_paused` produces.
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WindowsNamedPipe),
             current_timeout: 0,
             flags: Flags::DISCONNECTED, // disconnected: bool = true is the only non-false default
         }
@@ -463,7 +462,7 @@ impl WindowsNamedPipe {
 
         #[cfg(windows)]
         if let Some(pipe) = self.pipe.as_mut() {
-            let _ = pipe.unref();
+            pipe.unref();
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
@@ -599,7 +598,7 @@ impl WindowsNamedPipe {
         debug_assert!(self.pipe.is_some());
         self.flags.set_disconnected(true);
         // ref because we are connecting
-        let _ = self.pipe.as_mut().unwrap().r#ref();
+        self.pipe.as_mut().unwrap().ref_();
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             if result.is_err() {
@@ -756,7 +755,7 @@ impl WindowsNamedPipe {
             if self.pipe.is_none() {
                 return false;
             }
-            let _ = self.pipe.as_mut().unwrap().unref();
+            self.pipe.as_mut().unwrap().unref();
             self.writer.set_parent(self);
             // TODO(port): start_with_pipe takes the pipe pointer; Box<uv::Pipe> must yield a stable *mut uv::Pipe.
             let start_pipe_result = self
@@ -774,12 +773,11 @@ impl WindowsNamedPipe {
                 return false;
             };
 
-            let read_start_result = stream.read_start(
-                self,
-                Self::on_read_alloc,
-                Self::on_read_error,
-                Self::on_read,
-            );
+            // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
+            // (returned by `writer.get_stream()`); the `StreamReader` impl
+            // below routes the trampolines back to `self`.
+            let read_start_result = unsafe { (*stream).read_start_ctx::<Self>(self) }
+                .to_result(bun_sys::Tag::listen);
             if let bun_sys::Result::Err(err) = read_start_result {
                 self.on_error(err);
                 return false;
@@ -845,7 +843,9 @@ impl WindowsNamedPipe {
         } else {
             #[cfg(windows)]
             if let Some(stream) = self.writer.get_stream() {
-                let _ = stream.read_stop();
+                // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
+                // always succeeds and is a no-op if not reading.
+                unsafe { (*stream).read_stop() };
             }
         }
     }
@@ -936,7 +936,9 @@ impl WindowsNamedPipe {
         self.set_timeout(0);
         #[cfg(windows)]
         if let Some(stream) = self.writer.get_stream() {
-            let _ = stream.read_stop();
+            // SAFETY: `stream` is the live pipe stream; `uv_read_stop` always
+            // succeeds and is a no-op if not reading.
+            unsafe { (*stream).read_stop() };
         }
         self.wrapper = None;
         self.ssl_error = CertError::default();

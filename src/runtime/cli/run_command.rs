@@ -1979,7 +1979,7 @@ impl RunCommand {
             strings::to_utf8_append_to_list(
                 path,
                 &target_path_buffer[prefix.len()..dir_slice_len],
-            )?;
+            );
             path.push(DELIMITER);
         }
         Ok(())
@@ -3535,7 +3535,7 @@ impl RunCommand {
             }
             #[cfg(windows)]
             {
-                if let Ok(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
+                if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
                     // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
                     let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
                         unsafe { bun_core::ffi::zeroed() };
@@ -3990,9 +3990,11 @@ mod bunx_fast_path_buffers {
     // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
     // buffers (bunx fast-path runs once on the main thread) → RacyCell.
     pub static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
-        bun_core::RacyCell::new([0; bun_paths::MAX_WPATH]);
-    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<[u16; 32768]> =
-        bun_core::RacyCell::new([0; 32768]);
+        bun_core::RacyCell::new(WPathBuffer::ZEROED);
+    // Zig spec (run_command.zig:2014): `var environment_buffer: bun.WPathBuffer`
+    // — same `[PATH_MAX_WIDE]u16` shape as the launch buffer.
+    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
+        bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 
 impl BunXFastPath {
@@ -4094,18 +4096,22 @@ impl BunXFastPath {
         );
         debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
 
-        let handle = match sys::open_file_at_windows_a(
+        let handle = match sys::open_file_at_windows(
             Fd::INVALID, // absolute path is given
             path_to_use,
-            sys::windows::STANDARD_RIGHTS_READ
-                | sys::windows::FILE_READ_DATA
-                | sys::windows::FILE_READ_ATTRIBUTES
-                | sys::windows::FILE_READ_EA
-                | sys::windows::SYNCHRONIZE,
-            sys::windows::FILE_OPEN,
-            sys::windows::FILE_NON_DIRECTORY_FILE | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
+            sys::NtCreateFileOptions {
+                access_mask: sys::windows::STANDARD_RIGHTS_READ
+                    | sys::windows::FILE_READ_DATA
+                    | sys::windows::FILE_READ_ATTRIBUTES
+                    | sys::windows::FILE_READ_EA
+                    | sys::windows::SYNCHRONIZE,
+                disposition: sys::windows::FILE_OPEN,
+                options: sys::windows::FILE_NON_DIRECTORY_FILE
+                    | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
+                ..Default::default()
+            },
         ) {
-            Ok(fd) => fd.cast(),
+            Ok(fd) => fd.native(),
             Err(err) => {
                 bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "Failed to open bunx file: '{}'", err);
                 return;
@@ -4128,8 +4134,8 @@ impl BunXFastPath {
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let env_buf = unsafe { &mut *bunx_fast_path_buffers::ENVIRONMENT_BUFFER.get() };
-        let environment = match env.map.write_windows_env_block(env_buf) {
-            Ok(env) => Some(env.as_ptr()),
+        let environment = match env.map.write_windows_env_block(&mut env_buf.0) {
+            Ok(env) => Some(env),
             Err(_) => return,
         };
 

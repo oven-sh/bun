@@ -1966,15 +1966,10 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     #[cfg(windows)]
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
-        // SAFETY: per-thread VM singleton.
-        let path_env = unsafe { vm_mut() }
-            .transpiler
-            .env
-            .map
-            .get(b"PATH")
-            .unwrap_or(b"");
+        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
+        let path_env = unsafe { (*vm_mut().transpiler.env).map.get(b"PATH") }.unwrap_or(b"");
         // SAFETY: argv[0] is a NUL-terminated string from caller.
-        let argv0 = unsafe { ZStr::from_ptr(argv[0]) }.as_bytes();
+        let argv0 = unsafe { core::ffi::CStr::from_ptr(argv[0]) }.to_bytes();
         match bun_core::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
             None => {

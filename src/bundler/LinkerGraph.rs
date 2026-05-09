@@ -468,7 +468,7 @@ impl LinkerGraph {
         &mut self,
         entry_points: &[Index],
         sources: &[Logger::Source],
-        server_component_boundaries: server_component_boundary::List,
+        server_component_boundaries: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
     ) -> Result<(), bun_core::Error> {

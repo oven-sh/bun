@@ -3250,7 +3250,14 @@ impl<'a> BundleV2<'a> {
         // matches Zig, which copies `source.*` by value and then reads the
         // still-intact original.
         let stored = &self.graph.input_files.items_source()[source_index.get() as usize];
-        let path_text: &'static [u8] = stored.path.text;
+        // Preserve the full path (including `.pretty` and `.namespace`) on the
+        // ParseTask — the spec sets `task.path = source.path` so the parser's
+        // `result.source.path` (which gets swapped back into `input_files` in
+        // `on_parse_task_complete`) carries the pretty-initialized path. Losing
+        // it here re-seats `input_files[B].path.pretty` to the absolute text
+        // after the swap, which the dev-server printer then emits as an HMR
+        // import dep, breaking the registry lookup.
+        let task_path: Fs::Path<'static> = fs_path_from_logger(&stored.path);
         // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
         // pass (arena lifetime); erase the borrow to `'static` to fit
         // `ContentsOrFd::Contents`. See `interned_slice` contract.
@@ -3271,9 +3278,9 @@ impl<'a> BundleV2<'a> {
         let task: *mut ParseTask = self.arena().alloc(ParseTask {
             // PORT NOTE: Zig had a single `fs.Path`; Rust split it into
             // `bun_logger::fs::Path` (on `Source`) and `bun_resolver::fs::Path`
-            // (on `ParseTask`). Reconstruct from the `text` slice — `pretty`/
-            // `namespace` are unset on a generated source anyway.
-            path: Fs::Path::init(path_text),
+            // (on `ParseTask`). Bridge through `fs_path_from_logger` so
+            // `.pretty`/`.namespace` survive (see note above).
+            path: task_path,
             contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
             side_effects: _resolver::SideEffects::HasSideEffects,
             jsx,
@@ -3474,7 +3481,7 @@ impl<'a> BundleV2<'a> {
             // `u32` newtypes (see ast/base.rs:52 / BundleEnums.rs:659), so a ptr cast
             // is layout-identical.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
-            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             this.linker.link(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
@@ -3631,7 +3638,7 @@ impl<'a> BundleV2<'a> {
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
-            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             this.linker.link(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
@@ -4329,7 +4336,7 @@ impl<'a> BundleV2<'a> {
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
-            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             let mut reachable_files = reachable_files;
             self.linker.link(
                 bundle_ptr,
@@ -4658,7 +4665,10 @@ impl<'a> BundleV2<'a> {
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
-            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
+            // Spec passes `this.graph.server_component_boundaries` by value-copy;
+            // the original stays intact for `dev_server.finalize_bundle` to read.
+            // Borrow it here — `linker.load` only `.slice()`s it.
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             self.linker.load(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),

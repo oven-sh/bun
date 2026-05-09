@@ -1066,7 +1066,6 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_highway",
  "bun_logger",
  "bun_string",
  "const_format",

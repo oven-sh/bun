@@ -665,11 +665,26 @@ impl Worker {
         // self-referential resolver backref is wired by `configure_linker` once
         // the real `linker::Linker` lands in the `Transpiler` struct.
         let macro_ctx = js_ast::Macro::MacroContext::init(t);
-        t.macro_context = Some(macro_ctx);
-        // PORT NOTE: `Resolver.caches` is `bun_resolver::cache::Set` (the
-        // MOVE_DOWN copy that broke the bundler→resolver cycle), not this
-        // crate's `cache::Set` aliased above as `CacheSet`.
-        t.resolver.caches = bun_resolver::cache::Set::init();
+        // PORT NOTE: every field write on `t` after `clone_for_worker` MUST go
+        // through `ptr::write` (or be a `Copy` type). The bitwise copy above
+        // duplicated every owned field of the parent `Transpiler` — a plain
+        // `t.field = new` would run `Drop` on the *aliased* old value and
+        // free/destroy the parent's allocation. Zig's `transpiler.* = from.*`
+        // has no destructors, so reassignment there is a pure overwrite; this
+        // mirrors that exactly. Concretely: `resolver.caches.json.bump` is a
+        // `MimallocArena` since dc78fc14c43f, and dropping the bitwise copy
+        // calls `mi_heap_destroy` on the parent's heap (every subsequent
+        // worker then double-destroys the same — ASAN use-after-poison).
+        // SAFETY: `t` is fully initialized (clone_for_worker wrote every byte);
+        // the overwritten old values are aliased borrows of `from` and must
+        // NOT be dropped — `ptr::write` discards them without running `Drop`.
+        unsafe {
+            core::ptr::write(&raw mut t.macro_context, Some(macro_ctx));
+            // PORT NOTE: `Resolver.caches` is `bun_resolver::cache::Set` (the
+            // MOVE_DOWN copy that broke the bundler→resolver cycle), not this
+            // crate's `cache::Set` aliased above as `CacheSet`.
+            core::ptr::write(&raw mut t.resolver.caches, bun_resolver::cache::Set::init());
+        }
     }
 
     pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {

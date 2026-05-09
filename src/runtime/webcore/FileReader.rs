@@ -391,8 +391,9 @@ impl FileReader {
                             }
                             #[cfg(windows)]
                             {
-                                self.reader().flags.nonblocking = opened.nonblocking;
-                                self.reader().flags.pollable = pollable;
+                                use bun_io::pipe_reader::WindowsFlags;
+                                self.reader().flags.set(WindowsFlags::NONBLOCKING, opened.nonblocking);
+                                self.reader().flags.set(WindowsFlags::POLLABLE, pollable);
                             }
                         }
                     }
@@ -535,7 +536,7 @@ impl FileReader {
         }
         #[cfg(windows)]
         {
-            self.reader().flags.pollable
+            self.reader().flags.contains(bun_io::pipe_reader::WindowsFlags::POLLABLE)
         }
     }
 

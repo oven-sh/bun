@@ -1525,6 +1525,7 @@ pub mod upgrade_js_bindings {
         }
         #[cfg(windows)]
         {
+            use bun_sys::FdExt as _;
             if let Some(fd) = TEMPDIR_FD.with(|f| f.get()) {
                 fd.close();
             }

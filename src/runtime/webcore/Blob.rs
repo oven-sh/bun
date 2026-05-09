@@ -393,13 +393,14 @@ impl BlobExt for Blob {
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start(
-                // SAFETY: `bun_vm()` returns the live VM for this global.
-                global.bun_vm().event_loop(),
+            read_file::ReadFileUV::start::<Handler<'_, F>>(
+                // SAFETY: `bun_vm()` returns the live VM for this global; the
+                // event loop outlives any in-flight async fs request.
+                unsafe { &*global.bun_vm().event_loop() },
                 self.store.as_ref().expect("infallible: store present").clone(),
                 self.offset,
                 self.size,
-                handler,
+                handler.cast::<c_void>(),
             );
             return promise_value;
         }
@@ -1328,7 +1329,7 @@ impl BlobExt for Blob {
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 global_this,
-                                err.with_path(path).to_js(global_this)?,
+                                err.with_path(path).to_js(global_this),
                             ));
                         }
                     }
@@ -1379,7 +1380,7 @@ impl BlobExt for Blob {
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
-                            err.to_js(global_this)?,
+                            err.to_js(global_this),
                         ));
                     }
                 } else {
@@ -1388,7 +1389,7 @@ impl BlobExt for Blob {
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
-                            err.to_js(global_this)?,
+                            err.to_js(global_this),
                         ));
                     }
                 }

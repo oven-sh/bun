@@ -19,6 +19,8 @@ use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 use bun_sys::windows::libuv;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
+use bun_sys_jsc::ErrorJsc as _;
 
 
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
@@ -972,7 +974,6 @@ pub struct CopyFileWindows<'a> {
     pub read_write_loop: ReadWriteLoop,
 }
 
-#[derive(Default)]
 #[cfg(windows)]
 pub struct ReadWriteLoop {
     pub source_fd: Fd,
@@ -982,6 +983,22 @@ pub struct ReadWriteLoop {
     pub written: usize,
     pub read_buf: Vec<u8>,
     pub uv_buf: libuv::uv_buf_t,
+}
+
+#[cfg(windows)]
+impl Default for ReadWriteLoop {
+    fn default() -> Self {
+        Self {
+            source_fd: Fd::INVALID,
+            must_close_source_fd: false,
+            destination_fd: Fd::INVALID,
+            must_close_destination_fd: false,
+            written: 0,
+            read_buf: Vec::new(),
+            // Zig: `.{ .base = undefined, .len = 0 }`
+            uv_buf: libuv::uv_buf_t { len: 0, base: core::ptr::null_mut() },
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -996,7 +1013,10 @@ impl ReadWriteLoop {
         self.read_buf.clear();
         // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
         let cap = self.read_buf.capacity();
-        self.uv_buf = libuv::uv_buf_t::init_raw(self.read_buf.as_mut_ptr(), cap);
+        self.uv_buf = libuv::uv_buf_t {
+            len: cap as libuv::ULONG,
+            base: self.read_buf.as_mut_ptr(),
+        };
         let loop_ = this.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.

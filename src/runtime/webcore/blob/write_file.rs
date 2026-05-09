@@ -571,6 +571,12 @@ mod windows_impl {
         }
     }
 
+    impl PartialEq<bun_core::Error> for WriteFileWindowsError {
+        fn eq(&self, other: &bun_core::Error) -> bool {
+            <&'static str>::from(self) == other.name()
+        }
+    }
+
     impl WriteFileWindows {
         pub fn create_with_ctx(
             file_blob: Blob,
@@ -861,7 +867,7 @@ mod windows_impl {
             // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
             unsafe {
                 (*this.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
-                    ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete),
+                    ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
                 ));
             }
         }
@@ -879,7 +885,7 @@ mod windows_impl {
             let rc = this.io_request.result;
             if let Some(err) = rc.errno() {
                 match this.throw(sys::Error {
-                    errno: i32::try_from(err).expect("int cast"),
+                    errno: err,
                     syscall: sys::Tag::write,
                     ..Default::default()
                 }) {
@@ -942,7 +948,7 @@ mod windows_impl {
                     PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
                 };
 
-                return Some(sys_err.to_system_error());
+                return Some(sys_err.to_system_error().into());
             }
             None
         }

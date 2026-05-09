@@ -14,13 +14,14 @@ use bun_paths::PathBuffer;
 use bun_str::{self as strings, String as BunString, ZStr};
 use bun_sys::{self as sys, windows};
 use bun_sys::windows::libuv as uv;
+use bun_sys::windows::libuv::UvHandle as _;
 use bun_sys::ReturnCodeExt as _;
 
 use super::path_watcher::EventType;
 // Zig: `const onPathUpdateFn = jsc.Node.fs.Watcher.onPathUpdate;` (win_watcher.zig:306) —
 // the callbacks are *associated functions* on `FSWatcher`, not free fns.
 // lower_snake names mirror the Zig `onPathUpdateFn`/`onUpdateEndFn` decls.
-use crate::node::node_fs_watcher::{FSWatcher, Event};
+use crate::node::node_fs_watcher::{FSWatcher, Event, StringOrBytesToDecode};
 #[allow(non_upper_case_globals)]
 const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
 #[allow(non_upper_case_globals)]

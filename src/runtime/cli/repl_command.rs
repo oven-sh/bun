@@ -9,7 +9,7 @@
 //! - Multi-line input support
 //! - REPL commands (.help, .exit, .clear, .load, .save, .editor)
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_alloc::Arena;
@@ -281,14 +281,11 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         };
         // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.
-        // PORT NOTE: C++ signature is `void` with `[[ZIG_EXPORT(check_slow)]]` — Zig codegen
-        // wraps it as `JSError!void` by post-checking `hasException()`. Replicate that here
-        // since `Result<(), JsError>` is not FFI-safe across `extern "C"`.
+        // C++ is `[[ZIG_EXPORT(check_slow)]]` → use the generated `bun_jsc::cpp` wrapper,
+        // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`
+        // would assert under `BUN_JSC_validateExceptionChecks=1`).
         unsafe {
-            Bun__REPL__setupGlobalRequire(vm.global, cwd.as_ptr().cast::<c_char>(), cwd.len());
-            if (*vm.global).has_exception() {
-                return Err(bun_jsc::JsError::Thrown);
-            }
+            bun_jsc::cpp::Bun__REPL__setupGlobalRequire(&*vm.global, cwd.as_ptr(), cwd.len())?;
         }
 
         // Set timezone if specified
@@ -314,13 +311,6 @@ unsafe extern "C" {
     // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
     // bun_jsc grows a wrapper.
     fn JSGlobalObject__setTimeZone(global: *const JSGlobalObject, time_zone: *const ZigString) -> bool;
-    // C++ ABI is `void` (`[[ZIG_EXPORT(check_slow)]]`); the JSError!void wrapper is a Zig
-    // codegen artifact that post-checks `hasException()` — replicated at the call site.
-    fn Bun__REPL__setupGlobalRequire(
-        global: *const JSGlobalObject,
-        cwd_ptr: *const c_char,
-        cwd_len: usize,
-    );
 }
 
 use bun_bundler::options::EnvBehavior;

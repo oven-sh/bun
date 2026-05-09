@@ -270,10 +270,8 @@ pub fn bun_fetch_preconnect(
 
     let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
     // PORT NOTE: `defer url_str.deref()` → BunString impls Drop.
-
-    if global_object.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
+    // (Zig's post-hoc `hasException()` is redundant here — `href_from_js` already
+    // returns `JsResult` and is `?`-propagated.)
 
     if url_str.tag() == BunStringTag::Dead {
         return Err(global_object
@@ -520,15 +518,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
+    // (`StringOrURL::from_js` returns `JsResult` — Zig's post-hoc `hasException()` is dead.)
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
         StringOrURL::from_js(first_arg, global_this)?
     } else {
         None
     };
-    if global_this.has_exception() {
-        is_error = true;
-        return Ok(JSValue::ZERO);
-    }
 
     let request_init_object: Option<JSValue> = 'brk: {
         if request.is_some() {

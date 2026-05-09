@@ -569,55 +569,150 @@ impl ExceptionValidationScope {
 // scope is RAII (dropped on every return path including `?`).
 
 /// `[[ZIG_EXPORT(zero_is_throw)]]`: callee returns `JSValue::ZERO` ⟺ it threw.
+///
+/// `src` is the diagnostic location for `BUN_JSC_dumpSimulatedThrows`; pass [`src!`](crate::src)
+/// to avoid the [`intern_location_file`] HashMap lookup that the `#[track_caller]`
+/// convenience wrapper [`call_zero_is_throw`] pays.
+#[inline]
+pub fn call_zero_is_throw_at(
+    global: &JSGlobalObject,
+    src: SourceLocation,
+    f: impl FnOnce() -> JSValue,
+) -> JsResult<JSValue> {
+    let mut storage = core::mem::MaybeUninit::uninit();
+    let mut scope = ExceptionValidationScope::init_guard_at(&mut storage, global, src);
+    let v = f();
+    scope.assert_exception_presence_matches(v == JSValue::ZERO);
+    if v == JSValue::ZERO { Err(JsError::Thrown) } else { Ok(v) }
+}
+
+/// `[[ZIG_EXPORT(zero_is_throw)]]` — `#[track_caller]` convenience wrapper.
+/// Prefer [`call_zero_is_throw_at`] with [`src!`](crate::src) in hot paths (avoids the
+/// debug-build thread-local intern of `Location::file()`).
 #[track_caller]
 #[inline]
 pub fn call_zero_is_throw(
     global: &JSGlobalObject,
     f: impl FnOnce() -> JSValue,
 ) -> JsResult<JSValue> {
-    let mut storage = core::mem::MaybeUninit::uninit();
-    let mut scope = ExceptionValidationScope::init_guard(&mut storage, global);
-    let v = f();
-    scope.assert_exception_presence_matches(v == JSValue::ZERO);
-    if v == JSValue::ZERO { Err(JsError::Thrown) } else { Ok(v) }
+    call_zero_is_throw_at(global, SourceLocation::from_caller(), f)
 }
 
 /// `[[ZIG_EXPORT(false_is_throw)]]`: callee returns `false` ⟺ it threw.
-#[track_caller]
 #[inline]
-pub fn call_false_is_throw(global: &JSGlobalObject, f: impl FnOnce() -> bool) -> JsResult<()> {
+pub fn call_false_is_throw_at(
+    global: &JSGlobalObject,
+    src: SourceLocation,
+    f: impl FnOnce() -> bool,
+) -> JsResult<()> {
     let mut storage = core::mem::MaybeUninit::uninit();
-    let mut scope = ExceptionValidationScope::init_guard(&mut storage, global);
+    let mut scope = ExceptionValidationScope::init_guard_at(&mut storage, global, src);
     let v = f();
     scope.assert_exception_presence_matches(!v);
     if v { Ok(()) } else { Err(JsError::Thrown) }
 }
 
+/// `[[ZIG_EXPORT(false_is_throw)]]` — `#[track_caller]` convenience wrapper.
+#[track_caller]
+#[inline]
+pub fn call_false_is_throw(global: &JSGlobalObject, f: impl FnOnce() -> bool) -> JsResult<()> {
+    call_false_is_throw_at(global, SourceLocation::from_caller(), f)
+}
+
 /// `[[ZIG_EXPORT(null_is_throw)]]`: callee returns null ⟺ it threw.
+#[inline]
+pub fn call_null_is_throw_at<T>(
+    global: &JSGlobalObject,
+    src: SourceLocation,
+    f: impl FnOnce() -> *mut T,
+) -> JsResult<NonNull<T>> {
+    let mut storage = core::mem::MaybeUninit::uninit();
+    let mut scope = ExceptionValidationScope::init_guard_at(&mut storage, global, src);
+    let v = f();
+    scope.assert_exception_presence_matches(v.is_null());
+    NonNull::new(v).ok_or(JsError::Thrown)
+}
+
+/// `[[ZIG_EXPORT(null_is_throw)]]` — `#[track_caller]` convenience wrapper.
 #[track_caller]
 #[inline]
 pub fn call_null_is_throw<T>(
     global: &JSGlobalObject,
     f: impl FnOnce() -> *mut T,
 ) -> JsResult<NonNull<T>> {
-    let mut storage = core::mem::MaybeUninit::uninit();
-    let mut scope = ExceptionValidationScope::init_guard(&mut storage, global);
-    let v = f();
-    scope.assert_exception_presence_matches(v.is_null());
-    NonNull::new(v).ok_or(JsError::Thrown)
+    call_null_is_throw_at(global, SourceLocation::from_caller(), f)
 }
 
 /// `[[ZIG_EXPORT(check_slow)]]`: callee's return value carries no exception sentinel;
-/// the scope must be queried explicitly. Uses a real [`TopExceptionScope`] (not the
-/// validation-only flavor) so `return_if_exception()` works in release builds too.
+/// the scope must be queried explicitly.
+///
+/// Under `cfg(any(debug_assertions, bun_asan))` this opens a real [`TopExceptionScope`]
+/// so `simulateThrow()` is satisfied and the assertion fires on mismatch. In release
+/// builds the C++ validation machinery is compiled out, so we match Zig's generated
+/// `check_slow` wrapper exactly: single `Bun__RETURN_IF_EXCEPTION` FFI call after the
+/// closure (1 FFI hop instead of 3).
+#[inline]
+pub fn call_check_slow_at<R>(
+    global: &JSGlobalObject,
+    src: SourceLocation,
+    f: impl FnOnce() -> R,
+) -> JsResult<R> {
+    #[cfg(any(debug_assertions, bun_asan))]
+    {
+        let mut storage = core::mem::MaybeUninit::uninit();
+        let mut scope = TopExceptionScope::init_guard_at(&mut storage, global, src);
+        let r = f();
+        scope.return_if_exception()?;
+        Ok(r)
+    }
+    #[cfg(not(any(debug_assertions, bun_asan)))]
+    {
+        let _ = src;
+        let r = f();
+        // SAFETY: trivial FFI; reads vm.m_exception (with trap check) — same body as
+        // `RETURN_IF_EXCEPTION` in C++. `[[ZIG_EXPORT(nothrow)]]`.
+        if unsafe { crate::cpp::raw::Bun__RETURN_IF_EXCEPTION(global.as_ptr()) } {
+            Err(JsError::Thrown)
+        } else {
+            Ok(r)
+        }
+    }
+}
+
+/// `[[ZIG_EXPORT(check_slow)]]` — `#[track_caller]` convenience wrapper.
 #[track_caller]
 #[inline]
 pub fn call_check_slow<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> JsResult<R> {
-    let mut storage = core::mem::MaybeUninit::uninit();
-    let mut scope = TopExceptionScope::init_guard(&mut storage, global);
-    let r = f();
-    scope.return_if_exception()?;
-    Ok(r)
+    call_check_slow_at(global, SourceLocation::from_caller(), f)
+}
+
+/// Macro forms of the per-mode wrappers — expand [`src!`](crate::src) at the *call site* so
+/// the debug-build diagnostic `SourceLocation` is a NUL-terminated literal (zero-cost),
+/// not a `#[track_caller]` `Location::file()` interned through a thread-local HashMap.
+/// Prefer these over the bare `call_*_is_throw` fns in hand-written hot-path shims.
+#[macro_export]
+macro_rules! call_zero_is_throw {
+    ($global:expr, $f:expr $(,)?) => {
+        $crate::top_exception_scope::call_zero_is_throw_at($global, $crate::src!(), $f)
+    };
+}
+#[macro_export]
+macro_rules! call_false_is_throw {
+    ($global:expr, $f:expr $(,)?) => {
+        $crate::top_exception_scope::call_false_is_throw_at($global, $crate::src!(), $f)
+    };
+}
+#[macro_export]
+macro_rules! call_null_is_throw {
+    ($global:expr, $f:expr $(,)?) => {
+        $crate::top_exception_scope::call_null_is_throw_at($global, $crate::src!(), $f)
+    };
+}
+#[macro_export]
+macro_rules! call_check_slow {
+    ($global:expr, $f:expr $(,)?) => {
+        $crate::top_exception_scope::call_check_slow_at($global, $crate::src!(), $f)
+    };
 }
 
 unsafe extern "C" {

@@ -46,11 +46,13 @@ unsafe extern "C" {
 #[inline]
 fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Option<JSValue>> {
     let key_str = bun_str::String::init(ZigString::init(key));
+    // Zig spec opens a `TopExceptionScope` before the FFI call (the C++ side has a
+    // ThrowScope whose dtor sets `m_needExceptionCheck`); a post-hoc `has_exception()`
+    // would assert under `BUN_JSC_validateExceptionChecks=1`.
+    bun_jsc::top_scope!(scope, global);
     // SAFETY: `global` is live; `key_str` borrows `key` for the call duration.
     let v = unsafe { JSC__JSValue__getOwn(value, global, &raw const key_str) };
-    if global.has_exception() {
-        return Err(jsc::JsError::Thrown);
-    }
+    scope.return_if_exception()?;
     if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
 }
 

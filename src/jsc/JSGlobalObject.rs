@@ -361,12 +361,15 @@ impl JSGlobalObject {
     /// `bun_string::String` is `Copy` and has no `Drop`, so a bare `BunString`
     /// here would leak (Zig spec does `defer actual_string_value.deref()`).
     pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<OwnedString> {
+        // The C++ side opens a `DECLARE_THROW_SCOPE`; under
+        // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so we
+        // must have a Rust-side scope live across the FFI call (and query it) rather than
+        // post-hoc `has_exception()` (whose own scope ctor would assert first).
+        crate::top_scope!(scope, global);
         // `errdefer str.deref()` → wrapping immediately in OwnedString releases the
         // +1 ref on the early-return path below.
         let str = OwnedString::new(Bun__ErrorCode__determineSpecificType(global, value));
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
+        scope.return_if_exception()?;
         Ok(str)
     }
 
@@ -1297,15 +1300,14 @@ impl JSGlobalObject {
         default: T,
         range: IntegerRange,
     ) -> Option<T> {
+        // `JSValue::get` already returns `JsResult` (scoped internally), so the
+        // post-hoc `has_exception()` the Zig spec carried is dead here — `Err(_)`
+        // covers the throw path and `Ok(None)` is by definition exception-free.
         match obj.get(self, range.field_name) {
-            Ok(Some(val)) => return self.validate_integer_range::<T>(val, default, range).ok(),
-            Ok(None) => {}
-            Err(_) => return None,
+            Ok(Some(val)) => self.validate_integer_range::<T>(val, default, range).ok(),
+            Ok(None) => Some(default),
+            Err(_) => None,
         }
-        if self.has_exception() {
-            return None;
-        }
-        Some(default)
     }
 
     /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.

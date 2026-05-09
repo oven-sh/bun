@@ -20,12 +20,10 @@ unsafe extern "C" {
 }
 #[inline]
 fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
-    // SAFETY: FFI; may throw OOM.
-    let v = unsafe { JSBuffer__bufferFromLength(global.as_ptr(), len as i64) };
-    if global.has_exception() {
-        return Err(jsc::JsError::Thrown);
-    }
-    Ok(v)
+    // SAFETY: FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
+    bun_jsc::call_zero_is_throw!(global, || unsafe {
+        JSBuffer__bufferFromLength(global.as_ptr(), len as i64)
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

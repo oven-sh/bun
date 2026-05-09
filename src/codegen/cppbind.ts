@@ -553,10 +553,15 @@ function generateRustType(type: CppType, parent: CppType | null): string {
   if (type.type === "named") {
     const t = rustSharedTypes[type.name];
     if (t) return t;
-    // Unknown opaque — only valid behind a pointer; the Zig path errors loudly,
-    // but the Rust output is best-effort (the per-type shim casts), so degrade
-    // to c_void rather than failing the whole codegen.
-    return "core::ffi::c_void";
+    // Unknown opaque — only valid behind a pointer (the per-type shim casts the
+    // pointee). Behind a pointer we degrade to c_void; in by-value position that
+    // would emit `-> core::ffi::c_void` (a ZST in Rust → silent ABI corruption),
+    // so match the Zig generator and fail loudly at the C++ source location.
+    if (parent?.type === "pointer") return "core::ffi::c_void";
+    throwError(
+      type.position,
+      `unmapped C++ type '${type.name}' in by-value position; add to rustSharedTypes or pass by pointer`,
+    );
   }
   assertNever(type);
 }

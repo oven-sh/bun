@@ -851,7 +851,23 @@ pub const Bunfig = struct {
 
                     if (run_expr.get("elide-lines")) |elide_lines| {
                         if (elide_lines.data == .e_number) {
-                            this.ctx.bundler_options.elide_lines = @intFromFloat(elide_lines.data.e_number.value);
+                            // Guard negative, non-finite, fractional, and
+                            // out-of-range values before `@intFromFloat`,
+                            // which would panic in safe builds (UB in
+                            // release). Fractional floats like `0.7`
+                            // otherwise truncate silently to `0`, which
+                            // disables elision — the opposite of the
+                            // error-message intent. The upper bound uses
+                            // `>=` because `@floatFromInt(maxInt(u64))`
+                            // rounds up to `2^64` on 64-bit targets, which
+                            // is itself out of range for `@intFromFloat`
+                            // into `usize`.
+                            const value = elide_lines.data.e_number.value;
+                            if (value < 0 or !std.math.isFinite(value) or value != @floor(value) or value >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) {
+                                try this.addError(elide_lines.loc, "Expected a non-negative integer");
+                            } else {
+                                this.ctx.bundler_options.elide_lines = @intFromFloat(value);
+                            }
                         } else {
                             try this.addError(elide_lines.loc, "Expected number");
                         }

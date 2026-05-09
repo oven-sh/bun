@@ -38,6 +38,28 @@ pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {
     }
 }
 
+/// Populate `ctx.bundler_options.elide_lines` from the `--elide-lines` CLI
+/// flag, falling back to `BUN_CONFIG_ELIDE_LINES` when the flag is absent
+/// or expanded to an empty string (e.g. `--elide-lines "$MAYBE_UNSET"`).
+fn parseElideLinesOption(args: anytype, ctx: Command.Context) void {
+    const cli_value: ?[]const u8 = if (args.option("--elide-lines")) |v|
+        (if (v.len > 0) v else null)
+    else
+        null;
+
+    if (cli_value) |elide_lines| {
+        ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
+            Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
+            Global.exit(1);
+        };
+    } else if (bun.env_var.BUN_CONFIG_ELIDE_LINES.get()) |value| {
+        // `BUN_CONFIG_ELIDE_LINES` is parsed as `u64`; `elide_lines` is a
+        // `usize`. Clamp rather than `@intCast`, which would panic on
+        // 32-bit targets for values above `maxInt(usize)`.
+        ctx.bundler_options.elide_lines = std.math.cast(usize, value) orelse std.math.maxInt(usize);
+    }
+}
+
 pub const ParamType = clap.Param(clap.Help);
 
 pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
@@ -483,15 +505,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.parallel = args.flag("--parallel");
         ctx.sequential = args.flag("--sequential");
         ctx.no_exit_on_error = args.flag("--no-exit-on-error");
-
-        if (args.option("--elide-lines")) |elide_lines| {
-            if (elide_lines.len > 0) {
-                ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
-                    Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
-                    Global.exit(1);
-                };
-            }
-        }
     }
 
     if (cmd == .TestCommand) {
@@ -1589,14 +1602,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.debug.silent = true;
         }
 
-        if (args.option("--elide-lines")) |elide_lines| {
-            if (elide_lines.len > 0) {
-                ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
-                    Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
-                    Global.exit(1);
-                };
-            }
-        }
+        // Runs after `loadConfigWithCmdArgs` so the `--elide-lines` flag
+        // and `BUN_CONFIG_ELIDE_LINES` env var take precedence over any
+        // value set by `run.elide-lines` in bunfig.toml.
+        parseElideLinesOption(&args, ctx);
 
         if (opts.define) |define| {
             if (define.keys.len > 0)

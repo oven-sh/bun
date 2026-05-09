@@ -2022,11 +2022,19 @@ pub fn spawn_process_windows(
         debug_assert!(uv_proc.exit_cb == Some(Process::on_exit_uv));
     }
 
+    // Explicit field init — `WindowsSpawnResult` now `impl Drop` (so its
+    // unconsumed `Buffer(Box<uv::Pipe>)` fields get a real `uv_close`
+    // instead of being freed while still in libuv's handle queue), and
+    // `..Default::default()` (E0509) can't move out of a `Drop` type.
     let mut result = WindowsSpawnResult {
         // Intrusive raw pointer; refcount lives inside `Process` (see field comment).
         process_: Some(process),
+        stdin: WindowsStdioResult::Unavailable,
+        stdout: WindowsStdioResult::Unavailable,
+        stderr: WindowsStdioResult::Unavailable,
         extra_pipes: Vec::with_capacity(options.extra_fds.len()),
-        ..Default::default()
+        stream: true,
+        sync: false,
     };
 
     for i in 0..3usize {

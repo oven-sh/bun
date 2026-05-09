@@ -145,7 +145,7 @@ pub const S3Client = struct {
         const arguments = callframe.arguments_old(2).slice();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
-        const path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
+        var path: jsc.Node.PathLike = try jsc.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
                 return globalThis.ERR(.MISSING_ARGS, "Expected a path to presign", .{}).throw();
             }
@@ -155,6 +155,7 @@ pub const S3Client = struct {
 
         const options = args.nextEat();
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
+        path = .{ .string = bun.PathString.empty };
         defer blob.detach();
         return S3File.getPresignUrlFrom(&blob, globalThis, options);
     }

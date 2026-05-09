@@ -84,6 +84,7 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
             }
             const options = args.nextEat();
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
+            path_or_blob = .{ .path = .{ .path = .{ .string = bun.PathString.empty } } };
             defer blob.deinit();
             return try getPresignUrlFrom(&blob, globalThis, options);
         },

@@ -917,10 +917,13 @@ pub mod feature_flag {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn linux_kernel_version() -> Version {
     use core::sync::atomic::{AtomicU32, Ordering};
-    // Packed u32: 0 = uninit, otherwise (major<<20)|(minor<<10)|patch.
-    static CACHE: AtomicU32 = AtomicU32::new(0);
+    // Packed u32: u32::MAX = uninit, otherwise (major<<20)|(minor<<10)|patch.
+    // (Using MAX, not 0, as the sentinel so a parse that yields {0,0,0} caches
+    // as 0 and round-trips to {0,0,0} on every call — the previous 0-sentinel
+    // stored 1 in that case, returning {0,0,1} on subsequent calls.)
+    static CACHE: AtomicU32 = AtomicU32::new(u32::MAX);
     let packed = CACHE.load(Ordering::Relaxed);
-    if packed != 0 {
+    if packed != u32::MAX {
         return Version {
             major: (packed >> 20) & 0x3ff,
             minor: (packed >> 10) & 0x3ff,
@@ -956,7 +959,7 @@ pub fn linux_kernel_version() -> Version {
     let v = Version { major: nums[0], minor: nums[1], patch: nums[2] };
     // Cache; clamp components to 10 bits (kernel versions fit comfortably).
     let p = ((v.major & 0x3ff) << 20) | ((v.minor & 0x3ff) << 10) | (v.patch & 0x3ff);
-    CACHE.store(if p == 0 { 1 } else { p }, Ordering::Relaxed);
+    CACHE.store(p, Ordering::Relaxed);
     v
 }
 #[cfg(not(any(target_os = "linux", target_os = "android")))]

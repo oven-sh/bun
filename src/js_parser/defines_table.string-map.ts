@@ -207,25 +207,25 @@ const ENTRIES: ReadonlyArray<readonly [string, V]> = [
   ["SVGViewElement", "Other"],
 
   // Other browser APIs
-  // 
+  //
   // This list contains all globals present in modern versions of Chrome, Safari,
   // and Firefox except for the following properties, since they have a side effect
   // of triggering layout (https://gist.github.com/paulirish/5d52fb081b3570c81e3a):
-  // 
+  //
   // - scrollX
   // - scrollY
   // - innerWidth
   // - innerHeight
   // - pageXOffset
   // - pageYOffset
-  // 
+  //
   // The following globals have also been removed since they sometimes throw an
   // exception when accessed, which is a side effect (for more information see
   // https://stackoverflow.com/a/33047477):
-  // 
+  //
   // - localStorage
   // - sessionStorage
-  // 
+  //
   ["AnalyserNode", "Other"],
   ["Animation", "Other"],
   ["AnimationEffect", "Other"],

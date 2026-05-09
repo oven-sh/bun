@@ -987,8 +987,8 @@ impl Task {
 
                                         let mut file_copier = FileCopier::init(
                                             folder_dir,
-                                            src_path.into_sep::<{ PathSeparators::ANY }>(),
-                                            dest.into_sep::<{ PathSeparators::ANY }>(),
+                                            src_path.into_sep::<{ PathSeparators::AUTO }>(),
+                                            dest.into_sep::<{ PathSeparators::AUTO }>(),
                                             &[bun_paths::os_path_literal!("node_modules")],
                                         )?;
 
@@ -1323,8 +1323,8 @@ impl Task {
 
                                 let mut file_copier = FileCopier::init(
                                     cached_package_dir.unwrap(),
-                                    src_path.into_sep::<{ PathSeparators::ANY }>(),
-                                    dest_subpath.into_sep::<{ PathSeparators::ANY }>(),
+                                    src_path.into_sep::<{ PathSeparators::AUTO }>(),
+                                    dest_subpath.into_sep::<{ PathSeparators::AUTO }>(),
                                     &[],
                                 )?;
 

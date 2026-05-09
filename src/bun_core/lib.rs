@@ -230,19 +230,15 @@ pub mod build_options {
     /// unnormalized path that crash_handler's byte-wise `starts_with` (which
     /// appends `SEP_STR` and compares against debug-info file paths) can never
     /// match — so require the env var there, matching the Zig contract.
-    #[cfg(not(windows))]
     pub const BASE_PATH: &[u8] = match option_env!("BUN_BASE_PATH") {
         Some(v) => v.as_bytes(),
+        // The fallback is correct on POSIX. On Windows it is mixed-separator
+        // + unnormalized and crash_handler's byte-wise `starts_with` will
+        // never match it — but real Windows builds always go through
+        // `scripts/build/rust.ts` (which sets the env var). Kept so that bare
+        // `cargo check --target *-windows-*` from a non-Windows host compiles.
         None => concat!(env!("CARGO_MANIFEST_DIR"), "/../..").as_bytes(),
     };
-    #[cfg(windows)]
-    pub const BASE_PATH: &[u8] = env!(
-        "BUN_BASE_PATH",
-        "BUN_BASE_PATH must be set (scripts/build/rust.ts exports it); the \
-         CARGO_MANIFEST_DIR `/../..` fallback is mixed-separator + unnormalized \
-         on Windows and breaks crash_handler base-path stripping",
-    )
-    .as_bytes();
     pub const ENABLE_LOGS: bool = cfg!(debug_assertions);
     pub const ENABLE_ASAN: bool = cfg!(bun_asan);
     pub const ENABLE_FUZZILLI: bool = false;
@@ -263,18 +259,13 @@ pub mod build_options {
     /// every crate's rustc env. POSIX fallback for bare `cargo check`; on
     /// Windows the `/../../` fallback is mixed-separator + unnormalized (see
     /// `BASE_PATH` above), so require the env var there.
-    #[cfg(not(windows))]
     pub const CODEGEN_PATH: &[u8] = match option_env!("BUN_CODEGEN_DIR") {
         Some(v) => v.as_bytes(),
+        // See BASE_PATH note re: Windows fallback being mixed-separator. Real
+        // Windows builds set the env var; this only fires for cross-target
+        // `cargo check`.
         None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../build/debug/codegen").as_bytes(),
     };
-    #[cfg(windows)]
-    pub const CODEGEN_PATH: &[u8] = env!(
-        "BUN_CODEGEN_DIR",
-        "BUN_CODEGEN_DIR must be set (scripts/build/rust.ts exports it); the \
-         CARGO_MANIFEST_DIR fallback is mixed-separator + unnormalized on Windows",
-    )
-    .as_bytes();
     /// `cfg.version` from package.json, split by `scripts/build/rust.ts`.
     pub const VERSION: crate::Version = {
         // const-parse a "u32" string — `str::parse` isn't const.

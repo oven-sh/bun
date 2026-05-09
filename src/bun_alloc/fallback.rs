@@ -62,13 +62,13 @@ impl CAllocator {
             // Zig's `std.heap.CAllocator` probes `_msize` on Windows. Our
             // over-aligned path uses `_aligned_malloc`, and MSDN forbids
             // `_msize` on those blocks — must use `_aligned_msize` instead.
-            extern "C" {
+            unsafe extern "C" {
                 fn _msize(p: *mut c_void) -> usize;
                 fn _aligned_msize(p: *mut c_void, align: usize, offset: usize) -> usize;
             }
             // SAFETY: `buf` was allocated by `raw_alloc` above on this platform.
             let usable = unsafe {
-                if _alignment.to_byte_units() > MALLOC_ALIGN {
+                if _alignment.to_byte_units() > crate::MAX_ALIGN_T {
                     _aligned_msize(buf.as_mut_ptr().cast(), _alignment.to_byte_units(), 0)
                 } else {
                     _msize(buf.as_mut_ptr().cast())

@@ -2994,7 +2994,7 @@ mod windows_impl {
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
-            return Err(Error::new(w::WSAGetLastError().map_or(E::EUNKNOWN, SystemErrno::to_e), Tag::recv).with_fd(fd));
+            return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd));
         }
         Ok(rc as usize)
     }
@@ -3004,7 +3004,7 @@ mod windows_impl {
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
-            return Err(Error::new(w::WSAGetLastError().map_or(E::EUNKNOWN, SystemErrno::to_e), Tag::send).with_fd(fd));
+            return Err(Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd));
         }
         Ok(rc as usize)
     }

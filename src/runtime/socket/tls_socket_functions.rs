@@ -34,7 +34,11 @@ fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JS
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
 pub mod ffi {
     use super::boringssl::{SSL, X509, struct_stack_st_X509, X509_STORE_CTX};
-    use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
+    use core::ffi::{c_char, c_int, c_long, c_void};
+
+    // Re-export decls that already live in the canonical sys crate so existing
+    // `ffi::X` call sites resolve there instead of a local re-declaration.
+    pub use super::boringssl::{SSL_get0_alpn_selected, SSL_get_servername, SSL_set_tlsext_host_name};
 
     // Opaque handles missing from boringssl_sys.
     bun_opaque::opaque_ffi! {
@@ -68,9 +72,7 @@ pub mod ffi {
 
     unsafe extern "C" {
         // ── SSL session/handshake info ───────────────────────────────────
-        pub fn SSL_get_servername(ssl: *const SSL, type_: c_int) -> *const c_char;
         pub fn SSL_get_version(ssl: *const SSL) -> *const c_char;
-        pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
         pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
         pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
         pub fn SSL_set_max_send_fragment(ssl: *mut SSL, max_send_fragment: usize) -> c_int;
@@ -95,11 +97,6 @@ pub mod ffi {
             context_len: usize,
             use_context: c_int,
         ) -> c_int;
-        pub fn SSL_get0_alpn_selected(
-            ssl: *const SSL,
-            out_data: *mut *const u8,
-            out_len: *mut c_uint,
-        );
         pub fn SSL_session_reused(ssl: *const SSL) -> c_int;
         pub fn SSL_get_privatekey(ssl: *const SSL) -> *mut EVP_PKEY;
 

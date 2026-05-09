@@ -10,6 +10,7 @@ use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_string::{strings, ZStr};
+use bun_core::ZBox;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::thread_pool::{self as thread_pool, Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
@@ -153,10 +154,8 @@ pub struct ApplyPatch {
     pub pkgname: SemverString,
 
     pub cache_dir: StdFsDir,
-    // TODO(port): owned NUL-terminated slice type. Stored as `Box<[u8]>` whose last byte is NUL;
-    // construct `ZStr` views at use sites. Phase B may introduce `bun_str::ZBox`/`CString`-like.
-    pub cache_dir_subpath: Box<[u8]>,
-    pub cache_dir_subpath_without_patch_hash: Box<[u8]>,
+    pub cache_dir_subpath: ZBox,
+    pub cache_dir_subpath_without_patch_hash: ZBox,
 
     /// this is non-null if this was called before a Task, for example extracting
     pub task_id: Option<TaskId>,
@@ -518,9 +517,7 @@ impl PatchTask {
         // PORT NOTE: `defer allocator.free(resolution_label)` — Vec drops at scope end.
 
         // 3. copy the unpatched files into temp dir
-        // `cache_dir_subpath_without_patch_hash` was built by `dupe_z` (NUL-terminated).
-        let cache_dir_subpath_z =
-            ZStr::from_slice_with_nul(&patch.cache_dir_subpath_without_patch_hash);
+        let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
         // PORT NOTE: borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
         // `PackageInstall` also wants `&mut tmpname_buf[..]` for
         // `destination_dir_subpath_buf`. Zig aliased the two; `PackageInstall`
@@ -637,8 +634,7 @@ impl PatchTask {
             ],
         );
 
-        // `cache_dir_subpath` was built by `dupe_z` (NUL-terminated).
-        let cache_dir_subpath_z = ZStr::from_slice_with_nul(&patch.cache_dir_subpath);
+        let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
         if let Err(e) = sys::renameat_concurrently(
             system_tmpdir.fd,
             path_in_tmpdir,
@@ -879,9 +875,9 @@ impl PatchTask {
 
         // need to dupe this as it's calculated using
         // `PackageManager.cached_package_folder_name_buf` which may be modified
-        let cache_dir_subpath = dupe_z(cache_dir_subpath_bytes);
+        let cache_dir_subpath = ZBox::from_bytes(cache_dir_subpath_bytes);
         let cache_dir_subpath_without_patch_hash =
-            dupe_z(&cache_dir_subpath_bytes[..patch_hash_idx]);
+            ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
         let cache_dir = stuff.cache_dir;
 
         let tempdir = pkg_manager.get_temporary_directory().handle;
@@ -912,15 +908,6 @@ impl PatchTask {
 
         bun_core::heap::into_raw(pt)
     }
-}
-
-/// Allocate a NUL-terminated copy of `s` as `Box<[u8]>` (length includes the trailing NUL).
-/// TODO(port): replace with a proper owned-ZStr type (`bun_str::ZBox`?) in Phase B.
-fn dupe_z(s: &[u8]) -> Box<[u8]> {
-    let mut v = Vec::with_capacity(s.len() + 1);
-    v.extend_from_slice(s);
-    v.push(0);
-    v.into_boxed_slice()
 }
 
 // TODO(port): these enum/type references are placeholders for cross-file types that live in

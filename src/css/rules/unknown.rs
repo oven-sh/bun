@@ -29,14 +29,10 @@ impl UnknownAtRule {
         }
 
         if let Some(block) = &self.block {
-            dest.whitespace()?;
-            dest.write_char(b'{')?;
-            dest.indent();
-            dest.newline()?;
-            block.to_css(dest, false)?;
-            dest.dedent();
-            dest.newline()?;
-            dest.write_char(b'}')
+            dest.block(|d| {
+                d.newline()?;
+                block.to_css(d, false)
+            })
         } else {
             dest.write_char(b';')
         }

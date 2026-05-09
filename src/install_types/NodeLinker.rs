@@ -43,7 +43,7 @@ pub mod npm {
     pub struct Registry;
 
     impl Registry {
-        pub const DEFAULT_URL: &'static [u8] = b"https://registry.npmjs.org/";
+        pub const DEFAULT_URL: &'static str = "https://registry.npmjs.org/";
 
         /// `bun.Wyhash11.hash(0, strings.withoutTrailingSlash(default_url))`
         /// — i.e. hash of `b"https://registry.npmjs.org"` (no trailing `/`).
@@ -53,7 +53,7 @@ pub mod npm {
         pub fn default_url_hash() -> u64 {
             use bun_wyhash::Wyhash11;
             // strings.withoutTrailingSlash strips exactly one trailing '/'.
-            Wyhash11::hash(0, &Self::DEFAULT_URL[..Self::DEFAULT_URL.len() - 1])
+            Wyhash11::hash(0, &Self::DEFAULT_URL.as_bytes()[..Self::DEFAULT_URL.len() - 1])
         }
     }
 }
@@ -151,12 +151,7 @@ pub enum FromExprError {
     InvalidRegExp,
     UnexpectedExpr,
 }
-impl core::fmt::Display for FromExprError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for FromExprError {}
+bun_core::impl_tag_error!(FromExprError);
 
 bun_core::oom_from_alloc!(FromExprError);
 
@@ -352,12 +347,7 @@ pub enum CreateMatcherError {
     OutOfMemory,
     InvalidRegExp,
 }
-impl core::fmt::Display for CreateMatcherError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for CreateMatcherError {}
+bun_core::impl_tag_error!(CreateMatcherError);
 
 bun_core::oom_from_alloc!(CreateMatcherError);
 

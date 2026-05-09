@@ -304,7 +304,7 @@ pub use util::*;
 pub use result::*;
 pub use Global::*;
 pub use tty::Winsize;
-pub use ffi::Zeroable;
+pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
 
 // ── intrusive-container parent recovery ───────────────────────────────────
 //
@@ -392,6 +392,54 @@ macro_rules! from_field_ptr {
 
 /// `bun_core::OOM` per PORTING.md type map (`OOM!T` → `Result<T, OOM>`).
 pub type OOM = AllocError;
+
+/// `bun.JSError` — the canonical JS error union (`error{JSError, OutOfMemory, JSTerminated}`
+/// in Zig). Tier-0 so every layer of the runtime can name it directly; `bun_jsc` re-exports
+/// it as `bun_jsc::JsError` and `bun_event_loop` re-exports it as `ErasedJsError` for
+/// historical call sites.
+///
+/// `#[repr(u8)]` with explicit discriminants: `AnyTask` stores
+/// `fn(*mut c_void) -> Result<(), JsError>` and the dispatcher relies on the 1-byte layout
+/// surviving the type-erased round-trip.
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum JsError {
+    /// A JavaScript exception is pending in the VM's exception scope.
+    Thrown = 0,
+    /// Allocation failure; caller must throw an `OutOfMemoryError`.
+    OutOfMemory = 1,
+    /// The VM is terminating (worker shutdown / `process.exit`).
+    Terminated = 2,
+}
+
+bun_alloc::oom_from_alloc!(JsError);
+
+impl From<crate::Error> for JsError {
+    fn from(_: crate::Error) -> Self {
+        // PORT NOTE: Zig coerces arbitrary `anyerror` into the JS error union by
+        // throwing a generic Error; the throw happens at the call site. Mapping
+        // to `Thrown` here lets `?` propagate while the actual throw is handled
+        // by the host-fn wrapper.
+        JsError::Thrown
+    }
+}
+
+impl From<JsError> for crate::Error {
+    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
+    /// the exact Zig tag (`@errorName`) so call sites that round-trip through
+    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
+    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
+    #[inline]
+    fn from(e: JsError) -> Self {
+        match e {
+            JsError::OutOfMemory => crate::err!("OutOfMemory"),
+            // `Terminated` is a Rust-port addition (worker shutdown); it has no
+            // distinct Zig `error.` tag, so collapse into `JSError` like every
+            // other thrown JS exception.
+            JsError::Thrown | JsError::Terminated => crate::err!("JSError"),
+        }
+    }
+}
 
 /// Zig `bun.concat(u8, buf, &.{ a, b, ... })` — write `parts` consecutively
 /// into `buf` and return the prefix slice. Panics on overflow (matches Zig
@@ -1604,6 +1652,52 @@ pub mod ffi {
     pub unsafe fn cstr_bytes<'a>(p: *const core::ffi::c_char) -> &'a [u8] {
         // SAFETY: forwarded to `cstr`.
         unsafe { cstr(p) }.to_bytes()
+    }
+
+    #[cfg(unix)]
+    static UTSNAME: std::sync::OnceLock<libc::utsname> = std::sync::OnceLock::new();
+
+    /// Process-lifetime cached `uname(2)` result. Several callers
+    /// (analytics version probe, crash-handler, kernel-version checks) read
+    /// the same struct; cache so the binary issues exactly one syscall.
+    #[cfg(unix)]
+    #[inline]
+    pub fn cached_uname() -> &'static libc::utsname {
+        UTSNAME.get_or_init(uname)
+    }
+
+    /// Slice up to (excluding) the first NUL byte. Port of Zig `bun.sliceTo(b, 0)`;
+    /// re-exported as `bun_string::slice_to_nul`.
+    #[inline]
+    pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
+        &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
+    }
+
+    /// Mutable variant of [`slice_to_nul`].
+    #[inline]
+    pub fn slice_to_nul_mut(buf: &mut [u8]) -> &mut [u8] {
+        let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        &mut buf[..n]
+    }
+
+    /// Heap-allocate a `T` filled with zero bytes. Safe by virtue of the
+    /// [`Zeroable`] bound (the all-zero bit pattern is a valid `T`).
+    #[inline]
+    pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        unsafe { Box::<T>::new_zeroed().assume_init() }
+    }
+
+    /// Heap-allocate a `T` filled with zero bytes without the [`Zeroable`]
+    /// bound. Prefer [`boxed_zeroed`]; this is for orphan-rule cases where the
+    /// caller cannot `unsafe impl Zeroable` for a foreign type.
+    ///
+    /// # Safety
+    /// `T` must be valid at the all-zero bit pattern.
+    #[inline]
+    pub unsafe fn boxed_zeroed_unchecked<T>() -> Box<T> {
+        // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
+        unsafe { Box::<T>::new_zeroed().assume_init() }
     }
 
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return

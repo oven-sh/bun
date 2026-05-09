@@ -735,18 +735,9 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
 /// Returns None if the formatted output (plus NUL) doesn't fit.
 /// Port helper for `std.fmt.bufPrintZ`.
 #[cfg(unix)]
+#[inline]
 fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Option<&'a ZStr> {
-    use std::io::Write;
-    let cap = buf.len();
-    let mut w = &mut buf[..];
-    w.write_fmt(args).ok()?;
-    let n = cap - w.len();
-    if n >= cap {
-        return None;
-    }
-    buf[n] = 0;
-    // SAFETY: buf[n] == 0 written immediately above; buf[..n] is valid for 'a.
-    Some(ZStr::from_buf(&buf[..], n))
+    bun_core::fmt::buf_print_z(buf, args).ok()
 }
 
 /// Parse an ASCII decimal pid from bytes. Port helper for

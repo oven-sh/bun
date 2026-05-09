@@ -1,6 +1,7 @@
 use core::ptr;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue};
+use bun_string::strings::parse_int;
 use bun_string::String as BunString;
 
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
@@ -95,36 +96,36 @@ impl<'a> Row<'a> {
             }
             MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u16 = parse_int::<u16>(value.slice()).unwrap_or(0);
+                    let val: u16 = parse_int::<u16>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: val as u32 }, ..SQLDataCell::default() };
                 } else {
-                    let val: i16 = parse_int::<i16>(value.slice()).unwrap_or(0);
+                    let val: i16 = parse_int::<i16>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: val as i32 }, ..SQLDataCell::default() };
                 }
             }
             MYSQL_TYPE_LONG => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u32 = parse_int::<u32>(value.slice()).unwrap_or(0);
+                    let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: val }, ..SQLDataCell::default() };
                 } else {
-                    let val: i32 = parse_int::<i32>(value.slice()).unwrap_or(i32::MIN);
+                    let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(i32::MIN);
                     *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: val }, ..SQLDataCell::default() };
                 }
             }
             MYSQL_TYPE_INT24 => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     // TODO(port): Zig used u24; Rust has no u24 — u32 parse then mask not needed (text protocol bounds)
-                    let val: u32 = parse_int::<u32>(value.slice()).unwrap_or(0);
+                    let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: val }, ..SQLDataCell::default() };
                 } else {
                     // std.math.minInt(i24) == -8_388_608
-                    let val: i32 = parse_int::<i32>(value.slice()).unwrap_or(-8_388_608);
+                    let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(-8_388_608);
                     *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: val }, ..SQLDataCell::default() };
                 }
             }
             MYSQL_TYPE_LONGLONG => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u64 = parse_int::<u64>(value.slice()).unwrap_or(0);
+                    let val: u64 = parse_int::<u64>(value.slice(), 10).unwrap_or(0);
                     if val <= u32::MAX as u64 {
                         *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: u32::try_from(val).expect("int cast") }, ..SQLDataCell::default() };
                         return;
@@ -134,7 +135,7 @@ impl<'a> Row<'a> {
                         return;
                     }
                 } else {
-                    let val: i64 = parse_int::<i64>(value.slice()).unwrap_or(0);
+                    let val: i64 = parse_int::<i64>(value.slice(), 10).unwrap_or(0);
                     if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
                         *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: i32::try_from(val).expect("int cast") }, ..SQLDataCell::default() };
                         return;
@@ -353,13 +354,6 @@ fn clone_wtf_string_or_null(slice: &[u8]) -> bun_string::WTFStringImpl {
     } else {
         ptr::null_mut()
     }
-}
-
-#[inline]
-fn parse_int<T: core::str::FromStr>(bytes: &[u8]) -> Option<T> {
-    // TODO(port): std.fmt.parseInt(T, bytes, 10) — MySQL text-protocol ints are ASCII so
-    // from_utf8 is sound here; Phase B may swap to a byte-slice parser in bun_str.
-    core::str::from_utf8(bytes).ok()?.parse::<T>().ok()
 }
 
 // ported from: src/sql_jsc/mysql/protocol/ResultSet.zig

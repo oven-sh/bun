@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_collections::{AutoBitSet, VecExt, DynamicBitSet, HashMap};
+use bun_collections::{AutoBitSet, VecExt, HashMap};
 use bun_options_types::{ImportKind, ImportRecord};
 
 use crate::{
@@ -291,7 +291,5 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         }
     }
 }
-
-pub type BitSet = DynamicBitSet;
 
 // ported from: src/bundler/linker_context/findAllImportedPartsInJSOrder.zig

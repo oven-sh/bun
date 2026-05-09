@@ -6,8 +6,7 @@ use crate::webcore::response::{HeadersRef, Init};
 use bun_str::String as BunString;
 
 pub fn fix_dead_code_elimination() {
-    core::hint::black_box(BakeResponseClass__constructForSSR as *const ());
-    core::hint::black_box(BakeResponseClass__constructRender as *const ());
+    bun_core::keep_symbols!(BakeResponseClass__constructForSSR, BakeResponseClass__constructRender);
 }
 
 // TODO(port): callconv(jsc.conv) — Rust cannot express the JSC ABI in `extern` position;

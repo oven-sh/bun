@@ -25,8 +25,6 @@ pub use resolver_hooks::{
 // truth). The drafts are dead duplicates; the public surface of this crate
 // re-exports the single canonical impl so `install_types::SemverString::*`
 // and `bun_semver::string::*` name the same types.
-// The sibling Phase-A `.rs` draft files are retained on disk for reference
-// but are not compiled.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod ExternalString {

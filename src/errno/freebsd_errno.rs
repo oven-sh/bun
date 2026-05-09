@@ -3,39 +3,6 @@ pub use crate::posix::mode_t as Mode;
 pub use crate::posix::E;
 pub use crate::posix::S;
 
-// ──────────────────────────────────────────────────────────────────────────
-// posix — MOVE_DOWN landing for std.posix.{mode_t,E,S} + std.c._errno()
-//
-// Ground truth: Zig `std.posix` (freebsd) / `std.c` re-exports. Landed here so
-// the errno crate stays leaf (T0) and bun_sys (T≥1) imports forward.
-// ──────────────────────────────────────────────────────────────────────────
-#[allow(non_camel_case_types, non_snake_case)]
-pub mod posix {
-    use core::ffi::c_int;
-
-    /// FreeBSD `mode_t` (`__uint16_t` in <sys/types.h>).
-    pub type mode_t = u16;
-
-    /// Kernel errno enum. Zig's `std.posix.E` and Bun's `SystemErrno` share the
-    /// exact same discriminant space on FreeBSD; we alias rather than duplicate.
-    /// TODO(port): Zig's `E` uses unprefixed variant names (`PERM`, `NOENT`);
-    /// `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on `E::PERM` must
-    /// migrate to `E::EPERM` (or this becomes a distinct enum in Phase B).
-    pub type E = super::SystemErrno;
-
-    /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
-    /// Constants are typed `u32` (the cross-platform `Mode` width) rather than
-    /// FreeBSD's native `mode_t` (u16) so that `Mode`-typed expressions compile
-    /// uniformly across platforms — i.e. byte-identical to the canonical
-    /// `bun_core::S`, so re-export it directly.
-    pub use bun_core::S;
-
-    /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
-    /// Canonical impl lives in `bun_core::ffi` (single target_os→symbol ladder).
-    pub use bun_core::ffi::errno;
-    #[allow(unused_imports)] use c_int as _;
-}
-
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
 pub enum SystemErrno {

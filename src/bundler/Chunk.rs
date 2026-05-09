@@ -29,8 +29,7 @@ use crate::{
     LinkerGraph, PartRange, PathTemplate,
 };
 
-// TODO(port): Index::Int — assuming bun_js_parser exports this alongside Index
-type IndexInt = u32;
+use crate::IndexInt;
 
 pub struct ChunkImport {
     pub chunk_index: u32,

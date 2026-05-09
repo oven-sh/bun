@@ -630,6 +630,13 @@ impl MediaList {
     }
 }
 
+impl crate::generic::ToCss for MediaList {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        MediaList::to_css(self, dest)
+    }
+}
+
 impl MediaQuery {
     /// Returns whether the media query is guaranteed to always match.
     pub fn always_matches(&self) -> bool {

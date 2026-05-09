@@ -55,30 +55,28 @@ use x509 as X509;
 /// BoringSSL's translated C API
 pub use boring as c;
 
-static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
 pub fn load() {
     // Callers are expected to invoke this on a single thread during startup
-    // before any concurrent BoringSSL use; the atomic just removes the
-    // `static mut` aliasing hazard.
-    if LOADED.swap(true, core::sync::atomic::Ordering::AcqRel) {
-        return;
-    }
-    // BoringSSL no-arg init calls — declared `safe fn` in `bun_boringssl_sys`.
-    boring::CRYPTO_library_init();
-    // NB: do NOT fold this into `debug_assert!` — that macro elides its
-    // argument entirely in release builds, which would skip the call.
-    let rc = boring::SSL_library_init();
-    debug_assert!(rc > 0);
-    boring::SSL_load_error_strings();
-    boring::ERR_load_BIO_strings();
-    boring::OpenSSL_add_all_algorithms();
+    // before any concurrent BoringSSL use.
+    bun_core::run_once! {{
+        // BoringSSL no-arg init calls — declared `safe fn` in `bun_boringssl_sys`.
+        boring::CRYPTO_library_init();
+        // NB: do NOT fold this into `debug_assert!` — that macro elides its
+        // argument entirely in release builds, which would skip the call.
+        let rc = boring::SSL_library_init();
+        debug_assert!(rc > 0);
+        boring::SSL_load_error_strings();
+        boring::ERR_load_BIO_strings();
+        boring::OpenSSL_add_all_algorithms();
 
-    if !cfg!(test) {
-        core::hint::black_box(OPENSSL_memory_alloc as *const ());
-        core::hint::black_box(OPENSSL_memory_get_size as *const ());
-        core::hint::black_box(OPENSSL_memory_free as *const ());
-    }
+        if !cfg!(test) {
+            // D006 added the bun_core dep for `run_once!`; keep_symbols! could
+            // now be used here too — left as inline `black_box` for this pass.
+            core::hint::black_box(OPENSSL_memory_alloc as *const ());
+            core::hint::black_box(OPENSSL_memory_get_size as *const ());
+            core::hint::black_box(OPENSSL_memory_free as *const ());
+        }
+    }}
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -201,7 +199,7 @@ pub extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
     // OPENSSL_memory_alloc above (i.e. mi_malloc).
     unsafe {
-        let len = bun_alloc::mimalloc::mi_usable_size(ptr);
+        let len = bun_alloc::usable_size(ptr.cast());
         ptr::write_bytes(ptr.cast::<u8>(), 0, len);
         bun_alloc::mimalloc::mi_free(ptr);
     }
@@ -209,8 +207,8 @@ pub extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
-    // SAFETY: ptr was returned by mi_malloc (or is null, which mi_usable_size handles).
-    unsafe { bun_alloc::mimalloc::mi_usable_size(ptr) }
+    // ptr was returned by mi_malloc (or is null, which usable_size handles).
+    bun_alloc::usable_size(ptr.cast())
 }
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;

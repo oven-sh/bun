@@ -118,37 +118,10 @@ pub fn validate_path(
     Box::from(out)
 }
 
-// TODO(port): both Zig call sites (defines/loaders from transform options) inline
-// the map construction directly; this generic helper is dead until a concrete
-// map trait (`reserve`/`insert`) is available. Gated to avoid a silent no-op
-// (the body never inserts — see options.zig:41-51).
-pub fn string_hash_map_from_arrays<M, K, V>(
-    total_capacity: usize,
-    keys: &[K],
-    values: &[V],
-) -> Result<M, bun_alloc::AllocError>
-where
-    M: Default,
-    K: Clone,
-    V: Clone,
-    // TODO(port): M is a StringArrayHashMap-like; this is a structural constraint in Zig (anytype)
-{
-    // TODO(port): Zig used `t.init(arena)`; in Rust the map type owns its arena.
-    let mut hash_map = M::default();
-    if !keys.is_empty() {
-        // TODO(port): ensureTotalCapacity / putAssumeCapacity — needs concrete map API
-        let _ = u32::try_from(total_capacity).expect("int cast");
-        for (i, key) in keys.iter().enumerate() {
-            // hash_map.put_assume_capacity(key.clone(), values[i].clone());
-            let _ = (key, &values[i]);
-        }
-        // PERF(port): was assume_capacity
-    }
-    let _ = total_capacity;
-    Ok(hash_map)
-    // TODO(port): this fn is generic over `comptime t: type` with `.init/.ensureTotalCapacity/.putAssumeCapacity`.
-    // Phase B: replace callers with concrete StringArrayHashMap construction; this stub preserves signature.
-}
+// PORT NOTE: options.zig `stringHashMapFromArrays` — use `bun_core::util::{MapLike, from_entries}`
+// or inline the construction (see definesFromTransformOptions / loadersFromTransformOptions below).
+// Note `from_entries` reserves `iter.len()`; if you need the Zig over-reserve (`keys.len + N`),
+// call `MapLike::ensure_unused_capacity(total_cap)` yourself before zipping keys/values.
 
 // `AllowUnresolved` is defined canonically in
 // `bun_js_parser::options` (lower tier) because the parser is the consumer
@@ -1098,7 +1071,7 @@ pub fn defines_from_transform_options(
 ) -> Result<Box<defines::Define>, bun_core::Error> {
     let input_user_define = maybe_input_define.unwrap_or_default();
 
-    // TODO(port): string_hash_map_from_arrays is generic stub; replace with concrete RawDefines builder
+    // PORT NOTE: Zig stringHashMapFromArrays — inlined as concrete RawDefines build (over-reserves +4).
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
     user_defines.reserve(input_user_define.keys.len() + 4);
     for (i, key) in input_user_define.keys.iter().enumerate() {
@@ -1868,7 +1841,7 @@ impl<'a> BundleOptions<'a> {
         }
         let node_env: Option<Box<[u8]>> = 'node_env: {
             if let Some(e) = loader_.as_deref() {
-                if let Some(env_) = e.map.get(b"BUN_ENV").or_else(|| e.map.get(b"NODE_ENV")) {
+                if let Some(env_) = e.get_node_env() {
                     break 'node_env Some(Box::from(env_));
                 }
             }

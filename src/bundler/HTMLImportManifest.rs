@@ -100,10 +100,7 @@ fn write_entry_item<W: Write + ?Sized>(
     writer.write_all(b",\"headers\":{")?;
 
     if hash > 0 {
-        // PORT NOTE: `bun_base64::encode_len_from_size` isn't `const fn`; the
-        // url-safe encoding of an 8-byte input is at most ceil(8*4/3)=11 bytes.
-        // Match Zig's `+ 2` slack.
-        const BASE64_BUF_LEN: usize = ((core::mem::size_of::<u64>() * 4) + 2) / 3 + 2;
+        const BASE64_BUF_LEN: usize = bun_base64::encode_len_from_size(core::mem::size_of::<u64>()) + 2;
         let mut base64_buf = [0u8; BASE64_BUF_LEN];
         let n = bun_base64::encode_url_safe(&mut base64_buf, &hash.to_ne_bytes());
         let base64 = &base64_buf[..n];

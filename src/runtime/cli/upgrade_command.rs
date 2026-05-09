@@ -71,15 +71,11 @@ fn argv_contains(target: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub static INITIALIZED_STORE: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-
 pub fn initialize_store() {
-    if INITIALIZED_STORE.swap(true, core::sync::atomic::Ordering::Relaxed) {
-        return;
-    }
-    js_ast::Expr::data_store_create();
-    js_ast::Stmt::data_store_create();
+    bun_core::run_once! {{
+        js_ast::Expr::data_store_create();
+        js_ast::Stmt::data_store_create();
+    }}
 }
 
 // ──────────────────────────────────────────────────────────────────────────

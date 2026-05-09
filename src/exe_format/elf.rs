@@ -40,27 +40,7 @@ pub struct ElfFile {
 
 impl ElfFile {
     pub fn init(data: Vec<u8>) -> Result<Box<ElfFile>, ElfError> {
-        if data.len() < size_of::<Elf64_Ehdr>() {
-            return Err(ElfError::InvalidElfFile);
-        }
-
-        let ehdr = read_ehdr(&data);
-
-        // Validate ELF magic
-        if &ehdr.e_ident[0..4] != b"\x7fELF" {
-            return Err(ElfError::InvalidElfFile);
-        }
-
-        // Must be 64-bit
-        if ehdr.e_ident[EI_CLASS] != ELFCLASS64 {
-            return Err(ElfError::Not64Bit);
-        }
-
-        // Must be little-endian (bun only supports x64 + arm64, both LE)
-        if ehdr.e_ident[EI_DATA] != ELFDATA2LSB {
-            return Err(ElfError::NotLittleEndian);
-        }
-
+        validate_elf64_le(&data)?;
         Ok(Box::new(ElfFile { data }))
     }
 
@@ -529,6 +509,27 @@ fn read_ehdr(data: &[u8]) -> Elf64_Ehdr {
     read_struct(&data[..size_of::<Elf64_Ehdr>()])
 }
 
+/// Full ELF64-LE header validation (magic + class + endian). This is the strict
+/// check used before parsing program/section headers — NOT a format sniff. Do
+/// not route `macho::utils::is_elf` through this; that function is intentionally
+/// a 4-byte-magic-only sniff used for elf-vs-macho dispatch and must accept
+/// 32-bit/BE ELF.
+fn validate_elf64_le(data: &[u8]) -> Result<(), ElfError> {
+    if data.len() < size_of::<Elf64_Ehdr>() {
+        return Err(ElfError::InvalidElfFile);
+    }
+    if &data[0..4] != b"\x7fELF" {
+        return Err(ElfError::InvalidElfFile);
+    }
+    if data[EI_CLASS] != ELFCLASS64 {
+        return Err(ElfError::Not64Bit);
+    }
+    if data[EI_DATA] != ELFDATA2LSB {
+        return Err(ElfError::NotLittleEndian);
+    }
+    Ok(())
+}
+
 /// True iff the host bun is running on is managed by Nix or Guix — in which
 /// case the "generic" FHS linker path `/lib64/ld-linux-x86-64.so.2` is a stub
 /// that rejects generic binaries, and rewriting PT_INTERP to it would break
@@ -605,18 +606,8 @@ fn host_uses_nix_store_interpreter() -> bool {
                 }
             };
             fd.close();
-            if n < size_of::<Elf64_Ehdr>() {
-                return false;
-            }
             let data = &buf[..n];
-
-            if &data[0..4] != b"\x7fELF" {
-                return false;
-            }
-            if data[EI_CLASS] != ELFCLASS64 {
-                return false;
-            }
-            if data[EI_DATA] != ELFDATA2LSB {
+            if validate_elf64_le(data).is_err() {
                 return false;
             }
 

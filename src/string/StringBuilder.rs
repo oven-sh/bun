@@ -224,7 +224,7 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let start = self.len;
-        let written = buf_print(self.writable(), args).expect("unreachable");
+        let written = bun_core::fmt::buf_print_len(self.writable(), args).expect("unreachable");
         self.len += written;
 
         debug_assert!(self.len <= self.cap);
@@ -237,7 +237,7 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let off = self.len;
-        let written = buf_print(self.writable(), args).expect("unreachable");
+        let written = bun_core::fmt::buf_print_len(self.writable(), args).expect("unreachable");
         self.len += written;
 
         debug_assert!(self.len <= self.cap);
@@ -250,7 +250,7 @@ impl StringBuilder {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let off = self.len;
-        let written = buf_print_z(self.writable(), args).expect("unreachable");
+        let written = bun_core::fmt::buf_print_z(self.writable(), args).expect("unreachable").len();
         self.len += written;
         self.len += 1;
 
@@ -260,7 +260,7 @@ impl StringBuilder {
     }
 
     pub fn fmt_count(&mut self, args: fmt::Arguments<'_>) {
-        self.cap += fmt_count_bytes(args);
+        self.cap += bun_alloc::fmt_count(args);
     }
 
     pub fn allocated_slice(&mut self) -> &mut [u8] {
@@ -327,57 +327,6 @@ impl Drop for StringBuilder {
                 slice::from_raw_parts_mut(ptr.as_ptr().cast(), self.cap),
             );
         }
-    }
-}
-
-// ── local helpers (std.fmt.bufPrint / bufPrintZ / count equivalents) ──────────
-
-/// `std.fmt.bufPrint`: write formatted args into `buf`, return bytes written.
-fn buf_print(buf: &mut [u8], args: fmt::Arguments<'_>) -> Result<usize, fmt::Error> {
-    let mut cursor = SliceWriter { buf, pos: 0 };
-    fmt::write(&mut cursor, args)?;
-    Ok(cursor.pos)
-}
-
-/// `std.fmt.bufPrintZ`: like buf_print but writes a trailing NUL (not counted in return).
-fn buf_print_z(buf: &mut [u8], args: fmt::Arguments<'_>) -> Result<usize, fmt::Error> {
-    let n = buf_print(buf, args)?;
-    if n >= buf.len() {
-        return Err(fmt::Error);
-    }
-    buf[n] = 0;
-    Ok(n)
-}
-
-/// `std.fmt.count`: count bytes the formatted args would produce.
-fn fmt_count_bytes(args: fmt::Arguments<'_>) -> usize {
-    struct Counter(usize);
-    impl fmt::Write for Counter {
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            self.0 += s.len();
-            Ok(())
-        }
-    }
-    let mut c = Counter(0);
-    let _ = fmt::write(&mut c, args);
-    c.0
-}
-
-struct SliceWriter<'a> {
-    buf: &'a mut [u8],
-    pos: usize,
-}
-
-impl fmt::Write for SliceWriter<'_> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let bytes = s.as_bytes();
-        let end = self.pos + bytes.len();
-        if end > self.buf.len() {
-            return Err(fmt::Error);
-        }
-        self.buf[self.pos..end].copy_from_slice(bytes);
-        self.pos = end;
-        Ok(())
     }
 }
 

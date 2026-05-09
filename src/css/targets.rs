@@ -4,26 +4,6 @@ use crate::VendorPrefix;
 use bun_core;
 use bun_string::strings;
 
-// TODO(port): replace with bun_str::strings::parse_int once available — PORTING.md
-// forbids from_utf8 on external bytes (env vars / target strings).
-fn parse_ascii_u32(bytes: &[u8]) -> Option<u32> {
-    if bytes.is_empty() {
-        return None;
-    }
-    let mut v: u32 = 0;
-    for &b in bytes {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        v = v.checked_mul(10)?.checked_add((b - b'0') as u32)?;
-    }
-    Some(v)
-}
-
-fn parse_ascii_u16(bytes: &[u8]) -> Option<u16> {
-    parse_ascii_u32(bytes).and_then(|v| u16::try_from(v).ok())
-}
-
 /// Target browsers and features to compile.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Targets {
@@ -68,12 +48,12 @@ impl Targets {
         for (j, &c) in val.iter().enumerate() {
             if !c.is_ascii_digit() {
                 i = j;
-                lhs = parse_ascii_u32(&val[0..j]).expect("invalid bytes");
+                lhs = strings::parse_int::<u32>(&val[0..j], 10).expect("invalid bytes");
                 break;
             }
         }
         if i >= val.len() {
-            lhs = parse_ascii_u32(val).expect("invalid bytes");
+            lhs = strings::parse_int::<u32>(val, 10).expect("invalid bytes");
             return Some(lhs);
         }
         if val[i] != b' ' {
@@ -88,7 +68,7 @@ impl Targets {
             panic!("bad string");
         }
         i += 1;
-        rhs = parse_ascii_u32(&val[i..]).expect("invalid bytes");
+        rhs = strings::parse_int::<u32>(&val[i..], 10).expect("invalid bytes");
         Some(lhs << rhs)
     }
 
@@ -239,7 +219,8 @@ impl Browsers {
                 // error.InvalidCharacter / error.Overflow. Preserve the tag for
                 // @errorName snapshot compat (do NOT collapse to UnsupportedCSSTarget).
                 // TODO(port): narrow error set (InvalidCharacter | Overflow)
-                let year = parse_ascii_u16(number_part)
+                let year = strings::parse_int::<u16>(number_part, 10)
+                    .ok()
                     .ok_or(bun_core::err!("InvalidCharacter"))?;
                 match year {
                     // https://caniuse.com/?search=es2015
@@ -343,11 +324,11 @@ impl Browsers {
                             .iter()
                             .position(|&b| b == b'.')
                             .unwrap_or(version_str.len());
-                        let Some(major) = parse_ascii_u16(&version_str[0..dot_index]) else {
+                        let Some(major) = strings::parse_int::<u16>(&version_str[0..dot_index], 10).ok() else {
                             continue 'for_loop;
                         };
                         let minor = if dot_index < version_str.len() {
-                            parse_ascii_u16(&version_str[dot_index + 1..]).unwrap_or(0)
+                            strings::parse_int::<u16>(&version_str[dot_index + 1..], 10).unwrap_or(0)
                         } else {
                             0
                         };

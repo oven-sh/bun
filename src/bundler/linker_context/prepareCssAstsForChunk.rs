@@ -70,9 +70,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // scope the shared borrow before materializing `&mut *linker` below to
     // avoid aliasing.
     let worker = {
-        let bundle_v2: &BundleV2 = unsafe {
-            &*bun_core::from_field_ptr!(BundleV2, linker, linker)
-        };
+        let bundle_v2: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_ptr(linker) };
         ThreadPool::Worker::get(bundle_v2)
     };
     let worker = scopeguard::guard(worker, |w| w.unget());
@@ -86,27 +84,6 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
         unsafe { &mut *chunk },
         worker.arena(),
     );
-}
-
-/// `ImportRecord.path` is `bun_paths::fs::Path<'static>`; `CssImportOrderKind::ExternalPath`
-/// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
-/// mirrors of Zig `Fs.Path`. Re-construct field-by-field rather than transmute
-/// non-`repr(C)` structs. Inverse of `findImportedFilesInCSSOrder::fs_path_from_import_record`.
-#[inline]
-fn import_record_path_from_fs(p: &Path<'static>) -> bun_paths::fs::Path<'static> {
-    bun_paths::fs::Path {
-        pretty: p.pretty,
-        text: p.text,
-        namespace: p.namespace,
-        name: bun_paths::fs::PathName {
-            base: p.name.base,
-            dir: p.name.dir,
-            ext: p.name.ext,
-            filename: p.name.filename,
-        },
-        is_disabled: p.is_disabled,
-        is_symlink: p.is_symlink,
-    }
 }
 
 fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
@@ -188,7 +165,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         entry.condition_import_records.push(
                             ImportRecord {
                                 kind: ImportKind::At,
-                                path: import_record_path_from_fs(p),
+                                path: p.clone(),
                                 range: Range::default(),
                                 tag: ImportRecordTag::None,
                                 loader: None,
@@ -312,7 +289,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
 
                     entry.condition_import_records.push(ImportRecord {
                         kind: ImportKind::At,
-                        path: import_record_path_from_fs(p),
+                        path: p.clone(),
                         range: Range::NONE,
                         tag: ImportRecordTag::None,
                         loader: None,

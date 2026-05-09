@@ -323,6 +323,62 @@ pub enum ShouldContinue {
     Finished,
 }
 
+/// Return of `apply_headers` in the h2/h3 client sessions: did the headers
+/// terminate the response (HEAD, 204/304, END_STREAM) or is a body expected?
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum HeaderResult {
+    HasBody,
+    Finished,
+}
+
+impl HTTPClient<'_> {
+    /// Shared body of `apply_headers` for the h2/h3 client sessions: hand a
+    /// pre-decoded multiplexed response (HPACK / QPACK) to the HTTP/1.1
+    /// metadata pipeline (`handle_response_metadata` + `clone_metadata`), then
+    /// undo the HTTP/1.1-specific framing decisions that don't apply when the
+    /// transport delimits the body (h2 DATA frames / h3 STREAM frames).
+    ///
+    /// SAFETY CONTRACT: `headers` borrows caller-owned storage
+    /// (`stream.decoded_bytes` for h2, the lsquic hset for h3) that is
+    /// lifetime-erased into `state.pending_response`. The caller MUST invoke
+    /// `clone_metadata` (which deep-copies the header bytes) synchronously
+    /// before that backing storage is freed. Both call sites already do.
+    #[inline]
+    pub(crate) fn apply_multiplexed_headers(
+        &mut self,
+        status_code: u32,
+        headers: &[picohttp::Header],
+    ) -> Result<HeaderResult, bun_core::Error> {
+        let mut response = picohttp::Response {
+            minor_version: 0,
+            status_code,
+            status: b"",
+            headers: picohttp::HeaderList { list: headers },
+            bytes_read: 0,
+        };
+        // SAFETY: see fn doc — erased borrow is deep-copied by `clone_metadata`
+        // before the backing storage is released.
+        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
+        let should_continue = self.handle_response_metadata(&mut response)?;
+        // handle_response_metadata may mutate `response` (e.g. the 304 rewrite
+        // for force_last_modified); clone_metadata reads pending_response, so
+        // re-sync. SAFETY: same lifetime erase as above.
+        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
+        // h2/h3 framing delimits the body; chunked transfer-encoding and the
+        // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
+        self.state.transfer_encoding = Encoding::Identity;
+        if self.state.response_stage == ResponseStage::BodyChunk {
+            self.state.response_stage = ResponseStage::Body;
+        }
+        self.state.flags.allow_keepalive = true;
+        Ok(if should_continue == ShouldContinue::Finished {
+            HeaderResult::Finished
+        } else {
+            HeaderResult::HasBody
+        })
+    }
+}
+
 #[derive(Default, Copy, Clone)]
 pub enum BodySize {
     TotalReceived(usize),
@@ -755,42 +811,6 @@ pub use scratch::temp_hostname;
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AlpnOffer { H1, H2Only, H1OrH2 }
 
-// ── boringssl FFI not yet re-exported by bun_boringssl ──────────────────
-mod boring_extra {
-    use core::ffi::{c_int, c_uchar, c_uint};
-    unsafe extern "C" {
-        pub(crate) fn i2d_X509(x: *mut bun_boringssl::c::X509, out: *mut *mut u8) -> c_int;
-        pub(crate) fn SSL_get0_alpn_selected(
-            ssl: *const bun_boringssl::c::SSL,
-            out_data: *mut *const c_uchar,
-            out_len: *mut c_uint,
-        );
-        pub(crate) fn SSL_is_init_finished(ssl: *const bun_boringssl::c::SSL) -> c_int;
-        pub(crate) fn SSL_get_peer_cert_chain(
-            ssl: *const bun_boringssl::c::SSL,
-        ) -> *mut core::ffi::c_void; // STACK_OF(X509)*
-        // `sk_X509_value` is a `static inline` wrapper in BoringSSL's headers
-        // (DEFINE_STACK_OF), so there is no exported symbol to link against —
-        // call the underlying generic function it expands to.
-        pub(crate) fn OPENSSL_sk_value(stack: *const core::ffi::c_void, idx: usize) -> *mut core::ffi::c_void;
-        pub(crate) fn SSL_set_tlsext_host_name(ssl: *mut bun_boringssl::c::SSL, name: *const core::ffi::c_char) -> c_int;
-        pub(crate) fn SSL_set_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
-        pub(crate) fn SSL_clear_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
-        pub(crate) fn SSL_set_alpn_protos(ssl: *mut bun_boringssl::c::SSL, protos: *const u8, protos_len: usize) -> c_int;
-        pub(crate) fn SSL_enable_signed_cert_timestamps(ssl: *mut bun_boringssl::c::SSL);
-        pub(crate) fn SSL_enable_ocsp_stapling(ssl: *mut bun_boringssl::c::SSL);
-    }
-
-    #[inline]
-    pub(crate) unsafe fn sk_X509_value(stack: *const core::ffi::c_void, idx: usize) -> *mut bun_boringssl::c::X509 {
-        unsafe { OPENSSL_sk_value(stack, idx).cast() }
-    }
-
-    // BoringSSL defines this as 0 (a no-op flag), but we keep the
-    // clear/set pair to mirror the Zig spec exactly.
-    pub(crate) const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
-}
-
 /// Port of `BoringSSL.SSL.configureHTTPClientWithALPN` (boringssl.zig:19066).
 /// Sets SNI (when `hostname` is non-empty), the legacy-server-connect option,
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
@@ -805,10 +825,10 @@ pub fn configure_http_client_with_alpn(
     // is either null or a NUL-terminated buffer that outlives this call.
     unsafe {
         if !hostname.is_null() {
-            boring_extra::SSL_set_tlsext_host_name(ssl, hostname);
+            boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
         }
-        boring_extra::SSL_clear_options(ssl, boring_extra::SSL_OP_LEGACY_SERVER_CONNECT);
-        boring_extra::SSL_set_options(ssl, boring_extra::SSL_OP_LEGACY_SERVER_CONNECT);
+        boringssl::c::SSL_clear_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
+        boringssl::c::SSL_set_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
 
         const ALPN_H1: &[u8] = &[8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
         const ALPN_H2: &[u8] = &[2, b'h', b'2'];
@@ -818,41 +838,16 @@ pub fn configure_http_client_with_alpn(
             AlpnOffer::H1OrH2 => ALPN_H2_H1,
             AlpnOffer::H2Only => ALPN_H2,
         };
-        let rc = boring_extra::SSL_set_alpn_protos(ssl, alpns.as_ptr(), alpns.len());
+        let rc = boringssl::c::SSL_set_alpn_protos(ssl, alpns.as_ptr(), alpns.len());
         debug_assert_eq!(rc, 0);
 
-        boring_extra::SSL_enable_signed_cert_timestamps(ssl);
-        boring_extra::SSL_enable_ocsp_stapling(ssl);
+        boringssl::c::SSL_enable_signed_cert_timestamps(ssl);
+        boringssl::c::SSL_enable_ocsp_stapling(ssl);
     }
 }
 
 // ── EntryList column accessors ──────────────────────────────────────────
-// `header_entries.slice().items_name()` was a Zig MultiArrayList convenience.
-// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
-// that need to mutate `header_entries` afterwards copy the index out first.
-trait HeaderEntrySliceColumns {
-    fn items_name(&self) -> &[StringPointer];
-    fn items_value(&self) -> &[StringPointer];
-}
-impl HeaderEntrySliceColumns for bun_collections::multi_array_list::Slice<bun_http_types::ETag::HeaderEntry> {
-    #[inline]
-    fn items_name(&self) -> &[StringPointer] {
-        self.items::<"name", StringPointer>()
-    }
-    #[inline]
-    fn items_value(&self) -> &[StringPointer] {
-        self.items::<"value", StringPointer>()
-    }
-}
-trait HeaderEntryListColumns {
-    fn items_name(&self) -> &[StringPointer];
-}
-impl HeaderEntryListColumns for bun_http_types::ETag::HeaderEntryList {
-    #[inline]
-    fn items_name(&self) -> &[StringPointer] {
-        self.items::<"name", StringPointer>()
-    }
-}
+use bun_http_types::ETag::HeaderEntryColumns;
 
 // ── socket helpers ──────────────────────────────────────────────────────
 #[inline]
@@ -927,30 +922,15 @@ struct InitialRequestPayloadResult {
 }
 
 // ── request/response writers ────────────────────────────────────────────
-fn write_proxy_connect(
-    writer: &mut Vec<u8>,
-    client: &HTTPClient,
-) -> Result<(), bun_core::Error> {
-    let port: &[u8] = if client.url.get_port().is_some() {
-        client.url.port
-    } else if client.url.is_https() {
-        b"443"
-    } else {
-        b"80"
-    };
-    writer.extend_from_slice(b"CONNECT ");
-    writer.extend_from_slice(client.url.hostname);
-    writer.extend_from_slice(b":");
-    writer.extend_from_slice(port);
-    writer.extend_from_slice(b" HTTP/1.1\r\n");
-
-    writer.extend_from_slice(b"Host: ");
-    writer.extend_from_slice(client.url.hostname);
-    writer.extend_from_slice(b":");
-    writer.extend_from_slice(port);
-
-    writer.extend_from_slice(b"\r\nProxy-Connection: Keep-Alive\r\n");
-
+/// Emit `Proxy-Authorization` (auto-generated from URL credentials, unless the
+/// user supplied one via `proxy_headers`) followed by all custom
+/// `proxy_headers`. Shared by `write_proxy_connect` and `write_proxy_request` —
+/// the precedence rule (user-provided header wins over URL-derived credentials)
+/// is identical for both CONNECT tunnels and absolute-form forward requests.
+///
+/// NOTE: this precedence is the *opposite* of the WebSocket upgrade client's
+/// CONNECT builder, which is intentional per the .zig specs — do not unify.
+fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     // Check if user provided Proxy-Authorization in custom headers
     let user_provided_proxy_auth = client
         .proxy_headers
@@ -979,6 +959,33 @@ fn write_proxy_connect(
             writer.extend_from_slice(b"\r\n");
         }
     }
+}
+
+fn write_proxy_connect(
+    writer: &mut Vec<u8>,
+    client: &HTTPClient,
+) -> Result<(), bun_core::Error> {
+    let port: &[u8] = if client.url.get_port().is_some() {
+        client.url.port
+    } else if client.url.is_https() {
+        b"443"
+    } else {
+        b"80"
+    };
+    writer.extend_from_slice(b"CONNECT ");
+    writer.extend_from_slice(client.url.hostname);
+    writer.extend_from_slice(b":");
+    writer.extend_from_slice(port);
+    writer.extend_from_slice(b" HTTP/1.1\r\n");
+
+    writer.extend_from_slice(b"Host: ");
+    writer.extend_from_slice(client.url.hostname);
+    writer.extend_from_slice(b":");
+    writer.extend_from_slice(port);
+
+    writer.extend_from_slice(b"\r\nProxy-Connection: Keep-Alive\r\n");
+
+    write_proxy_auth_and_headers(writer, client);
 
     writer.extend_from_slice(b"\r\n");
     Ok(())
@@ -1005,34 +1012,7 @@ fn write_proxy_request(
     writer.extend_from_slice(request.path);
     writer.extend_from_slice(b" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n");
 
-    // Check if user provided Proxy-Authorization in custom headers
-    let user_provided_proxy_auth = client
-        .proxy_headers
-        .as_ref()
-        .map(|hdrs| hdrs.get(b"proxy-authorization").is_some())
-        .unwrap_or(false);
-
-    // Only write auto-generated proxy_authorization if user didn't provide one
-    if let Some(auth) = &client.proxy_authorization {
-        if !user_provided_proxy_auth {
-            writer.extend_from_slice(b"Proxy-Authorization: ");
-            writer.extend_from_slice(auth);
-            writer.extend_from_slice(b"\r\n");
-        }
-    }
-
-    // Write custom proxy headers
-    if let Some(hdrs) = &client.proxy_headers {
-        let slice = hdrs.entries.slice();
-        let names = slice.items_name();
-        let values = slice.items_value();
-        for (idx, name_ptr) in names.iter().enumerate() {
-            writer.extend_from_slice(hdrs.as_str(*name_ptr));
-            writer.extend_from_slice(b": ");
-            writer.extend_from_slice(hdrs.as_str(values[idx]));
-            writer.extend_from_slice(b"\r\n");
-        }
-    }
+    write_proxy_auth_and_headers(writer, client);
 
     for header in request.headers {
         writer.extend_from_slice(header.name());
@@ -1384,10 +1364,10 @@ impl<'a> HTTPClient<'a> {
     ) -> bool {
         if self.flags.reject_unauthorized {
             // SAFETY: ssl_ptr is a live *mut SSL while the TLS socket is open
-            let cert_chain = unsafe { boring_extra::SSL_get_peer_cert_chain(ssl_ptr) };
+            let cert_chain = unsafe { boringssl::c::SSL_get_peer_cert_chain(ssl_ptr) };
             if !cert_chain.is_null() {
                 // SAFETY: cert_chain is a live STACK_OF(X509) owned by the SSL session; index 0 is in bounds when non-null is returned
-                let x509 = unsafe { boring_extra::sk_X509_value(cert_chain, 0) };
+                let x509 = unsafe { boringssl::c::sk_X509_value(cert_chain, 0) };
                 if !x509.is_null() {
                     let hostname = get_tls_hostname(self, allow_proxy_url);
 
@@ -1396,12 +1376,12 @@ impl<'a> HTTPClient<'a> {
                     if self.signals.get(signals::Field::CertErrors) {
                         // clone the relevant data
                         // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
-                        let cert_size = unsafe { boring_extra::i2d_X509(x509, core::ptr::null_mut()) };
+                        let cert_size = unsafe { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
                         let mut cert =
                             vec![0u8; usize::try_from(cert_size).expect("int cast")].into_boxed_slice();
                         let mut cert_ptr = cert.as_mut_ptr();
                         // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
-                        let result_size = unsafe { boring_extra::i2d_X509(x509, &raw mut cert_ptr) };
+                        let result_size = unsafe { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
                         debug_assert!(result_size == cert_size);
 
                         self.state.certificate_info = Some(CertificateInfo {
@@ -1480,7 +1460,7 @@ impl<'a> HTTPClient<'a> {
             let ssl_ptr: *mut boringssl::c::SSL =
                 socket.get_native_handle().map(|p| p.cast()).unwrap_or(core::ptr::null_mut());
             // SAFETY: ssl_ptr is a live *mut SSL for the just-opened TLS socket
-            if !ssl_ptr.is_null() && unsafe { boring_extra::SSL_is_init_finished(ssl_ptr) } == 0 {
+            if !ssl_ptr.is_null() && unsafe { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
                 let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
 
                 // Build a NUL-terminated SNI string only when the hostname is not an
@@ -1590,7 +1570,7 @@ impl<'a> HTTPClient<'a> {
             // valid stack locals. `proto[0..proto_len]` is the slice ALPN wrote
             // (borrowed from the SSL session, valid while ssl_ptr is).
             let alpn = unsafe {
-                boring_extra::SSL_get0_alpn_selected(ssl_ptr, &raw mut proto, &raw mut proto_len);
+                boringssl::c::SSL_get0_alpn_selected(ssl_ptr, &raw mut proto, &raw mut proto_len);
                 bun_core::ffi::slice(proto, proto_len as usize)
             };
             if alpn == b"h2" {

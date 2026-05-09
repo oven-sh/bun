@@ -70,6 +70,31 @@ impl DotEnvBehavior {
     pub const Prefix: Self = Self::prefix;
     pub const LoadAll: Self = Self::load_all;
     pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
+
+    /// String-branch classifier shared by `bunfig.zig:988-1018` (serve.env) and
+    /// `JSBundler.zig:603-630` (Bun.build env). Only the *string* arm is common to
+    /// both specs — the surrounding null/bool/number dispatch and the error
+    /// reporting intentionally diverge per call site, so they stay inline there.
+    ///
+    /// Returns `Ok((behavior, prefix))` where `prefix` is `Some(&s[..idx])` only for
+    /// `DotEnvBehavior::prefix`; `Err(())` means the string is none of
+    /// `"inline"` / `"disable"` / contains-`*`, and the caller emits its own
+    /// site-specific diagnostic.
+    pub fn parse_str(s: &[u8]) -> Result<(Self, Option<&[u8]>), ()> {
+        if s == b"inline" {
+            Ok((Self::load_all, None))
+        } else if s == b"disable" {
+            Ok((Self::disable, None))
+        } else if let Some(asterisk) = s.iter().position(|&b| b == b'*') {
+            if asterisk > 0 {
+                Ok((Self::prefix, Some(&s[..asterisk])))
+            } else {
+                Ok((Self::load_all, None))
+            }
+        } else {
+            Err(())
+        }
+    }
 }
 
 /// Mirrors the value fields of `bun_s3_signing::S3Credentials` (T5). Defined locally so
@@ -127,31 +152,50 @@ static NODE_PATH_TO_USE_SET_ONCE: parking_lot::RwLock<Option<Box<[u8]>>> =
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
 impl<'a> Loader<'a> {
+    /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
+    /// or a literal empty-quote pair left over from shell `export FOO=""` /
+    /// `export FOO=''`. Mirrors Zig env_loader.zig getHttpProxy/getNoProxy.
+    #[inline]
+    fn is_emptyish(v: &[u8]) -> bool {
+        v.is_empty() || v == b"\"\"" || v == b"''"
+    }
+
+    /// Lookup `lower` first; if present-but-empty, fall through to `upper`.
+    /// CI environments often set `http_proxy=""` as a default; a runtime
+    /// `process.env.HTTP_PROXY = "..."` must still be observed.
+    #[inline]
+    fn get_lower_then_upper(&self, lower: &[u8], upper: &[u8]) -> Option<&[u8]> {
+        if let Some(p) = self.get(lower) {
+            if !p.is_empty() {
+                return Some(p);
+            }
+        }
+        self.get(upper)
+    }
+
     pub fn iterator(&mut self) -> <HashTable as ArrayHashMapExt>::Iterator<'_> {
         self.map.iterator()
     }
 
     pub fn has(&self, input: &[u8]) -> bool {
         let Some(value) = self.get(input) else { return false };
-        if value.is_empty() {
-            return false;
-        }
+        // NOTE: intentionally stricter than `is_emptyish` — also rejects "0"/"false"
+        // per Zig `Loader.has` spec; do not collapse the extra terms.
+        !Self::is_emptyish(value) && value != b"0" && value != b"false"
+    }
 
-        value != b"\"\"" && value != b"''" && value != b"0" && value != b"false"
+    /// `BUN_ENV` with fallback to `NODE_ENV` — Bun's env precedence for
+    /// production/test detection. Mirrors Zig `isProduction`/`isTest` lookup.
+    pub fn get_node_env(&self) -> Option<&[u8]> {
+        self.get(b"BUN_ENV").or_else(|| self.get(b"NODE_ENV"))
     }
 
     pub fn is_production(&self) -> bool {
-        let Some(env) = self.get(b"BUN_ENV").or_else(|| self.get(b"NODE_ENV")) else {
-            return false;
-        };
-        env == b"production"
+        self.get_node_env() == Some(b"production")
     }
 
     pub fn is_test(&self) -> bool {
-        let Some(env) = self.get(b"BUN_ENV").or_else(|| self.get(b"NODE_ENV")) else {
-            return false;
-        };
-        env == b"test"
+        self.get_node_env() == Some(b"test")
     }
 
     pub fn get_node_path<'b>(
@@ -317,36 +361,14 @@ impl<'a> Loader<'a> {
 
         let mut http_proxy: Option<URL<'a>> = None;
 
-        // Treat empty-string lowercase as "absent" so it falls through to uppercase.
-        // CI environments often set `http_proxy=""` as a default; a runtime
-        // `process.env.HTTP_PROXY = "..."` must still be observed.
-        if is_http {
-            let proxy: Option<&[u8]> = 'blk: {
-                if let Some(p) = self.get(b"http_proxy") {
-                    if !p.is_empty() {
-                        break 'blk Some(p);
-                    }
-                }
-                break 'blk self.get(b"HTTP_PROXY");
-            };
-            if let Some(p) = proxy {
-                if !p.is_empty() && p != b"\"\"" && p != b"''" {
-                    http_proxy = Some(URL::parse(extend(p)));
-                }
-            }
+        let proxy = if is_http {
+            self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
         } else {
-            let proxy: Option<&[u8]> = 'blk: {
-                if let Some(p) = self.get(b"https_proxy") {
-                    if !p.is_empty() {
-                        break 'blk Some(p);
-                    }
-                }
-                break 'blk self.get(b"HTTPS_PROXY");
-            };
-            if let Some(p) = proxy {
-                if !p.is_empty() && p != b"\"\"" && p != b"''" {
-                    http_proxy = Some(URL::parse(extend(p)));
-                }
+            self.get_lower_then_upper(b"https_proxy", b"HTTPS_PROXY")
+        };
+        if let Some(p) = proxy {
+            if !Self::is_emptyish(p) {
+                http_proxy = Some(URL::parse(extend(p)));
             }
         }
 
@@ -365,19 +387,10 @@ impl<'a> Loader<'a> {
         // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
         let Some(hn) = hostname else { return false };
 
-        // Treat empty-string lowercase as "absent" so it falls through to uppercase.
-        let no_proxy_text: &[u8] = 'blk: {
-            if let Some(p) = self.get(b"no_proxy") {
-                if !p.is_empty() {
-                    break 'blk p;
-                }
-            }
-            match self.get(b"NO_PROXY") {
-                Some(p) => break 'blk p,
-                None => return false,
-            }
+        let Some(no_proxy_text) = self.get_lower_then_upper(b"no_proxy", b"NO_PROXY") else {
+            return false;
         };
-        if no_proxy_text.is_empty() || no_proxy_text == b"\"\"" || no_proxy_text == b"''" {
+        if Self::is_emptyish(no_proxy_text) {
             return false;
         }
 
@@ -717,60 +730,52 @@ impl<'a> Loader<'a> {
         // `*FileSystem.DirEntry` (env_loader.zig). `bun_dotenv` sits below
         // `bun_resolver` in the crate graph, so the directory entry is taken
         // generically — `bun_resolver::fs::DirEntry` impls `DirEntryProbe`.
-        {
-            match suffix {
-                DotEnvFileSuffix::Development => {
-                    if dir.has_comptime_query(b".env.development.local") {
-                        self.load_env_file::<false>(dir_handle, b".env.development.local", value_buffer)?;
-                        analytics::Features::dotenv_inc();
-                    }
-                }
-                DotEnvFileSuffix::Production => {
-                    if dir.has_comptime_query(b".env.production.local") {
-                        self.load_env_file::<false>(dir_handle, b".env.production.local", value_buffer)?;
-                        analytics::Features::dotenv_inc();
-                    }
-                }
-                DotEnvFileSuffix::Test => {
-                    if dir.has_comptime_query(b".env.test.local") {
-                        self.load_env_file::<false>(dir_handle, b".env.test.local", value_buffer)?;
-                        analytics::Features::dotenv_inc();
-                    }
-                }
+        match suffix {
+            DotEnvFileSuffix::Development => {
+                self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
             }
+            DotEnvFileSuffix::Production => {
+                self.try_load_default(dir, dir_handle, b".env.production.local", value_buffer)?
+            }
+            DotEnvFileSuffix::Test => {
+                self.try_load_default(dir, dir_handle, b".env.test.local", value_buffer)?
+            }
+        }
 
-            if suffix != DotEnvFileSuffix::Test {
-                if dir.has_comptime_query(b".env.local") {
-                    self.load_env_file::<false>(dir_handle, b".env.local", value_buffer)?;
-                    analytics::Features::dotenv_inc();
-                }
-            }
+        if suffix != DotEnvFileSuffix::Test {
+            self.try_load_default(dir, dir_handle, b".env.local", value_buffer)?;
+        }
 
-            match suffix {
-                DotEnvFileSuffix::Development => {
-                    if dir.has_comptime_query(b".env.development") {
-                        self.load_env_file::<false>(dir_handle, b".env.development", value_buffer)?;
-                        analytics::Features::dotenv_inc();
-                    }
-                }
-                DotEnvFileSuffix::Production => {
-                    if dir.has_comptime_query(b".env.production") {
-                        self.load_env_file::<false>(dir_handle, b".env.production", value_buffer)?;
-                        analytics::Features::dotenv_inc();
-                    }
-                }
-                DotEnvFileSuffix::Test => {
-                    if dir.has_comptime_query(b".env.test") {
-                        self.load_env_file::<false>(dir_handle, b".env.test", value_buffer)?;
-                        analytics::Features::dotenv_inc();
-                    }
-                }
+        match suffix {
+            DotEnvFileSuffix::Development => {
+                self.try_load_default(dir, dir_handle, b".env.development", value_buffer)?
             }
+            DotEnvFileSuffix::Production => {
+                self.try_load_default(dir, dir_handle, b".env.production", value_buffer)?
+            }
+            DotEnvFileSuffix::Test => {
+                self.try_load_default(dir, dir_handle, b".env.test", value_buffer)?
+            }
+        }
 
-            if dir.has_comptime_query(b".env") {
-                self.load_env_file::<false>(dir_handle, b".env", value_buffer)?;
-                analytics::Features::dotenv_inc();
-            }
+        self.try_load_default(dir, dir_handle, b".env", value_buffer)
+    }
+
+    /// Probe `dir` for a known `.env*` filename and, if present, load it into
+    /// its dedicated slot and bump the analytics counter. Shared body for the
+    /// eight unrolled call sites in `load_default_files` (Zig unrolled them for
+    /// `hasComptimeQuery`'s comptime-string requirement, which Rust lacks).
+    #[inline]
+    fn try_load_default<D: DirEntryProbe + ?Sized>(
+        &mut self,
+        dir: &D,
+        dir_handle: bun_sys::Fd,
+        name: &'static [u8],
+        value_buffer: &mut Vec<u8>,
+    ) -> Result<(), bun_core::Error> {
+        if dir.has_comptime_query(name) {
+            self.load_env_file::<false>(dir_handle, name, value_buffer)?;
+            analytics::Features::dotenv_inc();
         }
         Ok(())
     }

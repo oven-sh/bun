@@ -3629,6 +3629,11 @@ pub struct Bufs {
     #[cfg(not(windows))]
     pub win32_normalized_dir_info_cache: (),
 }
+// SAFETY: every field is a byte/integer array (`PathBuffer` = `[u8; N]`,
+// `[FD; 256]` where `Fd` is a `#[repr(C)]` integer newtype, `[MaybeUninit<_>;
+// 256]` which has no validity requirement, `()`). Zig left these `= undefined`;
+// the all-zero bit pattern is a valid `Bufs`.
+unsafe impl bun_core::Zeroable for Bufs {}
 
 // TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
 // In Rust we model it as a `thread_local! { static BUFS_STORAGE: RefCell<Box<Bufs>> }`
@@ -3644,8 +3649,7 @@ fn bufs_storage_get() -> *mut Bufs {
     BUFS_STORAGE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         if borrow.is_none() {
-            // SAFETY: Bufs is plain bytes; Zig left these `= undefined`.
-            *borrow = Some(unsafe { Box::<Bufs>::new_zeroed().assume_init() });
+            *borrow = Some(bun_core::boxed_zeroed::<Bufs>());
         }
         &raw mut **borrow.as_mut().unwrap()
     })

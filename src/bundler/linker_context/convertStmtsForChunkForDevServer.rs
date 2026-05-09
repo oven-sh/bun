@@ -74,23 +74,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
         }
         // Make sure the printer gets the resolved path
         if record.source_index.is_valid() {
-            // PORT NOTE: `Source.path` is `bun_logger::fs::Path` (a Phase-A
-            // duplicate of `bun_paths::fs::Path<'static>` with identical layout);
-            // re-seat field-by-field until the two crates unify on one `Path`.
-            let src = &sources[record.source_index.get() as usize].path;
-            record.path = bun_paths::fs::Path {
-                pretty: src.pretty,
-                text: src.text,
-                namespace: src.namespace,
-                name: bun_paths::fs::PathName {
-                    base: src.name.base,
-                    dir: src.name.dir,
-                    ext: src.name.ext,
-                    filename: src.name.filename,
-                },
-                is_disabled: src.is_disabled,
-                is_symlink: src.is_symlink,
-            };
+            record.path = sources[record.source_index.get() as usize].path.clone();
         }
     }
 

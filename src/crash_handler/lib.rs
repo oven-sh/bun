@@ -318,16 +318,31 @@ pub mod debug {
             TtyConfig::NoColor
         }
     }
+    /// Port of `std.io.tty.Config` (vendor/zig/lib/std/Io/tty.zig). The
+    /// `windows_api` variant is omitted: every consumer here writes into an
+    /// in-memory buffer or raw fd 2, never the live `CONSOLE_SCREEN_BUFFER`, so
+    /// `SetConsoleTextAttribute` would colour the wrong stream.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum TtyConfig { NoColor, EscapeCodes }
+    /// Port of `std.io.tty.Color` — only the variants Bun actually emits.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Color { Bold, Reset, Dim, Red, Yellow, Green, BrightCyan }
     impl TtyConfig {
-        pub const BOLD: u8 = 1;
-        pub const RESET: u8 = 0;
-        pub const DIM: u8 = 2;
-        pub const RED: u8 = 31;
-        pub const YELLOW: u8 = 33;
-        pub const BRIGHT_CYAN: u8 = 96;
-        pub fn set_color<W>(self, _w: &mut W, _c: u8) -> Result<(), bun_core::Error> { Ok(()) }
+        /// Port of `std.io.tty.Config.setColor`.
+        pub fn set_color<W: bun_io::Write + ?Sized>(self, w: &mut W, c: Color) -> Result<(), bun_core::Error> {
+            match self {
+                TtyConfig::NoColor => Ok(()),
+                TtyConfig::EscapeCodes => w.write_all(match c {
+                    Color::Bold       => b"\x1b[1m",
+                    Color::Reset      => b"\x1b[0m",
+                    Color::Dim        => b"\x1b[2m",
+                    Color::Red        => b"\x1b[31m",
+                    Color::Yellow     => b"\x1b[33m",
+                    Color::Green      => b"\x1b[32m",
+                    Color::BrightCyan => b"\x1b[96m",
+                }),
+            }
+        }
     }
 }
 
@@ -437,7 +452,7 @@ fn abort() -> ! {
     // SAFETY: libc::abort has no preconditions; never returns.
     unsafe { libc::abort() }
 }
-use super::debug::{SelfInfo, SourceLocation, TtyConfig};
+use super::debug::{Color, SelfInfo, SourceLocation, TtyConfig};
 use super::cpu_features::CPUFeatures;
 
 /// Zig: `bun.fmt.fmtArgv` — print an argv vector as a shell-ish line.
@@ -2295,7 +2310,7 @@ fn report(url: &[u8]) {
         // PORT NOTE: reshaped for borrowck — capture cwd bytes by value (it
         // borrows buf2, not buf, so no actual overlap; copy len for clarity).
         let cwd_bytes = cwd.as_bytes();
-        let Some(curl) = bun_core::which(&mut buf, path_env, cwd_bytes, b"curl") else { return; };
+        let Some(curl) = bun_which::which(&mut buf, path_env, cwd_bytes, b"curl") else { return; };
         let mut cmd_line = BoundedArray::<u8, 4096>::default();
         if cmd_line.append_slice(url).is_err() { return; }
         if cmd_line.append_slice(b"/ack").is_err() { return; }
@@ -2366,14 +2381,12 @@ fn crash() -> ! {
         // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it
         // includes a breakpoint which makes crashes easier to debug.
         //
-        // Zig spec: `std.posix.abort()` on Windows = `@breakpoint()` (Debug only)
-        // then `kernel32.ExitProcess(3)`. Do NOT call MSVCRT `libc::abort()` here —
-        // that raises SIGABRT, may print the CRT `abort() has been called` message,
-        // and can invoke WER, none of which the Zig path does.
-        #[cfg(debug_assertions)]
-        core::intrinsics::breakpoint();
-        // SAFETY: ExitProcess never returns.
-        unsafe { bun_sys::windows::kernel32::ExitProcess(3) }
+        // Zig spec (crash_handler.zig:1592): the `.windows` arm is literally
+        // `std.posix.abort();` — i.e. our same-module `abort()` helper, which on
+        // Windows is `@breakpoint()` (Debug only) then `kernel32.ExitProcess(3)`.
+        // Do NOT call MSVCRT `libc::abort()` here — that raises SIGABRT, may print
+        // the CRT `abort() has been called` message, and can invoke WER.
+        abort()
     }
 }
 
@@ -2803,13 +2816,13 @@ pub fn write_stack_trace(
     if stack_trace.index > stack_trace.instruction_addresses.len() {
         let dropped_frames = stack_trace.index - stack_trace.instruction_addresses.len();
 
-        let _ = tty_config.set_color(out_stream, TtyConfig::BOLD);
+        let _ = tty_config.set_color(out_stream, Color::Bold);
         write!(out_stream, "({} additional stack frames not recorded...)\n", dropped_frames).map_err(fmt_err)?;
-        let _ = tty_config.set_color(out_stream, TtyConfig::RESET);
+        let _ = tty_config.set_color(out_stream, Color::Reset);
     } else if frames_left != 0 {
-        let _ = tty_config.set_color(out_stream, TtyConfig::BOLD);
+        let _ = tty_config.set_color(out_stream, Color::Bold);
         write!(out_stream, "({} additional stack frames skipped...)\n", frames_left).map_err(fmt_err)?;
-        let _ = tty_config.set_color(out_stream, TtyConfig::RESET);
+        let _ = tty_config.set_color(out_stream, Color::Reset);
     }
     let _ = out_stream.write_all(b"\n");
     Ok(())
@@ -2856,32 +2869,32 @@ fn print_line_info(
     {
         if let Some(sl) = source_location {
             if sl.file_name.starts_with(base_path) {
-                tty_config.set_color(out_stream, TtyConfig::DIM)?;
+                tty_config.set_color(out_stream, Color::Dim)?;
                 out_stream.write_all(base_path)?;
-                tty_config.set_color(out_stream, TtyConfig::RESET)?;
-                tty_config.set_color(out_stream, TtyConfig::BOLD)?;
+                tty_config.set_color(out_stream, Color::Reset)?;
+                tty_config.set_color(out_stream, Color::Bold)?;
                 write!(out_stream, "{}", bstr::BStr::new(&sl.file_name[base_path.len()..])).map_err(fmt_err)?;
             } else {
-                tty_config.set_color(out_stream, TtyConfig::BOLD)?;
+                tty_config.set_color(out_stream, Color::Bold)?;
                 write!(out_stream, "{}", bstr::BStr::new(&sl.file_name)).map_err(fmt_err)?;
             }
             write!(out_stream, ":{}:{}", sl.line, sl.column).map_err(fmt_err)?;
         } else {
-            tty_config.set_color(out_stream, TtyConfig::BOLD)?;
+            tty_config.set_color(out_stream, Color::Bold)?;
             out_stream.write_all(b"???:?:?")?;
         }
 
-        tty_config.set_color(out_stream, TtyConfig::RESET)?;
+        tty_config.set_color(out_stream, Color::Reset)?;
         out_stream.write_all(b": ")?;
-        tty_config.set_color(out_stream, TtyConfig::DIM)?;
+        tty_config.set_color(out_stream, Color::Dim)?;
         write!(out_stream, "0x{:x} in", address).map_err(fmt_err)?;
-        tty_config.set_color(out_stream, TtyConfig::RESET)?;
-        tty_config.set_color(out_stream, TtyConfig::YELLOW)?;
+        tty_config.set_color(out_stream, Color::Reset)?;
+        tty_config.set_color(out_stream, Color::Yellow)?;
         write!(out_stream, " {}", bstr::BStr::new(symbol_name)).map_err(fmt_err)?;
-        tty_config.set_color(out_stream, TtyConfig::RESET)?;
-        tty_config.set_color(out_stream, TtyConfig::DIM)?;
+        tty_config.set_color(out_stream, Color::Reset)?;
+        tty_config.set_color(out_stream, Color::Dim)?;
         write!(out_stream, " ({})", bstr::BStr::new(compile_unit_name)).map_err(fmt_err)?;
-        tty_config.set_color(out_stream, TtyConfig::RESET)?;
+        tty_config.set_color(out_stream, Color::Reset)?;
         out_stream.write_all(b"\n")?;
 
         // Show the matching source code line if possible
@@ -3025,20 +3038,20 @@ fn print_line_from_file_any_os(
         comment = &after_before_comment[pos..];
         after_before_comment = &after_before_comment[0..pos];
     }
-    tty_config.set_color(out_stream, TtyConfig::RED)?;
-    tty_config.set_color(out_stream, TtyConfig::DIM)?;
+    tty_config.set_color(out_stream, Color::Red)?;
+    tty_config.set_color(out_stream, Color::Dim)?;
     out_stream.write_all(before)?;
-    tty_config.set_color(out_stream, TtyConfig::RESET)?;
-    tty_config.set_color(out_stream, TtyConfig::RED)?;
+    tty_config.set_color(out_stream, Color::Reset)?;
+    tty_config.set_color(out_stream, Color::Red)?;
     out_stream.write_all(highlight)?;
-    tty_config.set_color(out_stream, TtyConfig::DIM)?;
+    tty_config.set_color(out_stream, Color::Dim)?;
     out_stream.write_all(after_before_comment)?;
     if !comment.is_empty() {
-        tty_config.set_color(out_stream, TtyConfig::RESET)?;
-        tty_config.set_color(out_stream, TtyConfig::BRIGHT_CYAN)?;
+        tty_config.set_color(out_stream, Color::Reset)?;
+        tty_config.set_color(out_stream, Color::BrightCyan)?;
         out_stream.write_all(comment)?;
     }
-    tty_config.set_color(out_stream, TtyConfig::RESET)?;
+    tty_config.set_color(out_stream, Color::Reset)?;
     out_stream.write_byte(b'\n')?;
     Ok(())
 }
@@ -3093,7 +3106,7 @@ pub extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
 }
 
 pub fn fix_dead_code_elimination() {
-    core::hint::black_box(CrashHandler__unsupportedUVFunction as extern "C" fn(*const c_char));
+    bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);
 }
 // In Zig: comptime { _ = &Bun__crashHandler; ... } — Rust links #[no_mangle] symbols unconditionally.
 

@@ -41,15 +41,11 @@ static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 const TARGET_NEXTJS_VERSION: &[u8] = b"12.2.3";
-// PORTING.md §Global mutable state: bool flag → AtomicBool.
-pub static INITIALIZED_STORE: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
 pub fn initialize_store() {
-    if INITIALIZED_STORE.swap(true, Ordering::Relaxed) {
-        return;
-    }
-    js_ast::expr::data::Store::create();
-    js_ast::stmt::data::Store::create();
+    bun_core::run_once! {{
+        js_ast::expr::data::Store::create();
+        js_ast::stmt::data::Store::create();
+    }}
 }
 
 // PORT NOTE: bun.OSPathLiteral — `bun_paths` does not (yet) export an

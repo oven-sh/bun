@@ -1264,74 +1264,76 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
 
     fn parse_prelude(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<Self::Prelude> {
         // phf-style dispatch on at-rule name (case-insensitive).
-        // TODO(port): Zig used `bun.ComptimeEnumMap(PreludeEnum)`; Phase B
-        // wires `phf::Map` or `match_ignore_ascii_case!`.
-        if strings::eql_case_insensitive_ascii(name, b"import", true) {
-            if (this.state as u8) > (TopLevelState::Imports as u8) {
-                return Err(input.new_custom_error(ParserError::unexpected_import_rule));
-            }
-            // TODO(port): lifetime — arena-owned slice; same `'static` erasure
-            // as `Token` payloads.
-            let url_str: &'static [u8] =
-                unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
+        // Zig used `bun.ComptimeEnumMap(PreludeEnum)`.
+        crate::match_ignore_ascii_case! { name, {
+            b"import" => {
+                if (this.state as u8) > (TopLevelState::Imports as u8) {
+                    return Err(input.new_custom_error(ParserError::unexpected_import_rule));
+                }
+                // TODO(port): lifetime — arena-owned slice; same `'static` erasure
+                // as `Token` payloads.
+                let url_str: &'static [u8] =
+                    unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
 
-            let layer: Option<Option<LayerName>> =
-                if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
-                    Some(None)
-                } else if input.try_parse(|p| p.expect_function_matching(b"layer")).is_ok() {
-                    Some(Some(input.parse_nested_block(LayerName::parse)?))
+                let layer: Option<Option<LayerName>> =
+                    if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
+                        Some(None)
+                    } else if input.try_parse(|p| p.expect_function_matching(b"layer")).is_ok() {
+                        Some(Some(input.parse_nested_block(LayerName::parse)?))
+                    } else {
+                        None
+                    };
+
+                let supports = if input.try_parse(|p| p.expect_function_matching(b"supports")).is_ok() {
+                    Some(input.parse_nested_block(|p| {
+                        let result = p.try_parse(SupportsCondition::parse);
+                        if result.is_err() {
+                            SupportsCondition::parse_declaration(p)
+                        } else {
+                            result
+                        }
+                    })?)
                 } else {
                     None
                 };
 
-            let supports = if input.try_parse(|p| p.expect_function_matching(b"supports")).is_ok() {
-                Some(input.parse_nested_block(|p| {
-                    let result = p.try_parse(SupportsCondition::parse);
-                    if result.is_err() {
-                        SupportsCondition::parse_declaration(p)
-                    } else {
-                        result
-                    }
-                })?)
-            } else {
-                None
-            };
+                let media = parse_media_list(input, this.options)?;
 
-            let media = parse_media_list(input, this.options)?;
-
-            return Ok(AtRulePrelude::Import { url: url_str, media, supports, layer });
-        }
-        if strings::eql_case_insensitive_ascii(name, b"namespace", true) {
-            if (this.state as u8) > (TopLevelState::Namespaces as u8) {
-                return Err(input.new_custom_error(ParserError::unexpected_namespace_rule));
-            }
-            let prefix = input
-                .try_parse(|p| {
-                    p.expect_ident()
-                        .map(|s| -> &'static [u8] { unsafe { &*std::ptr::from_ref::<[u8]>(s) } })
-                })
-                .ok();
-            let namespace: &'static [u8] =
-                unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
-            return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
-        }
-        if strings::eql_case_insensitive_ascii(name, b"charset", true) {
-            // @charset is removed by rust-cssparser if it's the first rule in
-            // the stylesheet. Anything left is technically invalid, however,
-            // users often concatenate CSS files together, so we are more
-            // lenient and simply ignore @charset rules in the middle of a file.
-            input.expect_string()?;
-            return Ok(AtRulePrelude::Charset);
-        }
-        if strings::eql_case_insensitive_ascii(name, b"custom-media", true) {
-            let custom_media_name = DashedIdentFns::parse(input)?;
-            let media = parse_media_list(input, this.options)?;
-            return Ok(AtRulePrelude::CustomMedia { name: custom_media_name, media });
-        }
-        if strings::eql_case_insensitive_ascii(name, b"property", true) {
-            let property_name = DashedIdentFns::parse(input)?;
-            return Ok(AtRulePrelude::Property { name: property_name });
-        }
+                return Ok(AtRulePrelude::Import { url: url_str, media, supports, layer });
+            },
+            b"namespace" => {
+                if (this.state as u8) > (TopLevelState::Namespaces as u8) {
+                    return Err(input.new_custom_error(ParserError::unexpected_namespace_rule));
+                }
+                let prefix = input
+                    .try_parse(|p| {
+                        p.expect_ident()
+                            .map(|s| -> &'static [u8] { unsafe { &*std::ptr::from_ref::<[u8]>(s) } })
+                    })
+                    .ok();
+                let namespace: &'static [u8] =
+                    unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
+                return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
+            },
+            b"charset" => {
+                // @charset is removed by rust-cssparser if it's the first rule in
+                // the stylesheet. Anything left is technically invalid, however,
+                // users often concatenate CSS files together, so we are more
+                // lenient and simply ignore @charset rules in the middle of a file.
+                input.expect_string()?;
+                return Ok(AtRulePrelude::Charset);
+            },
+            b"custom-media" => {
+                let custom_media_name = DashedIdentFns::parse(input)?;
+                let media = parse_media_list(input, this.options)?;
+                return Ok(AtRulePrelude::CustomMedia { name: custom_media_name, media });
+            },
+            b"property" => {
+                let property_name = DashedIdentFns::parse(input)?;
+                return Ok(AtRulePrelude::Property { name: property_name });
+            },
+            _ => {},
+        } }
 
         let mut nested_rule_parser = this.nested();
         <NestedRuleParser<'_, AtRuleParserT> as AtRuleParser>::parse_prelude(
@@ -1598,144 +1600,124 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
         // `Token` payload erasure throughout this file).
         let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
         let result: Self::Prelude = 'brk: {
-            // TODO(port): Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
-            // Phase B: replace these chained if-eql with `match_ignore_ascii_case!`.
-            if strings::eql_case_insensitive_ascii(name, b"media", true) {
-                break 'brk AtRulePrelude::Media(parse_media_list(input, this.options)?);
-            }
-            if strings::eql_case_insensitive_ascii(name, b"supports", true) {
-                break 'brk AtRulePrelude::Supports(SupportsCondition::parse(input)?);
-            }
-            if strings::eql_case_insensitive_ascii(name, b"font-face", true) {
-                break 'brk AtRulePrelude::FontFace;
-            }
-            if strings::eql_case_insensitive_ascii(name, b"font-palette-values", true) {
-                break 'brk AtRulePrelude::FontPaletteValues(DashedIdentFns::parse(input)?);
-            }
-            if strings::eql_case_insensitive_ascii(name, b"counter-style", true) {
-                break 'brk AtRulePrelude::CounterStyle(CustomIdentFns::parse(input)?);
-            }
-            if strings::eql_case_insensitive_ascii(name, b"viewport", true)
-                || strings::eql_case_insensitive_ascii(name, b"-ms-viewport", true)
-            {
-                let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-ms") {
-                    VendorPrefix::MS
-                } else {
-                    VendorPrefix::NONE
-                };
-                break 'brk AtRulePrelude::Viewport(prefix);
-            }
-            if strings::eql_case_insensitive_ascii(name, b"keyframes", true)
-                || strings::eql_case_insensitive_ascii(name, b"-webkit-keyframes", true)
-                || strings::eql_case_insensitive_ascii(name, b"-moz-keyframes", true)
-                || strings::eql_case_insensitive_ascii(name, b"-o-keyframes", true)
-                || strings::eql_case_insensitive_ascii(name, b"-ms-keyframes", true)
-            {
-                let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-webkit") {
-                    VendorPrefix::WEBKIT
-                } else if strings::starts_with_case_insensitive_ascii(name, b"-moz") {
-                    VendorPrefix::MOZ
-                } else if strings::starts_with_case_insensitive_ascii(name, b"-o-") {
-                    VendorPrefix::O
-                } else if strings::starts_with_case_insensitive_ascii(name, b"-ms") {
-                    VendorPrefix::MS
-                } else {
-                    VendorPrefix::NONE
-                };
-                let keyframes_name =
-                    input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
-                break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
-            }
-            if strings::eql_case_insensitive_ascii(name, b"page", true) {
-                // Zig: tryParse(parseCommaSeparated(PageSelector.parse)) → on
-                // .err returns empty list. EOF inside `PageSelector::parse`
-                // (e.g. `@page foo` with nothing after) propagates here and is
-                // swallowed by `try_parse` — matches css_parser.zig:2073.
-                let selectors: Vec<PageSelector> = input
-                    .try_parse(|input2| {
-                        input2.parse_comma_separated(css_rules::page::PageSelector::parse)
-                    })
-                    .unwrap_or_default();
-                break 'brk AtRulePrelude::Page(selectors);
-            }
-            if strings::eql_case_insensitive_ascii(name, b"-moz-document", true) {
-                // Firefox only supports the url-prefix() function with no
-                // arguments as a legacy CSS hack.
-                input.expect_function_matching(b"url-prefix")?;
-                input.parse_nested_block(|input2| {
-                    // Firefox also allows an empty string as an argument...
-                    let _ = input2.try_parse(|input2| -> CssResult<()> {
-                        let s = input2.expect_string()?;
-                        if !s.is_empty() {
-                            return Err(input2.new_custom_error(ParserError::invalid_value));
-                        }
-                        Ok(())
-                    });
-                    input2.expect_exhausted()
-                })?;
-                break 'brk AtRulePrelude::MozDocument;
-            }
-            if strings::eql_case_insensitive_ascii(name, b"layer", true) {
-                let names: SmallList<LayerName, 1> =
-                    match input.parse_comma_separated(LayerName::parse) {
-                        Ok(vv) => SmallList::<LayerName, 1>::from_list(vv),
-                        Err(e) => {
-                            if matches!(
-                                e.kind,
-                                errors_::ParserErrorKind::basic(BasicParseErrorKind::end_of_input)
-                            ) {
-                                SmallList::default()
-                            } else {
-                                return Err(e);
-                            }
-                        }
+            // Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
+            crate::match_ignore_ascii_case! { name, {
+                b"media" => break 'brk AtRulePrelude::Media(parse_media_list(input, this.options)?),
+                b"supports" => break 'brk AtRulePrelude::Supports(SupportsCondition::parse(input)?),
+                b"font-face" => break 'brk AtRulePrelude::FontFace,
+                b"font-palette-values" => break 'brk AtRulePrelude::FontPaletteValues(DashedIdentFns::parse(input)?),
+                b"counter-style" => break 'brk AtRulePrelude::CounterStyle(CustomIdentFns::parse(input)?),
+                b"viewport" | b"-ms-viewport" => {
+                    let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-ms") {
+                        VendorPrefix::MS
+                    } else {
+                        VendorPrefix::NONE
                     };
-                break 'brk AtRulePrelude::Layer(names);
-            }
-            if strings::eql_case_insensitive_ascii(name, b"container", true) {
-                let container_name: Option<ContainerName> =
-                    input.try_parse(css_rules::container::ContainerName::parse).ok();
-                let condition: ContainerCondition =
-                    css_rules::container::ContainerCondition::parse(input)?;
-                break 'brk AtRulePrelude::Container { name: container_name, condition };
-            }
-            if strings::eql_case_insensitive_ascii(name, b"starting-style", true) {
-                break 'brk AtRulePrelude::StartingStyle;
-            }
-            if strings::eql_case_insensitive_ascii(name, b"scope", true) {
-                let mut selector_parser = selector_parser::SelectorParser {
-                    is_nesting_allowed: true,
-                    options: this.options,
-                };
-                let scope_start = if input.try_parse(|p| p.expect_parenthesis_block()).is_ok() {
-                    Some(input.parse_nested_block(|input2| {
-                        SelectorList::parse_relative(
-                            &mut selector_parser,
-                            input2,
-                            selector_parser::ParseErrorRecovery::IgnoreInvalidSelector,
-                            selector_parser::NestingRequirement::None,
-                        )
-                    })?)
-                } else {
-                    None
-                };
-                let scope_end = if input.try_parse(|p| p.expect_ident_matching(b"to")).is_ok() {
-                    input.expect_parenthesis_block()?;
-                    Some(input.parse_nested_block(|input2| {
-                        SelectorList::parse_relative(
-                            &mut selector_parser,
-                            input2,
-                            selector_parser::ParseErrorRecovery::IgnoreInvalidSelector,
-                            selector_parser::NestingRequirement::None,
-                        )
-                    })?)
-                } else {
-                    None
-                };
-                break 'brk AtRulePrelude::Scope { scope_start, scope_end };
-            }
-            if strings::eql_case_insensitive_ascii(name, b"nest", true) {
-                if this.is_in_style_rule {
+                    break 'brk AtRulePrelude::Viewport(prefix);
+                },
+                b"keyframes" | b"-webkit-keyframes" | b"-moz-keyframes" | b"-o-keyframes" | b"-ms-keyframes" => {
+                    let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-webkit") {
+                        VendorPrefix::WEBKIT
+                    } else if strings::starts_with_case_insensitive_ascii(name, b"-moz") {
+                        VendorPrefix::MOZ
+                    } else if strings::starts_with_case_insensitive_ascii(name, b"-o-") {
+                        VendorPrefix::O
+                    } else if strings::starts_with_case_insensitive_ascii(name, b"-ms") {
+                        VendorPrefix::MS
+                    } else {
+                        VendorPrefix::NONE
+                    };
+                    let keyframes_name =
+                        input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
+                    break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
+                },
+                b"page" => {
+                    // Zig: tryParse(parseCommaSeparated(PageSelector.parse)) → on
+                    // .err returns empty list. EOF inside `PageSelector::parse`
+                    // (e.g. `@page foo` with nothing after) propagates here and is
+                    // swallowed by `try_parse` — matches css_parser.zig:2073.
+                    let selectors: Vec<PageSelector> = input
+                        .try_parse(|input2| {
+                            input2.parse_comma_separated(css_rules::page::PageSelector::parse)
+                        })
+                        .unwrap_or_default();
+                    break 'brk AtRulePrelude::Page(selectors);
+                },
+                b"-moz-document" => {
+                    // Firefox only supports the url-prefix() function with no
+                    // arguments as a legacy CSS hack.
+                    input.expect_function_matching(b"url-prefix")?;
+                    input.parse_nested_block(|input2| {
+                        // Firefox also allows an empty string as an argument...
+                        let _ = input2.try_parse(|input2| -> CssResult<()> {
+                            let s = input2.expect_string()?;
+                            if !s.is_empty() {
+                                return Err(input2.new_custom_error(ParserError::invalid_value));
+                            }
+                            Ok(())
+                        });
+                        input2.expect_exhausted()
+                    })?;
+                    break 'brk AtRulePrelude::MozDocument;
+                },
+                b"layer" => {
+                    let names: SmallList<LayerName, 1> =
+                        match input.parse_comma_separated(LayerName::parse) {
+                            Ok(vv) => SmallList::<LayerName, 1>::from_list(vv),
+                            Err(e) => {
+                                if matches!(
+                                    e.kind,
+                                    errors_::ParserErrorKind::basic(BasicParseErrorKind::end_of_input)
+                                ) {
+                                    SmallList::default()
+                                } else {
+                                    return Err(e);
+                                }
+                            }
+                        };
+                    break 'brk AtRulePrelude::Layer(names);
+                },
+                b"container" => {
+                    let container_name: Option<ContainerName> =
+                        input.try_parse(css_rules::container::ContainerName::parse).ok();
+                    let condition: ContainerCondition =
+                        css_rules::container::ContainerCondition::parse(input)?;
+                    break 'brk AtRulePrelude::Container { name: container_name, condition };
+                },
+                b"starting-style" => break 'brk AtRulePrelude::StartingStyle,
+                b"scope" => {
+                    let mut selector_parser = selector_parser::SelectorParser {
+                        is_nesting_allowed: true,
+                        options: this.options,
+                    };
+                    let scope_start = if input.try_parse(|p| p.expect_parenthesis_block()).is_ok() {
+                        Some(input.parse_nested_block(|input2| {
+                            SelectorList::parse_relative(
+                                &mut selector_parser,
+                                input2,
+                                selector_parser::ParseErrorRecovery::IgnoreInvalidSelector,
+                                selector_parser::NestingRequirement::None,
+                            )
+                        })?)
+                    } else {
+                        None
+                    };
+                    let scope_end = if input.try_parse(|p| p.expect_ident_matching(b"to")).is_ok() {
+                        input.expect_parenthesis_block()?;
+                        Some(input.parse_nested_block(|input2| {
+                            SelectorList::parse_relative(
+                                &mut selector_parser,
+                                input2,
+                                selector_parser::ParseErrorRecovery::IgnoreInvalidSelector,
+                                selector_parser::NestingRequirement::None,
+                            )
+                        })?)
+                    } else {
+                        None
+                    };
+                    break 'brk AtRulePrelude::Scope { scope_start, scope_end };
+                },
+                b"nest" => if this.is_in_style_rule {
                     this.options.warn(input.new_custom_error(ParserError::deprecated_nest_rule));
                     let mut selector_parser = selector_parser::SelectorParser {
                         is_nesting_allowed: true,
@@ -1748,8 +1730,9 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                         selector_parser::NestingRequirement::Contained,
                     )?;
                     break 'brk AtRulePrelude::Nest(selectors);
-                }
-            }
+                },
+                _ => {},
+            } }
 
             parse_custom_at_rule_prelude(name, input, this.options, this.at_rule_parser)?
         };
@@ -6461,20 +6444,6 @@ pub mod to_css {
         for (idx, val) in this.iter().enumerate() {
             val.to_css(dest)?;
             if idx < len - 1 {
-                dest.delim(b',', false)?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn from_baby_list<T: generic::ToCss>(
-        this: &Vec<T>,
-        dest: &mut Printer,
-    ) -> Result<(), PrintErr> {
-        let len = this.len();
-        for (idx, val) in this.slice_const().iter().enumerate() {
-            val.to_css(dest)?;
-            if idx + 1 < len {
                 dest.delim(b',', false)?;
             }
         }

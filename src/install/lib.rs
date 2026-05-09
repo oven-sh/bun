@@ -548,6 +548,7 @@ pub mod ci_info {
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_snake_case)]
 pub mod ShellCompletions {
+    #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
     pub enum Shell {
         #[default]
@@ -590,9 +591,12 @@ pub mod ShellCompletions {
 // ──────────────────────────────────────────────────────────────────────────
 pub struct RunCommand;
 
-/// Hook (GENUINE b0): mirrors `bun_runtime::cli::PRETEND_TO_BE_NODE`. Set once at
-/// startup by bun_cli when argv[0] basename == "node"; install only reads it.
-/// Lives at module scope because Rust forbids `static` inside `impl`.
+/// Canonical `PRETEND_TO_BE_NODE` flag (port of `Cli.pretend_to_be_node`,
+/// src/cli.zig). Set once during single-threaded startup by `Command::which()`
+/// in `bun_runtime::cli` when argv[0] basename == "node"; read by both the
+/// runtime CLI and the install-tier `RunCommand` helpers below. Lives in
+/// `bun_install` (not `bun_runtime`) so both crates can address the SAME
+/// static without a dep-cycle — `bun_runtime::cli` re-exports it.
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -1140,29 +1144,19 @@ pub fn initialize_mini_store() {
     });
 }
 
-pub type PackageID = u32;
-pub type DependencyID = u32;
-
-// pub enum DependencyID: u32 {
-//     root = max - 1,
-//     invalid = max,
-//     _,
-//
-//     const max = u32::MAX;
-// }
-
-pub const INVALID_PACKAGE_ID: PackageID = PackageID::MAX;
-pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::MAX;
+// MOVE_DOWN: identity/sentinel scalar aliases live in `bun_install_types::resolver_hooks`
+// (single canonical definition shared with `bun_resolver`). Re-exported here so existing
+// `bun_install::PackageID` / `INVALID_PACKAGE_ID` / etc. paths continue to resolve.
+pub use bun_install_types::{
+    DependencyID, PackageID, PackageNameHash, TruncatedPackageNameHash, INVALID_DEPENDENCY_ID,
+    INVALID_PACKAGE_ID,
+};
 // Phase-A drafts use the Zig field-style lowercase names; alias both spellings.
 pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
 pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
 pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
 
 pub type PackageNameAndVersionHash = u64;
-/// Use String.Builder.stringHash to compute this
-pub type PackageNameHash = u64;
-/// @truncate String.Builder.stringHash to compute this
-pub type TruncatedPackageNameHash = u32;
 
 pub struct Aligner;
 
@@ -1286,11 +1280,7 @@ pub enum PackageManifestError {
     PackageManifestHTTP5xx,
 }
 
-impl core::fmt::Display for PackageManifestError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(*self))
-    }
-}
+bun_core::impl_tag_error!(PackageManifestError);
 
 bun_core::named_error_set!(PackageManifestError);
 

@@ -1,3 +1,5 @@
+use bun_string::strings;
+
 // PORT NOTE: Zig stored a `std.mem.TokenIterator(u8, .scalar)` field. The Rust
 // equivalent (`slice::Split<'_, u8, _>` + `.filter(..)`) has an unnameable
 // closure type, so we store the remaining input slice and inline the
@@ -10,7 +12,7 @@ impl<'a> HeaderValueIterator<'a> {
     pub fn init(input: &'a [u8]) -> HeaderValueIterator<'a> {
         HeaderValueIterator {
             // std.mem.tokenizeScalar(u8, std.mem.trim(u8, input, " \t"), ',')
-            remaining: trim_sp_tab(input),
+            remaining: strings::trim(input, b" \t"),
         }
     }
 
@@ -30,27 +32,13 @@ impl<'a> HeaderValueIterator<'a> {
         let token = &self.remaining[..end];
         self.remaining = &self.remaining[end..];
 
-        let slice = trim_sp_tab(token);
+        let slice = strings::trim(token, b" \t");
         if slice.is_empty() {
             return self.next();
         }
 
         Some(slice)
     }
-}
-
-#[inline]
-fn trim_sp_tab(s: &[u8]) -> &[u8] {
-    // std.mem.trim(u8, s, " \t")
-    let mut start = 0;
-    let mut end = s.len();
-    while start < end && matches!(s[start], b' ' | b'\t') {
-        start += 1;
-    }
-    while end > start && matches!(s[end - 1], b' ' | b'\t') {
-        end -= 1;
-    }
-    &s[start..end]
 }
 
 // ported from: src/http/HeaderValueIterator.zig

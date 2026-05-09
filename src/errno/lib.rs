@@ -30,16 +30,56 @@ macro_rules! impl_get_errno_libc {
 }
 
 #[cfg(target_os = "macos")] pub mod darwin_errno;
-#[cfg(target_os = "macos")] pub use darwin_errno::{*, posix};
+#[cfg(target_os = "macos")] pub use darwin_errno::*;
 #[cfg(target_os = "freebsd")] pub mod freebsd_errno;
-#[cfg(target_os = "freebsd")] pub use freebsd_errno::{*, posix};
+#[cfg(target_os = "freebsd")] pub use freebsd_errno::*;
 // Android shares the Linux kernel errno space (bionic copies <asm/errno.h>),
 // so it uses the same per-errno enum. Rust splits `target_os` into
 // `linux`/`android` (Zig keeps both as `os.tag == .linux`), so list both.
 #[cfg(any(target_os = "linux", target_os = "android"))] pub mod linux_errno;
-#[cfg(any(target_os = "linux", target_os = "android"))] pub use linux_errno::{*, posix};
+#[cfg(any(target_os = "linux", target_os = "android"))] pub use linux_errno::*;
 #[cfg(windows)] pub mod windows_errno;
 #[cfg(windows)] pub use windows_errno::{*, posix};
+
+// ──────────────────────────────────────────────────────────────────────────
+// posix — MOVE_DOWN landing for std.posix.{mode_t,E,S} + std.c._errno()
+//
+// Ground truth: Zig `std.posix` / `std.c` re-exports. Landed here so the errno
+// crate stays leaf (T0) and bun_sys (T≥1) imports forward. Windows keeps its
+// own divergent `mod posix` in windows_errno.rs (no `errno()` fn, unprefixed
+// `E`); this block is the shared POSIX-target definition.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(not(windows))]
+#[allow(non_camel_case_types, non_snake_case)]
+pub mod posix {
+    /// glibc/musl/bionic `mode_t` == `unsigned int`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub type mode_t = u32;
+    /// Darwin/FreeBSD `mode_t` == `__uint16_t` in `<sys/types.h>`.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub type mode_t = u16;
+
+    /// Kernel errno enum. Zig's `std.posix.E` and Bun's `SystemErrno` share the
+    /// exact same discriminant space on each POSIX target; alias rather than
+    /// duplicate. Resolves to the per-OS `SystemErrno` via the glob re-export
+    /// above. TODO(port): Zig's `E` uses unprefixed variant names (`PERM`,
+    /// `NOENT`); `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on
+    /// `E::PERM` must migrate to `E::EPERM` (or this becomes a distinct enum
+    /// in Phase B).
+    pub type E = crate::SystemErrno;
+
+    /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
+    /// Values are POSIX-standard octal; identical across linux/darwin/freebsd.
+    /// Constants are typed `u32` (== `bun_core::Mode`); on Darwin/FreeBSD the
+    /// kernel `mode_t` is u16 so the upper 16 bits are always zero — every call
+    /// site already casts (`as i32`/`as u32`/`as _`) so the wider type is
+    /// harmless, and on Linux `mode_t` == `u32` so it's a drop-in re-export.
+    pub use bun_core::S;
+
+    /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
+    /// Canonical impl lives in `bun_core::ffi` (single target_os→symbol ladder).
+    pub use bun_core::ffi::errno;
+}
 
 /// Zig's `getErrno(rc: anytype)` switches on `@TypeOf(rc)` to pick the errno
 /// extraction strategy. Rust has no type-switch, so we model it as a trait with

@@ -3,7 +3,7 @@ use std::io::Write as _;
 use bun_logger as logger;
 
 use crate::zig_string::ZigString;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _};
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 pub struct BuildMessage {

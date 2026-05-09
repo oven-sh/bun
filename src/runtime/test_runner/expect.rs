@@ -19,17 +19,7 @@ use super::jest::Jest;
 #[allow(unused_imports)]
 use super::expect::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, make_formatter};
 
-// `bun_core::deprecated::js_error_to_write_error` is ``-gated
-// (tier-0 cannot depend on bun_jsc). Inlined here at the use-site tier instead.
-// Display impls return `fmt::Error`; the JS exception, if any, remains on the VM.
-#[inline]
-fn js_error_to_write_error(e: JsError) -> fmt::Error {
-    match e {
-        JsError::OutOfMemory => bun_alloc::out_of_memory(),
-        // TODO(port): may swallow Thrown/Terminated — see deprecated::js_error_to_write_error
-        _ => fmt::Error,
-    }
-}
+use bun_jsc::js_error_to_write_error;
 
 // Matcher submodules are declared in `super::expect` (mod.rs); this file
 // provides only the `Expect` payload + helpers they extend.

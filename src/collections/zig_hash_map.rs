@@ -81,12 +81,10 @@ impl<K: Hash + Eq + ?Sized> HashContext<K> for AutoHashContext {
     #[inline]
     fn ctx_hash(key: &K) -> u64 {
         // Zig autoHash for unique-repr types is `Wyhash.hash(0, asBytes(&key))`.
-        // Routing through `core::hash::Hash` + the wyhash `OneShotHasher` is the
-        // closest stable approximation without per-type byte-layout plumbing;
-        // exact AutoContext bucket order isn't relied on by any test today.
-        let mut h = bun_wyhash::OneShotHasher::default();
-        key.hash(&mut h);
-        h.finish()
+        // Routing through `core::hash::Hash` + wyhash is the closest stable
+        // approximation without per-type byte-layout plumbing; exact AutoContext
+        // bucket order isn't relied on by any test today.
+        bun_wyhash::auto_hash(key)
     }
     #[inline]
     fn ctx_eql(a: &K, b: &K) -> bool {

@@ -460,11 +460,16 @@ impl Progress {
             // `columns_written` cells to the left, then clear the rest of the
             // line
             if self.supports_ansi_escape_codes {
-                end += buf_print(
+                end += super::fmt::buf_print_len(
                     &mut self.output_buffer[end..],
                     format_args!("\x1b[{}D", self.columns_written),
-                );
-                end += buf_print(&mut self.output_buffer[end..], format_args!("\x1b[0K"));
+                )
+                .expect("unreachable");
+                end += super::fmt::buf_print_len(
+                    &mut self.output_buffer[end..],
+                    format_args!("\x1b[0K"),
+                )
+                .expect("unreachable");
             } else {
                 #[cfg(windows)]
                 'winapi: {
@@ -722,14 +727,6 @@ impl Progress {
             }
         }
     }
-}
-
-/// Helper mirroring `std.fmt.bufPrint(buf, fmt, args).len` with `catch unreachable`.
-fn buf_print(buf: &mut [u8], args: fmt::Arguments<'_>) -> usize {
-    let mut cursor: &mut [u8] = buf;
-    let before = cursor.len();
-    cursor.write_fmt(args).expect("unreachable");
-    before - cursor.len()
 }
 
 #[cfg(test)]

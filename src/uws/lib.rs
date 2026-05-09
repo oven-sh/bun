@@ -1017,7 +1017,7 @@ type ZigMutex = *mut c_void; // SRWLOCK
 // are the SAME type (bun_io's EventLoopCtxVTable is typed against the uws_sys
 // version).
 pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
-pub use bun_uws_sys::loop_::LoopHandler;
+pub use bun_uws_sys::loop_::{us_wakeup_loop, LoopHandler};
 pub type LoopCb = unsafe extern "C" fn(*mut Loop);
 
 /// Carrier trait so `set_parent_event_loop` can accept the higher-tier
@@ -1802,6 +1802,51 @@ impl AnySocket {
         match self {
             AnySocket::SocketTcp(s) => s.get_native_handle(),
             AnySocket::SocketTls(s) => s.get_native_handle(),
+        }
+    }
+}
+
+/// Runtime-tagged TCP/TLS socket with a `None` arm for the "no active socket"
+/// state. Used by proxy-tunnel layers (HTTP `ProxyTunnel`, WebSocket
+/// `WebSocketProxyTunnel`) where the inner socket may be either transport and
+/// may be detached. Distinct from [`AnySocket`] which has no `None` variant.
+pub enum MaybeAnySocket {
+    Tcp(SocketTCP),
+    Ssl(SocketTLS),
+    None,
+}
+
+impl MaybeAnySocket {
+    /// Convert a const-generic `NewSocketHandler<IS_SSL>` to the runtime-tagged
+    /// enum. `NewSocketHandler<true>` and `<false>` are layout-identical
+    /// (`#[derive(Copy)]` over a single `InternalSocket` field); only the const
+    /// generic differs.
+    #[inline]
+    pub fn from_generic<const IS_SSL: bool>(socket: NewSocketHandler<IS_SSL>) -> Self {
+        // `assume_ssl`/`assume_tcp` are safe field moves with a matching
+        // `debug_assert!(SSL)` — the const generic only gates `get_native_handle`.
+        if IS_SSL {
+            MaybeAnySocket::Ssl(socket.assume_ssl())
+        } else {
+            MaybeAnySocket::Tcp(socket.assume_tcp())
+        }
+    }
+
+    #[inline]
+    pub fn write(&self, data: &[u8]) -> i32 {
+        match self {
+            MaybeAnySocket::Tcp(s) => s.write(data),
+            MaybeAnySocket::Ssl(s) => s.write(data),
+            MaybeAnySocket::None => 0,
+        }
+    }
+
+    #[inline]
+    pub fn is_closed(&self) -> bool {
+        match self {
+            MaybeAnySocket::Tcp(s) => s.is_closed(),
+            MaybeAnySocket::Ssl(s) => s.is_closed(),
+            MaybeAnySocket::None => true,
         }
     }
 }

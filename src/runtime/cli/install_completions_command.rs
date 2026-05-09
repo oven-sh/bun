@@ -7,7 +7,7 @@ use bun_paths::{platform, resolve_path, PathBuffer, WPathBuffer};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Dir, File, E};
 
-use crate::shell_completions::{self as ShellCompletions, Shell};
+use crate::shell_completions::{self as ShellCompletions, Shell, ShellCompletionsExt as _};
 
 pub struct InstallCompletionsCommand;
 
@@ -562,10 +562,13 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
                                 .copy_from_slice(b"/.zshrc");
                             zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                            let filepath = bun_str::ZStr::from_buf(
-                                &zshrc_filepath,
-                                zdot_dir.len() + b"/.zshrc".len(),
-                            );
+                            // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
+                            let filepath = unsafe {
+                                bun_str::ZStr::from_raw(
+                                    zshrc_filepath.as_ptr(),
+                                    zdot_dir.len() + b"/.zshrc".len(),
+                                )
+                            };
                             match bun_sys::open_file_absolute_z(filepath, bun_sys::OpenFlags::READ_WRITE) {
                                 Ok(f) => break 'zshrc f,
                                 Err(_) => break 'first,
@@ -579,10 +582,13 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
                                 .copy_from_slice(b"/.zshrc");
                             zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                            let filepath = bun_str::ZStr::from_buf(
-                                &zshrc_filepath,
-                                zdot_dir.len() + b"/.zshrc".len(),
-                            );
+                            // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
+                            let filepath = unsafe {
+                                bun_str::ZStr::from_raw(
+                                    zshrc_filepath.as_ptr(),
+                                    zdot_dir.len() + b"/.zshrc".len(),
+                                )
+                            };
                             match bun_sys::open_file_absolute_z(filepath, bun_sys::OpenFlags::READ_WRITE) {
                                 Ok(f) => break 'zshrc f,
                                 Err(_) => break 'second,
@@ -596,10 +602,13 @@ impl InstallCompletionsCommand {
                             zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshenv".len()]
                                 .copy_from_slice(b"/.zshenv");
                             zshrc_filepath[zdot_dir.len() + b"/.zshenv".len()] = 0;
-                            let filepath = bun_str::ZStr::from_buf(
-                                &zshrc_filepath,
-                                zdot_dir.len() + b"/.zshenv".len(),
-                            );
+                            // SAFETY: NUL written at zdot_dir.len() + "/.zshenv".len() above
+                            let filepath = unsafe {
+                                bun_str::ZStr::from_raw(
+                                    zshrc_filepath.as_ptr(),
+                                    zdot_dir.len() + b"/.zshenv".len(),
+                                )
+                            };
                             match bun_sys::open_file_absolute_z(filepath, bun_sys::OpenFlags::READ_WRITE) {
                                 Ok(f) => break 'zshrc f,
                                 Err(_) => break 'third,
@@ -675,28 +684,16 @@ impl InstallCompletionsCommand {
 
 /// Helper: write `args` into `buf` and return the written subslice.
 /// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.
-// TODO(port): move to bun_str or bun_core if widely reused
-fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [u8] {
-    let total = buf.len();
-    let mut cursor: &mut [u8] = buf;
-    cursor.write_fmt(args).expect("unreachable");
-    let remaining = cursor.len();
-    let written = total - remaining;
-    // NLL ends `cursor`'s reborrow here; safe sub-slice of the owning buffer.
-    &mut buf[..written]
+#[inline]
+fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
+    bun_core::fmt::buf_print(buf, args).expect("unreachable")
 }
 
 /// Like [`buf_print`] but appends a NUL terminator and returns a `&ZStr`.
 /// Mirrors `std.fmt.bufPrintZ(buf, fmt, args) catch unreachable`.
+#[inline]
 pub(crate) fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a ZStr {
-    let total = buf.len();
-    let mut cursor: &mut [u8] = buf;
-    cursor.write_fmt(args).expect("unreachable");
-    let remaining = cursor.len();
-    let written = total - remaining;
-    debug_assert!(written < total, "buf_print_z overflow");
-    buf[written] = 0;
-    ZStr::from_buf(buf, written)
+    bun_core::fmt::buf_print_z(buf, args).expect("unreachable")
 }
 
 // ported from: src/cli/install_completions_command.zig

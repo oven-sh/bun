@@ -9,7 +9,6 @@ use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
 
 use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
-use crate::bun_fs;
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context_mod::debug;
 use crate::Graph::{Graph, InputFileColumns as _};
@@ -28,27 +27,6 @@ use bun_js_parser::Index as AstIndex;
 #[inline(always)]
 unsafe fn bitwise_copy<T>(src: &T) -> T {
     unsafe { core::ptr::read(src) }
-}
-
-/// `ImportRecord.path` is `bun_paths::fs::Path<'static>`; `CssImportOrderKind::ExternalPath`
-/// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
-/// ports of the same Zig `Fs.Path` struct. Re-construct
-/// field-by-field rather than transmute non-`repr(C)` structs.
-#[inline]
-fn fs_path_from_import_record(p: &bun_paths::fs::Path<'static>) -> bun_fs::Path<'static> {
-    bun_fs::Path {
-        pretty: p.pretty,
-        text: p.text,
-        namespace: p.namespace,
-        name: bun_fs::PathName {
-            base: p.name.base,
-            dir: p.name.dir,
-            ext: p.name.ext,
-            filename: p.name.filename,
-        },
-        is_disabled: p.is_disabled,
-        is_symlink: p.is_symlink,
-    }
 }
 
 /// Zig: `order.len = wip_order.len; @memcpy(order.slice(), wip_order.slice());
@@ -245,17 +223,13 @@ pub fn find_imported_files_in_css_order<'a>(
                                 ),
                             );
                             self.order.push(CssImportOrder {
-                                kind: CssImportOrderKind::ExternalPath(
-                                    fs_path_from_import_record(&record.path),
-                                ),
+                                kind: CssImportOrderKind::ExternalPath(record.path.clone()),
                                 conditions: all_conditions,
                                 condition_import_records: all_import_records,
                             });
                         } else {
                             self.order.push(CssImportOrder {
-                                kind: CssImportOrderKind::ExternalPath(
-                                    fs_path_from_import_record(&record.path),
-                                ),
+                                kind: CssImportOrderKind::ExternalPath(record.path.clone()),
                                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
                                 conditions: unsafe { bitwise_copy(wrapping_conditions) },
                                 condition_import_records: unsafe {

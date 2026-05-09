@@ -444,7 +444,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 = unsafe {
-            &mut *(bun_core::from_field_ptr!(BundleV2, linker, std::ptr::from_mut::<LinkerContext>(c)))
+            &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c))
         };
         let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::default();
         for ch in chunks.iter() {
@@ -548,7 +548,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
     let bundler: &mut BundleV2 = unsafe {
-        &mut *(bun_core::from_field_ptr!(BundleV2, linker, std::ptr::from_mut::<LinkerContext>(c)))
+        &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c))
     };
     let mut static_route_visitor = StaticRouteVisitor {
         // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this

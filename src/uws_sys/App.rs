@@ -644,12 +644,7 @@ impl<const SSL: bool> ListenSocket<SSL> {
 pub enum AddServerNameError {
     FailedToAddServerName,
 }
-impl core::fmt::Display for AddServerNameError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for AddServerNameError {}
+bun_core::impl_tag_error!(AddServerNameError);
 
 impl From<AddServerNameError> for bun_core::Error {
     fn from(e: AddServerNameError) -> Self {

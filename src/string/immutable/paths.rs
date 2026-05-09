@@ -46,43 +46,14 @@ fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
 /// Checks if a path is missing a windows drive letter. For windows APIs,
 /// this is used for an assertion, and PosixToWinNormalizer can help make
 /// an absolute path contain a drive letter.
-pub fn is_windows_absolute_path_missing_drive_letter<T: Ch>(chars: &[T]) -> bool {
+///
+/// Thin wrapper over the canonical [`bun_core::strings`] impl that additionally
+/// debug-asserts the Zig precondition `Platform.windows.isAbsoluteT(chars)`
+/// (bun_core can't, as `bun_paths` would be a tier-0 cycle there).
+#[inline]
+pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[T]) -> bool {
     debug_assert!(bun_paths::Platform::Windows.is_absolute_t(chars));
-    debug_assert!(!chars.is_empty());
-
-    // 'C:\hello' -> false
-    // This is the most common situation, so we check it first
-    if !(chars[0] == ch(b'/') || chars[0] == ch(b'\\')) {
-        debug_assert!(chars.len() > 2);
-        debug_assert!(chars[1] == ch(b':'));
-        return false;
-    }
-
-    if chars.len() > 4 {
-        // '\??\hello' -> false (has the NT object prefix)
-        if chars[1] == ch(b'?')
-            && chars[2] == ch(b'?')
-            && (chars[3] == ch(b'/') || chars[3] == ch(b'\\'))
-        {
-            return false;
-        }
-        // '\\?\hello' -> false (has the other NT object prefix)
-        // '\\.\hello' -> false (has the NT device prefix)
-        if (chars[1] == ch(b'/') || chars[1] == ch(b'\\'))
-            && (chars[2] == ch(b'?') || chars[2] == ch(b'.'))
-            && (chars[3] == ch(b'/') || chars[3] == ch(b'\\'))
-        {
-            return false;
-        }
-    }
-
-    // A path starting with `/` can be a UNC path with forward slashes,
-    // or actually just a posix path.
-    //
-    // '\\Server\Share' -> false (unc)
-    // '\\Server\\Share' -> true (not unc because extra slashes)
-    // '\Server\Share' -> true (posix path)
-    resolve_path::windows_filesystem_root_t(chars).len() == 1
+    bun_core::strings::is_windows_absolute_path_missing_drive_letter(chars)
 }
 
 pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
@@ -477,16 +448,7 @@ pub fn starts_with_windows_drive_letter_t<T: Ch>(s: &[T]) -> bool {
         }
 }
 
-pub fn without_trailing_slash(this: &[u8]) -> &[u8] {
-    let mut href = this;
-    while href.len() > 1
-        && matches!(href[href.len() - 1], b'/' | b'\\')
-    {
-        href = &href[..href.len() - 1];
-    }
-
-    href
-}
+pub use bun_core::strings::without_trailing_slash;
 
 /// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
 pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
@@ -533,76 +495,15 @@ pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
     slice
 }
 
-// Copied from std, modified to accept input type
+// Copied from std, modified to accept input type — canonical impl lives in
+// `bun_paths::{basename_posix, basename_windows}` (generic over `PathChar`);
+// this is a thin re-wrapper preserving the `Ch` bound for this module's API.
+#[inline]
 pub fn basename<T: Ch>(input: &[T]) -> &[T] {
     #[cfg(windows)]
-    {
-        return basename_windows(input);
-    }
+    { return bun_paths::basename_windows::<T>(input); }
     #[cfg(not(windows))]
-    {
-        basename_posix(input)
-    }
-}
-
-fn basename_posix<T: Ch>(input: &[T]) -> &[T] {
-    if input.is_empty() {
-        return &[];
-    }
-
-    let mut end_index: usize = input.len() - 1;
-    while input[end_index] == ch(b'/') {
-        if end_index == 0 {
-            return &[];
-        }
-        end_index -= 1;
-    }
-    let mut start_index: usize = end_index;
-    end_index += 1;
-    while input[start_index] != ch(b'/') {
-        if start_index == 0 {
-            return &input[..end_index];
-        }
-        start_index -= 1;
-    }
-
-    &input[start_index + 1..end_index]
-}
-
-fn basename_windows<T: Ch>(input: &[T]) -> &[T] {
-    if input.is_empty() {
-        return &[];
-    }
-
-    let mut end_index: usize = input.len() - 1;
-    loop {
-        let byte = input[end_index];
-        if byte == ch(b'/') || byte == ch(b'\\') {
-            if end_index == 0 {
-                return &[];
-            }
-            end_index -= 1;
-            continue;
-        }
-        if byte == ch(b':') && end_index == 1 {
-            return &[];
-        }
-        break;
-    }
-
-    let mut start_index: usize = end_index;
-    end_index += 1;
-    while input[start_index] != ch(b'/')
-        && input[start_index] != ch(b'\\')
-        && !(input[start_index] == ch(b':') && start_index == 1)
-    {
-        if start_index == 0 {
-            return &input[..end_index];
-        }
-        start_index -= 1;
-    }
-
-    &input[start_index + 1..end_index]
+    { bun_paths::basename_posix::<T>(input) }
 }
 
 // ported from: src/string/immutable/paths.zig

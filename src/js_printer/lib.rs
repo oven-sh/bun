@@ -660,7 +660,7 @@ pub mod analyze_transpiled_module {
 /// link-interface); the printer just holds the raw pointer.
 pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_js_parser::RuntimeTranspilerCache>;
 
-const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
+use bun_core::fmt::UPPER_HEX_TABLE as HEX_CHARS;
 const FIRST_ASCII: u32 = 0x20;
 const LAST_ASCII: u32 = 0x7E;
 const FIRST_HIGH_SURROGATE: u32 = 0xD800;

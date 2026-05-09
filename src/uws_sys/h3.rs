@@ -385,12 +385,7 @@ enum RouteKind {
 pub enum AddServerNameError {
     FailedToAddServerName,
 }
-impl core::fmt::Display for AddServerNameError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for AddServerNameError {}
+bun_core::impl_tag_error!(AddServerNameError);
 
 impl App {
     pub fn create(opts: BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {

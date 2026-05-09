@@ -236,7 +236,7 @@ fn get_argv0(
     if path_to_use.is_empty() {
         actual_argv0 = ZBox::from_bytes(argv0_to_use);
     } else {
-        let Some(resolved) = bun_core::which(&mut path_buf, path_to_use, cwd, argv0_to_use) else {
+        let Some(resolved) = bun_which::which(&mut path_buf, path_to_use, cwd, argv0_to_use) else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
         actual_argv0 = ZBox::from_bytes(resolved.as_bytes());

@@ -45,13 +45,7 @@ pub enum AnyPostgresError {
     UnknownFormatCode,
 }
 
-impl core::fmt::Display for AnyPostgresError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(*self))
-    }
-}
-
-impl std::error::Error for AnyPostgresError {}
+bun_core::impl_tag_error!(AnyPostgresError);
 
 bun_core::named_error_set!(AnyPostgresError);
 

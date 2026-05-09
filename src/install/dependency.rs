@@ -310,25 +310,18 @@ impl DependencyExt for Dependency {
 // an untagged union with `ManuallyDrop` fields, so we implement a shallow
 // bitwise clone matching Zig's copy semantics.
 
-// TODO(port): `comptime StringBuilder: type` param replaced with trait bound;
-// the only methods called are `.count`, `.append(String, ...)`, and access to
-// the backing `string_bytes` buffer.
-pub trait StringBuilderLike {
-    fn count(&mut self, s: &[u8]);
-    fn append_string(&mut self, s: &[u8]) -> String;
+// `comptime StringBuilder: type` param maps onto `bun_semver::StringBuilder`
+// (count / append<T> / append_string). The only extra method needed here is
+// access to the FULL backing buffer (Zig: `builder.lockfile.buffers
+// .string_bytes.items`), which is intentionally NOT on the base trait since
+// `semver_string::Builder`'s isolated Box<[u8]> would be wrong for callers
+// that need the lockfile's full string_bytes.
+pub trait StringBuilderLike: bun_semver::StringBuilder {
     /// Full backing string buffer (Zig: `builder.lockfile.buffers.string_bytes.items`).
     fn string_bytes(&self) -> &[u8];
 }
 
 impl<'a> StringBuilderLike for crate::lockfile_real::StringBuilder<'a> {
-    #[inline]
-    fn count(&mut self, s: &[u8]) {
-        crate::lockfile_real::StringBuilder::count(self, s);
-    }
-    #[inline]
-    fn append_string(&mut self, s: &[u8]) -> String {
-        self.append::<String>(s)
-    }
     #[inline]
     fn string_bytes(&self) -> &[u8] {
         self.string_bytes.as_slice()

@@ -1423,7 +1423,7 @@ impl Data {
                         }
 
                         line_offset_for_second_line +=
-                            fmt_count(format_args!("{} | ", location.line));
+                            bun_core::fmt::count(format_args!("{} | ", location.line));
                     }
 
                     write!(
@@ -1517,20 +1517,6 @@ fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
         to.write_char(b as char)?;
     }
     Ok(())
-}
-
-// Helper: Zig `std.fmt.count(fmt, args)` — count rendered bytes without allocating.
-fn fmt_count(args: fmt::Arguments<'_>) -> usize {
-    struct Counter(usize);
-    impl fmt::Write for Counter {
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            self.0 += s.len();
-            Ok(())
-        }
-    }
-    let mut c = Counter(0);
-    let _ = fmt::write(&mut c, args);
-    c.0
 }
 
 // ───────────────────────────────────────────────────────────────────────────

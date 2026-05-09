@@ -358,7 +358,7 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
                     "Image(): only base64 data: URLs are supported",
                 )));
             }
-            let mut out = vec![0u8; base64::decode_len(payload)];
+            let mut out = vec![0u8; bun_base64::decode_len(payload)];
             let r = base64::decode(&mut out, payload);
             if r.fail {
                 return Err(global

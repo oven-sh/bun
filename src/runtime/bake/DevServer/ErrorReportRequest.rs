@@ -30,8 +30,10 @@ use bun_str::{strings, String as BunString};
 use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
+use super::serialized_failure::{write_i32_le, write_u32_le};
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{DevServer, CLIENT_PREFIX};
+use crate::bake::dev_server_body::parse_hex_to_int;
 use crate::server::static_route::InitFromBytesOptions;
 use crate::server::StaticRoute;
 
@@ -440,20 +442,6 @@ pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_stor
     Some(source_map_store::Key::init(parse_hex_to_int::<u64>(hex)?))
 }
 
-// PORT NOTE: Zig used `std.fmt.parseUnsigned(T, slice, 16)`. Thin local copy of
-// `dev_server_body::parse_hex_to_int` so this module doesn't depend on the
-// body draft. Rust can't size a stack array by a generic `T` without
-// `generic_const_exprs`, so cap at 16 bytes (enough for u128).
-fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
-    let size = ::core::mem::size_of::<T>();
-    debug_assert!(size <= 16);
-    let mut out = [0u8; 16];
-    let decoded = strings::decode_hex_to_bytes(&mut out[..size], slice).ok()?;
-    debug_assert!(decoded == size);
-    // SAFETY: out[..size] is fully initialized by decode_hex_to_bytes; T: Copy.
-    Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr().cast::<T>()) })
-}
-
 /// Instead of decoding the entire file, just decode the desired section.
 fn extract_json_encoded_source_code<'a, const N: usize>(
     contents: &'a [u8],
@@ -601,16 +589,6 @@ fn read_i32_le(r: &mut &[u8]) -> Result<i32, bun_core::Error> {
     let (head, tail) = r.split_at(4);
     *r = tail;
     Ok(i32::from_le_bytes([head[0], head[1], head[2], head[3]]))
-}
-
-#[inline]
-fn write_u32_le(w: &mut Vec<u8>, v: u32) {
-    w.extend_from_slice(&v.to_le_bytes());
-}
-
-#[inline]
-fn write_i32_le(w: &mut Vec<u8>, v: i32) {
-    w.extend_from_slice(&v.to_le_bytes());
 }
 
 // ported from: src/bake/DevServer/ErrorReportRequest.zig

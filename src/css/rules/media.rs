@@ -28,14 +28,10 @@ impl<R> MediaRule<R> {
 
         dest.write_str("@media ")?;
         self.query.to_css(dest)?;
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-        dest.newline()?;
-        self.rules.to_css(dest)?;
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')
+        dest.block(|d| {
+            d.newline()?;
+            self.rules.to_css(d)
+        })
     }
 }
 

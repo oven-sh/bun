@@ -15,15 +15,10 @@ impl<R> StartingStyleRule<R> {
         // dest.add_mapping(self.loc);
 
         dest.write_str("@starting-style")?;
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-        dest.newline()?;
-        self.rules.to_css(dest)?;
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')?;
-        Ok(())
+        dest.block(|d| {
+            d.newline()?;
+            self.rules.to_css(d)
+        })
     }
 }
 

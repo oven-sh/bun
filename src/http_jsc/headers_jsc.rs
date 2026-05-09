@@ -115,15 +115,12 @@ pub fn to_fetch_headers(
     global: &JSGlobalObject,
 ) -> JsResult<NonNull<FetchHeaders>> {
     use bun_jsc::JsError;
+    use bun_http_types::ETag::HeaderEntryColumns;
     if this.entries.len() == 0 {
         return Ok(FetchHeaders::create_empty());
     }
-    // SAFETY: column type for both fields is `StringPointer` (see
-    // `HeaderEntry::FIELD_SIZES`); `items` returns `&[F]` over live storage.
-    let names: &[StringPointer] =
-        unsafe { this.entries.items::<"name", StringPointer>() };
-    let values: &[StringPointer] =
-        unsafe { this.entries.items::<"value", StringPointer>() };
+    let names: &[StringPointer] = this.entries.items_name();
+    let values: &[StringPointer] = this.entries.items_value();
     FetchHeaders::create(
         global,
         // PORT NOTE: C++ side reads only; cast_mut() is safe (no mutation).

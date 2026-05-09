@@ -77,7 +77,7 @@ pub use pending_connect::PendingConnect;
 // ═══════════════════════════════════════════════════════════════════════
 pub(crate) mod bridge {
     use crate::http_context::HTTPSocket;
-    use crate::{HTTPClient, NewHTTPContext, ShouldContinue};
+    use crate::{HTTPClient, NewHTTPContext};
     use bun_picohttp as picohttp;
 
     /// Socket helper missing from `bun_uws::NewSocketHandler`.
@@ -122,13 +122,6 @@ pub(crate) mod bridge {
         #[inline]
         pub fn h2_clone_metadata(&mut self) {
             self.clone_metadata();
-        }
-        #[inline]
-        pub fn h2_handle_response_metadata(
-            &mut self,
-            response: &mut picohttp::Response<'_>,
-        ) -> Result<ShouldContinue, bun_core::Error> {
-            self.handle_response_metadata(response)
         }
         #[inline]
         pub fn h2_handle_response_body(

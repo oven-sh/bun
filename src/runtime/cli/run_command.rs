@@ -533,14 +533,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         this_transpiler.configure_linker();
 
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
                     if !log_errors {
                         return Err(bun_core::err!("CouldntReadCurrentDirectory"));
                     }
-                    let _ = unsafe { ctx.log_mut() }
+                    // SAFETY: `ctx.log` set in `create_context_data` (single-
+                    // threaded CLI startup), process-lifetime.
+                    let _ = unsafe { ctx.log() }
                         .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
@@ -551,7 +554,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     return Err(err);
                 }
                 Ok(None) => {
-                    let _ = unsafe { ctx.log_mut() }
+                    // SAFETY: see `Err` arm above.
+                    let _ = unsafe { ctx.log() }
                         .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     pretty_errorln!("error loading current directory");
                     Output::flush();
@@ -1018,7 +1022,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
             // opaque slot; the API lock is held for the full call so no
             // other thread touches the VM.
-            let this = unsafe { bun_ptr::callback_ctx::<Run>(ctx) };
+            let this = unsafe { &mut *ctx.cast::<Run>() };
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
@@ -1162,7 +1166,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         extern "C" fn trampoline(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
             // opaque slot; the API lock is held for the full call.
-            let this = unsafe { bun_ptr::callback_ctx::<Run>(ctx) };
+            let this = unsafe { &mut *ctx.cast::<Run>() };
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
@@ -1240,9 +1244,9 @@ impl Run {
             fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
             fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
         }
-        // `self.vm` is the per-thread VM written by `boot()` before the
-        // API-lock trampoline runs; route through the safe singleton accessor.
-        let vm = VirtualMachine::get();
+        // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
+        // `boot()` before the API-lock trampoline runs.
+        let vm = unsafe { &*self.vm };
         let ro = unsafe { &(*self.ctx).runtime_options };
         if !ro.eval.script.is_empty() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
@@ -1261,11 +1265,10 @@ impl Run {
     fn start(&mut self) -> ! {
         // PORT NOTE: deref the raw VM/ctx pointers once so the rest of this
         // body can borrow `vm` and `ctx` alongside `self.entry_path`.
-        // `self.vm` is the boxed-and-leaked main-thread VM; route through the
-        // safe singleton accessor. `self.ctx` is the CLI's process-lifetime
-        // `ContextData`, written by `boot()`/`boot_standalone()` before the
-        // API-lock trampoline runs.
-        let vm = VirtualMachine::get().as_mut();
+        // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; `self.ctx`
+        // is the CLI's process-lifetime `ContextData`. Both are written by
+        // `boot()`/`boot_standalone()` before the API-lock trampoline runs.
+        let vm = unsafe { &mut *self.vm };
         let ctx = unsafe { &*self.ctx };
         // SAFETY: `entry_path` is process-lifetime (heap from `heap::alloc`
         // or a borrow into the standalone graph); deref to a `'static` slice
@@ -1288,7 +1291,8 @@ impl Run {
                 interval: opts.interval,
             });
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(vm.jsc_vm_mut());
+            // SAFETY: `vm.jsc_vm` set in `init`.
+            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
             bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -1394,7 +1398,9 @@ impl Run {
 
         // Zig: `if entry_path == "." { entry_path = fs.top_level_dir }`.
         if entry == b"." {
-            let tld = bun_resolver::fs::FileSystem::get().top_level_dir;
+            // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
+            // singleton (set in `Transpiler::init`).
+            let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
             if !tld.is_empty() {
                 entry = tld;
             }
@@ -1407,9 +1413,11 @@ impl Run {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
-                    let result = promise.result(vm.jsc_vm_mut());
-                    let global = vm.global();
-                    let handled = vm.uncaught_exception(global, result, true);
+                    // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
+                    let result = promise.result(unsafe { &mut *vm.jsc_vm });
+                    let global = vm.global;
+                    // SAFETY: `global` valid for VM lifetime.
+                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -1651,11 +1659,14 @@ impl RunCommand {
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
         if let Err(err) = Self::boot(ctx, owned, loader) {
+            // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
+            // CLI startup) and is process-lifetime.
+            
             // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
             // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
             // returns the process-global writer; cast to the raw pointer the
             // trait expects.
-            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
+            let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
 
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -1673,28 +1684,11 @@ impl RunCommand {
     // `RealFS.platformTempDir` instead — this const is POSIX-only and
     // referencing it on Windows is a compile error (mirrors Zig's
     // `@compileError` arm).
+    //
+    // Canonical definition lives in `bun_install::RunCommand` (lower tier so
+    // the package manager can use it without depending on `bun_runtime`).
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = const_format::concatcp!(
-        if cfg!(target_os = "macos") {
-            "/private/tmp"
-        } else if cfg!(target_os = "android") {
-            "/data/local/tmp"
-        } else {
-            "/tmp"
-        },
-        if !cfg!(debug_assertions) {
-            const_format::concatcp!(
-                "/bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                }
-            )
-        } else {
-            "/bun-node-debug"
-        }
-    );
+    pub const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
     /// Port of `bunNodeFileUtf8` (run_command.zig). Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
@@ -1756,227 +1750,16 @@ impl RunCommand {
     /// `<tmp>/bun-node*/node` and `<tmp>/bun-node*/bun` symlinks (or hard
     /// links on Windows) pointing at the running `bun` binary, then appends
     /// that directory to `path` so child processes resolve `node` to bun.
+    ///
+    /// Implementation lives in `bun_install::RunCommand` (lower tier) so the
+    /// package manager can call it without depending on `bun_runtime`; this is
+    /// a thin delegate so existing `Self::` callers keep compiling.
+    #[inline]
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
     ) -> Result<(), bun_core::Error> {
-        // If we are already running as "node", the path should exist
-        if cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        #[cfg(unix)]
-        {
-            use ::core::ffi::{c_char, CStr};
-
-            let mut argv0: *const c_char = optional_bun_path.as_ptr().cast::<c_char>();
-
-            // if we are already an absolute path, use that
-            // if the user started the application via a shebang, it's likely
-            // that the path is absolute already
-            // PORT NOTE: `bun_core::argv()` returns an `Argv` wrapper; `.get(0)`
-            // yields `&'static ZStr` (NUL-terminated, process-lifetime).
-            let argv0_slice = bun_core::argv().get(0).map(|z| z.as_bytes()).unwrap_or(b"");
-            if argv0_slice.first() == Some(&b'/') {
-                *optional_bun_path = argv0_slice;
-                argv0 = argv0_slice.as_ptr().cast::<c_char>();
-            } else if optional_bun_path.is_empty() {
-                // otherwise, ask the OS for the absolute path
-                let self_ = bun_core::self_exe_path()?;
-                if !self_.is_empty() {
-                    argv0 = self_.as_ptr().cast::<c_char>();
-                    *optional_bun_path = self_.as_bytes();
-                }
-            }
-
-            if optional_bun_path.is_empty() {
-                argv0 = argv0_slice.as_ptr().cast::<c_char>();
-            }
-
-            #[cfg(debug_assertions)]
-            {
-                // Zig: std.fs.deleteTreeAbsolute(BUN_NODE_DIR) — best-effort.
-                let _ = sys::Dir::cwd().delete_tree(Self::BUN_NODE_DIR.as_bytes());
-            }
-            const PATHS: [&str; 2] = [
-                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node\0"),
-                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0"),
-            ];
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            for p in PATHS {
-                let mut retried = false;
-                'retry: loop {
-                    'inner: {
-                        // SAFETY: argv0 is a valid NUL-terminated C string
-                        // (points at argv[0], `self_exe_path`, or `optional_bun_path`).
-                        let target = ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv0) });
-                        // PATHS entries are NUL-terminated string literals.
-                        let link = ZStr::from_slice_with_nul(p.as_bytes());
-                        if let Err(err) = sys::symlink(target, link) {
-                            if err.get_errno() == sys::E::EEXIST {
-                                break 'inner;
-                            }
-                            if retried {
-                                return Ok(());
-                            }
-
-                            // Zig: std.fs.makeDirAbsoluteZ(BUN_NODE_DIR) — best-effort.
-                            let dir_z = ZStr::from_slice_with_nul(BUN_NODE_DIR_Z.as_bytes());
-                            let _ = sys::mkdir(dir_z, 0o755);
-
-                            retried = true;
-                            continue 'retry;
-                        }
-                    }
-                    break;
-                }
-            }
-            if !path.is_empty() && path[path.len() - 1] != DELIMITER {
-                path.push(DELIMITER);
-            }
-
-            // The reason for the extra delim is because we are going to append
-            // the system PATH later on. this is done by the caller, and explains
-            // why we are adding bun_node_dir to the end of the path slice rather
-            // than the start.
-            path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
-            path.push(DELIMITER);
-            let _ = argv0;
-        }
-        #[cfg(windows)]
-        {
-            let mut target_path_buffer = WPathBuffer::uninit();
-
-            let prefix = bun_str::w!("\\??\\");
-
-            // SAFETY: FFI Win32 `GetTempPathW`. We pass a valid writable
-            // pointer into `target_path_buffer` offset by `prefix.len()`
-            // (in-bounds: prefix.len() < target_path_buffer.len()) and the
-            // remaining capacity in WCHARs as `nBufferLength`.
-            let len = unsafe {
-                sys::windows::GetTempPathW(
-                    u32::try_from(target_path_buffer.len() - prefix.len()).expect("int cast"),
-                    target_path_buffer.as_mut_ptr().add(prefix.len()),
-                )
-            };
-            if len == 0 {
-                Output::debug(format_args!(
-                    "Failed to create temporary node dir: {}",
-                    sys::windows::get_last_error_tag(),
-                ));
-                return Ok(());
-            }
-            let len = len as usize;
-
-            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
-
-            const DIR_NAME: &str = if cfg!(debug_assertions) {
-                "bun-node-debug"
-            } else {
-                const_format::concatcp!(
-                    "bun-node",
-                    if Environment::GIT_SHA_SHORT.len() > 0 {
-                        const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                    } else {
-                        ""
-                    }
-                )
-            };
-            // Zig: `comptime bun.strings.w(DIR_NAME)`. `bun_str::w!` requires
-            // a string-literal *token*, which `concatcp!` doesn't yield, so
-            // widen the ASCII const at runtime into a small stack buffer.
-            let mut dir_name_buf = [0u16; 64];
-            for (i, b) in DIR_NAME.bytes().enumerate() {
-                debug_assert!(b < 0x80, "DIR_NAME is ASCII-only");
-                dir_name_buf[i] = b as u16;
-            }
-            let dir_name_w: &[u16] = &dir_name_buf[..DIR_NAME.len()];
-            target_path_buffer[prefix.len() + len..prefix.len() + len + dir_name_w.len()]
-                .copy_from_slice(dir_name_w);
-            let dir_slice_len = prefix.len() + len + dir_name_w.len();
-
-            #[cfg(debug_assertions)]
-            {
-                // Spec (run_command.zig:727-730) calls
-                // `std.fs.{deleteTree,makeDir}Absolute`, whose Windows impls
-                // recognise the NT-object `\??\` prefix. The bun_sys helpers
-                // route through Win32 `mkdirat`, which does NOT — strip the
-                // prefix so they see a Win32-style `C:\…\bun-node-debug` path.
-                let dir_slice_u8 = bun_string::immutable::to_utf8_alloc_with_type(
-                    &target_path_buffer[prefix.len()..dir_slice_len],
-                );
-                let _ = sys::Dir::cwd().delete_tree(&dir_slice_u8);
-                // Zig spec (run_command.zig:730): `std.fs.makeDirAbsolute` —
-                // single-level mkdir that panics on *any* error (incl.
-                // PathAlreadyExists). `make_path` would recurse and silently
-                // swallow EEXIST.
-                sys::Dir::cwd().make_dir(&dir_slice_u8).expect("huh?");
-            }
-
-            let image_path = sys::windows::exe_path_w();
-            for name in [bun_str::w!("node.exe"), bun_str::w!("bun.exe")] {
-                // file_name = dir_name ++ "\\" ++ name ++ "\x00"
-                let mut off = prefix.len() + len;
-                target_path_buffer[off..off + dir_name_w.len()].copy_from_slice(dir_name_w);
-                off += dir_name_w.len();
-                target_path_buffer[off] = b'\\' as u16;
-                off += 1;
-                target_path_buffer[off..off + name.len()].copy_from_slice(name);
-                off += name.len();
-                target_path_buffer[off] = 0;
-
-                // Zig's `file_slice.ptr` is the buffer base (slice starts at 0);
-                // use the raw base ptr to avoid holding an immutable borrow
-                // across the `target_path_buffer[dir_slice_len]` mutation below.
-                if sys::windows::CreateHardLinkW(
-                    target_path_buffer.as_ptr(),
-                    image_path.as_ptr(),
-                    None,
-                ) == 0
-                {
-                    match sys::windows::get_last_win32_error() {
-                        sys::windows::Win32Error::ALREADY_EXISTS => {}
-                        _ => {
-                            {
-                                // Spec (run_command.zig:745): `bun.assert` is
-                                // always-on, not debug-gated.
-                                assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);
-                                target_path_buffer[dir_slice_len] = 0;
-                                // SAFETY: we just wrote a NUL terminator at
-                                // `dir_slice_len`; `target_path_buffer[..dir_slice_len]`
-                                // is initialised wide-string data → valid `WStr`.
-                                let dir_w = bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len,);
-                                let _ = sys::mkdir_w(dir_w);
-                                target_path_buffer[dir_slice_len] = b'\\' as u16;
-                            }
-
-                            if sys::windows::CreateHardLinkW(
-                                target_path_buffer.as_ptr(),
-                                image_path.as_ptr(),
-                                None,
-                            ) == 0
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
-            if !path.is_empty() && path[path.len() - 1] != DELIMITER {
-                path.push(DELIMITER);
-            }
-
-            // The reason for the extra delim is because we are going to append
-            // the system PATH later on. this is done by the caller, and explains
-            // why we are adding bun_node_dir to the end of the path slice rather
-            // than the start.
-            strings::to_utf8_append_to_list(
-                path,
-                &target_path_buffer[prefix.len()..dir_slice_len],
-            );
-            path.push(DELIMITER);
-        }
-        Ok(())
+        bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
     }
 
     /// Port of `configurePathForRun` (run_command.zig). Prepends workspace
@@ -2276,8 +2059,10 @@ impl RunCommand {
                         {
                             // SAFETY: `executable_z` is the NUL-terminated form
                             // of `executable` (caller invariant).
-                            let exec_z =
-                                ZStr::from_cstr(unsafe { bun_core::ffi::cstr(executable_z) });
+                            let exec_z = unsafe {
+                                let cstr = bun_core::ffi::cstr(executable_z);
+                                ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
+                            };
                             match sys::stat(exec_z) {
                                 Ok(stat) => {
                                     if sys::S::ISDIR(stat.st_mode as _) {
@@ -2642,7 +2427,7 @@ impl RunCommand {
             RUN_LOG,
             "Try resolve `{}` in `{}`",
             bstr::BStr::new(target_name),
-            bstr::BStr::new(bun_resolver::fs::FileSystem::get().top_level_dir),
+            bstr::BStr::new(unsafe { (*this_transpiler.fs).top_level_dir }),
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve. Zig: `defer resolver.opts.preserve_symlinks = saved`.
@@ -2652,7 +2437,8 @@ impl RunCommand {
                 .runtime_options
                 .preserve_symlinks_main
                 || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN.get().unwrap_or(false);
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+            // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
+            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2802,6 +2588,8 @@ impl RunCommand {
         }
 
         // `bun feedback` (run_command.zig:1921-1925).
+        // `cli::CMD` is a single-threaded process-static set once during CLI
+        // startup (mod.rs:693) — now `OnceLock<Tag>`.
         if ctx.filters.is_empty()
             && !ctx.workspaces
             && cli::CMD.get().copied() == Some(CommandTag::AutoCommand)
@@ -3015,7 +2803,9 @@ impl RunCommand {
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, owned, None) {
-            let _ = unsafe { ctx.log_mut() }
+            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+            // CLI startup), process-lifetime.
+            let _ = unsafe { ctx.log() }
                 .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -3115,7 +2905,9 @@ impl RunCommand {
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, normalized, None) {
-            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
+            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+            // CLI startup), process-lifetime.
+            let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
 
             Output::err(
                 err,
@@ -3643,7 +3435,8 @@ impl RunCommand {
         this_transpiler.resolver.store_fd = true;
         this_transpiler.configure_linker();
 
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
         let Some(root_dir_info) = this_transpiler
             .resolver
             .read_dir_info(top_level_dir)
@@ -3974,10 +3767,7 @@ impl BunXFastPath {
     /// rules. Writes into `buffer` and returns the number of u16s written.
     #[cfg(windows)]
     fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
-        // Spec (run_command.zig:2027): `var temp_buf: [2048]u16` — 4 KiB stack,
-        // not MAX_WPATH (64 KiB). Called per-arg in a loop under a deep call
-        // chain on Windows' default 1 MiB stack.
-        let mut wbuf = [0u16; 2048];
+        let mut wbuf = [0u16; bun_paths::MAX_WPATH];
         let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
 
         if warg.is_empty() {
@@ -4144,21 +3934,30 @@ impl BunXFastPath {
         wpath: &mut [u16],
         ctx: bun_options_types::Context::Context<'_>,
     ) {
-        // Spec (run_command.zig:2164-2166) reinterprets `direct_launch_buffer`
-        // as `[u8]`, but Zig has no aliasing model. Under Stacked Borrows,
-        // forming a `&mut [u8]` over the whole `DIRECT_LAUNCH_BUFFER` cell
-        // would push a Unique tag and invalidate `try_launch`'s outstanding
-        // `path_to_use`/`command_line` borrows and the shim's `image_path_*`
-        // pointers (bun_shim_impl.rs:451-454) into the same cell. `wpath`
-        // lives in the shim's own stack `buf1`, so transcode into a fresh
-        // stack `PathBuffer` instead — no `DIRECT_LAUNCH_BUFFER` access at all.
-        let mut out_buf = PathBuffer::uninit();
-        let utf8 = match strings::convert_utf16_to_utf8_in_buffer(&mut out_buf.0, wpath) {
+        // SAFETY: process-lifetime static, single-threaded CLI dispatch.
+        // `try_launch` (still on the call stack) holds live `&mut [u16]`
+        // reborrows (`path_to_use`/`command_line`) and raw pointers
+        // (`run_ctx.base_path`/`arguments`) into this same UnsafeCell.
+        // Materialising a fresh `&mut WPathBuffer` here would push a Unique
+        // tag over the whole buffer and pop those tags under Stacked Borrows.
+        // Derive the byte slice directly from the raw `*mut WPathBuffer` so no
+        // intermediate `&mut` retag covers the caller's borrows.
+        // WPathBuffer is `#[repr(transparent)] [u16; PATH_MAX_WIDE]` —
+        // reinterpret as `[u8; 2N]` for the UTF-16→UTF-8 transcoder's output.
+        let out_buf = unsafe {
+            let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
+            ::core::slice::from_raw_parts_mut(
+                raw.cast::<u8>(),
+                bun_paths::PATH_MAX_WIDE * 2,
+            )
+        };
+        let utf8 = match strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath) {
             Ok(u) => u,
             Err(_) => return,
         };
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
-            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut(Output::error_writer()));
+            // SAFETY: `ctx.log` was set in `create_context_data`.
+            let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

@@ -8,7 +8,7 @@ use std::io::Write as _;
 use bun_string::{strings, SliceWithUnderlyingString, String, Tag, ZigStringSlice};
 
 use crate::zig_string::{self, ZigString};
-use crate::{CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/

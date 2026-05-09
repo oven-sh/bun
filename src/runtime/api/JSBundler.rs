@@ -604,22 +604,16 @@ pub mod js_bundler {
                         this.env_behavior = api::DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
                         let slice = env.to_slice(global_this)?;
-                        if slice.slice() == b"inline" {
-                            this.env_behavior = api::DotEnvBehavior::LoadAll;
-                        } else if slice.slice() == b"disable" {
-                            this.env_behavior = api::DotEnvBehavior::Disable;
-                        } else if let Some(asterisk) =
-                            bun_str::strings::index_of_char(slice.slice(), b'*')
-                        {
-                            if asterisk > 0 {
-                                this.env_behavior = api::DotEnvBehavior::Prefix;
-                                this.env_prefix
-                                    .append_slice_exact(&slice.slice()[0..asterisk as usize])?;
-                            } else {
-                                this.env_behavior = api::DotEnvBehavior::LoadAll;
+                        match api::DotEnvBehavior::parse_str(slice.slice()) {
+                            Ok((behavior, prefix)) => {
+                                this.env_behavior = behavior;
+                                if let Some(prefix) = prefix {
+                                    this.env_prefix.append_slice_exact(prefix)?;
+                                }
                             }
-                        } else {
-                            return Err(global_this.throw_invalid_arguments(format_args!("env must be 'inline', 'disable', or a string with a '*' character")));
+                            Err(()) => {
+                                return Err(global_this.throw_invalid_arguments(format_args!("env must be 'inline', 'disable', or a string with a '*' character")));
+                            }
                         }
                         drop(slice);
                     } else {

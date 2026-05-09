@@ -3,39 +3,6 @@ pub use crate::posix::mode_t as Mode;
 pub use crate::posix::E;
 pub use crate::posix::S;
 
-// ──────────────────────────────────────────────────────────────────────────
-// posix — MOVE_DOWN landing for std.posix.{mode_t,E,S} + std.c._errno()
-//
-// Ground truth: Zig `std.posix` (darwin) / `std.c` re-exports. Landed here so
-// the errno crate stays leaf (T0) and bun_sys (T≥1) imports forward.
-// ──────────────────────────────────────────────────────────────────────────
-#[allow(non_camel_case_types, non_snake_case)]
-pub mod posix {
-    use core::ffi::c_int;
-
-    /// Darwin `mode_t` (`__uint16_t` in <sys/types.h>).
-    pub type mode_t = u16;
-
-    /// Kernel errno enum. Zig's `std.posix.E` and Bun's `SystemErrno` share the
-    /// exact same discriminant space on Darwin; we alias rather than duplicate.
-    /// TODO(port): Zig's `E` uses unprefixed variant names (`PERM`, `NOENT`);
-    /// `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on `E::PERM` must
-    /// migrate to `E::EPERM` (or this becomes a distinct enum in Phase B).
-    pub type E = super::SystemErrno;
-
-    /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
-    /// Values are POSIX-standard octal; identical across linux/darwin/freebsd.
-    /// Constants are typed `u32` (== `bun_core::Mode`); Darwin's kernel
-    /// `mode_t` is u16 so the upper 16 bits are always zero — every call site
-    /// already casts (`as i32`/`as u32`/`as _`) so the wider type is harmless.
-    pub use bun_core::S;
-
-    /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
-    /// Canonical impl lives in `bun_core::ffi` (single target_os→symbol ladder).
-    pub use bun_core::ffi::errno;
-    #[allow(unused_imports)] use c_int as _;
-}
-
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
 pub enum SystemErrno {
@@ -232,25 +199,9 @@ pub mod uv_e {
     pub const NOEXEC: i32 = SystemErrno::ENOEXEC as i32;
 }
 
-use super::GetErrno;
-
-// On Darwin every libc wrapper returns a signed int sentinel (-1) and sets
-// thread-local errno; there is no Linux-style raw-syscall `usize` errno-in-retval
-// convention. We still impl `usize` for callers that uniformly cast.
-impl GetErrno for usize {
-    #[inline]
-    fn get_errno(self) -> E {
-        // Reinterpret as signed (Zig: @bitCast). Darwin syscalls never encode
-        // errno in the return value, so only `-1` is the sentinel.
-        if self as isize == -1 {
-            // __error() returns a value in [0, MAX) per <sys/errno.h>.
-            E::from_raw(crate::posix::errno() as u16)
-        } else {
-            E::SUCCESS
-        }
-    }
-}
-
-impl_get_errno_libc!(i32, u32, isize, i64);
+// Darwin has no raw-syscall `-errno`-in-retval convention (unlike Linux); every
+// kernel entry goes through libc, so all widths — including `usize` — route to
+// the thread-local `__error()` slot via the shared macro.
+impl_get_errno_libc!(i32, u32, isize, usize, i64);
 
 // ported from: src/errno/darwin_errno.zig

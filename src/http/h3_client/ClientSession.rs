@@ -18,10 +18,9 @@ use super::stream::Stream;
 use crate::h3_client as H3;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
-use crate::{Encoding, HTTPClient, Protocol, ShouldContinue};
-use bun_picohttp as picohttp;
+use crate::{HTTPClient, HeaderResult, Protocol};
 
-bun_core::declare_scope!(h3_client, hidden);
+use crate::h3_client::h3_client;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
@@ -380,31 +379,10 @@ fn apply_headers(
     stream: &mut Stream,
     client: &mut HTTPClient,
 ) -> Result<HeaderResult, bun_core::Error> {
-    let mut response = picohttp::Response {
-        minor_version: 0,
-        status_code: u32::from(stream.status_code),
-        status: b"",
-        headers: picohttp::HeaderList { list: stream.decoded_headers.as_slice() },
-        bytes_read: 0,
-    };
-    // SAFETY: lifetime erase — `pending_response` is `Response<'static>`; the
-    // borrowed header slice is deep-copied synchronously by `clone_metadata`
-    // inside the same lsquic callback before lsquic frees the hset, so no
-    // dangling read occurs (matches Zig semantics).
-    client.state.pending_response = Some(unsafe { response.detach_lifetime() });
-    let should_continue = client.handle_response_metadata(&mut response)?;
-    // SAFETY: same lifetime erase as above.
-    client.state.pending_response = Some(unsafe { response.detach_lifetime() });
-    client.state.transfer_encoding = Encoding::Identity;
-    if client.state.response_stage == HTTPStage::BodyChunk {
-        client.state.response_stage = HTTPStage::Body;
-    }
-    client.state.flags.allow_keepalive = true;
-    Ok(if should_continue == ShouldContinue::Finished {
-        HeaderResult::Finished
-    } else {
-        HeaderResult::HasBody
-    })
+    // SAFETY: decoded_headers borrow the lsquic hset, which is deep-copied by
+    // `clone_metadata` inside the same lsquic callback before lsquic frees it
+    // — see `HTTPClient::apply_multiplexed_headers` contract.
+    client.apply_multiplexed_headers(u32::from(stream.status_code), &stream.decoded_headers)
 }
 
 fn finish(client: &mut HTTPClient) {
@@ -422,12 +400,6 @@ impl Drop for ClientSession {
         // pending: Vec and hostname: Vec<u8> drop automatically.
         // `bun.destroy(this)` is handled by `deref()` via heap::take.
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum HeaderResult {
-    HasBody,
-    Finished,
 }
 
 // ported from: src/http/h3_client/ClientSession.zig

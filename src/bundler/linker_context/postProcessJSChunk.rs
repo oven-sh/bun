@@ -21,8 +21,7 @@ use bun_options_types::{ImportRecord, ImportRecordTag, ImportRecordFlags};
 use bun_sourcemap as SourceMap;
 use bun_string::{strings, MutableString, string_joiner::{StringJoiner, Watcher}};
 
-#[allow(dead_code)]
-type IndexInt = u32;
+use crate::IndexInt;
 
 /// Move the printed code out of a `PrintResult`. Mirrors Zig
 /// `j.push(result.code, worker.allocator)` where the joiner takes ownership of

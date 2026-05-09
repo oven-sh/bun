@@ -2,7 +2,7 @@ use core::ffi::{c_uint, c_void};
 use core::ptr;
 
 use crate as jsc;
-use crate::{JSGlobalObject, JSType, JSValue, JsResult};
+use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
 use crate::c as jsc_c; // jsc.C.* (JSTypedArrayType, JSTypedArrayBytesDeallocator, JSObjectMakeTypedArrayWithArrayBuffer)
 use crate::SysErrorJsc;
 use bun_sys::{self, Fd, FdExt};
@@ -732,10 +732,7 @@ impl BinaryType {
 
     pub fn from_js_value(global: &JSGlobalObject, input: JSValue) -> JsResult<Option<BinaryType>> {
         if input.is_string() {
-            // TODO(port): phf custom hasher — Zig uses Map.getWithEql(str, bun.String.eqlComptime)
-            // to compare a bun.String against ASCII keys without transcoding. For now, transcode.
-            let utf8 = input.to_slice_or_null(global)?;
-            return Ok(BINARY_TYPE_MAP.get(utf8.slice()).copied());
+            return BINARY_TYPE_MAP.from_js(global, input);
         }
 
         Ok(None)

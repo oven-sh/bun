@@ -3402,10 +3402,12 @@ use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use bun_jsc::{StringJsc as _, JsClass as _};
 #[allow(unused_imports)]
 use bun_bundler::options_impl::LoaderExt as _;
-// Local: the `bun_jsc::zig_string::ZigString` (repr(C)-identical to
-// `bun_str::ZigString`) carries the `to_js`/`EMPTY` JSC-side methods.
+// `bun_jsc::zig_string::ZigString` re-exports `bun_str::ZigString`; JSC-side
+// methods (`to_js`, …) come from the `ZigStringJsc` extension trait.
 #[allow(unused_imports)]
 use bun_jsc::zig_string::ZigString as JscZigString;
+#[allow(unused_imports)]
+use bun_jsc::ZigStringJsc as _;
 
 /// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
 /// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but

@@ -583,6 +583,18 @@ pub unsafe trait CellRefCounted: Sized {
     /// Locate the embedded `Cell<u32>` refcount field.
     fn ref_count(&self) -> &Cell<u32>;
 
+    /// Raw-pointer projection to the embedded refcount. Unlike [`ref_count`],
+    /// this never materialises a whole-struct `&Self`, so it is sound to call
+    /// from contexts where another live borrow (e.g. a `&mut` on a sibling
+    /// field) overlaps `*this` under Stacked Borrows. The derive supplies this
+    /// via `addr_of!((*this).#field)`.
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self` for the chosen `'a`.
+    ///
+    /// [`ref_count`]: CellRefCounted::ref_count
+    unsafe fn ref_count_raw<'a>(this: *const Self) -> &'a Cell<u32>;
+
     /// Called exactly once when the refcount reaches zero.
     ///
     /// The default reclaims the allocation as a `Box<Self>` (i.e.
@@ -619,10 +631,10 @@ pub unsafe trait CellRefCounted: Sized {
     /// After this call `this` may be dangling.
     #[inline]
     unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; `ref_count` is a `Cell` so
-        // the shared borrow taken here is sound even if other raw aliases
-        // exist on this single thread.
-        let rc = unsafe { (*this).ref_count() };
+        // SAFETY: caller contract — `this` is live. Project to the `Cell<u32>`
+        // only via `ref_count_raw` (no `&Self` formed), so this is sound even
+        // when a `&mut` on a sibling field is live in a parent frame.
+        let rc = unsafe { Self::ref_count_raw(this) };
         let n = rc.get() - 1;
         rc.set(n);
         if n == 0 {

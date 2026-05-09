@@ -43,13 +43,7 @@ pub enum Error {
     InvalidState,
 }
 
-impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(*self))
-    }
-}
-
-impl std::error::Error for Error {}
+bun_core::impl_tag_error!(Error);
 
 /// Zig callers name this `AnyMySQLError` (the file basename); the Rust enum is
 /// `Error` per convention. Re-export both spellings so cross-crate `use` lines

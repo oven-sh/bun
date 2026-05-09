@@ -17,7 +17,7 @@ use super::stream::Stream;
 use crate::h3_client as H3;
 use crate::HTTPClient;
 
-bun_core::declare_scope!(h3_client, hidden);
+use crate::h3_client::h3_client;
 
 pub struct ClientContext {
     // FFI handle owned for process lifetime (never freed).

@@ -264,6 +264,18 @@ impl<'a> Default for LinkerContext<'a> {
 }
 
 impl<'a> LinkerContext<'a> {
+    /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
+    /// field. Mirrors Zig `@fieldParentPtr("linker", c)`. Returns raw; caller
+    /// decides `&*` vs `&mut *` per local aliasing rules (several callers run
+    /// on worker-pool threads and MUST NOT materialize `&mut BundleV2`).
+    ///
+    /// SAFETY: `linker` must point to the `.linker` field of a live `BundleV2`
+    /// and carry provenance over the full `BundleV2` allocation.
+    #[inline(always)]
+    pub unsafe fn bundle_v2_ptr(linker: *mut Self) -> *mut BundleV2<'a> {
+        bun_core::from_field_ptr!(BundleV2, linker, linker)
+    }
+
     /// Shared-read accessor for the parse-side graph.
     ///
     /// `parse_graph` is a backref into `BundleV2.graph`, a sibling field of
@@ -1243,9 +1255,7 @@ impl SourceMapDataTask {
         // any `&mut` to the shared `BundleV2`/`LinkerContext` would be aliased
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
-        let bundle: *const BundleV2 = unsafe {
-            bun_core::from_field_ptr!(BundleV2, linker, ctx)
-        };
+        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx) };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
@@ -1274,9 +1284,7 @@ impl SourceMapDataTask {
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
-        let bundle: *const BundleV2 = unsafe {
-            bun_core::from_field_ptr!(BundleV2, linker, ctx)
-        };
+        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx) };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 
         // Use the default arena when using DevServer and the file
@@ -1442,7 +1450,7 @@ impl<'a> GenerateChunkCtx<'a> {
         // SAFETY: `self.c` is `&raw mut bundle.linker` set in
         // `generate_chunks_in_parallel`; container_of recovers the parent.
         // The bundle is valid for the link step.
-        unsafe { &*bun_core::from_field_ptr!(BundleV2, linker, self.c.cast_const()) }
+        unsafe { &*LinkerContext::bundle_v2_ptr(self.c) }
     }
 
     /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
@@ -1464,6 +1472,77 @@ pub struct PendingPartRange<'a> {
     pub task: ThreadPoolLib::Task,
     pub ctx: &'a GenerateChunkCtx<'a>,
     pub i: u32,
+}
+
+/// Shared prologue for `generate_compile_result_for_{js,css}_chunk` thread-pool
+/// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
+/// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
+/// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
+/// as a scopeguard that calls `unget()` on drop — Zig: `defer worker.unget()`).
+///
+/// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
+/// through `&GenerateChunkCtx` preserves the mutable provenance they were
+/// constructed with in `generate_chunks_in_parallel`. This mirrors Zig's
+/// `*LinkerContext` / `*Chunk` semantics where many `PendingPartRange` tasks
+/// share one `chunk_ctx` across worker threads.
+///
+/// # Safety
+/// `task` must point to the `task` field of a live `PendingPartRange` scheduled
+/// by `generate_chunks_in_parallel`. The returned `&PendingPartRange` borrows
+/// the task allocation for the callback's duration; the returned raw pointers
+/// carry the mutable provenance the `GenerateChunkCtx` was constructed with.
+/// Callers uphold the disjoint-write contract before materializing `&mut`:
+///   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique `i`,
+///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
+///   - all other access through `c` / `chunk` during codegen is read-only.
+#[inline]
+#[allow(clippy::type_complexity)]
+pub(crate) unsafe fn pending_part_range_prologue<'a>(
+    task: *mut ThreadPoolLib::Task,
+) -> (
+    &'a PendingPartRange<'a>,
+    *mut LinkerContext<'a>,
+    *mut Chunk,
+    scopeguard::ScopeGuard<
+        &'static mut crate::thread_pool::Worker,
+        impl FnOnce(&'static mut crate::thread_pool::Worker),
+    >,
+) {
+    // SAFETY: per fn contract — `task` is the intrusive `task` field.
+    let part_range: &PendingPartRange = unsafe {
+        &*bun_core::from_field_ptr!(PendingPartRange, task, task)
+    };
+    let ctx = part_range.ctx;
+    let c_ptr: *mut LinkerContext = ctx.c.cast();
+    let chunk_ptr: *mut Chunk = ctx.chunk;
+    let worker = crate::thread_pool::Worker::get(ctx.bundle());
+    let worker = scopeguard::guard(worker, |w| w.unget());
+    (part_range, c_ptr, chunk_ptr, worker)
+}
+
+/// `Environment.show_crash_trace` scoped-action guard for the
+/// `generate_compile_result_for_{js,css}_chunk` callbacks. Thin wrapper over
+/// [`bundle_generate_chunk_action`] + [`bun_crash_handler::scoped_action`].
+///
+/// # Safety
+/// `c` / `chunk` must carry valid provenance (see
+/// [`pending_part_range_prologue`]); transient `&` refs are materialized only
+/// to hand erased `*const ()` to the crash-trace vtable and are not retained
+/// past this expression.
+#[cfg(feature = "show_crash_trace")]
+#[inline]
+#[must_use]
+pub(crate) unsafe fn crash_guard_for_part_range(
+    c: *const LinkerContext,
+    chunk: *const Chunk,
+    part_range: &PartRange,
+) -> bun_crash_handler::ActionGuard {
+    // SAFETY: per fn contract.
+    bun_crash_handler::scoped_action(bundle_generate_chunk_action(
+        unsafe { &*c },
+        unsafe { &*chunk },
+        part_range,
+    ))
 }
 
 struct SubstituteChunkFinalPathResult {
@@ -1537,7 +1616,7 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
             // `transpiler_for_target` only reads `bundle.browser_transpiler`.
             let bundle = unsafe {
-                &mut *(bun_core::from_field_ptr!(BundleV2, linker, std::ptr::from_mut::<LinkerContext>(self)))
+                &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
             };
             &bundle.transpiler_for_target(Target::Browser).options.public_path
         } else {

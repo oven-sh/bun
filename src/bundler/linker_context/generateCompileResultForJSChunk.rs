@@ -22,35 +22,21 @@ use super::generate_code_for_file_in_chunk_js::{generate_code_for_file_in_chunk_
 // `PendingPartRange` is `Send` because its only non-auto-`Send` field is
 // `&GenerateChunkCtx` whose pointee is `unsafe impl Send + Sync`.
 pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: task is the `task` field embedded in a PendingPartRange (intrusive task node).
-    let part_range: &PendingPartRange = unsafe {
-        &*bun_core::from_field_ptr!(PendingPartRange, task, task)
-    };
-    let ctx = part_range.ctx;
-    // `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
-    // through `&GenerateChunkCtx` preserves the mutable provenance they were
-    // constructed with in `generate_chunks_in_parallel`. This mirrors Zig's
-    // `*LinkerContext` / `*Chunk` semantics where many `PendingPartRange`
-    // tasks share one `chunk_ctx` across worker threads.
-    let c_ptr: *mut LinkerContext = ctx.c.cast();
-    let chunk_ptr: *mut Chunk = ctx.chunk;
-
-    let worker = Worker::get(ctx.bundle());
-    // `defer worker.unget()` — explicit; Worker::get returns the thread-local worker.
-    let mut worker = scopeguard::guard(worker, |w| w.unget());
+    // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
+    // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
+    let (part_range, c_ptr, chunk_ptr, mut worker) =
+        unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
 
     // TODO(port): Environment.show_crash_trace — exact cfg key TBD; using feature = "show_crash_trace"
     #[cfg(feature = "show_crash_trace")]
-    // SAFETY: `c_ptr` / `chunk_ptr` carry valid mutable provenance (see extraction above);
-    // we materialize transient `&` refs only to hand erased `*const ()` to the crash-trace
-    // vtable — they are not retained past this expression.
-    let _crash_guard = bun_crash_handler::scoped_action(
-        crate::linker_context_mod::bundle_generate_chunk_action(
-            unsafe { &*c_ptr },
-            unsafe { &*chunk_ptr },
+    // SAFETY: `c_ptr` / `chunk_ptr` carry valid provenance (see helper above).
+    let _crash_guard = unsafe {
+        crate::linker_context_mod::crash_guard_for_part_range(
+            c_ptr,
+            chunk_ptr,
             &part_range.part_range,
-        ),
-    );
+        )
+    };
 
     #[cfg(feature = "show_crash_trace")]
     {
@@ -65,15 +51,9 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
         }
     }
 
-    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance (see extraction above). In the
-    // Zig source these are bare `*LinkerContext` / `*Chunk` shared across all part-range
-    // tasks for a chunk; concurrent tasks uphold a disjoint-write contract:
-    //   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique index `i`,
-    //   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
-    //   - all other access through `c` / `chunk` during codegen is read-only.
-    // No other live `&`/`&mut` to these allocations exists in this frame at this point
-    // (`bv2` and `ctx` are no longer used below).
-    let _ = ctx;
+    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
+    // contract is documented on `pending_part_range_prologue`. No other live
+    // `&`/`&mut` to these allocations exists in this frame at this point.
     let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
     let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
 

@@ -13,6 +13,7 @@ use bun_jsc::event_loop::EventLoop;
 // JSC-side ZigString carries `to_js` (the `bun_string::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::zig_string::ZigString as JscZigString;
+use bun_jsc::ZigStringJsc as _;
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{JSPromise, JSPromiseStrong};

@@ -421,6 +421,7 @@ unsafe extern "C" {
 
     // ── X509 ─────────────────────────────────────────────────────────────
     pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
+    pub fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
     pub fn X509_free(x509: *mut X509);
     pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
@@ -548,6 +549,10 @@ pub const ssl_renegotiate_once: ssl_renegotiate_mode_t = 1;
 pub const ssl_renegotiate_freely: ssl_renegotiate_mode_t = 2;
 pub const ssl_renegotiate_ignore: ssl_renegotiate_mode_t = 3;
 pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
+
+/// `SSL_OP_LEGACY_SERVER_CONNECT` — BoringSSL defines this as 0 (no-op flag);
+/// kept so callers can mirror the OpenSSL clear/set dance verbatim.
+pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
 
 /// `#define RSA_PKCS1_OAEP_PADDING 4` (`openssl/rsa.h`).
 pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
@@ -682,6 +687,11 @@ unsafe extern "C" {
     pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
     pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
+    pub fn SSL_get0_alpn_selected(ssl: *const SSL, out_data: *mut *const u8, out_len: *mut c_uint);
+    pub fn SSL_set_options(ssl: *mut SSL, options: u32) -> u32;
+    pub fn SSL_clear_options(ssl: *mut SSL, options: u32) -> u32;
+    pub fn SSL_enable_signed_cert_timestamps(ssl: *mut SSL);
+    pub fn SSL_enable_ocsp_stapling(ssl: *mut SSL);
     pub fn SSL_select_next_proto(
         out: *mut *mut u8,
         out_len: *mut u8,

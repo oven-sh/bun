@@ -1175,12 +1175,7 @@ pub enum OnResultRowError {
     ShortRead,
     JSError,
 }
-impl core::fmt::Display for OnResultRowError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl core::error::Error for OnResultRowError {}
+bun_core::impl_tag_error!(OnResultRowError);
 bun_core::named_error_set!(OnResultRowError);
 impl From<OnResultRowError> for AnyMySQLErrorT {
     fn from(e: OnResultRowError) -> Self {

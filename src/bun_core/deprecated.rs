@@ -91,173 +91,13 @@ pub fn buffered_reader_size<const SIZE: usize, R: DeprecatedRead>(
 // ──────────────────────────────────────────────────────────────────────────
 // SinglyLinkedList
 // ──────────────────────────────────────────────────────────────────────────
-
-/// A singly-linked list is headed by a single forward pointer. The elements
-/// are singly-linked for minimum space and pointer manipulation overhead at
-/// the expense of O(n) removal for arbitrary elements. New elements can be
-/// added to the list after an existing element or at the head of the list.
-/// A singly-linked list may only be traversed in the forward direction.
-/// Singly-linked lists are ideal for applications with large datasets and
-/// few or no removals or for implementing a LIFO queue.
-pub struct SinglyLinkedList<T> {
-    pub first: *mut SinglyLinkedNode<T>,
-}
-
-/// Node inside the linked list wrapping the actual data.
-// In Zig this is `SinglyLinkedList(T).Node`; Rust has no inherent nested struct
-// capturing the outer generic, so it lives alongside the list type.
-pub struct SinglyLinkedNode<T> {
-    pub next: *mut SinglyLinkedNode<T>,
-    pub data: T,
-}
-
-impl<T> SinglyLinkedNode<T> {
-    // `pub type Data = T;` — inherent assoc types are nightly-only. Dropped:
-    // Zig only used it for `@TypeOf` reflection; Rust callers name `T` directly.
-
-    /// Insert a new node after the current one.
-    ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
-    pub unsafe fn insert_after(&mut self, new_node: *mut SinglyLinkedNode<T>) {
-        // SAFETY: caller guarantees `new_node` is a valid, exclusively-accessed node
-        // not already linked elsewhere (intrusive list invariant from Zig).
-        unsafe {
-            (*new_node).next = self.next;
-        }
-        self.next = new_node;
-    }
-
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
-    /// Returns:
-    ///     node removed
-    pub unsafe fn remove_next(&mut self) -> *mut SinglyLinkedNode<T> {
-        let next_node = self.next;
-        if next_node.is_null() {
-            return ptr::null_mut();
-        }
-        // SAFETY: `next_node` is non-null and was linked by us; intrusive invariant
-        // guarantees it points at a live node.
-        self.next = unsafe { (*next_node).next };
-        next_node
-    }
-
-    /// Iterate over the singly-linked list from this node, until the final node is found.
-    /// This operation is O(N).
-    pub unsafe fn find_last(&mut self) -> *mut SinglyLinkedNode<T> {
-        let mut it: *mut SinglyLinkedNode<T> = self;
-        loop {
-            // SAFETY: `it` starts at `self` and only advances along `.next` links
-            // populated by this list; null terminates.
-            let next = unsafe { (*it).next };
-            if next.is_null() {
-                return it;
-            }
-            it = next;
-        }
-    }
-
-    /// Iterate over each next node, returning the count of all nodes except the starting one.
-    /// This operation is O(N).
-    pub unsafe fn count_children(&self) -> usize {
-        let mut count: usize = 0;
-        let mut it: *const SinglyLinkedNode<T> = self.next;
-        while !it.is_null() {
-            count += 1;
-            // SAFETY: `it` is non-null and reached via list links.
-            it = unsafe { (*it).next };
-        }
-        count
-    }
-
-    /// Reverse the list starting from this node in-place.
-    /// This operation is O(N).
-    pub unsafe fn reverse(indirect: &mut *mut SinglyLinkedNode<T>) {
-        if indirect.is_null() {
-            return;
-        }
-        let mut current: *mut SinglyLinkedNode<T> = *indirect;
-        // SAFETY: `current` is non-null (checked above) and every `next` we follow was
-        // linked by this list.
-        unsafe {
-            while !(*current).next.is_null() {
-                let next = (*current).next;
-                (*current).next = (*next).next;
-                (*next).next = *indirect;
-                *indirect = next;
-            }
-        }
-    }
-}
-
-impl<T> Default for SinglyLinkedList<T> {
-    fn default() -> Self {
-        Self { first: ptr::null_mut() }
-    }
-}
-
-impl<T> SinglyLinkedList<T> {
-    /// Insert a new node at the head.
-    ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
-    pub unsafe fn prepend(&mut self, new_node: *mut SinglyLinkedNode<T>) {
-        // SAFETY: caller guarantees `new_node` is valid and unlinked.
-        unsafe {
-            (*new_node).next = self.first;
-        }
-        self.first = new_node;
-    }
-
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
-    pub unsafe fn remove(&mut self, node: *mut SinglyLinkedNode<T>) {
-        if self.first == node {
-            // SAFETY: `node` equals `first`, which is a valid linked node.
-            self.first = unsafe { (*node).next };
-        } else {
-            // SAFETY: caller guarantees `node` is in this list, so `first` is non-null
-            // and the chain reaches `node` before null.
-            let mut current_elm = self.first;
-            unsafe {
-                while (*current_elm).next != node {
-                    current_elm = (*current_elm).next;
-                }
-                (*current_elm).next = (*node).next;
-            }
-        }
-    }
-
-    /// Remove and return the first node in the list.
-    ///
-    /// Returns:
-    ///     A pointer to the first node in the list.
-    pub unsafe fn pop_first(&mut self) -> *mut SinglyLinkedNode<T> {
-        let first = self.first;
-        if first.is_null() {
-            return ptr::null_mut();
-        }
-        // SAFETY: `first` is non-null and a valid linked node.
-        self.first = unsafe { (*first).next };
-        first
-    }
-
-    /// Iterate over all nodes, returning the count.
-    /// This operation is O(N).
-    pub unsafe fn len(&self) -> usize {
-        if !self.first.is_null() {
-            // SAFETY: `first` is non-null and a valid linked node.
-            1 + unsafe { (*self.first).count_children() }
-        } else {
-            0
-        }
-    }
-}
+//
+// DEDUP(D050): the Rust port of `SinglyLinkedList` / `SinglyLinkedNode` was
+// removed — the canonical implementation lives at
+// `bun_collections::pool::{SinglyLinkedList, Node}`. The two had diverged
+// (`data: T` vs `data: MaybeUninit<T>`, `*mut`-null vs `Option<*mut>` returns)
+// and this copy had zero callers outside its own unit test. New consumers
+// should depend on `bun_collections::pool` directly.
 
 // ──────────────────────────────────────────────────────────────────────────
 // DoublyLinkedList
@@ -497,35 +337,6 @@ pub use bun_hash::RapidHash;
 // misc
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun.JSError` — tier-0 mirror of the canonical JS error union
-// (`error{JSError, OutOfMemory, JSTerminated}` in Zig). The richer copy with
-// `From<JsTerminated>` etc. lives in `bun_jsc` (tier-6); this bare enum exists
-// so `js_error_to_write_error` can compile here without an upward dep cycle.
-// `bun_jsc` is expected to take ownership of the function in a later pass.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
-    Thrown,
-    /// Allocation failure; caller must throw an `OutOfMemoryError`.
-    OutOfMemory,
-    /// The VM is terminating (worker shutdown / `process.exit`).
-    Terminated,
-}
-
-// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.
-// test_runner/expect.rs carries a local copy bound to `bun_jsc::JsError`.
-pub fn js_error_to_write_error(e: JsError) -> crate::Error {
-    match e {
-        // TODO: this might lose a JSTerminated, causing m_terminationException problems
-        JsError::Terminated => crate::err!("WriteFailed"),
-        // TODO: this might lose a JSError, causing exception check problems
-        JsError::Thrown => crate::err!("WriteFailed"),
-        // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
-        // i.e. unconditionally abort.
-        JsError::OutOfMemory => bun_alloc::out_of_memory(),
-    }
-}
-
 // TODO(port): comptime reflection — Zig picks "{f}" if `ty` has a `format` method,
 // otherwise `fallback`. Rust has no `@hasDecl`; the equivalent is "does `T: Display`?".
 // Format specifiers also differ (Rust uses "{}" for both). Callers should be migrated
@@ -548,61 +359,8 @@ pub const fn auto_format_label<T>() -> &'static str {
 mod tests {
     use super::*;
 
-    fn snode(data: u32) -> SinglyLinkedNode<u32> {
-        SinglyLinkedNode { next: ptr::null_mut(), data }
-    }
-
     fn dnode(data: u32) -> DoublyLinkedNode<u32> {
         DoublyLinkedNode { prev: ptr::null_mut(), next: ptr::null_mut(), data }
-    }
-
-    #[test]
-    fn basic_singly_linked_list_test() {
-        // SAFETY: all nodes are stack-locals that outlive the list; intrusive-list invariants upheld by test sequencing
-        unsafe {
-            let mut list: SinglyLinkedList<u32> = SinglyLinkedList::default();
-
-            assert!(list.len() == 0);
-
-            let mut one = snode(1);
-            let mut two = snode(2);
-            let mut three = snode(3);
-            let mut four = snode(4);
-            let mut five = snode(5);
-
-            list.prepend(&mut two); // {2}
-            two.insert_after(&mut five); // {2, 5}
-            list.prepend(&mut one); // {1, 2, 5}
-            two.insert_after(&mut three); // {1, 2, 3, 5}
-            three.insert_after(&mut four); // {1, 2, 3, 4, 5}
-
-            assert!(list.len() == 5);
-
-            // Traverse forwards.
-            {
-                let mut it = list.first;
-                let mut index: u32 = 1;
-                while !it.is_null() {
-                    assert!((*it).data == index);
-                    index += 1;
-                    it = (*it).next;
-                }
-            }
-
-            let _ = list.pop_first(); // {2, 3, 4, 5}
-            list.remove(&mut five); // {2, 3, 4}
-            let _ = two.remove_next(); // {2, 4}
-
-            assert!((*list.first).data == 2);
-            assert!((*(*list.first).next).data == 4);
-            assert!((*(*list.first).next).next.is_null());
-
-            SinglyLinkedNode::reverse(&mut list.first);
-
-            assert!((*list.first).data == 4);
-            assert!((*(*list.first).next).data == 2);
-            assert!((*(*list.first).next).next.is_null());
-        }
     }
 
     #[test]

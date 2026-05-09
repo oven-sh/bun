@@ -418,16 +418,9 @@ pub mod generate_header {
         // PORT NOTE: Zig's `Environment.isLinux` is true on Android (it checks
         // the kernel, not the libc target), so all Linux-gated items below are
         // `any(linux, android)` — `for_linux()` itself branches on Android.
-        // PORT NOTE: §Concurrency — Zig `var` + `std.once` becomes `OnceLock`.
-        // The Zig source calls `std.c.uname` directly; the Rust port uses
-        // `libc::uname` for the same reason (`bun_sys` exposes no wrapper).
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub static LINUX_OS_NAME: OnceLock<libc::utsname> = OnceLock::new();
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        fn linux_os_name() -> &'static libc::utsname {
-            LINUX_OS_NAME.get_or_init(bun_core::ffi::uname)
-        }
+        // The cached `utsname` itself now lives in T1 at
+        // `bun_core::ffi::cached_uname()` so `bun_sys` feature probes share the
+        // same single `uname(2)` syscall.
 
         // ──────────────────────────────────────────────────────────────────
         // Platform OnceLock
@@ -548,7 +541,7 @@ pub mod generate_header {
         fn for_linux() -> analytics::Platform {
             // Confusingly, the "release" tends to contain the kernel version much more frequently than the "version" field.
             let release: &'static [u8] =
-                bun_core::ffi::c_field_bytes(&linux_os_name().release);
+                bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
 
             #[cfg(target_os = "android")]
             {
@@ -586,11 +579,8 @@ pub mod generate_header {
         // PORT NOTE: Rust's `libc` crate does provide `utsname`/`uname` on
         // FreeBSD, so the translate-c indirection is unnecessary here.
         #[cfg(target_os = "freebsd")]
-        static FREEBSD_OS_NAME: OnceLock<libc::utsname> = OnceLock::new();
-
-        #[cfg(target_os = "freebsd")]
         fn for_freebsd() -> analytics::Platform {
-            let name = FREEBSD_OS_NAME.get_or_init(bun_core::ffi::uname);
+            let name = bun_core::ffi::cached_uname();
             analytics::Platform {
                 os: analytics::OperatingSystem::freebsd,
                 version: bun_core::ffi::c_field_bytes(&name.release),

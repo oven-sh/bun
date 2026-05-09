@@ -5,7 +5,7 @@ use bun_logger::ImportKind;
 use bun_string::strings;
 
 use crate::zig_string::ZigString;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _};
 
 #[crate::JsClass]
 pub struct ResolveMessage {

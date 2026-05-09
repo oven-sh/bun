@@ -788,7 +788,7 @@ impl BunxCommand {
         bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
 
         // PORT NOTE: Zig's module-level `var path_buf` is a stack local here so
-        // `bun_core::which`'s returned slice can borrow it for the rest of exec().
+        // `bun_which::which`'s returned slice can borrow it for the rest of exec().
         let mut path_buf = PathBuffer::uninit();
         let top_level_dir: &[u8] = fs.top_level_dir;
 
@@ -834,7 +834,7 @@ impl BunxCommand {
                         // If the bin name is a guess derived from a scoped package name,
                         // exclude the original system $PATH so we don't match unrelated
                         // system binaries. Only search local node_modules/.bin directories.
-                        if let Some(d) = bun_core::which(
+                        if let Some(d) = bun_which::which(
                             &mut path_buf,
                             if initial_bin_name_is_a_guess { &local_bin_dirs } else { &path_for_bin_dirs },
                             if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
@@ -843,7 +843,7 @@ impl BunxCommand {
                             break 'find Some(d);
                         }
                     }
-                    bun_core::which(
+                    bun_which::which(
                         &mut path_buf,
                         bunx_cache_dir,
                         if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
@@ -966,7 +966,7 @@ impl BunxCommand {
                                 // local node_modules.
                                 let dest_or_cache2: Option<&ZStr> = 'find2: {
                                     if update_request.version.literal.is_empty() {
-                                        if let Some(d) = bun_core::which(
+                                        if let Some(d) = bun_which::which(
                                             &mut path_buf,
                                             &local_bin_dirs,
                                             if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
@@ -975,7 +975,7 @@ impl BunxCommand {
                                             break 'find2 Some(d);
                                         }
                                     }
-                                    bun_core::which(
+                                    bun_which::which(
                                         &mut path_buf,
                                         bunx_cache_dir,
                                         if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
@@ -1215,7 +1215,7 @@ impl BunxCommand {
         //
         //  1. Try the bin in the global cache
         //     Do not try $PATH because we already checked it above if we should
-        if let Some(destination) = bun_core::which(
+        if let Some(destination) = bun_which::which(
             &mut path_buf,
             bunx_cache_dir,
             if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },
@@ -1257,7 +1257,7 @@ impl BunxCommand {
                         unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
                     };
 
-                    if let Some(destination) = bun_core::which(
+                    if let Some(destination) = bun_which::which(
                         &mut path_buf,
                         bunx_cache_dir,
                         if !ignore_cwd.is_empty() { b"".as_slice() } else { top_level_dir },

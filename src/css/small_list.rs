@@ -2,10 +2,16 @@
 // The container itself now lives in `bun_collections::SmallList` (a thin
 // `#[repr(transparent)]` newtype over `smallvec::SmallVec<[T; N]>`). This file
 // keeps only the CSS-domain pieces that depend on `bun_css` types — the
-// `parse`/`to_css`/`is_compatible`/`deep_clone`/`eql`/`hash` extension trait,
-// the `ImageFallback` protocol, and the two `getFallbacks` comptime branches —
+// `ImageFallback` protocol and the two `getFallbacks` comptime branches —
 // which the orphan rule prevents from living on the foreign `SmallList` type
 // as inherent methods.
+//
+// `parse`/`to_css`/`is_compatible`/`deep_clone`/`eql`/`hash` for
+// `SmallList<T, N>` are provided by the blanket trait impls in
+// `crate::generics` (DeepClone / CssEql / CssHash / IsCompatible / Parse /
+// ToCss); the former `SmallListCssExt` extension trait that duplicated those
+// bodies has been removed — callers import the relevant `generics` trait
+// instead.
 //
 // The previous bespoke `Data`/`HeapData` union, `triple_mut`, `try_grow`,
 // `grow_capacity`, manual `Drop`, and `SmallListIntoIter` (~800 lines of
@@ -15,127 +21,11 @@
 
 pub use bun_collections::SmallList;
 
-use crate::generics as generic;
-use crate::css_parser::{CssResult, Delimiters, Parser};
-
 // ─── CSS-domain extension trait ────────────────────────────────────────────
-// These were inherent methods on the in-crate `SmallList`; now that the type is
-// foreign they're hoisted onto a trait. Callers add
-// `use crate::small_list::SmallListCssExt as _;`. The bodies are identical to
-// the blanket trait impls in `crate::generics` (DeepClone / CssEql / CssHash /
-// IsCompatible / Parse / ToCss for `SmallList`) — kept distinct so call sites
-// that name `SmallList::eql(a, b)` UFCS-style continue to resolve without
-// pulling the whole `generics` trait set into scope.
-pub trait SmallListCssExt<T, const N: usize> {
-    fn parse(input: &mut Parser) -> CssResult<SmallList<T, N>>
-    where
-        T: generic::Parse;
-    fn to_css(&self, dest: &mut crate::printer::Printer) -> Result<(), crate::PrintErr>
-    where
-        T: generic::ToCss;
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool
-    where
-        T: generic::IsCompatible;
-    fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> SmallList<T, N>
-    where
-        T: generic::DeepClone<'bump>;
-    fn eql(&self, rhs: &SmallList<T, N>) -> bool
-    where
-        T: generic::CssEql;
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
-    where
-        T: generic::CssHash;
-}
-
-impl<T, const N: usize> SmallListCssExt<T, N> for SmallList<T, N> {
-    fn parse(input: &mut Parser) -> CssResult<SmallList<T, N>>
-    where
-        T: generic::Parse,
-    {
-        let mut values = SmallList::<T, N>::default();
-        loop {
-            input.skip_whitespace();
-            match input.parse_until_before(Delimiters::COMMA, generic::parse::<T>) {
-                CssResult::Ok(v) => values.append(v),
-                CssResult::Err(e) => return CssResult::Err(e),
-            }
-            match input.next() {
-                CssResult::Err(_) => return CssResult::Ok(values),
-                CssResult::Ok(t) => {
-                    if matches!(t, crate::css_parser::Token::Comma) {
-                        continue;
-                    }
-                    unreachable!("Expected a comma");
-                }
-            }
-        }
-    }
-
-    fn to_css(&self, dest: &mut crate::printer::Printer) -> Result<(), crate::PrintErr>
-    where
-        T: generic::ToCss,
-    {
-        let length = self.len();
-        for (idx, val) in self.slice().iter().enumerate() {
-            generic::to_css(val, dest)?;
-            if idx + 1 < length as usize {
-                dest.delim(b',', false)?;
-            }
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool
-    where
-        T: generic::IsCompatible,
-    {
-        for v in self.slice() {
-            if !generic::is_compatible(v, browsers) {
-                return false;
-            }
-        }
-        true
-    }
-
-    #[inline]
-    fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> SmallList<T, N>
-    where
-        T: generic::DeepClone<'bump>,
-    {
-        let mut ret = SmallList::<T, N>::init_capacity(self.len());
-        for in_ in self.slice() {
-            ret.append(generic::deep_clone(in_, bump));
-        }
-        ret
-    }
-
-    #[inline]
-    fn eql(&self, rhs: &SmallList<T, N>) -> bool
-    where
-        T: generic::CssEql,
-    {
-        if self.len() != rhs.len() {
-            return false;
-        }
-        for (a, b) in self.slice().iter().zip(rhs.slice()) {
-            if !generic::eql(a, b) {
-                return false;
-            }
-        }
-        true
-    }
-
-    #[inline]
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
-    where
-        T: generic::CssHash,
-    {
-        for item in self.slice() {
-            generic::hash(item, hasher);
-        }
-    }
-}
+// (the `SmallListCssExt` trait that lived here was a verbatim duplicate of the
+// `generics::{DeepClone,CssEql,CssHash,IsCompatible,Parse,ToCss}` blanket impls
+// for `SmallList<T, N>` and has been removed — import the relevant `generics`
+// trait at the call site instead.)
 
 // ─── getFallbacks ──────────────────────────────────────────────────────────
 // The Zig version uses `@hasDecl(T, "getImage")` and `T == TextShadow` comptime

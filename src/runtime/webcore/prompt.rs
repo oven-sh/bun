@@ -3,6 +3,7 @@
 use bun_core::Output;
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::zig_string::ZigString;
+use bun_jsc::ZigStringJsc as _;
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]

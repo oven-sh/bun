@@ -546,9 +546,7 @@ pub fn compute_chunks(
     // SAFETY: `this` points to LinkerContext which is the `linker` field of BundleV2.
     // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
     // slices below hold disjoint immutable borrows into `this.graph`.
-    let bv2: &mut BundleV2 = unsafe {
-        &mut *(bun_core::from_field_ptr!(BundleV2, linker, this_ptr))
-    };
+    let bv2: &mut BundleV2 = unsafe { &mut *LinkerContext::bundle_v2_ptr(this_ptr) };
     let kinds = this.graph.files.items_entry_point_kind();
     let output_paths = this.graph.entry_points.items_output_path();
     // PORT NOTE: re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.

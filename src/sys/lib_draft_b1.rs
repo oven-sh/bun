@@ -3096,8 +3096,7 @@ pub fn get_fd_path<'a>(fd: Fd, out_buffer: &'a mut PathBuffer) -> Result<&'a mut
         if let Result::Err(err) = fcntl(fd, posix::F_GETPATH, out_buffer.as_mut_ptr() as usize) {
             return Result::Err(err);
         }
-        let len = out_buffer.iter().position(|&b| b == 0).unwrap_or(out_buffer.len());
-        return Result::Ok(&mut out_buffer[0..len]);
+        return Result::Ok(bun_core::ffi::slice_to_nul_mut(&mut out_buffer[..]));
     }
     #[cfg(target_os = "linux")]
     {

@@ -478,12 +478,7 @@ pub struct ErrorWithLocation<T> {
 pub enum MinifyErr {
     minify_err,
 }
-impl fmt::Display for MinifyErr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for MinifyErr {}
+bun_core::impl_tag_error!(MinifyErr);
 bun_core::named_error_set!(MinifyErr);
 
 pub type MinifyError = ErrorWithLocation<MinifyErrorKind>;

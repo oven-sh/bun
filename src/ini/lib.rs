@@ -1611,7 +1611,7 @@ pub fn load_npmrc(
                 let u = URL::parse(&dr.url);
                 break 'brk (Box::from(u.host), Box::from(u.pathname));
             }
-            let u = URL::parse(bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL);
+            let u = URL::parse(bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes());
             (Box::from(u.host), Box::from(u.pathname))
         };
 
@@ -1705,7 +1705,7 @@ pub fn load_npmrc(
                         token: Box::default(),
                         username: Box::default(),
                         url: Box::<[u8]>::from(
-                            bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL,
+                            bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
                         ),
                         email: Box::default(),
                     });

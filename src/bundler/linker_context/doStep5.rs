@@ -66,9 +66,7 @@ impl LinkerContext<'_> {
         // dispatch from `scanImportsAndExports`); `container_of` shape.
         // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
         // form `&mut BundleV2` here (concurrent tasks would alias it).
-        let bundle_v2: &BundleV2<'_> = unsafe {
-            &*(bun_core::from_field_ptr!(BundleV2, linker, this.cast_const()))
-        };
+        let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
         let worker = ThreadPool::Worker::get(bundle_v2);
         // Zig: `defer worker.unget()`. `Worker::get` returns the thread-local worker
         // (not RAII), so balance explicitly via scopeguard.

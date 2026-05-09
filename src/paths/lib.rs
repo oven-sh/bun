@@ -189,37 +189,40 @@ pub fn basename(p: &[u8]) -> &[u8] {
 }
 
 /// Port of `std.fs.path.basenamePosix` — strips trailing `/` then returns the
-/// final component. `\` is NOT a separator.
-pub fn basename_posix(p: &[u8]) -> &[u8] {
-    if p.is_empty() { return b""; }
+/// final component. `\` is NOT a separator. Generic over `u8`/`u16` so the
+/// `bun_string::immutable::paths` re-exports can serve wide-path callers.
+pub fn basename_posix<T: PathChar>(p: &[T]) -> &[T] {
+    if p.is_empty() { return &[]; }
     let mut end = p.len();
-    while end > 0 && p[end - 1] == b'/' { end -= 1; }
-    if end == 0 { return b""; }
+    while end > 0 && p[end - 1] == T::from_u8(b'/') { end -= 1; }
+    if end == 0 { return &[]; }
     let mut start = end;
-    while start > 0 && p[start - 1] != b'/' { start -= 1; }
+    while start > 0 && p[start - 1] != T::from_u8(b'/') { start -= 1; }
     &p[start..end]
 }
 
 /// Port of `std.fs.path.basenameWindows` — strips trailing `/`/`\`, treats a
 /// drive designator (`X:`) as a boundary, then returns the final component.
-pub fn basename_windows(p: &[u8]) -> &[u8] {
-    if p.is_empty() { return b""; }
+/// Generic over `u8`/`u16` so the `bun_string::immutable::paths` re-exports
+/// can serve wide-path callers.
+pub fn basename_windows<T: PathChar>(p: &[T]) -> &[T] {
+    if p.is_empty() { return &[]; }
     let mut end = p.len();
     loop {
         let c = p[end - 1];
-        if c == b'/' || c == b'\\' {
+        if c == T::from_u8(b'/') || c == T::from_u8(b'\\') {
             end -= 1;
-            if end == 0 { return b""; }
+            if end == 0 { return &[]; }
             continue;
         }
-        if c == b':' && end == 2 { return b""; }
+        if c == T::from_u8(b':') && end == 2 { return &[]; }
         break;
     }
     let mut start = end;
     while start > 0
-        && p[start - 1] != b'/'
-        && p[start - 1] != b'\\'
-        && !(p[start - 1] == b':' && start - 1 == 1)
+        && p[start - 1] != T::from_u8(b'/')
+        && p[start - 1] != T::from_u8(b'\\')
+        && !(p[start - 1] == T::from_u8(b':') && start - 1 == 1)
     {
         start -= 1;
     }
@@ -251,7 +254,7 @@ pub fn stem(p: &[u8]) -> &[u8] {
 
 // LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
 // are defined once in `bun_core` (T0) and re-exported here so `bun_paths` and
-// `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_core::which`
+// `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
 // etc. accept a buffer obtained from this crate without a pointer cast.
 pub use bun_core::{PathBuffer, WPathBuffer, MAX_PATH_BYTES, PATH_MAX_WIDE};
 /// Zig spells the wide-path capacity `bun.MAX_WPATH` (`libuv.zig` uses the same
@@ -356,6 +359,14 @@ pub mod Dirname {
 
 /// Convenience: `std.fs.path.dirname` for `u8` paths (returns `None` for
 /// root / no-parent). Prefer `Dirname::dirname::<T>` for width-generic use.
+///
+/// POSIX: re-exports `bun_core::dirname` (canonical u8 impl — identical state
+/// machine). Windows: keeps `path::dirname_generic`, whose
+/// `disk_designator_len_windows` covers UNC `\\server\share` roots that
+/// `bun_core::dirname`'s inline drive-prefix check does not.
+#[cfg(not(windows))]
+pub use bun_core::dirname;
+#[cfg(windows)]
 #[inline]
 pub fn dirname(p: &[u8]) -> Option<&[u8]> {
     path::dirname_generic(p)

@@ -11,27 +11,11 @@ use crate::{WStr, ZStr};
 use crate::immutable::CodePoint; // i32
 use crate::immutable::paths::wstr_in_buf;
 use crate::lexer as js_lexer;
+#[allow(unused_imports)]
 use bun_core::strings::{is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii};
 use bun_simdutf_sys::simdutf;
 
 bun_core::declare_scope!(strings, hidden);
-
-/// `Vec::spare_capacity_mut()` returns `&mut [MaybeUninit<u8>]`; the simdutf
-/// safe wrappers want `&mut [u8]`. This re-slices the full backing buffer from
-/// `len()` onward as initialized bytes.
-///
-/// SAFETY: callers MUST NOT read the returned slice and MUST `set_len()` to
-/// no more than the bytes actually written by the FFI call. The bytes are
-/// uninitialized; we only ever pass them to `*mut u8` writers.
-#[inline]
-unsafe fn spare_capacity_as_slice(v: &mut Vec<u8>) -> &mut [u8] {
-    let len = v.len();
-    let cap = v.capacity();
-    // SAFETY: `cap - len` bytes are allocated past `as_mut_ptr().add(len)`;
-    // u8 has no validity invariant beyond initialization, and the caller
-    // contract forbids reading before write.
-    unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr().add(len), cap - len) }
-}
 
 /// Mirrors Zig `ArrayList.allocatedSlice()` — the full backing buffer
 /// `[0..capacity)`, ignoring `len()`. Used where Zig writes simdutf output to
@@ -483,17 +467,21 @@ where
 }
 
 // ───────────────────────────── UTF16 → UTF8 ─────────────────────────────
-
-pub(super) fn convert_utf16_to_utf8(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
-    // Zig writes into `list.allocatedSlice()` (offset 0..capacity) then sets
-    // `list.items.len = result.count` — i.e. discards any prior contents.
-    let result = simdutf_utf16le_into_allocated(&mut list, utf16);
-    if result.status == simdutf::Status::SURROGATE {
-        // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-        return to_utf8_list_with_type_bun::<false>(&mut list, utf16).map(|_| list);
-    }
-    Ok(list)
-}
+//
+// The transcoding suite (`convert_utf16_to_utf8{,_append}`, `to_utf8_alloc{,_z}`,
+// `to_utf8_alloc_with_type`, `to_utf8_list_with_type`, `to_utf8_append_to_list`,
+// `to_utf8_from_latin1{,_z}`, `allocate_latin1_into_utf8_with_list`) lives
+// canonically in `bun_core::strings` (T0) and is re-exported by
+// `crate::immutable`. The `pub(super)` copies that previously lived here were
+// shadowed dead code (the parent module re-exports the bun_core versions, not
+// these) and have been deleted in D056.
+//
+// Kept below: the two variants bun_core does NOT provide —
+//   * `convert_utf16_to_utf8_without_invalid_surrogate_pairs` (hard-error on
+//     unpaired surrogates instead of U+FFFD replacement), and
+//   * `to_utf8_list_with_type_bun::<SKIP_TRAILING_REPLACEMENT>` (returns the
+//     dangling lead surrogate instead of replacing it — streaming TextEncoder
+//     contract).
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum SurrogatePairError {
@@ -512,95 +500,6 @@ pub(super) fn convert_utf16_to_utf8_without_invalid_surrogate_pairs(
         return Err(SurrogatePairError::SurrogatePair);
     }
     Ok(list)
-}
-
-pub(super) fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) -> Result<(), AllocError> {
-    // SAFETY: simdutf only writes into the spare-capacity output buffer; on
-    // non-SURROGATE it wrote `result.count` bytes after the current len.
-    let result = unsafe {
-        let r = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, spare_capacity_as_slice(list));
-        if r.status != simdutf::Status::SURROGATE {
-            list.set_len(list.len() + r.count);
-        }
-        r
-    };
-
-    if result.status == simdutf::Status::SURROGATE {
-        // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-        let _ = to_utf8_list_with_type_bun::<false>(list, utf16)?;
-    }
-    Ok(())
-}
-
-pub(super) fn to_utf8_alloc_with_type_without_invalid_surrogate_pairs(
-    utf16: &[u16],
-) -> Result<Vec<u8>, AllocError> {
-    // previously, this function was an exact copy of `toUTF8AllocWithType`.
-    // TODO: actually make this function behave differently?
-    to_utf8_alloc_with_type(utf16)
-}
-
-pub(super) fn to_utf8_alloc_with_type(utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
-    if bun_core::FeatureFlags::USE_SIMDUTF {
-        let length = simdutf::length::utf8::from::utf16::le(utf16);
-        // add 16 bytes of padding for SIMDUTF
-        let list = Vec::with_capacity(length + 16);
-        let list = convert_utf16_to_utf8(list, utf16)?;
-        return Ok(list);
-    }
-
-    let list = Vec::with_capacity(utf16.len());
-    let list = to_utf8_list_with_type(list, utf16)?;
-    Ok(list)
-}
-
-pub(super) fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
-    if bun_core::FeatureFlags::USE_SIMDUTF {
-        let length = simdutf::length::utf8::from::utf16::le(utf16);
-        list.reserve_exact((length + 16).saturating_sub(list.len()));
-        let buf = convert_utf16_to_utf8(list, utf16)?;
-
-        // Commenting out because `convertUTF16ToUTF8` may convert to WTF-8
-        // which uses 3 bytes for invalid surrogates, causing the length to not
-        // match from simdutf.
-        // if (Environment.allow_assert) {
-        //     bun.unsafeAssert(buf.items.len == length);
-        // }
-
-        return Ok(buf);
-    }
-
-    unreachable!("not implemented");
-}
-
-pub(super) fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) -> Result<(), AllocError> {
-    if !bun_core::FeatureFlags::USE_SIMDUTF {
-        unreachable!("not implemented");
-    }
-    let length = simdutf::length::utf8::from::utf16::le(utf16);
-    list.reserve(length + 16);
-    convert_utf16_to_utf8_append(list, utf16)?;
-    Ok(())
-}
-
-pub(super) fn to_utf8_from_latin1(latin1: &[u8]) -> Result<Option<Vec<u8>>, AllocError> {
-    if is_all_ascii(latin1) {
-        return Ok(None);
-    }
-
-    let list = Vec::with_capacity(latin1.len());
-    Ok(Some(allocate_latin1_into_utf8_with_list(list, 0, latin1)?))
-}
-
-pub(super) fn to_utf8_from_latin1_z(latin1: &[u8]) -> Result<Option<Vec<u8>>, AllocError> {
-    if is_all_ascii(latin1) {
-        return Ok(None);
-    }
-
-    let list = Vec::with_capacity(latin1.len() + 1);
-    let mut list1 = allocate_latin1_into_utf8_with_list(list, 0, latin1)?;
-    list1.push(0);
-    Ok(Some(list1))
 }
 
 /// Returns `Some(u16)` (the trailing lead surrogate) when `SKIP_TRAILING_REPLACEMENT` and a
@@ -664,150 +563,18 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
 
 pub use bun_core::strings::EncodeIntoResult;
 
+/// Thin wrapper over the canonical T0 `bun_core::strings::allocate_latin1_into_utf8_with_list`.
+/// Kept `Result`-typed for source-compat with existing callers (TextEncoder /
+/// encoding.rs / ConsoleObject) — the bun_core impl is infallible per
+/// PORTING.md §Allocators (panic-on-OOM), so this is always `Ok`.
 pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> {
-    let list = Vec::with_capacity(latin1_.len());
-    let foo = allocate_latin1_into_utf8_with_list(list, 0, latin1_)?;
-    Ok(foo)
+    Ok(bun_core::strings::allocate_latin1_into_utf8_with_list(
+        Vec::with_capacity(latin1_.len()),
+        0,
+        latin1_,
+    ))
 }
 
-pub(super) fn allocate_latin1_into_utf8_with_list(
-    mut list: Vec<u8>,
-    offset_into_list: usize,
-    latin1_: &[u8],
-) -> Result<Vec<u8>, AllocError> {
-    let mut latin1 = latin1_;
-    let mut i: usize = offset_into_list;
-    list.reserve(latin1.len());
-
-    while !latin1.is_empty() {
-        debug_assert!(i < list.capacity());
-        // SAFETY: we operate on the raw backing buffer between `i` and `capacity`, mirroring Zig's
-        // `list.items.ptr[i..list.capacity]`. Bytes are written before being observed.
-        let mut buf: &mut [u8] = unsafe {
-            core::slice::from_raw_parts_mut(list.as_mut_ptr().add(i), list.capacity() - i)
-        };
-
-        'inner: {
-            // PERF(port): Zig used @Vector(ascii_vector_size, u8) + @reduce(.Max). Rust portable_simd
-            // is unstable; fall back to the u64 SWAR path which the Zig also contains. Profile in Phase B.
-            let mut count = latin1.len() / ASCII_VECTOR_SIZE;
-            while count > 0 {
-                count -= 1;
-                // Emulate `@reduce(.Max, vec) > 127` by scanning the chunk for a high bit.
-                let chunk = &latin1[..ASCII_VECTOR_SIZE];
-                let mut has_high = false;
-                for &b in chunk {
-                    if b > 127 {
-                        has_high = true;
-                        break;
-                    }
-                }
-
-                if has_high {
-                    const SIZE: usize = core::mem::size_of::<u64>();
-                    // zig or LLVM doesn't do @ctz nicely with SIMD
-                    if ASCII_VECTOR_SIZE >= 8 {
-                        {
-                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                            // https://dotat.at/@/2022-06-27-tolower-swar.html
-                            let mask = bytes & 0x8080808080808080;
-
-                            if mask > 0 {
-                                let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                                debug_assert!(latin1[first_set_byte] >= 127);
-
-                                buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-                                buf = &mut buf[first_set_byte..];
-                                latin1 = &latin1[first_set_byte..];
-                                break 'inner;
-                            }
-
-                            buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-                            latin1 = &latin1[SIZE..];
-                            buf = &mut buf[SIZE..];
-                        }
-
-                        if ASCII_VECTOR_SIZE >= 16 {
-                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                            // https://dotat.at/@/2022-06-27-tolower-swar.html
-                            let mask = bytes & 0x8080808080808080;
-
-                            if mask > 0 {
-                                let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                                debug_assert!(latin1[first_set_byte] >= 127);
-
-                                buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-                                buf = &mut buf[first_set_byte..];
-                                latin1 = &latin1[first_set_byte..];
-                                break 'inner;
-                            }
-                        }
-                    }
-                    unreachable!();
-                }
-
-                buf[..ASCII_VECTOR_SIZE].copy_from_slice(chunk);
-                latin1 = &latin1[ASCII_VECTOR_SIZE..];
-                buf = &mut buf[ASCII_VECTOR_SIZE..];
-            }
-
-            while latin1.len() >= 8 {
-                const SIZE: usize = core::mem::size_of::<u64>();
-
-                let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
-                // https://dotat.at/@/2022-06-27-tolower-swar.html
-                let mask = bytes & 0x8080808080808080;
-
-                if mask > 0 {
-                    let first_set_byte = (mask.trailing_zeros() / 8) as usize;
-                    debug_assert!(latin1[first_set_byte] >= 127);
-
-                    buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-                    latin1 = &latin1[first_set_byte..];
-                    buf = &mut buf[first_set_byte..];
-                    break 'inner;
-                }
-
-                buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
-                latin1 = &latin1[SIZE..];
-                buf = &mut buf[SIZE..];
-            }
-
-            {
-                debug_assert!(latin1.len() < 8);
-                while !latin1.is_empty() && latin1[0] < 128 {
-                    buf[0] = latin1[0];
-                    buf = &mut buf[1..];
-                    latin1 = &latin1[1..];
-                }
-            }
-        }
-
-        while !latin1.is_empty() && latin1[0] > 127 {
-            // PORT NOTE: reshaped for borrowck — recompute `i` from buf offset.
-            i = (buf.as_ptr() as usize) - (list.as_ptr() as usize);
-            // SAFETY: `i` bytes have been written into the backing buffer.
-            unsafe { list.set_len(i) };
-            list.reserve(2 + latin1.len());
-            // SAFETY: see top of loop.
-            buf = unsafe {
-                core::slice::from_raw_parts_mut(list.as_mut_ptr().add(i), list.capacity() - i)
-            };
-            let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[0]);
-            buf[..2].copy_from_slice(&two);
-            latin1 = &latin1[1..];
-            buf = &mut buf[2..];
-        }
-
-        i = (buf.as_ptr() as usize) - (list.as_ptr() as usize);
-        // SAFETY: `i` bytes have been written into the backing buffer.
-        unsafe { list.set_len(i) };
-    }
-
-    bun_core::scoped_log!(strings, "Latin1 {} -> UTF8 {}", latin1_.len(), i);
-
-    Ok(list)
-}
 
 #[derive(Clone, Copy)]
 pub(super) struct UTF16Replacement {
@@ -1037,18 +804,6 @@ pub(super) fn eql_utf16(self_: &[u8], other: &[u16]) -> bool {
     }
 }
 
-pub(super) fn to_utf8_alloc(js: &[u16]) -> Result<Vec<u8>, AllocError> {
-    to_utf8_alloc_with_type(js)
-}
-
-pub(super) fn to_utf8_alloc_z(js: &[u16]) -> Result<bun_core::ZBox, AllocError> {
-    let mut list = Vec::new();
-    to_utf8_append_to_list(&mut list, js)?;
-    list.push(0);
-    // Trailing NUL just appended; bytes [0..len-1] form the slice.
-    Ok(bun_core::ZBox::from_vec_with_nul(list))
-}
-
 #[inline]
 pub(super) fn append_utf8_machine_word_to_utf16_machine_word(
     output: &mut [u16; core::mem::size_of::<usize>() / 2],
@@ -1204,7 +959,7 @@ impl BOM {
                         trimmed_bytes.len() / 2,
                     )
                 };
-                let out = to_utf8_alloc(trimmed_bytes_u16)?;
+                let out = bun_core::strings::to_utf8_alloc(trimmed_bytes_u16);
                 drop(bytes);
                 Ok(out)
             }
@@ -1244,7 +999,7 @@ impl BOM {
                         trimmed_bytes.len() / 2,
                     )
                 };
-                let out = to_utf8_alloc(trimmed_bytes_u16)?;
+                let out = bun_core::strings::to_utf8_alloc(trimmed_bytes_u16);
                 list.clear();
                 list.extend_from_slice(&out);
                 // TODO(port): Zig returned `out` (the new alloc); returning list slice instead to honor

@@ -3,7 +3,7 @@
 use bun_alloc::ArenaVecExt as _;
 use crate as css;
 use crate::{Parser, Printer, PrintErr, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext};
-use crate::small_list::SmallListCssExt as _;
+use crate::generics::{CssEql, DeepClone};
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::length::LengthPercentageOrAuto;

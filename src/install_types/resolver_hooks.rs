@@ -1341,6 +1341,8 @@ impl DependencyGroup {
         field: b"peer_dependencies",
         behavior: Behavior::PEER,
     };
+    pub const WORKSPACES: Self =
+        Self { prop: b"workspaces", field: b"workspaces", behavior: Behavior::WORKSPACE };
 }
 
 // ─── EnqueueResult ────────────────────────────────────────────────────────

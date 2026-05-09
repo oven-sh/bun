@@ -891,12 +891,7 @@ pub enum SetError {
     OutOfMemory,
     Clobber,
 }
-impl core::fmt::Display for SetError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl core::error::Error for SetError {}
+bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
 impl From<SetError> for bun_core::Error {
     fn from(e: SetError) -> Self {

@@ -9,7 +9,7 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::fmt::Write as _;
 use bun_io::Write as _;
-use crate::ZigStringJsc as _;
+use crate::{ComptimeStringMapExt as _, ZigStringJsc as _};
 
 use bun_collections::HashMap;
 use bun_core::{Environment, Output, StackCheck};
@@ -4712,17 +4712,12 @@ pub mod formatter {
                 JSValue::UNDEFINED
             };
 
-            // PORT NOTE: Zig `EventType.map.fromJS` is `ComptimeEnumMap.fromJS`;
-            // here the value is already known to be a JS string (or `undefined`),
-            // so we coerce to a `ZigString` and look it up in the static `phf`
-            // map directly.
-            let event_type = match {
-                let mut s = ZigString::init(b"");
-                if event_type_value.is_string() {
-                    event_type_value.to_zig_string(&mut s, self.global_this)?;
-                }
-                EventType::MAP.get(s.slice()).copied().unwrap_or(EventType::unknown)
-            } {
+            // `event_type_value` is a JS string or `undefined` (see break-block
+            // above); UNDEFINED → "undefined" → not in MAP → `unknown`.
+            let event_type = match EventType::MAP
+                .from_js(self.global_this, event_type_value)?
+                .unwrap_or(EventType::unknown)
+            {
                 evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
                 _ => {
                     if *remove_before_recurse {

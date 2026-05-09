@@ -54,6 +54,5 @@ pub unsafe fn ntop(
     if c_ares::ares_inet_ntop(af, src, dst.as_mut_ptr(), dst.len() as c_ares::ares_socklen_t).is_null() {
         return None;
     }
-    let n = dst.iter().position(|&b| b == 0).unwrap_or(dst.len());
-    Some(&dst[..n])
+    Some(bun_core::ffi::slice_to_nul(dst))
 }

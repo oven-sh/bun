@@ -16,7 +16,7 @@ pub use bun_js_parser::Index;
 pub use bun_js_parser::Ref;
 
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
-pub type IndexInt = u32;
+pub use crate::IndexInt;
 
 pub struct Graph {
     // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170

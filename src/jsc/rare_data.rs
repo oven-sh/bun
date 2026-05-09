@@ -389,20 +389,11 @@ impl PathBuf {
     // must revisit caller semantics for inputs exceeding the large tier.
     pub fn get(&mut self, min_len: usize) -> &mut [u8] {
         if min_len <= 2 * Self::S {
-            &mut **self.small.get_or_insert_with(|| {
-                // SAFETY: zeroed [u8; N] is valid
-                unsafe { Box::<[u8; 2 * MAX_PATH_BYTES]>::new_zeroed().assume_init() }
-            })
+            &mut **self.small.get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
         } else if min_len <= 8 * Self::S {
-            &mut **self.medium.get_or_insert_with(|| {
-                // SAFETY: zeroed [u8; N] is valid
-                unsafe { Box::<[u8; 8 * MAX_PATH_BYTES]>::new_zeroed().assume_init() }
-            })
+            &mut **self.medium.get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
         } else {
-            &mut **self.large.get_or_insert_with(|| {
-                // SAFETY: zeroed [u8; N] is valid
-                unsafe { Box::<[u8; 32 * MAX_PATH_BYTES]>::new_zeroed().assume_init() }
-            })
+            &mut **self.large.get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
         }
     }
 }
@@ -634,10 +625,7 @@ impl RareData {
 
     // ── lazy-init: misc heap slots ────────────────────────────────────────
     pub fn pipe_read_buffer(&mut self) -> &mut PipeReadBuffer {
-        self.temp_pipe_read_buffer.get_or_insert_with(|| {
-            // SAFETY: zeroed [u8; N] is valid.
-            unsafe { Box::<PipeReadBuffer>::new_zeroed().assume_init() }
-        })
+        self.temp_pipe_read_buffer.get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
     }
 
     pub fn file_polls(&mut self, _vm: &mut VirtualMachine) -> &mut FilePollStore {

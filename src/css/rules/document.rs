@@ -17,15 +17,10 @@ impl<R> MozDocumentRule<R> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_str("@-moz-document url-prefix()")?;
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-        dest.newline()?;
-        self.rules.to_css(dest)?;
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')?;
-        Ok(())
+        dest.block(|d| {
+            d.newline()?;
+            self.rules.to_css(d)
+        })
     }
 }
 

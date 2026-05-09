@@ -6,6 +6,7 @@ use bun_str::{strings, OwnedString};
 use jsc::text_codec::TextCodec;
 use jsc::zig_string::ZigString;
 use jsc::StringJsc as _;
+use jsc::ZigStringJsc as _;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -283,7 +284,7 @@ impl TextDecoder {
 
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
                 // PERF(port): heap::alloc transfers a tight allocation (no excess capacity).
-                Ok(ZigString::to_external_u16(
+                Ok(jsc::zig_string::to_external_u16(
                     bun_core::heap::into_raw(bytes).cast::<u16>(),
                     out.written as usize,
                     global_this,
@@ -353,7 +354,7 @@ impl TextDecoder {
                     let len = decoded.len();
                     // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile in Phase B
                     let ptr = decoded.leak().as_mut_ptr();
-                    return Ok(ZigString::to_external_u16(ptr, len, global_this));
+                    return Ok(jsc::zig_string::to_external_u16(ptr, len, global_this));
                 }
 
                 debug_assert!(input.is_empty() || !deinit);
@@ -403,7 +404,7 @@ impl TextDecoder {
                 let len = decoded.len();
                 // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile in Phase B
                 let ptr = decoded.leak().as_mut_ptr();
-                Ok(ZigString::to_external_u16(ptr, len, global_this))
+                Ok(jsc::zig_string::to_external_u16(ptr, len, global_this))
             }
 
             // Handle all other encodings using WebKit's TextCodec

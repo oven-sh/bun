@@ -408,8 +408,10 @@ pub static CMD: std::sync::OnceLock<command::Tag> = std::sync::OnceLock::new();
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
-pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+///
+/// Canonical static lives in `bun_install` so both crates read/write the SAME
+/// flag (`RunCommand::create_fake_temporary_node_executable` lives there).
+pub use bun_install::PRETEND_TO_BE_NODE;
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 pub static IS_BUNX_EXE: core::sync::atomic::AtomicBool =
@@ -927,20 +929,7 @@ pub mod command {
             if let Some(fd_str) = bun_core::env_var::BUN_INTERNAL_WEBVIEW_HOST::get() {
                 // Zig: `std.fmt.parseInt(u31, fd_str, 10)` — parse base-10 directly
                 // from bytes; env var values are `&[u8]`, not assumed UTF-8.
-                let fd: u32 = match (|| {
-                    if fd_str.is_empty() {
-                        return None;
-                    }
-                    let mut acc: u32 = 0;
-                    for &b in fd_str {
-                        let d = u32::from(b.wrapping_sub(b'0'));
-                        if d > 9 {
-                            return None;
-                        }
-                        acc = acc.checked_mul(10)?.checked_add(d)?;
-                    }
-                    Some(acc)
-                })() {
+                let fd: u32 = match bun_string::strings::parse_int::<u32>(fd_str, 10).ok() {
                     Some(v) if v <= i32::MAX as u32 => v,
                     _ => Output::panic(format_args!(
                         "Invalid BUN_INTERNAL_WEBVIEW_HOST fd: {}",
@@ -1065,6 +1054,7 @@ pub mod command {
                         Global::exit(0);
                     }
                 }
+                use super::shell_completions::ShellCompletionsExt as _;
                 let shell = bun_core::env_var::SHELL::platform_get()
                     .map(super::shell_completions::Shell::from_env)
                     .unwrap_or_default();

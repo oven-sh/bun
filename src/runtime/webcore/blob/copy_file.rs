@@ -1371,7 +1371,14 @@ impl<'a> CopyFileWindows<'a> {
 
         let mut pathbuf1 = PathBuffer::uninit();
         let mut pathbuf2 = PathBuffer::uninit();
-        // PORT NOTE: reshaped for borrowck — borrow file stores after computing paths
+        // PORT NOTE: capture the raw `self` pointer before borrowing the file
+        // stores. `slice_z` ties the returned `&ZStr` lifetime to `&self`, so
+        // `new_path`/`old_path` keep `self.{destination,source}_file_store`
+        // borrowed across the `uv_fs_copyfile` call below; taking
+        // `core::ptr::from_mut(self)` there would require an exclusive reborrow
+        // of all of `*self` and conflict. The pointer is only stored in
+        // `io_request.data` for the libuv callback to recover `self`.
+        let this_ptr: *mut c_void = core::ptr::from_mut(self).cast::<c_void>();
         let destination_file_store = &mut self.destination_file_store.data.as_file();
         let source_file_store = &mut self.source_file_store.data.as_file();
 
@@ -1470,7 +1477,7 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
         let loop_ = self.event_loop.uv_loop();
-        self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
+        self.io_request.data = this_ptr;
 
         // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is owned by `self`,
         // `old_path`/`new_path` are NUL-terminated (from `slice_z`/`ZStr`), and

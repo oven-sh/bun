@@ -396,12 +396,13 @@ impl BlobExt for Blob {
             read_file::ReadFileUV::start::<Handler<'_, F>>(
                 // `bun_vm()` returns the live VM for this global; the event
                 // loop outlives any in-flight async fs request. `start<H>`
-                // takes the raw `*mut EventLoop` and erases `*mut H` itself.
+                // takes the already-erased `*anyopaque` (caller casts); `H`
+                // (turbofish) supplies `Handler::run` for the callback.
                 global.bun_vm().event_loop(),
                 self.store.as_ref().expect("infallible: store present").clone(),
                 self.offset,
                 self.size,
-                handler,
+                handler.cast(),
             );
             return promise_value;
         }

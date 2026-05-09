@@ -544,12 +544,11 @@ pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
             if v.tag() == bun_str::Tag::Empty {
                 break 'str_ EMPTY_W.as_ptr();
             }
-            let wtf2 = v.value().wtf_string_impl();
-            let len2: usize = if wtf2.is_8bit() {
-                strings::copy_latin1_into_utf16(&mut buf2, wtf2.latin1_slice()).written
+            let len2: usize = if v.is_8bit() {
+                strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written as usize
             } else {
-                buf2[0..wtf2.length()].copy_from_slice(wtf2.utf16_slice());
-                wtf2.length()
+                buf2[0..v.length()].copy_from_slice(v.utf16());
+                v.length()
             };
             buf2[len2] = 0;
             buf2.as_ptr()

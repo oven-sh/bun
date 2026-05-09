@@ -3592,9 +3592,15 @@ macro_rules! export_path_host_fn {
                 args_ptr: *const JSValue,
                 args_len: u16,
             ) -> JSValue {
+                // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
+                // CallFrame (NodePath.cpp). Borrowed for the synchronous call.
+                // (Body kept in sync with the non-Windows arm below — bughunt
+                // changed the target signature to take a slice but only updated
+                // one cfg arm.)
+                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
                 crate::jsc::host_fn::to_js_host_call(
                     global,
-                    || $target(global, is_windows, args_ptr, args_len),
+                    || $target(global, is_windows, args),
                 )
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]

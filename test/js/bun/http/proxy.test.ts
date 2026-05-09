@@ -1062,11 +1062,33 @@ describe("fetch through SOCKS5 proxy", () => {
   });
 
   test("socks5:// with unresolvable hostname rejects request", async () => {
-    expect(
+    await expect(
       fetch(`http://this-hostname-does-not-exist-bun-test.invalid:${httpServer.port}/`, {
         proxy: `socks5://127.0.0.1:${socksPort}`,
       }),
     ).rejects.toThrow();
+  });
+
+  test("socks5:// with password but no username rejects request", async () => {
+    await expect(
+      fetch(`http://127.0.0.1:${httpServer.port}/`, {
+        proxy: `socks5://:proxy_pass@127.0.0.1:${socksPort}`,
+      }),
+    ).rejects.toThrow("SOCKS proxy credentials must include a username");
+  });
+
+  test("socks5:// maps general proxy failure", async () => {
+    const failingProxy = createSocksProxy({ connectFailureCode: 0x01 });
+    const failingPort = await startProxy(failingProxy);
+    try {
+      await expect(
+        fetch(`http://127.0.0.1:${httpServer.port}/`, {
+          proxy: `socks5://127.0.0.1:${failingPort}`,
+        }),
+      ).rejects.toThrow("SOCKS proxy reported a general failure.");
+    } finally {
+      failingProxy.close();
+    }
   });
 
   test("socks5h:// with hostname sends domain to proxy (ATYP 0x03)", async () => {

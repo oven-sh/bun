@@ -22,6 +22,7 @@ export interface SocksProxyRecord {
 export interface SocksProxyOptions {
   requireAuth?: boolean;
   records?: SocksProxyRecord[];
+  connectFailureCode?: number;
 }
 
 /**
@@ -278,6 +279,11 @@ export function createSocksProxy(options: SocksProxyOptions = {}): net.Server {
           const remaining = buffer.subarray(offset + 2);
           buffer = Buffer.alloc(0);
           options.records?.push({ atyp, host, port, ...auth });
+
+          if (options.connectFailureCode != null) {
+            fail(options.connectFailureCode);
+            return;
+          }
 
           targetSocket = net.connect(port, host, () => {
             clientSocket.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));

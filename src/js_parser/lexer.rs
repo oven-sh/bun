@@ -177,12 +177,7 @@ pub enum Error {
     // the local error set; modeled here as an extra variant.
     Backtrack,
 }
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(<&'static str>::from(*self))
-    }
-}
-impl core::error::Error for Error {}
+bun_core::impl_tag_error!(Error);
 bun_core::oom_from_alloc!(Error);
 bun_core::named_error_set!(Error);
 

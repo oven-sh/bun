@@ -208,6 +208,24 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn apply_coverage_reporter_item(&mut self, item: &Expr) -> Result<(), bun_core::Error> {
+        let item_str = item.as_string(self.bump).unwrap_or(b"");
+        if item_str == b"text" {
+            self.ctx.test_options.coverage.reporters.text = true;
+        } else if item_str == b"lcov" {
+            self.ctx.test_options.coverage.reporters.lcov = true;
+        } else {
+            self.add_error_format(
+                item.loc,
+                format_args!(
+                    "Invalid coverage reporter \"{}\"",
+                    bstr::BStr::new(item_str)
+                ),
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn expect(&mut self, expr: &Expr, token: ExprTag) -> Result<(), bun_core::Error> {
         if expr.data.tag() != token {
             return self.add_error_format(
@@ -453,20 +471,7 @@ impl<'a> Parser<'a> {
                             lcov: false,
                         };
                         if let ExprData::EString(_) = &expr.data {
-                            let item_str = expr.as_string(self.bump).unwrap_or(b"");
-                            if item_str == b"text" {
-                                self.ctx.test_options.coverage.reporters.text = true;
-                            } else if item_str == b"lcov" {
-                                self.ctx.test_options.coverage.reporters.lcov = true;
-                            } else {
-                                self.add_error_format(
-                                    expr.loc,
-                                    format_args!(
-                                        "Invalid coverage reporter \"{}\"",
-                                        bstr::BStr::new(item_str)
-                                    ),
-                                )?;
-                            }
+                            self.apply_coverage_reporter_item(&expr)?;
                             break 'brk;
                         }
 
@@ -475,20 +480,7 @@ impl<'a> Parser<'a> {
                         let items = arr.items.slice();
                         for item in items {
                             self.expect_string(item)?;
-                            let item_str = item.as_string(self.bump).unwrap_or(b"");
-                            if item_str == b"text" {
-                                self.ctx.test_options.coverage.reporters.text = true;
-                            } else if item_str == b"lcov" {
-                                self.ctx.test_options.coverage.reporters.lcov = true;
-                            } else {
-                                self.add_error_format(
-                                    item.loc,
-                                    format_args!(
-                                        "Invalid coverage reporter \"{}\"",
-                                        bstr::BStr::new(item_str)
-                                    ),
-                                )?;
-                            }
+                            self.apply_coverage_reporter_item(item)?;
                         }
                     }
                 }
@@ -1592,21 +1584,15 @@ impl<'a> Parser<'a> {
                     };
                 }
                 ExprData::EString(str) => {
-                    if str.eql_comptime(b"inline") {
-                        self.ctx.args.serve_env_behavior = api::DotEnvBehavior::load_all;
-                    } else if str.eql_comptime(b"disable") {
-                        self.ctx.args.serve_env_behavior = api::DotEnvBehavior::disable;
-                    } else {
-                        let slice = str.string(self.bump)?;
-                        if let Some(asterisk) = bun_core::strings::index_of_char(slice, b'*') {
-                            if asterisk > 0 {
-                                self.ctx.args.serve_env_prefix =
-                                    Some(Box::<[u8]>::from(&slice[..asterisk]));
-                                self.ctx.args.serve_env_behavior = api::DotEnvBehavior::prefix;
-                            } else {
-                                self.ctx.args.serve_env_behavior = api::DotEnvBehavior::load_all;
+                    let slice = str.string(self.bump)?;
+                    match api::DotEnvBehavior::parse_str(slice) {
+                        Ok((behavior, prefix)) => {
+                            if let Some(prefix) = prefix {
+                                self.ctx.args.serve_env_prefix = Some(Box::<[u8]>::from(prefix));
                             }
-                        } else {
+                            self.ctx.args.serve_env_behavior = behavior;
+                        }
+                        Err(()) => {
                             self.add_error(
                                     env.loc,
                                     b"Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character",

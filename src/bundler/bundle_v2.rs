@@ -254,6 +254,8 @@ impl<'a> BundleV2<'a> {
 
 pub mod bv2_impl {
 use crate::mal_prelude::*;
+use crate::IndexInt;
+use super::ResolveQueue;
 // This is Bun's JavaScript/TypeScript bundler
 //
 // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
@@ -1327,7 +1329,7 @@ bun_core::declare_scope!(PartRanges, hidden);
 // with the `Watcher` type alias (hot-reloader handle) in this module.
 bun_core::declare_scope!(watcher, visible);
 
-pub type MangledProps = ArrayHashMap<Ref, Box<[u8]>>;
+pub use bun_js_printer::MangledProps;
 
 // ══════════════════════════════════════════════════════════════════════════
 // CYCLEBREAK §Dispatch — vtables/hooks for T6 GENUINE deps (jsc/bake/runtime).
@@ -1451,8 +1453,6 @@ pub use crate::ungate_support::EventLoop;
 /// and has no usable size/layout in this crate.
 bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
 
-type IndexInt = u32; // Index.Int
-
 // DEDUP(D059): `generic_path_with_pretty_initialized` is canonically defined in
 // `crate::ungate_support`. After D090 the `Fs::Path` / `Logger::fs::Path`
 // distinction is purely a `'static` alias, so the in-module caller passes
@@ -1493,18 +1493,6 @@ pub(crate) fn logger_path_to_paths(p: &Logger::fs::Path) -> bun_paths::fs::Path<
 #[inline]
 pub(crate) fn fs_path_from_logger(p: &Logger::fs::Path) -> Fs::Path<'static> {
     p.clone()
-}
-/// PORT NOTE: `Logger::Source` is `!Clone`; manual field-by-field dup for the
-/// few sites (server-component boundary handling) that need a value copy.
-#[inline]
-fn dup_source(s: &Logger::Source) -> Logger::Source {
-    Logger::Source {
-        path: s.path.clone(),
-        contents: s.contents.clone(),
-        contents_is_recycled: s.contents_is_recycled,
-        identifier_name: s.identifier_name.clone(),
-        index: s.index,
-    }
 }
 
 // Unified with the canonical definitions at the parent module level (this
@@ -5753,8 +5741,6 @@ impl<'a> BundleV2<'a> {
     }
 }
 
-pub type ResolveQueue = StringHashMap<*mut ParseTask>;
-
 impl<'a> BundleV2<'a> {
     pub fn on_notify_defer(&mut self) {
         self.thread_lock.assert_locked();
@@ -5988,16 +5974,16 @@ impl<'a> BundleV2<'a> {
 
                     // PORT NOTE: `result.source` was swapped into
                     // `graph.input_files` earlier; re-borrow it from the SoA.
-                    // `dup_source` materializes the value-copy Zig got for free.
+                    // `.clone()` materializes the value-copy Zig got for free.
                     let source_loader: Loader =
                         this.graph.input_files.items_loader()[result_source_index];
 
                     let (reference_source_index, ssr_index) = if separate_ssr_graph {
                         // Enqueue two files, one in server graph, one in ssr graph.
                         let other_source =
-                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                            this.graph.input_files.items_source()[result_source_index].clone();
                         let scb_source =
-                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                            this.graph.input_files.items_source()[result_source_index].clone();
                         let reference_source_index = this
                             .enqueue_server_component_generated_file(
                                 crate::ServerComponentParseTask::Data::ClientReferenceProxy(
@@ -6011,7 +5997,7 @@ impl<'a> BundleV2<'a> {
                             .expect("oom");
 
                         let mut ssr_source =
-                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                            this.graph.input_files.items_source()[result_source_index].clone();
                         // PORT NOTE: `path_with_pretty_initialized` takes/returns
                         // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
                         // `fs_path_from_logger`/`fs_path_to_logger` until the
@@ -6036,7 +6022,7 @@ impl<'a> BundleV2<'a> {
                     } else {
                         // Enqueue only one file
                         let mut server_source =
-                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                            this.graph.input_files.items_source()[result_source_index].clone();
                         server_source.path.pretty = server_source.path.text;
                         let server_target = this.transpiler.options.target;
                         server_source.path = fs_path_to_logger(

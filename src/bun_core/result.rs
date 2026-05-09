@@ -513,6 +513,26 @@ macro_rules! named_error_set {
     };
 }
 
+/// Stamp out `impl Display + impl Error` for one or more
+/// `strum::IntoStaticStr`-deriving error enums whose user-facing string is
+/// exactly the variant tag (Zig `@errorName(e)` semantics). Replaces the
+/// hand-rolled 5-line `f.write_str(<&'static str>::from(self))` boilerplate.
+///
+/// Kept separate from [`named_error_set!`] because not every named error set
+/// wants the tag-as-Display behavior (some have bespoke `Display` impls).
+#[macro_export]
+macro_rules! impl_tag_error {
+    ($($t:ty),+ $(,)?) => {$(
+        impl ::core::fmt::Display for $t {
+            #[inline]
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str(<&'static str>::from(self))
+            }
+        }
+        impl ::core::error::Error for $t {}
+    )+};
+}
+
 // ─── coreutils_error_map ─────────────────────────────────────────────────
 // Zig builds a comptime `EnumMap<SystemErrno, []const u8>` with a per-OS
 // `switch (Environment.os)` body (src/sys/coreutils_error_map.zig). The full

@@ -51,15 +51,9 @@ impl ExprViewExt for ast::Expr {
 
 /// Helper: write `args` into `buf` and return the written subslice.
 /// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.
-fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [u8] {
-    use std::io::Write as _;
-    let total = buf.len();
-    let mut cursor: &mut [u8] = buf;
-    cursor.write_fmt(args).expect("unreachable");
-    let remaining = cursor.len();
-    let written = total - remaining;
-    // NLL ends `cursor`'s reborrow here; safe sub-slice of the owning buffer.
-    &mut buf[..written]
+#[inline]
+fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
+    bun_fmt::buf_print(buf, args).expect("unreachable")
 }
 
 pub fn view(

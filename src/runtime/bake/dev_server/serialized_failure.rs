@@ -210,12 +210,12 @@ pub enum ErrorKind {
 type Writer = Vec<u8>;
 
 #[inline]
-fn write_u32_le(w: &mut Writer, v: u32) {
+pub(crate) fn write_u32_le(w: &mut Writer, v: u32) {
     w.extend_from_slice(&v.to_le_bytes());
 }
 
 #[inline]
-fn write_i32_le(w: &mut Writer, v: i32) {
+pub(crate) fn write_i32_le(w: &mut Writer, v: i32) {
     w.extend_from_slice(&v.to_le_bytes());
 }
 

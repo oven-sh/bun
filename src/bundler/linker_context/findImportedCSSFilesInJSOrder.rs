@@ -1,8 +1,9 @@
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
-use bun_collections::{VecExt, DynamicBitSet};
+use bun_collections::VecExt;
 use bun_options_types::ImportRecord;
 
+use bun_collections::DynamicBitSet as BitSet;
 use crate::options::Loader;
 use crate::part::List as PartList;
 use crate::{Index, LinkerContext, Part};
@@ -103,7 +104,5 @@ pub fn find_imported_css_files_in_js_order(
 
     order
 }
-
-pub type BitSet = DynamicBitSet;
 
 // ported from: src/bundler/linker_context/findImportedCSSFilesInJSOrder.zig

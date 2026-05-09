@@ -7,6 +7,67 @@ use bun_logger::Ref;
 use bun_string::strings;
 use bun_wyhash::Wyhash;
 
+// ──────────────────────── arena-slice newtype boilerplate ────────────────
+// `DashedIdent` / `Ident` / `CustomIdent` are DISTINCT CSS value types per
+// spec (their `parse`/`to_css` differ intentionally — `--` prefix check,
+// plain ident, CSS-wide-keyword rejection respectively) but share an
+// identical `*const [u8]` arena-slice newtype shell. This macro stamps out
+// the struct + the byte-identical `v()`/`deep_clone`/`hash`/`as_slice`
+// boilerplate; per-type `parse`/`to_css` live in separate inherent `impl`
+// blocks below (Rust allows multiple inherent impls). Precedent:
+// `generics.rs` `ident_eql_impl!` already macroizes the shared `CssEql`.
+macro_rules! arena_slice_newtype {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy)]
+        pub struct $name {
+            // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
+            pub v: *const [u8],
+        }
+
+        impl $name {
+            /// Borrow the underlying arena-owned slice.
+            ///
+            /// `v` is always a non-null fat pointer into the parser's bump arena
+            /// (constructed from `expect_ident()` source text or copied from
+            /// another instance). Arena bytes are immutable and outlive every
+            /// value produced from them, so handing out `&[u8]` is sound.
+            ///
+            /// NOTE: the borrow is tied to `&self`. Call sites that must return
+            /// the slice with the Phase-A `'static` placeholder lifetime (e.g.
+            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
+            /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
+            /// still go through the raw `v` field directly until Phase B threads `'bump`.
+            #[inline]
+            pub fn v(&self) -> &[u8] {
+                // SAFETY: arena-owned, never null, immutable for the parse session
+                // (see field-level TODO(port) on `'bump` threading).
+                unsafe { crate::arena_str(self.v) }
+            }
+
+            pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+                // PORT NOTE: Zig `css.implementDeepClone` — field-wise. The
+                // `*const [u8]` slice is arena-owned (never mutated, freed on
+                // arena reset), so identity copy is correct (matches generics.zig
+                // "const strings" fast-path).
+                *self
+            }
+
+            pub fn hash(&self, hasher: &mut Wyhash) {
+                // PORT NOTE: Zig `css.implementHash` (comptime field-walk) → arena slice bytes.
+                hasher.update(self.v());
+            }
+
+            /// Borrow the underlying arena slice.
+            /// SAFETY: caller must ensure the parser arena outlives the borrow.
+            #[inline]
+            pub unsafe fn as_slice(&self) -> &[u8] {
+                self.v()
+            }
+        }
+    };
+}
+
 // ───────────────────────── DashedIdentReference ──────────────────────────
 // `properties::css_modules::Specifier` is real (parse/to_css/eql/hash); the
 // `from` field below uses it directly. `parse_with_options` honors
@@ -116,14 +177,12 @@ impl DashedIdentReference {
 
 pub use DashedIdent as DashedIdentFns;
 
-/// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) declaration.
-///
-/// Dashed idents are used in cases where an identifier can be either author defined _or_ CSS-defined.
-/// Author defined idents must start with two dash characters ("--") or parsing will fail.
-#[derive(Debug, Clone, Copy)]
-pub struct DashedIdent {
-    // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
-    pub v: *const [u8],
+arena_slice_newtype! {
+    /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) declaration.
+    ///
+    /// Dashed idents are used in cases where an identifier can be either author defined _or_ CSS-defined.
+    /// Author defined idents must start with two dash characters ("--") or parsing will fail.
+    DashedIdent
 }
 
 // TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
@@ -135,19 +194,6 @@ pub struct DashedIdent {
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
 impl DashedIdent {
-    /// Borrow the underlying arena-owned slice.
-    ///
-    /// `v` is always constructed from a valid parser-arena slice
-    /// (`expect_ident()` / source text) and the arena outlives every
-    /// `DashedIdent` produced from it. The slice is never null and never
-    /// mutated, so handing out `&[u8]` is sound.
-    #[inline]
-    pub fn v(&self) -> &[u8] {
-        // SAFETY: arena-owned, never null, immutable for the parse session
-        // (see type-level TODO(port) on `'bump` threading).
-        unsafe { crate::arena_str(self.v) }
-    }
-
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
@@ -160,56 +206,16 @@ impl DashedIdent {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_dashed_ident(self, true)
     }
-
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` — field-wise. The `*const [u8]`
-        // slice is arena-owned (never mutated, freed on arena reset), so identity
-        // copy is correct (matches generics.zig "const strings" fast-path).
-        *self
-    }
-
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        // PORT NOTE: Zig used css.implementHash (comptime field-walk) → arena slice bytes.
-        hasher.update(self.v());
-    }
-
-    /// Borrow the underlying arena slice.
-    /// SAFETY: caller must ensure the parser arena outlives the borrow.
-    #[inline]
-    pub unsafe fn as_slice(&self) -> &[u8] {
-        self.v()
-    }
 }
 
-/// A CSS [`<ident>`](https://www.w3.org/TR/css-values-4/#css-css-identifier).
 pub use Ident as IdentFns;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Ident {
-    // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
-    pub v: *const [u8],
+arena_slice_newtype! {
+    /// A CSS [`<ident>`](https://www.w3.org/TR/css-values-4/#css-css-identifier).
+    Ident
 }
 
 impl Ident {
-    /// Borrow the underlying arena-owned slice.
-    ///
-    /// `v` is always a non-null fat pointer into the parser's bump arena —
-    /// constructed from `expect_ident()` source text (or repacked via
-    /// `IdentOrRef::as_ident`). Arena bytes are immutable and outlive every
-    /// `Ident` produced from them, so handing out `&[u8]` is sound.
-    ///
-    /// NOTE: the borrow is tied to `&self`. Call sites that must return the
-    /// slice with the Phase-A `'static` placeholder lifetime (e.g.
-    /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
-    /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
-    /// still go through the raw field directly until Phase B threads `'bump`.
-    #[inline]
-    pub fn v(&self) -> &[u8] {
-        // SAFETY: arena-owned, never null, immutable for the parse session
-        // (see type-level TODO(port) on `'bump` threading).
-        unsafe { crate::arena_str(self.v) }
-    }
-
     pub fn parse(input: &mut Parser) -> CssResult<Ident> {
         let ident = input.expect_ident()?;
         Ok(Ident { v: std::ptr::from_ref::<[u8]>(ident) })
@@ -217,22 +223,6 @@ impl Ident {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.serialize_identifier(self.v())
-    }
-
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Arena-owned slice pointer — identity copy (see DashedIdent::deep_clone).
-        *self
-    }
-
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        hasher.update(self.v());
-    }
-
-    /// Borrow the underlying arena slice.
-    /// SAFETY: caller must ensure the parser arena outlives the borrow.
-    #[inline]
-    pub unsafe fn as_slice(&self) -> &[u8] {
-        self.v()
     }
 }
 
@@ -463,25 +453,12 @@ impl core::fmt::Display for IdentOrRef {
 
 pub use CustomIdent as CustomIdentFns;
 
-#[derive(Debug, Clone, Copy)]
-pub struct CustomIdent {
-    // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
-    pub v: *const [u8],
+arena_slice_newtype! {
+    /// A CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents).
+    CustomIdent
 }
 
 impl CustomIdent {
-    /// Borrow the underlying arena slice.
-    ///
-    /// SAFETY: `v` is never null - it is always set from a valid parser-arena
-    /// slice in `parse()` (or copied from another `CustomIdent`). The arena is
-    /// immutable for the parse/print session and outlives every `CustomIdent`
-    /// constructed from it, so dereferencing is sound for any borrow no longer
-    /// than `&self`. (Phase B will thread the real `'bump` lifetime here.)
-    #[inline]
-    pub fn v(&self) -> &[u8] {
-        unsafe { crate::arena_str(self.v) }
-    }
-
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
@@ -520,22 +497,6 @@ impl CustomIdent {
         // (`arena_str` yields an unbounded borrow, which coerces to `'a`).
         let v = unsafe { crate::arena_str(self.v) };
         dest.write_ident(v, css_module_custom_idents_enabled)
-    }
-
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Arena-owned slice pointer — identity copy (see DashedIdent::deep_clone).
-        *self
-    }
-
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        hasher.update(self.v());
-    }
-
-    /// Borrow the underlying arena slice.
-    /// SAFETY: caller must ensure the parser arena outlives the borrow.
-    #[inline]
-    pub unsafe fn as_slice(&self) -> &[u8] {
-        self.v()
     }
 }
 

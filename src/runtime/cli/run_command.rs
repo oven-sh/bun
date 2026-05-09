@@ -1684,28 +1684,11 @@ impl RunCommand {
     // `RealFS.platformTempDir` instead — this const is POSIX-only and
     // referencing it on Windows is a compile error (mirrors Zig's
     // `@compileError` arm).
+    //
+    // Canonical definition lives in `bun_install::RunCommand` (lower tier so
+    // the package manager can use it without depending on `bun_runtime`).
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = const_format::concatcp!(
-        if cfg!(target_os = "macos") {
-            "/private/tmp"
-        } else if cfg!(target_os = "android") {
-            "/data/local/tmp"
-        } else {
-            "/tmp"
-        },
-        if !cfg!(debug_assertions) {
-            const_format::concatcp!(
-                "/bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                }
-            )
-        } else {
-            "/bun-node-debug"
-        }
-    );
+    pub const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
     /// Port of `bunNodeFileUtf8` (run_command.zig). Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
@@ -1767,225 +1750,16 @@ impl RunCommand {
     /// `<tmp>/bun-node*/node` and `<tmp>/bun-node*/bun` symlinks (or hard
     /// links on Windows) pointing at the running `bun` binary, then appends
     /// that directory to `path` so child processes resolve `node` to bun.
+    ///
+    /// Implementation lives in `bun_install::RunCommand` (lower tier) so the
+    /// package manager can call it without depending on `bun_runtime`; this is
+    /// a thin delegate so existing `Self::` callers keep compiling.
+    #[inline]
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
     ) -> Result<(), bun_core::Error> {
-        // If we are already running as "node", the path should exist
-        if cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        #[cfg(unix)]
-        {
-            use ::core::ffi::{c_char, CStr};
-
-            let mut argv0: *const c_char = optional_bun_path.as_ptr().cast::<c_char>();
-
-            // if we are already an absolute path, use that
-            // if the user started the application via a shebang, it's likely
-            // that the path is absolute already
-            // PORT NOTE: `bun_core::argv()` returns an `Argv` wrapper; `.get(0)`
-            // yields `&'static ZStr` (NUL-terminated, process-lifetime).
-            let argv0_slice = bun_core::argv().get(0).map(|z| z.as_bytes()).unwrap_or(b"");
-            if argv0_slice.first() == Some(&b'/') {
-                *optional_bun_path = argv0_slice;
-                argv0 = argv0_slice.as_ptr().cast::<c_char>();
-            } else if optional_bun_path.is_empty() {
-                // otherwise, ask the OS for the absolute path
-                let self_ = bun_core::self_exe_path()?;
-                if !self_.is_empty() {
-                    argv0 = self_.as_ptr().cast::<c_char>();
-                    *optional_bun_path = self_.as_bytes();
-                }
-            }
-
-            if optional_bun_path.is_empty() {
-                argv0 = argv0_slice.as_ptr().cast::<c_char>();
-            }
-
-            #[cfg(debug_assertions)]
-            {
-                // Zig: std.fs.deleteTreeAbsolute(BUN_NODE_DIR) — best-effort.
-                let _ = sys::Dir::cwd().delete_tree(Self::BUN_NODE_DIR.as_bytes());
-            }
-            const PATHS: [&str; 2] = [
-                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node\0"),
-                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0"),
-            ];
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            for p in PATHS {
-                let mut retried = false;
-                'retry: loop {
-                    'inner: {
-                        // SAFETY: argv0 is a valid NUL-terminated C string
-                        // (points at argv[0], `self_exe_path`, or `optional_bun_path`).
-                        let target = unsafe {
-                            let cstr = bun_core::ffi::cstr(argv0);
-                            ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
-                        };
-                        // PATHS entries are NUL-terminated string literals.
-                        let link = ZStr::from_slice_with_nul(p.as_bytes());
-                        if let Err(err) = sys::symlink(target, link) {
-                            if err.get_errno() == sys::E::EEXIST {
-                                break 'inner;
-                            }
-                            if retried {
-                                return Ok(());
-                            }
-
-                            // Zig: std.fs.makeDirAbsoluteZ(BUN_NODE_DIR) — best-effort.
-                            // SAFETY: BUN_NODE_DIR_Z is a NUL-terminated literal.
-                            let dir_z = unsafe {
-                                ZStr::from_raw(BUN_NODE_DIR_Z.as_ptr(), BUN_NODE_DIR_Z.len() - 1)
-                            };
-                            let _ = sys::mkdir(dir_z, 0o755);
-
-                            retried = true;
-                            continue 'retry;
-                        }
-                    }
-                    break;
-                }
-            }
-            if !path.is_empty() && path[path.len() - 1] != DELIMITER {
-                path.push(DELIMITER);
-            }
-
-            // The reason for the extra delim is because we are going to append
-            // the system PATH later on. this is done by the caller, and explains
-            // why we are adding bun_node_dir to the end of the path slice rather
-            // than the start.
-            path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
-            path.push(DELIMITER);
-            let _ = argv0;
-        }
-        #[cfg(windows)]
-        {
-            let mut target_path_buffer = WPathBuffer::uninit();
-
-            let prefix = bun_str::w!("\\??\\");
-
-            // SAFETY: FFI Win32 `GetTempPathW`. We pass a valid writable
-            // pointer into `target_path_buffer` offset by `prefix.len()`
-            // (in-bounds: prefix.len() < target_path_buffer.len()) and the
-            // remaining capacity in WCHARs as `nBufferLength`.
-            let len = unsafe {
-                sys::windows::GetTempPathW(
-                    u32::try_from(target_path_buffer.len() - prefix.len()).expect("int cast"),
-                    target_path_buffer.as_mut_ptr().add(prefix.len()),
-                )
-            };
-            if len == 0 {
-                Output::debug(format_args!(
-                    "Failed to create temporary node dir: {}",
-                    sys::windows::get_last_error_tag(),
-                ));
-                return Ok(());
-            }
-            let len = len as usize;
-
-            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
-
-            const DIR_NAME: &str = if cfg!(debug_assertions) {
-                "bun-node-debug"
-            } else {
-                const_format::concatcp!(
-                    "bun-node",
-                    if Environment::GIT_SHA_SHORT.len() > 0 {
-                        const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                    } else {
-                        ""
-                    }
-                )
-            };
-            // Zig: `comptime bun.strings.w(DIR_NAME)`. `bun_str::w!` requires
-            // a string-literal *token*, which `concatcp!` doesn't yield, so
-            // widen the ASCII const at runtime into a small stack buffer.
-            let mut dir_name_buf = [0u16; 64];
-            for (i, b) in DIR_NAME.bytes().enumerate() {
-                debug_assert!(b < 0x80, "DIR_NAME is ASCII-only");
-                dir_name_buf[i] = b as u16;
-            }
-            let dir_name_w: &[u16] = &dir_name_buf[..DIR_NAME.len()];
-            target_path_buffer[prefix.len() + len..prefix.len() + len + dir_name_w.len()]
-                .copy_from_slice(dir_name_w);
-            let dir_slice_len = prefix.len() + len + dir_name_w.len();
-
-            #[cfg(debug_assertions)]
-            {
-                let dir_slice_u8 =
-                    bun_string::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
-                let _ = sys::Dir::cwd().delete_tree(&dir_slice_u8);
-                // Zig spec (run_command.zig:730): `std.fs.makeDirAbsolute` —
-                // single-level mkdir that panics on *any* error (incl.
-                // PathAlreadyExists). `make_path` would recurse into the
-                // `\??\` NT-object prefix and silently swallow EEXIST.
-                sys::Dir::cwd().make_dir(&dir_slice_u8).expect("huh?");
-            }
-
-            let image_path = sys::windows::exe_path_w();
-            for name in [bun_str::w!("node.exe"), bun_str::w!("bun.exe")] {
-                // file_name = dir_name ++ "\\" ++ name ++ "\x00"
-                let mut off = prefix.len() + len;
-                target_path_buffer[off..off + dir_name_w.len()].copy_from_slice(dir_name_w);
-                off += dir_name_w.len();
-                target_path_buffer[off] = b'\\' as u16;
-                off += 1;
-                target_path_buffer[off..off + name.len()].copy_from_slice(name);
-                off += name.len();
-                target_path_buffer[off] = 0;
-
-                // Zig's `file_slice.ptr` is the buffer base (slice starts at 0);
-                // use the raw base ptr to avoid holding an immutable borrow
-                // across the `target_path_buffer[dir_slice_len]` mutation below.
-                if sys::windows::CreateHardLinkW(
-                    target_path_buffer.as_ptr(),
-                    image_path.as_ptr(),
-                    None,
-                ) == 0
-                {
-                    match sys::windows::get_last_win32_error() {
-                        sys::windows::Win32Error::ALREADY_EXISTS => {}
-                        _ => {
-                            {
-                                debug_assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);
-                                target_path_buffer[dir_slice_len] = 0;
-                                // SAFETY: we just wrote a NUL terminator at
-                                // `dir_slice_len`; `target_path_buffer[..dir_slice_len]`
-                                // is initialised wide-string data → valid `WStr`.
-                                let dir_w = bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len,);
-                                let _ = sys::mkdir_w(dir_w);
-                                target_path_buffer[dir_slice_len] = b'\\' as u16;
-                            }
-
-                            if sys::windows::CreateHardLinkW(
-                                target_path_buffer.as_ptr(),
-                                image_path.as_ptr(),
-                                None,
-                            ) == 0
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
-            if !path.is_empty() && path[path.len() - 1] != DELIMITER {
-                path.push(DELIMITER);
-            }
-
-            // The reason for the extra delim is because we are going to append
-            // the system PATH later on. this is done by the caller, and explains
-            // why we are adding bun_node_dir to the end of the path slice rather
-            // than the start.
-            strings::to_utf8_append_to_list(
-                path,
-                &target_path_buffer[prefix.len()..dir_slice_len],
-            );
-            path.push(DELIMITER);
-        }
-        Ok(())
+        bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
     }
 
     /// Port of `configurePathForRun` (run_command.zig). Prepends workspace

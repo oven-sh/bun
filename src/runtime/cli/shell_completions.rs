@@ -1,47 +1,29 @@
 use bun_core::Output;
-use bun_paths;
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
-pub enum Shell {
-    #[default]
-    Unknown,
-    Bash,
-    Zsh,
-    Fish,
-    Pwsh,
+// D173: canonical enum + `from_env` live in bun_install (MOVE_DOWN(b0)); re-export
+// here so existing `crate::cli::shell_completions::Shell` paths keep working.
+pub use bun_install::ShellCompletions::Shell;
+
+// PORT NOTE: Zig used `@embedFile("completions-bash")` etc. via build-system
+// module aliases. The actual files live at `<repo>/completions/bun.{bash,zsh,fish}`.
+// The embedded script bodies must stay above the install tier (asset dependency),
+// so `completions()` is an extension trait on the re-exported enum rather than an
+// inherent method.
+const BASH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.bash");
+const ZSH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.zsh");
+const FISH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.fish");
+
+pub trait ShellCompletionsExt {
+    fn completions(self) -> &'static [u8];
 }
 
-impl Shell {
-    // PORT NOTE: Zig used `@embedFile("completions-bash")` etc. via build-system
-    // module aliases. The actual files live at `<repo>/completions/bun.{bash,zsh,fish}`.
-    const BASH_COMPLETIONS: &'static [u8] = include_bytes!("../../../completions/bun.bash");
-    const ZSH_COMPLETIONS: &'static [u8] = include_bytes!("../../../completions/bun.zsh");
-    const FISH_COMPLETIONS: &'static [u8] = include_bytes!("../../../completions/bun.fish");
-
-    pub fn completions(self) -> &'static [u8] {
+impl ShellCompletionsExt for Shell {
+    fn completions(self) -> &'static [u8] {
         match self {
-            Shell::Bash => Self::BASH_COMPLETIONS,
-            Shell::Zsh => Self::ZSH_COMPLETIONS,
-            Shell::Fish => Self::FISH_COMPLETIONS,
+            Shell::Bash => BASH_COMPLETIONS,
+            Shell::Zsh => ZSH_COMPLETIONS,
+            Shell::Fish => FISH_COMPLETIONS,
             _ => b"",
-        }
-    }
-
-    // Zig: `fn fromEnv(comptime Type: type, SHELL: Type) Shell` — paired (comptime T, arg: T)
-    // collapses to a single byte-slice param; callers pass `[]const u8`.
-    pub fn from_env(shell: &[u8]) -> Shell {
-        let basename = bun_paths::basename(shell);
-        if basename == b"bash" {
-            Shell::Bash
-        } else if basename == b"zsh" {
-            Shell::Zsh
-        } else if basename == b"fish" {
-            Shell::Fish
-        } else if basename == b"pwsh" || basename == b"powershell" {
-            Shell::Pwsh
-        } else {
-            Shell::Unknown
         }
     }
 }

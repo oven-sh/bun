@@ -362,14 +362,10 @@ impl<R> ContainerRule<R> {
         self.condition.to_css(dest)?;
         dest.targets.exclude = exclude;
 
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-        dest.newline()?;
-        self.rules.to_css(dest)?;
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')
+        dest.block(|d| {
+            d.newline()?;
+            self.rules.to_css(d)
+        })
     }
 }
 

@@ -1970,7 +1970,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         let path_env = unsafe { (*vm_mut().transpiler.env).map.get(b"PATH") }.unwrap_or(b"");
         // SAFETY: argv[0] is a NUL-terminated string from caller.
         let argv0 = unsafe { core::ffi::CStr::from_ptr(argv[0]) }.to_bytes();
-        match bun_core::which(&mut path_buf, path_env, b"", argv0) {
+        match bun_which::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
             None => {
                 s.set_err(format_args!(
@@ -2157,7 +2157,7 @@ fn find_crontab() -> Option<*const c_char> {
         let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
         // SAFETY: single-threaded JS access.
         let buf = unsafe { &mut *BUF.get() };
-        let found = bun_core::which(buf, path_env, b"", b"crontab")?;
+        let found = bun_which::which(buf, path_env, b"", b"crontab")?;
         Some(found.as_ptr().cast())
     }
 }
@@ -2845,15 +2845,6 @@ fn compute_step_interval<T: StepBits>(bits: T, _min: u8, max: u8) -> Option<u32>
     Some(step)
 }
 
-/// `std.fmt.bufPrint` equivalent: write into `buf`, return the written slice.
-fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Result<&'a [u8], core::fmt::Error> {
-    let mut cursor: &mut [u8] = buf;
-    let total = cursor.len();
-    cursor.write_fmt(args).map_err(|_| core::fmt::Error)?;
-    let remaining = cursor.len();
-    let written = total - remaining;
-    // NLL ends `cursor`'s reborrow here; safe sub-slice of the owning buffer.
-    Ok(&buf[..written])
-}
+use bun_core::fmt::buf_print;
 
 // ported from: src/runtime/api/cron.zig

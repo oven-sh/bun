@@ -109,7 +109,7 @@ impl Method {
     }
 
     pub fn find(str: &[u8]) -> Option<Method> {
-        MAP.get(str).copied()
+        Self::which(str)
     }
 
     pub fn which(str: &[u8]) -> Option<Method> {

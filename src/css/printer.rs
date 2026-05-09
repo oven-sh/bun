@@ -46,15 +46,7 @@ pub struct PrinterOptions<'a> {
 
 impl<'a> PrinterOptions<'a> {
     pub fn default() -> PrinterOptions<'a> {
-        PrinterOptions {
-            minify: false,
-            source_map: None,
-            project_root: None,
-            targets: Targets { browsers: None, ..Targets::default() },
-            analyze_dependencies: None,
-            pseudo_classes: None,
-            public_path: b"",
-        }
+        Self::default_with_minify(false)
     }
 
     pub fn default_with_minify(minify: bool) -> PrinterOptions<'a> {
@@ -348,7 +340,7 @@ impl<'a> Printer<'a> {
     pub fn print_import_record(&mut self, import_record_idx: u32) -> PrintResult<()> {
         if let Some(info) = &self.import_info {
             let import_record = info.import_records.at(import_record_idx as usize);
-            let (a, b) = bun_string::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
+            let [a, b] = bun_string::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
@@ -703,6 +695,24 @@ impl<'a> Printer<'a> {
             return Ok(());
         }
         self.write_char(b' ')
+    }
+
+    /// Writes a `{ ... }` block envelope: optional leading whitespace, `{`,
+    /// indent, the caller-supplied body, dedent, trailing newline, `}`.
+    ///
+    /// This is the shared shape used by every nested-rule at-rule printer
+    /// (`@media`, `@supports`, `@container`, `@layer`, `@starting-style`,
+    /// `@-moz-document`, unknown at-rules). The body closure is responsible
+    /// for its own leading `newline()` if it wants one — per-item printers
+    /// (e.g. `@font-face`, `@keyframes`) interleave newlines differently.
+    pub fn block(&mut self, f: impl FnOnce(&mut Self) -> PrintResult<()>) -> PrintResult<()> {
+        self.whitespace()?;
+        self.write_char(b'{')?;
+        self.indent();
+        f(self)?;
+        self.dedent();
+        self.newline()?;
+        self.write_char(b'}')
     }
 
     pub fn with_context<C, F>(

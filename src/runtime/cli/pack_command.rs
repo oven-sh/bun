@@ -1630,9 +1630,10 @@ fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
 fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader> {
     // SAFETY: all-zero is a valid bit pattern for `[u8; N]`, `usize`, and
     // `File { handle: Fd }` (`Fd` is a `#[repr(C)]` integer newtype). The
-    // `unbuffered_reader` slot is overwritten before any read.
-    let mut b: Box<BufferedFileReader> =
-        unsafe { Box::<BufferedFileReader>::new_zeroed().assume_init() };
+    // `unbuffered_reader` slot is overwritten before any read. (Orphan rule
+    // blocks an `unsafe impl Zeroable` here — both trait and generic are
+    // foreign — so use the unchecked variant.)
+    let mut b: Box<BufferedFileReader> = unsafe { bun_core::boxed_zeroed_unchecked() };
     b.unbuffered_reader = file;
     b
 }
@@ -3530,10 +3531,8 @@ pub mod bindings {
         let mut sha512 = sha::SHA512::init();
         sha512.update(&tarball);
         sha512.r#final(&mut sha512_digest);
-        let mut base64_buf = vec![0u8; bun_base64::encode_len_from_size(sha::SHA512::DIGEST)];
-        // TODO(port): comptime calcSize → const fn; using runtime helper
-        let encode_count = bun_base64::encode(&mut base64_buf, &sha512_digest);
-        let integrity_value = bun_string_jsc::create_utf8_for_js(global, &base64_buf[..encode_count])?;
+        let base64_buf = bun_base64::encode_alloc(&sha512_digest);
+        let integrity_value = bun_string_jsc::create_utf8_for_js(global, &base64_buf)?;
 
         struct EntryInfo {
             pathname: BunString,

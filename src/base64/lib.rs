@@ -88,6 +88,17 @@ pub fn simdutf_encode_url_safe(destination: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, destination, true)
 }
 
+/// `simdutf_encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
+/// `simdutf_encode_len_url_safe` (simdutf computes the exact no-padding length, so
+/// the trailing `truncate` is a no-op kept for symmetry with `encode_alloc`).
+pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
+    let len = simdutf_encode_len_url_safe(source.len());
+    let mut destination = vec![0u8; len];
+    let encoded_len = simdutf_encode_url_safe(&mut destination, source);
+    destination.truncate(encoded_len);
+    destination
+}
+
 pub fn decode_len_upper_bound(len: usize) -> usize {
     match zig_base64::STANDARD.decoder.calc_size_upper_bound(len) {
         Ok(v) => v,
@@ -118,9 +129,15 @@ pub const fn encode_len_from_size(source: usize) -> usize {
     bun_core::base64::standard_encoder_calc_size(source)
 }
 
-pub fn url_safe_encode_len(source: &[u8]) -> usize {
+#[inline]
+pub const fn url_safe_encode_len_from_size(n: usize) -> usize {
     // Copied from WebKit
-    ((source.len() * 4) + 2) / 3
+    ((n * 4) + 2) / 3
+}
+
+#[inline]
+pub const fn url_safe_encode_len(source: &[u8]) -> usize {
+    url_safe_encode_len_from_size(source.len())
 }
 
 // TODO(port): move to base64_sys

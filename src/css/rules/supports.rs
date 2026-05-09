@@ -256,6 +256,13 @@ impl SupportsCondition {
     }
 }
 
+impl css::generic::ToCss for SupportsCondition {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        SupportsCondition::to_css(self, dest)
+    }
+}
+
 // ─── parse bodies ─────────────────────────────────────────────────────────
 impl SupportsCondition {
     pub fn parse(input: &mut css::Parser) -> css::Result<SupportsCondition> {
@@ -473,15 +480,10 @@ impl<R> SupportsRule<R> {
 
         dest.write_str(b"@supports ")?;
         self.condition.to_css(dest)?;
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-        dest.newline()?;
-        self.rules.to_css(dest)?;
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')?;
-        Ok(())
+        dest.block(|d| {
+            d.newline()?;
+            self.rules.to_css(d)
+        })
     }
 }
 

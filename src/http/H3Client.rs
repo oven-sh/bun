@@ -25,6 +25,12 @@ use core::sync::atomic::AtomicU32;
 #[path = "h3_client/callbacks.rs"]       pub mod callbacks;
 #[path = "h3_client/encode.rs"]          pub mod encode;
 
+// Single `Output.scoped(.h3_client, .hidden)` for the whole module tree. Zig
+// comptime-deduplicates per tag, so the four submodules share one
+// `really_disable`/`is_visible_once`/lock; declaring it once here and importing
+// in each child preserves that behavior.
+bun_core::declare_scope!(h3_client, hidden);
+
 pub use client_session::ClientSession;
 pub use client_context::ClientContext;
 pub use stream::Stream;

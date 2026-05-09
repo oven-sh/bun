@@ -3075,11 +3075,7 @@ mod uv_functions_to_export {}
 /// To update this list, use find + multi-cursor in your editor.
 /// - pub extern fn napi_
 /// - pub export fn napi_
-macro_rules! keep_symbols {
-    ($($f:path),* $(,)?) => {
-        $( core::hint::black_box($f as *const ()); )*
-    };
-}
+use bun_core::keep_symbols;
 
 pub fn fix_dead_code_elimination() {
     jsc::mark_binding();
@@ -3314,7 +3310,7 @@ pub fn fix_dead_code_elimination() {
     ))]
     keep_symbols!(posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE);
 
-    core::hint::black_box(crate::node::buffer::BufferVectorized::fill as *const ());
+    keep_symbols!(crate::node::buffer::BufferVectorized::fill);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

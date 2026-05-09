@@ -20,7 +20,7 @@ use super::stream::Stream;
 use crate::h3_client as H3;
 use bun_picohttp as picohttp;
 
-bun_core::declare_scope!(h3_client, hidden);
+use crate::h3_client::h3_client;
 
 /// Recover the `ClientSession` from a `quic::Socket`'s ext slot.
 ///

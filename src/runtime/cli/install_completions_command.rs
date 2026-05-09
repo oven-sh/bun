@@ -7,7 +7,7 @@ use bun_paths::{platform, resolve_path, PathBuffer, WPathBuffer};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Dir, File, E};
 
-use crate::shell_completions::{self as ShellCompletions, Shell};
+use crate::shell_completions::{self as ShellCompletions, Shell, ShellCompletionsExt as _};
 
 pub struct InstallCompletionsCommand;
 
@@ -684,33 +684,16 @@ impl InstallCompletionsCommand {
 
 /// Helper: write `args` into `buf` and return the written subslice.
 /// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.
-// TODO(port): move to bun_str or bun_core if widely reused
-fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [u8] {
-    let total = buf.len();
-    let mut cursor: &mut [u8] = buf;
-    cursor.write_fmt(args).expect("unreachable");
-    let remaining = cursor.len();
-    let written = total - remaining;
-    // NLL ends `cursor`'s reborrow here; safe sub-slice of the owning buffer.
-    &mut buf[..written]
+#[inline]
+fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
+    bun_core::fmt::buf_print(buf, args).expect("unreachable")
 }
 
 /// Like [`buf_print`] but appends a NUL terminator and returns a `&ZStr`.
 /// Mirrors `std.fmt.bufPrintZ(buf, fmt, args) catch unreachable`.
+#[inline]
 pub(crate) fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a ZStr {
-    let total = buf.len();
-    let mut cursor: &mut [u8] = buf;
-    cursor.write_fmt(args).expect("unreachable");
-    let remaining = cursor.len();
-    let written = total - remaining;
-    debug_assert!(written < total, "buf_print_z overflow");
-    // SAFETY: `written` bytes were just written contiguously from buf[0]; we
-    // place a NUL at buf[written] (in bounds: written < total) and reinterpret
-    // as a length-carrying NUL-terminated slice.
-    unsafe {
-        *buf.as_mut_ptr().add(written) = 0;
-        ZStr::from_raw(buf.as_ptr(), written)
-    }
+    bun_core::fmt::buf_print_z(buf, args).expect("unreachable")
 }
 
 // ported from: src/cli/install_completions_command.zig

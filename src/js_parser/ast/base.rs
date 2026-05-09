@@ -52,7 +52,7 @@ pub struct Index {
 }
 
 /// Zig: `pub const Int = u32;` (nested in `Index`)
-pub type IndexInt = u32;
+pub use bun_options_types::IndexInt;
 
 impl Index {
     #[inline]

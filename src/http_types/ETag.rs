@@ -112,6 +112,36 @@ pub struct HeaderEntry {
 
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
+/// Column accessors for `HeaderEntry` MultiArrayList storage.
+///
+/// `header_entries.slice().items_name()` was a Zig MultiArrayList convenience.
+/// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
+/// that need to mutate `header_entries` afterwards copy the index out first.
+pub trait HeaderEntryColumns {
+    fn items_name(&self) -> &[StringPointer];
+    fn items_value(&self) -> &[StringPointer];
+}
+impl HeaderEntryColumns for bun_collections::multi_array_list::Slice<HeaderEntry> {
+    #[inline]
+    fn items_name(&self) -> &[StringPointer] {
+        self.items::<"name", StringPointer>()
+    }
+    #[inline]
+    fn items_value(&self) -> &[StringPointer] {
+        self.items::<"value", StringPointer>()
+    }
+}
+impl HeaderEntryColumns for HeaderEntryList {
+    #[inline]
+    fn items_name(&self) -> &[StringPointer] {
+        self.items::<"name", StringPointer>()
+    }
+    #[inline]
+    fn items_value(&self) -> &[StringPointer] {
+        self.items::<"value", StringPointer>()
+    }
+}
+
 #[derive(Default)]
 pub struct Headers {
     pub entries: HeaderEntryList,
@@ -140,8 +170,8 @@ impl Headers {
 
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
         let entries = self.entries.slice();
-        let names: &[StringPointer] = entries.items::<"name", StringPointer>();
-        let values: &[StringPointer] = entries.items::<"value", StringPointer>();
+        let names: &[StringPointer] = entries.items_name();
+        let values: &[StringPointer] = entries.items_value();
         for (i, name_ptr) in names.iter().enumerate() {
             if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
                 return Some(self.as_str(values[i]));

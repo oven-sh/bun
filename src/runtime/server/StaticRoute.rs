@@ -449,13 +449,10 @@ impl StaticRoute {
     }
 
     fn do_write_headers(&self, resp: AnyResponse) {
+        use bun_http_types::ETag::HeaderEntryColumns;
         let entries = self.headers.entries.slice();
-        // SAFETY: `HeaderEntry` columns are both `StringPointer` (see
-        // `bun_http_types::ETag::HeaderEntry` MultiArrayElement impl).
-        let names: &[StringPointer] =
-            unsafe { entries.items::<"name", StringPointer>() };
-        let values: &[StringPointer] =
-            unsafe { entries.items::<"value", StringPointer>() };
+        let names: &[StringPointer] = entries.items_name();
+        let values: &[StringPointer] = entries.items_value();
         let buf = self.headers.buf.as_slice();
 
         debug_assert_eq!(names.len(), values.len());

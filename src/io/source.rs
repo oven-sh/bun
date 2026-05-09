@@ -317,8 +317,7 @@ impl Source {
             return stdin_tty::get_stdin_tty(loop_);
         }
 
-        // SAFETY: uv_tty_t is a #[repr(C)] libuv struct; Box::new_zeroed yields a valid pre-init state.
-        let mut tty: Box<Tty> = unsafe { Box::new_zeroed().assume_init() };
+        let mut tty: Box<Tty> = bun_core::boxed_zeroed();
         if let Some(err) = tty.init(loop_, uv_fd).to_error(bun_sys::Tag::open) {
             drop(tty);
             return bun_sys::Result::Err(err);

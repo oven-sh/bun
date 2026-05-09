@@ -100,8 +100,13 @@ impl String {
     /// union (both `#[repr(C)] { *const u8, usize }`, same tag-bit scheme).
     #[inline(always)]
     fn wrap_zig(tag: Tag, z: ZigString) -> Self {
-        // SAFETY: see size/align const-assert at the top of this module.
-        let zig_string: bun_alloc::ZigString = unsafe { core::mem::transmute(z) };
+        // Field-by-field (not `transmute`) so a future field reorder in either
+        // struct fails at compile time, not at runtime. Both are
+        // `#[repr(C)] { *const u8, usize }` with identical tag-bit semantics.
+        let zig_string = bun_alloc::ZigString {
+            _unsafe_ptr_do_not_use: z.tagged_ptr(),
+            len: z.len,
+        };
         Self(bun_alloc::String { tag, value: StringImpl { zig_string } })
     }
 
@@ -1272,10 +1277,17 @@ pub struct ZigString {
     ptr: *const u8,
     pub len: usize,
 }
+const ZS_STATIC_BIT: usize = 1usize << 60;
 const ZS_UTF8_BIT: usize = 1usize << 61;
 const ZS_GLOBAL_BIT: usize = 1usize << 62;
 const ZS_16BIT_BIT: usize = 1usize << 63;
 const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
+
+/// `ZigString.as_()` — encoding-dispatched borrow.
+pub enum ByteString<'a> {
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
 
 impl Default for ZigString {
     #[inline]
@@ -1376,9 +1388,11 @@ impl ZigString {
     /// rule that becomes `is_16_bit`).
     #[inline] pub fn is_16_bit(self) -> bool { self.is_16bit() }
     #[inline] pub fn is_globally_allocated(self) -> bool { (self.ptr as usize & ZS_GLOBAL_BIT) != 0 }
+    #[inline] pub fn is_static(self) -> bool { (self.ptr as usize & ZS_STATIC_BIT) != 0 }
     #[inline] pub fn mark_utf8(&mut self) { self.ptr = (self.ptr as usize | ZS_UTF8_BIT) as *const u8; }
     #[inline] pub fn mark_utf16(&mut self) { self.ptr = (self.ptr as usize | ZS_16BIT_BIT) as *const u8; }
     #[inline] pub fn mark_global(&mut self) { self.ptr = (self.ptr as usize | ZS_GLOBAL_BIT) as *const u8; }
+    #[inline] pub fn mark_static(&mut self) { self.ptr = (self.ptr as usize | ZS_STATIC_BIT) as *const u8; }
 
     /// `ZigString.fromBytes` — borrow `slice`; if it contains any non-ASCII
     /// byte, sets the UTF-8 ptr-tag (ZigString.zig:14).
@@ -1536,6 +1550,183 @@ impl ZigString {
         }
         // Mixed encoding — go through the UTF-8 view (matches Zig's slow path).
         self.to_slice().slice() == other.to_slice().slice()
+    }
+
+    /// `ZigString.length` — alias for `len` field (matches Zig method).
+    #[inline]
+    pub const fn length(&self) -> usize { self.len }
+
+    /// `ZigString.as` — encoding-dispatched borrow as either Latin-1 bytes or
+    /// UTF-16 code units.
+    #[inline]
+    pub fn as_(&self) -> ByteString<'_> {
+        if self.is_16bit() {
+            ByteString::Utf16(self.utf16_slice_aligned())
+        } else {
+            ByteString::Latin1(self.slice())
+        }
+    }
+
+    /// `ZigString.isAllASCII` — true iff every code unit is < 0x80.
+    pub fn is_all_ascii(&self) -> bool {
+        if self.is_16bit() {
+            return strings::first_non_ascii16(self.utf16_slice_aligned()).is_none();
+        }
+        strings::is_all_ascii(self.slice())
+    }
+
+    /// `ZigString.hasPrefixChar` (ZigString.zig).
+    pub fn has_prefix_char(&self, char: u8) -> bool {
+        if self.len == 0 {
+            return false;
+        }
+        if self.is_16bit() {
+            return self.utf16_slice_aligned()[0] == char as u16;
+        }
+        self.slice()[0] == char
+    }
+
+    /// `ZigString.maxUTF8ByteLength` — upper bound on UTF-8 byte length
+    /// (cheap; does not scan the string). UTF-16 → ×3, Latin-1 → ×2.
+    pub fn max_utf8_byte_length(&self) -> usize {
+        if self.is_utf8() {
+            return self.len;
+        }
+        if self.is_16bit() {
+            return self.utf16_slice_aligned().len() * 3;
+        }
+        self.len * 2
+    }
+
+    /// `ZigString.detectEncoding` — if the (currently-untagged) bytes contain
+    /// any non-ASCII, mark the pointer as UTF-16. Mirrors ZigString.zig's
+    /// `detectEncoding` (which assumes the bytes were sourced from a
+    /// JS-produced 8-bit string and need re-widening on non-ASCII).
+    #[inline]
+    pub fn detect_encoding(&mut self) {
+        if !strings::is_all_ascii(self.slice()) {
+            self.mark_utf16();
+        }
+    }
+
+    /// `ZigString.setOutputEncoding` — for `toJS`/`toExternalValue` callers:
+    /// if 8-bit, run `detect_encoding`; if (now) 16-bit, mark UTF-8 so the
+    /// C++ side decodes the bytes as UTF-8 instead of Latin-1.
+    #[inline]
+    pub fn set_output_encoding(&mut self) {
+        if !self.is_16bit() {
+            self.detect_encoding();
+        }
+        if self.is_16bit() {
+            self.mark_utf8();
+        }
+    }
+
+    /// `ZigString.deinitGlobal` — free the underlying buffer via mimalloc.
+    /// Only valid when `is_globally_allocated()`.
+    #[inline]
+    pub fn deinit_global(&self) {
+        // SAFETY: caller contract — `slice()` was allocated by global mimalloc.
+        unsafe {
+            bun_alloc::mimalloc::mi_free(
+                self.slice().as_ptr().cast_mut().cast::<core::ffi::c_void>(),
+            )
+        };
+    }
+
+    /// `ZigString.full` — raw 8-bit byte view without the `u32::MAX` length
+    /// clamp `slice()` applies.
+    #[inline]
+    pub fn full(&self) -> &[u8] {
+        if self.len == 0 { return &[]; }
+        // SAFETY: untagged ptr valid for `self.len` bytes (constructor invariant).
+        unsafe { core::slice::from_raw_parts(Self::untagged(self.ptr), self.len) }
+    }
+
+    /// `ZigString.trimmedSlice` — `full()` with leading/trailing
+    /// space/CR/LF stripped.
+    #[inline]
+    pub fn trimmed_slice(&self) -> &[u8] {
+        strings::trim(self.full(), b" \r\n")
+    }
+
+    /// `ZigString.toSliceFast` — like `to_slice` but skips the Latin-1-to-UTF-8
+    /// rescan for 8-bit inputs (caller asserts bytes are already valid UTF-8 /
+    /// ASCII). 16-bit inputs still allocate a UTF-8 copy.
+    pub fn to_slice_fast(&self) -> ZigStringSlice {
+        if self.len == 0 {
+            return ZigStringSlice::EMPTY;
+        }
+        if self.is_16bit() {
+            return ZigStringSlice::Owned(self.to_owned_slice());
+        }
+        ZigStringSlice::Static(Self::untagged(self.ptr), self.len)
+    }
+
+    /// `ZigString.fromStringPointer` — borrow a sub-range of `buf` described by
+    /// a `StringPointer` (offset + length).
+    #[inline]
+    pub fn from_string_pointer(ptr: StringPointer, buf: &[u8]) -> ZigString {
+        ZigString {
+            len: ptr.length as usize,
+            ptr: buf[ptr.offset as usize..][..ptr.length as usize].as_ptr(),
+        }
+    }
+
+    /// `ZigString.sortAsc` / `sortDesc` — in-place stable sort by 8-bit bytes.
+    pub fn sort_asc(slice_: &mut [ZigString]) {
+        slice_.sort_by(|a, b| a.slice().cmp(b.slice()));
+    }
+    pub fn sort_desc(slice_: &mut [ZigString]) {
+        slice_.sort_by(|a, b| b.slice().cmp(a.slice()));
+    }
+    #[inline]
+    pub fn cmp_asc(a: &ZigString, b: &ZigString) -> bool {
+        strings::cmp_strings_asc(&(), a.slice(), b.slice())
+    }
+    #[inline]
+    pub fn cmp_desc(a: &ZigString, b: &ZigString) -> bool {
+        strings::cmp_strings_desc(&(), a.slice(), b.slice())
+    }
+
+    /// `ZigString.toSliceLowercase` — allocate a lowercased UTF-8 copy.
+    pub fn to_slice_lowercase(&self) -> ZigStringSlice {
+        if self.len == 0 {
+            return ZigStringSlice::EMPTY;
+        }
+        let upper = self.to_owned_slice();
+        let mut buffer = vec![0u8; upper.len()];
+        let out_len = strings::copy_lowercase(&upper, &mut buffer).len();
+        buffer.truncate(out_len);
+        ZigStringSlice::Owned(buffer)
+    }
+
+    /// `ZigString.eqlCaseInsensitive` — slow path; allocates lowercased copies
+    /// of both sides.
+    pub fn eql_case_insensitive(&self, other: &ZigString) -> bool {
+        let a = self.to_slice_lowercase();
+        let b = other.to_slice_lowercase();
+        strings::eql_long(a.slice(), b.slice(), true)
+    }
+
+    /// `ZigString.sliceZBuf` — `Display`-format into `buf`, NUL-terminate, and
+    /// return the borrowed `[:0]u8`. Errors if the formatted output (plus NUL)
+    /// would not fit.
+    pub fn slice_z_buf<'a>(
+        &self,
+        buf: &'a mut bun_paths::PathBuffer,
+    ) -> Result<&'a ZStr, bun_core::Error> {
+        use std::io::Write as _;
+        let buf_slice: &mut [u8] = &mut buf[..];
+        let start_len = buf_slice.len();
+        let mut cursor: &mut [u8] = buf_slice;
+        write!(cursor, "{}", self).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+        let written = start_len - cursor.len();
+        if written >= buf.len() {
+            return Err(bun_core::err!("NoSpaceLeft"));
+        }
+        buf[written] = 0;
+        Ok(ZStr::from_buf(&buf[..], written))
     }
 
     #[inline]
@@ -2249,26 +2440,24 @@ pub use printer::quote_for_json;
 
 /// `bun.sliceTo(buf, 0)` — slice up to (not including) the first NUL byte,
 /// or the whole buffer if none. Port of `std.mem.sliceTo` for `u8`/`0`.
-#[inline]
-pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
-    match buf.iter().position(|&b| b == 0) {
-        Some(i) => &buf[..i],
-        None => buf,
-    }
-}
+/// Sunk to `bun_core::ffi` so tier-1 crates (cares_sys, sys) can share it;
+/// re-exported here for the existing `bun_string::slice_to_nul` callers.
+pub use bun_core::ffi::{slice_to_nul, slice_to_nul_mut};
 
 /// move-in: `cheap_prefix_normalizer` (MOVE_DOWN ← `bundle_v2.zig`).
 ///
 /// Pure path-string helper used by the bundler chunk writer and `css::printer`.
-/// Returns `(prefix', suffix')` such that concatenating them produces a
+/// Returns `[prefix', suffix']` such that concatenating them produces a
 /// reasonably-normalized path (collapses `./` leading and avoids `//`).
-pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> (&'a [u8], &'a [u8]) {
+/// Matches the .zig spec `[2]string` return shape so bundler call-sites can
+/// index it directly.
+pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [u8]; 2] {
     if prefix.is_empty() {
         let suffix_no_slash = strings::remove_leading_dot_slash(suffix);
-        return (
+        return [
             if strings::has_prefix_comptime(suffix_no_slash, b"../") { b"" } else { b"./" },
             suffix_no_slash,
-        );
+        ];
     }
 
     // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
@@ -2278,13 +2467,13 @@ pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> (&'a [
         if strings::starts_with_char(suffix, b'/')
             || (win && strings::starts_with_char(suffix, b'\\'))
         {
-            return (prefix, &suffix[1..]);
+            return [prefix, &suffix[1..]];
         }
         // It gets really complicated if we try to deal with URLs more than this
         // (see bundle_v2.zig comment block).
     }
 
-    (prefix, strings::remove_leading_dot_slash(suffix))
+    [prefix, strings::remove_leading_dot_slash(suffix)]
 }
 
 // Re-export `wtf::parse_double` at crate root (callers spell it `bun_str::parse_double`).

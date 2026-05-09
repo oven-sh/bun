@@ -64,14 +64,10 @@ pub struct AutoContext;
 impl<K: Hash + Eq + ?Sized> ArrayHashContext<K> for AutoContext {
     #[inline]
     fn hash(&self, key: &K) -> u32 {
-        // Zig: std.array_hash_map.getAutoHashFn → std.hash.Wyhash. The
-        // streaming `Wyhash` state zero-fills a 48-byte buffer on every
-        // `init`/`shallow_copy` (Zig left it `undefined`); route through the
-        // one-shot hasher to skip that — keys here are small POD (`Ref`,
-        // indices) so the per-chunk fold is a single `mum`.
-        let mut h = bun_wyhash::OneShotHasher::default();
-        key.hash(&mut h);
-        h.finish() as u32 // @truncate
+        // Zig: std.array_hash_map.getAutoHashFn → std.hash.Wyhash. Route through
+        // the one-shot hasher to skip the streaming state's 48-byte zero-fill —
+        // keys here are small POD (`Ref`, indices) so the fold is a single `mum`.
+        bun_wyhash::auto_hash(key) as u32 // @truncate
     }
     #[inline]
     fn eql(&self, a: &K, b: &K, _b_index: usize) -> bool {
@@ -1500,10 +1496,6 @@ impl<V: Default> StringHashMap<V> {
 #[allow(non_snake_case)]
 pub mod StringHashMapContext {
     #[inline]
-    pub fn hash(s: &[u8]) -> u64 {
-        bun_wyhash::hash(s)
-    }
-    #[inline]
     pub fn eql(a: &[u8], b: &[u8]) -> bool {
         a == b
     }
@@ -1514,7 +1506,7 @@ pub mod StringHashMapContext {
         super::string_hash_map::Prehashed { value: bun_wyhash::hash(input), input }
     }
 
-    pub use super::string_hash_map::{Prehashed, PrehashedCaseInsensitive};
+    pub use super::string_hash_map::{hash, Prehashed, PrehashedCaseInsensitive};
 }
 
 /// Namespace mirroring `std.hash_map` so call sites can write

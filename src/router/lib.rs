@@ -1953,12 +1953,7 @@ pub mod pattern {
         MissingParamName,
         PatternMissingClosingBracket,
     }
-    impl core::fmt::Display for PatternParseError {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            f.write_str(<&'static str>::from(*self))
-        }
-    }
-    impl std::error::Error for PatternParseError {}
+    bun_core::impl_tag_error!(PatternParseError);
 
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]

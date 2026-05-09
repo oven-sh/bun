@@ -63,18 +63,6 @@ type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
 type Sockaddr = netc::sockaddr;
 
-/// Platform `freeaddrinfo` for the [`AddrInfo`] alias above. On Windows the
-/// list comes from `ws2_32!getaddrinfo` (see `work_pool_callback`), so it must
-/// be freed with `ws2_32!freeaddrinfo` — *not* `uv_freeaddrinfo` (different
-/// allocator) and *not* `libc::freeaddrinfo` (wrong type / absent on Windows).
-#[inline]
-unsafe fn os_freeaddrinfo(ai: *mut AddrInfo) {
-    #[cfg(not(windows))]
-    unsafe { libc::freeaddrinfo(ai) };
-    #[cfg(windows)]
-    unsafe { bun_sys::windows::ws2_32::freeaddrinfo(ai.cast()) };
-}
-
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
 /// as a type-erased `Option<NonNull<c_void>>` to break the
@@ -1237,7 +1225,7 @@ pub mod get_addr_info_request {
 
             // do not free addrinfo when err != 0
             // https://github.com/ziglang/zig/pull/14242
-            let _free = scopeguard::guard(addrinfo, |a| unsafe { libc::freeaddrinfo(a) });
+            let _free = scopeguard::guard(addrinfo, |a| unsafe { bun_dns::freeaddrinfo(a) });
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
             *self = LibcBackend::Success(bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe { &*addrinfo })));
@@ -2468,7 +2456,10 @@ pub mod internal {
     fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
         let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
             let res = process_results(info);
-            unsafe { os_freeaddrinfo(info) };
+            // ws2_32!getaddrinfo-allocated on Windows — free via the matching
+            // ws2_32!freeaddrinfo (NOT uv_freeaddrinfo: different allocator).
+            // `.cast()` is identity on POSIX, libuv_sys→ws2_32 addrinfo on Windows.
+            unsafe { bun_dns::freeaddrinfo(info.cast()) };
             Some(res)
         } else {
             None

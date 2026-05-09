@@ -304,14 +304,22 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
         unsafe impl #impl_g ::bun_ptr::CellRefCounted for #name #ty_g #where_g {
             #[inline]
             fn ref_count(&self) -> &::core::cell::Cell<u32> { &self.#field }
+            #[inline]
+            unsafe fn ref_count_raw<'a>(this: *const Self) -> &'a ::core::cell::Cell<u32> {
+                // SAFETY: caller contract — `this` is live. Project to the
+                // `Cell<u32>` field only; never form `&Self` (callers may hold
+                // a live `&mut` on a sibling field — Stacked Borrows).
+                unsafe { &*::core::ptr::addr_of!((*this).#field) }
+            }
             #destroy_impl
         }
         impl #impl_g ::bun_ptr::AnyRefCounted for #name #ty_g #where_g {
             type DestructorCtx = ();
             #[inline]
             unsafe fn rc_ref(this: *mut Self) {
-                // SAFETY: caller contract — `this` is live.
-                let rc = unsafe { <Self as ::bun_ptr::CellRefCounted>::ref_count(&*this) };
+                // SAFETY: caller contract — `this` is live. Raw field
+                // projection; no `&Self` is formed (see `ref_count_raw`).
+                let rc = unsafe { &*::core::ptr::addr_of!((*this).#field) };
                 rc.set(rc.get() + 1);
             }
             #[inline]
@@ -321,14 +329,14 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
             }
             #[inline]
             unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-                // SAFETY: caller contract — `this` is live.
-                unsafe { <Self as ::bun_ptr::CellRefCounted>::ref_count(&*this) }.get() == 1
+                // SAFETY: caller contract — `this` is live. Raw field projection.
+                unsafe { &*::core::ptr::addr_of!((*this).#field) }.get() == 1
             }
             #[inline]
             unsafe fn rc_assert_no_refs(this: *const Self) {
                 debug_assert_eq!(
-                    // SAFETY: caller contract — `this` is live.
-                    unsafe { <Self as ::bun_ptr::CellRefCounted>::ref_count(&*this) }.get(),
+                    // SAFETY: caller contract — `this` is live. Raw field projection.
+                    unsafe { &*::core::ptr::addr_of!((*this).#field) }.get(),
                     0,
                 );
             }

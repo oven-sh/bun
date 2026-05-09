@@ -836,11 +836,11 @@ impl HttpThread {
 
     pub fn wakeup(&self) {
         if self.has_awoken.load(Ordering::Relaxed) {
-            unsafe extern "C" {
-                fn us_wakeup_loop(loop_: *mut uws::Loop);
-            }
             // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            unsafe { us_wakeup_loop(self.uws_loop) };
+            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
+            // cross-thread while the HTTP thread owns the loop, so forming
+            // `&mut Loop` here would alias.
+            unsafe { uws::us_wakeup_loop(self.uws_loop) };
         }
     }
 

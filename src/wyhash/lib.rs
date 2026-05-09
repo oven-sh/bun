@@ -577,6 +577,16 @@ impl core::hash::Hasher for OneShotHasher {
     }
 }
 
+/// Hash any `K: Hash` through [`OneShotHasher`] — the `Hash` → wyhash thunk
+/// shared by both auto-context map types. See the [`OneShotHasher`] doc-comment
+/// for the length-prefix divergence from Zig's `Wyhash.hash(0, asBytes(&k))`.
+#[inline]
+pub fn auto_hash<K: core::hash::Hash + ?Sized>(key: &K) -> u64 {
+    let mut h = OneShotHasher::default();
+    key.hash(&mut h);
+    core::hash::Hasher::finish(&h)
+}
+
 /// `BuildHasher` for `std::collections::HashMap` so containers can opt out of
 /// SipHash. Deterministic across runs and ~3-5× faster than `RandomState` on
 /// the short identifier keys the parser/printer/renamer churn.

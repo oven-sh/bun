@@ -15,7 +15,7 @@
 use bun_collections::StringHashMap;
 use bun_string::strings;
 
-bun_core::declare_scope!(h3_client, hidden);
+use crate::h3_client::h3_client;
 
 /// One advertised `h3` alternative from an `Alt-Svc` field-value. `port` is
 /// the alt-authority port (where QUIC should connect); `ma` is the freshness
@@ -96,7 +96,7 @@ pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
         if colon != 0 {
             continue;
         }
-        let Some(port) = parse_int::<u16>(&auth[colon + 1..]) else {
+        let Some(port) = strings::parse_int::<u16>(&auth[colon + 1..], 10).ok() else {
             continue;
         };
         if port == 0 {
@@ -111,7 +111,7 @@ pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
             };
             let peq = peq as usize;
             if strings::eql_case_insensitive_ascii(&param[..peq], b"ma", true) {
-                result.ma = parse_int::<u32>(&param[peq + 1..]).unwrap_or(result.ma);
+                result.ma = strings::parse_int::<u32>(&param[peq + 1..], 10).unwrap_or(result.ma);
             }
             // `persist` and unknown parameters are ignored (§3.1).
         }
@@ -247,13 +247,6 @@ pub fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
-
-#[inline]
-fn parse_int<T: core::str::FromStr>(bytes: &[u8]) -> Option<T> {
-    // Integer literals in Alt-Svc are ASCII-only; non-ASCII → not a valid int
-    // → `from_utf8` failing is equivalent to Zig's `parseInt` failing.
-    core::str::from_utf8(bytes).ok()?.parse::<T>().ok()
-}
 
 #[inline]
 fn timestamp() -> i64 {

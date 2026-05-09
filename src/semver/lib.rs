@@ -49,6 +49,18 @@ pub use crate::semver_string as string;
 pub trait StringBuilder {
     fn count(&mut self, slice_: &[u8]);
     fn append<T: crate::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T;
+
+    /// Convenience wrapper for `append::<String>` so callers ported from Zig's
+    /// `builder.append(String, s)` don't each need a local adapter trait.
+    #[inline]
+    fn append_string(&mut self, s: &[u8]) -> crate::semver_string::String {
+        self.append::<crate::semver_string::String>(s)
+    }
+    /// Convenience wrapper for `append::<ExternalString>`.
+    #[inline]
+    fn append_external_string(&mut self, s: &[u8]) -> crate::external_string::ExternalString {
+        self.append::<crate::external_string::ExternalString>(s)
+    }
 }
 
 impl StringBuilder for crate::semver_string::Builder {

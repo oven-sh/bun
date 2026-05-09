@@ -1268,10 +1268,11 @@ impl<'a> JSXTag<'a> {
 /// collide with a user's name. This is the easiest way to do so
 //
 // Zig: `comptime { name ++ "_" ++ truncatedHash32(std.hash.Wyhash.hash(0, name)) }`.
-// `bun_core::fmt::truncated_hash32` is not `const fn`, so a const-fn copy of
-// the suffix encoder lives here; the const-fn Wyhash one-shot now lives in
-// `bun_wyhash::hash_const` next to the runtime impl it must stay in lock-step
-// with.
+// The const-fn Wyhash one-shot lives in `bun_wyhash::hash_const` next to the
+// runtime impl it must stay in lock-step with; the const-fn suffix encoder is
+// `bun_core::fmt::truncated_hash32_bytes` (re-exported here so the
+// `$crate::parser::__generated_symbol_hash::truncated_hash32` macro path keeps
+// working).
 #[doc(hidden)]
 pub mod __generated_symbol_hash {
     /// `std.hash.Wyhash.hash(0, input)`.
@@ -1281,20 +1282,7 @@ pub mod __generated_symbol_hash {
     }
 
     /// `bun.fmt.truncatedHash32` — 8-byte base32-ish suffix (native-endian, matches Zig).
-    pub const fn truncated_hash32(int: u64) -> [u8; 8] {
-        const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
-        let b = int.to_ne_bytes();
-        [
-            CHARS[(b[0] & 31) as usize],
-            CHARS[(b[1] & 31) as usize],
-            CHARS[(b[2] & 31) as usize],
-            CHARS[(b[3] & 31) as usize],
-            CHARS[(b[4] & 31) as usize],
-            CHARS[(b[5] & 31) as usize],
-            CHARS[(b[6] & 31) as usize],
-            CHARS[(b[7] & 31) as usize],
-        ]
-    }
+    pub use bun_core::fmt::truncated_hash32_bytes as truncated_hash32;
 }
 
 #[macro_export]

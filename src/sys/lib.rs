@@ -6033,15 +6033,7 @@ pub mod posix {
     /// `uname(2)`. Returns a zeroed struct on the (POSIX-impossible) error
     /// path so callers never observe uninitialised bytes.
     #[cfg(unix)]
-    #[inline]
-    pub fn uname() -> libc::utsname {
-        let mut uts: libc::utsname = bun_core::ffi::zeroed();
-        // SAFETY: `uts` is exclusive and valid for `sizeof(utsname)` writes;
-        // `uname(2)` only fails with EFAULT on a bad pointer, which `&mut`
-        // precludes.
-        let _ = unsafe { libc::uname(&mut uts) };
-        uts
-    }
+    pub use bun_core::ffi::uname;
 
     /// `sysinfo(2)` (Linux).
     #[cfg(any(target_os = "linux", target_os = "android"))]

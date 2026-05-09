@@ -2,7 +2,7 @@
 
 use core::ffi::c_char;
 
-use bun_jsc::{JSGlobalObject, JSValue, WebWorker};
+use bun_jsc::{JSGlobalObject, JSValue, WebWorker, ZigStringJsc as _};
 use bun_jsc::zig_string::ZigString;
 use bun_core::{self, Environment, Global};
 use bun_core::env_var::feature_flag;
@@ -115,7 +115,7 @@ pub static Bun__version_sha: CStrPtr =
     CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr().cast::<c_char>());
 
 mod _impl {
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::zig_string::ZigString;
 use bun_str::{String as BunString, strings};

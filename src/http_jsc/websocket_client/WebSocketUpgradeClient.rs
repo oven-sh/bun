@@ -28,7 +28,7 @@ use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_collections::StringSet;
 use bun_core::fmt::HostFormatter;
-use bun_core::FeatureFlags;
+use bun_core::{FeatureFlags, ZBox};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
@@ -111,9 +111,7 @@ pub struct HTTPClient<const SSL: bool> {
     headers_buf: [picohttp::Header; 128],
     body: Vec<u8>,
     /// Owned NUL-terminated hostname for SNI; empty when unset.
-    // TODO(port): owned ZStr type — Zig `[:0]const u8` from `dupeZ`. Stored here
-    // as bytes including the trailing NUL; `&hostname[..len-1]` is the slice.
-    hostname: Box<[u8]>,
+    hostname: ZBox,
     poll_ref: KeepAlive,
     state: State,
     subprotocols: StringSet,
@@ -352,7 +350,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             read_length: 0,
             headers_buf: [picohttp::Header::ZERO; 128],
             body: Vec::new(),
-            hostname: Box::default(),
+            hostname: ZBox::default(),
             poll_ref: KeepAlive::init(),
             state: State::Initializing,
             proxy: proxy_state,
@@ -499,7 +497,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         if !host_slice.slice().is_empty()
                             && !strings::is_ip_address(host_slice.slice())
                         {
-                            client_ref.hostname = dupe_z(host_slice.slice());
+                            client_ref.hostname = ZBox::from_bytes(host_slice.slice());
                         }
                     }
 
@@ -540,7 +538,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // dialed. For HTTPS proxy connections, that's the proxy host,
                     // not the wss:// target.
                     if !strings::is_ip_address(display_host_) {
-                        out.hostname = dupe_z(display_host_);
+                        out.hostname = ZBox::from_bytes(display_host_);
                     }
                 }
 
@@ -572,7 +570,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         self.body = Vec::new();
 
         if !self.hostname.is_empty() {
-            self.hostname = Box::default();
+            self.hostname = ZBox::default();
         }
 
         // Clean up proxy state. Null the field and detach the tunnel's
@@ -785,16 +783,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SAFETY: native handle on a TLS socket is `*SSL`; live for the
                     // open socket's lifetime.
                     let handle = handle.cast::<boringssl::c::SSL>();
-                    // hostname is NUL-terminated (`dupe_z`); pass the C string
-                    // directly. `configureHTTPClient` ext-method
-                    // hasn't landed on boringssl::SSL; use bun_http's helper.
+                    // `configureHTTPClient` ext-method hasn't landed on
+                    // boringssl::SSL; use bun_http's helper.
                     bun_http::configure_http_client_with_alpn(
                         handle,
-                        me.hostname.as_ptr().cast(),
+                        me.hostname.as_ptr(),
                         bun_http::AlpnOffer::H1,
                     );
                 }
-                me.hostname = Box::default();
+                me.hostname = ZBox::default();
             }
         }
 
@@ -839,7 +836,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // Ref the tunnel to keep it alive during this call
                     // (in case the WebSocket client closes during processing)
                     // SAFETY: `p` holds a live ref on `tunnel`.
-                    let _g = unsafe { WebSocketProxyTunnel::ref_scope(tp) };
+                    let _g = unsafe { bun_ptr::ScopedRef::new(tp) };
                     // SAFETY: ref guard above keeps the tunnel live.
                     unsafe { WebSocketProxyTunnel::receive(tp, data) };
                 }
@@ -1357,15 +1354,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         }
                         // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
                         for ext_str in header.value().split(|b| *b == b',') {
-                            let mut ext_it = trim_ws(ext_str).split(|b| *b == b';');
-                            let ext_name = trim_ws(ext_it.next().unwrap_or(b""));
+                            let mut ext_it = strings::trim(ext_str, b" \t").split(|b| *b == b';');
+                            let ext_name = strings::trim(ext_it.next().unwrap_or(b""), b" \t");
                             if ext_name == b"permessage-deflate" {
                                 deflate_result.enabled = true;
                                 for param_str in ext_it {
                                     let mut param_it =
-                                        trim_ws(param_str).split(|b| *b == b'=');
-                                    let key = trim_ws(param_it.next().unwrap_or(b""));
-                                    let value = trim_ws(param_it.next().unwrap_or(b""));
+                                        strings::trim(param_str, b" \t").split(|b| *b == b'=');
+                                    let key = strings::trim(param_it.next().unwrap_or(b""), b" \t");
+                                    let value = strings::trim(param_it.next().unwrap_or(b""), b" \t");
 
                                     if key == b"server_no_context_takeover" {
                                         deflate_result.params.server_no_context_takeover = 1;
@@ -1383,7 +1380,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                                 value
                                             };
 
-                                            if let Some(bits) = parse_u8_dec(trimmed_value) {
+                                            if let Ok(bits) = strings::parse_int::<u8>(trimmed_value, 10) {
                                                 if bits >= WebSocketDeflate::Params::MIN_WINDOW_BITS
                                                     && bits
                                                         <= WebSocketDeflate::Params::MAX_WINDOW_BITS
@@ -1405,7 +1402,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                                 value
                                             };
 
-                                            if let Some(bits) = parse_u8_dec(trimmed_value) {
+                                            if let Ok(bits) = strings::parse_int::<u8>(trimmed_value, 10) {
                                                 if bits >= WebSocketDeflate::Params::MIN_WINDOW_BITS
                                                     && bits
                                                         <= WebSocketDeflate::Params::MAX_WINDOW_BITS
@@ -1742,65 +1739,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 }
 
-/// `bun.default_allocator.dupeZ(u8, s) catch ""` — returns owned bytes with a
-/// trailing NUL, or empty on (impossible-in-Rust) alloc failure.
-// TODO(port): owned ZStr type — replace this helper and the `hostname` field
-// with `bun_str::ZStr::from_bytes(s)` once the owned-ZStr shape is settled.
-fn dupe_z(s: &[u8]) -> Box<[u8]> {
-    let mut v = Vec::with_capacity(s.len() + 1);
-    v.extend_from_slice(s);
-    v.push(0);
-    v.into_boxed_slice()
-}
-
-/// `std.mem.trim(u8, s, " \t")`
-fn trim_ws(s: &[u8]) -> &[u8] {
-    let mut start = 0;
-    let mut end = s.len();
-    while start < end && (s[start] == b' ' || s[start] == b'\t') {
-        start += 1;
-    }
-    while end > start && (s[end - 1] == b' ' || s[end - 1] == b'\t') {
-        end -= 1;
-    }
-    &s[start..end]
-}
-
-/// `std.fmt.parseInt(u8, s, 10) catch null`
-///
-/// Zig's `parseInt` accepts an optional leading `+` (and `-`, which for an
-/// unsigned target type only succeeds on `-0`). RFC 7692 §7.1.2 constrains the
-/// permessage-deflate window-bits parameter to bare decimal `8`..`15`, so the
-/// sign handling is only here for spec parity with the Zig path.
-fn parse_u8_dec(mut s: &[u8]) -> Option<u8> {
-    match s.first()? {
-        b'+' => s = &s[1..],
-        b'-' => {
-            // Unsigned target: `-0`/`-00…` parses to 0; any other digit fails.
-            s = &s[1..];
-            if s.is_empty() || s.iter().any(|&b| b != b'0') {
-                return None;
-            }
-            return Some(0);
-        }
-        _ => {}
-    }
-    if s.is_empty() {
-        return None;
-    }
-    let mut acc: u32 = 0;
-    for &b in s {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        acc = acc.checked_mul(10)?.checked_add((b - b'0') as u32)?;
-        if acc > u8::MAX as u32 {
-            return None;
-        }
-    }
-    Some(acc as u8)
-}
-
 /// Decodes an array of BunString header name/value pairs to UTF-8 up front.
 ///
 /// The BunString values may be backed by 8-bit Latin1 or 16-bit UTF-16
@@ -1900,14 +1838,10 @@ fn build_connect_request(
 
     // Custom proxy headers
     if let Some(hdrs) = proxy_headers {
-        use bun_http_types::ETag::{StringPointer as HeaderStringPointer};
+        use bun_http_types::ETag::HeaderEntryColumns;
         let slice = hdrs.entries.slice();
-        // SAFETY: column type for both fields is `StringPointer` (see
-        // `HeaderEntry::FIELD_SIZES`); `items` returns `&[F]` over live storage.
-        let names: &[HeaderStringPointer] =
-            unsafe { slice.items::<"name", HeaderStringPointer>() };
-        let values: &[HeaderStringPointer] =
-            unsafe { slice.items::<"value", HeaderStringPointer>() };
+        let names = slice.items_name();
+        let values = slice.items_value();
         debug_assert_eq!(names.len(), values.len());
         for (idx, name_ptr) in names.iter().enumerate() {
             // Skip Proxy-Authorization if user provided one (we already added it)

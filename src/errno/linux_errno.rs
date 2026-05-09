@@ -3,37 +3,6 @@ pub use crate::posix::mode_t as Mode;
 pub use crate::posix::E;
 pub use crate::posix::S;
 
-// ──────────────────────────────────────────────────────────────────────────
-// posix — MOVE_DOWN landing for std.posix.{mode_t,E,S} + std.c._errno()
-//
-// Ground truth: Zig `std.posix` (linux) / `std.c` re-exports. Landed here so
-// the errno crate stays leaf (T0) and bun_sys (T≥1) imports forward.
-// ──────────────────────────────────────────────────────────────────────────
-#[allow(non_camel_case_types, non_snake_case)]
-pub mod posix {
-    use core::ffi::c_int;
-
-    /// Linux `mode_t` (glibc/musl: `unsigned int`).
-    pub type mode_t = u32;
-
-    /// Kernel errno enum. Zig's `std.posix.E` and Bun's `SystemErrno` share the
-    /// exact same discriminant space on Linux; we alias rather than duplicate.
-    /// TODO(port): Zig's `E` uses unprefixed variant names (`PERM`, `NOENT`);
-    /// `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on `E::PERM` must
-    /// migrate to `E::EPERM` (or this becomes a distinct enum in Phase B).
-    pub type E = super::SystemErrno;
-
-    /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
-    /// Linux `mode_t` == `u32` == `bun_core::Mode`, so the canonical module is
-    /// a drop-in re-export (constant types and predicate signatures unchanged).
-    pub use bun_core::S;
-
-    /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
-    /// Canonical impl lives in `bun_core::ffi` (single target_os→symbol ladder).
-    pub use bun_core::ffi::errno;
-    #[allow(unused_imports)] use c_int as _;
-}
-
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
 pub enum SystemErrno {

@@ -259,25 +259,8 @@ impl MimallocArena {
     #[inline]
     fn aligned_alloc(&self, len: usize, align: usize) -> *mut u8 {
         self.assert_owning_thread();
-        let heap = self.heap_ptr();
-        // SAFETY: `heap` is live.
-        let p = unsafe {
-            if mimalloc::must_use_aligned_alloc(align) {
-                mimalloc::mi_heap_malloc_aligned(heap, len, align)
-            } else {
-                mimalloc::mi_heap_malloc(heap, len)
-            }
-        };
-        #[cfg(debug_assertions)]
-        if !p.is_null() {
-            // SAFETY: `p` was just returned by mimalloc.
-            let usable = unsafe { mimalloc::mi_malloc_usable_size(p) };
-            debug_assert!(
-                usable >= len,
-                "mimalloc: allocated size is too small: {usable} < {len}"
-            );
-        }
-        p.cast()
+        // SAFETY: `self.heap_ptr()` is live.
+        unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) }
     }
 
     /// Zig: `vtable_resize` — in-place expand/shrink, no relocation.
@@ -467,6 +450,16 @@ impl Drop for MimallocArena {
 // `Vec<T, &'a MimallocArena>` borrows the arena for `'a` — matching
 // `bumpalo`'s `&'bump Bump: Allocator` shape and the `ArenaVec<'a, T>` alias.
 
+/// Wrap a raw mimalloc pointer in the `Result<NonNull<[u8]>, AllocError>` shape
+/// the `Allocator` trait wants. `#[inline(always)]` keeps codegen identical to
+/// the open-coded `match` this replaced (hot path).
+#[inline(always)]
+fn alloc_result(p: *mut u8, size: usize) -> Result<NonNull<[u8]>, AllocError> {
+    NonNull::new(p)
+        .map(|p| NonNull::slice_from_raw_parts(p, size))
+        .ok_or(AllocError)
+}
+
 // SAFETY: every pointer returned by `allocate` comes from
 // `mi_heap_malloc[_aligned]` on `self.heap`, which yields a block of at least
 // `layout.size()` bytes aligned to `layout.align()`. `deallocate` forwards to
@@ -481,10 +474,7 @@ unsafe impl Allocator for &MimallocArena {
         // mimalloc tolerates size==0 (returns a unique non-null pointer), so
         // no special-casing needed.
         let p = self.aligned_alloc(layout.size(), layout.align());
-        match NonNull::new(p) {
-            Some(p) => Ok(NonNull::slice_from_raw_parts(p, layout.size())),
-            None => Err(AllocError),
-        }
+        alloc_result(p, layout.size())
     }
 
     #[inline]
@@ -499,10 +489,7 @@ unsafe impl Allocator for &MimallocArena {
                 mimalloc::mi_heap_zalloc(heap, layout.size())
             }
         };
-        match NonNull::new(p.cast::<u8>()) {
-            Some(p) => Ok(NonNull::slice_from_raw_parts(p, layout.size())),
-            None => Err(AllocError),
-        }
+        alloc_result(p.cast::<u8>(), layout.size())
     }
 
     #[inline]
@@ -520,21 +507,9 @@ unsafe impl Allocator for &MimallocArena {
         _old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        self.assert_owning_thread();
-        // SAFETY: caller contract — `ptr` was allocated by this allocator with
-        // `_old`; `new.size() >= _old.size()`.
-        let p = unsafe {
-            mimalloc::mi_heap_realloc_aligned(
-                self.heap_ptr(),
-                ptr.as_ptr().cast(),
-                new.size(),
-                new.align(),
-            )
-        };
-        match NonNull::new(p.cast::<u8>()) {
-            Some(p) => Ok(NonNull::slice_from_raw_parts(p, new.size())),
-            None => Err(AllocError),
-        }
+        // Route through the canonical `mi_heap_realloc_aligned` thunk; `remap`
+        // asserts owning-thread and casts for us.
+        alloc_result(self.remap(ptr, new.size(), new.align()), new.size())
     }
 
     #[inline]
@@ -554,10 +529,7 @@ unsafe impl Allocator for &MimallocArena {
                 new.align(),
             )
         };
-        match NonNull::new(p.cast::<u8>()) {
-            Some(p) => Ok(NonNull::slice_from_raw_parts(p, new.size())),
-            None => Err(AllocError),
-        }
+        alloc_result(p.cast::<u8>(), new.size())
     }
 
     #[inline]
@@ -567,35 +539,44 @@ unsafe impl Allocator for &MimallocArena {
         _old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        self.assert_owning_thread();
-        // SAFETY: see `grow`; `new.size() <= _old.size()`.
-        let p = unsafe {
-            mimalloc::mi_heap_realloc_aligned(
-                self.heap_ptr(),
-                ptr.as_ptr().cast(),
-                new.size(),
-                new.align(),
-            )
-        };
-        match NonNull::new(p.cast::<u8>()) {
-            Some(p) => Ok(NonNull::slice_from_raw_parts(p, new.size())),
-            None => Err(AllocError),
-        }
+        // Same FFI call as `grow` — route through `remap`.
+        alloc_result(self.remap(ptr, new.size(), new.align()), new.size())
     }
+}
+
+/// Shared core of `MimallocArena::aligned_alloc` and `vtable_alloc`:
+/// Zig's `Borrowed.alignedAlloc` body — pick `mi_heap_malloc_aligned` only when
+/// `align > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_heap_malloc`, then
+/// debug-assert the returned block's usable size covers `len`.
+///
+/// SAFETY: `heap` must be a live `mi_heap_t*`.
+#[inline]
+unsafe fn heap_alloc_maybe_aligned(heap: *mut mimalloc::Heap, len: usize, align: usize) -> *mut u8 {
+    // SAFETY: caller guarantees `heap` is live.
+    let p = unsafe {
+        if mimalloc::must_use_aligned_alloc(align) {
+            mimalloc::mi_heap_malloc_aligned(heap, len, align)
+        } else {
+            mimalloc::mi_heap_malloc(heap, len)
+        }
+    };
+    #[cfg(debug_assertions)]
+    if !p.is_null() {
+        // SAFETY: `p` was just returned by mimalloc.
+        let usable = unsafe { mimalloc::mi_malloc_usable_size(p) };
+        debug_assert!(
+            usable >= len,
+            "mimalloc: allocated size is too small: {usable} < {len}"
+        );
+    }
+    p.cast()
 }
 
 // ── StdAllocator vtable (Zig: `heap_allocator_vtable`) ───────────────────
 
 unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, a: crate::Alignment, _ra: usize) -> *mut u8 {
-    let heap = ctx.cast::<mimalloc::Heap>();
     // SAFETY: `ctx` is the `mi_heap_t*` stashed by `std_allocator()`.
-    unsafe {
-        if mimalloc::must_use_aligned_alloc(a.to_byte_units()) {
-            mimalloc::mi_heap_malloc_aligned(heap, len, a.to_byte_units()).cast()
-        } else {
-            mimalloc::mi_heap_malloc(heap, len).cast()
-        }
-    }
+    unsafe { heap_alloc_maybe_aligned(ctx.cast(), len, a.to_byte_units()) }
 }
 
 unsafe fn vtable_remap(

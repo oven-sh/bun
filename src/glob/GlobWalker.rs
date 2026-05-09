@@ -25,6 +25,7 @@ use core::ffi::c_int;
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, AutoBitSet};
+use bun_core::env::IS_WINDOWS;
 use bun_core::Error;
 use bun_core::{declare_scope, scoped_log};
 use bun_paths::{resolve_path, PathBuffer, MAX_PATH_BYTES};
@@ -33,11 +34,6 @@ use bun_sys::dir_iterator as DirIterator;
 use bun_string::strings::{self, UnsignedCodepointIterator as CodepointIterator};
 use bun_string::{String as BunString, ZStr};
 use bun_sys::{self as Syscall, Fd, FdExt, Result as Maybe, Stat, Error as SysError, E, O, S};
-
-#[cfg(windows)]
-const IS_WINDOWS: bool = true;
-#[cfg(not(windows))]
-const IS_WINDOWS: bool = false;
 
 // const Codepoint = u32;
 
@@ -2191,64 +2187,35 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             // PORT NOTE: Zig calls bun.strings.utf8ByteSequenceLength; same table as wtf8.
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
-            match c {
-                b'\\' => {
-                    #[cfg(windows)]
-                    {
-                        let mut end_byte = i;
-                        // is last char
-                        if (i + width) as usize == pattern.len() {
-                            end_byte += width;
-                        }
-                        if let Some(component) =
-                            Self::make_component(pattern, start_byte, end_byte, has_relative_patterns)
-                        {
-                            saw_special = saw_special || component.syntax_hint.is_special_syntax();
-                            if !saw_special {
-                                *basename_excluding_special_syntax_component_idx =
-                                    u32::try_from(pattern_components.len()).expect("int cast");
-                                *end_byte_of_basename_excluding_special_syntax = i + width;
-                            }
-                            pattern_components.push(component);
-                        }
-                        start_byte = i + width;
-                        i += 1;
-                        continue;
-                    }
-
-                    #[cfg(not(windows))]
-                    {
-                        if prev_is_backslash {
-                            prev_is_backslash = false;
-                            i += 1;
-                            continue;
-                        }
-
-                        prev_is_backslash = true;
-                    }
+            // PORT NOTE: GlobWalker.zig duplicates this block across the '\\' (Windows) and '/'
+            // arms because Zig has no or-pattern with a comptime guard; merged here via cfg!().
+            if c == b'/' || (cfg!(windows) && c == b'\\') {
+                let mut end_byte = i;
+                // is last char
+                if (i + width) as usize == pattern.len() {
+                    end_byte += width;
                 }
-                b'/' => {
-                    let mut end_byte = i;
-                    // is last char
-                    if (i + width) as usize == pattern.len() {
-                        end_byte += width;
+                if let Some(component) =
+                    Self::make_component(pattern, start_byte, end_byte, has_relative_patterns)
+                {
+                    saw_special = saw_special || component.syntax_hint.is_special_syntax();
+                    if !saw_special {
+                        *basename_excluding_special_syntax_component_idx =
+                            u32::try_from(pattern_components.len()).expect("int cast");
+                        *end_byte_of_basename_excluding_special_syntax = i + width;
                     }
-                    if let Some(component) =
-                        Self::make_component(pattern, start_byte, end_byte, has_relative_patterns)
-                    {
-                        saw_special = saw_special || component.syntax_hint.is_special_syntax();
-                        if !saw_special {
-                            *basename_excluding_special_syntax_component_idx =
-                                u32::try_from(pattern_components.len()).expect("int cast");
-                            *end_byte_of_basename_excluding_special_syntax = i + width;
-                        }
-                        pattern_components.push(component);
-                    }
-                    start_byte = i + width;
+                    pattern_components.push(component);
                 }
-                // TODO: Support other escaping glob syntax
-                _ => {}
+                start_byte = i + width;
+            } else if c == b'\\' {
+                if prev_is_backslash {
+                    prev_is_backslash = false;
+                    i += 1;
+                    continue;
+                }
+                prev_is_backslash = true;
             }
+            // TODO: Support other escaping glob syntax
             i += 1;
         }
         let _ = prev_is_backslash;
@@ -2355,12 +2322,11 @@ pub fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `allocator.dupeZ(u8, s)` — returns owned bytes with trailing NUL included
-/// at index `len()-1`.
+/// at index `len()-1`. Kept as `Box<[u8]>` (not `ZBox`) so `dupe_matched` can
+/// store sentinel and non-sentinel payloads in the same `MatchedPath` shape.
+#[inline]
 fn dupe_z(s: &[u8]) -> Box<[u8]> {
-    let mut v = Vec::with_capacity(s.len() + 1);
-    v.extend_from_slice(s);
-    v.push(0);
-    v.into_boxed_slice()
+    bun_core::ZBox::from_bytes(s).into_boxed_slice_with_nul()
 }
 
 /// Allocate a matched-path payload: when `SENTINEL` is true the box has a

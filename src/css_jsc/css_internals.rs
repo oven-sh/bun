@@ -60,6 +60,32 @@ pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     testing_impl(global, frame, TestKind::Normal, TestCategory::Normal)
 }
 
+/// Shared arg-validation for the test-only CSS internals: pulls the next arg,
+/// throws "{fn_name}: expected {expected_n} arguments, got {got_n}" if absent,
+/// throws "{fn_name}: expected {arg_label} to be a string" if not a string,
+/// otherwise returns the +1-ref BunString wrapped in `OwnedString` for RAII deref.
+/// Caller does `.to_utf8()` (borrows the OwnedString, so can't be returned here).
+fn eat_string_arg(
+    arguments: &mut bun_jsc::ArgumentsSlice<'_>,
+    global: &JSGlobalObject,
+    fn_name: &str,
+    expected_n: u32,
+    got_n: u32,
+    arg_label: &str,
+) -> JsResult<OwnedString> {
+    let Some(arg) = arguments.next_eat() else {
+        return Err(global.throw(format_args!(
+            "{fn_name}: expected {expected_n} arguments, got {got_n}"
+        )));
+    };
+    if !arg.is_string() {
+        return Err(global.throw(format_args!(
+            "{fn_name}: expected {arg_label} to be a string"
+        )));
+    }
+    Ok(OwnedString::new(arg.to_bun_string(global)?))
+}
+
 pub fn testing_impl(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -87,33 +113,12 @@ pub fn testing_impl(
     // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
     let mut arguments =
         bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
-    let Some(source_arg) = arguments.next_eat() else {
-        return Err(global.throw(format_args!(
-            "minifyTestWithOptions: expected 2 arguments, got 0"
-        )));
-    };
-    if !source_arg.is_string() {
-        return Err(global.throw(format_args!(
-            "minifyTestWithOptions: expected source to be a string"
-        )));
-    }
-    // Zig: `defer source_bunstr.deref()` — `to_bun_string` returns a +1 ref and
-    // `bun_string::String` is `Copy` (no `Drop`), so wrap in `OwnedString` for RAII release.
-    let source_bunstr = OwnedString::new(source_arg.to_bun_string(global)?);
+    let source_bunstr =
+        eat_string_arg(&mut arguments, global, "minifyTestWithOptions", 2, 0, "source")?;
     let source = source_bunstr.to_utf8();
 
-    let Some(expected_arg) = arguments.next_eat() else {
-        return Err(global.throw(format_args!(
-            "minifyTestWithOptions: expected 2 arguments, got 1"
-        )));
-    };
-    if !expected_arg.is_string() {
-        return Err(global.throw(format_args!(
-            "minifyTestWithOptions: expected `expected` arg to be a string"
-        )));
-    }
-    // Zig: `defer expected_bunstr.deref()`
-    let expected_bunstr = OwnedString::new(expected_arg.to_bun_string(global)?);
+    let expected_bunstr =
+        eat_string_arg(&mut arguments, global, "minifyTestWithOptions", 2, 1, "`expected` arg")?;
     let _expected = expected_bunstr.to_utf8();
 
     let browser_options_arg = arguments.next_eat();
@@ -302,27 +307,11 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // SAFETY: bunVM() never returns null for a Bun-owned global.
     let mut arguments =
         bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
-    let Some(source_arg) = arguments.next_eat() else {
-        return Err(global.throw(format_args!("attrTest: expected 3 arguments, got 0")));
-    };
-    if !source_arg.is_string() {
-        return Err(global.throw(format_args!("attrTest: expected source to be a string")));
-    }
-    // Zig: `defer source_bunstr.deref()` — `to_bun_string` returns a +1 ref;
-    // `bun_string::String` is `Copy` (no `Drop`), so wrap in `OwnedString` for RAII release.
-    let source_bunstr = OwnedString::new(source_arg.to_bun_string(global)?);
+    let source_bunstr = eat_string_arg(&mut arguments, global, "attrTest", 3, 0, "source")?;
     let source = source_bunstr.to_utf8();
 
-    let Some(expected_arg) = arguments.next_eat() else {
-        return Err(global.throw(format_args!("attrTest: expected 3 arguments, got 1")));
-    };
-    if !expected_arg.is_string() {
-        return Err(global.throw(format_args!(
-            "attrTest: expected `expected` arg to be a string"
-        )));
-    }
-    // Zig: `defer expected_bunstr.deref()`
-    let expected_bunstr = OwnedString::new(expected_arg.to_bun_string(global)?);
+    let expected_bunstr =
+        eat_string_arg(&mut arguments, global, "attrTest", 3, 1, "`expected` arg")?;
     let _expected = expected_bunstr.to_utf8();
 
     let Some(minify_arg) = arguments.next_eat() else {

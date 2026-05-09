@@ -268,6 +268,29 @@ pub fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
     &s[..end]
 }
 
+/// Port of `std.fmt.count`: number of bytes the formatted args would produce.
+///
+/// Drives a discarding `fmt::Write` that only sums `s.len()` — no allocation,
+/// no UTF-8 validation beyond what the formatter already did. Lives here in
+/// T0 so higher tiers (`bun_core::fmt::count` re-exports this) and `bun_alloc`
+/// itself can share the single implementation.
+#[inline]
+pub fn fmt_count(args: core::fmt::Arguments<'_>) -> usize {
+    struct Discarding(usize);
+    impl core::fmt::Write for Discarding {
+        #[inline]
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            self.0 += s.len();
+            Ok(())
+        }
+    }
+    let mut w = Discarding(0);
+    // Infallible: our `write_str` never errors, mirroring Zig's
+    // `error.WriteFailed => unreachable`.
+    let _ = core::fmt::write(&mut w, args);
+    w.0
+}
+
 // ── RAII Mutex ────────────────────────────────────────────────────────────
 // Zig's `bun.Mutex` exposes bare `lock()`/`unlock()` (no guard). The BSS
 // containers below need to hold the lock across `&mut self` method calls, so
@@ -561,6 +584,18 @@ pub enum Tag {
 /// Port of `jsc.ZigString` — extern struct `{ ptr: [*]const u8, len: usize }`
 /// where `ptr` carries tag bits in the high byte (bit 63 = UTF-16, 62 = global,
 /// 61 = UTF-8, 60 = static). Untagging masks to the low 53 bits.
+///
+/// **STORAGE TWIN — not canonical.** The canonical, method-rich `ZigString`
+/// lives in `bun_string::ZigString` (identical `#[repr(C)] { *const u8, usize }`
+/// layout, same tag-bit scheme — guarded by a `const _ = assert!(size/align)`
+/// in `bun_string`). This copy exists so the T0 `bun_alloc::String` /
+/// `StringImpl` union can name the field type without an upward dep on
+/// `bun_string` (`bun_alloc` is the lowest tier). The handful of methods kept
+/// here are for `bun_alloc`'s internal use only (`WTFStringImplStruct::
+/// to_zig_string`, `String::eql_bytes`, the `Debug` impl). **Do not add new
+/// methods here** — add them to `bun_string::ZigString` and convert via
+/// `from_tagged_ptr` / `_unsafe_ptr_do_not_use`.
+#[doc(hidden)]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ZigString {
@@ -575,6 +610,15 @@ impl ZigString {
     #[inline]
     pub const fn init(slice: &[u8]) -> ZigString {
         ZigString { _unsafe_ptr_do_not_use: slice.as_ptr(), len: slice.len() }
+    }
+
+    /// Construct from an already-tagged pointer + length. Mirror of
+    /// `bun_string::ZigString::from_tagged_ptr` for field-by-field round-trips
+    /// (preferred over `transmute` so a future field reorder fails at compile
+    /// time, not at runtime).
+    #[inline]
+    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> ZigString {
+        ZigString { _unsafe_ptr_do_not_use: ptr, len }
     }
 
     #[inline]
@@ -1860,20 +1904,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<&[u8], AllocError> {
         // ── std.fmt.count: drive a discarding `fmt::Write` that only sums byte lengths.
-        // (Inlined here because bun_alloc sits below bun_core in T0; cannot pull
-        // `bun_core::fmt::count`.)
-        struct Discarding(usize);
-        impl core::fmt::Write for Discarding {
-            #[inline]
-            fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                self.0 += s.len();
-                Ok(())
-            }
-        }
-        let mut counter = Discarding(0);
-        // Infallible: our `write_str` never errors (Zig: `error.WriteFailed => unreachable`).
-        let _ = core::fmt::write(&mut counter, args);
-        let len = counter.0;
+        let len = crate::fmt_count(args);
 
         // var buf = try self.appendMutable(EmptyType, .{ .len = count + 1 });
         let buf = self.append_mutable(EmptyType { len: len + 1 })?;
@@ -1882,6 +1913,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         buf[buf_len - 1] = 0;
 
         // ── std.fmt.bufPrint(buf[0..len-1], fmt, args) catch unreachable
+        // duplicated from bun_core::fmt::SliceCursor — bun_alloc is below bun_core
+        // in the crate graph, so we can't route to the canonical copy.
         struct SliceCursor<'a> {
             buf: &'a mut [u8],
             pos: usize,
@@ -2076,16 +2109,25 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         instance.backing_buf_used as usize >= COUNT
     }
 
-    pub fn get_or_put(
-        &mut self,
-        denormalized_key: &[u8],
-    ) -> core::result::Result<Result, AllocError> {
+    /// Normalize `denormalized_key` per `REMOVE_TRAILING_SLASHES` and hash it.
+    /// Shared prelude of `get_or_put` / `get` / `remove`; the trimmed slice itself
+    /// is never needed by callers, only the hash. `#[inline(always)]` + the
+    /// const-generic branch fold to identical codegen at each monomorphization.
+    #[inline(always)]
+    fn key_hash(denormalized_key: &[u8]) -> u64 {
         let key = if REMOVE_TRAILING_SLASHES {
             trim_right(denormalized_key, SEP_STR.as_bytes())
         } else {
             denormalized_key
         };
-        let _key = bun_wyhash::hash(key);
+        bun_wyhash::hash(key)
+    }
+
+    pub fn get_or_put(
+        &mut self,
+        denormalized_key: &[u8],
+    ) -> core::result::Result<Result, AllocError> {
+        let _key = Self::key_hash(denormalized_key);
 
         let _guard = self.mutex.lock();
         // TODO(port): narrow error set — IndexMap::get_or_put can only OOM.
@@ -2114,12 +2156,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
-        let key = if REMOVE_TRAILING_SLASHES {
-            trim_right(denormalized_key, SEP_STR.as_bytes())
-        } else {
-            denormalized_key
-        };
-        let _key = bun_wyhash::hash(key);
+        let _key = Self::key_hash(denormalized_key);
         // Hold the lock across `at_index` (Zig: `defer self.mutex.unlock()` at fn scope) —
         // a concurrent `put()` could otherwise mutate `overflow_list`/`backing_buf` while
         // we dereference `index`. `MutexGuard` holds a raw pointer (see [`Mutex`] docs),
@@ -2193,12 +2230,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// Returns true if the entry was removed.
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
         let _guard = self.mutex.lock();
-        let key = if REMOVE_TRAILING_SLASHES {
-            trim_right(denormalized_key, SEP_STR.as_bytes())
-        } else {
-            denormalized_key
-        };
-        let _key = bun_wyhash::hash(key);
+        let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
         // (Zig has commented-out per-slot deinit code here; intentionally not ported.)
     }

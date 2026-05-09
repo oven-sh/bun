@@ -1073,6 +1073,8 @@ impl PackageManager {
         // PORT NOTE: Zig `bun.once` caches the `()` result. The body itself is
         // already idempotent (early-returns when `node_gyp_tempdir_name` is
         // non-empty), so a simple `AtomicBool` ran-flag matches semantics.
+        // NB: not `bun_core::run_once!` — body is fallible and the contract is
+        // "2nd call = Ok(()) regardless of 1st outcome" (D006).
         if ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
@@ -2192,11 +2194,8 @@ pub fn init(
             }
 
             // If any HTTP proxy is set, use a diferent limit
-            if env.has(b"http_proxy")
-                || env.has(b"https_proxy")
-                || env.has(b"HTTPS_PROXY")
-                || env.has(b"HTTP_PROXY")
-            {
+            // (env_loader.zig:167 hasHTTPProxy — PackageManager.zig open-codes this)
+            if env.has_http_proxy() {
                 break 'brk DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES;
             }
 
@@ -2278,13 +2277,11 @@ pub fn init_with_runtime(
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
 ) -> *mut PackageManager {
-    if !INIT_WITH_RUNTIME_ONCE.swap(true, Ordering::AcqRel) {
+    bun_core::run_once! {{
         init_with_runtime_once(log, bun_install, cli, env);
-    }
+    }}
     get()
 }
-
-static INIT_WITH_RUNTIME_ONCE: AtomicBool = AtomicBool::new(false);
 
 pub fn init_with_runtime_once(
     log: &mut logger::Log,

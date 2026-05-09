@@ -661,14 +661,13 @@ impl HardLinkWindowsInstallTask {
         }
 
         if PackageManager::verbose_install() {
-            static ONCE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-            if !ONCE.swap(true, Ordering::Relaxed) {
+            bun_core::run_once! {{
                 Output::warn(format_args!(
                     "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
                     bun_core::fmt::fmt_os_path(src, Default::default()),
                     bun_core::fmt::fmt_os_path(&dest[..dest_len], Default::default()),
                 ));
-            }
+            }}
         }
 
         // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
@@ -1936,15 +1935,13 @@ impl<'a> PackageInstall<'a> {
                                     }
 
                                     if PackageManager::verbose_install() {
-                                        static ONCE: core::sync::atomic::AtomicBool =
-                                            core::sync::atomic::AtomicBool::new(false);
-                                        if !ONCE.swap(true, Ordering::Relaxed) {
+                                        bun_core::run_once! {{
                                             Output::warn(format_args!(
                                                 "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
                                                 bun_core::fmt::fmt_os_path(src.as_slice(), Default::default()),
                                                 bun_core::fmt::fmt_os_path(dest.as_slice(), Default::default()),
                                             ));
-                                        }
+                                        }}
                                     }
 
                                     return Err(err.into());

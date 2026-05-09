@@ -251,7 +251,7 @@ use crate::ast::char_freq::CHAR_FREQ_COUNT;
 pub use crate::ast::ts as TS;
 pub use crate::ast::ts::{TSNamespaceMember, TSNamespaceMemberMap, TSNamespaceScope};
 
-pub use crate::ast::base::{Index, Ref, RefCtx, RefFields, RefHashCtx, RefTag};
+pub use crate::ast::base::{Index, IndexInt, Ref, RefCtx, RefFields, RefHashCtx, RefTag};
 
 
 use crate::ast::symbol; // for symbol::Use, symbol::SlotNamespace
@@ -1424,10 +1424,7 @@ pub enum ToJSError {
     JSError,
     JSTerminated,
 }
-impl fmt::Display for ToJSError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(<&'static str>::from(*self)) }
-}
-impl core::error::Error for ToJSError {}
+bun_core::impl_tag_error!(ToJSError);
 
 bun_core::named_error_set!(ToJSError);
 

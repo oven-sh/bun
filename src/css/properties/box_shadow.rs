@@ -2,7 +2,7 @@
 use bun_alloc::ArenaVecExt as _;
 use crate as css;
 use crate::SmallList;
-use crate::small_list::SmallListCssExt as _;
+use crate::generics::{CssEql, DeepClone, IsCompatible};
 use crate::Printer;
 use crate::PrintErr;
 use crate::css_values::color::CssColor;

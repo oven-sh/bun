@@ -263,6 +263,16 @@ impl TextShadow {
     }
 }
 
+// Forward to the inherent method so the blanket `SmallList<T,N>` impl in
+// `crate::generics` (IsCompatible) applies to `SmallList<TextShadow,1>`.
+// (DeepClone is bridged via `bridge_deep_clone!(TextShadow)` in generics.rs.)
+impl css::generics::IsCompatible for TextShadow {
+    #[inline]
+    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+        self.is_compatible(browsers)
+    }
+}
+
 /// A value for the [text-size-adjust](https://w3c.github.io/csswg-drafts/css-size-adjust/#adjustment-control) property.
 pub enum TextSizeAdjust {
     /// Use the default size adjustment when displaying on a small device.

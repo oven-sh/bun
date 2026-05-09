@@ -711,11 +711,8 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         let handle = WINDOWS_SEGFAULT_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
         if !handle.is_null() {
-            unsafe extern "system" {
-                fn RemoveVectoredExceptionHandler(handle: *mut c_void) -> u32;
-            }
             // SAFETY: `handle` came from `AddVectoredExceptionHandler`.
-            let _ = unsafe { RemoveVectoredExceptionHandler(handle) };
+            let _ = unsafe { bun_windows_sys::kernel32::RemoveVectoredExceptionHandler(handle) };
         }
     }
 
@@ -790,6 +787,18 @@ unsafe impl Sync for SyncCStr {}
 pub static Bun__userAgent: SyncCStr =
     SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
+/// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
+/// only ever called from C/C++ (so rustc sees no Rust caller). Port of Zig's
+/// `std.mem.doNotOptimizeAway` pattern (Global.zig:224). Expands to one
+/// `core::hint::black_box(f as *const ())` per path — purely a side-effect, so
+/// invoke inside a `fix_dead_code_elimination()` fn wired from `run_command`.
+#[macro_export]
+macro_rules! keep_symbols {
+    ($($f:path),* $(,)?) => {
+        $( ::core::hint::black_box($f as *const ()); )*
+    };
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {
     // `bun.jsc.Node.FSEvents.closeAndWait()` (spec `Global.zig:220`) — runs
@@ -802,7 +811,7 @@ pub extern "C" fn Bun__onExit() {
     }
     run_exit_callbacks();
     Output::flush();
-    core::hint::black_box(Bun__atexit as unsafe extern "C" fn(ExitFn));
+    crate::keep_symbols!(Bun__atexit);
 
     Output::source::stdio::restore();
 }

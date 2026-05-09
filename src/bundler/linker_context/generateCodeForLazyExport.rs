@@ -5,7 +5,7 @@ use bun_collections::VecExt as _VecExt;
 
 use bun_alloc::AllocError;
 use bun_alloc::Arena;
-use bun_collections::{ArrayHashMap, VecExt, DynamicBitSetUnmanaged};
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::fmt as bun_fmt;
 use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
 use bun_js_parser::ast::Symbol;
@@ -16,9 +16,9 @@ use bun_options_types::ImportRecord;
 
 use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
 use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
+use bun_collections::DynamicBitSetUnmanaged as BitSet;
 use crate::{Index, IndexInt, LinkerContext};
 
-type BitSet = DynamicBitSetUnmanaged;
 type SymbolList = Vec<Symbol>;
 
 /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)

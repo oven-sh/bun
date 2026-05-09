@@ -385,40 +385,18 @@ mod zig_std_debug {
 use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext, UnwindError};
 
 // Port of the subset of `std.io.tty.{Config,Color,detectConfig}` used by btjs.zig
-// (vendor/zig/lib/std/Io/tty.zig). Only the four colors btjs emits are mapped; the
-// `windows_api` variant is omitted because btjs writes to an in-memory `Vec<u8>`
-// returned to lldb, not to the live console handle, so `SetConsoleTextAttribute`
-// would colour the wrong stream.
+// (vendor/zig/lib/std/Io/tty.zig). The `windows_api` variant is omitted because
+// btjs writes to an in-memory `Vec<u8>` returned to lldb, not to the live console
+// handle, so `SetConsoleTextAttribute` would colour the wrong stream.
 #[cfg(debug_assertions)]
 mod tty {
-    pub enum Config {
-        NoColor,
-        EscapeCodes,
-    }
-    pub enum Color {
-        Bold,
-        Reset,
-        Dim,
-        Green,
-    }
-    impl Config {
-        /// Port of `std.io.tty.Config.setColor`.
-        pub fn set_color(&self, w: &mut Vec<u8>, c: Color) -> Result<(), bun_core::Error> {
-            match self {
-                Config::NoColor => Ok(()),
-                Config::EscapeCodes => {
-                    let color_string: &[u8] = match c {
-                        Color::Green => b"\x1b[32m",
-                        Color::Bold => b"\x1b[1m",
-                        Color::Dim => b"\x1b[2m",
-                        Color::Reset => b"\x1b[0m",
-                    };
-                    w.extend_from_slice(color_string);
-                    Ok(())
-                }
-            }
-        }
-    }
+    // D089: `Config`/`Color`/`set_color` deduped to the canonical port in
+    // `bun_crash_handler::debug` (lower-tier crate; `Vec<u8>` already impls
+    // `bun_io::Write` so the generic `set_color` covers btjs's in-memory sink).
+    // `detect_config_stdout` stays LOCAL — it ports a *different* Zig call
+    // site (`detectConfig(stdout())` with NO_COLOR/CLICOLOR_FORCE/isatty) than
+    // crash_handler's `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).
+    pub use bun_crash_handler::debug::{Color, TtyConfig as Config};
 
     /// Port of `process.hasNonEmptyEnvVarConstant`.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {

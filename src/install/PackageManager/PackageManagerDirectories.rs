@@ -4,6 +4,7 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 
 use bun_core::{env_var, fmt as bun_fmt, Error, Global, Output, ZBox};
+use bun_core::fmt::{buf_print_len as buf_print, buf_print_z};
 use bun_dotenv::Loader as DotEnvLoader;
 use crate::bun_fs::FileSystem;
 use bun_install::lockfile::{self, Lockfile, LoadResult, Format as LockfileFormat};
@@ -1224,31 +1225,6 @@ fn cached_package_folder_name_buf() -> &'static mut [u8] {
 const fn z_static(bytes_with_nul: &'static [u8]) -> &'static ZStr {
     // `from_static` is the const-eval-safe form of `from_slice_with_nul`.
     ZStr::from_static(bytes_with_nul)
-}
-
-// TODO(port): move to bun_str / bun_core if not already provided
-/// Equivalent of `std.fmt.bufPrintZ` — writes formatted bytes into `buf`,
-/// appends a NUL terminator, and returns a `&ZStr` borrowing `buf`.
-fn buf_print_z<'a>(buf: &'a mut [u8], args: fmt::Arguments<'_>) -> Result<&'a ZStr, fmt::Error> {
-    let total = buf.len();
-    let mut cursor: &mut [u8] = buf;
-    cursor.write_fmt(args).map_err(|_| fmt::Error)?;
-    let remaining = cursor.len();
-    let written = total - remaining;
-    if written >= total {
-        return Err(fmt::Error);
-    }
-    buf[written] = 0;
-    Ok(ZStr::from_buf(buf, written))
-}
-
-/// Equivalent of `std.fmt.bufPrint` — returns the number of bytes written.
-fn buf_print(buf: &mut [u8], args: fmt::Arguments<'_>) -> Result<usize, fmt::Error> {
-    let total = buf.len();
-    let mut cursor: &mut [u8] = buf;
-    cursor.write_fmt(args).map_err(|_| fmt::Error)?;
-    let remaining = cursor.len();
-    Ok(total - remaining)
 }
 
 // ported from: src/install/PackageManager/PackageManagerDirectories.zig

@@ -2,7 +2,6 @@
 
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ushort, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(windows))]
 use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
@@ -947,25 +946,21 @@ impl Channel {
     }
 }
 
-static ARES_HAS_LOADED: AtomicBool = AtomicBool::new(false);
-
 fn library_init() {
-    if ARES_HAS_LOADED.swap(true, Ordering::Relaxed) {
-        return;
-    }
-
-    // SAFETY: c-ares FFI; mimalloc fn pointers have C ABI matching ares_library_init_mem's contract.
-    let rc = unsafe {
-        ares_library_init_mem(
-            ARES_LIB_INIT_ALL,
-            Some(bun_alloc::mimalloc::mi_malloc),
-            Some(bun_alloc::mimalloc::mi_free),
-            Some(bun_alloc::mimalloc::mi_realloc),
-        )
-    };
-    if rc != ARES_SUCCESS {
-        panic!("ares_library_init_mem failed: {}", rc);
-    }
+    bun_core::run_once! {{
+        // SAFETY: c-ares FFI; mimalloc fn pointers have C ABI matching ares_library_init_mem's contract.
+        let rc = unsafe {
+            ares_library_init_mem(
+                ARES_LIB_INIT_ALL,
+                Some(bun_alloc::mimalloc::mi_malloc),
+                Some(bun_alloc::mimalloc::mi_free),
+                Some(bun_alloc::mimalloc::mi_realloc),
+            )
+        };
+        if rc != ARES_SUCCESS {
+            panic!("ares_library_init_mem failed: {}", rc);
+        }
+    }}
 }
 
 pub type ares_callback =

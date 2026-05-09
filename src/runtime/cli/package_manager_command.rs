@@ -881,12 +881,9 @@ fn print_node_modules_folder_structure(
 /// Mirrors `std.fmt.bufPrint(buf, fmt, args)` — Zig's `error.NoSpaceLeft`
 /// becomes a panic here (512 bytes is ample for a Resolution formatter, and
 /// both behaviours crash the CLI).
+#[inline]
 fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
-    let total = buf.len();
-    let mut cursor: &mut [u8] = &mut *buf;
-    cursor.write_fmt(args).expect("buf_print overflow");
-    let written = total - cursor.len();
-    &buf[..written]
+    bun_core::fmt::buf_print(buf, args).expect("buf_print overflow")
 }
 
 // ported from: src/cli/package_manager_command.zig

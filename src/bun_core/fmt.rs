@@ -694,28 +694,62 @@ pub fn fmt_path(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     fmt_path_u8(path, options)
 }
 
+/// `core::fmt::Write` adapter over a borrowed `&mut [u8]` — the engine behind
+/// [`buf_print`] / [`buf_print_len`] / [`buf_print_z`] and [`print_int`].
+/// Hoisted so other modules can reuse it instead of redefining the same
+/// `Cursor{buf,pos}` struct (the `std.fmt.bufPrint` shim shows up everywhere).
+pub struct SliceCursor<'a> {
+    pub buf: &'a mut [u8],
+    pub at: usize,
+}
+impl core::fmt::Write for SliceCursor<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let bytes = s.as_bytes();
+        let end = self.at + bytes.len();
+        if end > self.buf.len() { return Err(core::fmt::Error); }
+        self.buf[self.at..end].copy_from_slice(bytes);
+        self.at = end;
+        Ok(())
+    }
+}
+
 /// Port of `std.fmt.bufPrint` — render into `buf`, return the written sub-slice.
 /// Fails (`fmt::Error`) when `buf` is too short.
 pub fn buf_print<'a>(
     buf: &'a mut [u8],
     args: core::fmt::Arguments<'_>,
 ) -> core::result::Result<&'a [u8], core::fmt::Error> {
-    use core::fmt::Write as _;
-    struct Cursor<'b> { buf: &'b mut [u8], at: usize }
-    impl core::fmt::Write for Cursor<'_> {
-        fn write_str(&mut self, s: &str) -> core::fmt::Result {
-            let bytes = s.as_bytes();
-            let end = self.at + bytes.len();
-            if end > self.buf.len() { return Err(core::fmt::Error); }
-            self.buf[self.at..end].copy_from_slice(bytes);
-            self.at = end;
-            Ok(())
-        }
-    }
-    let mut c = Cursor { buf, at: 0 };
-    c.write_fmt(args)?;
+    let mut c = SliceCursor { buf, at: 0 };
+    core::fmt::write(&mut c, args)?;
     let len = c.at;
     Ok(&c.buf[..len])
+}
+
+/// [`buf_print`] returning only the byte count — `std.fmt.bufPrint(..).len`.
+#[inline]
+pub fn buf_print_len(
+    buf: &mut [u8],
+    args: core::fmt::Arguments<'_>,
+) -> core::result::Result<usize, core::fmt::Error> {
+    let mut c = SliceCursor { buf, at: 0 };
+    core::fmt::write(&mut c, args)?;
+    Ok(c.at)
+}
+
+/// Port of `std.fmt.bufPrintZ` — [`buf_print`] then append a NUL terminator and
+/// return a [`ZStr`](crate::ZStr) borrowing `buf`. Fails if the formatted output
+/// *plus* the trailing NUL doesn't fit.
+pub fn buf_print_z<'a>(
+    buf: &'a mut [u8],
+    args: core::fmt::Arguments<'_>,
+) -> core::result::Result<&'a crate::ZStr, core::fmt::Error> {
+    let mut c = SliceCursor { buf, at: 0 };
+    core::fmt::write(&mut c, args)?;
+    let n = c.at;
+    if n >= c.buf.len() { return Err(core::fmt::Error); }
+    c.buf[n] = 0;
+    Ok(crate::ZStr::from_buf(c.buf, n))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1980,19 +2014,10 @@ pub fn format_ip<'a>(address: &impl Display, into: &'a mut [u8]) -> Result<&'a m
 /// validation beyond what the formatter already did.
 #[inline]
 pub fn count(args: fmt::Arguments<'_>) -> usize {
-    struct Discarding(usize);
-    impl fmt::Write for Discarding {
-        #[inline]
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            self.0 += s.len();
-            Ok(())
-        }
-    }
-    let mut w = Discarding(0);
-    // Infallible: our `write_str` never errors, mirroring Zig's
-    // `error.WriteFailed => unreachable`.
-    let _ = fmt::write(&mut w, args);
-    w.0
+    // Implementation sunk to T0 so `bun_alloc` (which sits below `bun_core`)
+    // can share it; this stays as the canonical higher-tier entry point so
+    // existing `bun_core::fmt::count` / `bun_fmt::count` callers are unchanged.
+    bun_alloc::fmt_count(args)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2178,9 +2203,9 @@ pub fn hex_lower(bytes: &[u8]) -> HexBytes<'_, true> {
     HexBytes(bytes)
 }
 
-const LOWER_HEX_TABLE: [u8; 16] =
+pub const LOWER_HEX_TABLE: [u8; 16] =
     [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f'];
-const UPPER_HEX_TABLE: [u8; 16] =
+pub const UPPER_HEX_TABLE: [u8; 16] =
     [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F'];
 
 // TODO(port): Zig parameterizes on `comptime Int: type` and computes
@@ -2458,19 +2483,7 @@ pub type DoubleFormatter = FormatDouble;
 /// type's max digit count.
 #[inline]
 pub fn print_int<T: core::fmt::Display>(buf: &mut [u8], value: T) -> usize {
-    struct SliceWriter<'a> { buf: &'a mut [u8], at: usize }
-    impl core::fmt::Write for SliceWriter<'_> {
-        #[inline]
-        fn write_str(&mut self, s: &str) -> core::fmt::Result {
-            let bytes = s.as_bytes();
-            let end = self.at + bytes.len();
-            if end > self.buf.len() { return Err(core::fmt::Error); }
-            self.buf[self.at..end].copy_from_slice(bytes);
-            self.at = end;
-            Ok(())
-        }
-    }
-    let mut w = SliceWriter { buf, at: 0 };
+    let mut w = SliceCursor { buf, at: 0 };
     let _ = core::fmt::Write::write_fmt(&mut w, format_args!("{value}"));
     w.at
 }
@@ -2493,14 +2506,7 @@ pub fn count_int(n: i64) -> usize {
 /// width tracking for `%f` substitutions.
 #[inline]
 pub fn count_float(n: f64) -> usize {
-    struct Counter(usize);
-    impl core::fmt::Write for Counter {
-        #[inline]
-        fn write_str(&mut self, s: &str) -> core::fmt::Result { self.0 += s.len(); Ok(()) }
-    }
-    let mut c = Counter(0);
-    let _ = core::fmt::Write::write_fmt(&mut c, format_args!("{n}"));
-    c.0
+    count(format_args!("{n}"))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2700,19 +2706,26 @@ impl Display for TruncatedHash32 {
 }
 
 fn truncated_hash32_impl(int: u64, writer: &mut impl fmt::Write) -> fmt::Result {
-    let in_bytes = int.to_ne_bytes();
+    write_bytes(writer, &truncated_hash32_bytes(int))
+}
+
+/// Const-fn core of [`truncated_hash32`] / [`TruncatedHash32`]: the 8-byte
+/// base32-ish encoding (native-endian, matches Zig `@bitCast([8]u8, int)`).
+/// Exposed so const contexts (e.g. `js_parser::generated_symbol_name!`) can
+/// share the single alphabet table instead of copy-pasting it.
+pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
-    let out = [
-        CHARS[(in_bytes[0] & 31) as usize],
-        CHARS[(in_bytes[1] & 31) as usize],
-        CHARS[(in_bytes[2] & 31) as usize],
-        CHARS[(in_bytes[3] & 31) as usize],
-        CHARS[(in_bytes[4] & 31) as usize],
-        CHARS[(in_bytes[5] & 31) as usize],
-        CHARS[(in_bytes[6] & 31) as usize],
-        CHARS[(in_bytes[7] & 31) as usize],
-    ];
-    write_bytes(writer, &out)
+    let b = int.to_ne_bytes();
+    [
+        CHARS[(b[0] & 31) as usize],
+        CHARS[(b[1] & 31) as usize],
+        CHARS[(b[2] & 31) as usize],
+        CHARS[(b[3] & 31) as usize],
+        CHARS[(b[4] & 31) as usize],
+        CHARS[(b[5] & 31) as usize],
+        CHARS[(b[6] & 31) as usize],
+        CHARS[(b[7] & 31) as usize],
+    ]
 }
 
 // ───────────────────────────────────────────────────────────────────────────

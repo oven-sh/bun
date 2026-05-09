@@ -266,39 +266,7 @@ impl<SemverIntType: VersionInt> Default for Package<SemverIntType> {
     }
 }
 
-pub struct DependencyGroup {
-    pub prop: &'static [u8],
-    pub field: &'static [u8],
-    pub behavior: Behavior,
-}
-
-impl DependencyGroup {
-    pub const DEPENDENCIES: DependencyGroup = DependencyGroup {
-        prop: b"dependencies",
-        field: b"dependencies",
-        behavior: Behavior::PROD,
-    };
-    pub const DEV: DependencyGroup = DependencyGroup {
-        prop: b"devDependencies",
-        field: b"dev_dependencies",
-        behavior: Behavior::DEV,
-    };
-    pub const OPTIONAL: DependencyGroup = DependencyGroup {
-        prop: b"optionalDependencies",
-        field: b"optional_dependencies",
-        behavior: Behavior::OPTIONAL,
-    };
-    pub const PEER: DependencyGroup = DependencyGroup {
-        prop: b"peerDependencies",
-        field: b"peer_dependencies",
-        behavior: Behavior::PEER,
-    };
-    pub const WORKSPACES: DependencyGroup = DependencyGroup {
-        prop: b"workspaces",
-        field: b"workspaces",
-        behavior: Behavior::WORKSPACE,
-    };
-}
+pub use bun_install_types::DependencyGroup;
 
 // Borrows into lockfile.packages SoA columns + string_bytes; `RawSlice`
 // carries the outlives-holder invariant (the lockfile outlives every sort

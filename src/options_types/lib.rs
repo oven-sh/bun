@@ -32,7 +32,7 @@ pub use jsx as JSX;
 // Dependents (bundler/css/js_parser/http_types/watcher) import these by bare
 // name from the crate root rather than reaching into the defining module.
 pub use import_record::{ImportRecord, ImportKind, Index as ImportRecordIndex, Flags as ImportRecordFlags, Tag as ImportRecordTag};
-pub use BundleEnums::{Loader, LoaderOptional, LoaderHashTable, Format, Target, ModuleType, SideEffects, BundlePackage, BuiltInModule, WindowsOptions, ForceNodeEnv};
+pub use BundleEnums::{Loader, LoaderOptional, LoaderHashTable, Format, Target, ModuleType, SideEffects, BundlePackage, BuiltInModule, WindowsOptions, ForceNodeEnv, Index, IndexInt};
 
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.
 ///

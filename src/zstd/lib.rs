@@ -180,12 +180,7 @@ pub enum ZstdError {
     ShortRead,
 }
 
-impl core::fmt::Display for ZstdError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl core::error::Error for ZstdError {}
+bun_core::impl_tag_error!(ZstdError);
 
 impl From<ZstdError> for bun_core::Error {
     fn from(e: ZstdError) -> Self {

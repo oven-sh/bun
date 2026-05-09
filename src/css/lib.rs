@@ -4,6 +4,23 @@
 // Allow `use bun_css as css;` from inside the crate — the ported submodules
 // were translated against the crate's public surface and refer to it by name.
 extern crate self as bun_css;
+
+/// ASCII case-insensitive ident dispatch — Rust port of Zig's
+/// `ComptimeStringMap.getCaseInsensitiveWithEql` / rust-cssparser's
+/// `match_ignore_ascii_case!`. Expands to a linear if-else chain over
+/// [`bun_string::strings::eql_case_insensitive_ascii_check_length`], so it is
+/// runtime-equivalent to the open-coded chains it replaces. Subsumes the
+/// per-file local `m!`/`eq!` macros and chained `if eql_case_insensitive_ascii`
+/// blocks scattered across `src/css/`.
+// TODO(port): swap body to phf when CI hasher lands.
+#[macro_export]
+macro_rules! match_ignore_ascii_case {
+    ($name:expr, { $( $($lit:literal)|+ => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
+        let __n: &[u8] = $name;
+        $( if $( ::bun_string::strings::eql_case_insensitive_ascii_check_length(__n, $lit) )||+ { $arm } else )* { $fallback }
+    }};
+}
+
 // AUTOGEN: mod declarations only — real exports added in B-1.
 //
 // B-2 un-gating in progress: leaf modules compile for real; the heavily
@@ -33,7 +50,7 @@ pub mod dependencies;
 pub mod css_modules;
 #[path = "small_list.rs"]
 pub mod small_list;
-pub use small_list::{SmallList, SmallListCssExt};
+pub use small_list::SmallList;
 
 // ─── B-2 round 3: rule-tree hubs un-gated ─────────────────────────────────
 // `properties/`, `rules/`, `selectors/`, `media_query` now compile for real

@@ -2267,6 +2267,12 @@ pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     &buf[buf_off..buf_off + out_len]
 }
 
+/// Port of `resolve_path.zig:basename` — **NOT** `std.fs.path.basename` (see
+/// [`crate::basename`] for that). Differs in two load-bearing ways: treats
+/// `\` as a separator on all platforms (`is_sep_any`), and returns `b"/"`
+/// (not `b""`) when the input is all separators. Shell builtins
+/// (`basename`/`mv`/`cp`) rely on both for POSIX-shell-correct `basename /`.
+/// Do not dedup against `crate::basename`.
 pub fn basename(path: &[u8]) -> &[u8] {
     if path.is_empty() {
         return &[];

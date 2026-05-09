@@ -109,13 +109,6 @@ pub mod kernel32 {
         pub fn WakeConditionVariable(ConditionVariable: *mut CONDITION_VARIABLE);
         pub fn WakeAllConditionVariable(ConditionVariable: *mut CONDITION_VARIABLE);
 
-        // ── vectored exception handling (`bun_crash_handler`) ──
-        pub fn AddVectoredExceptionHandler(
-            First: u32,
-            Handler: unsafe extern "system" fn(*mut c_void) -> i32,
-        ) -> *mut c_void;
-        pub fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
-
         /// No preconditions; reads the calling thread's ID.
         pub safe fn GetCurrentThreadId() -> DWORD;
     }

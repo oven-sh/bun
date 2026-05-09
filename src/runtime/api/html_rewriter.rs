@@ -20,12 +20,10 @@ use bun_jsc::{
 // name resolves as a type at `&mut VirtualMachine` annotations and as the
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
 use bun_jsc::virtual_machine::VirtualMachine;
-// PORT NOTE: `ZigString` is imported from `bun_jsc::zig_string` (NOT the
-// top-level `bun_jsc::ZigString` type alias, which points at
-// `bun_string::ZigString`). The `zig_string::ZigString` newtype carries the
-// JSC-side methods (`to_js`, `with_encoding`, `to_slice`); the two are
-// repr(C)-identical.
+// `ZigString` re-exports `bun_string::ZigString`; JSC-side methods
+// (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
 use bun_jsc::zig_string::ZigString;
+use bun_jsc::ZigStringJsc as _;
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
 // surface lives directly in `bun_lolhtml_sys::lol_html`. The Phase-A draft
 // referenced both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw
@@ -1647,7 +1645,7 @@ impl DocType {
             return JSValue::NULL;
         }
         ZigString::init(str).to_js(global_object)
-    } // PORT NOTE: ZigString = bun_jsc::ZigString (has .to_js)
+    }
 
     #[bun_jsc::host_fn(getter)]
     pub fn system_id(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -1660,7 +1658,7 @@ impl DocType {
             return JSValue::NULL;
         }
         ZigString::init(str).to_js(global_object)
-    } // PORT NOTE: ZigString = bun_jsc::ZigString (has .to_js)
+    }
 
     #[bun_jsc::host_fn(getter)]
     pub fn public_id(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -1673,7 +1671,7 @@ impl DocType {
             return JSValue::NULL;
         }
         ZigString::init(str).to_js(global_object)
-    } // PORT NOTE: ZigString = bun_jsc::ZigString (has .to_js)
+    }
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {

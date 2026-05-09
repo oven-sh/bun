@@ -946,19 +946,6 @@ pub struct ParseOptions<'a> {
     pub allow_bytecode_cache: bool,
 }
 
-/// Manual clone — `logger::Source` doesn't `derive(Clone)` yet but every field
-/// is `Copy`/`Clone` (`fs::Path`: Clone; `Str = &'static [u8]`: Copy).
-#[inline]
-fn dup_source(s: &logger::Source) -> logger::Source {
-    logger::Source {
-        path: s.path.clone(),
-        contents: s.contents.clone(),
-        contents_is_recycled: s.contents_is_recycled,
-        identifier_name: s.identifier_name.clone(),
-        index: s.index,
-    }
-}
-
 use bun_options_types::schema::api;
 
 // ── B-3 type unification (parse_maybe Js/Ts arm) ─────────────────────────
@@ -1326,12 +1313,12 @@ impl<'a> Transpiler<'a> {
         // owns the value and borrows it after the block.
         let source_owned: logger::Source = 'brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
-                break 'brk dup_source(virtual_source);
+                break 'brk virtual_source.clone();
             }
 
             if let Some(client_entry_point) = client_entry_point_ {
                 // Zig: if (@hasField(Child, "source")) — ClientEntryPoint always has it.
-                break 'brk dup_source(&client_entry_point.source);
+                break 'brk client_entry_point.source.clone();
             }
 
             if path.namespace == b"node" {
@@ -1451,7 +1438,7 @@ impl<'a> Transpiler<'a> {
 
         if RETURN_FILE_ONLY {
             return Some(ParseResult::empty_with(
-                dup_source(source),
+                source.clone(),
                 loader,
                 input_fd,
                 source_backing,
@@ -1464,7 +1451,7 @@ impl<'a> Transpiler<'a> {
         {
             if !loader.handles_empty_file() {
                 return Some(ParseResult::empty_with(
-                    dup_source(source),
+                    source.clone(),
                     loader,
                     input_fd,
                     source_backing,
@@ -1480,7 +1467,7 @@ impl<'a> Transpiler<'a> {
                 // wasm magic number
                 if source.is_web_assembly() {
                     return Some(ParseResult::empty_with(
-                        dup_source(source),
+                        source.clone(),
                         options::Loader::Wasm,
                         input_fd,
                         source_backing,
@@ -1648,7 +1635,7 @@ impl<'a> Transpiler<'a> {
                 return Some(match parsed {
                     js_ast::Result::Ast(value) => ParseResult {
                         ast: value,
-                        source: dup_source(source),
+                        source: source.clone(),
                         loader,
                         input_fd,
                         runtime_transpiler_cache: rtc_ptr,
@@ -1661,7 +1648,7 @@ impl<'a> Transpiler<'a> {
                         // TODO(port): Zig used `undefined` for ast here.
                         ast: js_ast::Ast::empty(),
                         runtime_transpiler_cache: rtc_ptr,
-                        source: dup_source(source),
+                        source: source.clone(),
                         loader,
                         input_fd,
                         already_bundled: AlreadyBundled::None,
@@ -1738,7 +1725,7 @@ impl<'a> Transpiler<'a> {
                                 default_value
                             }
                         },
-                        source: dup_source(source),
+                        source: source.clone(),
                         loader,
                         input_fd,
                         pending_imports: Default::default(),
@@ -1974,7 +1961,7 @@ impl<'a> Transpiler<'a> {
 
                 return Some(ParseResult {
                     ast,
-                    source: dup_source(source),
+                    source: source.clone(),
                     loader,
                     input_fd,
                     already_bundled: AlreadyBundled::None,
@@ -2007,7 +1994,7 @@ impl<'a> Transpiler<'a> {
 
                 return Some(ParseResult {
                     ast: js_ast::Ast::from_parts(parts),
-                    source: dup_source(source),
+                    source: source.clone(),
                     loader,
                     input_fd,
                     already_bundled: AlreadyBundled::None,
@@ -2053,7 +2040,7 @@ impl<'a> Transpiler<'a> {
 
                 return Some(ParseResult {
                     ast: js_ast::Ast::from_parts(parts),
-                    source: dup_source(source),
+                    source: source.clone(),
                     loader,
                     input_fd,
                     already_bundled: AlreadyBundled::None,
@@ -2079,7 +2066,7 @@ impl<'a> Transpiler<'a> {
 
                     return Some(ParseResult {
                         ast: js_ast::Ast::empty(),
-                        source: dup_source(source),
+                        source: source.clone(),
                         loader,
                         input_fd,
                         already_bundled: AlreadyBundled::None,

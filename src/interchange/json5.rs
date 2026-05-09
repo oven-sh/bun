@@ -97,13 +97,7 @@ pub enum ParseError {
     StackOverflow,
 }
 
-impl core::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PORTING.md §Type-map: @errorName(e) → IntoStaticStr; Display is the tag.
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl core::error::Error for ParseError {}
+bun_core::impl_tag_error!(ParseError);
 
 bun_core::oom_from_alloc!(ParseError);
 
@@ -140,12 +134,7 @@ pub enum AddToLogError {
     OutOfMemory,
     StackOverflow,
 }
-impl core::fmt::Display for AddToLogError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl core::error::Error for AddToLogError {}
+bun_core::impl_tag_error!(AddToLogError);
 
 impl From<AddToLogError> for bun_core::Error {
     fn from(e: AddToLogError) -> Self {
@@ -215,12 +204,7 @@ pub enum ExternalError {
     SyntaxError,
     StackOverflow,
 }
-impl core::fmt::Display for ExternalError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl core::error::Error for ExternalError {}
+bun_core::impl_tag_error!(ExternalError);
 
 impl From<ExternalError> for bun_core::Error {
     fn from(e: ExternalError) -> Self {

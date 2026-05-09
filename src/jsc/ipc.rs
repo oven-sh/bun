@@ -208,29 +208,22 @@ pub enum Mode {
     Json,
 }
 
+static MODE_MAP: phf::Map<&'static [u8], Mode> = phf::phf_map! {
+    b"advanced" => Mode::Advanced,
+    b"json" => Mode::Json,
+};
+
 impl Mode {
-    // ComptimeStringMap with ≤8 entries → plain match
     pub fn from_string(s: &[u8]) -> Option<Mode> {
-        match s {
-            b"advanced" => Some(Mode::Advanced),
-            b"json" => Some(Mode::Json),
-            _ => None,
-        }
+        MODE_MAP.get(s).copied()
     }
 
-    // TODO(port): move to *_jsc — Map.fromJS wrapper
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
-        // ComptimeStringMap.fromJS — get string from JSValue then `from_string`.
-        // VERIFY-FIX: a previous draft fabricated `Err(JsError::Thrown)` without
-        // an exception actually pending on `global` (violates the JSC invariant
-        // that `JsError::Thrown` ⇔ `global.has_exception()`). Now: only `?` on
-        // `to_slice_or_null` (which sets the exception itself); a non-string
-        // input or unrecognised string yields `Ok(None)`, never a synthetic Err.
+        use crate::ComptimeStringMapExt as _;
         if !value.is_string() {
             return Ok(None);
         }
-        let s = value.to_slice_or_null(global)?;
-        Ok(Self::from_string(s.slice()))
+        MODE_MAP.from_js(global, value)
     }
 }
 

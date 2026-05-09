@@ -44,6 +44,32 @@ pub use bounded_array::BoundedArray;
 pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 
 pub use bit_set::{AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet, StaticBitSet};
+
+// ──────────────────────────────────────────────────────────────────────────
+// const-eval byte/str equality — `==` on slices is not yet `const`, so several
+// const-context callers (reflected field-name lookup in `multi_array_list`,
+// host-fn error-set parsing in `bun_jsc`) need the manual len-check + while
+// loop. Centralised here so the identical helper isn't open-coded per crate.
+// ──────────────────────────────────────────────────────────────────────────
+#[inline]
+pub const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+#[inline]
+pub const fn const_str_eq(a: &str, b: &str) -> bool {
+    const_bytes_eq(a.as_bytes(), b.as_bytes())
+}
+
 /// `bun.bit_set` namespace alias (Zig: `bun.bit_set.List`).
 pub mod dynamic_bit_set {
     pub use super::bit_set::DynamicBitSetList as List;
@@ -121,7 +147,7 @@ impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
         out
     }
 }
-pub use identity_context::{ArrayIdentityContext, IdentityContext, IdentityHash};
+pub use identity_context::{ArrayIdentityContext, ArrayIdentityContextU64, IdentityContext, IdentityHash, U64};
 
 pub mod array_hash_map;
 pub use array_hash_map::{

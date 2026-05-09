@@ -7,26 +7,13 @@ use core::ptr::NonNull;
 
 use crate::Task;
 
-/// Low-tier discriminant for `bun_jsc::JsError`. `event_loop` is tier-3 and may
-/// not name `bun_jsc`, so callbacks return this 1-byte tag and the high-tier
-/// dispatcher recovers the real enum via `From` (defined in `bun_jsc`). The
-/// `#[repr(u8)]` discriminants match `bun_jsc::JsError` exactly so the
-/// conversion is a no-op.
-#[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ErasedJsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
-    Thrown = 0,
-    /// Allocation failure; caller must throw an `OutOfMemoryError`.
-    OutOfMemory = 1,
-    /// The VM is terminating (worker shutdown / `process.exit`).
-    Terminated = 2,
-}
+/// Historical low-tier alias for `bun_jsc::JsError`. The canonical enum now lives in
+/// `bun_core` (tier-0), so this is a straight re-export — the old "erased discriminant"
+/// split exists only to keep call sites compiling.
+pub use bun_core::JsError as ErasedJsError;
 
-/// `bun.JSError!T` for tier-3 callbacks. Error payload is [`ErasedJsError`]
-/// (layout-identical to `bun_jsc::JsError`) so the discriminant survives the
-/// round-trip through `AnyTask`/`ManagedTask` and `report_error_or_terminate`
-/// can branch on `Terminated` correctly.
+/// `bun.JSError!T` for tier-3 callbacks. Same type as `bun_jsc::JsResult<T>`; kept as a
+/// local alias so `AnyTask`/`ManagedTask` signatures don't take an upward dep.
 pub type JsResult<T> = core::result::Result<T, ErasedJsError>;
 
 pub struct AnyTask {

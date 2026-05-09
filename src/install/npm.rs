@@ -265,10 +265,14 @@ pub fn response_error<const OTP_RESPONSE: bool>(
 pub mod registry {
     use super::*;
 
-    pub const DEFAULT_URL: &str = "https://registry.npmjs.org/";
-    // TODO(port): const-eval Wyhash11 — needs const fn; init lazily for now
+    // Single source of truth lives in `bun_install_types` (lower-tier crate so
+    // `ini`/`options_types` can read it without depending on the full package
+    // manager). Re-exported here as the same surface (`&str` const + `LazyLock`)
+    // so existing `Npm::Registry::DEFAULT_URL` / `*DEFAULT_URL_HASH` callers are
+    // untouched.
+    pub const DEFAULT_URL: &str = bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL;
     pub static DEFAULT_URL_HASH: std::sync::LazyLock<u64> =
-        std::sync::LazyLock::new(|| Wyhash11::hash(0, strings::without_trailing_slash(DEFAULT_URL.as_bytes())));
+        std::sync::LazyLock::new(bun_install_types::NodeLinker::npm::Registry::default_url_hash);
     pub fn default_url_hash() -> u64 { *DEFAULT_URL_HASH }
 
     // Zig: `ObjectPool(MutableString, MutableString.init2048, true, 8)`.

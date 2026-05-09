@@ -532,6 +532,13 @@ pub mod kernel32 {
             nDefaultTimeOut: DWORD,
             lpSecurityAttributes: *mut c_void,
         ) -> HANDLE;
+        /// `AddVectoredExceptionHandler` (`errhandlingapi.h`).
+        pub fn AddVectoredExceptionHandler(
+            First: u32,
+            Handler: unsafe extern "system" fn(*mut c_void) -> i32,
+        ) -> *mut c_void;
+        /// `RemoveVectoredExceptionHandler` (`errhandlingapi.h`).
+        pub fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves
     // for callers porting Zig's `std.os.windows.kernel32.*` 1:1.

@@ -21,7 +21,8 @@ use core::ffi::{c_char, CStr};
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_core::{self, env_var, getenv_z, which, zstr, ZBox, ZStr};
+use bun_core::{self, env_var, getenv_z, zstr, ZBox, ZStr};
+use bun_which::which;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};

@@ -581,5 +581,9 @@ mod c {
         pub fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
+// Re-exported raw extern for cross-thread wakeup callers (e.g. bun_http's
+// `HTTPThread::wakeup`) that hold only a `*mut Loop` and MUST NOT form a
+// `&mut Loop` via `Loop::wakeup` — see the noalias warning on `mod c` above.
+pub use c::us_wakeup_loop;
 
 // ported from: src/uws_sys/Loop.zig

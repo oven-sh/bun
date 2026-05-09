@@ -611,236 +611,15 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
     !scoped || (slash_index > 0 && slash_index + 1 < target.len())
 }
 
-pub fn is_uuid(str: &[u8]) -> bool {
-    if str.len() != UUID_LEN {
-        return false;
-    }
-    for i in 0..8 {
-        match str[i] {
-            b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => {}
-            _ => return false,
-        }
-    }
-    if str[8] != b'-' {
-        return false;
-    }
-    for i in 9..13 {
-        match str[i] {
-            b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => {}
-            _ => return false,
-        }
-    }
-    if str[13] != b'-' {
-        return false;
-    }
-    for i in 14..18 {
-        match str[i] {
-            b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => {}
-            _ => return false,
-        }
-    }
-    if str[18] != b'-' {
-        return false;
-    }
-    for i in 19..23 {
-        match str[i] {
-            b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => {}
-            _ => return false,
-        }
-    }
-    if str[23] != b'-' {
-        return false;
-    }
-    for i in 24..36 {
-        match str[i] {
-            b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => {}
-            _ => return false,
-        }
-    }
-    true
-}
+// Secret-redaction scanners are canonical in bun_core::strings (only callers
+// live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
+// NOTE: starts_with_npm_secret now returns usize (was u8 in the Zig-literal port);
+// no external callers depended on the narrow type.
+pub use bun_core::strings::{
+    find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
+};
 
 pub const UUID_LEN: usize = 36;
-
-pub fn starts_with_uuid(str: &[u8]) -> bool {
-    is_uuid(&str[0..str.len().min(UUID_LEN)])
-}
-
-/// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L7
-/// /\b(npms?_)[a-zA-Z0-9]{36,48}\b/gi
-/// Returns the length of the secret if one exist.
-pub fn starts_with_npm_secret(str: &[u8]) -> u8 {
-    if str.len() < b"npm_".len() + 36 {
-        return 0;
-    }
-
-    if !has_prefix_case_insensitive(str, b"npm") {
-        return 0;
-    }
-
-    let mut i: u8 = b"npm".len() as u8;
-
-    if str[i as usize] == b'_' {
-        i += 1;
-    } else if str[i as usize] == b's' || str[i as usize] == b'S' {
-        i += 1;
-        if str[i as usize] != b'_' {
-            return 0;
-        }
-        i += 1;
-    } else {
-        return 0;
-    }
-
-    let min_len = i + 36;
-    let max_len = i + 48;
-
-    while i < max_len {
-        if i as usize == str.len() {
-            return if i >= min_len { i } else { 0 };
-        }
-
-        match str[i as usize] {
-            b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' => {}
-            _ => return if i >= min_len { i } else { 0 },
-        }
-        i += 1;
-    }
-
-    i
-}
-
-fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize, usize)> {
-    if !has_prefix_comptime(text, item) {
-        return None;
-    }
-
-    let mut whitespace = false;
-    let mut offset: usize = item.len();
-    while offset < text.len() && WHITESPACE_CHARS.contains(&text[offset]) {
-        offset += 1;
-        whitespace = true;
-    }
-    if offset == text.len() {
-        return None;
-    }
-    // TODO(b0): lexer arrives from move-in (MOVE_DOWN bun_js_parser::lexer → string)
-    let cont = crate::lexer::is_identifier_continue(text[offset] as u32);
-
-    // must be another identifier
-    if !whitespace && cont {
-        return None;
-    }
-
-    // `null` is not returned after this point. Redact to the next
-    // newline if anything is unexpected
-    if cont {
-        let rest = &text[offset..];
-        return Some((offset, index_of_char(rest, b'\n').map_or(rest.len(), |i| i as usize)));
-    }
-    offset += 1;
-
-    let mut end = offset;
-    while end < text.len() && WHITESPACE_CHARS.contains(&text[end]) {
-        end += 1;
-    }
-
-    if end == text.len() {
-        return Some((offset, text[offset..].len()));
-    }
-
-    match text[end] {
-        q @ (b'\'' | b'"' | b'`') => {
-            // attempt to find closing
-            let opening = end;
-            end += 1;
-            while end < text.len() {
-                match text[end] {
-                    b'\\' => {
-                        // skip
-                        end += 1;
-                        end += 1;
-                    }
-                    c if c == q => {
-                        // closing
-                        return Some((opening + 1, (end - 1) - opening));
-                    }
-                    _ => {
-                        end += 1;
-                    }
-                }
-            }
-
-            let rest = &text[offset..];
-            let len = index_of_char(rest, b'\n').map_or(rest.len(), |i| i as usize);
-            Some((offset, len))
-        }
-        _ => {
-            let rest = &text[offset..];
-            let len = index_of_char(rest, b'\n').map_or(rest.len(), |i| i as usize);
-            Some((offset, len))
-        }
-    }
-}
-
-/// Returns offset and length of first secret found.
-pub fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
-    if let Some((offset, len)) = starts_with_redacted_item(str, b"_auth") {
-        return Some((offset, len));
-    }
-    if let Some((offset, len)) = starts_with_redacted_item(str, b"_authToken") {
-        return Some((offset, len));
-    }
-    if let Some((offset, len)) = starts_with_redacted_item(str, b"email") {
-        return Some((offset, len));
-    }
-    if let Some((offset, len)) = starts_with_redacted_item(str, b"_password") {
-        return Some((offset, len));
-    }
-    if let Some((offset, len)) = starts_with_redacted_item(str, b"token") {
-        return Some((offset, len));
-    }
-
-    if starts_with_uuid(str) {
-        return Some((0, 36));
-    }
-
-    let npm_secret_len = starts_with_npm_secret(str);
-    if npm_secret_len > 0 {
-        return Some((0, npm_secret_len as usize));
-    }
-
-    if let Some((offset, len)) = find_url_password(str) {
-        return Some((offset, len));
-    }
-
-    None
-}
-
-pub fn find_url_password(text: &[u8]) -> Option<(usize, usize)> {
-    if !has_prefix_comptime(text, b"http") {
-        return None;
-    }
-    let mut offset: usize = b"http".len();
-    if has_prefix_comptime(&text[offset..], b"://") {
-        offset += b"://".len();
-    } else if has_prefix_comptime(&text[offset..], b"s://") {
-        offset += b"s://".len();
-    } else {
-        return None;
-    }
-    let mut remain = &text[offset..];
-    let end = index_of_char(remain, b'\n').map_or(remain.len(), |i| i as usize);
-    remain = &remain[0..end];
-    let at = index_of_char(remain, b'@')? as usize;
-    let colon = index_of_char_neg(&remain[0..at], b':');
-    if colon == -1 || colon as usize == at - 1 {
-        return None;
-    }
-    offset += usize::try_from(colon + 1).expect("int cast");
-    let len: usize = at - usize::try_from(colon + 1).expect("int cast");
-    Some((offset, len))
-}
 
 pub fn index_any_comptime(target: &[u8], chars: &'static [u8]) -> Option<usize> {
     for (i, &parent) in target.iter().enumerate() {
@@ -1477,9 +1256,7 @@ pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii(a, b, false)
 }
 
-pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
-    eql_case_insensitive_ascii(a, b, true)
-}
+pub use bun_core::strings::eql_case_insensitive_ascii_check_length;
 
 /// Preserves Zig's triple-`i` typo (`eqlCaseInsensitiveASCIIICheckLength`); both
 /// spellings are reachable from ported call sites until the next typo sweep.
@@ -1909,12 +1686,11 @@ macro_rules! w {
     }};
 }
 
+/// Index of first non-ASCII byte. Thin `u32` view over the canonical
+/// `bun_core::strings::first_non_ascii` (Zig spec `firstNonASCII -> ?u32`).
+#[inline]
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
-    let result = simdutf::validate::with_errors::ascii(slice);
-    if result.status == simdutf::Status::SUCCESS {
-        return None;
-    }
-    Some(result.count as u32)
+    bun_core::strings::first_non_ascii(slice).map(|i| i as u32)
 }
 
 /// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check (immutable.zig).
@@ -1970,9 +1746,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
     Some(u32::try_from(i).unwrap() + offset)
 }
 
-pub fn contains_newline_or_non_ascii_or_quote(text: &[u8]) -> bool {
-    highway::contains_newline_or_non_ascii_or_quote(text)
-}
+pub use highway::contains_newline_or_non_ascii_or_quote;
 
 /// Supports:
 /// - `"`
@@ -3214,17 +2988,6 @@ where
     }
 }
 
-/// `strings.removeLeadingDotSlash` — strip a leading `./` (or `.\` on Windows).
-#[inline]
-pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
-    if slice.len() >= 2 {
-        if &slice[..2] == b"./" || (cfg!(windows) && &slice[..2] == b".\\") {
-            return &slice[2..];
-        }
-    }
-    slice
-}
-
 /// Compare a UTF-16 string against a UTF-8 string without allocating
 /// (`unicode.zig:utf16EqlString`).
 pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
@@ -3289,20 +3052,19 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
     }
 }
 
-/// `strings.withoutTrailingSlash` — strip trailing `/` or `\` (but not down
-/// to empty; matches `paths.zig:withoutTrailingSlash` behavior `len > 1`).
-pub fn without_trailing_slash(this: &[u8]) -> &[u8] {
-    let mut href = this;
-    while href.len() > 1 && matches!(href[href.len() - 1], b'/' | b'\\') {
-        href = &href[..href.len() - 1];
-    }
-    href
-}
+// Zig: `pub const withoutTrailingSlash = paths_.withoutTrailingSlash;`
+// (immutable.zig:2380) — re-export from the `paths` submodule so callers can
+// use `strings::without_trailing_slash` directly, matching the Zig namespace.
+pub use paths::without_trailing_slash;
 
 // Zig: `pub const withoutLeadingPathSeparator = paths_.withoutLeadingPathSeparator;`
 // (immutable.zig:2377) — re-export from the `paths` submodule so callers can use
 // `strings::without_leading_path_separator` directly, matching the Zig namespace.
 pub use paths::without_leading_path_separator;
+// Zig: `pub const removeLeadingDotSlash = paths_.removeLeadingDotSlash;`
+// (immutable.zig) — re-export from the `paths` submodule so callers can use
+// `strings::remove_leading_dot_slash` directly, matching the Zig namespace.
+pub use paths::remove_leading_dot_slash;
 // Zig: `pub const fromWPath = paths_.fromWPath;` (immutable.zig:2356) — re-export
 // so callers can use `strings::from_wpath` directly, matching the Zig namespace.
 pub use paths::from_w_path as from_wpath;

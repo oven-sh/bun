@@ -264,11 +264,9 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
-        &mut self.pipe_read_buffer.get_or_insert_with(|| {
-            // SAFETY: zeroed [u8; N] is valid. Avoids a 256 KiB stack temporary
-            // that `Box::new([0u8; N])` would create in debug builds.
-            unsafe { Box::<PipeReadBuffer>::new_zeroed().assume_init() }
-        })[..]
+        // `boxed_zeroed` avoids the 256 KiB stack temporary `Box::new([0u8; N])`
+        // would create in debug builds.
+        &mut self.pipe_read_buffer.get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)[..]
     }
 
     pub fn on_after_event_loop(&mut self) {
@@ -380,6 +378,7 @@ impl<'a> MiniEventLoop<'a> {
         self.tasks.readable_length() - start_count
     }
 
+    #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
             // SAFETY: see `loop_ptr()` invariant.
@@ -422,23 +421,10 @@ impl<'a> MiniEventLoop<'a> {
         F: Fn(*mut c_void) -> bool,
     {
         // PERF(port): Zig `comptime isDone: *const fn` monomorphized per callsite; generic `F`
-        // here also monomorphizes — should match.
+        // here also monomorphizes — should match. `tick_once` is `#[inline]` so codegen is
+        // identical to the previously hand-inlined body.
         while !is_done(context) {
-            if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-                // SAFETY: see `loop_ptr()` invariant.
-                unsafe {
-                    (*self.loop_ptr()).inc();
-                    (*self.loop_ptr()).tick();
-                    (*self.loop_ptr()).dec();
-                }
-                // PORT NOTE: Zig `defer` was block-scoped to this `if`.
-                self.on_after_event_loop();
-            }
-
-            while let Some(task) = self.tasks.read_item() {
-                // SAFETY: see tick_once.
-                unsafe { (*task).run(context) };
-            }
+            self.tick_once(context);
         }
     }
 

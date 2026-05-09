@@ -1,6 +1,7 @@
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSType, JSValue, JsResult};
 use bun_jsc::virtual_machine::GCLevel;
 use bun_jsc::zig_string::ZigString;
+use bun_jsc::ZigStringJsc as _;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 3);

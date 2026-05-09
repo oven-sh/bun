@@ -34,14 +34,7 @@ pub enum RedisError {
     NestingDepthExceeded,
 }
 
-impl fmt::Display for RedisError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Mirrors Zig `@errorName(err)` — variant name as &'static str.
-        f.write_str(<&'static str>::from(*self))
-    }
-}
-
-impl std::error::Error for RedisError {}
+bun_core::impl_tag_error!(RedisError);
 
 bun_core::named_error_set!(RedisError);
 

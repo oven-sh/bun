@@ -1,7 +1,7 @@
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _};
+use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
 use bun_paths::{self as path_handler, PathBuffer, WPathBuffer, OSPathBuffer, OSPathSliceZ, MAX_PATH_BYTES};
 use bun_str::{self, strings, ZStr, WStr, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;
@@ -649,14 +649,12 @@ impl Encoding {
         // PERF(port): Zig used comptime-sized stack buffers; we heap-allocate.
         match self {
             Self::Base64 => {
-                let mut buf = vec![0u8; bun_core::base64::standard_encoder_calc_size(size)];
-                let len = bun_core::base64::encode(&mut buf, input);
-                Ok(jsc::zig_string::ZigString::init(&buf[..len]).to_js(global_object))
+                let buf = bun_base64::encode_alloc(input);
+                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Base64url => {
-                let mut buf = vec![0u8; bun_base64::simdutf_encode_len_url_safe(size)];
-                let encoded = bun_base64::simdutf_encode_url_safe(&mut buf, input);
-                Ok(jsc::zig_string::ZigString::init(&buf[..encoded]).to_js(global_object))
+                let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
+                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
                 // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
@@ -712,9 +710,8 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Base64url => {
-                let mut buf = vec![0u8; bun_base64::simdutf_encode_len_url_safe(MAX_SIZE * 4)];
-                let encoded = bun_base64::simdutf_encode_url_safe(&mut buf, input);
-                Ok(jsc::zig_string::ZigString::init(&buf[..encoded]).to_js(global_object))
+                let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
+                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
                 // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.

@@ -11,6 +11,7 @@ use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsClas
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
+use bun_jsc::ZigStringJsc as _;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, PathBuffer};
 use bun_str::{self as strings_mod, strings};

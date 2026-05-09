@@ -427,30 +427,11 @@ impl ContentHasher {
     }
 }
 
-/// `bundle_v2.zig:cheapPrefixNormalizer` — non-allocating, fast but not
-/// 100% thorough; users can put a trailing slash if they want, this is just
-/// being nice.
-pub fn cheap_prefix_normalizer<'s>(prefix: &'s [u8], suffix: &'s [u8]) -> [&'s [u8]; 2] {
-    if prefix.is_empty() {
-        let suffix_no_slash = strings::remove_leading_dot_slash(suffix);
-        return [
-            if suffix_no_slash.starts_with(b"../") { b"" } else { b"./" },
-            suffix_no_slash,
-        ];
-    }
-    // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
-    // ["/foo/", "/bar.js"] => "/foo/bar.js"
-    if strings::ends_with_char(prefix, b'/')
-        || (cfg!(windows) && strings::ends_with_char(prefix, b'\\'))
-    {
-        if strings::starts_with_char(suffix, b'/')
-            || (cfg!(windows) && strings::starts_with_char(suffix, b'\\'))
-        {
-            return [prefix, &suffix[1..]];
-        }
-    }
-    [prefix, strings::remove_leading_dot_slash(suffix)]
-}
+/// `bundle_v2.zig:cheapPrefixNormalizer` — moved down to `bun_string`
+/// (lower-tier crate shared with `css::printer`). Re-exported here so the
+/// existing `crate::cheap_prefix_normalizer` chain in `bundle_v2.rs` and the
+/// bundler call-sites keep working unchanged.
+pub use bun_string::cheap_prefix_normalizer;
 
 /// `bundle_v2.zig:targetFromHashbang`.
 pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
@@ -574,7 +555,7 @@ pub use bun_js_parser::ServerComponentBoundary;
 pub use crate::options_impl::PathTemplate;
 
 /// `bundle_v2.zig:MangledProps`.
-pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
+pub use bun_js_printer::MangledProps;
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 un-gate surface for `LinkerGraph.rs` + `linker_context/scanImportsAndExports.rs`.

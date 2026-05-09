@@ -267,12 +267,7 @@ pub enum ParseRequestError {
     BadRequest,
     ShortRead,
 }
-impl fmt::Display for ParseRequestError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for ParseRequestError {}
+bun_core::impl_tag_error!(ParseRequestError);
 bun_core::named_error_set!(ParseRequestError);
 
 pub struct Request<'a> {
@@ -495,12 +490,7 @@ pub enum ParseResponseError {
     Malformed_HTTP_Response,
     ShortRead,
 }
-impl fmt::Display for ParseResponseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for ParseResponseError {}
+bun_core::impl_tag_error!(ParseResponseError);
 bun_core::named_error_set!(ParseResponseError);
 
 #[derive(Clone, Copy)]
@@ -659,12 +649,7 @@ pub enum ParseHeadersError {
     BadHeaders,
     ShortRead,
 }
-impl fmt::Display for ParseHeadersError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl std::error::Error for ParseHeadersError {}
+bun_core::impl_tag_error!(ParseHeadersError);
 bun_core::named_error_set!(ParseHeadersError);
 
 pub struct Headers<'a> {

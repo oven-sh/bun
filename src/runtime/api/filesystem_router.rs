@@ -57,9 +57,9 @@ pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[
 ];
 
 // ── local shims ───────────────────────────────────────────────────────────
-// `bun_str::ZigString` lacks `with_encoding`/`to_js` (those live on the
-// `repr(C)`-identical `bun_jsc::zig_string::ZigString`). Route through the jsc
-// struct for `to_js`; for `with_encoding` use `from_bytes` (auto-detects UTF-8).
+// `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`
+// auto-detects UTF-8.
+use bun_jsc::ZigStringJsc as _;
 #[inline]
 fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
     jsc::zig_string::ZigString::from_bytes(bytes).to_js(global)

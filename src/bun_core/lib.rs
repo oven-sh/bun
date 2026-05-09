@@ -304,7 +304,7 @@ pub use util::*;
 pub use result::*;
 pub use Global::*;
 pub use tty::Winsize;
-pub use ffi::Zeroable;
+pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
 
 // ── intrusive-container parent recovery ───────────────────────────────────
 //
@@ -361,6 +361,54 @@ macro_rules! from_field_ptr {
 
 /// `bun_core::OOM` per PORTING.md type map (`OOM!T` → `Result<T, OOM>`).
 pub type OOM = AllocError;
+
+/// `bun.JSError` — the canonical JS error union (`error{JSError, OutOfMemory, JSTerminated}`
+/// in Zig). Tier-0 so every layer of the runtime can name it directly; `bun_jsc` re-exports
+/// it as `bun_jsc::JsError` and `bun_event_loop` re-exports it as `ErasedJsError` for
+/// historical call sites.
+///
+/// `#[repr(u8)]` with explicit discriminants: `AnyTask` stores
+/// `fn(*mut c_void) -> Result<(), JsError>` and the dispatcher relies on the 1-byte layout
+/// surviving the type-erased round-trip.
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum JsError {
+    /// A JavaScript exception is pending in the VM's exception scope.
+    Thrown = 0,
+    /// Allocation failure; caller must throw an `OutOfMemoryError`.
+    OutOfMemory = 1,
+    /// The VM is terminating (worker shutdown / `process.exit`).
+    Terminated = 2,
+}
+
+bun_alloc::oom_from_alloc!(JsError);
+
+impl From<crate::Error> for JsError {
+    fn from(_: crate::Error) -> Self {
+        // PORT NOTE: Zig coerces arbitrary `anyerror` into the JS error union by
+        // throwing a generic Error; the throw happens at the call site. Mapping
+        // to `Thrown` here lets `?` propagate while the actual throw is handled
+        // by the host-fn wrapper.
+        JsError::Thrown
+    }
+}
+
+impl From<JsError> for crate::Error {
+    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
+    /// the exact Zig tag (`@errorName`) so call sites that round-trip through
+    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
+    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
+    #[inline]
+    fn from(e: JsError) -> Self {
+        match e {
+            JsError::OutOfMemory => crate::err!("OutOfMemory"),
+            // `Terminated` is a Rust-port addition (worker shutdown); it has no
+            // distinct Zig `error.` tag, so collapse into `JSError` like every
+            // other thrown JS exception.
+            JsError::Thrown | JsError::Terminated => crate::err!("JSError"),
+        }
+    }
+}
 
 /// Zig `bun.concat(u8, buf, &.{ a, b, ... })` — write `parts` consecutively
 /// into `buf` and return the prefix slice. Panics on overflow (matches Zig
@@ -1154,9 +1202,16 @@ pub mod strings {
             return None;
         }
 
+        // Zig spec: bun.strings.whitespace_chars (immutable.zig) — includes VT (0x0B),
+        // which `u8::is_ascii_whitespace()` does NOT. Match the Zig set exactly.
+        #[inline(always)]
+        fn is_ws(b: u8) -> bool {
+            matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
+        }
+
         let mut whitespace = false;
         let mut offset = item.len();
-        while offset < text.len() && text[offset].is_ascii_whitespace() {
+        while offset < text.len() && is_ws(text[offset]) {
             offset += 1;
             whitespace = true;
         }
@@ -1179,7 +1234,7 @@ pub mod strings {
         offset += 1;
 
         let mut end = offset;
-        while end < text.len() && text[end].is_ascii_whitespace() {
+        while end < text.len() && is_ws(text[end]) {
             end += 1;
         }
 
@@ -1300,6 +1355,9 @@ pub mod strings {
 
     /// Zig delegates to highway: `b < 0x20 || b > 127 || b == '"'`
     /// (highway_strings.cpp:438). Do NOT match `'` or `` ` ``.
+    /// Scalar fallback — bun_core intentionally does not depend on bun_highway
+    /// (avoids pulling the C++ `highway_*` extern symbols into the base tier);
+    /// the SIMD path lives at `bun_highway::contains_newline_or_non_ascii_or_quote`.
     pub fn contains_newline_or_non_ascii_or_quote(s: &[u8]) -> bool {
         s.iter().any(|&b| b < 0x20 || b > 0x7F || b == b'"')
     }
@@ -1345,20 +1403,6 @@ pub mod strings {
         }
         out[..v.len()].copy_from_slice(&v);
         Ok(&mut out[..v.len()])
-    }
-    /// `bun.strings.basename` — pass-through to the path-module impl. Lives
-    /// here so T1 `bun_paths` (which can't depend on `bun_string`) can call it
-    /// via `bun_core::strings`.
-    #[inline]
-    pub fn basename(path: &[u8]) -> &[u8] {
-        // PORT NOTE: matches std.fs.path.basenamePosix — last component after
-        // stripping trailing separators; "/" → "".
-        let mut end = path.len();
-        while end > 0 && (path[end - 1] == b'/' || path[end - 1] == b'\\') { end -= 1; }
-        if end == 0 { return b""; }
-        let mut start = end;
-        while start > 0 && path[start - 1] != b'/' && path[start - 1] != b'\\' { start -= 1; }
-        &path[start..end]
     }
     /// `bun.strings.withoutTrailingSlash`
     #[inline]
@@ -1460,7 +1504,7 @@ pub fn linux_kernel_version() -> Version {
             patch: packed & 0x3ff,
         };
     }
-    let uts = crate::ffi::uname();
+    let uts = crate::ffi::cached_uname();
     let release = crate::ffi::c_field_bytes(&uts.release);
     // Parse leading "MAJOR.MINOR.PATCH"; stop at first non-digit per component.
     let mut nums = [0u32; 3];
@@ -1556,6 +1600,22 @@ pub mod ffi {
         u
     }
 
+    #[cfg(unix)]
+    static UTSNAME: std::sync::OnceLock<libc::utsname> = std::sync::OnceLock::new();
+
+    /// Process-wide cached `uname(2)` result. `utsname` is immutable for the
+    /// lifetime of the process, so every probe that only needs to *read* a
+    /// field (kernel-version gates, platform analytics) should borrow this
+    /// instead of issuing its own syscall. Port of Zig's single shared
+    /// `pub var linux_os_name: std.c.utsname` (analytics.zig), hoisted to T1
+    /// so `bun_sys` feature probes can share it without depending on
+    /// `bun_analytics`.
+    #[cfg(unix)]
+    #[inline]
+    pub fn cached_uname() -> &'static libc::utsname {
+        UTSNAME.get_or_init(uname)
+    }
+
     /// Borrow a fixed-size `[c_char; N]` C-struct field as `&[u8]`, truncated at
     /// the first NUL (or full length if none). This is the `&[c_char]` analogue
     /// of [`cstr_bytes`] for inline arrays like `utsname::release`.
@@ -1564,7 +1624,22 @@ pub mod ffi {
         // SAFETY: `c_char` is `i8`/`u8`; both are byte-sized and every bit
         // pattern is a valid `u8`. Same length, same provenance.
         let b = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) };
-        &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
+        slice_to_nul(b)
+    }
+
+    /// `std.mem.sliceTo(buf, 0)` — slice up to (not including) the first NUL
+    /// byte, or the whole buffer if none. Canonical NUL-scan prefix helper;
+    /// re-exported as `bun_string::slice_to_nul`.
+    #[inline]
+    pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
+        &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
+    }
+
+    /// Mutable variant of [`slice_to_nul`].
+    #[inline]
+    pub fn slice_to_nul_mut(buf: &mut [u8]) -> &mut [u8] {
+        let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        &mut buf[..n]
     }
 
     /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
@@ -1617,6 +1692,37 @@ pub mod ffi {
     pub const unsafe fn zeroed_unchecked<T>() -> T {
         // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
         unsafe { core::mem::zeroed() }
+    }
+
+    /// Heap-allocated all-bits-zero `Box<T>`.
+    ///
+    /// Single audited wrapper over `Box::new_zeroed().assume_init()` for the
+    /// "calloc, no stack temporary" idiom. Large fixed-size buffers
+    /// (`[u8; 256K]`, threadlocal scratch structs) must NOT be written
+    /// `Box::new([0u8; N])` — that materialises an `N`-byte temporary on the
+    /// stack in debug builds before moving it to the heap. This helper
+    /// allocates zeroed memory directly (typically a free kernel zero-page).
+    ///
+    /// The `T: Zeroable` bound discharges the safety obligation once per type;
+    /// callers need no `unsafe` block.
+    #[inline(always)]
+    pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        unsafe { Box::<T>::new_zeroed().assume_init() }
+    }
+
+    /// Unchecked heap-allocated all-bits-zero — escape hatch for types not yet
+    /// proven [`Zeroable`] (orphan-rule-blocked generics, foreign POD). Prefer
+    /// [`boxed_zeroed`] + an `unsafe impl Zeroable` whenever the type is
+    /// reachable.
+    ///
+    /// # Safety
+    /// `T` must be inhabited at the all-zero bit pattern (same contract as
+    /// [`Zeroable`], but asserted per-call instead of per-type).
+    #[inline(always)]
+    pub unsafe fn boxed_zeroed_unchecked<T>() -> Box<T> {
+        // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
+        unsafe { Box::<T>::new_zeroed().assume_init() }
     }
 
     // ── Zeroable impls ──────────────────────────────────────────────────────

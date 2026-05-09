@@ -26,28 +26,9 @@ type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 /// active socket is the socket that is currently being used
 // PORT NOTE: Zig used `NewHTTPContext(B).HTTPSocket`; inherent associated types
 // are unstable in Rust, so the free `HTTPSocket<SSL>` alias from http_context
-// is used instead.
-pub enum Socket {
-    Tcp(HTTPSocket<false>),
-    Ssl(HTTPSocket<true>),
-    None,
-}
-
-impl Socket {
-    /// Convert a const-generic `HTTPSocket<IS_SSL>` to the runtime-tagged enum.
-    /// `NewSocketHandler<true>` and `<false>` are layout-identical (`#[derive(Copy)]`
-    /// over a single `InternalSocket` field); only the const generic differs.
-    #[inline]
-    fn from_generic<const IS_SSL: bool>(socket: HTTPSocket<IS_SSL>) -> Self {
-        // `assume_ssl`/`assume_tcp` are safe field moves with a matching
-        // `debug_assert!(SSL)` — the const generic only gates `get_native_handle`.
-        if IS_SSL {
-            Socket::Ssl(socket.assume_ssl())
-        } else {
-            Socket::Tcp(socket.assume_tcp())
-        }
-    }
-}
+// is used instead. `HTTPSocket<B>` = `uws::SocketHandler<B>` = `NewSocketHandler<B>`,
+// so the canonical 3-arm enum lives in `bun_uws` next to its payload type.
+pub use bun_uws::MaybeAnySocket as Socket;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {
@@ -206,32 +187,6 @@ fn client_from_ctx<'a, 'c>(ctx: *mut HTTPClient<'c>) -> &'a mut HTTPClient<'c> {
     unsafe { &mut *ctx }
 }
 
-/// RAII guard that bumps/releases the intrusive refcount via raw field
-/// projection so the borrow covers only `ref_count` (a `Cell`), never the
-/// whole tunnel — avoids overlapping the caller's live `&mut SSLWrapper`.
-/// Replaces the open-coded `ref_raw + scopeguard(deref)` pair at every
-/// callback entry.
-struct ProxyRefGuard(NonNull<ProxyTunnel>);
-
-impl ProxyRefGuard {
-    #[inline]
-    fn new(this: NonNull<ProxyTunnel>) -> Self {
-        // SAFETY: `this` is live; `ref_count` is a `Cell<u32>` so a shared
-        // borrow is sound regardless of other raw aliases on this single thread.
-        let rc = ProxyTunnel::ref_count_of(this);
-        rc.set(rc.get() + 1);
-        Self(this)
-    }
-}
-
-impl Drop for ProxyRefGuard {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: balances the bump in `new`; tunnel allocated until count hits 0.
-        unsafe { ProxyTunnel::deref(self.0.as_ptr()) };
-    }
-}
-
 // ─── SSLWrapper callbacks (ctx = *mut HTTPClient) ────────────────────────────
 //
 // ALIASING NOTE: every callback below is invoked *synchronously from inside* an
@@ -253,9 +208,11 @@ fn on_open(ctx: *mut HTTPClient) {
     this.state.request_stage = HTTPStage::ProxyHandshake;
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
     // Live intrusive-refcounted tunnel allocated in `start()`. Do NOT form
-    // `&mut ProxyTunnel` — see ALIASING NOTE. ProxyRefGuard bumps via raw
-    // field projection.
-    let _guard = ProxyRefGuard::new(proxy_nn);
+    // `&mut ProxyTunnel` — see ALIASING NOTE. ScopedRef bumps via raw field
+    // projection (`CellRefCounted::ref_count_raw`), so the borrow covers only
+    // `ref_count`, never the whole tunnel.
+    // SAFETY: `proxy_nn` is live (held by `this.proxy_tunnel`).
+    let _guard = unsafe { bun_ptr::ScopedRef::new(proxy_nn.as_ptr()) };
     if let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) {
         let _hostname = this.hostname.unwrap_or(this.url.hostname);
 
@@ -299,7 +256,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // `&mut *ctx` (close → on_close, progress_update).
     let this = client_from_ctx(ctx);
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
-    let _guard = ProxyRefGuard::new(proxy_nn);
+    // SAFETY: `proxy_nn` is live (held by `this.proxy_tunnel`); see ALIASING NOTE.
+    let _guard = unsafe { bun_ptr::ScopedRef::new(proxy_nn.as_ptr()) };
     match this.state.response_stage {
         HTTPStage::Body => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body");
@@ -372,7 +330,8 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
-    let _guard = ProxyRefGuard::new(proxy_nn);
+    // SAFETY: `proxy_nn` is live (held by `this.proxy_tunnel`).
+    let _guard = unsafe { bun_ptr::ScopedRef::new(proxy_nn.as_ptr()) };
     this.state.response_stage = HTTPStage::ProxyHeaders;
     this.state.request_stage = HTTPStage::ProxyHeaders;
     this.state.request_sent_len = 0;
@@ -511,7 +470,7 @@ fn on_close(ctx: *mut HTTPClient) {
     let proxy_ptr = proxy_nn.as_ptr();
     // close_raw still holds `&mut SSLWrapper` on `(*proxy_ptr).wrapper`, so
     // bump refcount via the disjoint Cell projection.
-    // PORT NOTE: not a ProxyRefGuard — the matching deref is deferred via
+    // PORT NOTE: not a ScopedRef — the matching deref is deferred via
     // `schedule_proxy_deref` to avoid freeing within the callback.
     {
         let rc = ProxyTunnel::ref_count_of(proxy_nn);
@@ -691,7 +650,8 @@ impl ProxyTunnel {
         // line.
         let self_nn = NonNull::from(&mut *self);
         let self_ptr = self_nn.as_ptr();
-        let _guard = ProxyRefGuard::new(self_nn);
+        // SAFETY: `self_nn` derived from a live `&mut self`.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(self_ptr) };
         // PORT NOTE: Zig `defer wrapper.flush()` runs AFTER the body but BEFORE
         // `defer deref()` (LIFO). We mirror that order explicitly at the single
         // exit. flush() → handle_traffic → write_encrypted reenters and touches
@@ -723,7 +683,8 @@ impl ProxyTunnel {
     pub fn receive(&mut self, buf: &[u8]) {
         // Capture raw pointer first; never touch `self` again (see on_writable).
         let self_nn = NonNull::from(&mut *self);
-        let _guard = ProxyRefGuard::new(self_nn);
+        // SAFETY: `self_nn` derived from a live `&mut self`.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(self_nn.as_ptr()) };
         // receive_data() fires on_data/on_handshake/write_encrypted/on_close
         // synchronously; each accesses only tunnel fields disjoint from
         // `wrapper` via the accessors above (see ALIASING NOTE), so the

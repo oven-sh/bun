@@ -6,6 +6,7 @@ use bun_bundler::options;
 // from the lower-tier source crate directly.
 use bun_options_types::BundleEnums::Format;
 use bun_options_types::CompileTarget::CompileTarget;
+use bun_jsc::ComptimeStringMapExt as _;
 use bun_string::ZigString;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
@@ -14,10 +15,7 @@ pub fn target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Optio
     if !value.is_string() {
         return Err(global.throw_invalid_arguments(format_args!("target must be a string")));
     }
-    // PORT NOTE: `ComptimeStringMap.fromJS` inlined — checked `is_string()` above so
-    // `to_slice_or_null` (no coercion) is equivalent to `bun.String.fromJS` here.
-    let s = value.to_slice_or_null(global)?;
-    Ok(options::Target::MAP.get(s.slice()).copied())
+    options::Target::MAP.from_js(global, value)
 }
 
 pub fn format_from_js(global: &JSGlobalObject, format: JSValue) -> JsResult<Option<Format>> {
@@ -29,10 +27,7 @@ pub fn format_from_js(global: &JSGlobalObject, format: JSValue) -> JsResult<Opti
         return Err(global.throw_invalid_arguments(format_args!("format must be a string")));
     }
 
-    // PORT NOTE: `ComptimeStringMap.fromJS` inlined — checked `is_string()` above so
-    // `to_slice_or_null` (no coercion) is equivalent to `bun.String.fromJS` here.
-    let s = format.to_slice_or_null(global)?;
-    let Some(v) = Format::MAP.get(s.slice()).copied() else {
+    let Some(v) = Format::MAP.from_js(global, format)? else {
         return Err(global.throw_invalid_arguments(format_args!(
             "Invalid format - must be esm, cjs, or iife"
         )));

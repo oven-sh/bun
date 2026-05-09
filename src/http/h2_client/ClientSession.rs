@@ -8,7 +8,6 @@ use core::sync::atomic::Ordering;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{err, Error};
-use bun_picohttp as picohttp;
 use bun_string::immutable as strings;
 
 use super::bridge::socket_is_closed_or_has_error;
@@ -21,8 +20,7 @@ use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
-use crate::{HTTPClient, HTTPVerboseLevel, NewHTTPContext, Protocol, ShouldContinue};
-use bun_http_types::Encoding::Encoding;
+use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol};
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
 pub type Socket = HTTPSocket<true>;
@@ -1081,41 +1079,10 @@ impl ClientSession {
         stream: &mut Stream,
         client: &mut HTTPClient,
     ) -> Result<HeaderResult, Error> {
-        // SAFETY: decoded_headers borrow stream.decoded_bytes; lifetime erased
-        // because the slice outlives the call. Cast away to 'static so the
-        // pending_response field (Response<'static>) can hold it.
-        let headers: &'static [picohttp::Header] = unsafe {
-            bun_core::ffi::slice(
-                stream.decoded_headers.as_ptr(),
-                stream.decoded_headers.len(),
-            )
-        };
-        let mut response = picohttp::Response {
-            minor_version: 0,
-            status_code: stream.status_code,
-            status: b"",
-            headers: picohttp::HeaderList { list: headers },
-            bytes_read: 0,
-        };
-        client.state.pending_response = Some(response);
-
-        let should_continue = client.h2_handle_response_metadata(&mut response)?;
-        // handleResponseMetadata may mutate *response (e.g. the 304 rewrite for
-        // force_last_modified); cloneMetadata reads pending_response, so re-sync.
-        client.state.pending_response = Some(response);
-        // h2 framing delimits the body; chunked transfer-encoding and the
-        // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
-        client.state.transfer_encoding = Encoding::Identity;
-        if client.state.response_stage == HTTPStage::BodyChunk {
-            client.state.response_stage = HTTPStage::Body;
-        }
-        client.state.flags.allow_keepalive = true;
-
-        Ok(if should_continue == ShouldContinue::Finished {
-            HeaderResult::Finished
-        } else {
-            HeaderResult::HasBody
-        })
+        // SAFETY: decoded_headers borrow stream.decoded_bytes, which outlives
+        // the synchronous clone_metadata that follows in `process_stream` —
+        // see `HTTPClient::apply_multiplexed_headers` contract.
+        client.apply_multiplexed_headers(stream.status_code, &stream.decoded_headers)
     }
 }
 
@@ -1133,12 +1100,6 @@ impl Drop for ClientSession {
         // streams map storage drops automatically.
         // bun.destroy(this) — handled by heap::take in `deref`.
     }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum HeaderResult {
-    HasBody,
-    Finished,
 }
 
 // ported from: src/http/h2_client/ClientSession.zig

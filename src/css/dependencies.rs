@@ -66,38 +66,44 @@ impl ImportDependency {
         local_names: Option<&crate::LocalsResultsMap>,
         symbols: &bun_logger::symbol::Map,
     ) -> ImportDependency {
-        // PORT NOTE: Zig routed through `css.to_css.string(arena, T, ...)`;
-        // that free function is still ``-gated on the
-        // `Printer::new` arena reshape, so its body (sub-printer +
-        // `T::to_css` + buffer) is inlined here. Swap back to
-        // `crate::to_css::string` once that un-gates.
-        let stringify = |f: &dyn Fn(&mut crate::Printer) -> Result<(), crate::PrintErr>,
-                         what: &str|
-         -> &'bump [u8] {
-            let mut buf: Vec<u8> = Vec::new();
-            let mut printer =
-                crate::Printer::new_buffered(bump, &mut buf, None, local_names, symbols);
-            f(&mut printer).unwrap_or_else(|_| {
+        let supports: Option<*const [u8]> = if let Some(supports) = &rule.supports {
+            let s = crate::to_css::string(
+                bump,
+                supports,
+                crate::PrinterOptions::default(),
+                None,
+                local_names,
+                symbols,
+            )
+            .unwrap_or_else(|_| {
                 panic!(
-                    "Unreachable code: failed to stringify {what}.\n\n\
+                    "Unreachable code: failed to stringify SupportsCondition.\n\n\
                      This is a bug in Bun's CSS printer. Please file a bug report at \
                      https://github.com/oven-sh/bun/issues/new/choose"
                 )
             });
-            drop(printer);
-            bump.alloc_slice_copy(&buf)
-        };
-
-        let supports: Option<*const [u8]> = if let Some(supports) = &rule.supports {
-            // Zig passed the type `css.css_rules.supports.SupportsCondition` as a comptime
-            // param; in Rust the inherent `to_css` is dispatched directly.
-            Some(std::ptr::from_ref::<[u8]>(stringify(&|p| supports.to_css(p), "SupportsCondition")))
+            Some(std::ptr::from_ref::<[u8]>(bump.alloc_slice_copy(&s)))
         } else {
             None
         };
 
         let media: Option<*const [u8]> = if !rule.media.media_queries.is_empty() {
-            Some(std::ptr::from_ref::<[u8]>(stringify(&|p| rule.media.to_css(p), "MediaList")))
+            let s = crate::to_css::string(
+                bump,
+                &rule.media,
+                crate::PrinterOptions::default(),
+                None,
+                local_names,
+                symbols,
+            )
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Unreachable code: failed to stringify MediaList.\n\n\
+                     This is a bug in Bun's CSS printer. Please file a bug report at \
+                     https://github.com/oven-sh/bun/issues/new/choose"
+                )
+            });
+            Some(std::ptr::from_ref::<[u8]>(bump.alloc_slice_copy(&s)))
         } else {
             None
         };

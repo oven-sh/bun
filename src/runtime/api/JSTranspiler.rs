@@ -15,6 +15,7 @@ use bun_jsc::{
     ComptimeStringMapExt,
 };
 use bun_jsc::zig_string::ZigString as JscZigString;
+use bun_jsc::ZigStringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use crate::node::{Encoding, StringOrBuffer};
 use bun_js_parser::runtime::Runtime;

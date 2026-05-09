@@ -209,24 +209,13 @@ impl<'a> AnyEventLoop<'a> {
                     owner.auto_tick();
                 }
                 AnyEventLoop::Mini(mini) => {
-                    // Inline one iteration of `MiniEventLoop::tick` so the
-                    // `&mut MiniEventLoop` borrow does not straddle the next
-                    // `is_done`. Spec: MiniEventLoop.zig `tick` loop body.
-                    if mini.tick_concurrent_with_count() == 0
-                        && mini.tasks.readable_length() == 0
-                    {
-                        // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
-                        unsafe {
-                            (*mini.loop_ptr()).inc();
-                            (*mini.loop_ptr()).tick();
-                            (*mini.loop_ptr()).dec();
-                        }
-                        mini.on_after_event_loop();
-                    }
-                    while let Some(task) = mini.tasks.read_item() {
-                        // SAFETY: see `MiniEventLoop::tick_once`.
-                        unsafe { (*task).run(context) };
-                    }
+                    // One iteration only — we cannot call the *looping*
+                    // `MiniEventLoop::tick` here because that would hold
+                    // `&mut mini` across `is_done`. A single `tick_once`
+                    // borrow ends at the bottom of this match arm before the
+                    // next `is_done` reborrow. Spec: MiniEventLoop.zig `tick`
+                    // loop body.
+                    mini.tick_once(context);
                 }
             }
         }

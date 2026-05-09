@@ -435,30 +435,9 @@ pub use bun_collections::comptime_string_map::{
     ComptimeStringMap, ComptimeStringMap16, ComptimeStringMapWithKeyType,
 };
 
+#[allow(non_snake_case)]
 pub mod StringHashMapUnowned {
-    use super::hash;
-
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub struct Key {
-        pub hash: u64,
-        pub len: usize,
-    }
-
-    impl Key {
-        pub fn init(str_: &[u8]) -> Key {
-            Key { hash: hash(str_), len: str_.len() }
-        }
-    }
-
-    pub struct Adapter;
-    impl Adapter {
-        pub fn eql(&self, a: Key, b: Key) -> bool {
-            a.hash == b.hash && a.len == b.len
-        }
-        pub fn hash(&self, key: Key) -> u64 {
-            key.hash
-        }
-    }
+    pub use bun_collections::array_hash_map::string_hash_map_unowned::{Adapter, Key};
 }
 
 // ─── DebugOnly ────────────────────────────────────────────────────────────────
@@ -1042,162 +1021,39 @@ pub use bun_core::{
 };
 
 // ─── StringSet ────────────────────────────────────────────────────────────────
-pub struct StringSet {
-    pub map: bun_collections::ArrayHashMap<Box<[u8]>, ()>,
-}
-
-impl StringSet {
-    pub fn clone(&self) -> Result<StringSet, OOM> {
-        let mut new_map = bun_collections::ArrayHashMap::default();
-        new_map.reserve(self.map.len());
-        for key in self.map.keys() {
-            new_map.insert(Box::<[u8]>::from(&**key), ());
-            // PERF(port): was assume_capacity
-        }
-        Ok(StringSet { map: new_map })
-    }
-
-    pub fn init() -> StringSet {
-        StringSet { map: bun_collections::ArrayHashMap::default() }
-    }
-
-    /// Initialize an empty StringSet at comptime (for use as a static constant).
-    pub const fn init_comptime() -> StringSet {
-        // TODO(port): const-fn ArrayHashMap::new()
-        StringSet { map: bun_collections::ArrayHashMap::new_const() }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count() == 0
-    }
-
-    pub fn count(&self) -> usize {
-        self.map.len()
-    }
-
-    pub fn keys(&self) -> &[Box<[u8]>] {
-        self.map.keys()
-    }
-
-    pub fn insert(&mut self, key: &[u8]) -> Result<(), OOM> {
-        if !self.map.contains_key(key) {
-            self.map.insert(Box::<[u8]>::from(key), ());
-        }
-        Ok(())
-    }
-
-    pub fn contains(&self, key: &[u8]) -> bool {
-        self.map.contains_key(key)
-    }
-
-    pub fn swap_remove(&mut self, key: &[u8]) -> bool {
-        self.map.swap_remove(key).is_some()
-    }
-
-    pub fn clear_and_free(&mut self) {
-        self.map.clear();
-        self.map.shrink_to_fit();
-    }
-}
-// Drop frees owned Box<[u8]> keys automatically — no explicit deinit body.
+// Canonical impl lives in bun_collections (tier-0). The previous local copy was
+// dead code — every caller already imports `bun_collections::StringSet` directly.
+// `init_comptime()` had zero callers (Rust callers model the Zig static empty set
+// as `Option<Box<StringSet>> = None`); add a `const fn` to the canonical if a
+// future static needs it.
+pub use bun_collections::StringSet;
 
 // ─── StringMap ────────────────────────────────────────────────────────────────
-pub struct StringMap {
-    pub map: bun_collections::ArrayHashMap<Box<[u8]>, Box<[u8]>>,
-    pub dupe_keys: bool,
+// Canonical port of Zig `bun.StringMap` lives in bun_collections (lower-tier
+// crate, spec-correct `StringArrayHashMap<Box<[u8]>>` inner type, getOrPut
+// semantics on insert). Re-export here for `bun::StringMap` path parity.
+pub use bun_collections::StringMap;
+
+/// `to_api` can't live on the canonical struct without inverting the
+/// bun_collections → bun_options_types dep, so it's an extension trait here.
+pub trait StringMapExt {
+    fn to_api(&self) -> schema::api::StringMap;
 }
-
-impl StringMap {
-    pub fn clone(&self) -> Result<StringMap, OOM> {
-        Ok(StringMap { map: self.map.clone(), dupe_keys: self.dupe_keys })
-    }
-
-    pub fn init(dupe_keys: bool) -> StringMap {
-        StringMap { map: bun_collections::ArrayHashMap::default(), dupe_keys }
-    }
-
-    pub fn keys(&self) -> &[Box<[u8]>] {
-        self.map.keys()
-    }
-
-    pub fn values(&self) -> &[Box<[u8]>] {
-        self.map.values()
-    }
-
-    pub fn count(&self) -> usize {
-        self.map.len()
-    }
-
-    pub fn to_api(&self) -> schema::api::StringMap {
+impl StringMapExt for StringMap {
+    fn to_api(&self) -> schema::api::StringMap {
         schema::api::StringMap { keys: self.keys(), values: self.values() }
     }
-
-    pub fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), OOM> {
-        // PORT NOTE: dupe_keys is always effectively true here since keys are
-        // Box<[u8]>; the Zig version stored borrowed slices when dupe_keys=false.
-        // TODO(port): preserve borrowed-key mode if a caller relies on it
-        self.map.insert(Box::<[u8]>::from(key), Box::<[u8]>::from(value));
-        Ok(())
-    }
-    pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), OOM> {
-        self.insert(key, value)
-    }
-
-    pub fn get(&self, key: &[u8]) -> Option<&[u8]> {
-        self.map.get(key).map(|v| &**v)
-    }
-
-    pub fn sort<C: FnMut(usize, usize) -> core::cmp::Ordering>(&mut self, sort_ctx: C) {
-        self.map.sort_by(sort_ctx);
-    }
 }
-// Drop frees owned Box<[u8]> keys/values automatically.
+// `sort()` from the old local copy called `self.map.sort_by(..)` which never
+// existed on ArrayHashMap; canonical keeps the TODO until a caller needs it.
 
 // PERF(port): threadLocalAllocator — global mimalloc is already thread-local-cached
 
 // ─── HiveRef ──────────────────────────────────────────────────────────────────
-pub struct HiveRef<'a, T, const CAPACITY: u16> {
-    pub ref_count: u32,
-    pub pool: &'a mut bun_collections::HiveArrayFallback<HiveRef<'a, T, CAPACITY>, CAPACITY>,
-    pub value: T,
-}
-
-impl<'a, T, const CAPACITY: u16> HiveRef<'a, T, CAPACITY> {
-    pub fn init(
-        value: T,
-        pool: &'a mut bun_collections::HiveArrayFallback<HiveRef<'a, T, CAPACITY>, CAPACITY>,
-    ) -> Result<&'a mut Self, OOM> {
-        let this = pool.try_get()?;
-        // SAFETY: try_get returns uninitialized slot; we fully init it here
-        unsafe {
-            core::ptr::write(
-                this,
-                HiveRef { ref_count: 1, pool, value },
-            );
-        }
-        Ok(this)
-    }
-
-    pub fn ref_(&mut self) -> &mut Self {
-        self.ref_count += 1;
-        self
-    }
-
-    pub fn unref(&mut self) -> Option<&mut Self> {
-        let ref_count = self.ref_count;
-        self.ref_count = ref_count - 1;
-        if ref_count == 1 {
-            // TODO(port): @hasDecl(T, "deinit") — Drop on T handles this
-            // SAFETY: self came from pool.try_get()
-            unsafe {
-                let pool: *mut _ = self.pool;
-                (*pool).put(self);
-            }
-            return None;
-        }
-        Some(self)
-    }
-}
+// Zig spec `bun.HiveRef` (src/bun.zig:1860) is ported in bun_collections::hive_array
+// alongside its only collaborator `Fallback`; re-export here so the `bun::HiveRef`
+// namespace stays addressable.
+pub use bun_collections::{HiveRef, hive_array::HiveAllocator};
 
 pub fn open_file_for_path(file_path: &bun_str::ZStr) -> Result<bun_sys::File, bun_core::Error> {
     #[cfg(windows)]
@@ -1330,154 +1186,7 @@ pub fn argv() -> &'static [Box<bun_str::ZStr>] {
 }
 
 /// Trait for arg types accepted by `append_options_env` (replaces `comptime ArgType`).
-pub trait OptionsEnvArg {
-    fn from_slice(s: &[u8]) -> Self;
-    fn from_buf(buf: Vec<u8>) -> Self;
-}
-impl OptionsEnvArg for bun_str::String {
-    fn from_slice(s: &[u8]) -> Self {
-        bun_str::String::clone_utf8(s)
-    }
-    fn from_buf(buf: Vec<u8>) -> Self {
-        bun_str::String::clone_utf8(&buf)
-    }
-}
-impl OptionsEnvArg for Box<bun_str::ZStr> {
-    fn from_slice(s: &[u8]) -> Self {
-        bun_str::ZStr::from_bytes(s)
-    }
-    fn from_buf(mut buf: Vec<u8>) -> Self {
-        buf.push(0);
-        // SAFETY: just appended NUL
-        unsafe { bun_str::ZStr::from_vec_with_nul_unchecked(buf) }
-    }
-}
-
-pub fn append_options_env<A: OptionsEnvArg>(
-    env: &[u8],
-    args: &mut Vec<A>,
-) -> Result<(), OOM> {
-    let mut i: usize = 0;
-    let mut offset_in_args: usize = 1;
-    while i < env.len() {
-        // skip whitespace
-        while i < env.len() && env[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if i >= env.len() {
-            break;
-        }
-
-        // Handle all command-line arguments with quotes preserved
-        let start = i;
-        let mut j = i;
-
-        // Check if this is an option (starts with --)
-        let is_option = j + 2 <= env.len() && env[j] == b'-' && env[j + 1] == b'-';
-
-        if is_option {
-            // Find the end of the option flag (--flag)
-            while j < env.len() && !env[j].is_ascii_whitespace() && env[j] != b'=' {
-                j += 1;
-            }
-
-            let end_of_flag = j;
-            let mut found_equals = false;
-
-            // Check for equals sign
-            if j < env.len() && env[j] == b'=' {
-                found_equals = true;
-                j += 1; // Move past the equals sign
-            } else if j < env.len() && env[j].is_ascii_whitespace() {
-                j += 1; // Move past the space
-                while j < env.len() && env[j].is_ascii_whitespace() {
-                    j += 1;
-                }
-            }
-
-            // Handle quoted values
-            if j < env.len() && (env[j] == b'\'' || env[j] == b'"') {
-                let quote_char = env[j];
-                j += 1; // Move past opening quote
-                while j < env.len() && env[j] != quote_char {
-                    j += 1;
-                }
-                if j < env.len() {
-                    j += 1; // Move past closing quote
-                }
-            } else if found_equals {
-                // If we had --flag=value (no quotes), find next whitespace
-                while j < env.len() && !env[j].is_ascii_whitespace() {
-                    j += 1;
-                }
-            } else {
-                // No value found after flag (e.g., `--flag1 --flag2`).
-                j = end_of_flag;
-            }
-
-            // Copy the entire argument including quotes
-            let arg = A::from_slice(&env[start..j]);
-            args.insert(offset_in_args, arg);
-            offset_in_args += 1;
-
-            i = j;
-            continue;
-        }
-
-        // Non-option arguments or standalone values
-        let mut buf: Vec<u8> = Vec::new();
-
-        let mut in_single = false;
-        let mut in_double = false;
-        let mut escape = false;
-        while i < env.len() {
-            let ch = env[i];
-            if escape {
-                buf.push(ch);
-                escape = false;
-                i += 1;
-                continue;
-            }
-            if ch == b'\\' {
-                escape = true;
-                i += 1;
-                continue;
-            }
-            if in_single {
-                if ch == b'\'' {
-                    in_single = false;
-                } else {
-                    buf.push(ch);
-                }
-                i += 1;
-                continue;
-            }
-            if in_double {
-                if ch == b'"' {
-                    in_double = false;
-                } else {
-                    buf.push(ch);
-                }
-                i += 1;
-                continue;
-            }
-            if ch == b'\'' {
-                in_single = true;
-            } else if ch == b'"' {
-                in_double = true;
-            } else if ch.is_ascii_whitespace() {
-                break;
-            } else {
-                buf.push(ch);
-            }
-            i += 1;
-        }
-
-        args.insert(offset_in_args, A::from_buf(buf));
-        offset_in_args += 1;
-    }
-    Ok(())
-}
+pub use bun_core::{append_options_env, OptionsEnvArg};
 
 pub fn init_argv() -> Result<(), bun_core::Error> {
     #[cfg(unix)]
@@ -1532,7 +1241,7 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
             let argv = &mut *ARGV.get();
             let original_len = argv.len();
             let mut argv_list = core::mem::take(argv);
-            append_options_env::<Box<bun_str::ZStr>>(opts, &mut argv_list)?;
+            append_options_env::<Box<bun_str::ZStr>>(opts, &mut argv_list);
             *argv = argv_list;
             set_bun_options_argc(argv.len() - original_len);
         }
@@ -1751,31 +1460,10 @@ pub fn delete_all_pools_for_thread_exit() {
 }
 
 // ─── errno mapping ────────────────────────────────────────────────────────────
-// TODO(port): errno_map — Zig built a comptime [N]anyerror table from
-// SystemErrno tag names. In Rust, `bun_core::Error` is interned by name, so
-// `errno_to_zig_err` can construct directly from `SystemErrno::name()`.
-
-pub fn errno_to_zig_err(err: i32) -> bun_core::Error {
-    let mut num = err;
-    if cfg!(debug_assertions) {
-        debug_assert!(num != 0);
-    }
-    #[cfg(windows)]
-    {
-        // uv errors are negative, normalizing it will make this more resilient
-        num = num.abs();
-    }
-    #[cfg(not(windows))]
-    {
-        if cfg!(debug_assertions) {
-            debug_assert!(num > 0);
-        }
-    }
-    if let Some(e) = bun_sys::SystemErrno::from_raw(num) {
-        return bun_core::Error::intern(e.name());
-    }
-    bun_core::err!("Unexpected")
-}
+// Port of `bun.errnoToZigErr` lives in bun_core (delegates to `Error::from_errno`,
+// which reproduces the comptime `errno_map` table — including the sparse Windows
+// UV_* range that `SystemErrno::from_raw` alone does not cover).
+pub use bun_core::errno_to_zig_err;
 
 pub fn iterate_dir(dir: FD) -> DirIterator::Iterator {
     DirIterator::iterate(dir, DirIterator::Encoding::U8).iter

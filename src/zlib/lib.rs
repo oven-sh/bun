@@ -160,20 +160,6 @@ pub type ZlibReaderArrayListState = State;
 pub type ZlibCompressorArrayListState = State;
 
 impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
-    pub unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
-        // TODO(port): simplify — mi_malloc returns *mut c_void already; `orelse unreachable` → expect non-null
-        let p = mimalloc::mi_malloc((items * len) as usize);
-        if p.is_null() {
-            unreachable!();
-        }
-        p
-    }
-
-    pub unsafe extern "C" fn free(_: *mut c_void, data: *mut c_void) {
-        // SAFETY: data was allocated by mi_malloc above.
-        unsafe { mimalloc::mi_free(data) };
-    }
-
     pub fn end(&mut self) {
         if self.state == ZlibReaderState::Inflating {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
@@ -201,8 +187,8 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             total_out: BUFFER_SIZE as _,
 
             err_msg: core::ptr::null(),
-            alloc_func: Some(Self::alloc),
-            free_func: Some(Self::free),
+            alloc_func: Some(zlib_mi_malloc),
+            free_func: Some(zlib_mi_free),
 
             internal_state: core::ptr::null_mut(),
             user_data: (&raw mut *zlib_reader).cast::<c_void>(),
@@ -350,14 +336,27 @@ pub enum ZlibError {
     ShortRead,
 }
 
-impl core::fmt::Display for ZlibError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(*self))
-    }
-}
-impl core::error::Error for ZlibError {}
+bun_core::impl_tag_error!(ZlibError);
 
 bun_core::named_error_set!(ZlibError);
+
+/// zlib `alloc_func` thunk → mimalloc (non-zeroing). Shared by `ZlibReader` and
+/// `ZlibCompressorArrayList`. Mirrors zlib.zig:138 / :779 — intentionally
+/// `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
+/// heap-breakdown variant used by `ZlibReaderArrayList`).
+pub(crate) unsafe extern "C" fn zlib_mi_malloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
+    let p = mimalloc::mi_malloc((items * len) as usize);
+    if p.is_null() {
+        unreachable!();
+    }
+    p
+}
+
+/// zlib `free_func` thunk → mimalloc. Paired with `zlib_mi_malloc`.
+pub(crate) unsafe extern "C" fn zlib_mi_free(_: *mut c_void, data: *mut c_void) {
+    // SAFETY: data was allocated by mi_malloc in `zlib_mi_malloc`.
+    unsafe { mimalloc::mi_free(data) };
+}
 
 struct ZlibAllocator;
 
@@ -903,19 +902,6 @@ pub struct ZlibCompressorArrayList<'a> {
 }
 
 impl<'a> ZlibCompressorArrayList<'a> {
-    pub unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
-        let p = mimalloc::mi_malloc((items * len) as usize);
-        if p.is_null() {
-            unreachable!();
-        }
-        p
-    }
-
-    pub unsafe extern "C" fn free(_: *mut c_void, data: *mut c_void) {
-        // SAFETY: data was allocated by mi_malloc above.
-        unsafe { mimalloc::mi_free(data) };
-    }
-
     pub fn end(&mut self) {
         if self.state != ZlibCompressorArrayListState::End {
             // SAFETY: zlib was initialized via deflateInit2_; safe to end.
@@ -952,8 +938,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
             total_out: list_len as _,
 
             err_msg: core::ptr::null(),
-            alloc_func: Some(Self::alloc),
-            free_func: Some(Self::free),
+            alloc_func: Some(zlib_mi_malloc),
+            free_func: Some(zlib_mi_free),
 
             internal_state: core::ptr::null_mut(),
             user_data: (&raw mut *zlib_reader).cast::<c_void>(),

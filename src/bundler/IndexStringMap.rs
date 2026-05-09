@@ -3,7 +3,7 @@ use bun_collections::ArrayHashMap;
 
 pub use bun_js_parser::Index;
 /// `Index.Int` in Zig — the underlying integer repr.
-pub type IndexInt = u32;
+pub use crate::IndexInt;
 
 #[derive(Default)]
 pub struct IndexStringMap {

@@ -1627,6 +1627,11 @@ impl DynamicBitSet {
         self.unmanaged.set(index);
     }
 
+    /// Set all bits to the specified value.
+    pub fn set_all(&mut self, value: bool) {
+        self.unmanaged.set_all(value);
+    }
+
     /// Changes the value of all bits in the specified range to
     /// match the passed boolean.
     pub fn set_range_value(&mut self, range: Range, value: bool) {

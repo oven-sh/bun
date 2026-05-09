@@ -92,6 +92,8 @@ struct Dict {
     prefix: [u16; 4096],
     suffix: [u8; 4096],
 }
+// SAFETY: plain integer arrays; all-zero is a valid `Dict`.
+unsafe impl bun_core::Zeroable for Dict {}
 
 impl Dict {
     /// Walk the prefix chain into `scratch` (reversed), then copy forwards
@@ -235,8 +237,7 @@ fn decode_frame(
     let mut prev: Option<u16> = None;
 
     // PERF(port): Zig left this uninitialized; zero-init here for safety.
-    // SAFETY: all-zero is a valid Dict (plain integer arrays).
-    let mut dict: Box<Dict> = unsafe { Box::<Dict>::new_zeroed().assume_init() };
+    let mut dict: Box<Dict> = bun_core::boxed_zeroed();
     let mut scratch = [0u8; 4096];
 
     // PERF(port): Zig left this uninitialized; zero-init here for safety.

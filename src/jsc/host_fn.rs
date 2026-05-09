@@ -703,10 +703,9 @@ const fn parse_error_set(errors: &[&str]) -> ParsedHostFunctionErrorSet {
     let mut errs = ParsedHostFunctionErrorSet { out_of_memory: false, js_error: false };
     let mut i = 0;
     while i < errors.len() {
-        let name = errors[i].as_bytes();
-        if const_bytes_eq(name, b"OutOfMemory") {
+        if bun_collections::const_str_eq(errors[i], "OutOfMemory") {
             errs.out_of_memory = true;
-        } else if const_bytes_eq(name, b"JSError") {
+        } else if bun_collections::const_str_eq(errors[i], "JSError") {
             errs.js_error = true;
         } else {
             // Zig: @compileError("Return value from host function '...' can not contain error '...'")
@@ -715,21 +714,6 @@ const fn parse_error_set(errors: &[&str]) -> ParsedHostFunctionErrorSet {
         i += 1;
     }
     errs
-}
-
-#[allow(dead_code)]
-const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
 }
 
 // For when bubbling up errors to functions that require a C ABI boundary

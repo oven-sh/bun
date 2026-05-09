@@ -38,6 +38,10 @@ mod sock {
     }
 }
 
+// Re-export the cfg-dispatched addrinfo type + matching free so callers don't
+// duplicate the POSIX/Windows split (see dns_jsc::dns).
+pub use sock::{addrinfo, freeaddrinfo};
+
 // TODO(port): move to dns_sys / verify libc crate exposes these on all targets
 #[cfg(windows)]
 pub const AI_V4MAPPED: c_int = 2048;

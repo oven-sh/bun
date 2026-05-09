@@ -1458,14 +1458,7 @@ fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
     use css::VendorPrefix as VP;
     use PseudoClass as P;
     use WebKitScrollbarPseudoClass as WS;
-    // TODO(port): replace with phf once a case-insensitive hasher is available.
-    macro_rules! m {
-        ($($lit:literal => $val:expr,)*) => {{
-            $( if strings::eql_case_insensitive_ascii_check_length(name, $lit) { return Some($val); } )*
-            None
-        }};
-    }
-    m! {
+    Some(crate::match_ignore_ascii_case! { name, {
         // https://drafts.csswg.org/selectors-4/#useraction-pseudos
         b"hover" => P::Hover,
         b"active" => P::Active,
@@ -1545,7 +1538,8 @@ fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
         b"no-button" => P::WebkitScrollbar(WS::NoButton),
         b"corner-present" => P::WebkitScrollbar(WS::CornerPresent),
         b"window-inactive" => P::WebkitScrollbar(WS::WindowInactive),
-    }
+        _ => return None,
+    } })
 }
 
 /// Case-insensitive lookup table for `parse_pseudo_element`.
@@ -1554,13 +1548,7 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
     use css::VendorPrefix as VP;
     use PseudoElement as PE;
     use WebKitScrollbarPseudoElement as WS;
-    macro_rules! m {
-        ($($lit:literal => $val:expr,)*) => {{
-            $( if strings::eql_case_insensitive_ascii_check_length(name, $lit) { return Some($val); } )*
-            None
-        }};
-    }
-    m! {
+    Some(crate::match_ignore_ascii_case! { name, {
         b"before" => PE::Before,
         b"after" => PE::After,
         b"first-line" => PE::FirstLine,
@@ -1587,7 +1575,8 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
         b"-webkit-scrollbar-corner" => PE::WebkitScrollbar(WS::Corner),
         b"-webkit-resizer" => PE::WebkitScrollbar(WS::Resizer),
         b"view-transition" => PE::ViewTransition,
-    }
+        _ => return None,
+    } })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3457,46 +3446,33 @@ pub fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
     name: Str,
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
-    // TODO(port): phf custom hasher — Zig used `ComptimeEnumMap.getASCIIICaseInsensitive`.
-    macro_rules! eq {
-        ($lit:literal) => {
-            strings::eql_case_insensitive_ascii_check_length(name, $lit)
-        };
-    }
-    if eq!(b"nth-child") {
-        return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::Child);
-    } else if eq!(b"nth-of-type") {
-        return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::OfType);
-    } else if eq!(b"nth-last-child") {
-        return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastChild);
-    } else if eq!(b"nth-last-of-type") {
-        return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastOfType);
-    } else if eq!(b"nth-col") {
-        return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::Col);
-    } else if eq!(b"nth-last-col") {
-        return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastCol);
-    } else if eq!(b"is") {
-        if parser.parse_is_and_where() {
+    crate::match_ignore_ascii_case! { name, {
+        b"nth-child" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::Child),
+        b"nth-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::OfType),
+        b"nth-last-child" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastChild),
+        b"nth-last-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastOfType),
+        b"nth-col" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::Col),
+        b"nth-last-col" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastCol),
+        b"is" => if parser.parse_is_and_where() {
             return parse_is_or_where::<Impl, _>(parser, input, state, |s| GenericComponent::convert_helper_is(s));
-        }
-    } else if eq!(b"where") {
-        if parser.parse_is_and_where() {
+        },
+        b"where" => if parser.parse_is_and_where() {
             return parse_is_or_where::<Impl, _>(parser, input, state, |s| GenericComponent::convert_helper_where(s));
-        }
-    } else if eq!(b"has") {
-        return parse_has::<Impl>(parser, input, state);
-    } else if eq!(b"host") {
-        if !state.allows_tree_structural_pseudo_classes() {
-            return Err(input.new_custom_error(
-                SelectorParseErrorKind::InvalidState.into_default_parser_error(),
-            ));
-        }
-        return Ok(GenericComponent::Host(Some(
-            parse_inner_compound_selector::<Impl>(parser, input, state)?,
-        )));
-    } else if eq!(b"not") {
-        return parse_negation::<Impl>(parser, input, state);
-    }
+        },
+        b"has" => return parse_has::<Impl>(parser, input, state),
+        b"host" => {
+            if !state.allows_tree_structural_pseudo_classes() {
+                return Err(input.new_custom_error(
+                    SelectorParseErrorKind::InvalidState.into_default_parser_error(),
+                ));
+            }
+            return Ok(GenericComponent::Host(Some(
+                parse_inner_compound_selector::<Impl>(parser, input, state)?,
+            )));
+        },
+        b"not" => return parse_negation::<Impl>(parser, input, state),
+        _ => {},
+    } }
 
     if let Some(prefix) = parser.parse_any_prefix(name) {
         return parse_is_or_where::<Impl, _>(parser, input, state, move |s| {
@@ -3530,26 +3506,21 @@ pub fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
     }
 
     if state.allows_tree_structural_pseudo_classes() {
-        // TODO(port): phf custom hasher — Zig used `ComptimeEnumMap.getAnyCase`.
-        macro_rules! eq {
-            ($lit:literal) => {
-                strings::eql_case_insensitive_ascii_check_length(name, $lit)
-            };
-        }
-        if eq!(b"first-child") { return Ok(GenericComponent::Nth(NthSelectorData::first(false))); }
-        if eq!(b"last-child") { return Ok(GenericComponent::Nth(NthSelectorData::last(false))); }
-        if eq!(b"only-child") { return Ok(GenericComponent::Nth(NthSelectorData::only(false))); }
-        if eq!(b"root") { return Ok(GenericComponent::Root); }
-        if eq!(b"empty") { return Ok(GenericComponent::Empty); }
-        if eq!(b"scope") { return Ok(GenericComponent::Scope); }
-        if eq!(b"host") {
-            if parser.parse_host() {
+        crate::match_ignore_ascii_case! { name, {
+            b"first-child" => return Ok(GenericComponent::Nth(NthSelectorData::first(false))),
+            b"last-child" => return Ok(GenericComponent::Nth(NthSelectorData::last(false))),
+            b"only-child" => return Ok(GenericComponent::Nth(NthSelectorData::only(false))),
+            b"root" => return Ok(GenericComponent::Root),
+            b"empty" => return Ok(GenericComponent::Empty),
+            b"scope" => return Ok(GenericComponent::Scope),
+            b"host" => if parser.parse_host() {
                 return Ok(GenericComponent::Host(None));
-            }
-        }
-        if eq!(b"first-of-type") { return Ok(GenericComponent::Nth(NthSelectorData::first(true))); }
-        if eq!(b"last-of-type") { return Ok(GenericComponent::Nth(NthSelectorData::last(true))); }
-        if eq!(b"only-of-type") { return Ok(GenericComponent::Nth(NthSelectorData::only(true))); }
+            },
+            b"first-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::first(true))),
+            b"last-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::last(true))),
+            b"only-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::only(true))),
+            _ => {},
+        } }
     }
 
     // The view-transition pseudo elements accept the :only-child pseudo class.

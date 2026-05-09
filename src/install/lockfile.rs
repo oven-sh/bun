@@ -9,7 +9,7 @@ use std::io::Write as _;
 
 use bun_collections::{
     ArrayHashMap, DynamicBitSet, HashMap as BunHashMap, IdentityContext, ArrayIdentityContext,
-    LinearFifo, linear_fifo::DynamicBuffer,
+    ArrayIdentityContextU64, LinearFifo, linear_fifo::DynamicBuffer,
 };
 use bun_core::{err, Error as BunError, Global, Output};
 use bun_core::fmt::PathSep;
@@ -109,12 +109,12 @@ pub type DependencyIDList = Vec<DependencyID>;
 pub type StringBuffer = Vec<u8>;
 pub type ExternalStringBuffer = Vec<ExternalString>;
 
-pub type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContext>;
+pub type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContextU64>;
 pub type TrustedDependenciesSet =
     ArrayHashMap<TruncatedPackageNameHash, (), ArrayIdentityContext>;
-pub type VersionHashMap = ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContext>;
+pub type VersionHashMap = ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;
 pub type PatchedDependenciesMap =
-    ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContext>;
+    ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContextU64>;
 
 pub type StringPool = bun_semver::string::StringPool;
 // Zig: `String.Builder.StringPool` — `bun_semver::semver_string::StringPool`.
@@ -2435,29 +2435,10 @@ macro_rules! string_builder {
 }
 
 /// Trait implemented by `String` and `ExternalString` to support generic `append*`.
-/// Replaces Zig's `comptime Type: type` switch.
-pub trait StringBuilderType: Sized {
-    fn from_init(string_bytes: &[u8], slice: &[u8], hash: u64) -> Self;
-    fn from_pooled(value: SemverString, hash: u64) -> Self;
-}
-
-impl StringBuilderType for SemverString {
-    fn from_init(string_bytes: &[u8], slice: &[u8], _hash: u64) -> Self {
-        SemverString::init(string_bytes, slice)
-    }
-    fn from_pooled(value: SemverString, _hash: u64) -> Self {
-        value
-    }
-}
-
-impl StringBuilderType for ExternalString {
-    fn from_init(string_bytes: &[u8], slice: &[u8], hash: u64) -> Self {
-        ExternalString::init(string_bytes, slice, hash)
-    }
-    fn from_pooled(value: SemverString, hash: u64) -> Self {
-        ExternalString { value, hash }
-    }
-}
+/// Replaces Zig's `comptime Type: type` switch. Canonical def lives in
+/// `bun_semver::semver_string`; re-exported under the local name so generic
+/// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
+pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]
@@ -2615,30 +2596,16 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
     }
     #[inline]
     fn append<T: bun_semver::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T {
-        let s: SemverString = StringBuilder::append::<SemverString>(self, slice_);
-        T::from_pooled(s, SemverStringBuilder::string_hash(slice_))
+        StringBuilder::append::<T>(self, slice_)
     }
 }
 
 // `crate::dependency::StringBuilderLike` impl lives in `dependency.rs` next to
 // the trait definition (it needs `string_bytes()` access to the lockfile
-// buffers). `package::scripts` now takes `&mut StringBuilder<'_>` concretely,
-// so no adapter trait is needed there either.
-
-impl<'a> crate::bin_real::StringBuilder for StringBuilder<'a> {
-    #[inline]
-    fn count(&mut self, s: &[u8]) {
-        StringBuilder::count(self, s)
-    }
-    #[inline]
-    fn append_string(&mut self, s: &[u8]) -> SemverString {
-        StringBuilder::append::<SemverString>(self, s)
-    }
-    #[inline]
-    fn append_external_string(&mut self, s: &[u8]) -> ExternalString {
-        StringBuilder::append::<ExternalString>(self, s)
-    }
-}
+// buffers). `bin_real::StringBuilder` is now a re-export of
+// `bun_semver::StringBuilder`, so the impl above covers it; `package::scripts`
+// takes `&mut StringBuilder<'_>` concretely, so no adapter trait is needed
+// there either.
 
 // ────────────────────────────────────────────────────────────────────────────
 // PackageIndex

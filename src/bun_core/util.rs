@@ -505,6 +505,10 @@ impl ZBox {
         unsafe { ZStr::from_raw(self.0.as_ptr(), self.len()) }
     }
     #[inline] pub fn into_vec_with_nul(self) -> Vec<u8> { self.0.into_vec() }
+    /// Unwrap to the raw `Box<[u8]>` storage (trailing NUL at index `len()-1`).
+    /// For call sites that must store sentinel and non-sentinel payloads in the
+    /// same `Box<[u8]>` shape (e.g. GlobWalker's `MatchedPath`).
+    #[inline] pub fn into_boxed_slice_with_nul(self) -> Box<[u8]> { self.0 }
 }
 impl core::ops::Deref for ZBox {
     type Target = ZStr;
@@ -843,12 +847,11 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
     while i > root_end {
         i -= 1;
         if is_sep(path[i]) {
-            // Strip any run of separators that ends here, but never past root.
-            let mut j = i;
-            while j > root_end && is_sep(path[j - 1]) {
-                j -= 1;
-            }
-            return Some(&path[..j.max(root_end)]);
+            // Zig `std.fs.path.dirnamePosix/Windows` returns up to (excluding)
+            // the separator found — it does NOT collapse a preceding run of
+            // separators, so `/foo//bar` → `/foo/`. Preserve that contract for
+            // re-export parity with `bun_paths::dirname`.
+            return Some(&path[..i]);
         }
     }
     // No separator AFTER root, but content past it (e.g. "/foo", "C:\foo"):
@@ -1871,6 +1874,22 @@ impl<T, A> Once<T, fn(A) -> T> {
     #[inline] pub fn done(&self) -> bool { self.cell.get().is_some() }
 }
 
+/// Void-result sibling of [`Once`]: declares a hidden `static std::sync::Once`
+/// and runs `$body` exactly once for the process lifetime. Replaces the
+/// hand-rolled `static AtomicBool; if X.swap(true){return}` one-shot guards
+/// (D006). Acquire/Release per `std::sync::Once`; poisons on panic — second
+/// call after a mid-init panic will panic instead of silently returning.
+///
+/// Do **not** use when the guard must be reset on failure (e.g. retry-on-error)
+/// or when both first/subsequent arms run real code — keep the `AtomicBool`.
+#[macro_export]
+macro_rules! run_once {
+    ($body:block) => {{
+        static __ONCE: ::std::sync::Once = ::std::sync::Once::new();
+        __ONCE.call_once(|| $body);
+    }};
+}
+
 // ── Pollable / is_readable / is_writable ──────────────────────────────────
 // Port of `bun.PollFlag` + `bun.isReadable` / `bun.isWritable` (bun.zig:637).
 // Named `Pollable` to match the Phase-A draft callers (io/PipeReader.rs).
@@ -2655,10 +2674,6 @@ pub mod base64 {
         &dest[..n]
     }
 
-    /// Upper bound on decoded length (standard, may be 0..2 bytes over).
-    #[inline]
-    pub fn decode_len(source: &[u8]) -> usize { (source.len() / 4) * 3 + 3 }
-
     /// Result of a decode-into-buffer call.
     #[derive(Clone, Copy, Debug)]
     pub struct DecodeResult { pub written: usize, pub fail: bool }
@@ -2913,6 +2928,22 @@ impl OptionsEnvArg for &'static ZStr {
     }
 }
 
+/// Owned `Box<ZStr>` arm of `appendOptionsEnv` — used by `bun::init_argv`'s
+/// BUN_OPTIONS splice path, which stores argv entries as `Box<ZStr>`.
+impl OptionsEnvArg for Box<ZStr> {
+    fn from_slice(s: &[u8]) -> Self {
+        ZStr::boxed(s)
+    }
+    fn from_buf(mut buf: Vec<u8>) -> Self {
+        buf.push(0);
+        let b: Box<[u8]> = buf.into_boxed_slice();
+        // SAFETY: `ZStr` is `#[repr(transparent)]` over `[u8]`; the fat-pointer
+        // metadata (len includes the trailing NUL) is preserved by the cast —
+        // identical to `ZStr::boxed` but consuming the Vec without re-copying.
+        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
+    }
+}
+
 /// Zig: `bun.appendOptionsEnv` — parse a `BUN_OPTIONS`-style string
 /// (`--flag=value --flag2 "quoted value" bare`) and insert each token into
 /// `args` starting at index 1 (Zig callers prepend a placeholder at [0]).
@@ -3087,10 +3118,18 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
-/// Port of `bun.which` (`src/which/which.zig`). Searches `cwd` then each
-/// `PATH` entry for an executable named `bin`; returns the NUL-terminated
-/// match written into `buf`. POSIX semantics; Windows `PATHEXT` handling
-/// stays in `bun_which` (tier-2).
+// `bun.which` lives in the `bun_which` crate (tier-2, full Windows PATHEXT
+// support). bun_core cannot re-export it (bun_which → bun_core dep cycle), so
+// callers import `bun_which::which` directly. See `src/bun.rs` for the
+// `bun::which` re-export.
+//
+// A POSIX-only copy is kept here because `spawn_sync_inherit` (below) needs
+// PATH resolution at tier-0 and cannot reach up to `bun_which`. This is a
+// load-bearing duplicate; do NOT dedup against `src/which/lib.rs`.
+/// Tier-0 POSIX `which`. Resolves `bin` against `cwd` and each `PATH` entry
+/// for an executable named `bin`; returns the NUL-terminated match written
+/// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
+/// `bun_which` (tier-2).
 pub fn which<'a>(
     buf: &'a mut PathBuffer,
     path: &[u8],

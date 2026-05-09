@@ -453,13 +453,11 @@ pub enum ToJsonStyle {
     MultiLine,
 }
 
-// TODO(port): this trait stands in for the `comptime StringBuilder: type` param
-// used by `count`/`clone`. Phase B should map it to the real StringBuilder type(s).
-pub trait StringBuilder {
-    fn count(&mut self, s: &[u8]);
-    fn append_string(&mut self, s: &[u8]) -> String;
-    fn append_external_string(&mut self, s: &[u8]) -> ExternalString;
-}
+// `comptime StringBuilder: type` param maps onto the canonical
+// `bun_semver::StringBuilder` trait (count + append<T> + provided
+// append_string/append_external_string wrappers). Re-exported so
+// `bin_real::StringBuilder` paths still resolve.
+pub use bun_semver::StringBuilder;
 
 #[repr(C)]
 #[derive(Clone, Copy)]

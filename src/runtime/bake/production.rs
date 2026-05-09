@@ -304,10 +304,9 @@ pub fn build_with_vm(
     // SAFETY: vm_ptr is the live per-thread VM passed from build_command;
     // exclusive access on this thread for the duration of the call.
     let vm = unsafe { &mut *vm_ptr };
-    // Load and evaluate the configuration module
-    // SAFETY: vm.global is set in init_bake and live for VM lifetime; raw deref
-    // decouples the borrow from `vm` so later `&mut vm` reborrows are allowed.
-    let global = unsafe { &*vm.global };
+    // Load and evaluate the configuration module. `global()` returns
+    // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
+    let global = vm.global();
     // allocator = bun.default_allocator — dropped per §Allocators
 
     bun_core::pretty_errorln!("Loading configuration");
@@ -546,8 +545,7 @@ pub fn build_with_vm(
             }
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
-            // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-            let _ = unsafe { &*server_transpiler.log }.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = server_transpiler.log().print(std::ptr::from_mut(Output::error_writer()));
             Global::crash();
         }
     };
@@ -1204,9 +1202,9 @@ fn load_module(
         AnyPromise::Internal(p) => p,
         AnyPromise::Normal(_) => unreachable!(),
     };
-    // SAFETY: `as_any_promise` returns a non-null cell pointer owned by the JSC
-    // heap; unique &mut for `set_handled`/`unwrap` on this thread.
-    unsafe { (*promise).set_handled() };
+    // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
+    // safe `*mut → &mut` deref via the const-asserted accessor.
+    jsc::JSInternalPromise::opaque_mut(promise).set_handled();
     // PORT NOTE: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
     // We take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
     // permits mutation — casting a `&T` to `*mut T` and writing through it is
@@ -1223,8 +1221,7 @@ fn load_module(
     }
     // SAFETY: vm is the live per-thread VM; jsc_vm is live for VM lifetime.
     let jsc_vm = unsafe { &mut *(*vm).jsc_vm };
-    // SAFETY: see above; promise cell is still live (rooted via the module loader).
-    match unsafe { (*promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
+    match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
         Unwrapped::Rejected(err) => {
@@ -1479,6 +1476,20 @@ unsafe extern "C" {
 }
 
 impl PerThread {
+    /// Safe `&VirtualMachine` accessor for the JSC_BORROW `vm` back-pointer.
+    #[inline]
+    pub fn vm(&self) -> &VirtualMachine {
+        // SAFETY: `vm` is the live per-thread VM (set in `init`/`placeholder`
+        // from `init_bake`); the VM outlives `PerThread`.
+        unsafe { &*self.vm }
+    }
+
+    /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
+    #[inline]
+    pub fn global(&self) -> &'static JSGlobalObject {
+        self.vm().global()
+    }
+
     /// Empty placeholder used in `build_command` before `build_with_vm` fills it.
     fn placeholder(vm: *mut VirtualMachine) -> PerThread {
         PerThread {
@@ -1550,8 +1561,7 @@ impl PerThread {
 
     // Must be run at the top of the event loop
     pub fn load_bundled_module(&self, id: OpaqueFileId) -> Result<JSValue, bun_core::Error> {
-        // SAFETY: self.vm is the live per-thread VM; vm.global is live for VM lifetime.
-        let global = unsafe { &*(*self.vm).global };
+        let global = self.global();
         load_module(
             self.vm,
             global,
@@ -1567,8 +1577,7 @@ impl PerThread {
     // specifically for referenced files. This would remove the holes, but make
     // it harder to pre-allocate. It's probably worth it.
     pub fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
-        // SAFETY: self.vm is the live per-thread VM; vm.global is live for VM lifetime.
-        let global = unsafe { &*(*self.vm).global };
+        let global = self.global();
         if !self.loaded_files.is_set(id.get() as usize) {
             self.loaded_files.set(id.get() as usize);
             self.all_server_files.as_ref().unwrap().get().put_index(

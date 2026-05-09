@@ -620,7 +620,7 @@ pub enum Phase {
 }
 
 pub struct BunTest {
-    pub bun_test_root: *mut BunTestRoot,
+    pub bun_test_root: bun_ptr::BackRef<BunTestRoot>,
     pub in_run_loop: bool,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
     // PERF(port): was arena bulk-free for per-file scratch
@@ -657,7 +657,10 @@ impl BunTest {
         let _g = group_begin!();
 
         BunTest {
-            bun_test_root,
+            // SAFETY: BACKREF — caller passes a non-null `*mut BunTestRoot`
+            // derived from the stable global runner storage; the root outlives
+            // every `BunTest` it spawns.
+            bun_test_root: unsafe { bun_ptr::BackRef::from_raw(bun_test_root) },
             in_run_loop: false,
             phase: Phase::Collection,
             file_id,
@@ -1056,8 +1059,7 @@ impl BunTest {
                 });
                 // defer order.deinit() → Drop
 
-                // SAFETY: bun_test_root backref valid while self is live (BunTestRoot owns self)
-                let root = unsafe { &*self.bun_test_root };
+                let root = self.bun_test_root.get();
                 let beforeall_order: Order::AllOrderResult = if self.first_last.first {
                     order.generate_all_order(&root.hook_scope.before_all)?
                 } else {
@@ -1198,8 +1200,8 @@ impl BunTest {
 
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
 
-                // SAFETY: `as_promise` returned a non-null GC-managed JSPromise.
-                match unsafe { (*promise).status() } {
+                // S012: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+                match bun_jsc::JSPromise::opaque_mut(promise).status() {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         let this_ref: RefDataPtr = if let Some(dcb_ref_value) = dcb_ref {
@@ -1225,8 +1227,7 @@ impl BunTest {
                         return Some(cfg_data);
                     }
                     PromiseStatus::Rejected => {
-                        // SAFETY: `promise` is a non-null GC-managed JSPromise.
-                        let value = unsafe { (*promise).result(global_this.vm()) };
+                        let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
                         // drain above; sole `&mut` at this point.
                         unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, cfg_data.clone()) };
@@ -1276,8 +1277,7 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        // SAFETY: bun_test_root backref valid while self is live
-        unsafe { &*self.bun_test_root }.on_before_print();
+        self.bun_test_root.on_before_print();
         if matches!(
             handle_status,
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests

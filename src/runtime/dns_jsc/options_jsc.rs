@@ -92,8 +92,7 @@ pub fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family,
         return match js(FAMILY_MAP.from_js(global, value))? {
             Some(f) => Ok(f),
             None => {
-                // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
-                if unsafe { (*js(value.to_js_string(global))?).length() } == 0 {
+                if js(value.to_js_string(global))?.length() == 0 {
                     return Ok(Family::Unspecified);
                 }
                 Err(FromJSError::InvalidFamily)
@@ -123,8 +122,7 @@ pub fn socket_type_from_js(value: JSValue, global: &JSGlobalObject) -> Result<So
         return match js(SOCKET_TYPE_MAP.from_js(global, value))? {
             Some(s) => Ok(s),
             None => {
-                // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
-                if unsafe { (*js(value.to_js_string(global))?).length() } == 0 {
+                if js(value.to_js_string(global))?.length() == 0 {
                     return Ok(SocketType::Unspecified);
                 }
                 Err(FromJSError::InvalidSocketType)
@@ -153,8 +151,7 @@ pub fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Proto
         return match js(PROTOCOL_MAP.from_js(global, value))? {
             Some(p) => Ok(p),
             None => {
-                // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
-                let str = unsafe { &*js(value.to_js_string(global))? };
+                let str = js(value.to_js_string(global))?;
                 if str.length() == 0 {
                     return Ok(Protocol::Unspecified);
                 }
@@ -175,8 +172,7 @@ pub fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backen
         return match js(BACKEND_LABEL.from_js(global, value))? {
             Some(b) => Ok(b),
             None => {
-                // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
-                if unsafe { (*js(value.to_js_string(global))?).length() } == 0 {
+                if js(value.to_js_string(global))?.length() == 0 {
                     return Ok(Backend::default());
                 }
                 Err(FromJSError::InvalidBackend)

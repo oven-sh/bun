@@ -279,10 +279,13 @@ pub struct Options {
     pub server_failover_opts: struct_ares_server_failover_options,
 }
 
+// SAFETY: `#[repr(C)]` POD — every field is an integer, raw pointer, or
+// `Option<extern fn>`; all-zero is the documented "no options set" state
+// passed to `ares_init_options` (S021).
+unsafe impl bun_core::ffi::Zeroable for Options {}
 impl Default for Options {
     fn default() -> Self {
-        // SAFETY: all-zero is a valid Options (raw pointers, ints, Option<fn>).
-        unsafe { core::mem::zeroed() }
+        bun_core::ffi::zeroed()
     }
 }
 
@@ -669,6 +672,8 @@ pub struct AddrInfo_hints {
     pub ai_socktype: c_int,
     pub ai_protocol: c_int,
 }
+// SAFETY: four `c_int` fields; all-zero is a valid hints value (S021).
+unsafe impl bun_core::ffi::Zeroable for AddrInfo_hints {}
 
 impl AddrInfo_hints {
     pub fn is_empty(&self) -> bool {
@@ -1079,12 +1084,13 @@ pub struct struct_ares_addr6ttl {
     pub ttl: c_int,
 }
 
+// SAFETY: `#[repr(C)]` POD — 16-byte byte-array union + `c_int`. All-zero is a
+// valid bit pattern (matches Zig `std.mem.zeroes`) (S021).
+unsafe impl bun_core::ffi::Zeroable for struct_ares_addr6ttl {}
 impl Default for struct_ares_addr6ttl {
     #[inline]
     fn default() -> Self {
-        // SAFETY: `#[repr(C)]` POD — 16-byte union of u8 + c_int. All-zero is
-        // a valid bit pattern (matches Zig `std.mem.zeroes`).
-        unsafe { core::mem::zeroed() }
+        bun_core::ffi::zeroed()
     }
 }
 
@@ -1149,6 +1155,33 @@ impl AresReply for struct_ares_caa_reply {
     }
 }
 
+impl struct_ares_caa_reply {
+    /// Safe view of the c-ares-owned property tag bytes.
+    #[inline]
+    pub fn property_bytes(&self) -> &[u8] {
+        // SAFETY: c-ares allocates `property` as a contiguous buffer of
+        // `plength` bytes that lives until `ares_free_data` is called on the
+        // list head; the `&self` borrow is shorter than that. c-ares never
+        // sets a non-zero length with a null pointer.
+        if self.property.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.property, self.plength) }
+        }
+    }
+    /// Safe view of the c-ares-owned value bytes.
+    #[inline]
+    pub fn value_bytes(&self) -> &[u8] {
+        // SAFETY: same invariant as `property_bytes` — `value` points to
+        // `length` bytes owned by the reply node for `&self`'s lifetime.
+        if self.value.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.value, self.length) }
+        }
+    }
+}
+
 #[repr(C)]
 pub struct struct_ares_srv_reply {
     pub next: *mut struct_ares_srv_reply,
@@ -1190,12 +1223,40 @@ impl AresReply for struct_ares_txt_reply {
     }
 }
 
+impl struct_ares_txt_reply {
+    /// Safe view of the c-ares-owned TXT record bytes.
+    #[inline]
+    pub fn txt_bytes(&self) -> &[u8] {
+        // SAFETY: c-ares allocates `txt` as `length` bytes that live until
+        // `ares_free_data` on the list head; `&self` is the shorter borrow.
+        if self.txt.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
+        }
+    }
+}
+
 #[repr(C)]
 pub struct struct_ares_txt_ext {
     pub next: *mut struct_ares_txt_ext,
     pub txt: *mut u8,
     pub length: usize,
     pub record_start: u8,
+}
+
+impl struct_ares_txt_ext {
+    /// Safe view of the c-ares-owned TXT record bytes.
+    #[inline]
+    pub fn txt_bytes(&self) -> &[u8] {
+        // SAFETY: c-ares allocates `txt` as `length` bytes that live until
+        // `ares_free_data` on the list head; `&self` is the shorter borrow.
+        if self.txt.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
+        }
+    }
 }
 
 #[repr(C)]
@@ -1460,6 +1521,9 @@ pub struct struct_ares_addr_port_node {
     pub udp_port: c_int,
     pub tcp_port: c_int,
 }
+// SAFETY: `#[repr(C)]` POD — raw ptr, `c_int`s, and a byte-array union.
+// All-zero is the state callers fill before `ares_inet_pton` (S021).
+unsafe impl bun_core::ffi::Zeroable for struct_ares_addr_port_node {}
 
 impl struct_ares_addr_port_node {
     /// Type-erased pointer to the in_addr/in6_addr union, for `ares_inet_ntop`.

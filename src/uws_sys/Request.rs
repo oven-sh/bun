@@ -20,33 +20,31 @@ pub enum AnyRequest {
 }
 
 impl AnyRequest {
+    // S008: variant payloads are `opaque_ffi!` ZST handles (`Request` /
+    // `h3::Request`); route the per-arm `*mut → &mut` deref through the
+    // const-asserted `bun_opaque::opaque_deref_mut` so dispatch is `unsafe`-free.
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
-        // SAFETY: variant pointers are non-null FFI handles owned by uWS/lsquic for the
-        // duration of the request callback; returned slice borrows request-internal storage.
         match self {
-            Self::H1(r) => unsafe { (**r).header(name) },
-            Self::H3(r) => unsafe { (**r).header(name) },
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).header(name),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header(name),
         }
     }
     pub fn method(&self) -> &[u8] {
-        // SAFETY: see header()
         match self {
-            Self::H1(r) => unsafe { (**r).method() },
-            Self::H3(r) => unsafe { (**r).method() },
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).method(),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).method(),
         }
     }
     pub fn url(&self) -> &[u8] {
-        // SAFETY: see header()
         match self {
-            Self::H1(r) => unsafe { (**r).url() },
-            Self::H3(r) => unsafe { (**r).url() },
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).url(),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).url(),
         }
     }
     pub fn set_yield(&mut self, y: bool) {
-        // SAFETY: see header(); set_yield mutates the underlying uWS/lsquic request state
         match self {
-            Self::H1(r) => unsafe { (&mut **r).set_yield(y) },
-            Self::H3(r) => unsafe { (&mut **r).set_yield(y) },
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
         }
     }
 }
@@ -70,21 +68,17 @@ impl Request {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_url writes a pointer into request-owned storage and returns its length
         let len = unsafe { c::uws_req_get_url(self, &raw mut ptr) };
-        if len == 0 {
-            return &[];
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape uWS returns when no URL is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn method(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_method writes a pointer into request-owned storage and returns its length
         let len = unsafe { c::uws_req_get_method(self, &raw mut ptr) };
-        if len == 0 {
-            return &[];
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape uWS returns when no method is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
         debug_assert!(name[0].is_ascii_lowercase());
@@ -96,28 +90,24 @@ impl Request {
             return None;
         }
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        Some(unsafe { core::slice::from_raw_parts(ptr, len) })
+        Some(unsafe { bun_core::ffi::slice(ptr, len) })
     }
     pub fn query(&self, name: &[u8]) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_query writes a pointer into request-owned storage and returns its length
         let len = unsafe { c::uws_req_get_query(self, name.as_ptr(), name.len(), &raw mut ptr) };
-        if len == 0 {
-            return &[];
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape uWS returns when no query is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_parameter writes a pointer into request-owned storage and returns its length
         let len =
             unsafe { c::uws_req_get_parameter(self, c_ushort::try_from(index).unwrap(), &raw mut ptr) };
-        if len == 0 {
-            return &[];
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape uWS returns when no parameter is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
     }
 }
 

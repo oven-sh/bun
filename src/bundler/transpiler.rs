@@ -235,6 +235,19 @@ impl<'a> Transpiler<'a> {
         unsafe { &mut *self.log }
     }
 
+    /// Shared read-only borrow of the `DotEnv::Loader`. Prefer this over
+    /// [`Self::env_mut`] when only inspecting env vars (e.g. `.get()`), so
+    /// call sites can overlap with other `&` borrows of the same loader.
+    #[inline]
+    pub fn env(&self) -> &'a dot_env::Loader<'a> {
+        // SAFETY: `self.env` is non-null after `init` — set to either the
+        // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
+        // which live for at least `'a`. Shared access cannot conflict with the
+        // raw aliases in `resolver.env_loader` (those are reads or serialized
+        // writes on the same thread).
+        unsafe { &*self.env }
+    }
+
     /// Reborrow the `DotEnv::Loader`. Returned lifetime is decoupled from
     /// `&self` so call sites in `configure_defines` / `run_env_loader` can
     /// hold it across disjoint `&mut self.options` / `&mut self.resolver`

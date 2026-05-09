@@ -256,7 +256,7 @@ impl UpdateInteractiveCommand {
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
         let silent = cli.silent;
 
-        let (pm_ptr, original_cwd) =
+        let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, cli, Subcommand::Update) {
                 Ok(v) => v,
                 Err(err) => {
@@ -272,10 +272,6 @@ impl UpdateInteractiveCommand {
                     Global::crash();
                 }
             };
-        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
-        // non-null and exclusively owned by this thread for the command's
-        // duration (mirrors Zig's `*PackageManager`).
-        let manager: &mut PackageManager = unsafe { &mut *pm_ptr };
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)`
         // is implicit via Drop at scope exit.
 
@@ -307,18 +303,16 @@ impl UpdateInteractiveCommand {
         while let Some((workspace_path, workspace_update_idxs)) = it.next() {
             // Build the package.json path for this workspace
             // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-            let root_dir = unsafe { (*FileSystem::instance()).top_level_dir };
+            let root_dir = FileSystem::get().top_level_dir;
             let mut path_buf = PathBuffer::uninit();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
             // Load and parse the package.json
-            // PORT NOTE: reshaped for borrowck — `manager.log` is `*mut Log`
-            // borrowed for the cache call while `manager` itself is reborrowed
-            // for the disjoint `workspace_package_json_cache` field.
-            // SAFETY: `manager.log` was set by `PackageManager::init` and
-            // outlives the singleton; no other `&mut Log` is live here.
-            let log = unsafe { &mut *manager.log };
+            // PORT NOTE: reshaped for borrowck — `log_mut()` returns a borrow
+            // decoupled from `&self`, so it can overlap the disjoint
+            // `workspace_package_json_cache` field borrow below.
+            let log = manager.log_mut();
             let package_json: &mut WorkspacePackageJsonCacheEntry =
                 match manager.workspace_package_json_cache.get_with_path(
                     log,
@@ -432,14 +426,13 @@ impl UpdateInteractiveCommand {
         while let Some((workspace_path, updates_for_workspace)) = workspace_it.next() {
             // Build the package.json path for this workspace
             // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-            let root_dir = unsafe { (*FileSystem::instance()).top_level_dir };
+            let root_dir = FileSystem::get().top_level_dir;
             let mut path_buf = PathBuffer::uninit();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
             // Load and parse the package.json properly
-            // SAFETY: see `update_package_json_files_from_updates`.
-            let log = unsafe { &mut *manager.log };
+            let log = manager.log_mut();
             let package_json: &mut WorkspacePackageJsonCacheEntry =
                 match manager.workspace_package_json_cache.get_with_path(
                     log,
@@ -516,9 +509,7 @@ impl UpdateInteractiveCommand {
                     // for every subcommand and is non-null for the command's
                     // lifetime.
                     if unsafe { (*ctx_log_ptr).has_errors() } {
-                        // SAFETY: `manager.log` aliases `ctx.log`; no other
-                        // `&mut Log` is live here.
-                        unsafe { &*manager.log }.print(std::ptr::from_mut(Output::error_writer()))?;
+                        manager.log_mut().print(std::ptr::from_mut(Output::error_writer()))?;
                     }
                 }
                 Global::crash();
@@ -770,7 +761,7 @@ impl UpdateInteractiveCommand {
         // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
 
         // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-        let top_level_dir = unsafe { (*FileSystem::instance()).top_level_dir };
+        let top_level_dir = FileSystem::get().top_level_dir;
 
         // move all matched workspaces to front of array
         let mut i: usize = 0;
@@ -1059,8 +1050,7 @@ impl UpdateInteractiveCommand {
 
                 let is_catalog = dep.version.tag == dependency::Tag::Catalog;
                 let catalog_name_str: &[u8] = if is_catalog {
-                    // SAFETY: tag == Catalog ⇒ `value.catalog` active.
-                    unsafe { &dep.version.value.catalog }.slice(string_buf)
+                    dep.version.catalog().slice(string_buf)
                 } else {
                     b""
                 };
@@ -1222,7 +1212,7 @@ impl UpdateInteractiveCommand {
             };
 
             // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
             // SAFETY: handle is valid; csbi is a valid out-ptr.
             if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
                 != windows::FALSE

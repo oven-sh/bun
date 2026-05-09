@@ -613,24 +613,18 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         match binding.data {
             B::BMissing(_) => {}
             B::BIdentifier(ident) => {
-                // SAFETY: arena-owned `*mut B::Identifier` (Phase-A raw ARENA ptr).
-                let ident = unsafe { &*ident };
                 // PORT NOTE: reshaped for borrowck — capture original_name before calling &mut self method
                 let original_name = self.symbols[ident.r#ref.inner_index() as usize].original_name;
                 self.record_export(binding.loc, original_name.slice(), ident.r#ref)
                     .expect("unreachable");
             }
             B::BArray(array) => {
-                // SAFETY: arena-owned `*mut B::Array` (Phase-A raw ARENA ptr).
-                let array = unsafe { &*array };
-                for prop in array.items.slice() {
+                for prop in array.items() {
                     self.record_exported_binding(prop.binding);
                 }
             }
             B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut B::Object` (Phase-A raw ARENA ptr).
-                let obj = unsafe { &*obj };
-                for prop in obj.properties.slice() {
+                for prop in obj.properties() {
                     self.record_exported_binding(prop.value);
                 }
             }

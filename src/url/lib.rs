@@ -87,25 +87,29 @@ pub mod whatwg {
     // PORT NOTE: getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
     // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
     // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
+    // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
+    // `String` is a `#[repr(C)]` Copy POD that C++ reads (`BunString::toWTFString() const`).
+    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL` (consumes).
+    // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
-        fn URL__fromString(str: *mut String) -> Option<core::ptr::NonNull<URL>>;
-        fn URL__protocol(url: *const URL) -> String;
-        fn URL__href(url: *const URL) -> String;
-        fn URL__username(url: *const URL) -> String;
-        fn URL__password(url: *const URL) -> String;
-        fn URL__search(url: *const URL) -> String;
-        fn URL__host(url: *const URL) -> String;
-        fn URL__hostname(url: *const URL) -> String;
-        fn URL__port(url: *const URL) -> u32;
-        fn URL__deinit(url: *mut URL);
-        fn URL__pathname(url: *const URL) -> String;
-        fn URL__getHref(input: *mut String) -> String;
-        fn URL__getFileURLString(input: *mut String) -> String;
-        fn URL__getHrefJoin(base: *mut String, relative: *mut String) -> String;
-        fn URL__pathFromFileURL(input: *mut String) -> String;
-        fn URL__hash(url: *const URL) -> String;
-        fn URL__fragmentIdentifier(url: *const URL) -> String;
+        safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
+        safe fn URL__protocol(url: &URL) -> String;
+        safe fn URL__href(url: &URL) -> String;
+        safe fn URL__username(url: &URL) -> String;
+        safe fn URL__password(url: &URL) -> String;
+        safe fn URL__search(url: &URL) -> String;
+        safe fn URL__host(url: &URL) -> String;
+        safe fn URL__hostname(url: &URL) -> String;
+        safe fn URL__port(url: &URL) -> u32;
+        safe fn URL__deinit(url: &mut URL);
+        safe fn URL__pathname(url: &URL) -> String;
+        safe fn URL__getHref(input: &mut String) -> String;
+        safe fn URL__getFileURLString(input: &mut String) -> String;
+        safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
+        safe fn URL__pathFromFileURL(input: &mut String) -> String;
+        safe fn URL__hash(url: &URL) -> String;
+        safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
 
@@ -121,24 +125,20 @@ pub mod whatwg {
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
         let mut input = *str;
-        // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
-        unsafe { URL__getHref(&raw mut input) }
+        URL__getHref(&mut input)
     }
     pub fn join(base: &String, relative: &String) -> String {
         let mut base_str = *base;
         let mut relative_str = *relative;
-        // SAFETY: locals are uniquely owned; live for the duration of the call.
-        unsafe { URL__getHrefJoin(&raw mut base_str, &raw mut relative_str) }
+        URL__getHrefJoin(&mut base_str, &mut relative_str)
     }
     pub fn file_url_from_string(str: &String) -> String {
         let mut input = *str;
-        // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
-        unsafe { URL__getFileURLString(&raw mut input) }
+        URL__getFileURLString(&mut input)
     }
     pub fn path_from_file_url(str: &String) -> String {
         let mut input = *str;
-        // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
-        unsafe { URL__pathFromFileURL(&raw mut input) }
+        URL__pathFromFileURL(&mut input)
     }
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
         // a valid URL will not have non-ascii in the origin.
@@ -153,23 +153,20 @@ pub mod whatwg {
     impl URL {
         pub fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
             let mut input = *str;
-            // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
-            unsafe { URL__fromString(&raw mut input) }
+            URL__fromString(&mut input)
         }
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
-        // SAFETY (all getters below): `self` is a valid opaque `WTF::URL*` handle from C++;
-        // the C++ getters (BunString.cpp) never mutate the URL, so `*const URL` is sound.
         /// Includes the leading '#'.
-        pub fn hash(&self) -> String { unsafe { URL__hash(self) } }
+        pub fn hash(&self) -> String { URL__hash(self) }
         /// Exactly the same as `hash`, excluding the leading '#'.
-        pub fn fragment_identifier(&self) -> String { unsafe { URL__fragmentIdentifier(self) } }
-        pub fn protocol(&self) -> String { unsafe { URL__protocol(self) } }
-        pub fn href(&self) -> String { unsafe { URL__href(self) } }
-        pub fn username(&self) -> String { unsafe { URL__username(self) } }
-        pub fn password(&self) -> String { unsafe { URL__password(self) } }
-        pub fn search(&self) -> String { unsafe { URL__search(self) } }
+        pub fn fragment_identifier(&self) -> String { URL__fragmentIdentifier(self) }
+        pub fn protocol(&self) -> String { URL__protocol(self) }
+        pub fn href(&self) -> String { URL__href(self) }
+        pub fn username(&self) -> String { URL__username(self) }
+        pub fn password(&self) -> String { URL__password(self) }
+        pub fn search(&self) -> String { URL__search(self) }
         /// Returns the host WITHOUT the port.
         ///
         /// Note that this does NOT match JS behavior, which returns the host with the port. See
@@ -178,7 +175,7 @@ pub mod whatwg {
         /// ```text
         /// URL("http://example.com:8080").host() => "example.com"
         /// ```
-        pub fn host(&self) -> String { unsafe { URL__host(self) } }
+        pub fn host(&self) -> String { URL__host(self) }
         /// Returns the host WITH the port.
         ///
         /// Note that this does NOT match JS behavior which returns the host without the port. See
@@ -187,12 +184,12 @@ pub mod whatwg {
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
         /// ```
-        pub fn hostname(&self) -> String { unsafe { URL__hostname(self) } }
+        pub fn hostname(&self) -> String { URL__hostname(self) }
         /// Returns `u32::MAX` if the port is not set. Otherwise, the result is
         /// guaranteed to be within the `u16` range.
-        pub fn port(&self) -> u32 { unsafe { URL__port(self) } }
-        pub fn pathname(&self) -> String { unsafe { URL__pathname(self) } }
-        pub fn deinit(&mut self) { unsafe { URL__deinit(self) } }
+        pub fn port(&self) -> u32 { URL__port(self) }
+        pub fn pathname(&self) -> String { URL__pathname(self) }
+        pub fn deinit(&mut self) { URL__deinit(self) }
     }
 }
 // Re-export the free helpers at crate root so lower-tier callers can write

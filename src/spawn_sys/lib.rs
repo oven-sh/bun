@@ -88,25 +88,25 @@ pub mod ffi {
     unsafe extern "C" {
         /// Install SIGINT/SIGTERM/… handlers that record the signal for
         /// forwarding to [`Bun__currentSyncPID`].
-        pub fn Bun__registerSignalsForForwarding();
-        pub fn Bun__unregisterSignalsForForwarding();
+        pub safe fn Bun__registerSignalsForForwarding();
+        pub safe fn Bun__unregisterSignalsForForwarding();
 
         // macOS p_puniqueid descendant tracker — see NoOrphansTracker.cpp.
-        pub fn Bun__noOrphans_begin(kq: c_int, root: pid_t);
-        pub fn Bun__noOrphans_releaseKq();
-        pub fn Bun__noOrphans_onFork();
-        pub fn Bun__noOrphans_onExit(pid: pid_t);
+        pub safe fn Bun__noOrphans_begin(kq: c_int, root: pid_t);
+        pub safe fn Bun__noOrphans_releaseKq();
+        pub safe fn Bun__noOrphans_onFork();
+        pub safe fn Bun__noOrphans_onExit(pid: pid_t);
 
         /// The PID to forward signals to. Set to 0 when unregistering.
         ///
         /// C++ declares this as plain `int64_t`; `AtomicI64` is `#[repr(C)]`
         /// with the same size/align, and the C side only does word-sized
         /// loads/stores from the signal handler, so `Relaxed` here matches.
-        pub static Bun__currentSyncPID: core::sync::atomic::AtomicI64;
+        pub safe static Bun__currentSyncPID: core::sync::atomic::AtomicI64;
 
         /// Race condition: a signal could be sent before `spawn_process_posix`
         /// returns. Call after the child PID is known.
-        pub fn Bun__sendPendingSignalIfNecessary();
+        pub safe fn Bun__sendPendingSignalIfNecessary();
     }
 }
 

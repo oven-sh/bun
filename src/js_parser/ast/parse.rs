@@ -257,13 +257,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.expect(T::TCloseBrace)?;
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
-        // SAFETY: arena-owned slice → Vec borrowed view (no growth/free).
-        let ts_decorators = unsafe {
-            ExprNodeList::from_bump_slice(core::slice::from_raw_parts_mut(
-                class_opts.ts_decorators.as_ptr().cast_mut(),
-                class_opts.ts_decorators.len(),
-            ))
-        };
+        // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
+        let ts_decorators = ExprNodeList::from_arena_slice(class_opts.ts_decorators);
         Ok(G::Class {
             class_name: name,
             extends,
@@ -598,7 +593,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return Ok(p.new_expr(
                 E::Call {
                     target: async_expr,
-                    args: unsafe { ExprNodeList::from_bump_slice(items) },
+                    args: ExprNodeList::from_arena_slice(items),
                     ..Default::default()
                 },
                 loc,

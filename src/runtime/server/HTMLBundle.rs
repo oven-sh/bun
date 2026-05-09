@@ -287,9 +287,9 @@ impl Route {
     }
 
     fn on_any_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
-        // SAFETY: `this` is a live IntrusiveRc-managed allocation; keep alive for fn body.
-        unsafe { RefCount::<Route>::ref_(this) };
-        let _keep_alive = scopeguard::guard(this, |p| unsafe { RefCount::<Route>::deref(p) });
+        // SAFETY: `this` is a live IntrusiveRc-managed allocation; `ScopedRef`
+        // bumps the count and derefs on every exit path.
+        let _keep_alive = unsafe { bun_ptr::ScopedRef::new(this) };
         // SAFETY: held alive by `_keep_alive`; single-threaded (uws JS-thread callback).
         let route = unsafe { &mut *this };
 
@@ -305,9 +305,9 @@ impl Route {
                 // but stay defensive.
                 match req {
                     AnyRequest::H1(h1) => {
-                        // SAFETY: `h1` is the live uWS request handle for this callback.
+                        // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                         bun_core::handle_oom(
-                            dev.respond_for_html_bundle(route, unsafe { &mut *h1 }, resp),
+                            dev.respond_for_html_bundle(route, bun_opaque::opaque_deref_mut(h1), resp),
                         );
                     }
                     AnyRequest::H3(_) => {
@@ -410,8 +410,8 @@ impl Route {
         plugins: Option<NonNull<JSBundler::Plugin>>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        // SAFETY: `bundle.global` was set from a live `&JSGlobalObject` in `HTMLBundle::init`.
-        let global = unsafe { &*self.bundle.global };
+        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        let global = bun_opaque::opaque_deref(self.bundle.global);
         let server = self.server.get().expect("server set");
         let development = server.config().development;
         // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a Bun-owned
@@ -519,9 +519,9 @@ impl Route {
 
     pub fn on_complete(&mut self, completion_task: &mut JSBundleCompletionTask) {
         // For the build task — matches the ref() taken in on_plugins_resolved.
-        // SAFETY: self is IntrusiveRc-managed.
+        // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
         let _drop_build_ref =
-            scopeguard::guard(std::ptr::from_mut::<Route>(self), |p| unsafe { RefCount::<Route>::deref(p) });
+            unsafe { bun_ptr::ScopedRef::<Route>::adopt(std::ptr::from_mut::<Route>(self)) };
 
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {
@@ -551,8 +551,8 @@ impl Route {
                 }
                 // Find the HTML entry point and create static routes
                 let Some(server) = self.server.get() else { return };
-                // SAFETY: server.global_this is the JS-thread global; valid for process lifetime.
-                let global_this = unsafe { &*server.global_this() };
+                // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                let global_this = bun_opaque::opaque_deref(server.global_this());
                 let output_files = &mut bundle.output_files;
 
                 if server.config().is_development() {
@@ -825,9 +825,9 @@ impl PendingResponse {
 
         // Technically, this could be the final ref count, but we don't want to risk it
         let route_ptr = this_ref.route;
-        // SAFETY: this.route is a valid IntrusiveRc-managed allocation.
-        unsafe { RefCount::<Route>::ref_(route_ptr) };
-        let _keep_route = scopeguard::guard(route_ptr, |p| unsafe { RefCount::<Route>::deref(p) });
+        // SAFETY: this.route is a valid IntrusiveRc-managed allocation;
+        // `ScopedRef` bumps the count and derefs on every exit path.
+        let _keep_route = unsafe { bun_ptr::ScopedRef::new(route_ptr) };
 
         // PORT NOTE: reshaped for borrowck — Zig accessed this.route.pending_responses through
         // raw ptr; mutate via raw ptr (single-threaded).

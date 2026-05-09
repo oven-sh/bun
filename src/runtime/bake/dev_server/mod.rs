@@ -360,7 +360,7 @@ impl ResponseLike for bun_uws::AnyResponse {
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
-    pub dev: NonNull<DevServer>,
+    pub dev: bun_ptr::BackRef<DevServer>,
     pub underlying: Option<bun_uws::AnyWebSocket>,
     pub subscriptions: super::dev_server_body::HmrTopicBits,
     /// Allows actions which inspect or mutate sensitive DevServer state.

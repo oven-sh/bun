@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use bun_collections::HashMap;
 use bun_core::{feature_flags, Output};
 use bun_str::strings;
@@ -40,7 +38,7 @@ impl HmrSocket {
             false
         };
         Box::new(HmrSocket {
-            dev: NonNull::from(dev),
+            dev: bun_ptr::BackRef::new_mut(dev),
             is_from_localhost,
             subscriptions: HmrTopicBits::empty(),
             active_route: None,
@@ -50,21 +48,26 @@ impl HmrSocket {
         })
     }
 
-    /// SAFETY: returns `&mut DevServer` derived from a raw pointer; caller must
-    /// guarantee no other live `&mut DevServer` aliases it for the borrow's
-    /// lifetime. HmrSocket lifetime is strictly nested inside DevServer (the
-    /// socket is removed from `active_websocket_connections` and destroyed
-    /// before DevServer is torn down), so the pointer itself is always valid.
+    /// SAFETY: caller must guarantee no other live `&mut DevServer` aliases the
+    /// returned borrow for its lifetime (BackRef::get_mut exclusivity rule).
+    /// Liveness is structural: HmrSocket lifetime is strictly nested inside
+    /// DevServer (the socket is removed from `active_websocket_connections` and
+    /// destroyed before DevServer is torn down) — the BackRef invariant.
     #[inline]
-    unsafe fn dev(&self) -> &mut DevServer {
+    #[allow(clippy::mut_from_ref)]
+    unsafe fn dev<'a>(&self) -> &'a mut DevServer {
+        // Detach the borrow from `&self` (explicit unbound `'a`) so callers may
+        // interleave `self.*` field access with `dev.*` — DevServer is a
+        // separate heap allocation.
+        // SAFETY: caller upholds exclusivity; BackRef invariant guarantees liveness.
         unsafe { &mut *self.dev.as_ptr() }
     }
 
     pub fn on_open(&mut self, ws: AnyWebSocket) {
-        // PORT NOTE: derive `dev` from the raw NonNull directly (not via
-        // `self.dev()`) so its lifetime isn't tied to `&self` — we assign
-        // `self.underlying` below while `dev` is still live.
-        let dev = unsafe { &mut *self.dev.as_ptr() };
+        // SAFETY: JS-thread only; sole `&mut DevServer` for this scope. Derived
+        // via the BackRef accessor (lifetime-detached from `&self`) so we can
+        // assign `self.underlying` below while `dev` is still live.
+        let dev = unsafe { self.dev() };
         let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
         header[0] = MessageId::Version.char();
         header[1..].copy_from_slice(&dev.configuration_hash_key);

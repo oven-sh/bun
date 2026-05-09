@@ -444,31 +444,24 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 #[cfg(target_os = "freebsd")]
 fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let mut ncpu: c_uint = 0;
-    let mut ncpu_len: usize = core::mem::size_of::<c_uint>();
-    // TODO(port): std.posix.sysctlbynameZ → bun_sys::posix::sysctlbyname
-    bun_sys::posix::sysctlbyname(c"hw.ncpu", core::ptr::from_mut(&mut ncpu).cast::<c_void>(), &mut ncpu_len, core::ptr::null_mut(), 0)
-        .map_err(|_| OsError::Any)?;
+    bun_sys::posix::sysctl_read(c"hw.ncpu", &mut ncpu).map_err(|_| OsError::Any)?;
     if ncpu == 0 {
         return Err(OsError::Any);
     }
 
     let mut model_buf = [0u8; 512];
-    let mut model_len: usize = model_buf.len();
-    let model = if bun_sys::posix::sysctlbyname(c"hw.model", model_buf.as_mut_ptr().cast::<c_void>(), &mut model_len, core::ptr::null_mut(), 0).is_ok() {
+    let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
         ZigString::init(bun_str::slice_to_nul(&model_buf)).with_encoding().to_js(global_this)
     } else {
         ZigString::static_("unknown").with_encoding().to_js(global_this)
     };
 
     let mut speed_mhz: c_uint = 0;
-    let mut speed_len: usize = core::mem::size_of::<c_uint>();
-    let _ = bun_sys::posix::sysctlbyname(c"hw.clockrate", core::ptr::from_mut(&mut speed_mhz).cast::<c_void>(), &mut speed_len, core::ptr::null_mut(), 0);
+    let _ = bun_sys::posix::sysctl_read(c"hw.clockrate", &mut speed_mhz);
 
     const CPU_STATES: usize = 5; // user, nice, sys, intr, idle
     let mut times_buf: Vec<c_long> = vec![0; ncpu as usize * CPU_STATES];
-    let mut times_len: usize = times_buf.len() * core::mem::size_of::<c_long>();
-    bun_sys::posix::sysctlbyname(c"kern.cp_times", times_buf.as_mut_ptr().cast::<c_void>(), &mut times_len, core::ptr::null_mut(), 0)
-        .map_err(|_| OsError::Any)?;
+    bun_sys::posix::sysctl_read_slice(c"kern.cp_times", &mut times_buf[..]).map_err(|_| OsError::Any)?;
 
     // SAFETY: pure FFI getter
     let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
@@ -531,11 +524,9 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
     // Get CPU model name
     let mut model_name_buf = [0u8; 512];
-    let mut len: usize = model_name_buf.len();
     // Try brand_string first and if it fails try hw.model
-    // SAFETY: valid buffers
-    if !(unsafe { c::sysctlbyname(c"machdep.cpu.brand_string".as_ptr(), model_name_buf.as_mut_ptr().cast::<c_void>(), &mut len, core::ptr::null_mut(), 0) } == 0
-        || unsafe { c::sysctlbyname(c"hw.model".as_ptr(), model_name_buf.as_mut_ptr().cast::<c_void>(), &mut len, core::ptr::null_mut(), 0) } == 0)
+    if !(bun_sys::posix::sysctl_read_slice(c"machdep.cpu.brand_string", &mut model_name_buf[..]).is_ok()
+        || bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_name_buf[..]).is_ok())
     {
         return Err(OsError::Any);
     }
@@ -546,9 +537,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
     // Get CPU speed
     let mut speed: u64 = 0;
-    len = core::mem::size_of::<u64>();
-    // SAFETY: valid buffers
-    let _ = unsafe { c::sysctlbyname(c"hw.cpufrequency".as_ptr(), core::ptr::from_mut::<u64>(&mut speed).cast::<c_void>(), &mut len, core::ptr::null_mut(), 0) };
+    let _ = bun_sys::posix::sysctl_read(c"hw.cpufrequency", &mut speed);
     if speed == 0 {
         // Suggested by Node implementation:
         // If sysctl hw.cputype == CPU_TYPE_ARM64, the correct value is unavailable
@@ -565,7 +554,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
     let mut cpu_index: u32 = 0;
     // SAFETY: info points to num_cpus entries per host_processor_info contract
-    let info_slice = unsafe { core::slice::from_raw_parts(info, num_cpus as usize) };
+    let info_slice = unsafe { bun_core::ffi::slice(info, num_cpus as usize) };
     while cpu_index < num_cpus {
         let ticks = &info_slice[cpu_index as usize].cpu_ticks;
         let times = CPUTimes {
@@ -604,7 +593,7 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
     let values = JSValue::create_empty_array(global_this, usize::try_from(count).expect("int cast"))?;
 
     // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
-    let infos = unsafe { core::slice::from_raw_parts(cpu_infos, usize::try_from(count).expect("int cast")) };
+    let infos = unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
     for (i, cpu_info) in infos.iter().enumerate() {
         let times = CPUTimes {
             user: cpu_info.cpu_times.user,
@@ -629,12 +618,11 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn get_process_priority(pid: i32) -> i32;
+    safe fn get_process_priority(pid: i32) -> i32;
 }
 
 pub fn get_priority(global: &JSGlobalObject, pid: i32) -> JsResult<i32> {
-    // SAFETY: pure FFI call
-    let result = unsafe { get_process_priority(pid) };
+    let result = get_process_priority(pid);
     if result == i32::MAX {
         let err = SystemError {
             message: BunString::static_("no such process"),
@@ -765,8 +753,7 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
             return js;
         }
 
-        // SAFETY: zeroed POD
-        let mut result: windows::ws2_32::WSADATA = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
         // SAFETY: valid out-pointer
         if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
             // SAFETY: valid buffer
@@ -783,9 +770,7 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
     #[cfg(not(windows))]
     {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
-        // TODO(port): std.posix.gethostname → bun_sys::posix::gethostname
-        // SAFETY: valid buffer
-        let s: &[u8] = if unsafe { libc::gethostname(name_buffer.as_mut_ptr().cast::<c_char>(), name_buffer.len()) } == 0 {
+        let s: &[u8] = if bun_sys::posix::gethostname(&mut name_buffer).is_ok() {
             bun_str::slice_to_nul(&name_buffer)
         } else {
             b"unknown"
@@ -797,11 +782,8 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
 pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
     #[cfg(target_os = "macos")]
     let result: [f64; 3] = 'loadavg: {
-        // SAFETY: zeroed POD
         let mut avg: c::struct_loadavg = bun_core::ffi::zeroed();
-        let mut size: usize = core::mem::size_of::<c::struct_loadavg>();
-
-        if bun_sys::posix::sysctlbyname(c"vm.loadavg", core::ptr::from_mut(&mut avg).cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
+        if bun_sys::posix::sysctl_read(c"vm.loadavg", &mut avg).is_err() {
             break 'loadavg [0.0, 0.0, 0.0];
         }
 
@@ -814,10 +796,7 @@ pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
     };
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let result: [f64; 3] = 'loadavg: {
-        // SAFETY: zeroed POD
-        let mut info: libc::sysinfo = bun_core::ffi::zeroed();
-        // SAFETY: valid out-pointer
-        if unsafe { libc::sysinfo(&raw mut info) } == 0 {
+        if let Ok(info) = bun_sys::posix::sysinfo() {
             break 'loadavg [
                 ((info.loads[0] as f64 / 65536.0) * 100.0).ceil() / 100.0,
                 ((info.loads[1] as f64 / 65536.0) * 100.0).ceil() / 100.0,
@@ -1137,7 +1116,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
     let mut mac_buf = [0u8; 17];
 
     // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
-    let iface_slice = unsafe { core::slice::from_raw_parts(ifaces, usize::try_from(count).expect("int cast")) };
+    let iface_slice = unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
     for iface in iface_slice {
         let interface = JSValue::create_empty_object(global_this, 7);
 
@@ -1266,23 +1245,9 @@ pub fn release() -> BunString {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     let value: &[u8] = 'slice: {
         name_buffer.fill(0);
-
-        let mut size: usize = name_buffer.len();
-
-        // SAFETY: valid buffers
-        if unsafe {
-            c::sysctlbyname(
-                c"kern.osrelease".as_ptr(),
-                name_buffer.as_mut_ptr().cast::<c_void>(),
-                &mut size,
-                core::ptr::null_mut(),
-                0,
-            )
-        } == -1
-        {
+        if bun_sys::posix::sysctl_read_slice(c"kern.osrelease", &mut name_buffer[..]).is_err() {
             break 'slice b"unknown";
         }
-
         bun_str::slice_to_nul(&name_buffer)
     };
     #[cfg(windows)]
@@ -1304,7 +1269,7 @@ pub fn release() -> BunString {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub fn set_process_priority(pid: i32, priority: i32) -> i32;
+    pub safe fn set_process_priority(pid: i32, priority: i32) -> i32;
 }
 
 pub fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
@@ -1312,8 +1277,7 @@ pub fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
         return bun_sys::E::ESRCH;
     }
 
-    // SAFETY: pure FFI call
-    let code: i32 = unsafe { set_process_priority(pid, priority) };
+    let code: i32 = set_process_priority(pid, priority);
 
     if code == -2 {
         return bun_sys::E::ESRCH;
@@ -1383,20 +1347,14 @@ pub fn totalmem() -> u64 {
     #[cfg(target_os = "macos")]
     {
         let mut memory_: [c_ulonglong; 32] = [0; 32];
-        let mut size: usize = memory_.len();
-
-        if bun_sys::posix::sysctlbyname(c"hw.memsize", memory_.as_mut_ptr().cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
+        if bun_sys::posix::sysctl_read_slice(c"hw.memsize", &mut memory_[..]).is_err() {
             return 0;
         }
-
         return memory_[0];
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // SAFETY: zeroed POD
-        let mut info: libc::sysinfo = bun_core::ffi::zeroed();
-        // SAFETY: valid out-pointer
-        if unsafe { libc::sysinfo(&raw mut info) } == 0 {
+        if let Ok(info) = bun_sys::posix::sysinfo() {
             return (info.totalram as u64).wrapping_mul(info.mem_unit as c_ulong as u64);
         }
         return 0;
@@ -1404,8 +1362,7 @@ pub fn totalmem() -> u64 {
     #[cfg(target_os = "freebsd")]
     {
         let mut physmem: u64 = 0;
-        let mut size: usize = core::mem::size_of::<u64>();
-        if bun_sys::posix::sysctlbyname(c"hw.physmem", core::ptr::from_mut::<u64>(&mut physmem).cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
+        if bun_sys::posix::sysctl_read(c"hw.physmem", &mut physmem).is_err() {
             return 0;
         }
         return physmem;
@@ -1437,24 +1394,17 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
     }
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
-        // SAFETY: zeroed POD
         let mut boot_time: bun_sys::posix::timeval = bun_core::ffi::zeroed();
-        let mut size: usize = core::mem::size_of::<bun_sys::posix::timeval>();
-
-        if bun_sys::posix::sysctlbyname(c"kern.boottime", core::ptr::from_mut(&mut boot_time).cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
+        if bun_sys::posix::sysctl_read(c"kern.boottime", &mut boot_time).is_err() {
             return Ok(0.0);
         }
-
         // TODO(port): std.time.timestamp() → bun_sys::time::timestamp() (no std::time wallclock)
         return Ok((bun_sys::time::timestamp() - boot_time.tv_sec as i64) as f64);
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let _ = global;
-        // SAFETY: zeroed POD
-        let mut info: libc::sysinfo = bun_core::ffi::zeroed();
-        // SAFETY: valid out-pointer
-        if unsafe { libc::sysinfo(&raw mut info) } == 0 {
+        if let Ok(info) = bun_sys::posix::sysinfo() {
             return Ok(info.uptime as f64);
         }
         return Ok(0.0);
@@ -1498,23 +1448,9 @@ pub fn version() -> JsResult<BunString> {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     let slice: &[u8] = 'slice: {
         name_buffer.fill(0);
-
-        let mut size: usize = name_buffer.len();
-
-        // SAFETY: valid buffers
-        if unsafe {
-            c::sysctlbyname(
-                c"kern.version".as_ptr(),
-                name_buffer.as_mut_ptr().cast::<c_void>(),
-                &mut size,
-                core::ptr::null_mut(),
-                0,
-            )
-        } == -1
-        {
+        if bun_sys::posix::sysctl_read_slice(c"kern.version", &mut name_buffer[..]).is_err() {
             break 'slice b"unknown";
         }
-
         bun_str::slice_to_nul(&name_buffer)
     };
     #[cfg(any(target_os = "linux", target_os = "android"))]

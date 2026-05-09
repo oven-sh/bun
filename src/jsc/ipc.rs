@@ -1454,8 +1454,7 @@ impl SendQueue {
             let mut write_req = Box::new(WindowsWrite {
                 owner: Some(self as *mut SendQueue),
                 write_slice: write_req_slice,
-                // SAFETY: all-zero is a valid uv_write_t (C struct, initialized by uv_write).
-                write_req: unsafe { bun_core::ffi::zeroed_unchecked() },
+                write_req: bun_core::ffi::zeroed(),
                 write_buffer: uv::uv_buf_t::init(b""), // re-init below after slice address is stable
             });
             write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
@@ -1483,11 +1482,24 @@ impl SendQueue {
                     },
                 )
             };
-            if let Some(err) = result.to_error(bun_sys::Tag::write) {
-                Self::_windows_on_write_complete(
-                    write_req,
-                    uv::ReturnCode::from_raw(-(err.errno as c_int)),
-                );
+            if result.to_error(bun_sys::Tag::write).is_some() {
+                // Synchronous-error path: do NOT call `_windows_on_write_complete`
+                // here — that helper rebuilds `&mut SendQueue` from the raw
+                // `write_req.owner` backref, which would alias the `&mut self`
+                // already live in this frame (and in `continue_send` above it).
+                // Inline the same cleanup through `self` instead. The async
+                // libuv-callback path still uses `_windows_on_write_complete`
+                // (sound there: no `&mut self` is live when libuv fires it).
+                WindowsWrite::destroy(write_req);
+                self.windows.windows_write = None;
+                // SAFETY: pipe is live (socket == .open); pairs with the
+                // `(*pipe).ref_()` above.
+                unsafe { (*pipe).unref() };
+                self._on_write_complete(-1);
+                if self.windows.try_close_after_write {
+                    self.close_socket(CloseReason::Normal, CloseFrom::User);
+                }
+                return;
             }
             // write request is queued. it will call _onWriteComplete when it completes.
         }
@@ -1609,9 +1621,8 @@ impl SendQueue {
     pub fn windows_configure_client(&mut self, pipe_fd: Fd) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         log!("configureClient");
-        // SAFETY: all-zero is a valid uv::Pipe (C struct, initialized by uv_pipe_init).
         let ipc_pipe: *mut uv::Pipe =
-            bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+            bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
         // SAFETY: ipc_pipe just allocated above.
         if let Some(err) =
             unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)

@@ -150,10 +150,8 @@ impl DashedIdent {
 
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        let ident = input.expect_ident_cloned()?;
         if !strings::starts_with(ident, b"--") {
-            // SAFETY: ident borrows parser source/arena; see `css::src_str`.
-            let ident: &'static [u8] = unsafe { css::src_str(ident) };
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
         Ok(DashedIdent { v: std::ptr::from_ref::<[u8]>(ident) })
@@ -486,7 +484,7 @@ impl CustomIdent {
 
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        let ident = input.expect_ident_cloned()?;
         // css.todo_stuff.match_ignore_ascii_case
         // PORT NOTE: Zig fn name has typo `ASCIII` (3 I's); bun_string exports both spellings.
         let valid = !(strings::eql_case_insensitive_ascii_check_length(ident, b"initial")
@@ -497,8 +495,6 @@ impl CustomIdent {
             || strings::eql_case_insensitive_ascii_check_length(ident, b"revert-layer"));
 
         if !valid {
-            // SAFETY: ident borrows parser source/arena; see `css::src_str`.
-            let ident: &'static [u8] = unsafe { css::src_str(ident) };
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
         Ok(CustomIdent { v: std::ptr::from_ref::<[u8]>(ident) })

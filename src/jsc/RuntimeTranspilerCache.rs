@@ -349,10 +349,7 @@ impl Entry {
             };
             let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
 
-            let mut vecs_buf: [sys::PlatformIoVecConst; 4] =
-                // SAFETY: zeroed iovec is { null, 0 }; we only read the first
-                // `vecs_i` elements below.
-                unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
             let mut vecs_i: usize = 0;
             vecs_buf[vecs_i] = sys::platform_iovec_const_create(metadata_bytes);
             vecs_i += 1;

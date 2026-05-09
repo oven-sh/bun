@@ -319,21 +319,9 @@ impl JunitReporter {
 
             #[cfg(not(windows))]
             {
-                // TODO(b2-blocked): `bun_sys::posix::gethostname` /
-                // `bun_core::HOST_NAME_MAX` are not yet on the lower-tier
-                // surface. Hardcode the libc max and call libc directly so
-                // the JUnit hostname attribute still works.
                 const HOST_NAME_MAX: usize = 256;
                 let mut name_buffer = [0u8; HOST_NAME_MAX];
-                // SAFETY: `name_buffer` is HOST_NAME_MAX bytes; libc writes a
-                // NUL-terminated hostname or returns -1.
-                let rc = unsafe {
-                    libc::gethostname(
-                        name_buffer.as_mut_ptr().cast::<libc::c_char>(),
-                        name_buffer.len(),
-                    )
-                };
-                if rc != 0 {
+                if bun_sys::posix::gethostname(&mut name_buffer).is_err() {
                     self.hostname_value = Some(Box::default());
                     return None;
                 }
@@ -1169,7 +1157,7 @@ impl CommandLineReporter {
             {
                 // when using --only-failures, only print failures
             } else {
-                unsafe { (*buntest.bun_test_root).on_before_print(); }
+                buntest.bun_test_root.on_before_print();
 
                 // TODO(port): write_test_status_line takes comptime status in Zig
                 if Output::enable_ansi_colors_stderr() {
@@ -2714,14 +2702,14 @@ impl TestCommand {
                 reporter.summary().files += 1;
             }
 
-            // SAFETY: load_entry_point_for_test_runner returns a live *mut JSInternalPromise
-            // rooted by the module loader for the duration of this turn.
-            match unsafe { (*promise).status() } {
+            // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+            match jsc::JSInternalPromise::opaque_mut(promise).status() {
                 jsc::js_promise::Status::Rejected => {
-                    // SAFETY: vm.global is the live global object pointer; decoupled from
-                    // `vm`'s borrow so `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = unsafe { &*vm.global };
-                    let (result, promise_js) = unsafe { ((*promise).result(global.vm()), (*promise).to_js()) };
+                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
+                    // `unhandled_rejection(&mut self, ...)` can reborrow.
+                    let global = vm.global();
+                    let p = jsc::JSInternalPromise::opaque_mut(promise);
+                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
                     vm.unhandled_rejection(global, result, promise_js);
                     reporter.summary().fail += 1;
 

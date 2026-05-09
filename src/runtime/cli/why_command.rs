@@ -301,11 +301,7 @@ impl WhyCommand {
         let positionals = cli.positionals;
         let top_only = cli.top_only;
 
-        let (pm_ptr, _cwd) = package_manager::init(&mut *ctx, cli, Subcommand::Why)?;
-        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
-        // non-null and exclusively owned by this thread for the command's
-        // duration (mirrors Zig's `*PackageManager`).
-        let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
+        let (pm, _cwd) = package_manager::init(&mut *ctx, cli, Subcommand::Why)?;
 
         if positionals.is_empty() {
             Self::print_usage();

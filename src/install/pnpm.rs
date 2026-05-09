@@ -730,7 +730,6 @@ pub fn migrate_pnpm_lockfile<'a>(
                         }
                     }
                     dependency::VersionTag::Symlink => {
-                        // SAFETY: tag == Symlink → `value.symlink` active.
                         if !strings::is_npm_package_name(
                             dep.version.symlink()
                                 .slice(string_bytes!(lockfile)),

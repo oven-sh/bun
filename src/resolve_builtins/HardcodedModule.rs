@@ -317,8 +317,7 @@ macro_rules! ensure_node_prefix {
         } else {
             ::core::concat!("node:", $path, "\0").as_bytes()
         };
-        // SAFETY: const-evaluated NUL-terminated literal; len excludes NUL.
-        unsafe { ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
+        ZStr::from_static(__B)
     }};
 }
 

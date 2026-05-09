@@ -529,14 +529,14 @@ pub fn page_size() -> usize {
 pub mod wtf {
     unsafe extern "C" {
         // Defined in WebKit's WTF (linked into the final binary).
-        fn WTF__releaseFastMallocFreeMemoryForThisThread();
+        // No preconditions; thread-safe.
+        safe fn WTF__releaseFastMallocFreeMemoryForThisThread();
     }
 
     #[inline]
     pub fn release_fast_malloc_free_memory_for_this_thread() {
         // Zig: jsc.markBinding(@src()) — debug-only binding marker, dropped at T0.
-        // SAFETY: FFI call is thread-safe and takes no arguments.
-        unsafe { WTF__releaseFastMallocFreeMemoryForThisThread() }
+        WTF__releaseFastMallocFreeMemoryForThisThread()
     }
 }
 
@@ -1216,8 +1216,7 @@ macro_rules! bss_singleton {
 /// for the canonical per-monomorphization singleton.
 #[inline]
 pub(crate) fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
-    // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
-    let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()) }.cast::<T>();
+    let ptr = mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()).cast::<T>();
     let ptr = NonNull::new(ptr).expect("OOM");
     // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
     // process lifetime (singleton; never freed, matching Zig).
@@ -1982,8 +1981,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             // Route through mimalloc directly (PORTING.md forbids `Box::leak`). BSSStringList
             // never frees overflow allocations (matches Zig); the singleton lives for
             // process lifetime.
-            // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥value_len bytes.
-            let ptr = unsafe { mimalloc::mi_malloc(value_len) }.cast::<u8>();
+            let ptr = mimalloc::mi_malloc(value_len).cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
             }
@@ -2346,8 +2344,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
             // through mimalloc directly (PORTING.md forbids `Box::leak`) so the
             // size-agnostic `mi_free` below stays valid even after `trim_right` shortens
             // the stored slice.
-            // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥key.len() bytes.
-            let ptr = unsafe { mimalloc::mi_malloc(key.len().max(1)) }.cast::<u8>();
+            let ptr = mimalloc::mi_malloc(key.len().max(1)).cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
             }

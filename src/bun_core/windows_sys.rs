@@ -30,8 +30,7 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 /// `std.os.windows.GetStdHandle` error-union semantics).
 #[inline]
 pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
-    // SAFETY: kernel32 GetStdHandle has no preconditions.
-    let h = unsafe { kernel32::GetStdHandle(std_handle) };
+    let h = kernel32::GetStdHandle(std_handle);
     if h == INVALID_HANDLE_VALUE || h.is_null() { None } else { Some(h) }
 }
 

@@ -513,13 +513,11 @@ impl Expect {
     #[unsafe(no_mangle)]
     pub extern "C" fn Expect_readFlagsAndProcessPromise(
         instance_value: JSValue,
-        global_this: *const JSGlobalObject,
+        global_this: &JSGlobalObject,
         out_flags: *mut FlagsCppType,
         value: *mut JSValue,
         any_constructor_type: *mut u8,
     ) -> bool {
-        // SAFETY: called from C++ with valid pointers
-        let global_this = unsafe { &*global_this };
         // SAFETY: `from_js` returns the live `m_ctx` payload owned by `instance_value`.
         let flags: Flags = 'flags: { unsafe {
             if let Some(instance) = ExpectCustomAsymmetricMatcher::from_js(instance_value) {
@@ -2611,9 +2609,7 @@ pub struct ExpectMatcherUtils {}
 
 impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
-    pub extern "C" fn ExpectMatcherUtils_createSigleton(global_this: *const JSGlobalObject) -> JSValue {
-        // SAFETY: called from C++ with valid global
-        let global_this = unsafe { &*global_this };
+    pub extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
         ExpectMatcherUtils {}.to_js(global_this)
     }
 
@@ -2709,9 +2705,9 @@ impl ExpectMatcherUtils {
         let options = if arguments.len() > 3 { arguments[3] } else { JSValue::UNDEFINED };
 
         let mut is_not = false;
-        let mut comment: Option<*mut JSString> = None; // TODO support
-        let mut promise: Option<*mut JSString> = None; // TODO support
-        let mut second_argument: Option<*mut JSString> = None; // TODO support
+        let mut comment: Option<&JSString> = None; // TODO support
+        let mut promise: Option<&JSString> = None; // TODO support
+        let mut second_argument: Option<&JSString> = None; // TODO support
         // TODO support "chalk" colors (they are actually functions like: (value: string) => string;)
         //var second_argument_color: ?string = null;
         //var expected_color: ?string = null;

@@ -159,10 +159,8 @@ impl PerMessageDeflate {
         // TODO(port): narrow error set
         let mut self_ = Box::new(Self {
             params,
-            // SAFETY: z_stream is #[repr(C)] POD; all-zero is the documented init state.
-            compress_stream: unsafe { core::mem::zeroed::<zlib::z_stream>() },
-            // SAFETY: z_stream is #[repr(C)] POD; all-zero is the documented init state.
-            decompress_stream: unsafe { core::mem::zeroed::<zlib::z_stream>() },
+            compress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
+            decompress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
             // TODO(b2-blocked): bun_jsc::rare_data::WebSocketDeflateRareData —
             // `rare_data.websocket_deflate()` returns an opaque `{ _opaque: () }`
             // placeholder in bun_jsc; the real type is `self::RareData` (this

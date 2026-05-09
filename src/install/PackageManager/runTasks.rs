@@ -1193,18 +1193,16 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     let version = &mut manager.lockfile.buffers.dependencies
                                         [id as usize]
                                         .version;
-                                    // SAFETY: `version.tag` selects the active
-                                    // `dependency::Value` union arm.
                                     match version.tag {
-                                        bun_install::DependencyVersionTag::Git => unsafe {
-                                            (*version.value.git).package_name = pkg.name;
-                                        },
-                                        bun_install::DependencyVersionTag::Github => unsafe {
-                                            (*version.value.github).package_name = pkg.name;
-                                        },
-                                        bun_install::DependencyVersionTag::Tarball => unsafe {
-                                            version.value.tarball.package_name = pkg.name;
-                                        },
+                                        bun_install::DependencyVersionTag::Git => {
+                                            version.git_mut().package_name = pkg.name;
+                                        }
+                                        bun_install::DependencyVersionTag::Github => {
+                                            version.github_mut().package_name = pkg.name;
+                                        }
+                                        bun_install::DependencyVersionTag::Tarball => {
+                                            version.tarball_mut().package_name = pkg.name;
+                                        }
 
                                         // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
                                         // will still have the original.
@@ -1838,7 +1836,9 @@ pub fn generate_network_task_for_tarball<'a>(
     let scope = this.scope_for_package_name(pkg_name);
 
     let extract_tarball = ExtractTarball {
-        package_manager: this_backref, // TODO(port): lifetime — BACKREF
+        // SAFETY: BACKREF — `this_backref` is non-null and the PackageManager
+        // outlives every ExtractTarball it enqueues.
+        package_manager: unsafe { bun_ptr::BackRef::from_raw(this_backref) },
         name: strings::StringOrTinyString::init_append_if_needed(
             pkg_name,
             &mut crate::network_task::filename_store_appender(),

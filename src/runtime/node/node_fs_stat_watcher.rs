@@ -160,6 +160,17 @@ impl StatWatcherScheduler {
         unsafe { ThreadSafeRefCount::<Self>::deref(this) };
     }
 
+    /// Borrow the per-thread `VirtualMachine` this scheduler is bound to.
+    ///
+    /// SAFETY (invariant): `vm` is the live per-thread VM pointer captured at
+    /// [`init`]; the VM owns the event loop / timer heap that drives this
+    /// scheduler and outlives it (JSC_BORROW). Never null.
+    #[inline]
+    fn vm(&self) -> &VirtualMachine {
+        // SAFETY: see doc comment — JSC_BORROW backref valid for `'_`.
+        unsafe { &*self.vm }
+    }
+
     pub fn init(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
         RefPtr::new(StatWatcherScheduler {
             current_interval: AtomicI32::new(0),
@@ -299,9 +310,8 @@ impl StatWatcherScheduler {
     }
 
     pub fn timer_callback(&mut self) {
-        // SAFETY: `vm` is the live per-thread VM (JSC_BORROW).
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
-            || unsafe { (*self.vm).script_execution_status() } != jsc::ScriptExecutionStatus::Running;
+            || self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
 
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
         self.event_loop_timer.heap = Default::default();
@@ -460,6 +470,15 @@ mod js {
 }
 
 impl StatWatcher {
+    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this` back-pointer.
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        // SAFETY: JSC_BORROW per LIFETIMES.tsv — `global_this` is the live
+        // per-thread global stored at construction; the VM (and thus its
+        // global) outlives every `StatWatcher`.
+        unsafe { &*self.global_this }
+    }
+
     /// Spec `RareData.nodeFSStatWatcherScheduler`. Body lives here (high tier)
     /// because `StatWatcherScheduler` cannot be named from `bun_jsc::rare_data`
     /// without a crate cycle; the slot in `RareData` is an erased
@@ -633,8 +652,7 @@ impl StatWatcher {
         let Some(js_this) = this_ref.this_value.try_get() else {
             return Ok(());
         };
-        // SAFETY: JSC_BORROW; live for the watcher's lifetime.
-        let global_this = unsafe { &*this_ref.global_this };
+        let global_this = this_ref.global_this();
 
         let jsvalue = match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
             Ok(v) => v,
@@ -663,8 +681,7 @@ impl StatWatcher {
         let Some(js_this) = this_ref.this_value.try_get() else {
             return Ok(());
         };
-        // SAFETY: JSC_BORROW; live for the watcher's lifetime.
-        let global_this = unsafe { &*this_ref.global_this };
+        let global_this = this_ref.global_this();
         let jsvalue = match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
             Ok(v) => v,
             Err(err) => {
@@ -747,8 +764,7 @@ impl StatWatcher {
         let Some(js_this) = this_ref.this_value.try_get() else {
             return Ok(());
         };
-        // SAFETY: JSC_BORROW; live for the watcher's lifetime.
-        let global_this = unsafe { &*this_ref.global_this };
+        let global_this = this_ref.global_this();
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
             match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
@@ -780,7 +796,7 @@ impl StatWatcher {
 
         // SAFETY: `FileSystem::instance()` is initialized at process start
         // (`FileSystem::init` runs before any JS module loads).
-        let top_level_dir = unsafe { (*fs::FileSystem::instance()).top_level_dir };
+        let top_level_dir = fs::FileSystem::get().top_level_dir;
         let parts: [&[u8]; 1] = [slice];
         let file_path =
             Path::join_abs_string_buf::<platform::Auto>(top_level_dir, &mut buf[..], &parts);

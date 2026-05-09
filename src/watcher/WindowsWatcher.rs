@@ -32,8 +32,7 @@ impl Default for WindowsWatcher {
             mutex: Mutex::default(),
             iocp: w::INVALID_HANDLE_VALUE,
             watcher: DirWatcher {
-                // SAFETY: all-zero is a valid OVERLAPPED (#[repr(C)] POD).
-                overlapped: unsafe { bun_core::ffi::zeroed_unchecked() },
+                overlapped: bun_core::ffi::zeroed(),
                 buf: [0u8; 64 * 1024],
                 dir_handle: w::INVALID_HANDLE_VALUE,
             },
@@ -219,11 +218,7 @@ impl WindowsWatcher {
             SecurityQualityOfService: ptr::null_mut(),
         };
         let mut handle: HANDLE = w::INVALID_HANDLE_VALUE;
-        let mut io: w::IO_STATUS_BLOCK = unsafe {
-            // SAFETY: IO_STATUS_BLOCK is a #[repr(C)] POD output parameter; NtCreateFile
-            // writes it before any read.
-            bun_core::ffi::zeroed_unchecked()
-        };
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
         // SAFETY: all pointer params point to valid stack locals for the duration of the call.
         let rc = unsafe {
             w::ntdll::NtCreateFile(
@@ -263,8 +258,7 @@ impl WindowsWatcher {
         });
 
         self.watcher = DirWatcher {
-            // SAFETY: all-zero is a valid OVERLAPPED (#[repr(C)] POD; kernel treats zero as "no event/offset").
-            overlapped: unsafe { core::mem::zeroed::<w::OVERLAPPED>() },
+            overlapped: bun_core::ffi::zeroed::<w::OVERLAPPED>(),
             // SAFETY: buf is an output buffer filled by ReadDirectoryChangesW before read.
             buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
             dir_handle: *handle_guard,

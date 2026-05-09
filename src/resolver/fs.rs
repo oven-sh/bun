@@ -1027,6 +1027,60 @@ impl EntriesMap {
     }
 }
 
+/// RAII guard over the `entries_option_map()` singleton: holds
+/// `RealFS.entries_mutex` for its lifetime and exposes the map operations as
+/// **safe** methods. Obtaining this guard is the proof-of-exclusivity that
+/// every `unsafe { self.entries.* }` call site previously had to re-assert in
+/// a SAFETY comment — the lock is now structurally tied to the access, so the
+/// raw-pointer escape (`unsafe { &mut *entries_option_map() }`) lives in
+/// exactly one place per operation instead of at ~dozen call sites.
+///
+/// `bun_threading::MutexGuard` stores the mutex by raw pointer (no borrow of
+/// `RealFS`), so holding an `EntriesGuard` does **not** keep `&self`/`&mut self`
+/// borrowed — callers may freely re-borrow `self` for `readdir`/`open_dir`/
+/// `read_directory_error` while the guard is live (matching the prior
+/// `let _g = self.entries_mutex.lock_guard()` pattern).
+pub struct EntriesGuard {
+    _lock: bun_threading::MutexGuard,
+}
+impl EntriesGuard {
+    #[inline]
+    fn inner(&self) -> *mut EntriesOptionMap { entries_option_map() }
+
+    pub fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
+        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton
+        // for the duration of this call.
+        let r = unsafe { (*self.inner()).get(key)? };
+        Some(std::ptr::from_mut::<EntriesOption>(r))
+    }
+    pub fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
+        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
+        unsafe { (*self.inner()).get_or_put(key) }
+    }
+    pub fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
+        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
+        let r = unsafe { (*self.inner()).at_index(index)? };
+        Some(std::ptr::from_mut::<EntriesOption>(r))
+    }
+    pub fn put(
+        &self,
+        result: &mut allocators::Result,
+        value: EntriesOption,
+    ) -> core::result::Result<*mut EntriesOption, AllocError> {
+        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
+        let r = unsafe { (*self.inner()).put(result, value)? };
+        Ok(std::ptr::from_mut::<EntriesOption>(r))
+    }
+    pub fn mark_not_found(&self, result: allocators::Result) {
+        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
+        unsafe { (*self.inner()).mark_not_found(result) }
+    }
+    pub fn remove(&self, key: &[u8]) -> bool {
+        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
+        unsafe { (*self.inner()).remove(key) }
+    }
+}
+
 pub struct RealFS {
     pub entries_mutex: Mutex,
     pub entries: EntriesMap,
@@ -1146,6 +1200,15 @@ impl RealFS {
         }
     }
 
+    /// Lock `entries_mutex` and return an [`EntriesGuard`] exposing safe
+    /// accessors to the entries singleton. Replaces the
+    /// `let _g = self.entries_mutex.lock_guard(); unsafe { self.entries.* }`
+    /// pattern — the guard *is* the proof the SAFETY precondition holds.
+    #[inline]
+    pub fn entries_locked(&self) -> EntriesGuard {
+        EntriesGuard { _lock: self.entries_mutex.lock_guard() }
+    }
+
     pub fn entries_at(
         &mut self,
         index: allocators::IndexType,
@@ -1154,18 +1217,16 @@ impl RealFS {
         // PORT NOTE: Zig fs.zig:613 does not lock here; in Rust we must, because every
         // `EntriesMap` method auto-refs the global `BSSMapInner` to `&mut self`, and a
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
-        // alias that `&mut` — UB under Stacked Borrows. Take `entries_mutex` for the
-        // whole operation so the `&mut BSSMapInner` is exclusive.
-        // PORT NOTE: `MutexGuard` holds the mutex by raw pointer (no borrow of
-        // `self`), so the `&mut self` calls below (`readdir`, `read_directory_error`)
-        // remain unconstrained while the lock is held.
-        let _unlock_guard = self.entries_mutex.lock_guard();
+        // alias that `&mut` — UB under Stacked Borrows. `EntriesGuard` holds
+        // `entries_mutex` for the whole operation so the `&mut BSSMapInner` is
+        // exclusive; it does not borrow `self`, so the `&mut self` calls below
+        // (`readdir`, `read_directory_error`) remain unconstrained while held.
+        let map = self.entries_locked();
 
         // PORT NOTE: `at_index` returns a raw `*mut EntriesOption` (matching Zig's
         // `*EntriesOption`). Form short-lived `&mut` only at each use site below;
         // never hand a `&'static mut` back to the caller.
-        // SAFETY: `entries_mutex` held — sole access to the singleton map.
-        let existing_ptr = unsafe { self.entries.at_index(index) }?;
+        let existing_ptr = map.at_index(index)?;
         // SAFETY: `entries_mutex` held; no other `&mut` to this slot in scope.
         if let EntriesOption::Entries(entries) = unsafe { &mut *existing_ptr } {
             if entries.generation < generation {
@@ -1188,7 +1249,7 @@ impl RealFS {
                         // SAFETY: `entries_mutex` held; sole access to this slot.
                         unsafe { (*prev_map_ptr).clear() };
                         return Some(
-                            self.read_directory_error(dir_path, err.into())
+                            self.read_directory_error(Some(&map), dir_path, err.into())
                                 .expect("unreachable"),
                         );
                     }
@@ -1211,7 +1272,7 @@ impl RealFS {
                         unsafe { (*prev_map_ptr).clear() };
                         handle_dir.close();
                         return Some(
-                            self.read_directory_error(dir_path, err).expect("unreachable"),
+                            self.read_directory_error(Some(&map), dir_path, err).expect("unreachable"),
                         );
                     }
                 };
@@ -1224,8 +1285,7 @@ impl RealFS {
             }
         }
 
-        // SAFETY: `entries_mutex` held — sole access to the singleton map.
-        unsafe { self.entries.at_index(index) }
+        map.at_index(index)
     }
 
     pub fn get_default_temp_dir() -> &'static [u8] {
@@ -1276,11 +1336,7 @@ impl RealFS {
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
         // alias that `&mut` — UB. `&mut self` alone proves nothing cross-thread since
         // `EntriesMap` is a ZST handle over a process-global singleton.
-        self.entries_mutex.lock();
-        // SAFETY: `entries_mutex` held — sole `&mut BSSMapInner` access.
-        let removed = unsafe { self.entries.remove(file_path) };
-        self.entries_mutex.unlock();
-        removed
+        self.entries_locked().remove(file_path)
     }
 
     // Always try to max out how many files we can keep open
@@ -1697,15 +1753,18 @@ impl RealFS {
 
     fn read_directory_error(
         &mut self,
+        entries: Option<&EntriesGuard>,
         dir: &[u8],
         err: bun_core::Error,
     ) -> Result<*mut EntriesOption, AllocError> {
         if FeatureFlags::ENABLE_ENTRY_CACHE {
-            // SAFETY: caller holds `entries_mutex` — sole access to the singleton map.
-            let mut get_or_put_result = unsafe { self.entries.get_or_put(dir) }?;
+            // Caller holds `entries_mutex` exactly when `ENABLE_ENTRY_CACHE` is true
+            // (both call paths gate the lock on the same flag), so the guard is
+            // always `Some` here.
+            let entries = entries.expect("caller holds entries_mutex when ENABLE_ENTRY_CACHE");
+            let mut get_or_put_result = entries.get_or_put(dir)?;
             if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
-                // SAFETY: see above.
-                unsafe { self.entries.mark_not_found(get_or_put_result) };
+                entries.mark_not_found(get_or_put_result);
                 return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
                     slot.write(EntriesOption::Err(dir_entry::Err {
                         original_err: err,
@@ -1716,16 +1775,13 @@ impl RealFS {
                     slot.as_mut_ptr()
                 }));
             } else {
-                // SAFETY: see above — sole access to the slot.
-                let opt = unsafe {
-                    self.entries.put(
-                        &mut get_or_put_result,
-                        EntriesOption::Err(dir_entry::Err {
-                            original_err: err,
-                            canonical_error: err,
-                        }),
-                    )
-                }?;
+                let opt = entries.put(
+                    &mut get_or_put_result,
+                    EntriesOption::Err(dir_entry::Err {
+                        original_err: err,
+                        canonical_error: err,
+                    }),
+                )?;
                 return Ok(opt);
             }
         }
@@ -1779,26 +1835,24 @@ impl RealFS {
 
         crate::Resolver::assert_valid_cache_key(dir);
         let mut cache_result: Option<allocators::Result> = None;
-        // PORT NOTE: Zig `defer self.entries_mutex.unlock()`. `MutexGuard` holds the
+        // PORT NOTE: Zig `defer self.entries_mutex.unlock()`. `EntriesGuard` holds the
         // mutex by raw pointer (no borrow of `self`), so the `&mut self` calls below
-        // (`open_dir`, `readdir`, `read_directory_error`, `entries.put`) remain
-        // unconstrained while the lock is held.
-        let _unlock_guard = if FeatureFlags::ENABLE_ENTRY_CACHE {
-            Some(self.entries_mutex.lock_guard())
+        // (`open_dir`, `readdir`, `read_directory_error`) remain unconstrained while
+        // the lock is held.
+        let entries_guard = if FeatureFlags::ENABLE_ENTRY_CACHE {
+            Some(self.entries_locked())
         } else {
             None
         };
 
         let mut in_place: Option<*mut DirEntry> = None;
 
-        if FeatureFlags::ENABLE_ENTRY_CACHE {
-            // SAFETY: `entries_mutex` is held; no aliased map access in this scope.
-            cache_result = Some(unsafe { self.entries.get_or_put(dir) }?);
+        if let Some(entries) = entries_guard.as_ref() {
+            cache_result = Some(entries.get_or_put(dir)?);
 
             let cr = cache_result.as_ref().unwrap();
             if cr.has_checked_if_exists() {
-                // SAFETY: `entries_mutex` is held; sole access to the singleton map.
-                if let Some(cached_result) = unsafe { self.entries.at_index(cr.index) } {
+                if let Some(cached_result) = entries.at_index(cr.index) {
                     // SAFETY: `entries_mutex` held; form a short-lived `&mut` for the
                     // match only — the raw `*mut` is what escapes to the caller.
                     match unsafe { &mut *cached_result } {
@@ -1828,7 +1882,7 @@ impl RealFS {
             Some(h) => h,
             None => match self.open_dir(dir) {
                 Ok(h) => h,
-                Err(err) => return Ok(self.read_directory_error(dir, err)?),
+                Err(err) => return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?),
             },
         };
 
@@ -1870,11 +1924,11 @@ impl RealFS {
                     // SAFETY: see above
                     unsafe { (*existing).data.clear() };
                 }
-                return Ok(self.read_directory_error(dir, err)?);
+                return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?);
             }
         };
 
-        if FeatureFlags::ENABLE_ENTRY_CACHE {
+        if let Some(map) = entries_guard.as_ref() {
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle.fd();
             }
@@ -1896,8 +1950,7 @@ impl RealFS {
                         *p = entries;
                     }
                     let idx = cache_result.as_ref().unwrap().index;
-                    // SAFETY: `entries_mutex` held; sole `&mut` to this slot.
-                    unsafe { self.entries.at_index(idx) }
+                    map.at_index(idx)
                         .expect("in_place entry must exist in BSSMap")
                 }
                 None => {
@@ -1905,8 +1958,7 @@ impl RealFS {
                     let mut boxed = Box::new(DirEntry::init(dir, generation));
                     *boxed = entries;
                     let result = EntriesOption::Entries(boxed);
-                    // SAFETY: `entries_mutex` held; sole access to this slot.
-                    unsafe { self.entries.put(cache_result.as_mut().unwrap(), result) }?
+                    map.put(cache_result.as_mut().unwrap(), result)?
                 }
             };
 
@@ -2259,9 +2311,7 @@ impl RealFS {
         outpath[entry_path_len + 1] = 0;
         outpath[entry_path_len] = 0;
 
-        // SAFETY: outpath[entry_path_len] == 0 written above
-        let absolute_path_c =
-            unsafe { ZStr::from_raw(outpath.as_ptr(), entry_path_len) };
+        let absolute_path_c = ZStr::from_buf(&outpath[..], entry_path_len);
 
         #[cfg(windows)]
         {

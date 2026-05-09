@@ -99,9 +99,9 @@ pub fn set_override_module_run_main_promise(
 pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
     // allow esm evaluate to set value multiple times
     if !this.entry_point_result.cjs_set_value {
-        // PORT NOTE: reshaped for borrowck — split disjoint &mut/& borrows.
-        // SAFETY: `global` is the VM's owned global (STATIC ref per LIFETIMES.tsv).
-        let global = unsafe { &*this.global };
+        // `global()` returns `&'static`, decoupled from `this` for the
+        // disjoint `&mut this.entry_point_result` borrow.
+        let global = this.global();
         this.entry_point_result.value.set(global, result);
     }
 }
@@ -110,9 +110,9 @@ pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValu
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
 pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue) {
     if !this.entry_point_result.value.has() {
-        // PORT NOTE: reshaped for borrowck — split disjoint &mut/& borrows.
-        // SAFETY: `global` is the VM's owned global (STATIC ref per LIFETIMES.tsv).
-        let global = unsafe { &*this.global };
+        // `global()` returns `&'static`, decoupled from `this` for the
+        // disjoint `&mut this.entry_point_result` borrow.
+        let global = this.global();
         this.entry_point_result.value.set(global, value);
         this.entry_point_result.cjs_set_value = true;
     }

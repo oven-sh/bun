@@ -12,11 +12,14 @@ use crate::{
     Exception, JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace,
 };
 
+// SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
+// opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);
+// `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place.
 unsafe extern "C" {
-    pub fn ZigException__collectSourceLines(
+    pub safe fn ZigException__collectSourceLines(
         js_value: JSValue,
-        global: *mut JSGlobalObject,
-        exception: *mut ZigException,
+        global: &JSGlobalObject,
+        exception: &mut ZigException,
     );
 }
 
@@ -50,12 +53,7 @@ pub struct ZigException {
 
 impl ZigException {
     pub fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
-        // SAFETY: `self` is a valid &mut; `global.as_mut_ptr()` derives a `*mut`
-        // with write provenance via `UnsafeCell::get()` (JSGlobalObject is an
-        // opaque interior-mutable FFI handle), so C++ may mutate through it.
-        unsafe {
-            ZigException__collectSourceLines(value, global.as_mut_ptr(), self);
-        }
+        ZigException__collectSourceLines(value, global, self);
     }
 
     // PORT NOTE: kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI
@@ -68,22 +66,11 @@ impl ZigException {
         self.name.deref();
         self.message.deref();
 
-        // SAFETY: source_lines_ptr[..source_lines_len] is valid per ZigStackTrace contract.
-        let lines = unsafe {
-            bun_core::ffi::slice_mut(
-                self.stack.source_lines_ptr,
-                self.stack.source_lines_len as usize,
-            )
-        };
-        for line in lines {
+        for line in self.stack.source_lines_mut() {
             line.deref();
         }
 
-        // SAFETY: frames_ptr[..frames_len] is valid per ZigStackTrace contract.
-        let frames = unsafe {
-            bun_core::ffi::slice_mut(self.stack.frames_ptr, self.stack.frames_len as usize)
-        };
-        for frame in frames {
+        for frame in self.stack.frames_mutable() {
             frame.deinit();
         }
 

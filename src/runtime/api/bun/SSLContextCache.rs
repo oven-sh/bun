@@ -97,7 +97,10 @@ pub struct Entry {
     /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
     pub ctx: *mut boringssl::SSL_CTX,
-    pub owner: *const SSLContextCache,
+    /// BACKREF: the cache outlives every `Entry` it allocates (Drop clears
+    /// ex_data first so the `CRYPTO_EX_free` callback never sees a dangling
+    /// owner).
+    pub owner: bun_ptr::BackRef<SSLContextCache>,
 }
 
 impl SSLContextCache {
@@ -153,10 +156,10 @@ impl SSLContextCache {
 
         let _guard = self.mutex.lock_guard();
 
-        // Capture raw self pointer before the mutable borrow of `self.map` so the
+        // Capture the backref before the mutable borrow of `self.map` so the
         // borrow checker doesn't see an overlapping immutable borrow at the
         // `Entry { owner: ... }` site below.
-        let owner_ptr: *const SSLContextCache = std::ptr::from_ref::<SSLContextCache>(self);
+        let owner_ptr = bun_ptr::BackRef::new(&*self);
 
         // Re-check: another caller may have inserted while we were building.
         // Prefer the already-cached one and drop ours so callers converge.
@@ -263,8 +266,7 @@ pub extern "C" fn bun_ssl_ctx_cache_on_free(
     // SAFETY: non-null ptr is the *Entry we stored via SSL_CTX_set_ex_data; the
     // owning cache outlives every SSL_CTX it hands out (Drop clears ex_data first).
     let entry: &mut Entry = unsafe { &mut *ptr.cast::<Entry>() };
-    let owner = unsafe { &*entry.owner };
-    let _guard = owner.mutex.lock_guard();
+    let _guard = entry.owner.mutex.lock_guard();
     entry.ctx = ptr::null_mut();
 }
 

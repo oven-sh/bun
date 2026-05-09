@@ -32,6 +32,7 @@ use bun_core::FeatureFlags;
 use bun_http::{HeaderValueIterator, Headers};
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
+use bun_ptr::ThisPtr;
 use bun_string::strings;
 use bun_string::{String as BunString, ZigStringSlice as Utf8Slice};
 use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
@@ -603,36 +604,37 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// the trailing `deref` may free `this`, which would violate a `&mut self`
     /// argument protector.
     pub unsafe fn cancel(this: *mut Self) {
+        // SAFETY: caller (C++ / uWS) holds a live ref; `this` carries root
+        // (userdata) provenance from `heap::alloc`.
+        let this = unsafe { ThisPtr::new(this) };
         // SAFETY: short-lived `&mut` for clear_data; ends before any reentrant call.
-        unsafe { (*this).clear_data() };
+        unsafe { (*this.as_ptr()).clear_data() };
 
         // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
         // Therefore, we need to make sure the `this` pointer is valid until the end of the function.
-        // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
-        unsafe { (*this).ref_() };
+        // Bumps the intrusive refcount and derefs on Drop (after `tcp.close`
+        // below), which may free `this` — no `&`/`&mut Self` is live at that
+        // point.
+        let _guard = this.ref_guard();
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
         // SAFETY: short-lived `&mut` for the field take; ends before any reentrant call.
-        if unsafe { (*this).outgoing_websocket.take().is_some() } {
-            // SAFETY: refcount > 1 here (the +1 above).
-            unsafe { Self::deref(this) };
+        if unsafe { (*this.as_ptr()).outgoing_websocket.take().is_some() } {
+            // SAFETY: refcount > 1 here (the +1 from `_guard` above).
+            unsafe { Self::deref(this.as_ptr()) };
         }
 
         // Copy `tcp` out so no `&mut Self` spans the close — uSockets fires
         // `handle_close` inline, which derives a fresh `&mut`/`*mut` from
         // userdata.
-        // SAFETY: `Socket<SSL>` is `Copy`; short-lived read of `(*this).tcp`.
-        let tcp = unsafe { (*this).tcp };
+        let tcp = this.tcp;
         // no need to be .failure we still wanna to send pending SSL buffer + close_notify
         if SSL {
             tcp.close(uws::CloseCode::Normal);
         } else {
             tcp.close(uws::CloseCode::Failure);
         }
-
-        // Balance the `r#ref()` above. May free `this`; no `&mut Self` is live.
-        // SAFETY: `this` carries root (userdata) provenance.
-        unsafe { Self::deref(this) };
+        // `_guard` drops here, balancing the ref above. May free `this`.
     }
 
     /// # Safety
@@ -643,12 +645,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
     pub unsafe fn fail(this: *mut Self, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
+        // SAFETY: caller contract — `this` is a live `heap::alloc` pointer.
+        let this = unsafe { ThisPtr::new(this) };
         // Copy `tcp` out before dispatch so nothing touches `*this` after the
         // FFI call (which may reenter and pop our tag).
-        // SAFETY: `Socket<SSL>` is `Copy`; short-lived read.
-        let tcp = unsafe { (*this).tcp };
+        let tcp = this.tcp;
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
-        unsafe { Self::dispatch_abrupt_close(this, code) };
+        unsafe { Self::dispatch_abrupt_close(this.as_ptr(), code) };
 
         if SSL {
             tcp.close(uws::CloseCode::Normal);
@@ -666,9 +669,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for the field take; ends before the FFI call.
         let ws = unsafe { (*this).outgoing_websocket.take() };
         if let Some(ws) = ws {
-            // SAFETY: ws is a live C++ WebSocket back-reference (BACKREF). No
-            // `&mut Self` is live across this call.
-            unsafe { (*ws).did_abrupt_close(code) };
+            CppWebSocket::opaque_ref(ws).did_abrupt_close(code);
             // SAFETY: `this` carries root provenance; may free `this`.
             unsafe { Self::deref(this) };
         }
@@ -715,12 +716,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             ssl_error.error_no
         );
 
+        // SAFETY: caller (uWS dispatch) — `this` is a live `heap::alloc`
+        // pointer recovered from userdata; no Rust borrow is live.
+        let this = unsafe { ThisPtr::new(this) };
         let handshake_success = success == 1;
         let mut reject_unauthorized = false;
-        // SAFETY: short-lived read of `outgoing_websocket`.
-        if let Some(ws) = unsafe { (*this).outgoing_websocket } {
-            // SAFETY: live C++ back-reference.
-            reject_unauthorized = unsafe { (*ws).reject_unauthorized() };
+        if let Some(ws) = this.outgoing_websocket {
+            reject_unauthorized = CppWebSocket::opaque_ref(ws).reject_unauthorized();
         }
 
         if handshake_success {
@@ -731,11 +733,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     log!(
                         "TLS handshake failed: ssl_error={}, has_custom_ctx={}",
                         ssl_error.error_no,
-                        // SAFETY: short-lived read.
-                        unsafe { (*this).secure.is_some() }
+                        this.secure.is_some()
                     );
                     // SAFETY: no `&mut Self` is live across this call.
-                    unsafe { Self::fail(this, ErrorCode::TlsHandshakeFailed) };
+                    unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
                     return;
                 }
                 // SAFETY: native handle on a TLS socket is `*SSL`.
@@ -754,7 +755,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SAFETY: ssl_ptr is a live `*SSL` from the open socket.
                     if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
                         // SAFETY: no `&mut Self` is live across this call.
-                        unsafe { Self::fail(this, ErrorCode::TlsHandshakeFailed) };
+                        unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
                     }
                 }
             }
@@ -762,7 +763,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
             // SAFETY: no `&mut Self` is live across this call.
-            unsafe { Self::fail(this, ErrorCode::TlsHandshakeFailed) };
+            unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
         }
     }
 
@@ -824,13 +825,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// free `this` (argument-protector UB on `&mut self`).
     pub unsafe fn handle_data(this: *mut Self, socket: Socket<SSL>, data: &[u8]) {
         log!("onData");
+        // SAFETY: caller (uWS dispatch) — `this` is a live `heap::alloc`
+        // pointer recovered from userdata; no Rust borrow is live.
+        let this = unsafe { ThisPtr::new(this) };
 
         // For tunnel mode after successful upgrade, forward all data to the tunnel
         // The tunnel will decrypt and pass to the WebSocket client
-        // SAFETY: short-lived read.
-        if unsafe { (*this).state } == State::Done {
+        if this.state == State::Done {
             // SAFETY: short-lived `&mut` for the proxy borrow; ends before return.
-            if let Some(p) = unsafe { &mut (*this).proxy } {
+            if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
                     let tp = tunnel.as_ptr();
                     // Ref the tunnel to keep it alive during this call
@@ -844,44 +847,38 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        // SAFETY: short-lived read.
-        if unsafe { (*this).outgoing_websocket.is_none() } {
+        if this.outgoing_websocket.is_none() {
             // SAFETY: short-lived `&mut` writes; each ends before `socket.close`.
-            unsafe { (*this).state = State::Failed };
-            unsafe { (*this).clear_data() };
+            unsafe { (*this.as_ptr()).state = State::Failed };
+            unsafe { (*this.as_ptr()).clear_data() };
             // No `&mut Self` is live across this call (handle_close reenters).
             socket.close(uws::CloseCode::Failure);
             return;
         }
-        // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
-        unsafe { (*this).ref_() };
-        // TODO(port): defer self.deref() — placed at all return points below.
+        // Bumps the intrusive refcount and derefs on Drop at every return path
+        // below (Zig: `self.ref(); defer self.deref();`). No `&`/`&mut Self` is
+        // live when the guard drops.
+        let _guard = this.ref_guard();
 
-        // SAFETY: short-lived `&self` for the comparison.
-        debug_assert!(unsafe { (*this).is_same_socket(socket) });
+        debug_assert!(this.is_same_socket(socket));
 
         #[cfg(debug_assertions)]
         debug_assert!(!socket.is_shutdown());
 
         // Handle proxy handshake response
-        // SAFETY: short-lived read.
-        if unsafe { (*this).state } == State::ProxyHandshake {
+        if this.state == State::ProxyHandshake {
             // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
-            unsafe { Self::handle_proxy_response(this, socket, data) };
-            // SAFETY: balances the r#ref() above; may free `this`.
-            unsafe { Self::deref(this) };
+            unsafe { Self::handle_proxy_response(this.as_ptr(), socket, data) };
             return;
         }
 
         // Route through proxy tunnel if TLS handshake is in progress or complete
         {
             // SAFETY: short-lived `&mut` for the proxy borrow.
-            if let Some(p) = unsafe { &mut (*this).proxy } {
+            if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
                     // SAFETY: `p` holds a live ref on `tunnel`.
                     unsafe { WebSocketProxyTunnel::receive(tunnel.as_ptr(), data) };
-                    // SAFETY: balances the r#ref() above; may free `this`.
-                    unsafe { Self::deref(this) };
                     return;
                 }
             }
@@ -889,7 +886,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
         // this region until `terminate`/`process_response` below.
-        let me = unsafe { &mut *this };
+        let me = unsafe { &mut *this.as_ptr() };
         let mut body = data;
         if !me.body.is_empty() {
             me.body.extend_from_slice(data);
@@ -902,9 +899,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // fail early if we receive a non-101 status code
             if !body.starts_with(HTTP_101) {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };
-                // SAFETY: balances the r#ref() above; may free `this`.
-                unsafe { Self::deref(this) };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::Expected101StatusCode) };
                 return;
             }
         }
@@ -913,17 +908,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             Ok(r) => r,
             Err(picohttp::ParseResponseError::Malformed_HTTP_Response) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                // SAFETY: balances the r#ref() above; may free `this`.
-                unsafe { Self::deref(this) };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 return;
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
                     me.body.extend_from_slice(data);
                 }
-                // SAFETY: balances the r#ref() above; may free `this`.
-                unsafe { Self::deref(this) };
                 return;
             }
         };
@@ -934,9 +925,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // PERF(port): was zero-copy slice into self.body — profile in Phase B.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
         // no `&mut Self` spans this call.
-        unsafe { Self::process_response(this, response, &remain_buf) };
-        // SAFETY: balances the r#ref() above; may free `this`.
-        unsafe { Self::deref(this) };
+        unsafe { Self::process_response(this.as_ptr(), response, &remain_buf) };
+        // `_guard` drops here, balancing the ref above. May free `this`.
     }
 
     /// # Safety
@@ -1067,8 +1057,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Get certificate verification setting
         let reject_unauthorized = match me.outgoing_websocket {
-            // SAFETY: live C++ back-reference.
-            Some(ws) => unsafe { (*ws).reject_unauthorized() },
+            Some(ws) => CppWebSocket::opaque_ref(ws).reject_unauthorized(),
             None => true,
         };
 
@@ -1333,8 +1322,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             // SAFETY: short-lived read of `outgoing_websocket`.
                             if let Some(ws) = unsafe { (*this).outgoing_websocket } {
                                 let mut protocol_str = BunString::clone_latin1(protocol);
-                                // SAFETY: live C++ back-reference.
-                                unsafe { (*ws).set_protocol(&mut protocol_str) };
+                                CppWebSocket::opaque_ref(ws).set_protocol(&mut protocol_str);
                                 // `BunString` is `Copy`; explicitly drop the
                                 // ref taken by `clone_latin1` (Zig: `defer
                                 // protocol_str.deref()`).
@@ -1652,78 +1640,67 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate` and the trailing `deref` may free `this`; see `fail`.
     pub unsafe fn handle_writable(this: *mut Self, socket: Socket<SSL>) {
-        // SAFETY: short-lived `&self` for the comparison.
-        debug_assert!(unsafe { (*this).is_same_socket(socket) });
+        // SAFETY: caller (uWS dispatch) — `this` is a live `heap::alloc`
+        // pointer recovered from userdata; no Rust borrow is live.
+        let this = unsafe { ThisPtr::new(this) };
+        debug_assert!(this.is_same_socket(socket));
 
         // Forward to proxy tunnel if active
         // SAFETY: short-lived `&mut` for the proxy borrow.
-        if let Some(p) = unsafe { &mut (*this).proxy } {
+        if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
             if let Some(tunnel) = p.get_tunnel() {
                 // SAFETY: `p` holds a live ref on `tunnel`.
                 unsafe { WebSocketProxyTunnel::on_writable(tunnel.as_ptr()) };
                 // In .done state (after WebSocket upgrade), just handle tunnel writes
-                // SAFETY: short-lived read.
-                if unsafe { (*this).state } == State::Done {
+                if this.state == State::Done {
                     return;
                 }
 
                 // Flush any unwritten upgrade request bytes through the tunnel
-                // SAFETY: short-lived read.
-                if unsafe { (*this).to_send_len } == 0 {
+                if this.to_send_len == 0 {
                     return;
                 }
-                // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
-                unsafe { (*this).ref_() };
-                // TODO(port): defer self.deref() — placed at return points below.
-                // SAFETY: short-lived `&self` for `to_send()`.
+                // Bumps the intrusive refcount and derefs on Drop at every
+                // return path below (Zig: `self.ref(); defer self.deref();`).
+                let _guard = this.ref_guard();
                 // SAFETY: `p` holds a live ref on `tunnel`.
-                let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), (*this).to_send()) } {
+                let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), this.to_send()) } {
                     Ok(n) => n,
                     Err(_) => {
                         // SAFETY: no `&mut Self` is live across this call.
-                        unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
-                        // SAFETY: balances r#ref() above; may free `this`.
-                        unsafe { Self::deref(this) };
+                        unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
                         return;
                     }
                 };
                 // SAFETY: short-lived `&mut` write.
                 unsafe {
-                    let to_send_len = &mut (*this).to_send_len;
+                    let to_send_len = &mut (*this.as_ptr()).to_send_len;
                     *to_send_len -= wrote.min(*to_send_len);
                 }
-                // SAFETY: balances r#ref() above; may free `this`.
-                unsafe { Self::deref(this) };
                 return;
             }
         }
 
-        // SAFETY: short-lived read.
-        if unsafe { (*this).to_send_len } == 0 {
+        if this.to_send_len == 0 {
             return;
         }
 
-        // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
-        unsafe { (*this).ref_() };
-        // TODO(port): defer self.deref() — placed at return points below.
+        // Bumps the intrusive refcount and derefs on Drop at every return path
+        // below (Zig: `self.ref(); defer self.deref();`).
+        let _guard = this.ref_guard();
 
-        // SAFETY: short-lived `&self` for `to_send()`.
-        let wrote = socket.write(unsafe { (*this).to_send() });
+        let wrote = socket.write(this.to_send());
         if wrote < 0 {
             // SAFETY: no `&mut Self` is live across this call.
-            unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
-            // SAFETY: balances r#ref() above; may free `this`.
-            unsafe { Self::deref(this) };
+            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
             return;
         }
         let wrote = usize::try_from(wrote).expect("int cast");
         // SAFETY: short-lived `&mut` write.
         unsafe {
-            let to_send_len = &mut (*this).to_send_len;
+            let to_send_len = &mut (*this.as_ptr()).to_send_len;
             *to_send_len -= wrote.min(*to_send_len);
         }
-        // SAFETY: balances r#ref() above; may free `this`.
-        unsafe { Self::deref(this) };
     }
 
     /// # Safety
@@ -1743,23 +1720,25 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `&mut self` argument would carry a Stacked Borrows protector that
     /// makes deallocating its referent UB.
     pub unsafe fn handle_connect_error(this: *mut Self, _: Socket<SSL>, _: c_int) {
+        // SAFETY: caller (uWS dispatch) — `this` is a live `heap::alloc`
+        // pointer recovered from userdata; no Rust borrow is live.
+        let this = unsafe { ThisPtr::new(this) };
         // SAFETY: short-lived `&mut` for detach; ends before any reentrant call.
-        unsafe { (*this).tcp.detach() };
+        unsafe { (*this.as_ptr()).tcp.detach() };
 
         // For the TCP socket.
         // TODO(port): defer self.deref() — moved to end of fn.
 
-        // SAFETY: short-lived read.
-        if unsafe { (*this).state } == State::Reading {
+        if this.state == State::Reading {
             // SAFETY: no `&mut Self` is live across this call.
-            unsafe { Self::terminate(this, ErrorCode::FailedToConnect) };
+            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToConnect) };
         } else {
             // SAFETY: short-lived write.
-            unsafe { (*this).state = State::Failed };
+            unsafe { (*this.as_ptr()).state = State::Failed };
         }
 
         // SAFETY: may free `this`; no `&mut Self` is live.
-        unsafe { Self::deref(this) };
+        unsafe { Self::deref(this.as_ptr()) };
     }
 }
 
@@ -1855,8 +1834,8 @@ impl<'a> Headers8Bit<'a> {
             return Self { slices: Vec::new(), _marker: core::marker::PhantomData };
         }
         // SAFETY: per fn contract.
-        let names_in = unsafe { core::slice::from_raw_parts(names_ptr, len) };
-        let values_in = unsafe { core::slice::from_raw_parts(values_ptr, len) };
+        let names_in = unsafe { bun_core::ffi::slice(names_ptr, len) };
+        let values_in = unsafe { bun_core::ffi::slice(values_ptr, len) };
 
         let mut slices: Vec<Utf8Slice> = Vec::with_capacity(len * 2);
         for i in 0..len {

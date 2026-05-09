@@ -2152,8 +2152,7 @@ fn report(url: &[u8]) {
         // TODO(b2-blocked): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
         // TODO(b2-blocked): bun_str::w! / strings::convert_utf8_to_utf16_in_buffer
         use bun_sys::windows;
-        // SAFETY: all-zero is a valid PROCESS_INFORMATION (#[repr(C)] POD, no NonNull/NonZero fields)
-        let mut process: windows::PROCESS_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut process: windows::PROCESS_INFORMATION = bun_core::ffi::zeroed();
         let mut startup_info = windows::STARTUPINFOW {
             cb: core::mem::size_of::<windows::STARTUPINFOW>() as u32,
             lpReserved: core::ptr::null_mut(),

@@ -392,7 +392,7 @@ impl ThreadPool {
                 MapEntry::Vacant(v) => {
                     // SAFETY: every field is fully written below before any read.
                     // Zig wrote a struct literal with `undefined` for the
-                    // late-init fields; mirrored with `MaybeUninit` slots.
+                    // late-init fields; mirrored with `Option` slots.
                     worker = bun_core::heap::into_raw(unsafe { Box::<Worker>::new_uninit().assume_init() });
                     v.insert(worker);
                 }
@@ -405,10 +405,10 @@ impl ThreadPool {
         unsafe {
             worker.write(Worker {
                 ctx: self.v2,
-                heap: MaybeUninit::uninit(),
+                heap: None,
                 arena: ptr::null(),
                 thread: ThreadPoolLib::Thread::current(),
-                data: MaybeUninit::uninit(),
+                data: None,
                 quit: false,
                 ast_memory_store: ManuallyDrop::new(js_ast::ASTMemoryAllocator::default()),
                 has_created: false,
@@ -416,8 +416,8 @@ impl ThreadPool {
                     node: ThreadPoolLib::Node::default(),
                     callback: Worker::deinit_callback,
                 },
-                temporary_arena: MaybeUninit::uninit(),
-                stmt_list: MaybeUninit::uninit(),
+                temporary_arena: None,
+                stmt_list: None,
             });
             (*worker).init(&*self.v2);
             &mut *worker
@@ -433,9 +433,9 @@ impl ThreadPool {
 /// `deinit_task`/`arena` fields are self-referential); never moved after
 /// `get_worker` boxes it.
 pub struct Worker {
-    /// Thread-local arena. `MaybeUninit` because Zig writes `undefined` until
-    /// [`Worker::create`] runs; reading it before `has_created` is UB.
-    pub heap: MaybeUninit<ThreadLocalArena>,
+    /// Thread-local arena. `None` until [`Worker::create`] runs (Zig wrote
+    /// `undefined`); every read site is post-`has_created`.
+    pub heap: Option<ThreadLocalArena>,
 
     /// Thread-local memory arena
     /// All allocations are freed in `deinit` at the very end of bundling.
@@ -446,7 +446,9 @@ pub struct Worker {
 
     pub ctx: *const BundleV2<'static>,
 
-    pub data: MaybeUninit<WorkerData>,
+    /// `None` until [`Worker::create`] populates it; every read site is
+    /// post-`has_created`.
+    pub data: Option<WorkerData>,
     pub quit: bool,
 
     pub ast_memory_store: ManuallyDrop<js_ast::ASTMemoryAllocator>,
@@ -456,8 +458,8 @@ pub struct Worker {
 
     pub deinit_task: ThreadPoolLib::Task,
 
-    pub temporary_arena: MaybeUninit<bun_alloc::Arena>,
-    pub stmt_list: MaybeUninit<StmtList>,
+    pub temporary_arena: Option<bun_alloc::Arena>,
+    pub stmt_list: Option<StmtList>,
 }
 
 impl Worker {
@@ -528,16 +530,15 @@ impl Worker {
         // SAFETY: caller contract.
         let worker = unsafe { &mut *this };
         if worker.has_created {
-            // SAFETY: `has_created` ⇒ `create()` ran ⇒ these fields are init.
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`) and
             // `ast_memory_store` first, then the arenas they reference.
-            unsafe {
-                ptr::drop_in_place(worker.data.assume_init_mut());
-                ManuallyDrop::drop(&mut worker.ast_memory_store);
-                worker.temporary_arena.assume_init_drop();
-                worker.stmt_list.assume_init_drop();
-                worker.heap.assume_init_drop();
-            }
+            worker.data = None;
+            // SAFETY: `ast_memory_store` is always a valid `ManuallyDrop` (written
+            // in `get_worker`, reset in `create()`); dropped exactly once here.
+            unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
+            worker.temporary_arena = None;
+            worker.stmt_list = None;
+            worker.heap = None;
         }
         // SAFETY: caller contract — `this` was heap-allocated. Reclaim the
         // allocation without running field destructors (handled above).
@@ -593,10 +594,12 @@ impl Worker {
 
         self.has_created = true;
         Output::Source::configure_thread();
-        self.heap.write(ThreadLocalArena::new());
-        // Self-referential — `arena` borrows `self.heap`.
-        // SAFETY: heap was just initialized on the line above.
-        self.arena = std::ptr::from_ref::<ThreadLocalArena>(unsafe { self.heap.assume_init_ref() });
+        // Self-referential — `arena` borrows `self.heap`. `Option::insert`
+        // returns the stable address of the in-place payload (Worker is
+        // heap-pinned, so this never moves).
+        self.arena = std::ptr::from_ref::<ThreadLocalArena>(
+            self.heap.insert(ThreadLocalArena::new()),
+        );
 
         let arena = self.arena;
 
@@ -613,20 +616,18 @@ impl Worker {
         self.ctx = std::ptr::from_ref::<BundleV2<'_>>(ctx).cast();
         // PERF(port): was `bun.ArenaAllocator.init(this.arena)` — using a
         // fresh Bump (no nested-arena type yet).
-        self.temporary_arena.write(bun_alloc::Arena::new());
-        self.stmt_list.write(StmtList::init());
+        self.temporary_arena = Some(bun_alloc::Arena::new());
+        self.stmt_list = Some(StmtList::init());
         // SAFETY: `arena` points at `self.heap` (initialized above), which is
         // heap-pinned and outlives `WorkerData`; lifetime erased to `'static`
         // to match the slot's erased `Transpiler<'static>`.
         let arena_ref: &'static ThreadLocalArena = unsafe { &*arena };
-        self.data.write(WorkerData {
+        let data = self.data.insert(WorkerData {
             log,
             estimated_input_lines_of_code: 0,
             transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
             other_transpiler: None,
         });
-        // SAFETY: self.data was just written above.
-        let data = unsafe { self.data.assume_init_mut() };
         // Wire self-referential `linker`/`macro_context` now that `transpiler`
         // is at its final address inside `WorkerData`.
         data.transpiler.wire_after_move();
@@ -652,8 +653,8 @@ impl Worker {
     }
 
     pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
-        // SAFETY: callers only invoke this after `Worker::get` → `create()`.
-        let data = unsafe { self.data.assume_init_mut() };
+        // Callers only invoke this after `Worker::get` → `create()`.
+        let data = self.data.as_mut().expect("Worker.data set in create()");
         if target == Target::Browser && data.transpiler.options.target != target {
             if data.other_transpiler.is_none() {
                 // SAFETY: `ctx` is a valid backref; `client_transpiler` must be

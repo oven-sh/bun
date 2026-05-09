@@ -1,4 +1,4 @@
-use core::mem::{offset_of, MaybeUninit};
+use core::mem::offset_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::io::Write as _;
@@ -389,9 +389,10 @@ impl<'a> AsyncHTTP<'a> {
 struct Preconnect {
     // TODO(port): self-referential — `async_http.response_buffer` borrows
     // `self.response_buffer`. Zig relied on stable heap addresses from
-    // `bun.TrivialNew`. Kept as `MaybeUninit` so we can write the field after
-    // the heap address is fixed.
-    async_http: MaybeUninit<AsyncHTTP<'static>>,
+    // `bun.TrivialNew`. `Option` so we can write the field after the heap
+    // address is fixed (late-init); `None` is never observed after `preconnect()`
+    // populates it.
+    async_http: Option<AsyncHTTP<'static>>,
     response_buffer: MutableString,
     url: URL<'static>,
     is_url_owned: bool,
@@ -403,8 +404,11 @@ impl Preconnect {
         // uniquely owned here; `async_http` was fully written before scheduling.
         unsafe {
             (*this).response_buffer = MutableString::default();
-            let async_http = (*this).async_http.assume_init_mut();
-            async_http.clear_data();
+            (*this)
+                .async_http
+                .as_mut()
+                .expect("Preconnect.async_http set in preconnect()")
+                .clear_data();
             // PORT NOTE: Zig `async_http.client.deinit()` — handled by Drop when
             // the Box is reclaimed below.
             if (*this).is_url_owned {
@@ -414,7 +418,6 @@ impl Preconnect {
             }
             // Reclaim and drop the heap allocation (runs Drop on `async_http`
             // — which in turn drops `HTTPClient` — and on `response_buffer`).
-            core::ptr::drop_in_place((*this).async_http.as_mut_ptr());
             drop(bun_core::heap::take(this));
         }
     }
@@ -431,7 +434,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     }
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
-        async_http: MaybeUninit::uninit(),
+        async_http: None,
         response_buffer: MutableString::default(),
         url,
         is_url_owned,
@@ -443,7 +446,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     unsafe {
         let response_buffer: *mut MutableString = core::ptr::addr_of_mut!((*this).response_buffer);
         let url = (*this).url.clone();
-        (*this).async_http.write(AsyncHTTP::init(
+        let async_http = (*this).async_http.insert(AsyncHTTP::init(
             Method::GET,
             url,
             headers::EntryList::default(),
@@ -454,7 +457,6 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
             FetchRedirect::Manual,
             Options::default(),
         ));
-        let async_http = (*this).async_http.assume_init_mut();
         async_http.client.flags.is_preconnect_only = true;
 
         crate::http_thread().schedule(Batch::from(core::ptr::addr_of_mut!(async_http.task)));

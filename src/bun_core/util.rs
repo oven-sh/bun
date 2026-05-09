@@ -399,6 +399,47 @@ impl ZStr {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
         unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
     }
+    /// View as `&CStr`. Safe-surface bridge for FFI sites that need a
+    /// `*const c_char` via `CStr` — funnels the ~dozen open-coded
+    /// `CStr::from_bytes_with_nul_unchecked` call sites through one audited
+    /// `unsafe`. Debug-asserts no interior NUL (CStr's extra invariant over
+    /// ZStr); release relies on the construction-site contract (path/host
+    /// bytes never embed NUL — same assumption Zig `[:0]const u8` → C makes).
+    #[inline]
+    pub fn as_cstr(&self) -> &core::ffi::CStr {
+        debug_assert!(
+            !self.0.contains(&0),
+            "ZStr::as_cstr: interior NUL would truncate the C view",
+        );
+        // SAFETY: `as_bytes_with_nul()` is `[.., 0]` by the ZStr invariant;
+        // no interior NUL is debug-asserted above (caller contract in release).
+        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(self.as_bytes_with_nul()) }
+    }
+    /// Borrow a `&CStr` as `&ZStr` — both are NUL-terminated, len excludes NUL.
+    #[inline]
+    pub fn from_cstr(s: &core::ffi::CStr) -> &ZStr {
+        // SAFETY: `CStr` guarantees `bytes[count] == 0` and the whole range is
+        // readable for the borrow lifetime — exactly the ZStr invariant.
+        unsafe { Self::from_raw(s.as_ptr().cast::<u8>(), s.count_bytes()) }
+    }
+    /// Borrow a NUL-terminated FFI C string as `&ZStr`, or `EMPTY` if `p` is
+    /// null. Single audited funnel for the `strlen`-then-`from_raw` shape that
+    /// previously appeared as ad-hoc local helpers in libarchive / uSockets /
+    /// HTTPCertError. Returns `&'a ZStr` so the *caller* picks the lifetime.
+    ///
+    /// # Safety
+    /// If `p` is non-null it must point to a valid NUL-terminated byte sequence
+    /// readable for `'a`. Null is explicitly allowed (→ `ZStr::EMPTY`).
+    #[inline]
+    pub unsafe fn from_c_ptr<'a>(p: *const core::ffi::c_char) -> &'a ZStr {
+        if p.is_null() {
+            return Self::EMPTY;
+        }
+        // SAFETY: caller contract — `p` is non-null, NUL-terminated, valid for `'a`.
+        let len = unsafe { libc::strlen(p) };
+        // SAFETY: `p[len] == 0` (strlen postcondition) and `p[..len]` readable.
+        unsafe { Self::from_raw(p.cast::<u8>(), len) }
+    }
     // NOTE: prefer `ZBox` for owned NUL-terminated strings. `Box<ZStr>` is
     // supported only as a transitional shim for ported fields that were typed
     // `Box<ZStr>` before `ZBox` existed (e.g. `PackageManager.cache_directory_path`).
@@ -879,6 +920,31 @@ impl Fd {
             DecodeWindows::Uv(file_number) => unsafe { fd::uv_get_osfhandle(file_number) },
         }
     }
+    /// Borrow this `Fd` as a [`std::os::fd::BorrowedFd`] for handing to APIs
+    /// (e.g. `rustix`) that speak the std I/O-safety types.
+    ///
+    /// The returned borrow is tied to `&self`'s lifetime. `Fd` is a plain
+    /// `Copy` integer wrapper, so this does *not* by itself prevent the
+    /// underlying descriptor from being closed elsewhere — it encodes the
+    /// same "caller keeps the fd open for the duration of the call" contract
+    /// every `bun_sys` syscall wrapper already relies on when accepting `Fd`
+    /// by value.
+    #[cfg(unix)]
+    #[inline]
+    pub fn as_borrowed_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        let raw = self.native();
+        // `BorrowedFd`'s niche is `-1`; constructing one with that value is
+        // immediate UB regardless of later use. `Fd::INVALID` (i32::MIN) and
+        // `Fd::cwd()` (AT_FDCWD, -100) are both ≠ -1, so the only way to hit
+        // this is a caller explicitly wrapping a raw `-1`.
+        assert!(raw != -1, "Fd::as_borrowed_fd on raw fd -1");
+        // SAFETY: `raw != -1` (asserted above, satisfying `BorrowedFd`'s
+        // niche). The "remains open for the borrow's lifetime" invariant is
+        // the `Fd` type's contract — every API taking `Fd` requires the
+        // caller to keep the descriptor open for the call, and the returned
+        // borrow cannot outlive `&self`.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
+    }
     /// libuv c_int file number. On POSIX this equals `native()`. On Windows,
     /// when kind=uv this extracts the stored uv_file; when kind=system this
     /// maps stdio handles to 0/1/2 (checking both the cached statics and the
@@ -1271,8 +1337,7 @@ pub mod fd {
     pub use crate::windows_sys::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
     #[cfg(windows)]
     pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
-        // SAFETY: GetStdHandle is always safe to call.
-        let h = unsafe { GetStdHandle(id) };
+        let h = GetStdHandle(id);
         // Zig: `getStdHandle catch return false; handle == h`. INVALID_HANDLE_VALUE
         // (failure) won't equal a valid handle, so the equality check suffices.
         !h.is_null() && handle == h
@@ -1655,8 +1720,8 @@ fn thread_id() -> u64 {
     // On the BSDs `pthread_t` is a raw pointer, which must route through usize.
     unsafe { libc::pthread_self() as usize as u64 }
     #[cfg(windows)]
-    unsafe {
-        unsafe extern "system" { fn GetCurrentThreadId() -> u32; }
+    {
+        unsafe extern "system" { safe fn GetCurrentThreadId() -> u32; }
         GetCurrentThreadId() as u64
     }
 }
@@ -1666,8 +1731,10 @@ fn thread_id() -> u64 {
 #[derive(Clone, Copy)]
 pub struct StackCheck { cached_stack_end: usize }
 unsafe extern "C" {
-    fn Bun__StackCheck__initialize();
-    fn Bun__StackCheck__getMaxStack() -> *mut core::ffi::c_void;
+    /// No preconditions; initializes thread-local stack bookkeeping.
+    safe fn Bun__StackCheck__initialize();
+    /// No preconditions; returns the cached stack-bound pointer for this thread.
+    safe fn Bun__StackCheck__getMaxStack() -> *mut core::ffi::c_void;
 }
 impl Default for StackCheck {
     /// Zig `.{}` — `cached_stack_end` defaults to `0`, so
@@ -1675,9 +1742,9 @@ impl Default for StackCheck {
     #[inline] fn default() -> Self { Self { cached_stack_end: 0 } }
 }
 impl StackCheck {
-    #[inline] pub fn configure_thread() { unsafe { Bun__StackCheck__initialize() } }
-    #[inline] pub fn init() -> Self { Self { cached_stack_end: unsafe { Bun__StackCheck__getMaxStack() } as usize } }
-    #[inline] pub fn update(&mut self) { self.cached_stack_end = unsafe { Bun__StackCheck__getMaxStack() } as usize; }
+    #[inline] pub fn configure_thread() { Bun__StackCheck__initialize() }
+    #[inline] pub fn init() -> Self { Self { cached_stack_end: Bun__StackCheck__getMaxStack() as usize } }
+    #[inline] pub fn update(&mut self) { self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize; }
     /// Is there enough stack space to safely recurse?
     /// Zig: `> 256K` on Windows, `> 128K` elsewhere (bun.zig:3762).
     #[inline]
@@ -2837,14 +2904,12 @@ impl OptionsEnvArg for &'static ZStr {
         v.extend_from_slice(s);
         v.push(0);
         let z: &'static [u8] = v.leak();
-        // SAFETY: `z[len-1] == 0` (just pushed) and `z` is process-static.
-        unsafe { ZStr::from_raw(z.as_ptr(), z.len() - 1) }
+        ZStr::from_slice_with_nul(z)
     }
     fn from_buf(mut buf: Vec<u8>) -> Self {
         buf.push(0);
         let z: &'static [u8] = buf.leak();
-        // SAFETY: `z[len-1] == 0` (just pushed) and `z` is process-static.
-        unsafe { ZStr::from_raw(z.as_ptr(), z.len() - 1) }
+        ZStr::from_slice_with_nul(z)
     }
 }
 
@@ -3068,7 +3133,7 @@ pub fn which<'a>(
     };
     // Absolute `bin` → probe it directly without joining `cwd` (which.zig:35-42).
     if is_absolute(bin) {
-        return check(buf, b"", bin).map(|n| unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+        return check(buf, b"", bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     if has_sep {
         // Relative with separator → resolve against cwd only. Zig trims
@@ -3079,15 +3144,14 @@ pub fn which<'a>(
             c
         };
         let bin = bin.strip_prefix(b"./").unwrap_or(bin);
-        // SAFETY: n < buf.len, buf[n]==0.
-        return check(buf, cwd, bin).map(|n| unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+        return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     // Bare names go straight to PATH (which.zig:44-63) — do NOT consult cwd.
     let delim: u8 = if cfg!(windows) { b';' } else { b':' };
     for dir in path.split(|&b| b == delim) {
         if dir.is_empty() { continue; }
         if let Some(n) = check(buf, dir, bin) {
-            return Some(unsafe { ZStr::from_raw(buf.0.as_ptr(), n) });
+            return Some(ZStr::from_buf(&buf.0, n));
         }
     }
     None
@@ -3226,7 +3290,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     #[cfg(unix)]
     unsafe {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        { unsafe extern "C" { fn on_before_reload_process_linux(); } on_before_reload_process_linux(); }
+        { unsafe extern "C" { safe fn on_before_reload_process_linux(); } on_before_reload_process_linux(); }
 
         // We clone argv so that the memory address isn't the same as the libc one
         // (mirrors Zig `allocator.dupeZ` per entry).
@@ -3806,8 +3870,7 @@ pub mod perf {
             static INIT_ONCE: Once = Once::new();
             static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
             INIT_ONCE.call_once(|| {
-                // SAFETY: FFI; Bun__linux_trace_init has no preconditions.
-                let r = unsafe { sys::Bun__linux_trace_init() };
+                let r = sys::Bun__linux_trace_init();
                 IS_INITIALIZED.store(r != 0, Ordering::Relaxed);
             });
             IS_INITIALIZED.load(Ordering::Relaxed)
@@ -3846,9 +3909,11 @@ pub mod perf {
     #[cfg(target_os = "linux")]
     pub mod sys {
         unsafe extern "C" {
-            pub fn Bun__linux_trace_init() -> core::ffi::c_int;
+            /// No preconditions; returns 0/1 based on tracefs availability.
+            pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
+            /// No preconditions.
             #[allow(dead_code)]
-            pub fn Bun__linux_trace_close();
+            pub safe fn Bun__linux_trace_close();
             pub fn Bun__linux_trace_emit(
                 event_name: *const core::ffi::c_char,
                 duration_ns: i64,

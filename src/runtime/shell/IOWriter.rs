@@ -1052,6 +1052,14 @@ impl bun_io::pipe_writer::WindowsWriterParent for IOWriter {
 impl bun_io::pipe_writer::WindowsBufferedWriterParent for IOWriter {
     unsafe fn on_write(this: *mut Self, amount: usize, status: bun_io::WriteStatus) {
         // SAFETY: BACKREF set via set_parent; re-enter via `&self` (UnsafeCell model).
+        // Hold a keepalive across re-entry: `on_write_pollable` → `run_yield` →
+        // `bump` may fire `on_io_writer_chunk`, which can drop the last external
+        // `Arc<IOWriter>`. Spec defers free via `asyncDeinit`; the Rust port uses
+        // a stack-held strong ref instead (see POSIX `on_poll` above for the
+        // analogous guard). Without this, the Arc inner — including the inline
+        // `uv_write_t` — would free mid-callback while PipeWriter is still on
+        // the stack.
+        let _keepalive = unsafe { &*this }.keepalive();
         unsafe { (*this).on_write_pollable(amount, status) };
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {

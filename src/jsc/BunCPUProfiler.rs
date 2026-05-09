@@ -42,7 +42,9 @@ impl Default for CPUProfilerConfig {
 // C++ function declarations
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn Bun__startCPUProfiler(vm: *mut VM);
+    /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is
+    /// ABI-identical to a non-null `VM*`.
+    safe fn Bun__startCPUProfiler(vm: &mut VM);
     fn Bun__stopCPUProfiler(vm: *mut VM, out_json: *mut BunString, out_text: *mut BunString);
     /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
     safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
@@ -53,9 +55,7 @@ pub fn set_sampling_interval(interval: u32) {
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {
-    // SAFETY: vm is a valid exclusive reference to the opaque JSC VM for the
-    // duration of the call; C++ mutates profiler state behind it.
-    unsafe { Bun__startCPUProfiler(vm) };
+    Bun__startCPUProfiler(vm);
 }
 
 pub fn stop_and_write_profile(

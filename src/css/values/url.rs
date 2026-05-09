@@ -17,11 +17,7 @@ impl Url {
     pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
         let start_pos = input.position();
         let loc = input.current_source_location();
-        let url = input.expect_url()?;
-        // SAFETY: `url` borrows the parser source/arena which outlives the
-        // `add_import_record` call. Detach the borrow so `input` is reusable
-        // (Token payloads are arena-static).
-        let url: &'static [u8] = unsafe { css::src_str(url) };
+        let url = input.expect_url_cloned()?;
         let import_record_idx =
             input.add_import_record(url, start_pos, bun_options_types::ImportKind::Url)?;
         Ok(Url {

@@ -10,6 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use bun_io::{AllocatorType, KeepAlive};
 use bun_io::posix_event_loop::get_vm_ctx;
+use bun_ptr::BackRef;
 use bun_alloc::Arena;
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::{self, Loader, ModuleType};
@@ -310,7 +311,7 @@ impl RuntimeTranspilerStore {
             job.write(TranspilerJob {
                 non_threadsafe_input_specifier: input_specifier,
                 path: owned_path,
-                global_this: std::ptr::from_ref(global_object).cast_mut(),
+                global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: referrer,
                 vm,
                 log: logger::Log::init(),
@@ -365,9 +366,9 @@ pub struct TranspilerJob {
     pub promise: StrongOptional,
     // PORT NOTE: struct is stored in a HiveArray and crosses to a worker thread;
     // Zig used `*VirtualMachine` / `*JSGlobalObject` (BACKREF — VM owns the
-    // store and outlives every job). Stored as raw mutable pointers.
+    // store and outlives every job).
     pub vm: *mut VirtualMachine,
-    pub global_this: *mut JSGlobalObject,
+    pub global_this: BackRef<JSGlobalObject>,
     pub fetcher: Fetcher,
     pub poll_ref: KeepAlive,
     pub generation_number: u32,
@@ -481,8 +482,10 @@ impl TranspilerJob {
     pub fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
-        // SAFETY: vm/global_this outlive the job (BACKREF).
-        let global_this = unsafe { &*self.global_this };
+        // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
+        // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
+        // `fulfill` call site instead.
+        let global_this = self.global_this;
         // PORT NOTE: Zig `poll_ref.unref(vm)` — the Rust KeepAlive takes an `EventLoopCtx`
         // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
@@ -514,7 +517,7 @@ impl TranspilerJob {
         unsafe { (*vm).transpiler_store.store.put(std::ptr::from_mut::<TranspilerJob>(self)) };
 
         AsyncModule::fulfill(
-            global_this,
+            &global_this,
             promise,
             &mut resolved_source,
             parse_error,

@@ -144,7 +144,8 @@ impl MySQLRequestQueue {
                     }
                     debug!("isCompleted");
                     unsafe { (*this).requests.discard(1) };
-                    req.deref();
+                    // SAFETY: queue held one ref; pointer is live until this deref.
+                    unsafe { JSMySQLQuery::deref(request) };
                     continue;
                 }
 
@@ -182,7 +183,8 @@ impl MySQLRequestQueue {
                     unsafe { (*connection).on_error(Some(req), err) };
                     if offset == 0 {
                         unsafe { (*this).requests.discard(1) };
-                        req.deref();
+                        // SAFETY: queue held one ref; pointer is live until this deref.
+                        unsafe { JSMySQLQuery::deref(request) };
                     }
                     offset += 1;
                     continue;
@@ -238,7 +240,8 @@ impl MySQLRequestQueue {
             if req.is_completed() {
                 debug!("isCompleted discard after advance");
                 unsafe { (*this).requests.discard(1) };
-                req.deref();
+                // SAFETY: queue held one ref; pointer is live until this deref.
+                unsafe { JSMySQLQuery::deref(request) };
                 continue;
             }
             break;
@@ -311,7 +314,8 @@ impl MySQLRequestQueue {
                     req.reject(queries_array, AnyMySQLError::ConnectionClosed);
                 }
             }
-            req.deref();
+            // SAFETY: queue held one ref; pointer is live until this deref.
+            unsafe { JSMySQLQuery::deref(request) };
         }
     }
 }
@@ -326,7 +330,8 @@ impl Drop for MySQLRequestQueue {
             let req = unsafe { &mut *request };
             // We cannot touch JS here
             req.mark_as_failed();
-            req.deref();
+            // SAFETY: queue held one ref; pointer is live until this deref.
+            unsafe { JSMySQLQuery::deref(request) };
         }
         self.pipelined_requests = 0;
         self.nonpipelinable_requests = 0;

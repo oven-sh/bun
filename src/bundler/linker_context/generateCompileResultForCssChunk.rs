@@ -81,8 +81,10 @@ fn generate_compile_result_for_css_chunk_impl(
     let arena = unsafe { bun_ptr::detach_lifetime_ref(worker.arena()) };
     // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)) — profile in Phase B
     let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {
-        // SAFETY: temporary_arena is initialized in Worker::create before any task runs.
-        unsafe { arena.assume_init_mut() }.reset();
+        // temporary_arena is initialized in Worker::create before any task runs.
+        if let Some(a) = arena.as_mut() {
+            a.reset();
+        }
     });
     // TODO(port): worker.arena threading — css crate is an AST crate and may want &'bump Bump
     let mut allocating_writer: Vec<u8> = Vec::new();

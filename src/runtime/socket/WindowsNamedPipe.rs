@@ -148,6 +148,39 @@ impl WindowsNamedPipe {
         self.pipe.map(|p| unsafe { &mut *p.as_ptr() })
     }
 
+    /// Reclaim the leaked `Box<uv::Pipe>` on an early-error path **before**
+    /// [`start`] hands it to `self.writer.source` via `start_with_pipe`.
+    ///
+    /// [`from`] `Box::leak`s the allocation and records only a non-owning
+    /// `NonNull` in `self.pipe`; until adoption the writer's `Drop`
+    /// (`close_without_reporting`) is a no-op (`source == None`), so any
+    /// `connect`/`open`/`get_accepted_by` early return would leak the box and —
+    /// if `uv_pipe_init` had already run — leave the handle in the libuv
+    /// `handle_queue` with no `uv_close` ever scheduled (loop never drains).
+    /// `close_and_destroy` covers both states via its `loop_.is_null()` branch.
+    ///
+    /// PORT NOTE: the Zig spec has the same gap (WindowsNamedPipe.zig
+    /// L334-401); this is a deliberate divergence to plug a pre-existing leak,
+    /// not a transcription mismatch.
+    ///
+    /// MUST NOT be called once `start_with_pipe` has adopted the allocation
+    /// (would double-free against `writer.source`'s `Box`).
+    #[cfg(windows)]
+    fn discard_unadopted_pipe(&mut self) {
+        debug_assert!(
+            self.writer.source.is_none(),
+            "pipe already adopted by writer.source; discard would double-free"
+        );
+        if let Some(pipe) = self.pipe.take() {
+            // SAFETY: `pipe` is the `NonNull` recorded from `Box::leak` in
+            // `from()` and not yet re-materialised (asserted above);
+            // `close_and_destroy` reclaims via `Box::from_raw` either
+            // immediately (never-init'd, `loop_ == null`) or in the `uv_close`
+            // callback (init'd). Ownership transfers here exactly once.
+            unsafe { uv::Pipe::close_and_destroy(pipe.as_ptr()) };
+        }
+    }
+
     fn on_writable(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
         // flush pending data
@@ -290,24 +323,27 @@ impl WindowsNamedPipe {
 
         self.ssl_error = CertError {
             error_no: ssl_error.error_no,
-            code: if ssl_error.code.is_null() || ssl_error.error_no == 0 {
-                None
-            } else {
-                // SAFETY: code is a NUL-terminated C string from BoringSSL when non-null
-                Some(unsafe { bun_core::ffi::cstr(ssl_error.code) }.into())
-            },
-            reason: if ssl_error.reason.is_null() || ssl_error.error_no == 0 {
-                None
-            } else {
-                // SAFETY: reason is a NUL-terminated C string from BoringSSL when non-null
-                Some(unsafe { bun_core::ffi::cstr(ssl_error.reason) }.into())
-            },
+            code: ssl_error.code().filter(|_| ssl_error.error_no != 0).map(Into::into),
+            reason: ssl_error.reason().filter(|_| ssl_error.error_no != 0).map(Into::into),
         };
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
     }
 
     fn on_close(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
+        #[cfg(windows)]
+        {
+            // PORT NOTE: `self.pipe` is a non-owning `NonNull` alias of the
+            // `Box<uv::Pipe>` owned by `writer.source`. By the time the writer
+            // invokes this `on_close` hook it has already `take()`n that Box and
+            // scheduled `uv_close` → `Box::from_raw` on it (PipeWriter::close),
+            // so the alias is about to dangle. Clear it here so later
+            // `pipe_mut()` callers (e.g. `pause_stream` exported to JS) observe
+            // `None` instead of a freed pointer. The Zig spec's `onPipeClose`
+            // (which would null `this.pipe`) is dead code there too — the
+            // writer's `.onClose` slot is wired to `onClose`, not `onPipeClose`.
+            self.pipe = None;
+        }
         if !self.flags.is_closed() {
             self.flags.set_is_closed(true); // only call onClose once
             (self.handlers.on_close)(self.handlers.ctx);
@@ -452,8 +488,7 @@ impl WindowsNamedPipe {
             writer: StreamingWriter::default(),
             incoming: Vec::new(),
             ssl_error: CertError::default(),
-            // SAFETY: all-zero is a valid uv_connect_t (#[repr(C)] POD, libuv expects zeroed)
-            connect_req: unsafe { core::mem::zeroed::<uv::uv_connect_t>() },
+            connect_req: bun_core::ffi::zeroed::<uv::uv_connect_t>(),
             // Zig: `.{ .next = .epoch, .tag = .WindowsNamedPipe }` with field
             // defaults `state = .PENDING`, `heap = .{}`, `in_heap = .none` —
             // exactly what `init_paused` produces.
@@ -494,6 +529,15 @@ impl WindowsNamedPipe {
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
+            // PORT NOTE: divergence from Zig spec — on async connect failure the
+            // leaked `Box<uv::Pipe>` was never adopted by `writer.source`
+            // (`start_with_pipe` only runs on the success branch below), so
+            // `on_error → close → writer.end()` is a no-op for it. Reclaim it
+            // here via `discard_unadopted_pipe` (which schedules `uv_close` and
+            // `Box::from_raw`s in the callback), mirroring the synchronous
+            // early-error paths in `connect`/`open`/`get_accepted_by`. The Zig
+            // original leaks the init'd `uv_pipe_t` in this path.
+            self.discard_unadopted_pipe();
             self.on_error(err);
             self.deref();
             return;
@@ -543,6 +587,7 @@ impl WindowsNamedPipe {
             ) {
                 Ok(w) => Some(w),
                 Err(_) => {
+                    self.discard_unadopted_pipe();
                     return bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::EPIPE as _,
                         syscall: bun_sys::Tag::connect,
@@ -559,14 +604,23 @@ impl WindowsNamedPipe {
         #[cfg(windows)]
         {
             let uv_loop = self.vm.uv_loop();
-            self.pipe_mut()
+            if let Err(e) = self
+                .pipe_mut()
                 .unwrap()
                 .init(uv_loop, false)
-                .to_result(bun_sys::Tag::pipe)?;
+                .to_result(bun_sys::Tag::pipe)
+            {
+                self.discard_unadopted_pipe();
+                return Err(e);
+            }
 
-            server
+            if let Err(e) = server
                 .accept(self.pipe_mut().unwrap())
-                .to_result(bun_sys::Tag::accept)?;
+                .to_result(bun_sys::Tag::accept)
+            {
+                self.discard_unadopted_pipe();
+                return Err(e);
+            }
         }
 
         self.flags.set_disconnected(false);
@@ -596,19 +650,30 @@ impl WindowsNamedPipe {
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             if result.is_err() {
+                self.discard_unadopted_pipe();
                 return result;
             }
         }
         let uv_loop = self.vm.uv_loop();
-        self.pipe_mut()
+        if let Err(e) = self
+            .pipe_mut()
             .unwrap()
             .init(uv_loop, false)
-            .to_result(bun_sys::Tag::pipe)?;
+            .to_result(bun_sys::Tag::pipe)
+        {
+            self.discard_unadopted_pipe();
+            return Err(e);
+        }
 
-        self.pipe_mut()
+        if let Err(e) = self
+            .pipe_mut()
             .unwrap()
             .open(fd.uv())
-            .to_result(bun_sys::Tag::open)?;
+            .to_result(bun_sys::Tag::open)
+        {
+            self.discard_unadopted_pipe();
+            return Err(e);
+        }
 
         self.r#ref();
         Self::on_connect(self, uv::ReturnCode::ZERO);
@@ -629,14 +694,20 @@ impl WindowsNamedPipe {
 
         if let Some(result) = self.init_tls_wrapper(ssl_options, owned_ctx) {
             if result.is_err() {
+                self.discard_unadopted_pipe();
                 return result;
             }
         }
         let uv_loop = self.vm.uv_loop();
-        self.pipe_mut()
+        if let Err(e) = self
+            .pipe_mut()
             .unwrap()
             .init(uv_loop, false)
-            .to_result(bun_sys::Tag::pipe)?;
+            .to_result(bun_sys::Tag::pipe)
+        {
+            self.discard_unadopted_pipe();
+            return Err(e);
+        }
 
         // BORROW_PARAM: `connect()` takes `&mut self.connect_req`, a `*mut c_void`
         // context, and `&mut self.pipe` simultaneously (Zig: all `*T` alias freely).
@@ -665,6 +736,7 @@ impl WindowsNamedPipe {
             )
             .to_error(bun_sys::Tag::connect)
         {
+            self.discard_unadopted_pipe();
             return Err(err);
         }
         self.r#ref();

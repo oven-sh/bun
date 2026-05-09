@@ -294,8 +294,13 @@ const applied = await parallel(
 1. If abstraction is NEW: add it to the appropriate crate (usually bun_core/bun_ptr/bun_collections/the *_sys crate). ONE unsafe inside, with full SAFETY doc.
 2. Find ALL matching sites: \`grep -rn '<pattern-regex>' ${WT}/src/ --include='*.rs'\` (derive regex from the recipe).
 3. Convert each site: replace the unsafe block with the safe call. Update imports.
-4. **DO NOT** convert sites where the abstraction's invariant doesn't hold (e.g. BackRef requires never-null — if a site's ptr CAN be null, leave it). Document why skipped.
+4. **BE AGGRESSIVE** — r1 only converted 9% of removable sites because apply-agents were over-cautious without cargo. The compile-agent fixes errors; convert any site where the invariant *plausibly* holds. SKIP only if: ptr can be NULL (and abstraction requires non-null); buffer is mutated while borrow live (the ZStr::from_buf trap); FFI mutates struct via \`&self\`-derived ptr and fields aren't UnsafeCell (the WTFStringImpl trap).
 5. If you discover the strategy is unsound (e.g. would create aliased \`&mut\`): set applied:false + skip_reason and edit NOTHING.
+
+**Known r1 traps (DO NOT repeat):**
+- Changing receiver \`*mut Self\`→\`&self\` when C++ FFI mutates struct fields → fields must be \`Cell<T>\`/\`UnsafeCell\` first.
+- \`ZStr::from_buf(&buf, n)\` where \`buf\` is later mutated while the ZStr is live → keep \`from_raw\` with SAFETY comment.
+- safe fn that only \`debug_assert!\`s a precondition release-UB-if-violated → use \`assert!\` or \`NonNull\` parameter.
 
 ${NO_TOOLS} (Edit OK, NO cargo/git)
 
@@ -357,9 +362,10 @@ ${allBlocking
 1. Apply ALL blocking fixes above.
 2. \`cd ${WT} && cargo check --workspace --keep-going 2>&1 > /tmp/uw-check.log; grep -cE '^error\\[' /tmp/uw-check.log\`
 3. If errors: fix per-file (stale use paths, missing re-exports). Read .zig spec.
-4. unsafe_after = \`grep -rn 'unsafe {' ${WT}/src/ --include='*.rs' | wc -l\`
-5. \`cd ${WT} && bun bd --version\` exit 0 + \`bun bd test test/js/bun/util/inspect.test.js\` 72/0.
-6. \`cd ${WT} && git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-h: unsafe-wrap ${did.length} strategies (...)"\`. NO push.
+4. **5-target clean-leaf** (r1 only checked Linux and shipped a macOS E0119): \`for t in x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-unknown-freebsd aarch64-linux-android x86_64-unknown-linux-musl; do cargo clean -p bun_runtime -p bun_bin --target $t 2>/dev/null; cargo check -p bun_bin --target $t 2>&1 | grep -cE '^error\\['; done\` — fix any non-zero.
+5. unsafe_after = \`grep -rn 'unsafe {' ${WT}/src/ --include='*.rs' | wc -l\`
+6. \`cd ${WT} && bun bd --version\` exit 0 + \`bun bd test test/js/bun/util/inspect.test.js\` 72/0.
+7. \`cd ${WT} && git -c core.hooksPath=/dev/null add -A 'src/' Cargo.toml Cargo.lock && git -c core.hooksPath=/dev/null commit -q -m "phase-h: unsafe-wrap r2 ${did.length} strategies (...)"\`. NO push.
 
 Return {rounds, errors_before, errors_after, unsafe_before, unsafe_after, commit, notes}.`,
   { label: "compile-fix-commit", phase: "Compile", schema: COMPILE_S },

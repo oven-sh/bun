@@ -204,10 +204,10 @@ impl FileRoute {
 
         debug_assert_eq!(names.len(), values.len());
         // PORT NOTE: Zig `switch (resp) { inline else => |s, tag| { ... } }` expanded per-variant.
+        // S008: variant payloads are ZST opaques — safe `*mut → &mut` deref.
         match resp {
             AnyResponse::SSL(s) => {
-                // SAFETY: AnyResponse stores a live FFI handle valid while the caller holds it.
-                let s = unsafe { &mut *s };
+                let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(name, buf), sp_slice(value, buf));
                 }
@@ -218,8 +218,7 @@ impl FileRoute {
                 }
             }
             AnyResponse::TCP(s) => {
-                // SAFETY: see above.
-                let s = unsafe { &mut *s };
+                let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(name, buf), sp_slice(value, buf));
                 }
@@ -230,8 +229,7 @@ impl FileRoute {
                 }
             }
             AnyResponse::H3(s) => {
-                // SAFETY: see above.
-                let s = unsafe { &mut *s };
+                let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(name, buf), sp_slice(value, buf));
                 }
@@ -264,8 +262,8 @@ impl FileRoute {
                     write!(w, "{}", status).expect("unreachable");
                     16 - w.len()
                 };
-                // SAFETY: AnyResponse stores a live FFI handle valid while the caller holds it.
-                unsafe { (*r).write_status(&b[..written]) };
+                // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(r).write_status(&b[..written]);
             }
         }
     }

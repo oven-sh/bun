@@ -69,8 +69,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     if value.is_number() {
         // Allow numbers to be passed as strings.
         let str = value.to_js_string(global)?;
-        // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
-        return JSArgument::from_js_maybe_file(global, unsafe { (*str).to_js() }, true);
+        return JSArgument::from_js_maybe_file(global, str.to_js(), true);
     }
 
     JSArgument::from_js_maybe_file(global, value, false)

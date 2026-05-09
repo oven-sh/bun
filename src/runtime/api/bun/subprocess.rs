@@ -678,19 +678,25 @@ impl Subprocess<'_> {
         self.event_loop_timer_refd = refd;
         let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
-        // SAFETY: single JS thread; `timer_all()` points into the boxed
-        // per-thread `RuntimeState`.
-        unsafe { (*Self::timer_all()).increment_timer_ref(delta, uws_loop) };
+        Self::timer_all().increment_timer_ref(delta, uws_loop);
     }
 
     /// Recover this thread's `timer::All` heap. b2-cycle: `vm.timer` is `()`
     /// on the low-tier `bun_jsc::VirtualMachine`; the real value lives in
-    /// `jsc_hooks::RuntimeState.timer` (raw-ptr-per-field re-entry pattern).
+    /// `jsc_hooks::RuntimeState.timer`.
+    ///
+    /// Returns `&'static mut` because the boxed `RuntimeState` is per-thread
+    /// (`!Send`), lives for the process lifetime, and `Subprocess` is heap-
+    /// allocated separately (not a field of `All`), so a live `&mut self` here
+    /// never aliases the returned borrow. Callers must not hold the result
+    /// across a JS re-entry that could itself call `timer_all()`; all uses in
+    /// this file are single-expression.
     #[inline]
-    fn timer_all() -> *mut crate::timer::All {
+    fn timer_all() -> &'static mut crate::timer::All {
         let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`.
-        unsafe { core::ptr::addr_of_mut!((*state).timer) }
+        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+        // single JS thread so no concurrent `&mut`.
+        unsafe { &mut (*state).timer }
     }
 
     pub fn timeout_callback(&mut self) {
@@ -956,9 +962,7 @@ impl Subprocess<'_> {
         // For now we run them at the end and at early-return sites manually.
 
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            // SAFETY: single JS thread; `timer_all()` points into the boxed
-            // per-thread `RuntimeState`.
-            unsafe { (*Self::timer_all()).remove(&raw mut self.event_loop_timer) };
+            Self::timer_all().remove(&raw mut self.event_loop_timer);
         }
         self.set_event_loop_timer_refd(false);
 
@@ -1296,9 +1300,7 @@ impl Subprocess<'_> {
         unsafe { (*this.process.as_ptr()).deref() };
 
         if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            // SAFETY: single JS thread; `timer_all()` points into the boxed
-            // per-thread `RuntimeState`.
-            unsafe { (*Self::timer_all()).remove(&raw mut this.event_loop_timer) };
+            Self::timer_all().remove(&raw mut this.event_loop_timer);
         }
         this.set_event_loop_timer_refd(false);
 

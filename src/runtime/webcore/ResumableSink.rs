@@ -65,6 +65,7 @@ pub enum Status {
 // `ResumableFetchSink__ZigStructSize` deterministic and silences the
 // "unspecified layout" half of `improper_ctypes` at the extern block.
 #[repr(C)]
+#[derive(bun_ptr::CellRefCounted)]
 pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
     pub ref_count: Cell<u32>,
     js_this: JsRef,
@@ -557,33 +558,13 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     // Intrusive refcount helpers (`bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
-    #[inline]
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// Decrement the intrusive refcount; on 0, run `Drop` (= Zig `deinit`) and
-    /// free the `Box` allocated in [`init_exact_refs`].
-    ///
-    /// # Safety
-    /// `this` must point to a live `Self` allocated via `heap::alloc` in
-    /// `init_exact_refs`. After this call returns, `this` may dangle — the
-    /// caller must not access it (nor any `&`/`&mut` it was derived from).
+    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; `deref_` is
+    // kept as a thin alias so existing raw-pointer call sites (s3::client) keep
+    // compiling without churn.
     #[inline]
     pub unsafe fn deref_(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live.
-        let rc = unsafe { &(*this).ref_count };
-        // Match Zig `RefCount` debug assertion (under-deref guard).
-        debug_assert!(rc.get() > 0, "ResumableSink ref_count underflow");
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: allocated via `heap::alloc` in `init_exact_refs`;
-            // count==0 ⇒ no other live refs. No `&mut Self` is held across
-            // this point (raw-ptr receiver), so `Box`'s `Drop` taking a fresh
-            // `&mut Self` does not alias.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
+        // SAFETY: forwarded caller contract.
+        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 }
 

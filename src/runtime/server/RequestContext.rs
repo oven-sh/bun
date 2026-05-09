@@ -75,20 +75,21 @@ fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
 impl AnyResponseExt for uws::AnyResponse {
     #[inline]
     fn has_responded(self) -> bool {
+        // S012: variant payloads are ZST opaques (`Response<SSL>` / `H3Response`);
+        // route the `*mut → &mut` deref through the const-asserted
+        // `bun_opaque::opaque_deref_mut` so dispatch is `unsafe`-free.
         match self {
-            // SAFETY: AnyResponse stores a live FFI handle.
-            uws::AnyResponse::SSL(p) => unsafe { (*p).has_responded() },
-            uws::AnyResponse::TCP(p) => unsafe { (*p).has_responded() },
-            uws::AnyResponse::H3(p) => unsafe { (*p).has_responded() },
+            uws::AnyResponse::SSL(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
+            uws::AnyResponse::TCP(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
+            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
         }
     }
     #[inline]
     fn override_write_offset(self, offset: u64) {
         match self {
-            // SAFETY: AnyResponse stores a live FFI handle.
-            uws::AnyResponse::SSL(p) => unsafe { (*p).override_write_offset(offset) },
-            uws::AnyResponse::TCP(p) => unsafe { (*p).override_write_offset(offset) },
-            uws::AnyResponse::H3(p) => unsafe { (*p).override_write_offset(offset) },
+            uws::AnyResponse::SSL(p) => bun_opaque::opaque_deref_mut(p).override_write_offset(offset),
+            uws::AnyResponse::TCP(p) => bun_opaque::opaque_deref_mut(p).override_write_offset(offset),
+            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref_mut(p).override_write_offset(offset),
         }
     }
 }
@@ -553,14 +554,15 @@ where
         if let Some(resp) = self.resp {
             self.flags.set_has_abort_handler(true);
             // SAFETY: FFI handle valid while resp is Some
-            unsafe { resp.on_aborted(Self::on_abort, self) };
+            resp.on_aborted(Self::on_abort, self);
         }
     }
 
     pub fn set_cookies(&mut self, cookie_map: Option<*mut CookieMap>) {
-        // SAFETY: caller passes a live `CookieMap*` (or None); `new_ref` takes a
-        // ref for storage. Assigning replaces (and so drops/unrefs) the old one.
-        self.cookies = cookie_map.map(|p| CookieMapRef::new_ref(unsafe { &*p }));
+        // S008: `CookieMap` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        // `new_ref` takes a ref for storage. Assigning replaces (and so
+        // drops/unrefs) the old one.
+        self.cookies = cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const())));
     }
 
     pub fn set_timeout_handler(&mut self) {
@@ -570,7 +572,7 @@ where
         if let Some(resp) = self.resp {
             self.flags.set_has_timeout_handler(true);
             // SAFETY: FFI handle valid while resp is Some
-            unsafe { resp.on_timeout(Self::on_timeout, self) };
+            resp.on_timeout(Self::on_timeout, self);
         }
     }
 
@@ -799,7 +801,7 @@ where
 
         let resp = ctx.resp.expect("infallible: resp bound");
         // SAFETY: FFI handle, just checked Some
-        let has_responded = unsafe { resp.has_responded() };
+        let has_responded = resp.has_responded();
         if !has_responded {
             let original_state = ctx.defer_deinit_until_callback_completes;
             let mut should_deinit_context = match original_state {
@@ -827,7 +829,7 @@ where
         }
 
         // SAFETY: FFI handle
-        if unsafe { !resp.has_responded() }
+        if !resp.has_responded()
             && !ctx.flags.has_marked_pending()
             && !ctx.flags.is_error_promise_pending()
         {
@@ -956,14 +958,14 @@ where
 
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            unsafe { resp.on_writable(Self::on_writable_complete_response_buffer, self) };
+            resp.on_writable(Self::on_writable_complete_response_buffer, self);
         }
     }
 
     pub fn render_response_buffer(&mut self) {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            unsafe { resp.on_writable(Self::on_writable_response_buffer, self) };
+            resp.on_writable(Self::on_writable_response_buffer, self);
         }
     }
 
@@ -978,7 +980,7 @@ where
             self.render_metadata();
 
             // SAFETY: FFI handle
-            unsafe { resp.write(&self.response_buf_owned) };
+            resp.write(&self.response_buf_owned);
         }
         self.response_buf_owned.clear();
     }
@@ -989,7 +991,7 @@ where
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
-            unsafe { resp.end(data, close_connection) };
+            resp.end(data, close_connection);
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1022,7 +1024,7 @@ where
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
-            unsafe { resp.end_without_body(close_connection) };
+            resp.end_without_body(close_connection);
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1034,7 +1036,7 @@ where
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
-            unsafe { resp.force_close() };
+            resp.force_close();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1230,7 +1232,7 @@ where
         // pointer; everything else cleans up via the resolve/reject path.
         if HTTP3 {
             // SAFETY: FFI handle
-            if unsafe { resp.has_responded() } {
+            if resp.has_responded() {
                 this.resp = None;
                 this.flags.set_has_abort_handler(false);
                 return;
@@ -1430,7 +1432,7 @@ where
 
         let bytes = &bytes_[bytes_.len().min(write_offset)..];
         // SAFETY: FFI handle
-        if unsafe { resp.try_end(bytes, bytes_.len(), self.should_close_connection()) } {
+        if resp.try_end(bytes, bytes_.len(), self.should_close_connection()) {
             self.detach_response();
             self.end_request_streaming_and_drain();
             self.deref();
@@ -1438,7 +1440,7 @@ where
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            unsafe { resp.on_writable(Self::on_writable_bytes, self) };
+            resp.on_writable(Self::on_writable_bytes, self);
             true
         }
     }
@@ -1460,7 +1462,7 @@ where
         let total_len = self.response_buf_owned.len();
         let bytes = &self.response_buf_owned[total_len.min(write_offset)..];
         // SAFETY: FFI handle
-        let done = unsafe { resp.try_end(bytes, total_len, close_connection) };
+        let done = resp.try_end(bytes, total_len, close_connection);
         if done {
             self.response_buf_owned.clear();
             self.detach_response();
@@ -1469,7 +1471,7 @@ where
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            unsafe { resp.on_writable(Self::on_writable_complete_response_buffer, self) };
+            resp.on_writable(Self::on_writable_complete_response_buffer, self);
         }
 
         true
@@ -1679,11 +1681,11 @@ where
                 fd.close();
             }
             // SAFETY: FFI handle
-            let close = unsafe { resp.should_close_connection() };
+            let close = resp.should_close_connection();
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
-            unsafe { resp.end(b"", close) };
+            resp.end(b"", close);
             self.deref();
             return;
         }
@@ -2147,7 +2149,7 @@ where
 
         if let Some(resp) = this.resp {
             // SAFETY: FFI handle
-            unsafe { resp.write_header_int(b"content-length", pair.size as u64) };
+            resp.write_header_int(b"content-length", pair.size as u64);
         }
         this.end_without_body(this.should_close_connection());
         this.deref();
@@ -2201,7 +2203,7 @@ where
             // server detached?
             this.render_metadata();
             // SAFETY: FFI handle
-            unsafe { resp.write_header_int(b"content-length", 0) };
+            resp.write_header_int(b"content-length", 0);
             this.end_without_body(this.should_close_connection());
             return;
         };
@@ -2241,7 +2243,7 @@ where
 
                 this.render_metadata();
                 // SAFETY: FFI handle
-                unsafe { resp.write_header_int(b"content-length", len as u64) };
+                resp.write_header_int(b"content-length", len as u64);
                 this.end_without_body(this.should_close_connection());
                 return;
             }
@@ -2313,14 +2315,14 @@ where
                 this.render_metadata();
                 if !HTTP3 {
                     // SAFETY: FFI handle
-                    unsafe { resp.write_header(b"transfer-encoding", b"chunked") };
+                    resp.write_header(b"transfer-encoding", b"chunked");
                 }
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
                 this.render_metadata();
                 // SAFETY: FFI handle
-                unsafe { resp.write_header_int(b"content-length", 0) };
+                resp.write_header_int(b"content-length", 0);
                 this.end_without_body(this.should_close_connection());
             }
         }
@@ -2492,8 +2494,8 @@ where
             wrote_anything = wrapper.sink.wrote > 0;
 
             wrapper.sink.finalize();
-            // SAFETY: global_this set in do_render_stream before sink was stored.
-            let sink_global = unsafe { &*wrapper.sink.global_this };
+            // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
+            let sink_global = bun_opaque::opaque_deref(wrapper.sink.global_this);
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
                 &mut wrapper.sink.signal,
                 sink_global,
@@ -2565,15 +2567,15 @@ where
                 // assigned (flushFromJS / endFromJS). Drop that root before
                 // abandoning the pointer, otherwise it leaks for the
                 // lifetime of the VM.
-                // SAFETY: prom is a GC-rooted *JSPromise.
-                unsafe { (*prom).to_js() }.unprotect();
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(prom).to_js().unprotect();
             }
             wrapper.sink.done = true;
             let aborted = req.flags.aborted() || wrapper.sink.aborted;
             req.flags.set_aborted(aborted);
             wrapper.sink.finalize();
-            // SAFETY: global_this set in do_render_stream before sink was stored.
-            let sink_global = unsafe { &*wrapper.sink.global_this };
+            // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
+            let sink_global = bun_opaque::opaque_deref(wrapper.sink.global_this);
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
                 &mut wrapper.sink.signal,
                 sink_global,
@@ -2664,7 +2666,7 @@ where
 
                         if let Some(resp) = req.resp {
                             // SAFETY: FFI handle
-                            unsafe { resp.write(&bb) };
+                            resp.write(&bb);
                         }
 
                         req.end_stream(req.should_close_connection());
@@ -2879,7 +2881,7 @@ where
         // uSockets will append and manage the buffer
         // so any write will buffer if the write fails
         // SAFETY: FFI handle
-        if matches!(unsafe { resp.write(chunk) }, uws::WriteResult::WantMore(_)) {
+        if matches!(resp.write(chunk), uws::WriteResult::WantMore(_)) {
             if is_done {
                 this.end_stream(this.should_close_connection());
             }
@@ -2888,7 +2890,7 @@ where
             if is_done {
                 this.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                unsafe { resp.on_writable(Self::on_writable_response_buffer, this) };
+                resp.on_writable(Self::on_writable_response_buffer, this);
             }
         }
     }
@@ -2976,7 +2978,7 @@ where
     pub fn should_close_connection(&self) -> bool {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            return unsafe { resp.should_close_connection() };
+            return resp.should_close_connection();
         }
         false
     }
@@ -3366,10 +3368,10 @@ where
         let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.slice()) };
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            if unsafe { !resp.try_end(bytes, bytes.len(), self.should_close_connection()) } {
+            if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {
                 self.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                unsafe { resp.on_writable(Self::on_writable_bytes, self) };
+                resp.on_writable(Self::on_writable_bytes, self);
                 return;
             }
         }
@@ -3505,10 +3507,10 @@ where
                 // async handler would dereference the stale pointer.
                 // SAFETY: FFI handle
                 if let Some(resp) = this.resp {
-                    if unsafe { !resp.has_responded() } {
+                    if !resp.has_responded() {
                         this.flags.set_has_written_status(true);
                         // SAFETY: FFI handle
-                        unsafe { resp.write_status(b"413 Payload Too Large") };
+                        resp.write_status(b"413 Payload Too Large");
                     }
                 }
                 this.end_without_body(!HTTP3);
@@ -3647,7 +3649,7 @@ where
         // `AnyResponse::get_remote_socket_info` returns the uws_sys
         // borrowed-slice variant; convert to the owned `bun_uws::SocketAddress`.
         // SAFETY: FFI handle
-        let info = unsafe { resp.get_remote_socket_info()? };
+        let info = resp.get_remote_socket_info()?;
         Some(uws::SocketAddress {
             ip: info.ip.to_vec().into_boxed_slice(),
             port: info.port,
@@ -3658,7 +3660,7 @@ where
     pub fn set_timeout(&mut self, seconds: c_uint) -> bool {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            unsafe { resp.timeout(seconds.min(255) as u8) };
+            resp.timeout(seconds.min(255) as u8);
             if seconds > 0 {
                 // we only set the timeout callback if we wanna the timeout event to be triggered
                 // the connection will be closed so the abort handler will be called after the timeout
@@ -3670,7 +3672,7 @@ where
             } else {
                 // if the timeout is 0, we don't need to trigger the timeout event
                 // SAFETY: FFI handle
-                unsafe { resp.clear_timeout() };
+                resp.clear_timeout();
             }
             return true;
         }

@@ -1001,38 +1001,44 @@ impl Default for ReadWriteLoop {
     }
 }
 
+// PORT NOTE: Zig defines `ReadWriteLoop.start/read` taking both `*ReadWriteLoop` and
+// `*CopyFileWindows`, but in Rust the former is a subobject of the latter, so passing
+// both as `&mut` is aliasing UB. These are hoisted onto `CopyFileWindows` so the
+// borrow checker can see `self.read_write_loop` / `self.io_request` / `self.event_loop`
+// as disjoint field accesses through a single `&mut self`.
 #[cfg(windows)]
-impl ReadWriteLoop {
-    pub fn start(&mut self, this: &mut CopyFileWindows) -> bun_sys::Result<()> {
-        self.read_buf.reserve_exact(64 * 1024);
+impl<'a> CopyFileWindows<'a> {
+    fn read_write_loop_start(&mut self) -> bun_sys::Result<()> {
+        self.read_write_loop.read_buf.reserve_exact(64 * 1024);
 
-        self.read(this)
+        self.read_write_loop_read()
     }
 
-    pub fn read(&mut self, this: &mut CopyFileWindows) -> bun_sys::Result<()> {
-        self.read_buf.clear();
+    fn read_write_loop_read(&mut self) -> bun_sys::Result<()> {
+        self.read_write_loop.read_buf.clear();
         // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
-        let cap = self.read_buf.capacity();
-        self.uv_buf = libuv::uv_buf_t {
+        let cap = self.read_write_loop.read_buf.capacity();
+        self.read_write_loop.uv_buf = libuv::uv_buf_t {
             len: cap as libuv::ULONG,
-            base: self.read_buf.as_mut_ptr(),
+            base: self.read_write_loop.read_buf.as_mut_ptr(),
         };
-        let loop_ = this.event_loop.uv_loop();
+        let source_fd = self.read_write_loop.source_fd;
+        let loop_ = self.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.
         // For now, we don't start reading the next chunk until
         // we've finished writing all the previous chunks.
-        this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
+        self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
         // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is a zeroed/cleaned
-        // `fs_t` owned by `this`, `uv_buf` points into `read_buf`'s capacity, and
+        // `fs_t` owned by `self`, `uv_buf` points into `read_buf`'s capacity, and
         // `on_read` is a valid `uv_fs_cb`.
         let rc = unsafe {
             libuv::uv_fs_read(
                 loop_,
-                &mut this.io_request,
-                self.source_fd.uv(),
-                core::ptr::from_mut(&mut self.uv_buf),
+                &mut self.io_request,
+                source_fd.uv(),
+                core::ptr::from_mut(&mut self.read_write_loop.uv_buf),
                 1,
                 -1,
                 Some(on_read),
@@ -1045,7 +1051,10 @@ impl ReadWriteLoop {
 
         bun_sys::Result::Ok(())
     }
+}
 
+#[cfg(windows)]
+impl ReadWriteLoop {
     pub fn close(&mut self) {
         if self.must_close_source_fd {
             match self.source_fd.make_libuv_owned() {
@@ -1206,10 +1215,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
     // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
     unsafe { (*req).deinit() };
-    // TODO(port): overlapping &mut self/self.read_write_loop — restructure ReadWriteLoop::read to take disjoint fields (or move to impl CopyFileWindows) in Phase B.
-    let rwl: *mut ReadWriteLoop = core::ptr::from_mut(&mut this.read_write_loop);
-    // SAFETY: rwl points to this.read_write_loop; read() only touches this.io_request/this.event_loop, so no overlapping &mut alias is live across the call.
-    match unsafe { (*rwl).read(this) } {
+    match this.read_write_loop_read() {
         bun_sys::Result::Err(err) => {
             this.err = Some(err);
             this.on_read_write_loop_complete();
@@ -1253,7 +1259,7 @@ impl<'a> CopyFileWindows<'a> {
             source_file_store,
             promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
-            io_request: unsafe { core::mem::zeroed::<libuv::fs_t>() },
+            io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
@@ -1346,10 +1352,7 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
-        // TODO(port): overlapping &mut self/self.read_write_loop — restructure ReadWriteLoop::start to take disjoint fields (or move to impl CopyFileWindows) in Phase B.
-        let rwl: *mut ReadWriteLoop = core::ptr::from_mut(&mut self.read_write_loop);
-        // SAFETY: rwl points to self.read_write_loop; start() only touches self.io_request/self.event_loop, so no overlapping &mut alias is live across the call.
-        match unsafe { (*rwl).start(self) } {
+        match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => {
                 self.throw(err);
             }
@@ -1512,10 +1515,8 @@ impl<'a> CopyFileWindows<'a> {
         // PORT NOTE: `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
         // borrowck doesn't tie it to `self` across `destroy` below.
-        let promise: *mut JSPromise = self.promise.swap();
-        // SAFETY: `promise` is a live GC cell (held strongly until `swap` released the
-        // slot; the JS-side promise chain still roots it for the duration of this tick).
-        let err_instance = err.to_js_with_async_stack(global_this, unsafe { &*promise });
+        let promise = JSPromise::opaque_mut(self.promise.swap());
+        let err_instance = err.to_js_with_async_stack(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
@@ -1524,9 +1525,8 @@ impl<'a> CopyFileWindows<'a> {
         };
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
-        // SAFETY: `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid
-        // after `destroy`.
-        let _ = unsafe { (*promise).reject(global_this, err_instance) }; // TODO: properly propagate exception upwards
+        // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
+        let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
     }
 
     pub fn on_complete(&mut self, written_actual: usize) {
@@ -1561,7 +1561,7 @@ impl<'a> CopyFileWindows<'a> {
                 let loop_ = self.event_loop.uv_loop();
                 self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
-                self.io_request = unsafe { core::mem::zeroed::<libuv::fs_t>() };
+                self.io_request = bun_core::ffi::zeroed::<libuv::fs_t>();
                 self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
                 // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` was just zeroed,
@@ -1602,9 +1602,9 @@ impl<'a> CopyFileWindows<'a> {
     fn resolve_promise(&mut self, written: usize) {
         // SAFETY: `event_loop.global` is the VM's `JSGlobalObject` (process lifetime).
         let global_this = unsafe { self.event_loop.global.unwrap().as_ref() };
-        // PORT NOTE: see `throw` — decay the `&mut JSPromise` (GC cell) to a raw ptr so it
+        // PORT NOTE: see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
-        let promise: *mut JSPromise = self.promise.swap();
+        let promise = JSPromise::opaque_mut(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
         let _guard = unsafe {
@@ -1613,9 +1613,8 @@ impl<'a> CopyFileWindows<'a> {
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
-        // SAFETY: `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid
-        // after `destroy`.
-        let _ = unsafe { (*promise).resolve(global_this, JSValue::js_number_from_uint64(written as u64)) }; // TODO: properly propagate exception upwards
+        // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
+        let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
     }
 
     #[cold]

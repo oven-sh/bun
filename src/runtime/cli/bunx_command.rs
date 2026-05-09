@@ -272,8 +272,7 @@ impl BunxCommand {
         bun_js_parser::ast::expr::data::Store::create();
         bun_js_parser::ast::stmt::data::Store::create();
 
-        // SAFETY: `transpiler.log` is set by `Transpiler::init` and is process-lifetime.
-        let log = unsafe { &mut *transpiler.log };
+        let log = transpiler.log_mut();
         // PORT NOTE: Zig passed `transpiler.allocator` (global mimalloc). The
         // Rust JSON parser takes a bump arena; everything we keep is cloned
         // into `Box<[u8]>` before returning, so a local arena suffices.
@@ -401,10 +400,8 @@ impl BunxCommand {
                 #[cfg(windows)]
                 {
                     use bun_sys::windows as win;
-                    // SAFETY: all-zero is a valid IO_STATUS_BLOCK (repr(C) POD, no niches)
-                    let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
-                    // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION (repr(C) POD, no niches)
-                    let mut info: win::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut io_status_block: win::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+                    let mut info: win::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
                     // SAFETY: FFI call with valid out-params
                     let rc = unsafe {
                         win::ntdll::NtQueryInformationFile(
@@ -594,8 +591,7 @@ impl BunxCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
-        let env_loader = unsafe { &mut *this_transpiler.env };
+        let env_loader = this_transpiler.env_mut();
         env_loader.map.put(b"npm_command", b"exec").expect("unreachable");
         env_loader.map.put(b"npm_lifecycle_event", b"bunx").expect("unreachable");
         env_loader.map.put(b"npm_lifecycle_script", opts.package_name).expect("unreachable");
@@ -876,10 +872,8 @@ impl BunxCommand {
                                 // Zig: `defer fd.close()` — closed explicitly below before
                                 // any `break 'is_stale` (no early-return between open & close).
 
-                                // SAFETY: all-zero is a valid IO_STATUS_BLOCK (repr(C) POD, no niches)
-                                let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
-                                // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION (repr(C) POD, no niches)
-                                let mut info: win::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+                                let mut io_status_block: win::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+                                let mut info: win::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
                                 // SAFETY: FFI call with valid out-params
                                 let rc = unsafe {
                                     win::ntdll::NtQueryInformationFile(
@@ -1118,10 +1112,10 @@ impl BunxCommand {
             #[cfg(windows)]
             windows: proc_sync::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                    // SAFETY: `this_transpiler.env` is the process-lifetime `*mut Loader`
+                    // `this_transpiler.env` is the process-lifetime loader
                     // singleton populated during transpiler init; reborrowed `'static` here
                     // for the Windows MiniEventLoop singleton (Zig: `initGlobal(this_transpiler.env, null)`).
-                    Some(unsafe { &mut *this_transpiler.env }),
+                    Some(this_transpiler.env_mut()),
                     None,
                 )),
                 ..Default::default()

@@ -104,15 +104,20 @@ fn generate_compile_result_for_js_chunk_impl(
     // thread it here so dev-server bundles outlive the worker arena.
     let _ = c.dev_server;
 
-    // SAFETY: temporary_arena / stmt_list are initialized in Worker::create before any task runs.
-    let arena = unsafe { worker.temporary_arena.assume_init_mut() };
+    // temporary_arena / stmt_list are initialized in Worker::create before any task runs.
+    let arena = worker
+        .temporary_arena
+        .as_mut()
+        .expect("Worker.temporary_arena set in create()");
     let mut buffer_writer = js_printer::BufferWriter::init();
     // PERF(port): was arena bulk-free (.retain_capacity) — profile in Phase B
     let arena = scopeguard::guard(&mut *arena, |a| {
         a.reset();
     });
-    // SAFETY: see above.
-    let stmt_list = unsafe { worker.stmt_list.assume_init_mut() };
+    let stmt_list = worker
+        .stmt_list
+        .as_mut()
+        .expect("Worker.stmt_list set in create()");
     stmt_list.reset();
 
     let runtime_scope: &mut Scope =

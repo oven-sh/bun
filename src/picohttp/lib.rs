@@ -122,27 +122,18 @@ impl Header {
     #[inline]
     pub fn name(&self) -> &[u8] {
         // picohttpparser sets `name = NULL, name_len = 0` for multiline /
-        // continuation headers. `from_raw_parts(null, 0)` is UB in Rust even
-        // though Zig's `[]const u8{ptr=null, len=0}` is well-defined, so guard
-        // the zero-length case explicitly.
-        if self.name_len == 0 {
-            return &[];
-        }
+        // continuation headers. `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: ptr/len originate from picohttpparser pointing into the
         // caller-provided buffer, or from StringBuilder::append.
-        unsafe { core::slice::from_raw_parts(self.name_ptr, self.name_len) }
+        unsafe { bun_core::ffi::slice(self.name_ptr, self.name_len) }
     }
 
     #[inline]
     pub fn value(&self) -> &[u8] {
         // Defensive: picohttpparser always points `value` into `buf` on
-        // success, but mirror the name() guard so a zero-length value never
-        // constructs a slice from a null pointer.
-        if self.value_len == 0 {
-            return &[];
-        }
+        // success; `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: same as name()
-        unsafe { core::slice::from_raw_parts(self.value_ptr, self.value_len) }
+        unsafe { bun_core::ffi::slice(self.value_ptr, self.value_len) }
     }
 
     pub fn is_multiline(&self) -> bool {
@@ -375,8 +366,8 @@ impl<'a> Request<'a> {
             -2 => Err(ParseRequestError::ShortRead),
             _ => Ok(Request {
                 // SAFETY: on success, ptr/len point into `buf`.
-                method: unsafe { core::slice::from_raw_parts(method_ptr, method_len) },
-                path: unsafe { core::slice::from_raw_parts(path_ptr, path_len) },
+                method: unsafe { bun_core::ffi::slice(method_ptr, method_len) },
+                path: unsafe { bun_core::ffi::slice(path_ptr, path_len) },
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 headers: &src[0..num_headers],
                 bytes_read: u32::try_from(rc).expect("int cast"),
@@ -621,7 +612,7 @@ impl<'a> Response<'a> {
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 status_code: u32::try_from(status_code).expect("int cast"),
                 // SAFETY: on success, ptr/len point into `buf`.
-                status: unsafe { core::slice::from_raw_parts(status_ptr, status_len) },
+                status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
                 headers: HeaderList { list: &src[0..num_headers.min(src.len())] },
                 bytes_read: rc,
             }),

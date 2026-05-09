@@ -17,71 +17,57 @@ pub enum AnyPromise {
     Internal(*mut JSInternalPromise),
 }
 
+// S012: every method body is `match self { Variant(p) => (*p).foo() }` over a
+// ZST opaque (`JSPromise` is `bun_opaque::opaque_ffi!`). Route the per-variant
+// `*mut → &mut` deref through the const-asserted `opaque_deref_mut` so the
+// dispatch site is `unsafe`-free; the soundness proof lives once in
+// `bun_opaque`.
+macro_rules! any_promise_dispatch {
+    ($self:expr, |$p:ident| $body:expr) => {
+        match $self {
+            Self::Normal(ptr) => { let $p = JSPromise::opaque_mut(ptr); $body }
+            Self::Internal(ptr) => { let $p = JSInternalPromise::opaque_mut(ptr); $body }
+        }
+    };
+}
+
 impl AnyPromise {
     #[inline]
     pub fn unwrap(self, vm: &VM, mode: UnwrapMode) -> Unwrapped {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).unwrap(vm, mode) },
-            Self::Internal(p) => unsafe { (*p).unwrap(vm, mode) },
-        }
+        any_promise_dispatch!(self, |p| p.unwrap(vm, mode))
     }
 
     #[inline]
     pub fn status(self) -> Status {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).status() },
-            Self::Internal(p) => unsafe { (*p).status() },
-        }
+        any_promise_dispatch!(self, |p| p.status())
     }
 
     #[inline]
     pub fn result(self, vm: &VM) -> JSValue {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).result(vm) },
-            Self::Internal(p) => unsafe { (*p).result(vm) },
-        }
+        any_promise_dispatch!(self, |p| p.result(vm))
     }
 
     #[inline]
     pub fn is_handled(self) -> bool {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).is_handled() },
-            Self::Internal(p) => unsafe { (*p).is_handled() },
-        }
+        any_promise_dispatch!(self, |p| p.is_handled())
     }
 
     #[inline]
     pub fn set_handled(self, vm: &VM) {
         let _ = vm;
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).set_handled() },
-            Self::Internal(p) => unsafe { (*p).set_handled() },
-        }
+        any_promise_dispatch!(self, |p| p.set_handled())
     }
 
     #[inline]
     pub fn resolve(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).resolve(global_this, value) },
-            Self::Internal(p) => unsafe { (*p).resolve(global_this, value) },
-        }
+        any_promise_dispatch!(self, |p| p.resolve(global_this, value))
     }
 
     #[inline]
     pub fn reject(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
         // Zig: `promise.reject(globalThis, value)` — `JSValue` coerces to `JSError!JSValue`
         // implicitly in Zig; map that with `Ok(value)` here.
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).reject(global_this, Ok(value)) },
-            Self::Internal(p) => unsafe { (*p).reject(global_this, Ok(value)) },
-        }
+        any_promise_dispatch!(self, |p| p.reject(global_this, Ok(value)))
     }
 
     /// Like `reject` but first attaches async stack frames from this promise's
@@ -94,8 +80,7 @@ impl AnyPromise {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> Result<(), JsTerminated> {
-        // SAFETY: `as_js_promise` yields a non-null GC cell; reborrow is for the FFI call only.
-        value.attach_async_stack_from_promise(global_this, unsafe { &*self.as_js_promise() });
+        value.attach_async_stack_from_promise(global_this, JSPromise::opaque_ref(self.as_js_promise()));
         self.reject(global_this, value)
     }
 
@@ -117,11 +102,7 @@ impl AnyPromise {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> Result<(), JsTerminated> {
-        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
-        match self {
-            Self::Normal(p) => unsafe { (*p).reject_as_handled(global_this, value) },
-            Self::Internal(p) => unsafe { (*p).reject_as_handled(global_this, value) },
-        }
+        any_promise_dispatch!(self, |p| p.reject_as_handled(global_this, value))
     }
 
     #[inline]

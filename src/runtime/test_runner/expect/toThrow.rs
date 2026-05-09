@@ -49,8 +49,7 @@ pub fn to_throw(
         } else if value.is_string() {
             // `.toThrow("")` behaves the same as `.toThrow()`
             let s = value.to_js_string(global)?;
-            // SAFETY: to_js_string returns a non-null *mut JSString on Ok
-            if unsafe { (*s).length() } == 0 {
+            if s.length() == 0 {
                 break 'brk JSValue::ZERO;
             }
         }

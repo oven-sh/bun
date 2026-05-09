@@ -32,8 +32,7 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
     output[..input.len()].copy_from_slice(input);
     output[input.len()] = 0;
 
-    // SAFETY: output[input.len()] == 0 written above
-    unsafe { ZStr::from_raw(output.as_ptr(), input.len()) }
+    ZStr::from_buf(output, input.len())
 }
 
 #[inline]

@@ -1591,11 +1591,7 @@ impl<'a> HTTPClient<'a> {
             // (borrowed from the SSL session, valid while ssl_ptr is).
             let alpn = unsafe {
                 boring_extra::SSL_get0_alpn_selected(ssl_ptr, &raw mut proto, &raw mut proto_len);
-                if proto.is_null() {
-                    &[][..]
-                } else {
-                    core::slice::from_raw_parts(proto, proto_len as usize)
-                }
+                bun_core::ffi::slice(proto, proto_len as usize)
             };
             if alpn == b"h2" {
                 bun_core::scoped_log!(fetch, "ALPN negotiated h2 {}", BStr::new(self.url.href));

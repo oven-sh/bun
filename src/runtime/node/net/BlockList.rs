@@ -227,8 +227,7 @@ impl BlockList {
             SocketAddress::init_from_addr_family(global, network_js, family_js)?._addr
         };
         let mut prefix: u8 = 0;
-        // SAFETY: `sin.family` is at the same offset for both union variants.
-        let fam = unsafe { network.sin.family };
+        let fam = network.family_raw();
         if fam == AF_INET as inet::sa_family_t {
             prefix = u8::try_from(validators::validate_int32(
                 global, prefix_js, format_args!("prefix"), Some(0), Some(32),
@@ -313,14 +312,9 @@ impl BlockList {
                             }
                         }
                     }
-                    // SAFETY: `sin.family` is at the same offset for both union variants.
-                    if unsafe { address.sin.family } == AF_INET6 as inet::sa_family_t
-                        && unsafe { network.sin.family } == AF_INET6 as inet::sa_family_t
-                    {
-                        // SAFETY: family == INET6 guarantees `sin6` variant is active;
-                        // `sin6.addr` is `[u8; 16]`, all-bytes valid for u128.
-                        let ip_addr: u128 = u128::from_ne_bytes(unsafe { address.sin6.addr });
-                        let subnet_addr: u128 = u128::from_ne_bytes(unsafe { network.sin6.addr });
+                    if let (Some(addr6), Some(net6)) = (address.as_sin6(), network.as_sin6()) {
+                        let ip_addr: u128 = u128::from_ne_bytes(addr6.addr);
+                        let subnet_addr: u128 = u128::from_ne_bytes(net6.addr);
                         if *prefix == 128 {
                             if ip_addr == subnet_addr {
                                 return Ok(JSValue::TRUE);
@@ -408,7 +402,7 @@ impl BlockList {
         // non-null out-param the caller expects us to advance.
         let ptr = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
-        let buf = unsafe { core::slice::from_raw_parts(*ptr, total_length) };
+        let buf = unsafe { bun_core::ffi::slice(*ptr, total_length) };
         let mut pos: usize = 0;
 
         let int = match read_int_le_usize(buf, &mut pos) {
@@ -454,12 +448,8 @@ fn _compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
             return Some(l_4.swap_bytes().cmp(&r_4.swap_bytes()));
         }
     }
-    // SAFETY: `sin.family` is at the same offset for both union variants.
-    if unsafe { l.sin.family } == AF_INET6 as inet::sa_family_t
-        && unsafe { r.sin.family } == AF_INET6 as inet::sa_family_t
-    {
-        // SAFETY: family == INET6 guarantees `sin6` variant is active.
-        return Some(_compare_ipv6(unsafe { &l.sin6 }, unsafe { &r.sin6 }));
+    if let (Some(l6), Some(r6)) = (l.as_sin6(), r.as_sin6()) {
+        return Some(_compare_ipv6(l6, r6));
     }
     None
 }

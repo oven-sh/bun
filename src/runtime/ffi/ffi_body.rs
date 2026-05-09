@@ -3109,8 +3109,8 @@ impl CompilerRT {
     extern "C" fn memcpy(dest: *mut u8, source: *const u8, byte_count: usize) {
         // SAFETY: caller (TCC-compiled code) guarantees non-overlapping valid ranges
         unsafe {
-            core::slice::from_raw_parts_mut(dest, byte_count)
-                .copy_from_slice(core::slice::from_raw_parts(source, byte_count));
+            bun_core::ffi::slice_mut(dest, byte_count)
+                .copy_from_slice(bun_core::ffi::slice(source, byte_count));
         }
     }
 

@@ -39,6 +39,20 @@ fn timer_all() -> *mut All {
     }
 }
 
+/// Same as [`timer_all`] but returns `&'static mut`. Only valid once the JS
+/// runtime has installed `RuntimeState` (true for every JS host-call entry
+/// point below). Single JS thread + boxed-for-process-lifetime ⇒ the borrow is
+/// sound; callers must not hold it across a JS re-entry that could itself call
+/// this (NLL keeps every use here local to a single basic block).
+#[inline]
+fn timer_all_mut() -> &'static mut All {
+    let state = crate::jsc_hooks::runtime_state();
+    debug_assert!(!state.is_null(), "RuntimeState not installed");
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+    // single JS thread so no concurrent `&mut`.
+    unsafe { &mut (*state).timer }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // JS-facing surface on `super::All`
 // ════════════════════════════════════════════════════════════════════════════
@@ -220,9 +234,7 @@ impl All {
     pub fn sleep(global: &JSGlobalObject, promise: JSValue, countdown: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!promise.is_empty() && !countdown.is_empty());
-        // SAFETY: `timer_all()` is non-null on any thread that has reached the
-        // JS host-call surface (RuntimeState is installed before the first tick).
-        let all = unsafe { &mut *timer_all() };
+        let all = timer_all_mut();
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
@@ -246,8 +258,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty());
-        // SAFETY: see `sleep`.
-        let all = unsafe { &mut *timer_all() };
+        let all = timer_all_mut();
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
@@ -263,8 +274,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        // SAFETY: see `sleep`.
-        let all = unsafe { &mut *timer_all() };
+        let all = timer_all_mut();
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
@@ -289,8 +299,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        // SAFETY: see `sleep`.
-        let all = unsafe { &mut *timer_all() };
+        let all = timer_all_mut();
         let id = all.last_id;
         all.last_id = all.last_id.wrapping_add(1);
 
@@ -333,8 +342,7 @@ impl All {
         bun_jsc::mark_binding!();
 
         let vm = global_this.bun_vm_ptr();
-        // SAFETY: see `sleep`.
-        let all = unsafe { &mut *timer_all() };
+        let all = timer_all_mut();
 
         let timer: Option<*mut TimerObjectInternals> = 'brk: {
             if timer_id_value.is_int32() {

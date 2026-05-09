@@ -418,12 +418,12 @@ impl Package<u64> {
         debug_assert_eq!(new.buffers.resolutions.len(), end as usize);
 
         let extern_strings_old_len = new.buffers.extern_strings.len();
-        // SAFETY: capacity reserved above; written by `bin.clone` below.
-        unsafe {
-            new.buffers
-                .extern_strings
-                .set_len(extern_strings_old_len + new_extern_string_count);
-        }
+        // Default-fill the tail so it is valid before `bin.clone` overwrites
+        // it (replaces `reserve` + raw `set_len`).
+        bun_core::vec::grow_default(
+            &mut new.buffers.extern_strings,
+            new_extern_string_count,
+        );
         // PORT NOTE: Zig passes both `new.buffers.extern_strings.items` (full slice) and a
         // tail subslice into `bin.clone`; the full slice is only used to compute the tail's
         // offset for `ExternalStringList::init`. In Rust those two views would alias, so
@@ -708,14 +708,13 @@ impl Package<u64> {
         let resolutions_list = &mut lockfile.buffers.resolutions;
         dependencies_list.reserve(total_dependencies_count as usize);
         resolutions_list.reserve(total_dependencies_count as usize);
-        extern_strings_list.reserve(bin_extern_strings_count as usize);
         let extern_old_len = extern_strings_list.len();
-        // SAFETY: capacity reserved above; written by bin.clone below.
-        unsafe {
-            extern_strings_list.set_len(extern_old_len + bin_extern_strings_count as usize);
-        }
-        let extern_strings_slice =
-            &mut extern_strings_list[extern_old_len..];
+        // Default-fill the tail so it is valid before `bin.clone` overwrites
+        // it (replaces `reserve` + raw `set_len`).
+        let extern_strings_slice = bun_core::vec::grow_default(
+            extern_strings_list,
+            bin_extern_strings_count as usize,
+        );
 
         // -- Cloning
         {
@@ -1689,14 +1688,10 @@ impl Package<u64> {
             }
             dependency::version::Tag::Npm => {
                 if workspace_version.is_some() {
-                    // SAFETY: tag == Npm selects the `npm` union member.
-                    let satisfies = unsafe {
-                        dependency_version
-                            .value
-                            .npm
-                            .version
-                            .satisfies(workspace_version.unwrap(), buf, buf)
-                    };
+                    let satisfies = dependency_version
+                        .npm()
+                        .version
+                        .satisfies(workspace_version.unwrap(), buf, buf);
                     if pm.options.link_workspace_packages && satisfies {
                         // `String::sliced` takes `&'a self`; bind the unwrapped
                         // value so the borrow outlives the parse call.
@@ -2431,15 +2426,15 @@ impl Package<u64> {
                                     .buffers
                                     .extern_strings
                                     .reserve_exact(count);
-                                // SAFETY: capacity reserved above; slots written in loop below.
-                                unsafe {
-                                    lockfile
-                                        .buffers
-                                        .extern_strings
-                                        .set_len(current_len + count);
-                                }
-                                let extern_strings = &mut lockfile.buffers.extern_strings
-                                    [current_len..current_len + count];
+                                // Default-fill the tail; the loop below
+                                // overwrites each slot. Keeps every exposed
+                                // `ExternalString` valid even if `break 'bin`
+                                // fires partway through (replaces raw
+                                // `set_len`).
+                                let extern_strings = bun_core::vec::grow_default(
+                                    &mut lockfile.buffers.extern_strings,
+                                    count,
+                                );
 
                                 let mut i: usize = 0;
                                 for bin_prop in obj.properties.slice() {
@@ -2719,9 +2714,8 @@ impl Package<u64> {
                             dep.behavior = dep.behavior.add(Behavior::OPTIONAL);
                         }
 
-                        // SAFETY: `parse_dependency` was called with
-                        // `Tag::Workspace`, so `dep.version.value.workspace`
-                        // is the active union member.
+                        // `parse_dependency` was called with `Tag::Workspace`,
+                        // so the workspace accessor's tag-check holds.
                         let ws_path = *dep.version.workspace();
                         package_dependencies[total_dependencies_count as usize] = dep;
                         total_dependencies_count += 1;
@@ -2856,16 +2850,18 @@ impl Package<u64> {
         // `{off: u32, len: u32}` window into different backing buffers.
         self.resolutions = lockfile::PackageIDSlice::new(self.dependencies.off, self.dependencies.len);
 
-        // SAFETY: capacity reserved above.
-        unsafe { lockfile.buffers.resolutions.set_len(total_len) };
-        lockfile.buffers.resolutions[off..total_len].fill(invalid_package_id);
+        // Prior len == `off` (asserted above), so `resize` fills exactly
+        // `[off..total_len]` — equivalent to the old `set_len` + `fill`.
+        lockfile
+            .buffers
+            .resolutions
+            .resize(total_len, invalid_package_id);
 
         let new_len = off + total_dependencies_count as usize;
-        // SAFETY: shrink to actually-filled length.
-        unsafe {
-            lockfile.buffers.dependencies.set_len(new_len);
-            lockfile.buffers.resolutions.set_len(new_len);
-        }
+        // SAFETY: capacity reserved above; `package_dependencies[..new_len-off]`
+        // was fully initialized via the spare-capacity slice writes earlier.
+        unsafe { lockfile.buffers.dependencies.set_len(new_len) };
+        lockfile.buffers.resolutions.truncate(new_len);
 
         // This function depends on package.dependencies being set, so it is done at the very end.
         if FEATURES.is_main {

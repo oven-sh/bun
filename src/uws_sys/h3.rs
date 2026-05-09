@@ -61,14 +61,14 @@ impl Request {
         // SAFETY: self is a live FFI handle; out-ptr is a valid local
         let n = unsafe { c::uws_h3_req_get_url(self, &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { core::slice::from_raw_parts(p, n) }
+        unsafe { bun_core::ffi::slice(p, n) }
     }
     pub fn method(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; out-ptr is a valid local
         let n = unsafe { c::uws_h3_req_get_method(self, &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { core::slice::from_raw_parts(p, n) }
+        unsafe { bun_core::ffi::slice(p, n) }
     }
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
@@ -78,7 +78,7 @@ impl Request {
             None
         } else {
             // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-            Some(unsafe { core::slice::from_raw_parts(p, n) })
+            Some(unsafe { bun_core::ffi::slice(p, n) })
         }
     }
     pub fn query(&mut self, name: &[u8]) -> &[u8] {
@@ -86,14 +86,14 @@ impl Request {
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
         let n = unsafe { c::uws_h3_req_get_query(self, name.as_ptr(), name.len(), &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { core::slice::from_raw_parts(p, n) }
+        unsafe { bun_core::ffi::slice(p, n) }
     }
     pub fn parameter(&mut self, idx: u16) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; out-ptr is a valid local
         let n = unsafe { c::uws_h3_req_get_parameter(self, idx, &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { core::slice::from_raw_parts(p, n) }
+        unsafe { bun_core::ffi::slice(p, n) }
     }
     /// Iterate all request headers.
     ///
@@ -241,7 +241,7 @@ impl Response {
             return None;
         }
         // SAFETY: uws returns a pointer+len pair valid while the response is alive
-        let ip = unsafe { core::slice::from_raw_parts(ip_ptr, len) };
+        let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
         // TODO(port): SocketAddress.ip is a borrowed slice in Zig; Rust field type TBD
         Some(SocketAddress { ip, port, is_ipv6 })
     }

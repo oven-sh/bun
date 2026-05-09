@@ -694,7 +694,7 @@ impl BlobExt for Blob {
         let cursor = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*cursor as usize);
         let mut buffer_stream =
-            bun_io::FixedBufferStream::new(unsafe { core::slice::from_raw_parts(*cursor, total_length) });
+            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
@@ -2451,12 +2451,10 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-            // SAFETY: BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
-            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`.
+            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
+            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`; bytemuck checks align + even-len.
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
-            let out = OwnedString::new(BunString::clone_utf16(unsafe {
-                core::slice::from_raw_parts(buf.as_ptr().cast::<u16>(), buf.len() / 2)
-            }));
+            let out = OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
             return out.to_js(global);
         }
 
@@ -2605,12 +2603,10 @@ impl BlobExt for Blob {
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            // SAFETY: BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
-            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`.
+            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
+            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`; bytemuck checks align + even-len.
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
-            let mut out = OwnedString::new(BunString::clone_utf16(unsafe {
-                core::slice::from_raw_parts(buf.as_ptr().cast::<u16>(), buf.len() / 2)
-            }));
+            let mut out = OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -3256,8 +3252,7 @@ impl BlobExt for Blob {
                     // reference; lift it into the refcounted
                     // `bun_s3_signing::S3Credentials` here at the T6 call site
                     // (dotenv cannot name the s3_signing type — upward dep).
-                    // SAFETY: transpiler.env is set during VM init and outlives the VM.
-                    let env_creds = unsafe { &mut *vm.transpiler.env }.get_s3_credentials();
+                    let env_creds = vm.transpiler.env_mut().get_s3_credentials();
                     let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
                     let copy = core::mem::replace(
                         path_or_fd,
@@ -4061,13 +4056,13 @@ fn write_file_with_empty_source_to_destination(
             struct Wrapper {
                 promise: jsc::JSPromiseStrong,
                 store: StoreRef,
-                global: *const JSGlobalObject,
+                global: bun_ptr::BackRef<JSGlobalObject>,
             }
             impl Wrapper {
                 fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> jsc::JsTerminatedResult<()> {
                     // SAFETY: opaque_this was heap-allocated in the caller below.
                     let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
-                    let global = unsafe { &*this.global };
+                    let global = this.global.get();
                     match result {
                         S3UploadResult::Success => this.promise.resolve(global, JSValue::js_number(0.0))?,
                         S3UploadResult::Failure(err) => {
@@ -4103,7 +4098,7 @@ fn write_file_with_empty_source_to_destination(
                 bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
                     store: destination_store.clone(),
-                    global: ctx,
+                    global: bun_ptr::BackRef::new(ctx),
                 })).cast::<c_void>(),
             )?;
             return Ok(promise_value);
@@ -4319,14 +4314,13 @@ pub fn write_file_with_source_destination(
                     struct Wrapper {
                         store: StoreRef,
                         promise: jsc::JSPromiseStrong,
-                        global: *const JSGlobalObject,
+                        global: bun_ptr::BackRef<JSGlobalObject>,
                     }
                     impl Wrapper {
                         fn resolve(result: S3UploadResult, opaque_self: *mut c_void) -> jsc::JsTerminatedResult<()> {
                             // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
                             let mut this = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                            // SAFETY: global was stored from a live &JSGlobalObject; the VM outlives this callback.
-                            let global = unsafe { &*this.global };
+                            let global = this.global.get();
                             match result {
                                 S3UploadResult::Success => {
                                     this.promise.resolve(global, JSValue::js_number(this.store.data.as_bytes().len() as f64))?;
@@ -4361,7 +4355,7 @@ pub fn write_file_with_source_destination(
                         bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
                             promise,
-                            global: ctx,
+                            global: bun_ptr::BackRef::new(ctx),
                         })).cast::<c_void>(),
                     )?;
                     return Ok(promise_value);
@@ -5420,7 +5414,7 @@ pub extern "C" fn Blob__fromBytes(
         return Blob::new(Blob::init_empty(global_this));
     }
     // SAFETY: caller guarantees [ptr, ptr+len) is valid.
-    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
+    let bytes = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
     let store = Store::init(bytes);
     Blob::new(Blob::init_with_store(store, global_this))
 }
@@ -6392,8 +6386,14 @@ pub trait FileOpener: Sized {
 
             self.set_open_callback(callback);
             let loop_ = self.loop_();
-            let self_ptr = core::ptr::from_mut(self);
+            let self_ptr: *mut Self = core::ptr::from_mut(self);
             let req = self.req();
+            // Stash `self` on the request BEFORE dispatch. libuv never touches
+            // `req.data`, so pre-setting is safe; doing it after `uv_fs_open`
+            // is a UAF when the call fails synchronously and `callback` frees
+            // `self` (ReadFileUV::on_finish → finalize → heap::take). The Zig
+            // spec at Blob.zig:4956 has this ordering bug; we diverge to fix it.
+            req.data = self_ptr.cast();
             // SAFETY: loop_/req are live for the duration of the async open;
             // req.data is consumed by `wrapped_callback::<Self>` above.
             let rc = unsafe {
@@ -6415,10 +6415,11 @@ pub trait FileOpener: Sized {
                         .into(),
                 );
                 self.set_opened_fd(bun_sys::Fd::INVALID);
+                // `callback` may free `self` (see comment above) — must be the
+                // last thing we touch on this path.
                 callback(self, bun_sys::Fd::INVALID);
+                return;
             }
-            // SAFETY: req() borrows self; re-borrow to set data after rc check.
-            self.req().data = self_ptr.cast();
             return;
         }
 

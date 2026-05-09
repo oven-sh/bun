@@ -1643,10 +1643,10 @@ impl CronJob {
                     promise.set_handled(this_ref.global.vm());
                     // `bun_jsc::AnyPromise` (lib.rs duplicate) lacks `.result()`;
                     // dispatch on the variant and call `JSPromise::result` directly.
-                    // SAFETY: variants hold a live JSC heap cell.
+                    // S012: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
                     let reason = match promise {
-                        jsc::AnyPromise::Normal(p) => unsafe { (*p).result(this_ref.global.vm()) },
-                        jsc::AnyPromise::Internal(p) => unsafe { (*p).result(this_ref.global.vm()) },
+                        jsc::AnyPromise::Normal(p) => jsc::JSPromise::opaque_mut(p).result(this_ref.global.vm()),
+                        jsc::AnyPromise::Internal(p) => jsc::JSPromise::opaque_mut(p).result(this_ref.global.vm()),
                     };
                     // SAFETY: `vm.global` is live; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).
@@ -1816,9 +1816,9 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         js::pending_promise_set_cached(js_this, &this_ref.global, JSValue::UNDEFINED);
     }
-    // SAFETY: `vm.global` is live for the per-thread VM; raw deref decouples
-    // the borrow from `vm` so `unhandled_rejection(&mut self, ...)` can reborrow.
-    let global_ref = unsafe { &*vm.global };
+    // `vm.global()` returns `&'static`, so the borrow is already decoupled
+    // from `vm` and `unhandled_rejection(&mut self, ...)` can reborrow.
+    let global_ref = vm.global();
     vm.unhandled_rejection(global_ref, err, promise_value);
     CronJob::schedule_next(this, vm);
     Ok(JSValue::UNDEFINED)
@@ -1981,18 +1981,49 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             }
         }
     }
+    // PERF(port): was arena bulk-free for envp on Windows
+    #[cfg(unix)]
+    let envp: *const *const c_char = bun_core::c_environ();
+    #[cfg(windows)]
+    let envp_owned;
+    #[cfg(windows)]
+    let envp: *const *const c_char = {
+        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
+        match unsafe { (*vm_mut().transpiler.env).map.create_null_delimited_env_map() } {
+            Ok(v) => {
+                envp_owned = v;
+                envp_owned.as_ptr().cast()
+            }
+            Err(_) => {
+                s.set_err(format_args!("Failed to create environment block"));
+                return unsafe { T::finish(this) };
+            }
+        }
+    };
+
     // PORT NOTE: Zig stashes the heap libuv pipe in
     // `stderr_reader.source.?.pipe` and reuses the same pointer for
-    // `SpawnOptions.stderr = .{ .buffer = pipe }`. Rust's `Source::Pipe`
-    // owns a `Box<uv::Pipe>`; capture the stable heap address before moving
-    // the Box into `source` so `Stdio::Buffer` can name it without
-    // re-borrowing through the enum.
+    // `SpawnOptions.stderr = .{ .buffer = pipe }`. In the Rust port BOTH
+    // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
+    // and `spawn_process_windows` unconditionally `heap::take`s the raw
+    // `Stdio::Buffer` pointer back into a second Box on success
+    // (process.rs:1980-1982). We keep `stderr_reader.source` as the SOLE
+    // owner (matches the Zig spec, where the reader frees it) and pass a raw
+    // non-owning alias to `Stdio::Buffer`; the duplicate Box that comes back
+    // in `spawned.stderr` is disarmed via `mem::forget` below before
+    // `spawned` drops. On spawn-error paths `heap::take` never ran, so
+    // `stderr_reader.source` remains the only owner there too.
+    //
+    // ORDERING: this block is the LAST fallible pre-spawn step. It must run
+    // AFTER `which`/envp above because `T::finish` on those error paths drops
+    // the job → `WindowsBufferedReader::Drop` → `close_impl` → `uv_close` on
+    // a still-zeroed handle (NULL `loop_`, type 0) = crash. In Zig the
+    // equivalent path merely leaked a raw `*uv.Pipe`; the Rust Box+Drop
+    // tightened that leak into uv_close-on-uninit, so we reorder instead.
     #[cfg(windows)]
     let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = {
-        // SAFETY: all-zero is a valid uv_pipe_t init state (matches Zig
-        // `std.mem.zeroes(uv.Pipe)`).
         let mut pipe =
-            Box::new(unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() });
+            Box::new(bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>());
         let ptr: *mut bun_sys::windows::libuv::Pipe = core::ptr::from_mut(pipe.as_mut());
         s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
         ptr
@@ -2015,26 +2046,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             ..Default::default()
         },
         ..SpawnOptions::default()
-    };
-
-    // PERF(port): was arena bulk-free for envp on Windows
-    #[cfg(unix)]
-    let envp: *const *const c_char = bun_core::c_environ();
-    #[cfg(windows)]
-    let envp_owned;
-    #[cfg(windows)]
-    let envp: *const *const c_char = {
-        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
-        match unsafe { (*vm_mut().transpiler.env).map.create_null_delimited_env_map() } {
-            Ok(v) => {
-                envp_owned = v;
-                envp_owned.as_ptr().cast()
-            }
-            Err(_) => {
-                s.set_err(format_args!("Failed to create environment block"));
-                return unsafe { T::finish(this) };
-            }
-        }
     };
 
     let spawned = match spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) {
@@ -2086,7 +2097,16 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
     #[cfg(windows)]
     {
-        if matches!(spawned.stderr, spawn::WindowsStdioResult::Buffer(_)) {
+        // `spawn_process_windows` reconstructed a SECOND `Box<uv::Pipe>` from
+        // `stderr_pipe_ptr` via `heap::take` into `spawned.stderr`. The real
+        // owner is `stderr_reader.source` (set above); leaving the duplicate
+        // in `spawned` would free the live, libuv-registered handle when
+        // `spawned` drops at the end of this function (`to_process` takes
+        // `&mut`, not `self`) → use-after-free in the read callback +
+        // double-free on reader close. Take it out and forget it.
+        if let spawn::WindowsStdioResult::Buffer(dup) = spawned.stderr.take() {
+            debug_assert!(core::ptr::eq(Box::as_ref(&dup), stderr_pipe_ptr));
+            core::mem::forget(dup);
             s.stderr_reader().parent = this as *mut core::ffi::c_void;
             *s.remaining_fds() += 1;
             if s.stderr_reader().start_with_current_pipe().is_err() {

@@ -612,14 +612,11 @@ pub mod webcore {
     }
     impl super::JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: codegen-emitted `Blob__fromJS` returns null when `value`
-            // is not a Blob wrapper.
-            let p = unsafe { Blob__fromJS(value) };
+            let p = Blob__fromJS(value);
             if p.is_null() { None } else { Some(p.cast::<Self>()) }
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: codegen extern; caller has already checked `is_cell()`.
-            let p = unsafe { Blob__fromJSDirect(value) };
+            let p = Blob__fromJSDirect(value);
             if p.is_null() { None } else { Some(p.cast::<Self>()) }
         }
         fn to_js(self, _global: &JSGlobalObject) -> JSValue {
@@ -633,16 +630,18 @@ pub mod webcore {
             )
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            // SAFETY: `global` is live; codegen extern returns the cached ctor.
-            unsafe { Blob__getConstructor(global.as_mut_ptr()) }
+            Blob__getConstructor(global)
         }
     }
 
     // C++ codegen symbols (generate-classes.ts) — NOT Rust→Rust shims.
+    // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
+    // opaque `UnsafeCell`-backed handle, so `&JSGlobalObject` is ABI-identical
+    // to a non-null `JSGlobalObject*` with write provenance.
     unsafe extern "C" {
-        fn Blob__fromJS(value: JSValue) -> *mut c_void;
-        fn Blob__fromJSDirect(value: JSValue) -> *mut c_void;
-        fn Blob__getConstructor(global: *mut JSGlobalObject) -> JSValue;
+        safe fn Blob__fromJS(value: JSValue) -> *mut c_void;
+        safe fn Blob__fromJSDirect(value: JSValue) -> *mut c_void;
+        safe fn Blob__getConstructor(global: &JSGlobalObject) -> JSValue;
     }
 }
 
@@ -855,8 +854,7 @@ where
         where
             F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static,
         {
-            // SAFETY: `F` is a ZST fn item — no bit pattern to invalidate.
-            let f: F = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
+            let f: F = bun_core::ffi::conjure_zst::<F>();
             // SAFETY: JSC passes live non-null `*JSGlobalObject` / `*CallFrame`.
             let global = unsafe { &*g };
             let frame = unsafe { &*c };
@@ -880,8 +878,7 @@ where
         where
             F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static,
         {
-            // SAFETY: `F` is a ZST fn item.
-            let f: F = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
+            let f: F = bun_core::ffi::conjure_zst::<F>();
             // SAFETY: JSC passes live non-null pointers.
             f(unsafe { &*g }, unsafe { &*c })
         }

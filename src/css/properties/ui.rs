@@ -34,7 +34,7 @@ impl ColorScheme {
 
     pub fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
         let mut res = ColorScheme::empty();
-        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         if let Some(value) = color_scheme_map_get(ident) {
             match value {
@@ -45,9 +45,7 @@ impl ColorScheme {
             }
         }
 
-        while let Ok(i) = input.try_parse(|p| {
-            p.expect_ident().map(|s| unsafe { css::css_parser::src_str(s) })
-        }) {
+        while let Ok(i) = input.try_parse(|p| p.expect_ident_cloned()) {
             if let Some(value) = color_scheme_map_get(i) {
                 match value {
                     ColorSchemeKeyword::Normal => {

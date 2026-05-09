@@ -2677,11 +2677,9 @@ impl Payload {
     /// (matches the Zig ordering where several handlers reset before consuming `payload`).
     #[inline]
     unsafe fn data<'a>(&self) -> &'a [u8] {
-        if self.data_len == 0 {
-            return &[];
-        }
-        // SAFETY: caller contract — see doc comment above.
-        unsafe { core::slice::from_raw_parts(self.data_ptr, self.data_len) }
+        // SAFETY: caller contract — see doc comment above. `ffi::slice` tolerates
+        // the (null, 0) shape used for empty payloads.
+        unsafe { bun_core::ffi::slice(self.data_ptr, self.data_len) }
     }
 }
 

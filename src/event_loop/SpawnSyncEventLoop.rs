@@ -356,8 +356,7 @@ impl SpawnSyncEventLoop {
         let timer: NonNull<libuv::Timer> = match self.uv_timer {
             Some(t) => t,
             None => 'brk: {
-                // SAFETY: all-zero is a valid `libuv::Timer` (C POD, matches `std.mem.zeroes`).
-                let uv_timer: Box<libuv::Timer> = Box::new(unsafe { bun_core::ffi::zeroed_unchecked() });
+                let uv_timer: Box<libuv::Timer> = Box::new(bun_core::ffi::zeroed());
                 let uv_timer = bun_core::heap::into_raw(uv_timer);
                 // SAFETY: uv_timer just allocated; `uv_loop` is set by C `us_create_loop`.
                 unsafe { (*uv_timer).init(self.uws_loop().uv_loop) };

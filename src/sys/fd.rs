@@ -139,8 +139,7 @@ impl FdExt for Fd {
             #[cfg(target_os = "macos")]
             {
                 debug_assert!(self.native() >= 0);
-                // SAFETY: close$NOCANCEL is the non-cancellable variant of close(2).
-                match sys::get_errno(unsafe { close_nocancel(self.native()) }) {
+                match sys::get_errno(close_nocancel(self.native())) {
                     sys::E::EBADF => Some(sys::Error {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::close,
@@ -157,10 +156,13 @@ impl FdExt for Fd {
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
                         // SAFETY: synchronous libuv fs call (cb = None); req lives on the
-                        // stack for the duration. fs_t::Drop calls uv_fs_req_cleanup.
+                        // stack for the duration of the call.
                         let rc = unsafe {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
+                        // Zig: `defer req.deinit();` — fs_t has no Drop impl, so cleanup
+                        // must be explicit (uv_fs_req_cleanup).
+                        req.deinit();
                         if let Some(errno) = rc.errno() {
                             Some(sys::Error {
                                 errno,
@@ -411,8 +413,9 @@ impl fmt::Display for MovableIfWindowsFd {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     // Darwin libc: close that doesn't get interrupted by pthread cancellation.
+    // By-value `c_int` only; bad fd → `EBADF`, no UB.
     #[link_name = "close$NOCANCEL"]
-    fn close_nocancel(fd: c_int) -> c_int;
+    safe fn close_nocancel(fd: c_int) -> c_int;
 }
 
 #[cfg(windows)]

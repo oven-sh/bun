@@ -1198,8 +1198,7 @@ impl WebWorker {
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
-                // SAFETY: hook contract; `vm` exclusive.
-                unsafe { (hooks.cron_clear_all_teardown)(vm) };
+                (hooks.cron_clear_all_teardown)(vm);
             }
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs
@@ -1547,8 +1546,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
     if str.len() >= BLOB_SPECIFIER_LEN && str.starts_with(b"blob:") {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        // SAFETY: hook contract; `ObjectURLRegistry` lives in `bun_runtime`.
-        if unsafe { (hooks.has_blob_url)(&str[b"blob:".len()..]) } {
+        if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
             return Some(str);
         } else {
             *error_message = BunString::static_(b"Blob URL is missing");

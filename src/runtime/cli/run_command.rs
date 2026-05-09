@@ -520,8 +520,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: fully written on the line above.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
-        let env_loader = unsafe { &mut *this_transpiler.env };
+        let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
         this_transpiler.options.env.prefix = Box::default();
 
@@ -568,11 +567,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.store_fd = false;
 
         if env_is_none {
-            // SAFETY: re-derive — borrowck won't let `env_loader` straddle the
+            // Re-derive — borrowck won't let `env_loader` straddle the
             // `&mut this_transpiler.resolver` above. Scoped to this block so it
             // does NOT straddle `run_env_loader` below (which itself derives
-            // `&mut *self.env`, popping any outstanding `&mut Loader` tag).
-            let env_loader = unsafe { &mut *this_transpiler.env };
+            // `env_mut()`, popping any outstanding `&mut Loader` tag).
+            let env_loader = this_transpiler.env_mut();
             env_loader.load_process()?;
 
             if let Some(node_env) = env_loader.get(b"NODE_ENV") {
@@ -586,13 +585,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let _ = this_transpiler.run_env_loader(true);
         }
 
-        // SAFETY: re-derive after `run_env_loader` — that call creates its own
-        // `&mut *self.env` (transpiler.rs:282), which under Stacked Borrows
-        // invalidates any `&mut Loader` derived before it. Zig spec
-        // run_command.zig:820-823 re-dereferences `this_transpiler.env`
-        // per-statement; mirror that by taking a fresh borrow here for the
-        // remaining env-var seeding.
-        let env_loader = unsafe { &mut *this_transpiler.env };
+        // Re-derive after `run_env_loader` — that call creates its own
+        // `env_mut()` borrow, which under Stacked Borrows invalidates any
+        // `&mut Loader` derived before it. Zig spec run_command.zig:820-823
+        // re-dereferences `this_transpiler.env` per-statement; mirror that by
+        // taking a fresh borrow here for the remaining env-var seeding.
+        let env_loader = this_transpiler.env_mut();
 
         env_loader.map.put_default(b"npm_config_local_prefix", top_level_dir).expect("unreachable");
 
@@ -1551,8 +1549,7 @@ impl Run {
                                 }
                                 break 'brk result;
                             }
-                            // SAFETY: `vm.jsc_vm` set in `init`.
-                            _ => break 'brk promise.result(unsafe { &*vm.jsc_vm }),
+                            _ => break 'brk promise.result(vm.jsc_vm()),
                         }
                     }
                     result
@@ -1716,8 +1713,7 @@ impl RunCommand {
         #[cfg(not(windows))]
         {
             const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            // SAFETY: BUN_NODE_DIR_Z is a NUL-terminated &'static str literal.
-            Ok(unsafe { ZStr::from_raw(BUN_NODE_DIR_Z.as_ptr(), BUN_NODE_DIR_Z.len() - 1) })
+            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
         }
         #[cfg(windows)]
         {
@@ -2017,8 +2013,7 @@ impl RunCommand {
             cwd,
             force_using_bun,
         )?;
-        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
-        unsafe { &mut *this_transpiler.env }
+        this_transpiler.env_mut()
             .map
             .put(b"PATH", &new_path)
             .unwrap_or_oom();
@@ -2038,8 +2033,7 @@ impl RunCommand {
         cwd: &[u8],
         force_using_bun: bool,
     ) -> Result<Vec<u8>, bun_core::Error> {
-        // SAFETY: `Transpiler::init` always sets `env` (process-lifetime singleton).
-        let env_loader = unsafe { &mut *this_transpiler.env };
+        let env_loader = this_transpiler.env_mut();
         // Snapshot PATH up front. In Zig the env map stores borrowed slices into
         // process environ, so the returned `[]const u8` outlives later `put`s; the
         // Rust map owns `Box<[u8]>` values, so a borrow would dangle once the
@@ -2104,8 +2098,7 @@ impl RunCommand {
             }
 
             if !force_using_bun {
-                // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
-                let env_mut = unsafe { &mut *this_transpiler.env };
+                let env_mut = this_transpiler.env_mut();
                 env_mut
                     .map
                     .put(b"NODE", bun_node_exe.as_bytes())
@@ -2535,8 +2528,7 @@ impl RunCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        // SAFETY: `Transpiler::init` always sets `env`.
-        let env_loader: &mut DotEnv::Loader<'static> = unsafe { &mut *this_transpiler.env };
+        let env_loader: &mut DotEnv::Loader<'static> = this_transpiler.env_mut();
         env_loader.map.put(b"npm_command", b"run-script").expect("unreachable");
 
         let root_dir = root_dir_info;
@@ -3679,10 +3671,9 @@ impl RunCommand {
         };
 
         {
-            // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
-            unsafe { &mut *this_transpiler.env }.load_process()?;
+            this_transpiler.env_mut().load_process()?;
 
-            if let Some(node_env) = unsafe { &*this_transpiler.env }.get(b"NODE_ENV") {
+            if let Some(node_env) = this_transpiler.env().get(b"NODE_ENV") {
                 if node_env == b"production" {
                     this_transpiler.options.production = true;
                 }
@@ -3691,8 +3682,7 @@ impl RunCommand {
 
         type ResultList = ArrayHashMap<Box<[u8]>, ()>;
 
-        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
-        if let Some(shell) = unsafe { &*this_transpiler.env }.get(b"SHELL") {
+        if let Some(shell) = this_transpiler.env().get(b"SHELL") {
             shell_out.shell = crate::cli::shell_completions::Shell::from_env(shell);
         }
 
@@ -3821,9 +3811,8 @@ impl RunCommand {
                     }
 
                     let mut max_description_len: usize = 20;
-                    // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
                     if let Some(max) =
-                        unsafe { &*this_transpiler.env }.get(b"MAX_DESCRIPTION_LEN")
+                        this_transpiler.env().get(b"MAX_DESCRIPTION_LEN")
                     {
                         if let Some(max_len) = ::core::str::from_utf8(max)
                             .ok()

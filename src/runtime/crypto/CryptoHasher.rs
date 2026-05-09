@@ -77,7 +77,7 @@ impl CryptoHasher {
         name_len: usize,
     ) -> Option<Box<CryptoHasher>> {
         // SAFETY: caller passes a valid (ptr,len) byte slice
-        let name = unsafe { core::slice::from_raw_parts(name_bytes.cast::<u8>(), name_len) };
+        let name = unsafe { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
 
         if let Some(inner) = CryptoHasherZig::init(name) {
             return Some(CryptoHasher::new(CryptoHasher::Zig(inner)));

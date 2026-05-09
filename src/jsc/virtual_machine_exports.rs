@@ -191,7 +191,7 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
     }
 
     jsc_vm.plugin_runner = Some(PluginRunner {
-        global_object: global.as_ptr(),
+        global_object: bun_ptr::BackRef::new(global),
     });
     // SAFETY: `plugin_runner` was just set to `Some` above; the `Option` slot
     // is embedded in `*jsc_vm` and stable for the VM's lifetime, so taking a

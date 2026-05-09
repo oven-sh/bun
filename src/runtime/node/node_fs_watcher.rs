@@ -1000,7 +1000,7 @@ impl FSWatcher {
         };
         // SAFETY: `FileSystem::instance()` returns the process-global singleton
         // initialized at startup; never null once init has run.
-        let cwd = unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir };
+        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
         let file_path: &bun_str::ZStr =
             Path::join_abs_string_buf_z::<platform::Auto>(cwd, &mut joined_buf[..], &[slice]);
 

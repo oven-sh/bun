@@ -202,8 +202,7 @@ impl Linux {
     }
 
     fn init_once() {
-        // SAFETY: FFI call; Bun__linux_trace_init has no preconditions
-        let result = unsafe { Bun__linux_trace_init() };
+        let result = Bun__linux_trace_init();
         IS_INITIALIZED.store(result != 0, Ordering::Relaxed);
     }
 

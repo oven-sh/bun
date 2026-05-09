@@ -2459,8 +2459,7 @@ where
     }
 
     pub fn print_string_characters_utf16(&mut self, text: &[u16], quote: u8) {
-        // SAFETY: reinterpret &[u16] as &[u8] for write_pre_quoted_string's utf16 path
-        let slice = unsafe { core::slice::from_raw_parts(text.as_ptr().cast::<u8>(), text.len() * 2) };
+        let slice: &[u8] = bytemuck::cast_slice(text);
         let mut writer = self.writer.std_writer();
         let _ = match quote {
             b'\'' => write_pre_quoted_string::<_, b'\'', ASCII_ONLY, false, { Encoding::Utf16 }>(slice, &mut writer),

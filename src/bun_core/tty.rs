@@ -23,8 +23,7 @@ pub enum Mode {
 }
 
 pub fn set_mode(fd: c_int, mode: Mode) -> c_int {
-    // SAFETY: Bun__ttySetMode is a C++ FFI fn that takes plain ints; no invariants beyond ABI.
-    unsafe { Bun__ttySetMode(fd, mode as c_int) }
+    Bun__ttySetMode(fd, mode as c_int)
 }
 
 /// RAII guard: sets `fd` to [`Mode::Raw`] on construction and restores
@@ -51,7 +50,7 @@ impl Drop for RawModeGuard {
 
 // TODO(port): move to bun_core_sys (or appropriate *_sys crate)
 unsafe extern "C" {
-    fn Bun__ttySetMode(fd: c_int, mode: c_int) -> c_int;
+    safe fn Bun__ttySetMode(fd: c_int, mode: c_int) -> c_int;
 }
 
 // ported from: src/bun_core/tty.zig

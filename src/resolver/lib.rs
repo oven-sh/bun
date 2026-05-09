@@ -236,6 +236,26 @@ pub mod fs {
             unsafe { (*INSTANCE.get()).assume_init_mut() }
         }
 
+        /// Shared-ref accessor for the process-lifetime singleton. Prefer this
+        /// over [`instance`] for read-only access (e.g. `top_level_dir`,
+        /// `dirname_store`): the resolver runs on a thread pool and a `&'static`
+        /// is the only sound shape for concurrent readers.
+        ///
+        /// # Panics (debug)
+        /// If `init()` has not been called yet.
+        #[track_caller]
+        #[inline]
+        pub fn get() -> &'static FileSystem {
+            debug_assert!(
+                INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire),
+                "FileSystem::get() before FileSystem::init()"
+            );
+            // SAFETY: `INSTANCE` is written exactly once by `init()` during
+            // single-threaded startup (Release-paired with the Acquire above)
+            // and never freed; shared `&` aliases freely across threads.
+            unsafe { (*INSTANCE.get()).assume_init_ref() }
+        }
+
         /// Port of `FileSystem.init` (fs.zig:90-108). First call writes the
         /// global `INSTANCE`; subsequent calls return it untouched. Delegates
         /// `Implementation` construction to `RealFS::init` so the process
@@ -1430,23 +1450,18 @@ pub mod fs {
             err: bun_core::Error,
         ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                // SAFETY: `&mut self` ensures no aliased `EntriesMap` access in this scope.
-                let mut get_or_put_result = unsafe { self.entries.get_or_put(dir) }?;
+                let mut get_or_put_result = self.entries.get_or_put(dir)?;
                 if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
-                    // SAFETY: see above.
-                    unsafe { self.entries.mark_not_found(get_or_put_result) };
+                    self.entries.mark_not_found(get_or_put_result);
                     return Ok(temp_entries_option_write(EntriesOption::Err(dir_entry::Err {
                         original_err: err,
                         canonical_error: err,
                     })));
                 } else {
-                    // SAFETY: see above — sole `&mut` to the slot.
-                    let opt = unsafe {
-                        self.entries.put(
-                            &mut get_or_put_result,
-                            EntriesOption::Err(dir_entry::Err { original_err: err, canonical_error: err }),
-                        )
-                    }?;
+                    let opt = self.entries.put(
+                        &mut get_or_put_result,
+                        EntriesOption::Err(dir_entry::Err { original_err: err, canonical_error: err }),
+                    )?;
                     // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
                     return Ok(unsafe { &mut *opt });
                 }
@@ -1505,13 +1520,11 @@ pub mod fs {
             let mut in_place: Option<*mut DirEntry> = None;
 
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                // SAFETY: `entries_mutex` is held; no aliased map access in this scope.
-                cache_result = Some(unsafe { self.entries.get_or_put(dir) }?);
+                cache_result = Some(self.entries.get_or_put(dir)?);
 
                 let cr = cache_result.as_ref().unwrap();
                 if cr.has_checked_if_exists() {
-                    // SAFETY: `entries_mutex` is held; sole `&mut` to this slot.
-                    if let Some(cached_result) = unsafe { self.entries.at_index(cr.index) } {
+                    if let Some(cached_result) = self.entries.at_index(cr.index) {
                         // PORT NOTE: erase to raw immediately so the early-return reborrow
                         // doesn't conflict with the `&mut self.entries` borrow above.
                         let cached_ptr = std::ptr::from_mut::<EntriesOption>(cached_result);
@@ -1611,8 +1624,7 @@ pub mod fs {
                     unsafe { &mut *entries_ptr },
                 );
 
-                // SAFETY: `entries_mutex` is held; sole `&mut` to this slot.
-                let out = unsafe { self.entries.put(cache_result.as_mut().unwrap(), result) }?;
+                let out = self.entries.put(cache_result.as_mut().unwrap(), result)?;
                 // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
                 return Ok(unsafe { &mut *out });
             }
@@ -1627,8 +1639,7 @@ pub mod fs {
 
         /// Port of `RealFS.bustEntriesCache` in `fs.zig`.
         pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            // SAFETY: `&mut self` ensures no aliased `EntriesMap` access.
-            unsafe { self.entries.remove(file_path) }
+            self.entries.remove(file_path)
         }
 
         /// Port of `RealFS.kind` in `fs.zig` — lstat + (if symlink) open + fstat +
@@ -1658,9 +1669,7 @@ pub mod fs {
 
             outpath[entry_path_len + 1] = 0;
             outpath[entry_path_len] = 0;
-            // SAFETY: outpath[entry_path_len] == 0 written above
-            let absolute_path_c =
-                unsafe { ZStr::from_raw(outpath.as_ptr(), entry_path_len) };
+            let absolute_path_c = ZStr::from_buf(&outpath[..], entry_path_len);
 
             #[cfg(windows)]
             {
@@ -1725,8 +1734,7 @@ pub mod fs {
                     unsafe { let _ = w::CloseHandle(handle); }
                 }
 
-                // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD).
-                let mut info: w::BY_HANDLE_FILE_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+                let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
                 // SAFETY: `handle` is valid; `info` is a valid out-param.
                 if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
                     cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
@@ -1825,8 +1833,8 @@ pub mod fs {
         ) -> Option<&mut EntriesOption> {
             // PORT NOTE: erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
-            // SAFETY: `entries_mutex` held by caller; sole `&mut` to this slot.
-            let result_ptr = std::ptr::from_mut::<EntriesOption>(unsafe { self.entries.at_index(index) }?);
+            // `entries_mutex` held by caller; sole `&mut` to this slot.
+            let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {

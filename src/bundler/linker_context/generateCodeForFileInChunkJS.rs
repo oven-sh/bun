@@ -995,21 +995,15 @@ impl DeclCollector {
     ) {
         match binding.data {
             BindingData::BIdentifier(b) => {
-                // SAFETY: `b` is an arena-owned `*mut b::Identifier` valid for the AST lifetime.
-                let b = unsafe { &*b };
                 self.add_ref(b.r#ref, kind, r, c);
             }
             BindingData::BArray(b) => {
-                // SAFETY: arena-owned `*mut b::Array` valid for the AST lifetime.
-                let b = unsafe { &*b };
-                for item in unsafe { (*b.items).iter() } {
+                for item in b.items() {
                     self.collect_from_binding(item.binding, kind, r, c);
                 }
             }
             BindingData::BObject(b) => {
-                // SAFETY: arena-owned `*mut b::Object` valid for the AST lifetime.
-                let b = unsafe { &*b };
-                for prop in unsafe { (*b.properties).iter() } {
+                for prop in b.properties() {
                     self.collect_from_binding(prop.value, kind, r, c);
                 }
             }

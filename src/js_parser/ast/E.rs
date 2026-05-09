@@ -1481,12 +1481,7 @@ impl EString {
         if self.is_utf8() {
             bun_wyhash::hash(&self.data)
         } else {
-            let s16 = self.slice16();
-            // SAFETY: reinterpreting &[u16] as &[u8] of double length for hashing.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(s16.as_ptr().cast::<u8>(), s16.len() * 2)
-            };
-            bun_wyhash::hash(bytes)
+            bun_wyhash::hash(bytemuck::cast_slice::<u16, u8>(self.slice16()))
         }
     }
 }

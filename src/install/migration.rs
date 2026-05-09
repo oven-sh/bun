@@ -1032,13 +1032,10 @@ pub fn migrate_npm_lockfile<'a>(
                             // which case Zig reads `res_version.value.{git,github}.owner` from
                             // the original parsed dependency version.
                             let version_tag = version.tag;
-                            // SAFETY: tag-guarded union access
-                            let version_git_owner = unsafe {
-                                match version_tag {
-                                    DepTag::Git => version.value.git.owner,
-                                    DepTag::Github => version.value.github.owner,
-                                    _ => SemverString::default(),
-                                }
+                            let version_git_owner = match version_tag {
+                                DepTag::Git => version.git().owner,
+                                DepTag::Github => version.github().owner,
+                                _ => SemverString::default(),
                             };
 
                             // SAFETY: cursor < num_deps; capacity reserved
@@ -1084,13 +1081,10 @@ pub fn migrate_npm_lockfile<'a>(
                                                         Some(&mut *manager as &mut dyn dependency::NpmAliasRegistry),
                                                     ).ok_or(err!("InvalidNPMLockfile"))?;
                                                     res_version_tag = parsed.tag;
-                                                    // SAFETY: tag-guarded union access
-                                                    res_version_git_owner = unsafe {
-                                                        if parsed.tag == DepTag::Git {
-                                                            parsed.value.git.owner
-                                                        } else {
-                                                            parsed.value.github.owner
-                                                        }
+                                                    res_version_git_owner = if parsed.tag == DepTag::Git {
+                                                        parsed.git().owner
+                                                    } else {
+                                                        parsed.github().owner
                                                     };
 
                                                     break 'dep_resolved dep_resolved;

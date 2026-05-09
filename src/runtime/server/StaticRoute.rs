@@ -442,9 +442,8 @@ impl StaticRoute {
                 let mut cursor: &mut [u8] = &mut b[..];
                 write!(cursor, "{}", status).expect("unreachable");
                 let written = 16 - cursor.len();
-                // SAFETY: `r` is a non-null live uWS H3 response handle for the
-                // duration of the request callback.
-                unsafe { (*r).write_status(&b[..written]) };
+                // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(r).write_status(&b[..written]);
             }
         }
     }

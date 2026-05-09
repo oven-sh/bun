@@ -14,9 +14,21 @@ use std::io::Write as _;
 // erasure that forced every bundler/linker call site to `.cast()` back.
 pub use bun_css::BundlerStyleSheet;
 
+/// Arena-owned handle to a parsed CSS stylesheet (Zig: `*bun.css.BundlerStyleSheet`).
+///
+/// The pointee lives in a per-file `Bump` whose ownership is held by
+/// `Graph.heap` (PORT_NOTES_PLAN B-1: bumps are `Pin<Box<Bump>>` owned by the
+/// graph and outlive every `BundledAst` row by struct drop order). No `'arena`
+/// lifetime is threaded — N files imply N distinct per-worker bumps with no
+/// single common lifetime — so the invariant is enforced by drop order, not
+/// the type system. `StoreRef`'s `Deref`/`DerefMut` encapsulate the single
+/// documented `unsafe` deref justified by that invariant; callers use `&*r`
+/// (or `Option::as_deref`) instead of open-coded `unsafe { &*ptr }`.
+pub type CssAstRef = crate::ast::StoreRef<BundlerStyleSheet>;
+
 /// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
 /// call sites can name the column without re-spelling the pointer shape.
-pub type CssCol = Option<*mut BundlerStyleSheet>;
+pub type CssCol = Option<CssAstRef>;
 
 use bun_logger as logger;
 use bun_options_types::import_record;
@@ -58,10 +70,9 @@ pub struct BundledAst<'arena> {
     // round-trip.
     pub hashbang: crate::StoreStr,
     pub parts: part::List,
-    // Zig: `?*bun.css.BundlerStyleSheet` (nullable mutable raw ptr). Downstream
-    // bundler binds the SoA column as `&[Option<*mut css::BundlerStyleSheet>]`,
-    // so this must be a raw `*mut`, not a `&'arena` borrow.
-    pub css: Option<*mut BundlerStyleSheet>,
+    // Zig: `?*bun.css.BundlerStyleSheet`. See `CssAstRef` doc for the arena
+    // drop-order invariant that backs the safe `Deref`.
+    pub css: CssCol,
     pub url_for_css: &'arena [u8],
     pub symbols: symbol::List,
     pub module_scope: Scope,
@@ -108,7 +119,7 @@ bun_collections::multi_array_columns! {
         import_records: import_record::List,
         hashbang: crate::StoreStr,
         parts: part::List,
-        css: Option<*mut BundlerStyleSheet>,
+        css: CssCol,
         url_for_css: &'arena [u8],
         symbols: symbol::List,
         module_scope: Scope,

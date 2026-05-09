@@ -66,8 +66,8 @@ impl ApplyState {
 
     fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
         if let Some(len) = self.patch_dir_abs_path {
-            // SAFETY: pathbuf[len] == 0 was written below on a previous call.
-            return sys::Result::Ok(unsafe { ZStr::from_raw(self.pathbuf.as_ptr(), len) });
+            // pathbuf[len] == 0 was written below on a previous call.
+            return sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len));
         }
         match sys::get_fd_path(fd, &mut self.pathbuf) {
             sys::Result::Ok(p) => {
@@ -79,8 +79,7 @@ impl ApplyState {
                 // explicitly (the buffer is zero-initialized but be defensive).
                 self.pathbuf.0[len] = 0;
                 self.patch_dir_abs_path = Some(len);
-                // SAFETY: pathbuf[len] == 0 written above; buffer lives for `self`.
-                sys::Result::Ok(unsafe { ZStr::from_raw(self.pathbuf.as_ptr(), len) })
+                sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len))
             }
             sys::Result::Err(e) => sys::Result::Err(e.with_fd(fd)),
         }

@@ -322,8 +322,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let bump = bun_alloc::Arena::new();
         let (package_name, package_version, json, json_source) = {
             let source = logger::Source::init_path_string(b"package.json", package_json_contents);
-            // SAFETY: `manager.log` is set once at `PackageManager::init`.
-            let log = unsafe { &mut *manager.log };
+            let log = manager.log_mut();
             let json = match json_mod::parse_package_json_utf8(&source, log, &bump) {
                 Ok(j) => j,
                 Err(e) => {
@@ -466,8 +465,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
-        // SAFETY: `manager.log` is set once at `PackageManager::init`.
-        let log: &mut logger::Log = unsafe { &mut *manager.log };
+        let log: &mut logger::Log = manager.log_mut();
         let load_from_disk_result =
             lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
 
@@ -548,8 +546,6 @@ impl PublishCommand {
             }
         };
         drop(original_cwd);
-        // SAFETY: `init` returns a process-lifetime singleton; reborrow `&mut`.
-        let manager: &mut PackageManager = unsafe { &mut *manager };
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
@@ -793,8 +789,7 @@ impl PublishCommand {
             http::Method::GET,
             package_url,
             headers.entries,
-            // SAFETY: headers.content was allocated above
-            unsafe { core::slice::from_raw_parts(headers.content.ptr.unwrap().as_ptr(), headers.content.len) },
+            headers.content.written_slice(),
             &raw mut response_buf,
             b"",
             None,
@@ -917,8 +912,7 @@ impl PublishCommand {
             http::Method::PUT,
             publish_url.clone(),
             publish_headers.entries,
-            // SAFETY: publish_headers.content was allocated by construct_publish_headers
-            unsafe { core::slice::from_raw_parts(publish_headers.content.ptr.unwrap().as_ptr(), publish_headers.content.len) },
+            publish_headers.content.written_slice(),
             &raw mut response_buf,
             publish_req_body,
             None,
@@ -1004,8 +998,7 @@ impl PublishCommand {
                     http::Method::PUT,
                     publish_url,
                     otp_headers.entries,
-                    // SAFETY: otp_headers.content was allocated by construct_publish_headers
-                    unsafe { core::slice::from_raw_parts(otp_headers.content.ptr.unwrap().as_ptr(), otp_headers.content.len) },
+                    otp_headers.content.written_slice(),
                     &raw mut response_buf,
                     publish_req_body,
                     None,
@@ -1090,8 +1083,7 @@ impl PublishCommand {
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
         let bump = bun_alloc::Arena::new();
-        // SAFETY: `manager.log` is set once at `PackageManager::init`.
-        let manager_log: &mut logger::Log = unsafe { &mut *ctx.manager.log };
+        let manager_log: &mut logger::Log = ctx.manager.log_mut();
         let res_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
 
         let res_json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
@@ -1192,8 +1184,7 @@ impl PublishCommand {
                         http::Method::GET,
                         done_url.clone(),
                         auth_headers.entries.clone()?,
-                        // SAFETY: auth_headers.content was allocated by construct_publish_headers
-                        unsafe { core::slice::from_raw_parts(auth_headers.content.ptr.unwrap().as_ptr(), auth_headers.content.len) },
+                        auth_headers.content.written_slice(),
                         response_buf,
                         b"",
                         None,

@@ -140,6 +140,20 @@ pub mod vec {
         // fills this helper targets.
         unsafe { v.set_len(prev + n) };
     }
+
+    /// Extend `v` by `n` `T::default()` elements and return a mutable slice
+    /// of the newly-appended tail (`&mut v[prev_len .. prev_len + n]`).
+    ///
+    /// Replaces the Zig-ported `reserve(n); set_len(len+n); &mut v[len..]`
+    /// pattern (S022) where the tail is immediately overwritten by a clone/
+    /// fill loop — the default-fill keeps every exposed `T` valid even if the
+    /// caller bails partway through writing.
+    #[inline]
+    pub fn grow_default<T: Default>(v: &mut Vec<T>, n: usize) -> &mut [T] {
+        let prev = v.len();
+        extend_from_fn(v, n, |_| T::default());
+        &mut v[prev..]
+    }
 }
 
 // ── B-2 gate ── remaining heavy modules ────────────────────────────────────
@@ -1644,6 +1658,53 @@ pub mod ffi {
     unsafe impl Zeroable for libc::kevent64_s {}
     #[cfg(target_os = "freebsd")]
     unsafe impl Zeroable for libc::_umtx_time {}
+
+    // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are
+    // zero-init before the kernel fills them. All fields are integers / raw
+    // pointers / nested POD; audited against the Win32 SDK headers (S016).
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::IO_STATUS_BLOCK {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::UNICODE_STRING {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::WSADATA {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in6 {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::addrinfo {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::IO_COUNTERS {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_BASIC_LIMIT_INFORMATION {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
+
+    /// Conjure a value of a zero-sized type without `unsafe` at the call site.
+    ///
+    /// This is the monomorphised-ZST-handler trick: a fn item or capture-less
+    /// closure has `size_of == 0`, so the empty bit-pattern is its only
+    /// (trivially valid) value. The size constraint is a `const { assert! }`,
+    /// so passing a non-ZST `H` is a *compile* error at the monomorphisation
+    /// site rather than runtime UB — which is what makes this fn safe (S016).
+    ///
+    /// Replaces the `// SAFETY: H is a ZST → mem::zeroed()` comment repeated
+    /// at every callback trampoline that smuggles a generic `H: Fn*` through C
+    /// (`uws_sys::thunk`, `sql_jsc::IntoJSHostFn`, `server_body::route_thunk`).
+    #[inline(always)]
+    pub fn conjure_zst<H>() -> H {
+        const {
+            assert!(
+                core::mem::size_of::<H>() == 0,
+                "conjure_zst: H must be a ZST (fn item or capture-less closure)"
+            )
+        };
+        // SAFETY: `size_of::<H>() == 0` (compile-time asserted above), so the
+        // value occupies no bytes and `zeroed()` writes nothing. Every call
+        // site bounds `H: Fn*` (fn items / capture-less closures), and those
+        // are always inhabited — uninhabited ZSTs (`!`, `Infallible`) do not
+        // implement the `Fn` traits and so cannot reach a real instantiation.
+        unsafe { core::mem::zeroed() }
+    }
 
     /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
     /// boundary (C++ out-params, `extern "C"` callback args, `#[repr(C)]`

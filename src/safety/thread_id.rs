@@ -135,10 +135,10 @@ pub fn current() -> ThreadId {
     #[cfg(target_os = "windows")]
     {
         unsafe extern "system" {
-            fn GetCurrentThreadId() -> u32; // kernel32 DWORD
+            // No preconditions; infallible Win32 intrinsic.
+            safe fn GetCurrentThreadId() -> u32; // kernel32 DWORD
         }
-        // SAFETY: infallible Win32 intrinsic.
-        return unsafe { GetCurrentThreadId() };
+        return GetCurrentThreadId();
     }
     #[cfg(target_os = "freebsd")]
     {

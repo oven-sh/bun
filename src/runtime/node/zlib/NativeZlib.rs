@@ -49,6 +49,8 @@ unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
 /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
 /// zero it invokes [`NativeZlib::deinit`].
 #[bun_jsc::JsClass]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct NativeZlib {
     pub ref_count: Cell<u32>,
     // TODO(port): lifetime — JSC_BORROW backref; global outlives this m_ctx payload.
@@ -235,8 +237,7 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             mode: c::NodeMode::NONE,
-            // SAFETY: all-zero is a valid z_stream (C struct, std.mem.zeroes in Zig).
-            state: unsafe { mem::zeroed::<c::z_stream>() },
+            state: bun_core::ffi::zeroed::<c::z_stream>(),
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
             dictionary: bun_ptr::RawSlice::EMPTY,

@@ -14,7 +14,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("http2 session does not retain closed streams", async () => {
+test.concurrent("http2 session does not retain closed streams", async () => {
   const script = /* js */ `
     const http2 = require("node:http2");
 
@@ -95,7 +95,7 @@ test("http2 session does not retain closed streams", async () => {
 // `removeStreamByID` → `bun.destroy(stream)` — and the dereferences in the
 // defer become use-after-free. ASAN would trip here before the fix; release
 // builds would silently read reused heap memory.
-test("http2 write callback aborting the signal does not UAF the stream", async () => {
+test.concurrent("http2 write callback aborting the signal does not UAF the stream", async () => {
   const script = /* js */ `
     const http2 = require("node:http2");
 
@@ -169,7 +169,7 @@ test("http2 write callback aborting the signal does not UAF the stream", async (
 // code then continues reading and writing `stream.*` on the freed
 // allocation. Before the fix a release build would silently corrupt the
 // heap; an ASAN build crashes.
-test("http2 priority options getter aborting the signal does not UAF", async () => {
+test.concurrent("http2 priority options getter aborting the signal does not UAF", async () => {
   const script = /* js */ `
     const http2 = require("node:http2");
 

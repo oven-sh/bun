@@ -235,6 +235,10 @@ const found = await parallel(
 
 **Skip**: generic names with intentionally different semantics (e.g. 23× \`Options\` structs are per-API config — only flag if FIELDS overlap ≥80%). Test fixtures. Generated files in build/.
 
+**r1 already handled (skip these — already deduped or correctly rejected)**: PathName(→bun_paths), WTFStringImpl methods, opaque_ffi! macros, resolver::fs::Path, c_chars_as_bytes, GetSystemInfo, mimalloc free/resize variants (intentional backend split), Mutex tier-0, BSSAppendable array-vs-slice, brotli_mut accessor, uv_disable_stdio_inheritance, is_identifier_start/continue, hostent callback_wrapper, CountingWriter/DiscardingWriter, winsock sockaddr structs.
+
+**Focus r2 on what r1 missed**: helper_pattern (5-20 line code blocks repeated ≥3×), trait impls, error-conversion boilerplate, FFI thunk shapes, format_args! constructions.
+
 ${NO_TOOLS} (Read/Grep/Glob OK; no Edit this phase)
 
 Return {shard:${JSON.stringify(sh)}, candidates:[{kind,name,locations:[file:line,...],signature,why_duplicate,cross_crate}]}. Be EXHAUSTIVE — better to over-report than miss.`,
@@ -352,8 +356,10 @@ ${did.length} deduplications applied. Files edited: ${JSON.stringify([...new Set
 1. \`cd ${WT} && cargo check --workspace --keep-going 2>&1 > /tmp/dedup-check.log; grep -cE '^error\\[' /tmp/dedup-check.log\`
 2. If errors: per-file errfiles via \`grep -oP '\\-\\-> \\Ksrc/[^:]+\\.rs' /tmp/dedup-check.log | sort | uniq -c\`. Fix each (usually: stale \`use\` path, missing re-export, cfg mismatch). Read .zig spec.
 3. Loop until 0.
-4. \`cd ${WT} && bun bd --version\` exit 0.
-5. \`cd ${WT} && git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-h: dedup ${did.length} clusters (structs/fns/externs/helpers across ${CRATES.length} crates)"\`. NO push.
+4. **5-target clean-leaf** (r1 missed cross-target breaks): \`for t in x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-unknown-freebsd aarch64-linux-android x86_64-unknown-linux-musl; do cargo clean -p bun_runtime -p bun_bin --target $t 2>/dev/null; cargo check -p bun_bin --target $t 2>&1 | grep -cE '^error\\['; done\` — fix any non-zero.
+5. **Soundness check** (r1 introduced \`&self\` SB-UB): if any dedup changed a method receiver from raw-ptr to \`&self\`/\`&mut self\` AND that method calls FFI that mutates the struct → ensure the mutated fields are \`Cell<T>\`/\`UnsafeCell\`, or revert that receiver change.
+6. \`cd ${WT} && bun bd --version\` exit 0 + \`bun bd test test/js/bun/util/inspect.test.js\` 72/0.
+7. \`cd ${WT} && git -c core.hooksPath=/dev/null add -A 'src/' Cargo.toml Cargo.lock && git -c core.hooksPath=/dev/null commit -q -m "phase-h: dedup r2 ${did.length} clusters"\`. NO push.
 
 Return {rounds, errors_before, errors_after, commit, notes}.`,
   { label: "compile-fix-commit", phase: "Compile", schema: COMPILE_S },

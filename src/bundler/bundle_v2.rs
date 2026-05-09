@@ -4333,7 +4333,9 @@ impl<'a> BundleV2<'a> {
         self.add_server_component_boundaries_as_extra_entry_points()?;
 
         // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
-        // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
+        // raw-ptr borrow sidestep for `&mut .linker` / `&mut *self`. All projections
+        // (including the `.linker` receiver) go through the single `bundle_ptr` so no
+        // `&mut *self` retag occurs while `ep`/`scbs` are live.
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = self;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
@@ -4341,7 +4343,7 @@ impl<'a> BundleV2<'a> {
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = &(*bundle_ptr).graph.server_component_boundaries;
             let mut reachable_files = reachable_files;
-            self.linker.link(
+            (*bundle_ptr).linker.link(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
@@ -4659,10 +4661,12 @@ impl<'a> BundleV2<'a> {
         // The linker still has to be initialized as code generation expects
         // much of its state to be valid memory, even if empty.
         // SAFETY: `LinkerContext::load` takes `bundle` as a raw `*mut BundleV2` and only
-        // touches fields disjoint from `self.linker` (`graph`, `transpiler`,
-        // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut self.linker`
-        // receiver and `*bundle_ptr` never produce overlapping `&mut`. Both Index newtypes
-        // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
+        // touches fields disjoint from `.linker` (`graph`, `transpiler`,
+        // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut .linker`
+        // receiver and `*bundle_ptr` never produce overlapping `&mut`. All projections
+        // (including the `.linker` receiver) go through the single `bundle_ptr` so no
+        // `&mut *self` retag occurs while `ep`/`scbs` are live. Both Index newtypes are
+        // `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
         unsafe {
             let bundle_ptr: *mut BundleV2 = self;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
@@ -4672,7 +4676,7 @@ impl<'a> BundleV2<'a> {
             // the original stays intact for `dev_server.finalize_bundle` to read.
             // Borrow it here — `linker.load` only `.slice()`s it.
             let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-            self.linker.load(
+            (*bundle_ptr).linker.load(
                 bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,

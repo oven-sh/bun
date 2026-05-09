@@ -84,22 +84,22 @@ pub mod deprecated;
 // the safe wrapper below; keep `#[inline]` so cross-crate use stays a direct
 // libm call.
 unsafe extern "C" {
+    // safe: all args by-value; libm `powf` is defined for all f32 inputs.
     #[link_name = "powf"]
-    fn libm_powf(x: f32, y: f32) -> f32;
+    safe fn libm_powf(x: f32, y: f32) -> f32;
+    // safe: all args by-value; libm `pow` is defined for all f64 inputs.
     #[link_name = "pow"]
-    fn libm_pow(x: f64, y: f64) -> f64;
+    safe fn libm_pow(x: f64, y: f64) -> f64;
 }
 
 #[inline]
 pub fn powf(x: f32, y: f32) -> f32 {
-    // SAFETY: libm `powf` is defined for all f32 inputs.
-    unsafe { libm_powf(x, y) }
+    libm_powf(x, y)
 }
 
 #[inline]
 pub fn pow(x: f64, y: f64) -> f64 {
-    // SAFETY: libm `pow` is defined for all f64 inputs.
-    unsafe { libm_pow(x, y) }
+    libm_pow(x, y)
 }
 
 /// Safe `Vec` growth helpers — consolidate the
@@ -341,6 +341,37 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
     // SAFETY: per fn contract.
     unsafe { field.byte_sub(offset).cast::<P>() }
+}
+
+/// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
+///
+/// This is the canonical spelling for the ubiquitous trampoline pattern where
+/// a C library (libarchive, c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
+/// trips a Rust object through a `void *user_data` slot and hands it back to
+/// an `extern "C" fn` thunk. Phase-A open-coded this as
+/// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
+/// makes the pattern grep-able, attaches a uniform safety contract, and
+/// debug-asserts the non-null precondition the C side guarantees.
+///
+/// Re-exported from `bun_ptr` so callers can spell `bun_ptr::callback_ctx`.
+///
+/// # Safety
+/// - `ctx` must be non-null, properly aligned, and point to a live, fully
+///   initialised `T` for the entire returned lifetime `'a` (i.e. the body of
+///   the callback). The C library round-tripped the exact `*mut T` the Rust
+///   side registered, so type and provenance are correct by construction.
+/// - No other `&mut T` (or `&T` overlapping a mutated field) may be live for
+///   `'a`. C-callback user-data satisfies this on the runtime's single-
+///   threaded event loop: the callback is the unique re-entry point for `*ctx`
+///   while it runs. **Do not** use this for arbitrary pointer reinterpretation
+///   (struct-layout punning, lifetime laundering) — that is not the contract.
+#[inline(always)]
+#[track_caller]
+pub unsafe fn callback_ctx<'a, T>(ctx: *mut core::ffi::c_void) -> &'a mut T {
+    debug_assert!(!ctx.is_null(), "callback_ctx: null user-data pointer");
+    // SAFETY: per fn contract — `ctx` is the `*mut T` the caller registered as
+    // C user-data, non-null, live, and exclusively accessed for `'a`.
+    unsafe { &mut *ctx.cast::<T>() }
 }
 
 /// `from_field_ptr!(Parent, field, ptr)` → `*mut Parent`.
@@ -1202,16 +1233,9 @@ pub mod strings {
             return None;
         }
 
-        // Zig spec: bun.strings.whitespace_chars (immutable.zig) — includes VT (0x0B),
-        // which `u8::is_ascii_whitespace()` does NOT. Match the Zig set exactly.
-        #[inline(always)]
-        fn is_ws(b: u8) -> bool {
-            matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
-        }
-
         let mut whitespace = false;
         let mut offset = item.len();
-        while offset < text.len() && is_ws(text[offset]) {
+        while offset < text.len() && text[offset].is_ascii_whitespace() {
             offset += 1;
             whitespace = true;
         }
@@ -1234,7 +1258,7 @@ pub mod strings {
         offset += 1;
 
         let mut end = offset;
-        while end < text.len() && is_ws(text[end]) {
+        while end < text.len() && text[end].is_ascii_whitespace() {
             end += 1;
         }
 
@@ -1355,9 +1379,6 @@ pub mod strings {
 
     /// Zig delegates to highway: `b < 0x20 || b > 127 || b == '"'`
     /// (highway_strings.cpp:438). Do NOT match `'` or `` ` ``.
-    /// Scalar fallback — bun_core intentionally does not depend on bun_highway
-    /// (avoids pulling the C++ `highway_*` extern symbols into the base tier);
-    /// the SIMD path lives at `bun_highway::contains_newline_or_non_ascii_or_quote`.
     pub fn contains_newline_or_non_ascii_or_quote(s: &[u8]) -> bool {
         s.iter().any(|&b| b < 0x20 || b > 0x7F || b == b'"')
     }
@@ -1403,6 +1424,52 @@ pub mod strings {
         }
         out[..v.len()].copy_from_slice(&v);
         Ok(&mut out[..v.len()])
+    }
+    /// `bun.strings.basename` — pass-through to the path-module impl. Lives
+    /// here so T1 `bun_paths` (which can't depend on `bun_string`) can call it
+    /// via `bun_core::strings`.
+    ///
+    /// PORT NOTE: Zig's `bun.strings.basename` comptime-dispatches to
+    /// `basenameWindows` on Windows (treats `':'` at index 1 as a root
+    /// delimiter: `"C:"` → `""`, `"C:foo"` → `"foo"`, `"C:\\"` → `""`) and
+    /// `basenamePosix` elsewhere. Mirror that split exactly.
+    #[cfg(windows)]
+    #[inline]
+    pub fn basename(path: &[u8]) -> &[u8] {
+        // std.fs.path.basenameWindows — see src/string/immutable/paths.zig.
+        if path.is_empty() { return b""; }
+        let mut end = path.len() - 1;
+        loop {
+            let byte = path[end];
+            if byte == b'/' || byte == b'\\' {
+                if end == 0 { return b""; }
+                end -= 1;
+                continue;
+            }
+            if byte == b':' && end == 1 {
+                return b"";
+            }
+            break;
+        }
+        let mut start = end;
+        end += 1;
+        while path[start] != b'/' && path[start] != b'\\' && !(path[start] == b':' && start == 1) {
+            if start == 0 { return &path[0..end]; }
+            start -= 1;
+        }
+        &path[start + 1..end]
+    }
+    #[cfg(not(windows))]
+    #[inline]
+    pub fn basename(path: &[u8]) -> &[u8] {
+        // std.fs.path.basenamePosix — last component after stripping trailing
+        // '/' separators; "/" → "".
+        let mut end = path.len();
+        while end > 0 && (path[end - 1] == b'/' || path[end - 1] == b'\\') { end -= 1; }
+        if end == 0 { return b""; }
+        let mut start = end;
+        while start > 0 && path[start - 1] != b'/' && path[start - 1] != b'\\' { start -= 1; }
+        &path[start..end]
     }
     /// `bun.strings.withoutTrailingSlash`
     #[inline]
@@ -1504,7 +1571,7 @@ pub fn linux_kernel_version() -> Version {
             patch: packed & 0x3ff,
         };
     }
-    let uts = crate::ffi::cached_uname();
+    let uts = crate::ffi::uname();
     let release = crate::ffi::c_field_bytes(&uts.release);
     // Parse leading "MAJOR.MINOR.PATCH"; stop at first non-digit per component.
     let mut nums = [0u32; 3];
@@ -1587,6 +1654,52 @@ pub mod ffi {
         unsafe { cstr(p) }.to_bytes()
     }
 
+    #[cfg(unix)]
+    static UTSNAME: std::sync::OnceLock<libc::utsname> = std::sync::OnceLock::new();
+
+    /// Process-lifetime cached `uname(2)` result. Several callers
+    /// (analytics version probe, crash-handler, kernel-version checks) read
+    /// the same struct; cache so the binary issues exactly one syscall.
+    #[cfg(unix)]
+    #[inline]
+    pub fn cached_uname() -> &'static libc::utsname {
+        UTSNAME.get_or_init(uname)
+    }
+
+    /// Slice up to (excluding) the first NUL byte. Port of Zig `bun.sliceTo(b, 0)`;
+    /// re-exported as `bun_string::slice_to_nul`.
+    #[inline]
+    pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
+        &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
+    }
+
+    /// Mutable variant of [`slice_to_nul`].
+    #[inline]
+    pub fn slice_to_nul_mut(buf: &mut [u8]) -> &mut [u8] {
+        let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        &mut buf[..n]
+    }
+
+    /// Heap-allocate a `T` filled with zero bytes. Safe by virtue of the
+    /// [`Zeroable`] bound (the all-zero bit pattern is a valid `T`).
+    #[inline]
+    pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        unsafe { Box::<T>::new_zeroed().assume_init() }
+    }
+
+    /// Heap-allocate a `T` filled with zero bytes without the [`Zeroable`]
+    /// bound. Prefer [`boxed_zeroed`]; this is for orphan-rule cases where the
+    /// caller cannot `unsafe impl Zeroable` for a foreign type.
+    ///
+    /// # Safety
+    /// `T` must be valid at the all-zero bit pattern.
+    #[inline]
+    pub unsafe fn boxed_zeroed_unchecked<T>() -> Box<T> {
+        // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
+        unsafe { Box::<T>::new_zeroed().assume_init() }
+    }
+
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return
     /// it by value. On the (theoretical) error path the struct stays all-zero,
     /// so every `c_char[]` field reads as an empty NUL-terminated string.
@@ -1600,22 +1713,6 @@ pub mod ffi {
         u
     }
 
-    #[cfg(unix)]
-    static UTSNAME: std::sync::OnceLock<libc::utsname> = std::sync::OnceLock::new();
-
-    /// Process-wide cached `uname(2)` result. `utsname` is immutable for the
-    /// lifetime of the process, so every probe that only needs to *read* a
-    /// field (kernel-version gates, platform analytics) should borrow this
-    /// instead of issuing its own syscall. Port of Zig's single shared
-    /// `pub var linux_os_name: std.c.utsname` (analytics.zig), hoisted to T1
-    /// so `bun_sys` feature probes can share it without depending on
-    /// `bun_analytics`.
-    #[cfg(unix)]
-    #[inline]
-    pub fn cached_uname() -> &'static libc::utsname {
-        UTSNAME.get_or_init(uname)
-    }
-
     /// Borrow a fixed-size `[c_char; N]` C-struct field as `&[u8]`, truncated at
     /// the first NUL (or full length if none). This is the `&[c_char]` analogue
     /// of [`cstr_bytes`] for inline arrays like `utsname::release`.
@@ -1624,22 +1721,7 @@ pub mod ffi {
         // SAFETY: `c_char` is `i8`/`u8`; both are byte-sized and every bit
         // pattern is a valid `u8`. Same length, same provenance.
         let b = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) };
-        slice_to_nul(b)
-    }
-
-    /// `std.mem.sliceTo(buf, 0)` — slice up to (not including) the first NUL
-    /// byte, or the whole buffer if none. Canonical NUL-scan prefix helper;
-    /// re-exported as `bun_string::slice_to_nul`.
-    #[inline]
-    pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
-        &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
-    }
-
-    /// Mutable variant of [`slice_to_nul`].
-    #[inline]
-    pub fn slice_to_nul_mut(buf: &mut [u8]) -> &mut [u8] {
-        let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        &mut buf[..n]
+        &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
     }
 
     /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
@@ -1692,37 +1774,6 @@ pub mod ffi {
     pub const unsafe fn zeroed_unchecked<T>() -> T {
         // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
         unsafe { core::mem::zeroed() }
-    }
-
-    /// Heap-allocated all-bits-zero `Box<T>`.
-    ///
-    /// Single audited wrapper over `Box::new_zeroed().assume_init()` for the
-    /// "calloc, no stack temporary" idiom. Large fixed-size buffers
-    /// (`[u8; 256K]`, threadlocal scratch structs) must NOT be written
-    /// `Box::new([0u8; N])` — that materialises an `N`-byte temporary on the
-    /// stack in debug builds before moving it to the heap. This helper
-    /// allocates zeroed memory directly (typically a free kernel zero-page).
-    ///
-    /// The `T: Zeroable` bound discharges the safety obligation once per type;
-    /// callers need no `unsafe` block.
-    #[inline(always)]
-    pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
-        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
-        unsafe { Box::<T>::new_zeroed().assume_init() }
-    }
-
-    /// Unchecked heap-allocated all-bits-zero — escape hatch for types not yet
-    /// proven [`Zeroable`] (orphan-rule-blocked generics, foreign POD). Prefer
-    /// [`boxed_zeroed`] + an `unsafe impl Zeroable` whenever the type is
-    /// reachable.
-    ///
-    /// # Safety
-    /// `T` must be inhabited at the all-zero bit pattern (same contract as
-    /// [`Zeroable`], but asserted per-call instead of per-type).
-    #[inline(always)]
-    pub unsafe fn boxed_zeroed_unchecked<T>() -> Box<T> {
-        // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
-        unsafe { Box::<T>::new_zeroed().assume_init() }
     }
 
     // ── Zeroable impls ──────────────────────────────────────────────────────

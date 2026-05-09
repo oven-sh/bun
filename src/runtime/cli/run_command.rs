@@ -2588,11 +2588,11 @@ impl RunCommand {
         }
 
         // `bun feedback` (run_command.zig:1921-1925).
-        // SAFETY: `cli::CMD` is a single-threaded process-static written once
-        // during CLI startup (mod.rs:693).
+        // `cli::CMD` is a single-threaded process-static set once during CLI
+        // startup (mod.rs:693) — now `OnceLock<Tag>`.
         if ctx.filters.is_empty()
             && !ctx.workspaces
-            && unsafe { cli::CMD.read() } == Some(CommandTag::AutoCommand)
+            && cli::CMD.get().copied() == Some(CommandTag::AutoCommand)
             && target_name == b"feedback"
         {
             Self::bun_feedback(ctx)?;

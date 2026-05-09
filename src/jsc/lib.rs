@@ -537,6 +537,21 @@ impl From<JsError> for bun_event_loop::ErasedJsError {
     }
 }
 
+/// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.
+/// `Display` impls return `fmt::Error`; the JS exception, if any, remains on the VM.
+#[inline]
+pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
+    match e {
+        // TODO: this might lose a JSTerminated, causing m_terminationException problems
+        JsError::Terminated => core::fmt::Error,
+        // TODO: this might lose a JSError, causing exception check problems
+        JsError::Thrown => core::fmt::Error,
+        // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
+        // i.e. unconditionally abort.
+        JsError::OutOfMemory => bun_alloc::out_of_memory(),
+    }
+}
+
 impl From<JsTerminated> for JsError {
     fn from(_: JsTerminated) -> Self { JsError::Terminated }
 }

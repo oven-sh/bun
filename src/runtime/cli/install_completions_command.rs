@@ -141,7 +141,7 @@ impl InstallCompletionsCommand {
         };
         let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
 
-        if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), core::ptr::null_mut()) == 0 {
+        if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) == 0 {
             // if hard link fails, use a cmd script
             const SCRIPT: &[u8] = b"@%~dp0bun.exe x %*\n";
 

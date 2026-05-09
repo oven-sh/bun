@@ -614,6 +614,10 @@ impl NTSTATUS {
     pub const FILE_TOO_LARGE: NTSTATUS = NTSTATUS(0xC000_0904);
     pub const NOT_SAME_DEVICE: NTSTATUS = NTSTATUS(0xC000_00D4);
     pub const DELETE_PENDING: NTSTATUS = NTSTATUS(0xC000_0056);
+    /// `STATUS_FILE_DELETED` — an I/O request other than close was performed on
+    /// a file after it was deleted (typically `NtCreateFile` against a name
+    /// that has already been POSIX-delete-pended).
+    pub const FILE_DELETED: NTSTATUS = NTSTATUS(0xC000_0123);
     pub const SHARING_VIOLATION: NTSTATUS = NTSTATUS(0xC000_0043);
     pub const OBJECT_PATH_SYNTAX_BAD: NTSTATUS = NTSTATUS(0xC000_003B);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);

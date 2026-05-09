@@ -4074,6 +4074,17 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         )
     };
     bun_sys::syslog!("NtCreateFile({}, DELETE) = {:?}", bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()), rc);
+    // Zig stdlib `std.os.windows.DeleteFile` (which this is documented as a copy
+    // of) treats `STATUS_DELETE_PENDING`/`STATUS_FILE_DELETED` from the open as
+    // success — the target is already (being) deleted, which is what the caller
+    // wanted. `zigDeleteTree` (node_fs) goes through the stdlib `Dir.deleteFile`
+    // in Zig but through this function (via `Syscall::unlinkat`) in the Rust
+    // port, so without this short-circuit recursive `rmSync` on Windows fails
+    // with `EBUSY`/`UNKNOWN`→`EFAULT` whenever it races a still-open handle
+    // (e.g. node test `tmpdir.refresh()` after a stream-heavy test).
+    if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED {
+        return bun_sys::Result::success();
+    }
     if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::open) {
         return err;
     }

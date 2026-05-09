@@ -1779,8 +1779,7 @@ pub mod closer {
     #[cfg(windows)]
     impl Closer {
         pub fn close(fd: Fd, loop_: *mut uv::Loop) {
-            // SAFETY: all-zero is a valid uv::fs_t (libuv C struct, zero-init by convention).
-            let io_request: uv::fs_t = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let io_request: uv::fs_t = bun_core::ffi::zeroed();
             let closer = bun_core::heap::into_raw(Box::new(Closer { io_request }));
             // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
             // SAFETY: closer is a freshly-boxed valid pointer.

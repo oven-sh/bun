@@ -106,8 +106,9 @@ impl Clone for CookieMapRef {
 impl Drop for CookieMapRef {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: held +1 ref keeps the C++ object alive until this deref.
-        CookieMap__deref(unsafe { self.0.as_ref() })
+        // Held +1 ref keeps the C++ object alive until this deref; `Deref`
+        // (above) encapsulates the NonNull access.
+        CookieMap__deref(self)
     }
 }
 

@@ -1189,9 +1189,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             },
         );
 
-        // SAFETY: all-zero is a valid uv.Pipe (matches Zig std.mem.zeroes).
         let pipe_ptr: *mut uv::Pipe =
-            bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+            bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
         // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
         // close callback frees the heap allocation, so do NOT re-box on the
         // cleanup path (would double-free). Disarmed only after finish_spawn

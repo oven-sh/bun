@@ -460,10 +460,8 @@ impl Debugger {
                 // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
                 unsafe { uv::uv_update_time(uv_loop) };
                 // Spec: `bun.handleOom(allocator.create(Timer))` + zero-init.
-                // SAFETY: all-zero is a valid pre-`uv_timer_init` state (C POD,
-                // matches `std.mem.zeroes`).
                 let timer: *mut uv::Timer =
-                    bun_core::heap::into_raw(Box::new(unsafe { bun_core::ffi::zeroed_unchecked() }));
+                    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed()));
                 // SAFETY: `timer` freshly allocated; `uv_loop` valid.
                 unsafe { (*timer).init(uv_loop) };
 
@@ -667,9 +665,8 @@ impl Debugger {
             // for why we never form `&mut VirtualMachine` to the parent VM.
             Debugger::start(ctx.cast::<VirtualMachine>());
         }
-        // SAFETY: `vm.global` set by `init()` (non-null).
         #[allow(deprecated)]
-        unsafe { &*vm.global }
+        vm.global()
             .vm()
             .hold_api_lock(other_vm.cast(), start_trampoline);
     }

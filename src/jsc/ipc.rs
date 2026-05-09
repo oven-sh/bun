@@ -1454,8 +1454,7 @@ impl SendQueue {
             let mut write_req = Box::new(WindowsWrite {
                 owner: Some(self as *mut SendQueue),
                 write_slice: write_req_slice,
-                // SAFETY: all-zero is a valid uv_write_t (C struct, initialized by uv_write).
-                write_req: unsafe { bun_core::ffi::zeroed_unchecked() },
+                write_req: bun_core::ffi::zeroed(),
                 write_buffer: uv::uv_buf_t::init(b""), // re-init below after slice address is stable
             });
             write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
@@ -1622,9 +1621,8 @@ impl SendQueue {
     pub fn windows_configure_client(&mut self, pipe_fd: Fd) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         log!("configureClient");
-        // SAFETY: all-zero is a valid uv::Pipe (C struct, initialized by uv_pipe_init).
         let ipc_pipe: *mut uv::Pipe =
-            bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+            bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
         // SAFETY: ipc_pipe just allocated above.
         if let Some(err) =
             unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)

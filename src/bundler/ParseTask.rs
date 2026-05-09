@@ -613,7 +613,9 @@ fn get_empty_css_ast(
         js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
             .unwrap(),
     );
-    ast.css = Some(std::ptr::from_mut(bump.alloc(bun_css::BundlerStyleSheet::empty())));
+    ast.css = Some(bun_js_parser::ast::bundled_ast::CssAstRef::from_bump(
+        bump.alloc(bun_css::BundlerStyleSheet::empty()),
+    ));
     Ok(ast)
 }
 
@@ -1150,7 +1152,7 @@ fn get_ast(
             }
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
             let root = Expr::init(E::Object::default(), Loc { start: 0 });
-            let css_ast_heap = std::ptr::from_mut(bump.alloc(css_ast));
+            let css_ast_heap = bun_js_parser::ast::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
             // PORT NOTE: `StylesheetExtra.symbols` is
             // `Vec<bun_logger::Symbol>`; `new_lazy_export_ast_impl` takes
             // `Vec<bun_js_parser::Symbol>`. Both port the same Zig

@@ -1816,9 +1816,9 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         js::pending_promise_set_cached(js_this, &this_ref.global, JSValue::UNDEFINED);
     }
-    // SAFETY: `vm.global` is live for the per-thread VM; raw deref decouples
-    // the borrow from `vm` so `unhandled_rejection(&mut self, ...)` can reborrow.
-    let global_ref = unsafe { &*vm.global };
+    // `vm.global()` returns `&'static`, so the borrow is already decoupled
+    // from `vm` and `unhandled_rejection(&mut self, ...)` can reborrow.
+    let global_ref = vm.global();
     vm.unhandled_rejection(global_ref, err, promise_value);
     CronJob::schedule_next(this, vm);
     Ok(JSValue::UNDEFINED)
@@ -2022,10 +2022,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // tightened that leak into uv_close-on-uninit, so we reorder instead.
     #[cfg(windows)]
     let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe = {
-        // SAFETY: all-zero is a valid uv_pipe_t init state (matches Zig
-        // `std.mem.zeroes(uv.Pipe)`).
         let mut pipe =
-            Box::new(unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() });
+            Box::new(bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>());
         let ptr: *mut bun_sys::windows::libuv::Pipe = core::ptr::from_mut(pipe.as_mut());
         s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
         ptr

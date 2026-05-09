@@ -705,9 +705,7 @@ fn create_zeroed_pipe() -> *mut uv::Pipe {
     // store the pipe as a raw FFI-owned `*mut uv::Pipe` so `spawn_process_windows`
     // can transfer sole ownership into `WindowsStdioResult::Buffer` via
     // `heap::take` without aliasing a live `Box` (which would double-free).
-    // SAFETY: all-zero is a valid uv::Pipe (#[repr(C)] POD; libuv treats a
-    // zeroed pipe as "uninitialized" and `pipe.loop == null` is the sentinel).
-    bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))
+    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))
 }
 
 // ported from: src/runtime/api/bun/spawn/stdio.zig

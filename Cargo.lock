@@ -439,6 +439,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_core",
  "bun_opaque",
  "const_format",
  "enum-map",
@@ -1375,6 +1376,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_core",
  "bun_windows_sys",
  "bun_wyhash",
  "const_format",
@@ -2601,6 +2603,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_core",
  "const_format",
  "enum-map",
  "enumset",

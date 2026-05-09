@@ -106,7 +106,7 @@ pub fn hostent_with_ttls_to_js_response(
                 let address = if i32::from(hostent.h_addrtype) == c_ares::AF::INET6 {
                     // SAFETY: addr points to ≥16 bytes for AF_INET6.
                     let bytes: [u8; 16] = unsafe { *(addr as *const [u8; 16]) };
-                    let mut sa6: super::netc::sockaddr_in6 = unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut sa6: super::netc::sockaddr_in6 = bun_core::ffi::zeroed();
                     sa6.sin6_family = super::netc::AF_INET6 as _;
                     sa6.sin6_addr.s6_addr = bytes;
                     // SAFETY: &sa6 is a valid sockaddr_in6.
@@ -114,7 +114,7 @@ pub fn hostent_with_ttls_to_js_response(
                 } else {
                     // SAFETY: addr points to ≥4 bytes for AF_INET.
                     let bytes: [u8; 4] = unsafe { *(addr as *const [u8; 4]) };
-                    let mut sa4: super::netc::sockaddr_in = unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut sa4: super::netc::sockaddr_in = bun_core::ffi::zeroed();
                     sa4.sin_family = super::netc::AF_INET as _;
                     sa4.sin_addr.s_addr = u32::from_ne_bytes(bytes);
                     // SAFETY: &sa4 is a valid sockaddr_in.
@@ -260,10 +260,8 @@ pub fn caa_reply_to_js(
 
     obj.put(global_this, b"critical", JSValue::js_number(this.critical as f64));
 
-    // SAFETY: property is a c-ares-owned buffer of plength bytes.
-    let property = unsafe { bun_core::ffi::slice(this.property, this.plength as usize) };
-    // SAFETY: value is a c-ares-owned buffer of length bytes.
-    let value = unsafe { bun_core::ffi::slice(this.value, this.length as usize) };
+    let property = this.property_bytes();
+    let value = this.value_bytes();
     obj.put(global_this, property, utf8_to_js(global_this, value)?);
 
     Ok(obj)
@@ -395,8 +393,7 @@ pub fn txt_reply_to_js(
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global_this, 1)?;
-    // SAFETY: txt is a c-ares-owned buffer of `length` bytes.
-    let value = unsafe { bun_core::ffi::slice(this.txt, this.length as usize) };
+    let value = this.txt_bytes();
     array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
     Ok(array)
 }
@@ -421,8 +418,7 @@ pub fn txt_reply_to_js_for_any(
     while !txt.is_null() {
         // SAFETY: txt walks the c-ares-owned linked list.
         let node = unsafe { &mut *txt };
-        // SAFETY: txt is a c-ares-owned buffer of `length` bytes.
-        let value = unsafe { bun_core::ffi::slice(node.txt, node.length as usize) };
+        let value = node.txt_bytes();
         array.put_index(global_this, i, utf8_to_js(global_this, value)?)?;
         txt = node.next;
         i += 1;

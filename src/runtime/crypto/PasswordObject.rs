@@ -605,6 +605,13 @@ struct HashResult {
 }
 
 impl HashResult {
+    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
+    #[inline]
+    fn global(&self) -> &'static JSGlobalObject {
+        // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
+        unsafe { &*self.global }
+    }
+
     pub fn new(init: HashResult) -> *mut HashResult {
         bun_core::heap::into_raw(Box::new(init))
     }
@@ -622,8 +629,7 @@ impl HashResult {
         let this_ref = unsafe { &mut *this };
         let mut promise = core::mem::take(&mut this_ref.promise);
         // defer promise.deinit() — Drop on JSPromiseStrong at scope exit.
-        // SAFETY: global was stored from a live &JSGlobalObject; VM outlives the task.
-        let global = unsafe { &*this_ref.global };
+        let global = this_ref.global();
         this_ref.r#ref.unref(vm_ctx());
         match core::mem::replace(&mut this_ref.value, HashResultValue::Hash(Box::default())) {
             // TODO(port): the Zig leaves `value` in place and reads `this.value` again
@@ -935,6 +941,13 @@ struct VerifyResult {
 }
 
 impl VerifyResult {
+    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
+    #[inline]
+    fn global(&self) -> &'static JSGlobalObject {
+        // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
+        unsafe { &*self.global }
+    }
+
     pub fn new(init: VerifyResult) -> *mut VerifyResult {
         bun_core::heap::into_raw(Box::new(init))
     }
@@ -951,8 +964,7 @@ impl VerifyResult {
         // uniquely owned here (event loop hands sole ownership to this callback).
         let this_ref = unsafe { &mut *this };
         let mut promise = core::mem::take(&mut this_ref.promise);
-        // SAFETY: global stored from a live &JSGlobalObject; VM outlives task.
-        let global = unsafe { &*this_ref.global };
+        let global = this_ref.global();
         this_ref.r#ref.unref(vm_ctx());
         match this_ref.value {
             VerifyResultValue::Err(_) => {

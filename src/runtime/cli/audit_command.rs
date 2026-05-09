@@ -77,7 +77,7 @@ impl AuditCommand {
         let production = cli.production;
         let audit_ignore_list = cli.audit_ignore_list;
 
-        let (pm_ptr, _original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
+        let (manager, _original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
         {
             Ok(v) => v,
             Err(err) => {
@@ -98,10 +98,6 @@ impl AuditCommand {
                 return Err(err);
             }
         };
-        // SAFETY: `init` returns the process-singleton `*mut PackageManager`,
-        // non-null and exclusively owned by this thread for the command's
-        // duration (mirrors Zig's `*PackageManager`).
-        let manager: &mut PackageManager = unsafe { &mut *pm_ptr };
         let json_output = manager.options.json_output;
 
         let code = Self::audit(
@@ -505,12 +501,7 @@ fn send_audit_request(
     let http_proxy = pm.http_proxy(&url);
 
     // PORT NOTE: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
-    // SAFETY: `allocate()` succeeded above so `ptr` is non-null when `len > 0`;
-    // the buffer is kept alive on this stack frame for the synchronous request.
-    let headers_buf: &[u8] = match headers.content.ptr {
-        Some(p) => unsafe { bun_core::ffi::slice(p.as_ptr(), headers.content.len) },
-        None => &[],
-    };
+    let headers_buf: &[u8] = headers.content.written_slice();
 
     // PERF(port): Zig used MutableString with initial capacity 1024.
     let mut response_buf = MutableString::init(1024)?;

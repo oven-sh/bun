@@ -863,11 +863,12 @@ impl sockaddr {
     }
 
     pub fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
-        // SAFETY: family() guarantees correct variant; pointer is to valid in_addr/in6_addr
-        let addr_src: *const c_void = if self.family() == AF::INET {
-            unsafe { (&raw const self.sin.addr).cast::<c_void>() }
-        } else {
-            unsafe { (&raw const self.sin6.addr).cast::<c_void>() }
+        let addr_src: *const c_void = match self.as_sin() {
+            Some(sin) => core::ptr::from_ref(&sin.addr).cast::<c_void>(),
+            None => {
+                let sin6 = self.as_sin6().expect("sockaddr family is INET or INET6");
+                core::ptr::from_ref(&sin6.addr).cast::<c_void>()
+            }
         };
         // SAFETY: buf is INET6_ADDRSTRLEN bytes; ares_inet_ntop writes NUL-terminated string
         let result = unsafe { ares::ares_inet_ntop(self.family().int() as c_int, addr_src, buf.as_mut_ptr(), buf.len() as ares::ares_socklen_t) };

@@ -7,22 +7,29 @@ use core::ffi::{c_char, c_int, c_long, c_ulong, c_ulonglong, c_ushort, c_void};
 // `core::option::Option<...>` to avoid the shadow.
 
 unsafe extern "C" {
-    pub fn mi_malloc(size: usize) -> *mut c_void;
-    pub fn mi_calloc(count: usize, size: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_malloc(size: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_calloc(count: usize, size: usize) -> *mut c_void;
     pub fn mi_realloc(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_expand(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_free(p: *mut c_void);
     pub fn mi_strdup(s: *const c_char) -> *mut c_char;
     pub fn mi_strndup(s: *const c_char, n: usize) -> *mut c_char;
     pub fn mi_realpath(fname: *const c_char, resolved_name: *mut c_char) -> *mut c_char;
-    pub fn mi_malloc_small(size: usize) -> *mut c_void;
-    pub fn mi_zalloc_small(size: usize) -> *mut c_void;
-    pub fn mi_zalloc(size: usize) -> *mut c_void;
-    pub fn mi_mallocn(count: usize, size: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_malloc_small(size: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_zalloc_small(size: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_zalloc(size: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_mallocn(count: usize, size: usize) -> *mut c_void;
     pub fn mi_reallocn(p: *mut c_void, count: usize, size: usize) -> *mut c_void;
     pub fn mi_reallocf(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> usize;
-    pub fn mi_good_size(size: usize) -> usize;
+    /// No preconditions; pure size-class lookup.
+    pub safe fn mi_good_size(size: usize) -> usize;
 }
 
 pub type mi_deferred_free_fun = extern "C" fn(bool, c_ulonglong, *mut c_void);
@@ -44,15 +51,22 @@ pub type mi_error_fun = extern "C" fn(c_int, *mut c_void);
 
 unsafe extern "C" {
     pub fn mi_register_error(fun: core::option::Option<mi_error_fun>, arg: *mut c_void);
-    pub fn mi_collect(force: bool);
-    pub fn mi_version() -> c_int;
-    pub fn mi_stats_reset();
-    pub fn mi_stats_merge();
+    /// No preconditions.
+    pub safe fn mi_collect(force: bool);
+    /// No preconditions.
+    pub safe fn mi_version() -> c_int;
+    /// No preconditions.
+    pub safe fn mi_stats_reset();
+    /// No preconditions.
+    pub safe fn mi_stats_merge();
     pub fn mi_stats_print(out: *mut c_void);
     pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
-    pub fn mi_process_init();
-    pub fn mi_thread_init();
-    pub fn mi_thread_done();
+    /// No preconditions.
+    pub safe fn mi_process_init();
+    /// No preconditions.
+    pub safe fn mi_thread_init();
+    /// No preconditions.
+    pub safe fn mi_thread_done();
     pub fn mi_thread_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
     pub fn mi_process_info(
         elapsed_msecs: *mut usize,
@@ -64,11 +78,16 @@ unsafe extern "C" {
         peak_commit: *mut usize,
         page_faults: *mut usize,
     );
-    pub fn mi_malloc_aligned(size: usize, alignment: usize) -> *mut c_void;
-    pub fn mi_malloc_aligned_at(size: usize, alignment: usize, offset: usize) -> *mut c_void;
-    pub fn mi_zalloc_aligned(size: usize, alignment: usize) -> *mut c_void;
-    pub fn mi_zalloc_aligned_at(size: usize, alignment: usize, offset: usize) -> *mut c_void;
-    pub fn mi_calloc_aligned(count: usize, size: usize, alignment: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_malloc_aligned(size: usize, alignment: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_malloc_aligned_at(size: usize, alignment: usize, offset: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_zalloc_aligned(size: usize, alignment: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_zalloc_aligned_at(size: usize, alignment: usize, offset: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_calloc_aligned(count: usize, size: usize, alignment: usize) -> *mut c_void;
     pub fn mi_calloc_aligned_at(
         count: usize,
         size: usize,

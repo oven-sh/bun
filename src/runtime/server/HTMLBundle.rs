@@ -305,9 +305,9 @@ impl Route {
                 // but stay defensive.
                 match req {
                     AnyRequest::H1(h1) => {
-                        // SAFETY: `h1` is the live uWS request handle for this callback.
+                        // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                         bun_core::handle_oom(
-                            dev.respond_for_html_bundle(route, unsafe { &mut *h1 }, resp),
+                            dev.respond_for_html_bundle(route, bun_opaque::opaque_deref_mut(h1), resp),
                         );
                     }
                     AnyRequest::H3(_) => {
@@ -410,8 +410,8 @@ impl Route {
         plugins: Option<NonNull<JSBundler::Plugin>>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        // SAFETY: `bundle.global` was set from a live `&JSGlobalObject` in `HTMLBundle::init`.
-        let global = unsafe { &*self.bundle.global };
+        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        let global = bun_opaque::opaque_deref(self.bundle.global);
         let server = self.server.get().expect("server set");
         let development = server.config().development;
         // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a Bun-owned
@@ -551,8 +551,8 @@ impl Route {
                 }
                 // Find the HTML entry point and create static routes
                 let Some(server) = self.server.get() else { return };
-                // SAFETY: server.global_this is the JS-thread global; valid for process lifetime.
-                let global_this = unsafe { &*server.global_this() };
+                // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                let global_this = bun_opaque::opaque_deref(server.global_this());
                 let output_files = &mut bundle.output_files;
 
                 if server.config().is_development() {

@@ -242,8 +242,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         #[cfg(windows)]
         {
             // PORT NOTE: libuv Timer lives on stack for the lifetime of this never-returning fn.
-            // SAFETY: `init()` fully initializes before use.
-            let mut timer: bun_sys::windows::libuv::Timer = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
             // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
             // write-once in `Waker::init()` above and never mutated by `wake()`, so a
             // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)

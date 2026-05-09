@@ -20,7 +20,7 @@ use bun_core::Output;
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
 use bun_jsc::event_loop::EventLoop;
-use bun_ptr::IntrusiveRc;
+use bun_ptr::{IntrusiveRc, ThisPtr};
 use bun_string::{self as bstr_mod, strings, ZigString};
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
@@ -220,21 +220,16 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub extern "C" fn cancel(this_ptr: *mut Self) {
-        // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this_ptr };
         log!("cancel");
-        // clear_data() may drop the tunnel's I/O-layer ref; keep `this`
-        // alive until we've finished closing the socket below.
-        this.ref_();
-        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
-        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
-        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
-        // above guarantees the allocation outlives the guard.
-        let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
-            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
-            unsafe { Self::deref(p) }
-        });
+        // clear_data() may drop the tunnel's I/O-layer ref; keep `*this_ptr`
+        // alive until we've finished closing the socket below. ScopedRef bumps
+        // the intrusive refcount now and derefs on Drop (after `this`'s last
+        // use, since `this` is declared after the guard).
+        // SAFETY: called from C++ with a valid `heap::alloc` pointer.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: called from C++ with a valid pointer; the guard's ref keeps
+        // the allocation alive past every re-entrant call below.
+        let this = unsafe { &mut *this_ptr };
 
         let had_tunnel = this.proxy_tunnel.is_some();
         this.clear_data();
@@ -579,26 +574,21 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `heap::alloc` (see `init` / `init_with_tunnel`); no `&`/`&mut`
     /// borrow of `*this_ptr` may be live across this call.
     pub unsafe fn handle_data(this_ptr: *mut Self, data_: &[u8]) {
+        // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
+        // with no outstanding `&`/`&mut` borrow (uWS dispatches from userdata).
+        let this = unsafe { ThisPtr::new(this_ptr) };
         // after receiving close we should ignore the data
-        // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
-        if unsafe { (*this_ptr).close_received } {
+        if this.close_received {
             return;
         }
-        // SAFETY: caller contract — `this_ptr` is live; `r#ref` takes `&self`.
-        unsafe { (&*this_ptr).ref_() };
-        // PORT NOTE: capture the parent raw `this_ptr` so the guard's
-        // `deref(p)` runs after every `&mut *this_ptr` reborrow has ended.
-        let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the `heap::alloc` pointer, kept alive by the
-            // `r#ref()` above; no Rust borrow of `*p` is live at drop time.
-            unsafe { Self::deref(p) }
-        });
+        // Bumps the intrusive refcount and derefs on Drop, after every
+        // `&mut *this_ptr` reborrow below has ended.
+        let _guard = this.ref_guard();
 
         // Due to scheduling, it is possible for the websocket onData
         // handler to run with additional data before the microtask queue is
         // drained.
-        // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
-        if let Some(initial_handler) = unsafe { (*this_ptr).initial_data_handler } {
+        if let Some(initial_handler) = this.initial_data_handler {
             // This calls `handle_data`
             // We deliberately do not set self.initial_data_handler to None here, that's done in handle_without_deinit.
             // We do not free the memory here since the lifetime is managed by the microtask queue (it should free when called from there)
@@ -611,12 +601,10 @@ impl<const SSL: bool> WebSocket<SSL> {
 
             // handle_without_deinit is supposed to clear the handler from WebSocket*
             // to prevent an infinite loop
-            // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
-            debug_assert!(unsafe { (*this_ptr).initial_data_handler.is_none() });
+            debug_assert!(this.initial_data_handler.is_none());
 
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
-            // SAFETY: caller contract — `this_ptr` is live; brief `&Self` for `has_tcp`.
-            if unsafe { (*this_ptr).outgoing_websocket.is_none() || !(&*this_ptr).has_tcp() } {
+            if this.outgoing_websocket.is_none() || !this.has_tcp() {
                 return;
             }
         }
@@ -624,8 +612,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         // No further `handle_data` re-entry on this stack frame; hand the
         // remainder to the `&mut self` parse loop. The reborrow ends before
         // `_guard` drops (LIFO), so `deref(this_ptr)` observes a clean stack.
-        // SAFETY: caller contract — `this_ptr` is live, sole owner on this thread.
-        unsafe { (*this_ptr).handle_data_loop(data_) };
+        // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this thread.
+        unsafe { (*this.as_ptr()).handle_data_loop(data_) };
     }
 
     fn handle_data_loop(&mut self, data_: &[u8]) {
@@ -1416,21 +1404,15 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub extern "C" fn write_binary_data(this_ptr: *mut Self, ptr: *const u8, len: usize, op: u8) {
-        // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this_ptr };
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before the catch block in enqueue_encoded_bytes/send_buffer runs.
-        this.ref_();
-        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
-        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
-        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
-        // above guarantees the allocation outlives the guard.
-        let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
-            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
-            unsafe { Self::deref(p) }
-        });
+        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
+        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
+        // use, since `this` is declared after the guard).
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: called from C++ with a valid pointer; guarded above.
+        let this = unsafe { &mut *this_ptr };
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1463,19 +1445,13 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub extern "C" fn write_blob(this_ptr: *mut Self, blob_value: JSValue, op: u8) {
-        // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this_ptr };
         // See write_binary_data() — tunnel.write() can re-enter fail().
-        this.ref_();
-        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
-        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
-        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
-        // above guarantees the allocation outlives the guard.
-        let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
-            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
-            unsafe { Self::deref(p) }
-        });
+        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
+        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
+        // use, since `this` is declared after the guard).
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: called from C++ with a valid pointer; guarded above.
+        let this = unsafe { &mut *this_ptr };
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1521,19 +1497,13 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
-        // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this_ptr };
         // See write_binary_data() — tunnel.write() can re-enter fail().
-        this.ref_();
-        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
-        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
-        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
-        // above guarantees the allocation outlives the guard.
-        let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
-            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
-            unsafe { Self::deref(p) }
-        });
+        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
+        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
+        // use, since `this` is declared after the guard).
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: called from C++ with a valid pointer; guarded above.
+        let this = unsafe { &mut *this_ptr };
 
         // SAFETY: str_ is a valid pointer from C++
         let str = unsafe { &*str_ };
@@ -1606,22 +1576,16 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
-        // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this_ptr };
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before send_close_with_body's own clear_data/dispatch_close run.
-        this.ref_();
-        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
-        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
-        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
-        // above guarantees the allocation outlives the guard.
-        let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
-            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
-            unsafe { Self::deref(p) }
-        });
+        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
+        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
+        // use, since `this` is declared after the guard).
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: called from C++ with a valid pointer; guarded above.
+        let this = unsafe { &mut *this_ptr };
 
         if !this.has_tcp() {
             return;
@@ -1939,49 +1903,36 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
     /// this call.
     pub unsafe fn handle_tunnel_writable(this_ptr: *mut Self) {
-        // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
-        if unsafe { (*this_ptr).close_received } {
+        // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
+        // (the tunnel calls through its raw `connected_websocket` backref).
+        let this = unsafe { ThisPtr::new(this_ptr) };
+        if this.close_received {
             return;
         }
         // send_buffer → tunnel.write() can re-enter fail() synchronously
         // (see write_binary_data). The tunnel ref-guards itself in
         // on_writable() but not this struct.
-        // SAFETY: caller contract — `this_ptr` is live; `r#ref` takes `&self`.
-        unsafe { (&*this_ptr).ref_() };
-        // PORT NOTE: capture the parent raw `this_ptr` so the guard's
-        // `deref(p)` runs after every `&mut *this_ptr` reborrow has ended.
-        let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the `heap::alloc` pointer, kept alive by the
-            // `r#ref()` above; no Rust borrow of `*p` is live at drop time.
-            unsafe { Self::deref(p) }
-        });
+        let _guard = this.ref_guard();
 
-        // SAFETY: caller contract — `this_ptr` is live; brief `&Self` for length read.
-        if unsafe { (*this_ptr).send_buffer.readable_length() } == 0 {
+        if this.send_buffer.readable_length() == 0 {
             return;
         }
-        // SAFETY: caller contract — `this_ptr` is live, sole owner on this
-        // thread; the auto-ref `&mut *this_ptr` ends before `_guard` drops.
-        let _ = unsafe { (*this_ptr).send_buffer_out() };
+        // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
+        // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
+        let _ = unsafe { (*this.as_ptr()).send_buffer_out() };
     }
 
     pub extern "C" fn finalize(this_ptr: *mut Self) {
-        // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this_ptr };
         log!("finalize");
         // clear_data() may drop the tunnel's I/O-layer ref and the block
-        // below drops the C++ ref; keep `this` alive until we've finished
-        // the tcp close check.
-        this.ref_();
-        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
-        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
-        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
-        // above guarantees the allocation outlives the guard.
-        let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
-            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
-            unsafe { Self::deref(p) }
-        });
+        // below drops the C++ ref; keep `*this_ptr` alive until we've
+        // finished the tcp close check.
+        // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
+        // bumps the intrusive refcount and derefs on Drop (after `this`'s last
+        // use, since `this` is declared after the guard).
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: called from C++ with a valid pointer; guarded above.
+        let this = unsafe { &mut *this_ptr };
 
         this.clear_data();
 

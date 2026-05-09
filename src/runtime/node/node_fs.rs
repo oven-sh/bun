@@ -636,8 +636,7 @@ where
             // `R`; never construct an all-zero `Result` value.
             result: Err(sys::Error::default()),
             global_object: bun_ptr::BackRef::new(global_object),
-            // SAFETY: all-zero is a valid uv::fs_t (libuv `#[repr(C)]` POD).
-            req: unsafe { bun_core::ffi::zeroed_unchecked() },
+            req: bun_core::ffi::zeroed(),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
         });
@@ -1710,8 +1709,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         #[cfg(target_os = "macos")]
         {
             if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
-                unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
+                bun_sys::c::clonefile_rc(src, dest, 0),
                 sys::Tag::clonefile,
                 src.as_bytes(),
             ) {
@@ -4123,8 +4121,7 @@ impl NodeFS {
 
             if args.mode.is_force_clone() {
                 // https://www.manpagez.com/man/2/clonefile/
-                // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
-                return Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) }, sys::Tag::copyfile, src)
+                return Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, dest, 0), sys::Tag::copyfile, src)
                     .unwrap_or(Ok(()));
             } else {
                 let stat_ = match Syscall::stat(src) {
@@ -4143,8 +4140,7 @@ impl NodeFS {
                         // clonefile() will fail if it already exists
                         let _ = Syscall::unlink(dest);
                     }
-                    // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
-                    if Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) }, sys::Tag::copyfile, src).is_none() {
+                    if Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, dest, 0), sys::Tag::copyfile, src).is_none() {
                         let _ = Syscall::chmod(dest, stat_.st_mode as u32);
                         return Ok(());
                     }
@@ -4183,8 +4179,7 @@ impl NodeFS {
             // nor is it supported across devices
             let mut mode: u32 = bun_sys::c::COPYFILE_ACL | bun_sys::c::COPYFILE_DATA;
             if args.mode.shouldnt_overwrite() { mode |= bun_sys::c::COPYFILE_EXCL; }
-            // SAFETY: src/dest are NUL-terminated; copyfile(3) is the libc FFI
-            return Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode) }, sys::Tag::copyfile, src)
+            return Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::copyfile_rc(src, dest, mode), sys::Tag::copyfile, src)
                 .unwrap_or(Ok(()));
         }
 
@@ -6588,7 +6583,7 @@ impl NodeFS {
         #[cfg(target_os = "macos")]
         'try_with_clonefile: {
             if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
+                bun_sys::c::clonefile_rc(src, dest, 0),
                 sys::Tag::clonefile, src.as_bytes(),
             ) {
                 match err.get_errno() {
@@ -6774,7 +6769,7 @@ impl NodeFS {
             if mode.is_force_clone() {
                 // https://www.manpagez.com/man/2/clonefile/
                 return Maybe::<ret::CopyFile>::errno_sys_p(
-                    unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
+                    bun_sys::c::clonefile_rc(src, dest, 0),
                     sys::Tag::clonefile, src.as_bytes(),
                 ).unwrap_or(Ok(()));
             }
@@ -6794,7 +6789,7 @@ impl NodeFS {
                     let mut mode_: u32 = bun_sys::c::COPYFILE_ACL | bun_sys::c::COPYFILE_DATA | bun_sys::c::COPYFILE_NOFOLLOW_SRC;
                     if mode.shouldnt_overwrite() { mode_ |= bun_sys::c::COPYFILE_EXCL; }
                     return Maybe::<ret::CopyFile>::errno_sys_p(
-                        unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
+                        bun_sys::c::copyfile_rc(src, dest, mode_),
                         sys::Tag::copyfile, src.as_bytes(),
                     ).unwrap_or(Ok(()));
                 }
@@ -6815,7 +6810,7 @@ impl NodeFS {
                     let _ = Syscall::unlink(dest);
                 }
                 if Maybe::<ret::CopyFile>::errno_sys_p(
-                    unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
+                    bun_sys::c::clonefile_rc(src, dest, 0),
                     sys::Tag::clonefile, src.as_bytes(),
                 ).is_none() {
                     let _ = Syscall::chmod(dest, stat_.st_mode as u32);
@@ -6858,7 +6853,7 @@ impl NodeFS {
             if mode.shouldnt_overwrite() { mode_ |= bun_sys::c::COPYFILE_EXCL; }
 
             let first_try = Maybe::<ret::CopyFile>::errno_sys_p(
-                unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
+                bun_sys::c::copyfile_rc(src, dest, mode_),
                 sys::Tag::copyfile, src.as_bytes(),
             );
             match first_try {
@@ -6866,7 +6861,7 @@ impl NodeFS {
                 Some(err) if err.get_errno() == E::ENOENT => {
                     let _ = sys::Dir::cwd().make_path(paths::resolve_path::dirname::<paths::platform::Auto>(dest.as_bytes()));
                     return Maybe::<ret::CopyFile>::errno_sys_p(
-                        unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
+                        bun_sys::c::copyfile_rc(src, dest, mode_),
                         sys::Tag::copyfile, src.as_bytes(),
                     ).unwrap_or(Ok(()));
                 }
@@ -7565,9 +7560,7 @@ fn throw_invalid_fd_error(global: &JSGlobalObject, value: JSValue) -> JsError {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__mkdirp(global_this: *mut JSGlobalObject, path: *const c_char) -> bool {
-    // SAFETY: caller (C++) passes a valid JSGlobalObject*
-    let global_this = unsafe { &*global_this };
+pub extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached

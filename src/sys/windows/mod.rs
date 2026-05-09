@@ -116,7 +116,8 @@ pub mod kernel32 {
         ) -> *mut c_void;
         pub fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
 
-        pub fn GetCurrentThreadId() -> DWORD;
+        /// No preconditions; reads the calling thread's ID.
+        pub safe fn GetCurrentThreadId() -> DWORD;
     }
 }
 
@@ -461,7 +462,8 @@ pub use SetCurrentDirectoryW as SetCurrentDirectory;
 
 // TODO(port): move to windows_sys
 unsafe extern "system" {
-    pub fn RtlNtStatusToDosError(status: NTSTATUS) -> Win32Error;
+    /// Total over `NTSTATUS`; no preconditions.
+    pub safe fn RtlNtStatusToDosError(status: NTSTATUS) -> Win32Error;
 }
 
 pub use bun_windows_sys::externs::SaferiIsExecutableFileType;
@@ -3298,8 +3300,7 @@ impl Win32Error {
     }
 
     pub fn from_nt_status(status: NTSTATUS) -> Win32Error {
-        // SAFETY: RtlNtStatusToDosError is total over NTSTATUS
-        unsafe { RtlNtStatusToDosError(status) }
+        RtlNtStatusToDosError(status)
     }
 }
 
@@ -3888,8 +3889,7 @@ pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(
 }
 
 pub fn WSAGetLastError() -> Option<E> {
-    // SAFETY: ws2_32 is loaded
-    SystemErrno::init(u32::try_from(unsafe { win32::ws2_32::WSAGetLastError() }).expect("int cast"))
+    SystemErrno::init(u32::try_from(win32::ws2_32::WSAGetLastError()).expect("int cast"))
         .map(SystemErrno::to_e)
 }
 
@@ -4948,7 +4948,8 @@ mod kernel32_2 {
     use super::*;
     // TODO(port): move to windows_sys
     unsafe extern "system" {
-        pub fn GetEnvironmentStringsW() -> LPWSTR;
+        /// No preconditions; allocates and returns the env block (or null).
+        pub safe fn GetEnvironmentStringsW() -> LPWSTR;
         pub fn FreeEnvironmentStringsW(penv: LPWSTR) -> BOOL;
         pub fn GetEnvironmentVariableW(lpName: LPCWSTR, lpBuffer: *mut WCHAR, nSize: DWORD) -> DWORD;
     }
@@ -4957,8 +4958,7 @@ mod kernel32_2 {
 pub type GetEnvironmentStringsError = bun_alloc::AllocError;
 
 pub fn GetEnvironmentStringsW() -> Result<*mut u16, GetEnvironmentStringsError> {
-    // SAFETY: returns owned env block or null
-    let p = unsafe { kernel32_2::GetEnvironmentStringsW() };
+    let p = kernel32_2::GetEnvironmentStringsW();
     if p.is_null() {
         return Err(bun_alloc::AllocError);
     }

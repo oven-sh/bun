@@ -318,8 +318,10 @@ impl crate::Allocator for Zone {}
 // since these are macOS-only libc symbols).
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    pub fn malloc_default_zone() -> *mut Zone;
-    pub fn malloc_create_zone(start_size: vm_size_t, flags: c_uint) -> *mut Zone;
+    /// No preconditions; returns the process default malloc zone.
+    pub safe fn malloc_default_zone() -> *mut Zone;
+    /// No preconditions; allocates a new zone (process-lifetime).
+    pub safe fn malloc_create_zone(start_size: vm_size_t, flags: c_uint) -> *mut Zone;
     pub fn malloc_destroy_zone(zone: *mut Zone);
     pub fn malloc_zone_malloc(zone: *mut Zone, size: usize) -> *mut c_void;
     pub fn malloc_zone_calloc(zone: *mut Zone, num_items: usize, size: usize) -> *mut c_void;
@@ -330,7 +332,8 @@ unsafe extern "C" {
     pub fn malloc_zone_memalign(zone: *mut Zone, alignment: usize, size: usize) -> *mut c_void;
     pub fn malloc_zone_batch_malloc(zone: *mut Zone, size: usize, results: *mut *mut c_void, num_requested: c_uint) -> c_uint;
     pub fn malloc_zone_batch_free(zone: *mut Zone, to_be_freed: *mut *mut c_void, num: c_uint);
-    pub fn malloc_default_purgeable_zone() -> *mut Zone;
+    /// No preconditions.
+    pub safe fn malloc_default_purgeable_zone() -> *mut Zone;
     pub fn malloc_make_purgeable(ptr: *mut c_void);
     pub fn malloc_make_nonpurgeable(ptr: *mut c_void) -> c_int;
     pub fn malloc_zone_register(zone: *mut Zone);

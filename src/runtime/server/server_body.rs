@@ -580,15 +580,15 @@ impl AnyRoute {
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else { return Ok(None); };
         let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
         let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
-            // SAFETY: `create_from_js` returned a +1-ref C++ FetchHeaders; release it.
-            if let Some(h) = fh { unsafe { (*h.as_ptr()).deref(); } }
+            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+            if let Some(h) = fh { bun_opaque::opaque_deref_mut(h.as_ptr()).deref(); }
         });
         if init_ctx.global.has_exception() {
             return Err(JsError::Thrown);
         }
 
-        // SAFETY: `fetch_headers` is a live +1-ref C++ FetchHeaders for this scope.
-        let headers_ref = fetch_headers.map(|p| unsafe { &*p.as_ptr() });
+        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+        let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
         let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
 
         if is_index_route {
@@ -1255,8 +1255,8 @@ where
         context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
-        // SAFETY: uWS passes a live response handle for the upgrade callback.
-        Self::on_web_socket_upgrade(self, unsafe { &mut *res }, req, context, id);
+        // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        Self::on_web_socket_upgrade(self, bun_opaque::opaque_deref_mut(res), req, context, id);
     }
 }
 
@@ -1280,20 +1280,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Shared `&JSGlobalObject` accessor (struct stores it as `*const`).
     #[inline]
     fn global(&self) -> GlobalRef {
-        // SAFETY: `global_this` is set in `init()`; non-null and valid for the
+        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
+        // `global_this` is set in `init()`; non-null and valid for the
         // server's lifetime (LIFETIMES.tsv: STATIC).
-        GlobalRef::from(unsafe { &*self.global_this })
+        GlobalRef::from(bun_opaque::opaque_deref(self.global_this))
     }
 
     /// `&mut` accessor for the live uws App. Only call from paths where the
     /// server is running (`self.app` set in `listen()`).
     #[inline]
     fn app_mut(&self) -> &mut uws_sys::NewApp<SSL> {
-        // SAFETY: `self.app` is `Some` and points to a live uws App for the
-        // lifetime of any JS-reachable `Server` (set in `listen()`, freed in
-        // `deinit()` after the JS wrapper is gone). Single-JS-thread invariant
-        // — no concurrent `&mut` to the same App.
-        unsafe { &mut *self.app.expect("server not listening") }
+        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
+        // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
+        // for the lifetime of any JS-reachable `Server` (set in `listen()`,
+        // freed in `deinit()` after the JS wrapper is gone).
+        bun_opaque::opaque_deref_mut(self.app.expect("server not listening"))
     }
 
     /// `server.zig:notifyInspectorServerStopped`. Unbounded so `deinit()` (in
@@ -1649,8 +1650,8 @@ where
             let fetch_headers_to_deref: core::cell::Cell<Option<*mut FetchHeaders>> = core::cell::Cell::new(None);
             let _fh_guard = scopeguard::guard(&fetch_headers_to_deref, |cell| {
                 if let Some(fh) = cell.get() {
-                    // SAFETY: created via FetchHeaders::create_from_js below
-                    unsafe { &mut *fh }.deref();
+                    // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+                    bun_opaque::opaque_deref_mut(fh).deref();
                 }
             });
 
@@ -1704,8 +1705,8 @@ where
                                 return Err(JsError::Thrown);
                             }
                         };
-                        // SAFETY: fetch_headers_to_use is non-null from either branch above
-                        let fetch_headers_to_use = unsafe { &mut *fetch_headers_to_use };
+                        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+                        let fetch_headers_to_use = bun_opaque::opaque_deref_mut(fetch_headers_to_use);
 
                         if global.has_exception() {
                             return Err(JsError::Thrown);
@@ -1816,8 +1817,9 @@ where
             // contexts have a distinct generic param and `request_context.get`
             // above would have returned None — so the concrete `Req` is always
             // `uws_sys::Request` here.
-            // SAFETY: BACKREF; uws::Request is live while RequestContext.req is Some.
-            let r = unsafe { &mut *req_ptr.cast::<uws_sys::Request>() };
+            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
+            // (BACKREF; live while RequestContext.req is Some).
+            let r = bun_opaque::opaque_deref_mut(req_ptr.cast::<uws_sys::Request>());
             if sec_websocket_key_str.len == 0 {
                 sec_websocket_key_str = ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
             }
@@ -1840,7 +1842,8 @@ where
         // any) and derefs it on scope exit. Populated below via DerefMut.
         let mut fetch_headers_to_deref =
             scopeguard::guard(None::<*mut FetchHeaders>, |fh| {
-                if let Some(h) = fh { unsafe { (*h).deref() } }
+                // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+                if let Some(h) = fh { bun_opaque::opaque_deref_mut(h).deref() }
             });
         let mut fetch_headers_to_use: Option<*mut FetchHeaders> = None;
 
@@ -1878,8 +1881,8 @@ where
                     fetch_headers_to_use = Some(fh);
                     if global.has_exception() { return Err(JsError::Thrown); }
 
-                    // SAFETY: fh is a live FetchHeaders (either from JS or freshly created).
-                    let fh = unsafe { &mut *fh };
+                    // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+                    let fh = bun_opaque::opaque_deref_mut(fh);
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                         sec_websocket_protocol_owned = p.to_slice_clone();
                         sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
@@ -1910,8 +1913,8 @@ where
         if fetch_headers_to_use.is_some() || cookies_to_write.is_some() {
             resp.write_status(b"101 Switching Protocols");
             if let Some(h) = fetch_headers_to_use {
-                // SAFETY: h is a live FetchHeaders (see above).
-                unsafe { (*h).to_uws_response(ResponseKind::from(SSL, false), resp.socket().cast::<c_void>()) };
+                // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(h).to_uws_response(ResponseKind::from(SSL, false), resp.socket().cast::<c_void>());
             }
             if let Some(c) = cookies_to_write.as_mut() {
                 c.write(global, ResponseKind::from(SSL, false), resp.socket().cast::<c_void>())?;
@@ -1950,10 +1953,11 @@ where
             sec_websocket_key_str.slice(),
             proto_str.slice(),
             ext_str.slice(),
-            // SAFETY: `upgrade_ctx` was checked non-null / non-sentinel above
-            // (server.zig:899); the uWS HttpContext owns it for the request's
-            // duration.
-            Some(unsafe { &mut *upgrade_ctx }),
+            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe
+            // deref (`upgrade_ctx` checked non-null / non-sentinel above,
+            // server.zig:899; the uWS HttpContext owns it for the request's
+            // duration).
+            Some(bun_opaque::opaque_deref_mut(upgrade_ctx)),
         );
 
         Ok(JSValue::TRUE)
@@ -1972,7 +1976,7 @@ where
         // (`self.app` set in `listen()`).
         self.app_mut().clear_routes();
         if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.clear_routes(); }
+            if let Some(h3a) = self.h3_app { bun_opaque::opaque_deref_mut(h3a).clear_routes(); }
         }
 
         // Only reload `on_request` / `on_error` when the new config actually
@@ -2068,7 +2072,7 @@ where
         self.config = self.config.clone_for_reloading_static_routes()?;
         self.app_mut().clear_routes();
         if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.clear_routes(); }
+            if let Some(h3a) = self.h3_app { bun_opaque::opaque_deref_mut(h3a).clear_routes(); }
         }
         let route_list_value = self.set_routes();
         if !route_list_value.is_empty() {
@@ -2321,13 +2325,13 @@ where
         }
 
         if let Some(listener) = self.listener {
-            // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-            return JSValue::js_number(unsafe { &mut *listener }.get_local_port() as f64);
+            // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+            return JSValue::js_number(bun_opaque::opaque_deref_mut(listener).get_local_port() as f64);
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
-                // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
-                return JSValue::js_number(unsafe { &mut *h3l }.get_local_port() as f64);
+                // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                return JSValue::js_number(bun_opaque::opaque_deref_mut(h3l).get_local_port() as f64);
             }
         }
         match &self.config.address {
@@ -2365,8 +2369,8 @@ where
                 let mut port: u16 = *tcp_port;
 
                 if let Some(listener) = self.listener {
-                    // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-                    let listener = unsafe { &mut *listener };
+                    // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+                    let listener = bun_opaque::opaque_deref_mut(listener);
                     port = u16::try_from(listener.get_local_port()).expect("int cast");
 
                     let mut buf = [0u8; 64];
@@ -2385,8 +2389,8 @@ where
                 }
                 if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
-                        // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
-                        let h3l = unsafe { &mut *h3l };
+                        // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                        let h3l = bun_opaque::opaque_deref_mut(h3l);
                         port = u16::try_from(h3l.get_local_port()).expect("int cast");
                         let mut buf = [0u8; 64];
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
@@ -2430,8 +2434,8 @@ where
         {
             if let Some(listener) = self.listener {
                 let mut buf = [0u8; 1024];
-                // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-                if let Some(addr) = unsafe { &mut *listener }.socket().remote_address(&mut buf[..1024]) {
+                // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+                if let Some(addr) = bun_opaque::opaque_deref_mut(listener).socket().remote_address(&mut buf[..1024]) {
                     if !addr.is_empty() {
                         return jsc::bun_string_jsc::create_utf8_for_js(global, addr);
                     }
@@ -2805,8 +2809,8 @@ where
 
         let signal = AbortSignal::new(&self.global());
         ctx.set_signal(signal);
-        // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
-        unsafe { (*signal).pending_activity_ref() };
+        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
+        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
         // Zig: `.signal = signal.ref()` — bump once for the Request's owned
         // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
@@ -2942,8 +2946,9 @@ where
         // SAFETY: server_ptr is live for the request's duration.
         let server_js = unsafe { &*server_ptr }.js_value_assert_alive();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
-        // SAFETY: global_this set in init() and outlives ThisServer.
-        let global = unsafe { &*(*server_ptr).global_this };
+        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
+        // SAFETY (server_ptr field read): server_ptr is live for the request's duration.
+        let global = bun_opaque::opaque_deref(unsafe { (*server_ptr).global_this });
         let response_value = match jsc::from_js_host_call(global, || unsafe {
             Bun__ServerRouteList__callRoute(
                 global,
@@ -3020,8 +3025,8 @@ where
         // RequestContext owns one ref so aborts during the WS-upgrade fallback
         // fetch path propagate.
         ctx.signal = NonNull::new(signal);
-        // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
-        unsafe { (*signal).pending_activity_ref() };
+        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
+        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
         // Zig: `.signal = signal.ref()` — bump once for the Request's copy and
         // adopt into RAII so it pairs with `Request::Drop`'s unref.
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
@@ -3333,9 +3338,11 @@ pub fn server_set_on_client_error_(global: &JSGlobalObject, server: JSValue, cal
                         } else {
                             &[]
                         };
-                        this.on_client_error_callback(unsafe { &mut *socket }, error_code, packet);
+                        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                        this.on_client_error_callback(bun_opaque::opaque_deref_mut(socket), error_code, packet);
                     }
-                    unsafe { &mut *app }.on_client_error(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
+                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).on_client_error(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);
             }

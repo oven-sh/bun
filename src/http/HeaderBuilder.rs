@@ -71,6 +71,8 @@ impl HeaderBuilder {
         // is a non-owning slice into the StringBuilder's buffer. Phase B must decide whether
         // HttpClient takes ownership of the buffer or borrows it.
         // SAFETY: content.ptr was set by allocate() and exactly content.len bytes have been written.
+        // Cannot use `written_slice()` here — the borrow must outlive `&self` (`HTTPClient<'a>`
+        // holds it past this call); the lifetime is intentionally unbound.
         client.header_buf = unsafe {
             bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len)
         };

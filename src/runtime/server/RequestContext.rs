@@ -559,9 +559,10 @@ where
     }
 
     pub fn set_cookies(&mut self, cookie_map: Option<*mut CookieMap>) {
-        // SAFETY: caller passes a live `CookieMap*` (or None); `new_ref` takes a
-        // ref for storage. Assigning replaces (and so drops/unrefs) the old one.
-        self.cookies = cookie_map.map(|p| CookieMapRef::new_ref(unsafe { &*p }));
+        // S008: `CookieMap` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        // `new_ref` takes a ref for storage. Assigning replaces (and so
+        // drops/unrefs) the old one.
+        self.cookies = cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const())));
     }
 
     pub fn set_timeout_handler(&mut self) {
@@ -2493,8 +2494,8 @@ where
             wrote_anything = wrapper.sink.wrote > 0;
 
             wrapper.sink.finalize();
-            // SAFETY: global_this set in do_render_stream before sink was stored.
-            let sink_global = unsafe { &*wrapper.sink.global_this };
+            // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
+            let sink_global = bun_opaque::opaque_deref(wrapper.sink.global_this);
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
                 &mut wrapper.sink.signal,
                 sink_global,
@@ -2566,15 +2567,15 @@ where
                 // assigned (flushFromJS / endFromJS). Drop that root before
                 // abandoning the pointer, otherwise it leaks for the
                 // lifetime of the VM.
-                // SAFETY: prom is a GC-rooted *JSPromise.
-                unsafe { (*prom).to_js() }.unprotect();
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(prom).to_js().unprotect();
             }
             wrapper.sink.done = true;
             let aborted = req.flags.aborted() || wrapper.sink.aborted;
             req.flags.set_aborted(aborted);
             wrapper.sink.finalize();
-            // SAFETY: global_this set in do_render_stream before sink was stored.
-            let sink_global = unsafe { &*wrapper.sink.global_this };
+            // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
+            let sink_global = bun_opaque::opaque_deref(wrapper.sink.global_this);
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
                 &mut wrapper.sink.signal,
                 sink_global,

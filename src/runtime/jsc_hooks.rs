@@ -484,11 +484,8 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
 /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
 /// `bun:main` wrapper. Returns `false` on error (the error is already logged
 /// into `vm.log` by `generate`).
-///
-/// # Safety
-/// `vm` is the live per-thread VM.
-unsafe fn generate_entry_point(
-    _vm: *mut VirtualMachine,
+fn generate_entry_point(
+    _vm: &VirtualMachine,
     watch: bool,
     entry_path: &[u8],
 ) -> bool {
@@ -998,11 +995,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 /// `ConsoleObject::Formatter`. Spec `runErrorHandler` body
 /// (VirtualMachine.zig:2164-2188). Dispatched here so the high tier owns the
 /// formatter.
-///
-/// # Safety
-/// `vm` is the live per-thread VM.
-unsafe fn print_exception(
-    vm: *mut VirtualMachine,
+fn print_exception(
+    vm_ref: &mut VirtualMachine,
     value: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
 ) {
@@ -1012,10 +1006,7 @@ unsafe fn print_exception(
     // no early returns below.
     let writer = bun_core::Output::error_writer_buffered();
 
-    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let vm_ref = unsafe { &mut *vm };
-    // SAFETY: `vm.global` is set during init and live for VM lifetime.
-    let global = unsafe { &*vm_ref.global };
+    let global = vm_ref.global();
 
     if let Some(exception) = value.as_exception(vm_ref.jsc_vm) {
         // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
@@ -1128,10 +1119,7 @@ unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -
 
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
 /// Spec VirtualMachine.zig:1760.
-///
-/// # Safety
-/// Trivially safe; `unsafe` only to match the `RuntimeHooks` slot type.
-unsafe fn has_blob_url(blob_id: &[u8]) -> bool {
+fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
@@ -1141,10 +1129,7 @@ unsafe fn has_blob_url(blob_id: &[u8]) -> bool {
 /// in this crate, above `bun_jsc` / `bun_js_parser_jsc`) and returns its body
 /// Blob wrapped in a resolved Promise; `Ok(None)` to fall through to the
 /// `Blob`/`BuildMessage`/`ResolveMessage` arms in `Macro::Run::coerce`.
-///
-/// # Safety
-/// `value` is a live encoded `JSValue`; `global` is the live per-thread global.
-unsafe fn body_mixin_get_blob(
+fn body_mixin_get_blob(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
@@ -1168,7 +1153,10 @@ unsafe fn body_mixin_get_blob(
 /// # Safety
 /// `global` is the live VM global.
 unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
-    crate::node::process::exit(global, code);
+    // SAFETY: per fn contract — `global` is the live VM global. The deref is
+    // performed once here in the hook shim so the user-facing `process::exit`
+    // can take a safe `&JSGlobalObject`.
+    crate::node::process::exit(unsafe { &*global }, code);
 }
 
 /// `graph.find(path).?.sourcemap.load()` — Spec VirtualMachine.zig:3875.
@@ -1185,10 +1173,9 @@ unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
 /// hands out the `*mut` directly from the backing `UnsafeCell`, which is the
 /// same path every other mutating caller (`node_fs`, `Blob`) uses.
 ///
-/// # Safety
 /// Called on the JS thread; `Graph::find` / `LazySourceMap::load` only mutate
 /// the per-`File` lazy caches (sourcemap decode is serialized by `INIT_LOCK`).
-unsafe fn load_standalone_sourcemap(
+fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
     let graph = bun_standalone_graph::Graph::get()?;
@@ -1240,9 +1227,8 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) 
 /// `node_cluster_binding.child_singleton.deinit()` — Spec
 /// VirtualMachine.zig:3972 (`IPCInstance.handleIPCClose`).
 ///
-/// # Safety
 /// Called on the JS thread (the `CHILD_SINGLETON` static is JS-thread-only).
-unsafe fn ipc_child_singleton_deinit() {
+fn ipc_child_singleton_deinit() {
     // `InternalMsgHolder`'s owned fields (`Strong`s, map, `Vec`) all impl
     // `Drop`; taking the `Option` runs them — equivalent to Zig `deinit()`.
     // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
@@ -1439,28 +1425,18 @@ unsafe fn parse_worker_exec_argv_allow_addons(
 /// web_worker.zig:727. Stops every in-process `Bun.cron()` job registered on
 /// this VM and releases the pending-promise ref so the struct frees (the event
 /// loop is dying; settle callbacks will never run).
-///
-/// # Safety
-/// `vm` is the live worker-thread VM, unpublished (sole owner) at the call
-/// site (`WebWorker::shutdown` after `vm_lock` unpublish).
-unsafe fn cron_clear_all_teardown(vm: *mut VirtualMachine) {
+fn cron_clear_all_teardown(vm: &mut VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
-    // SAFETY: per fn contract.
-    CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(unsafe { &mut *vm });
+    CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(vm);
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` — spec
 /// VirtualMachine.zig:815. Same impl as [`cron_clear_all_teardown`] but skips
 /// the pending-promise force-release (the event loop survives a hot reload, so
 /// settle callbacks will still run).
-///
-/// # Safety
-/// `vm` is the live JS-thread VM; called from `VirtualMachine::reload` with
-/// exclusive `&mut self`.
-unsafe fn cron_clear_all_reload(vm: *mut VirtualMachine) {
+fn cron_clear_all_reload(vm: &mut VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
-    // SAFETY: per fn contract.
-    CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(unsafe { &mut *vm });
+    CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
 /// `webcore.WebWorker.terminateAllAndWait(timeout_ms)` — spec
@@ -1469,9 +1445,8 @@ unsafe fn cron_clear_all_reload(vm: *mut VirtualMachine) {
 /// sits below `web_worker.rs` in the module DAG and the wait re-enters
 /// `auto_tick` (this crate) on the worker side.
 ///
-/// # Safety
 /// Main-thread only; called from `global_exit` after `is_shutting_down` is set.
-unsafe fn terminate_all_workers_and_wait(timeout_ms: u64) {
+fn terminate_all_workers_and_wait(timeout_ms: u64) {
     bun_jsc::web_worker::terminate_all_and_wait(timeout_ms);
 }
 
@@ -1596,7 +1571,7 @@ unsafe fn retroactively_report_discovered_tests(
 
 /// `Jest.runner.?.bun_test_root.onBeforePrint()` — flush the test reporter's
 /// line state before user `console.log` output interleaves with it.
-unsafe fn console_on_before_print() {
+fn console_on_before_print() {
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }
@@ -1615,7 +1590,7 @@ impl core::fmt::Write for IoAsFmt<'_> {
 /// `ConsoleObject.Formatter.printAs(.Private, …)` runtime-type chain — see
 /// [`RuntimeHooks::console_print_runtime_object`]. Returns `true` when `value`
 /// matched one of the high-tier types and was fully formatted.
-unsafe fn console_print_runtime_object<'a, 'f>(
+fn console_print_runtime_object<'a, 'f>(
     formatter: &'a mut bun_jsc::Formatter<'f>,
     writer: &'a mut dyn bun_io::Write,
     value: JSValue,

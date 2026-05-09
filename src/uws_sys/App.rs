@@ -622,14 +622,15 @@ pub struct ListenSocket<const SSL: bool> {
 impl<const SSL: bool> ListenSocket<SSL> {
     #[inline]
     pub fn close(&mut self) {
-        // SAFETY: ListenSocket<SSL> is layout-identical to crate::ListenSocket (both opaque).
-        unsafe { (*std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>()).close() }
+        // S008: ListenSocket<SSL> is layout-identical to crate::ListenSocket
+        // (both ZST opaques) — safe deref via `opaque_deref_mut`.
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>()).close()
     }
 
     #[inline]
     pub fn get_local_port(&mut self) -> i32 {
-        // SAFETY: opaque cast as above.
-        unsafe { (*std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>()).get_local_port() }
+        // S008: opaque ZST cast as above.
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>()).get_local_port()
     }
 
     pub fn socket(&mut self) -> crate::socket::NewSocketHandler<'static, SSL> {

@@ -592,12 +592,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    // SAFETY: all-zero is a valid uv::Pipe (POD libuv handle;
-                    // matches Zig `std.mem.zeroes(uv.Pipe)`). Ownership of this
-                    // raw heap allocation transfers to `spawn_process_windows`,
-                    // which `heap::take`s it into `spawned.stdout`.
+                    // Ownership of this raw heap allocation transfers to
+                    // `spawn_process_windows`, which `heap::take`s it into
+                    // `spawned.stdout`.
                     bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                        core::mem::zeroed::<uv::Pipe>(),
+                        bun_core::ffi::zeroed::<uv::Pipe>(),
                     )) as bun_spawn::windows::UvPipePtr)
                 }
             },
@@ -612,9 +611,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    // SAFETY: as above; ownership transfers to `spawned.stderr`.
+                    // Ownership transfers to `spawned.stderr`.
                     bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                        core::mem::zeroed::<uv::Pipe>(),
+                        bun_core::ffi::zeroed::<uv::Pipe>(),
                     )) as bun_spawn::windows::UvPipePtr)
                 }
             },

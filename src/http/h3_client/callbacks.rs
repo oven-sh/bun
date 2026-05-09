@@ -189,10 +189,8 @@ unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             i += 1;
             continue;
         };
-        // SAFETY: lsquic guarantees name/value point to name_len/value_len bytes
-        // valid for the duration of this callback.
-        let name = unsafe { bun_core::ffi::slice(h.name, h.name_len as usize) };
-        let value = unsafe { bun_core::ffi::slice(h.value, h.value_len as usize) };
+        let name = h.name_bytes();
+        let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
                 status = core::str::from_utf8(value)

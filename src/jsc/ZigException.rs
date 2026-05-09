@@ -66,22 +66,11 @@ impl ZigException {
         self.name.deref();
         self.message.deref();
 
-        // SAFETY: source_lines_ptr[..source_lines_len] is valid per ZigStackTrace contract.
-        let lines = unsafe {
-            bun_core::ffi::slice_mut(
-                self.stack.source_lines_ptr,
-                self.stack.source_lines_len as usize,
-            )
-        };
-        for line in lines {
+        for line in self.stack.source_lines_mut() {
             line.deref();
         }
 
-        // SAFETY: frames_ptr[..frames_len] is valid per ZigStackTrace contract.
-        let frames = unsafe {
-            bun_core::ffi::slice_mut(self.stack.frames_ptr, self.stack.frames_len as usize)
-        };
-        for frame in frames {
+        for frame in self.stack.frames_mutable() {
             frame.deinit();
         }
 

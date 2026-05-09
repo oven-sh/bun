@@ -710,8 +710,7 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument, got {}", arguments.len())));
         }
 
-        // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut addr: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
         if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], &mut addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::setsockopt)
@@ -719,8 +718,7 @@ impl UDPSocket {
             ));
         }
 
-        // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut interface: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
 
         let Some(socket) = this.socket else {
             return Err(global_this.throw(format_args!("Socket is closed")));
@@ -1194,8 +1192,7 @@ impl UDPSocket {
         // JSC safepoint sits between capturing `payload.ptr` and handing it
         // to `socket.send`, so a borrowed pointer cannot be freed out from
         // under us. `payload_arg` itself stays rooted in the callframe.
-        // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut addr: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
                 if !this.parse_addr(global_this, dest.port, dest.address, &mut addr)? {

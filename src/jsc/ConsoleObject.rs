@@ -494,8 +494,7 @@ fn message_with_type_and_level_(
     // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
     // when `bun test` isn't running or hooks aren't installed.
     if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-        // SAFETY: JS-thread only; the hook touches a thread-local singleton.
-        unsafe { (hooks.console_on_before_print)() };
+        (hooks.console_on_before_print)();
     }
 
     let mut print_length = len;
@@ -4480,11 +4479,8 @@ pub mod formatter {
                 // overwrites with JSC-owned bytes, so a shared zero buffer is
                 // sufficient and keeps 512B off every recursive frame.
                 static NAME_BUF: [u8; 512] = [0; 512];
-                // SAFETY: JS-thread only; `self`/`writer_` borrow stack
-                // locals for the hook's duration.
-                let handled = unsafe {
-                    (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)
-                }?;
+                let handled =
+                    (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)?;
                 if handled {
                     return Ok(());
                 }

@@ -2011,11 +2011,7 @@ impl<'a> LinkerContext<'a> {
         let mut local_css_names: HashMap<Ref, ()> = HashMap::new();
 
         for (source_index, maybe_css_ast) in all_css_asts.iter().enumerate() {
-            if let Some(css_ast_ptr) = maybe_css_ast {
-                // SAFETY: the SoA `css` column stores arena-owned
-                // `*mut BundlerStyleSheet` (see `BundledAst.rs`); valid for the
-                // duration of the link pass.
-                let css_ast = unsafe { &**css_ast_ptr };
+            if let Some(css_ast) = maybe_css_ast.as_deref() {
                 if css_ast.local_scope.count() == 0 {
                     continue;
                 }

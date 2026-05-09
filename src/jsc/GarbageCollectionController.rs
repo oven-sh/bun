@@ -19,7 +19,6 @@
 //! thread-safe. Each VirtualMachine instance should have its own controller.
 
 use core::ffi::c_int;
-use core::mem::offset_of;
 
 #[allow(unused_imports)]
 use bun_core::env_var;
@@ -144,11 +143,12 @@ impl GarbageCollectionController {
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
-        // SAFETY: self is the `gc_controller` field embedded in a VirtualMachine
-        //.
-        unsafe {
-            &mut *bun_core::from_field_ptr!(VirtualMachine, gc_controller, std::ptr::from_mut::<Self>(self))
-        }
+        // S017: dropped `container_of` recovery — provenance of `&mut self`
+        // (which only covers `vm.gc_controller`) cannot soundly widen to the
+        // whole `VirtualMachine` under Stacked Borrows. Route through the
+        // per-thread singleton instead (same pointer, full-allocation
+        // provenance via `VirtualMachine::get_mut_ptr`).
+        VirtualMachine::get().as_mut()
     }
 
     /// Explicit teardown (Zig `deinit`). Idempotent — `Drop` forwards here.

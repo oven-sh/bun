@@ -73,8 +73,8 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
     fn resume_stream(&self) -> bool {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: non-null FFI handle owned by uSockets.
-                unsafe { (*s).resume() };
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).resume();
                 true
             }
             uws::InternalSocket::Detached => true,
@@ -90,8 +90,8 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
     fn pause_stream(&self) -> bool {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: non-null FFI handle owned by uSockets.
-                unsafe { (*s).pause() };
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).pause();
                 true
             }
             uws::InternalSocket::Detached => true,
@@ -106,8 +106,8 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
     fn set_no_delay(&self, enabled: bool) -> bool {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: non-null FFI handle owned by uSockets.
-                unsafe { (*s).set_nodelay(enabled) };
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).set_nodelay(enabled);
                 true
             }
             _ => false,
@@ -116,8 +116,8 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
     fn set_keep_alive(&self, enabled: bool, delay: u32) -> bool {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: non-null FFI handle owned by uSockets.
-                unsafe { (*s).set_keepalive(enabled, delay) == 0 }
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).set_keepalive(enabled, delay) == 0
             }
             _ => false,
         }
@@ -133,8 +133,8 @@ impl<const SSL: bool> SocketHandlerAddrExt for uws::NewSocketHandler<SSL> {
     fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-                unsafe { (*s).local_address(buf) }.ok()
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).local_address(buf).ok()
             }
             _ => None,
         }
@@ -142,8 +142,8 @@ impl<const SSL: bool> SocketHandlerAddrExt for uws::NewSocketHandler<SSL> {
     fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-                unsafe { (*s).remote_address(buf) }.ok()
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).remote_address(buf).ok()
             }
             _ => None,
         }
@@ -1642,19 +1642,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::NULL);
         }
 
-        let code: &[u8] = if ssl_error.code.is_null() {
-            b""
-        } else {
-            // SAFETY: ssl_error.code is a NUL-terminated C string from BoringSSL.
-            unsafe { bun_core::ffi::cstr(ssl_error.code) }.to_bytes()
-        };
-
-        let reason: &[u8] = if ssl_error.reason.is_null() {
-            b""
-        } else {
-            // SAFETY: ssl_error.reason is a NUL-terminated C string from BoringSSL.
-            unsafe { bun_core::ffi::cstr(ssl_error.reason) }.to_bytes()
-        };
+        let code: &[u8] = ssl_error.code_bytes();
+        let reason: &[u8] = ssl_error.reason_bytes();
 
         let fallback = SystemError {
             errno: 0,

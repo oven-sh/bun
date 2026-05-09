@@ -21,3 +21,4 @@ bitflags.workspace = true
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true
 bun_wyhash.workspace = true
+bun_core.workspace = true

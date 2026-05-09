@@ -28,7 +28,7 @@ impl LinkCommand {
 
 fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
     let cli = CommandLineArguments::parse(Subcommand::Link)?;
-    let (manager_ptr, original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Link) {
+    let (manager, original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Link) {
         Ok(v) => v,
         Err(e) if e == err!(MissingPackageJSON) => {
             attempt_to_create_package_json()?;
@@ -41,11 +41,6 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
         Err(e) => return Err(e),
     };
     // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
-
-    // SAFETY: `pm::init` heap-allocates the process-global `PackageManager` and
-    // returns its sole pointer; no worker thread derefs it during `bun link`,
-    // so a scoped `&mut` is exclusive for the rest of this function.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
 
     if manager.options.should_print_command_name() {
         Output::prettyln(format_args!(

@@ -1909,8 +1909,7 @@ impl fs_t {
     /// to the Zig `.rodata` value.
     #[inline(always)]
     pub fn uninitialized() -> fs_t {
-        // SAFETY: all-zero is a valid `fs_t` (POD `#[repr(C)]`).
-        let mut v: fs_t = unsafe { mem::zeroed() };
+        let mut v: fs_t = bun_core::ffi::zeroed();
         v.loop_ = 0xAAAA_AAAA_AAAA_0000usize as *mut Loop;
         v
     }
@@ -2094,6 +2093,32 @@ pub struct uv_thread_options_t {
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ReturnCode(pub c_int);
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun_core::ffi::Zeroable` impls (S021). Every libuv handle/request struct
+// above is `#[repr(C)]` POD whose fields are integers, raw pointers,
+// `Option<extern fn>` callbacks, nested POD unions, or `HandleType` (a
+// `#[repr(C)]` enum with `Unknown = 0`). The all-zero bit pattern is therefore
+// a valid pre-`uv_*_init` state — exactly what `std::mem::zeroes` produced in
+// the Zig original. Auditing the bound once per type here lets every
+// `Box::new(zeroed())` / stack out-param site drop its `unsafe` block.
+//
+// SAFETY (per type): audited against the field list in this file — no
+// `NonNull`/`NonZero`/reference/bare-fn-ptr fields; every enum field has a
+// `= 0` discriminant (`HandleType::Unknown`, `uv_req_type`/`uv_fs_type` are
+// plain `c_uint`/`c_int`).
+unsafe impl bun_core::ffi::Zeroable for uv_buf_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_req_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_write_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_connect_t {}
+unsafe impl bun_core::ffi::Zeroable for Handle {}
+unsafe impl bun_core::ffi::Zeroable for Timer {}
+unsafe impl bun_core::ffi::Zeroable for Pipe {}
+unsafe impl bun_core::ffi::Zeroable for uv_idle_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_poll_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_fs_event_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_getaddrinfo_t {}
+unsafe impl bun_core::ffi::Zeroable for fs_t {}
 impl ReturnCode {
     pub const ZERO: ReturnCode = ReturnCode(0);
     #[inline] pub const fn zero() -> ReturnCode { ReturnCode(0) }

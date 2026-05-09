@@ -164,20 +164,8 @@ pub fn verify_error_to_js(
     err: &bun_uws::us_bun_verify_error_t,
     global: &JSGlobalObject,
 ) -> crate::JsResult<JSValue> {
-    let code: &[u8] = if err.code.is_null() {
-        b""
-    } else {
-        // SAFETY: non-null `code` is a NUL-terminated C string owned by
-        // uSockets for the duration of the handshake callback.
-        unsafe { bun_core::ffi::cstr(err.code) }.to_bytes()
-    };
-    let reason: &[u8] = if err.reason.is_null() {
-        b""
-    } else {
-        // SAFETY: non-null `reason` is a NUL-terminated C string owned by
-        // uSockets for the duration of the handshake callback.
-        unsafe { bun_core::ffi::cstr(err.reason) }.to_bytes()
-    };
+    let code: &[u8] = err.code_bytes();
+    let reason: &[u8] = err.reason_bytes();
 
     let fallback = SystemError {
         code: String::clone_utf8(code),

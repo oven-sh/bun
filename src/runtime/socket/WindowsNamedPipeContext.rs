@@ -330,8 +330,7 @@ impl WindowsNamedPipeContext {
         };
         #[cfg(windows)]
         let named_pipe = {
-            // SAFETY: all-zero is a valid uv::Pipe (#[repr(C)] POD)
-            let pipe = Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() });
+            let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
             WindowsNamedPipe::from(pipe, handlers, vm)
         };
         #[cfg(not(windows))]

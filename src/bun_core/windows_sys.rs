@@ -30,8 +30,7 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 /// `std.os.windows.GetStdHandle` error-union semantics).
 #[inline]
 pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
-    // SAFETY: kernel32 GetStdHandle has no preconditions.
-    let h = unsafe { kernel32::GetStdHandle(std_handle) };
+    let h = kernel32::GetStdHandle(std_handle);
     if h == INVALID_HANDLE_VALUE || h.is_null() { None } else { Some(h) }
 }
 
@@ -100,15 +99,22 @@ pub unsafe fn peb() -> &'static PebView {
 pub mod kernel32 {
     use super::*;
     unsafe extern "system" {
-        pub fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
+        /// No preconditions; returns the cached console/std handle.
+        pub safe fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
         pub fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: *mut DWORD) -> BOOL;
         pub fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
-        pub fn GetConsoleOutputCP() -> u32;
-        pub fn SetConsoleOutputCP(wCodePageID: u32) -> BOOL;
-        pub fn GetConsoleCP() -> u32;
-        pub fn SetConsoleCP(wCodePageID: u32) -> BOOL;
-        pub fn ExitProcess(uExitCode: u32) -> !;
-        pub fn ExitThread(dwExitCode: u32) -> !;
+        /// No preconditions.
+        pub safe fn GetConsoleOutputCP() -> u32;
+        /// No preconditions; returns 0 on failure.
+        pub safe fn SetConsoleOutputCP(wCodePageID: u32) -> BOOL;
+        /// No preconditions.
+        pub safe fn GetConsoleCP() -> u32;
+        /// No preconditions; returns 0 on failure.
+        pub safe fn SetConsoleCP(wCodePageID: u32) -> BOOL;
+        /// No preconditions; terminates the process (cf. `std::process::exit`).
+        pub safe fn ExitProcess(uExitCode: u32) -> !;
+        /// No preconditions; terminates the calling thread.
+        pub safe fn ExitThread(dwExitCode: u32) -> !;
         pub fn GetConsoleScreenBufferInfo(
             hConsoleOutput: HANDLE,
             lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,

@@ -1332,8 +1332,7 @@ pub mod fd {
     pub use crate::windows_sys::{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
     #[cfg(windows)]
     pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
-        // SAFETY: GetStdHandle is always safe to call.
-        let h = unsafe { GetStdHandle(id) };
+        let h = GetStdHandle(id);
         // Zig: `getStdHandle catch return false; handle == h`. INVALID_HANDLE_VALUE
         // (failure) won't equal a valid handle, so the equality check suffices.
         !h.is_null() && handle == h
@@ -1676,8 +1675,8 @@ fn thread_id() -> u64 {
     // On the BSDs `pthread_t` is a raw pointer, which must route through usize.
     unsafe { libc::pthread_self() as usize as u64 }
     #[cfg(windows)]
-    unsafe {
-        unsafe extern "system" { fn GetCurrentThreadId() -> u32; }
+    {
+        unsafe extern "system" { safe fn GetCurrentThreadId() -> u32; }
         GetCurrentThreadId() as u64
     }
 }
@@ -1687,8 +1686,10 @@ fn thread_id() -> u64 {
 #[derive(Clone, Copy)]
 pub struct StackCheck { cached_stack_end: usize }
 unsafe extern "C" {
-    fn Bun__StackCheck__initialize();
-    fn Bun__StackCheck__getMaxStack() -> *mut core::ffi::c_void;
+    /// No preconditions; initializes thread-local stack bookkeeping.
+    safe fn Bun__StackCheck__initialize();
+    /// No preconditions; returns the cached stack-bound pointer for this thread.
+    safe fn Bun__StackCheck__getMaxStack() -> *mut core::ffi::c_void;
 }
 impl Default for StackCheck {
     /// Zig `.{}` — `cached_stack_end` defaults to `0`, so
@@ -1696,9 +1697,9 @@ impl Default for StackCheck {
     #[inline] fn default() -> Self { Self { cached_stack_end: 0 } }
 }
 impl StackCheck {
-    #[inline] pub fn configure_thread() { unsafe { Bun__StackCheck__initialize() } }
-    #[inline] pub fn init() -> Self { Self { cached_stack_end: unsafe { Bun__StackCheck__getMaxStack() } as usize } }
-    #[inline] pub fn update(&mut self) { self.cached_stack_end = unsafe { Bun__StackCheck__getMaxStack() } as usize; }
+    #[inline] pub fn configure_thread() { Bun__StackCheck__initialize() }
+    #[inline] pub fn init() -> Self { Self { cached_stack_end: Bun__StackCheck__getMaxStack() as usize } }
+    #[inline] pub fn update(&mut self) { self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize; }
     /// Is there enough stack space to safely recurse?
     /// Zig: `> 256K` on Windows, `> 128K` elsewhere (bun.zig:3762).
     #[inline]
@@ -3201,7 +3202,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     #[cfg(unix)]
     unsafe {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        { unsafe extern "C" { fn on_before_reload_process_linux(); } on_before_reload_process_linux(); }
+        { unsafe extern "C" { safe fn on_before_reload_process_linux(); } on_before_reload_process_linux(); }
 
         // We clone argv so that the memory address isn't the same as the libc one
         // (mirrors Zig `allocator.dupeZ` per entry).
@@ -3738,8 +3739,7 @@ pub mod perf {
             static INIT_ONCE: Once = Once::new();
             static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
             INIT_ONCE.call_once(|| {
-                // SAFETY: FFI; Bun__linux_trace_init has no preconditions.
-                let r = unsafe { Bun__linux_trace_init() };
+                let r = Bun__linux_trace_init();
                 IS_INITIALIZED.store(r != 0, Ordering::Relaxed);
             });
             IS_INITIALIZED.load(Ordering::Relaxed)
@@ -3773,7 +3773,8 @@ pub mod perf {
 
     #[cfg(target_os = "linux")]
     unsafe extern "C" {
-        fn Bun__linux_trace_init() -> core::ffi::c_int;
+        /// No preconditions; returns 0/1 based on tracefs availability.
+        safe fn Bun__linux_trace_init() -> core::ffi::c_int;
         fn Bun__linux_trace_emit(
             event_name: *const core::ffi::c_char,
             duration_ns: i64,

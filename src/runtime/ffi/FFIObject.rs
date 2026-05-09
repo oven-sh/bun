@@ -198,76 +198,91 @@ pub mod reader {
         Ok(arguments[0].as_ptr_address() + off)
     }
 
+    /// Read a `T` from a user-supplied raw address (unaligned, `*align(1)` in Zig).
+    ///
+    /// Single audited primitive for all `bun:ffi` `read.*` host functions
+    /// (slow-path and DOMJIT fast-path alike).
+    ///
+    /// # Safety
+    /// `addr` must point to `size_of::<T>()` readable bytes. The address is
+    /// JS-supplied and **not validated** — a bad value is UB, matching the
+    /// `bun:ffi` contract (`@as(*align(1) const T, @ptrFromInt(addr)).*`).
+    #[inline(always)]
+    pub(super) unsafe fn read_unaligned_at<T: Copy>(addr: usize) -> T {
+        // SAFETY: precondition delegated to caller (see fn-level Safety doc).
+        unsafe { (addr as *const T).read_unaligned() }
+    }
+
     pub fn u8(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: caller-supplied raw address; `read_unaligned` matches Zig `*align(1)`.
-        let value = unsafe { (addr as *const u8).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<u8>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn u16(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const u16).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<u16>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn u32(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const u32).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<u32>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn ptr(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const u64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<u64>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn i8(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const i8).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<i8>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn i16(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const i16).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<i16>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn i32(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const i32).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<i32>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn intptr(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const i64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<i64>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn f32(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const f32).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<f32>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn f64(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const f64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<f64>(addr) };
         Ok(JSValue::js_number(value))
     }
     pub fn i64(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const i64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<i64>(addr) };
         Ok(JSValue::from_int64_no_truncate(global_object, value))
     }
     pub fn u64(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
-        // SAFETY: see `u8`.
-        let value = unsafe { (addr as *const u64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at`.
+        let value = unsafe { read_unaligned_at::<u64>(addr) };
         Ok(JSValue::from_uint64_no_truncate(global_object, value))
     }
 
@@ -279,85 +294,85 @@ pub mod reader {
     #[bun_jsc::host_call]
     pub extern fn u8_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const u8).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<u8>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn u16_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const u16).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<u16>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn u32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const u32).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<u32>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn ptr_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const u64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<u64>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i8_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const i8).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<i8>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i16_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const i16).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<i16>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const i32).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<i32>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn intptr_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const i64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<i64>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn f32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const f32).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<f32>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn f64_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const f64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<f64>(addr) };
         JSValue::js_number(value)
     }
     #[bun_jsc::host_call]
     pub extern fn u64_without_type_checks(global: &JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const u64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<u64>(addr) };
         JSValue::from_uint64_no_truncate(global, value)
     }
     #[bun_jsc::host_call]
     pub extern fn i64_without_type_checks(global: &JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
         let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
-        // SAFETY: JIT-validated address.
-        let value = unsafe { (addr as *const i64).read_unaligned() };
+        // SAFETY: see `read_unaligned_at` (JIT-validated address).
+        let value = unsafe { read_unaligned_at::<i64>(addr) };
         JSValue::from_int64_no_truncate(global, value)
     }
 }

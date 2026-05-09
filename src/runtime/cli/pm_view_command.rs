@@ -159,12 +159,7 @@ pub fn view(
     }
 
     let mut response_buf = MutableString::init(2048)?;
-    // TODO(port): headers.content.ptr.?[0..headers.content.len]
-    // SAFETY: `headers.allocate()` populated `ptr` with at least `len` bytes.
-    let header_buf: &[u8] = match headers.content.ptr {
-        Some(p) => unsafe { bun_core::ffi::slice(p.as_ptr(), headers.content.len) },
-        None => &[],
-    };
+    let header_buf: &[u8] = headers.content.written_slice();
     let http_proxy = manager.http_proxy(&url);
     let mut req = http::AsyncHTTP::init_sync(
         http::Method::GET,

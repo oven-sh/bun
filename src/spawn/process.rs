@@ -538,18 +538,9 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
-        // Read everything needed from `*uv_handle` BEFORE creating
-        // `this: &mut Process`. The handle is the inline `Poller::Uv` payload
-        // inside the heap `Process`, so once `this` exclusively borrows the
-        // whole `Process`, any later raw read via `uv_handle` overlaps that
-        // borrow and pops `this`'s Unique tag under Stacked Borrows (see the
-        // matching comment in `on_exit_uv`).
-        // SAFETY: libuv passes the live handle; raw read of POD `pid` field.
-        let pid = unsafe { (*uv_handle).pid };
         // SAFETY: see `on_exit_uv` — `*mut Process` back-pointer in `data`.
-        // `uv_handle` is not dereferenced again after this point.
         let this: &mut Process = unsafe { &mut *(*uv_handle).data.cast::<Process>() };
-        bun_sys::windows::libuv::log!("Process.onClose({})", pid);
+        bun_sys::windows::libuv::log!("Process.onClose({})", unsafe { (*uv_handle).pid });
 
         if matches!(this.poller, Poller::Uv(_)) {
             this.poller = Poller::Detached;
@@ -2022,10 +2013,9 @@ pub fn spawn_process_windows(
         debug_assert!(uv_proc.exit_cb == Some(Process::on_exit_uv));
     }
 
-    // Explicit field init — `WindowsSpawnResult` now `impl Drop` (so its
-    // unconsumed `Buffer(Box<uv::Pipe>)` fields get a real `uv_close`
-    // instead of being freed while still in libuv's handle queue), and
-    // `..Default::default()` (E0509) can't move out of a `Drop` type.
+    // No FRU `..Default::default()` here: `WindowsSpawnResult` impls `Drop`,
+    // so functional-record-update would have to move fields out of the
+    // temporary default — E0509. Spell the defaults out instead.
     let mut result = WindowsSpawnResult {
         // Intrusive raw pointer; refcount lives inside `Process` (see field comment).
         process_: Some(process),
@@ -2145,10 +2135,9 @@ pub mod sync {
                 SyncStdio::Buffer => {
                     #[cfg(windows)]
                     {
-                        // SAFETY: all-zero is valid uv::Pipe
-                        SpawnOptionsStdio::buffer(bun_core::heap::into_raw(Box::new(unsafe {
-                            core::mem::zeroed::<uv::Pipe>()
-                        })))
+                        SpawnOptionsStdio::buffer(bun_core::heap::into_raw(Box::new(
+                            bun_core::ffi::zeroed::<uv::Pipe>(),
+                        )))
                     }
                     #[cfg(not(windows))]
                     {
@@ -2702,16 +2691,14 @@ pub mod sync {
     impl SignalForwarding {
         #[inline]
         fn register() -> Self {
-            // SAFETY: FFI
-            unsafe { Bun__registerSignalsForForwarding() };
+            Bun__registerSignalsForForwarding();
             Self
         }
     }
     #[cfg(unix)]
     impl Drop for SignalForwarding {
         fn drop(&mut self) {
-            // SAFETY: FFI
-            unsafe { Bun__unregisterSignalsForForwarding() };
+            Bun__unregisterSignalsForForwarding();
             bun_crash_handler::reset_on_posix();
         }
     }
@@ -2907,13 +2894,11 @@ pub mod sync {
         #[cfg(target_os = "macos")]
         scopeguard::defer! {
             if no_orphans_kq.fd() != Fd::INVALID {
-                // SAFETY: FFI
-                unsafe { Bun__noOrphans_releaseKq() };
+                Bun__noOrphans_releaseKq();
             }
         }
 
-        // SAFETY: extern static
-        unsafe { &Bun__currentSyncPID }.store(0, core::sync::atomic::Ordering::Relaxed);
+        Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
         let _signals = SignalForwarding::register();
 
         let process = match spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)? {
@@ -2923,8 +2908,7 @@ pub mod sync {
         // Negative → kill() in the C++ signal forwarder targets the pgroup, so
         // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
         // that hasn't `setsid()`-escaped.
-        // SAFETY: extern static
-        unsafe { &Bun__currentSyncPID }.store(
+        Bun__currentSyncPID.store(
             if no_orphans { -i64::from(process.pid) } else { i64::from(process.pid) },
             core::sync::atomic::Ordering::Relaxed,
         );
@@ -2943,8 +2927,7 @@ pub mod sync {
             // script's own knote.
             #[cfg(target_os = "macos")]
             if no_orphans_kq.fd() != Fd::INVALID {
-                // SAFETY: FFI
-                unsafe { Bun__noOrphans_begin(no_orphans_kq.fd().native(), process.pid) };
+                Bun__noOrphans_begin(no_orphans_kq.fd().native(), process.pid);
             }
         }
         // Move `jc` into the guard so the defer closure owns it (avoids holding
@@ -2983,8 +2966,7 @@ pub mod sync {
         // `siblings` by reference while still mutated below. Phase B: restructure
         // into a single RAII state struct (or run cleanup inline at each return).
 
-        // SAFETY: FFI
-        unsafe { Bun__sendPendingSignalIfNecessary() };
+        Bun__sendPendingSignalIfNecessary();
 
         let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
         let mut out_fds: [Fd; 2] = [
@@ -3264,8 +3246,7 @@ pub mod sync {
             // registration failure. `begin()` has already seeded m_tracked
             // with `child`; prune it so the caller's `reapChild()` doesn't
             // leave a freed pid for `killTracked()` to SIGSTOP.
-            // SAFETY: FFI
-            unsafe { Bun__noOrphans_onExit(child) };
+            Bun__noOrphans_onExit(child);
             return None;
         }
         // SAFETY: libc getppid
@@ -3276,8 +3257,7 @@ pub mod sync {
         // returning (in spawnPosix) and the NOTE_FORK registration above
         // taking effect; that fork produced no event. `begin()` already
         // seeded `m_seen` with `child`'s uniqueid, so this picks them up.
-        // SAFETY: FFI
-        unsafe { Bun__noOrphans_onFork() };
+        Bun__noOrphans_onFork();
 
         // SAFETY: zeroed kevent is valid
         let mut events: [libc::kevent; 16] = bun_core::ffi::zeroed();
@@ -3308,8 +3288,7 @@ pub mod sync {
                         // Drop from the live set (root included — `begin()`
                         // seeded it into `m_tracked`, and `reapChild()` is
                         // about to free its pid before `killTracked()` runs).
-                        // SAFETY: FFI
-                        unsafe { Bun__noOrphans_onExit(libc::pid_t::try_from(ev.ident).expect("int cast")) };
+                        Bun__noOrphans_onExit(libc::pid_t::try_from(ev.ident).expect("int cast"));
                         if ev.ident == usize::try_from(child).expect("int cast") {
                             child_exited = true;
                         }
@@ -3331,8 +3310,7 @@ pub mod sync {
                                 // still in m_tracked and `killTracked()` would
                                 // SIGSTOP a (potentially recycled) freed pid.
                                 // Idempotent with the NOTE_EXIT handler above.
-                                // SAFETY: FFI
-                                unsafe { Bun__noOrphans_onExit(child) };
+                                Bun__noOrphans_onExit(child);
                             }
                         }
                     }
@@ -3356,8 +3334,7 @@ pub mod sync {
             // without it the freeze-then-rescan loop in `killTracked()` is
             // the best-effort backstop.
             if saw_fork {
-                // SAFETY: FFI
-                unsafe { Bun__noOrphans_onFork() };
+                Bun__noOrphans_onFork();
             }
             if child_exited {
                 // Intentionally don't wait for pipe EOF (unlike the `poll()`

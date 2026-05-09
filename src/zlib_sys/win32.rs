@@ -61,6 +61,11 @@ pub struct struct_z_stream_s {
 pub type z_stream = struct_z_stream_s;
 pub type z_streamp = *mut z_stream;
 
+// SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
+// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
+// is the documented pre-`inflateInit`/`deflateInit` state (S021).
+unsafe impl bun_core::ffi::Zeroable for struct_z_stream_s {}
+
 #[repr(C)]
 pub struct struct_gz_header_s {
     pub text: c_int,

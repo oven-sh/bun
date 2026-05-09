@@ -433,7 +433,7 @@ pub fn convert_stmts_for_chunk(
                         let decl = *s.decls.at(0);
                         if let Some(decl_value) = decl.value {
                             let ident_ref = match decl.binding.data {
-                                B::B::BIdentifier(id) => unsafe { (*id).r#ref },
+                                B::B::BIdentifier(id) => id.r#ref,
                                 _ => unreachable!(),
                             };
                             stmt = Stmt::alloc(

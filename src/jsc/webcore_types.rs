@@ -1111,8 +1111,9 @@ pub mod store {
     impl Clone for StoreRef {
         #[inline]
         fn clone(&self) -> Self {
-            // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
-            unsafe { self.ptr.as_ref() }.ref_();
+            // `Deref` (below) encapsulates the NonNull access under the
+            // `StoreRef` liveness invariant.
+            (**self).ref_();
             Self { ptr: self.ptr }
         }
     }

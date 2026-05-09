@@ -117,8 +117,8 @@ impl<T> StoreRef<T> {
     /// Borrow the pointee (explicit form of `Deref`).
     #[inline]
     pub fn get(&self) -> &T {
-        // SAFETY: StoreRef invariant — points into a live Store/arena block.
-        unsafe { self.0.as_ref() }
+        // Route through `Deref` so the single `unsafe` lives there.
+        self
     }
 }
 impl<T> Clone for StoreRef<T> {

@@ -573,13 +573,16 @@ impl ShellSubprocess {
 
         // Hoist asSpawnOption results so a later one failing doesn't strand an earlier
         // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
-        let stdin_opt = match stdio_guard[0].as_spawn_option(0) {
+        // `mut` only for the Windows-only `.deinit()` rollback below.
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut stdin_opt = match stdio_guard[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
-        let stdout_opt = match stdio_guard[1].as_spawn_option(1) {
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut stdout_opt = match stdio_guard[1].as_spawn_option(1) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 #[cfg(windows)]
@@ -754,14 +757,14 @@ impl ShellSubprocess {
             // SAFETY: reborrow as a child of `stdin_ptr` so it does not
             // invalidate the sibling we store in `signal`.
             if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
-                // SAFETY: `Arc<FileSink>` is single-thread (mirrors Zig's
-                // intrusive `*FileSink`); the FileSink allocation is disjoint
-                // from `*stdin_ptr`. `stdin_ptr` outlives the sink — the
-                // Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the Arc. `init_with_type` is `unsafe fn`
-                // (caller asserts the handler outlives the `Signal`).
+                // SAFETY: shell is single-threaded; the FileSink allocation is
+                // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
+                // the Subprocess owns both and `Writable::on_close` is the only
+                // path that drops the FileSinkPtr. `init_with_type` is
+                // `unsafe fn` (caller asserts the handler outlives the
+                // `Signal`).
                 unsafe {
-                    arc_mut(pipe).signal =
+                    pipe.as_mut().signal =
                         webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr);
                 }
             }

@@ -1472,25 +1472,30 @@ impl<'a> CopyFileWindows<'a> {
         let loop_ = self.event_loop.uv_loop();
         self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
-        let rc = libuv::uv_fs_copyfile(
-            loop_,
-            &mut self.io_request,
-            old_path,
-            new_path,
-            0,
-            Some(on_copy_file),
-        );
+        // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is owned by `self`,
+        // `old_path`/`new_path` are NUL-terminated (from `slice_z`/`ZStr`), and
+        // `on_copy_file` is a valid `uv_fs_cb`.
+        let rc = unsafe {
+            libuv::uv_fs_copyfile(
+                loop_,
+                &mut self.io_request,
+                old_path.as_ptr(),
+                new_path.as_ptr(),
+                0,
+                Some(on_copy_file),
+            )
+        };
 
         if let Some(errno) = rc.errno() {
             self.throw(bun_sys::Error {
                 // #6336
-                errno: if errno == bun_sys::SystemErrno::EPERM as c_int {
-                    bun_sys::SystemErrno::ENOENT as c_int
+                errno: if errno == bun_sys::SystemErrno::EPERM as u16 {
+                    bun_sys::SystemErrno::ENOENT as u16
                 } else {
                     errno
                 },
                 syscall: bun_sys::Tag::copyfile,
-                path: Some(old_path.as_bytes().into()),
+                path: old_path.as_bytes().into(),
                 ..Default::default()
             });
             return;

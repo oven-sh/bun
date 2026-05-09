@@ -18,7 +18,6 @@ use crate::{Exception, ExceptionValidationScope, JSGlobalObject, JSValue, JsErro
 unsafe extern "C" {
     safe fn JSC__VM__deinit(vm: &VM, global_object: &JSGlobalObject);
     safe fn JSC__VM__setControlFlowProfiler(vm: &VM, enabled: bool);
-    safe fn JSC__VM__isJITEnabled() -> bool;
     safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
     fn JSC__VM__holdAPILock(
         this: &VM,
@@ -42,9 +41,6 @@ unsafe extern "C" {
     safe fn JSC__VM__notifyNeedDebuggerBreak(vm: &VM);
     safe fn JSC__VM__notifyNeedShellTimeoutCheck(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
-    safe fn JSC__VM__isTerminationException(vm: &VM, exception: &Exception) -> bool;
-    safe fn JSC__VM__hasTerminationRequest(vm: &VM) -> bool;
-    safe fn JSC__VM__clearHasTerminationRequest(vm: &VM);
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
@@ -82,7 +78,7 @@ impl VM {
     }
 
     pub fn is_jit_enabled() -> bool {
-        JSC__VM__isJITEnabled()
+        crate::cpp::JSC__VM__isJITEnabled()
     }
 
     pub fn has_execution_time_limit(&self) -> bool {
@@ -185,15 +181,15 @@ impl VM {
     }
 
     pub fn is_termination_exception(&self, exception: &Exception) -> bool {
-        JSC__VM__isTerminationException(self, exception)
+        crate::cpp::JSC__VM__isTerminationException(self, exception)
     }
 
     pub fn has_termination_request(&self) -> bool {
-        JSC__VM__hasTerminationRequest(self)
+        crate::cpp::JSC__VM__hasTerminationRequest(self)
     }
 
     pub fn clear_has_termination_request(&self) {
-        JSC__VM__clearHasTerminationRequest(self)
+        crate::cpp::JSC__VM__clearHasTerminationRequest(self)
     }
 
     #[track_caller]

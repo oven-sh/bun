@@ -143,12 +143,9 @@ impl JSGlobalObject {
         millisecond: i32,
     ) -> JsResult<f64> {
         crate::mark_binding();
-        // C++ `Bun__gregorianDateTimeToMS` is `[[ZIG_EXPORT(check_slow)]]`; the Zig codegen
-        // wrapper checks for a pending exception and returns `error.JSError`. Route through
-        // `from_js_host_call_generic` so a thrown exception surfaces as `Err(JsError::Thrown)`.
-        crate::from_js_host_call_generic(self, || {
-            Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, true)
-        })
+        // C++ `Bun__gregorianDateTimeToMS` is `[[ZIG_EXPORT(check_slow)]]`; the cppbind
+        // wrapper opens a `top_scope!` and surfaces a thrown exception as `Err(JsError::Thrown)`.
+        crate::cpp::Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, true)
     }
 
     pub fn gregorian_date_time_to_ms_utc(
@@ -162,9 +159,7 @@ impl JSGlobalObject {
         millisecond: i32,
     ) -> JsResult<f64> {
         crate::mark_binding();
-        crate::from_js_host_call_generic(self, || {
-            Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, false)
-        })
+        crate::cpp::Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, false)
     }
 
     pub fn ms_to_gregorian_date_time_utc(&self, ms: f64) -> GregorianDateTime {
@@ -173,8 +168,8 @@ impl JSGlobalObject {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
         // stack locals (`dt` fields) and remain valid for the duration of the call.
         unsafe {
-            Bun__msToGregorianDateTime(
-                self,
+            crate::cpp::raw::Bun__msToGregorianDateTime(
+                self as *const JSGlobalObject as *mut JSGlobalObject,
                 ms,
                 false,
                 &raw mut dt.year,
@@ -585,7 +580,7 @@ impl JSGlobalObject {
     pub fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
         self.vm().collect_async();
-        crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__reload(self))
+        crate::cpp::JSC__JSGlobalObject__reload(self)
     }
 
     pub fn run_on_load_plugins(
@@ -1573,30 +1568,6 @@ unsafe extern "C" {
     safe fn JSGlobalObject__throwOutOfMemoryError(this: &JSGlobalObject);
     safe fn JSGlobalObject__createOutOfMemoryError(this: &JSGlobalObject) -> JSValue;
 
-    safe fn Bun__gregorianDateTimeToMS(
-        this: &JSGlobalObject,
-        year: i32,
-        month: i32,
-        day: i32,
-        hour: i32,
-        minute: i32,
-        second: i32,
-        millisecond: i32,
-        local: bool,
-    ) -> f64;
-    fn Bun__msToGregorianDateTime(
-        this: *const JSGlobalObject,
-        ms: f64,
-        local: bool,
-        year: *mut i32,
-        month: *mut i32,
-        day: *mut i32,
-        hour: *mut i32,
-        minute: *mut i32,
-        second: *mut i32,
-        weekday: *mut i32,
-    );
-
     safe fn Bun__ErrorCode__determineSpecificType(global: &JSGlobalObject, value: JSValue) -> BunString;
 
     fn Bun__runOnLoadPlugins(
@@ -1612,8 +1583,6 @@ unsafe extern "C" {
         source: *const BunString,
         target: BunPluginTarget,
     ) -> JSValue;
-
-    safe fn JSC__JSGlobalObject__reload(this: &JSGlobalObject);
 
     fn JSC__JSGlobalObject__queueMicrotaskCallback(
         this: *const JSGlobalObject,

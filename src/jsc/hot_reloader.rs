@@ -1250,7 +1250,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
         // Zig: `else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .optional)
         //          return this.ctx.bun_watcher.?;` (hot_reloader.zig:373).
-        let mut handle = self
+        let handle = self
             .bun_watcher
             .expect("bun_watcher_mut on un-enabled BundleV2 reloader");
         // SAFETY: `Box<Watcher>` leaked via `into_raw` in `install_bun_watcher`;

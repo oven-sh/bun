@@ -148,7 +148,7 @@ pub mod TestingAPIs {
                 sigemptyset(mask.as_mut_ptr());
                 sigaddset(mask.as_mut_ptr(), SIGUSR2);
                 let act = Sigaction {
-                    sa_sigaction: sentry as usize,
+                    sa_sigaction: sentry as *const () as usize,
                     sa_mask: mask.assume_init(),
                     sa_flags: SA_RESTART,
                     ..core::mem::zeroed()
@@ -167,7 +167,7 @@ pub mod TestingAPIs {
             };
 
             let installed = JSValue::create_empty_object(global, 2);
-            installed.put(global, b"handler", JSValue::js_number(sentry as usize as f64));
+            installed.put(global, b"handler", JSValue::js_number(sentry as *const () as usize as f64));
             installed.put(global, b"flags", JSValue::js_number(act_flags as f64));
             let rb = JSValue::create_empty_object(global, 2);
             rb.put(global, b"handler", JSValue::js_number(rb_handler as f64));

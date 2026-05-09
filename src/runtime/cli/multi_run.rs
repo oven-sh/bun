@@ -179,8 +179,8 @@ impl<'a> ProcessHandle<'a> {
             .map_err(|e| Error::from(e))?
         };
         // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
-        // On Windows the readers are wired via `Source::Pipe` from `self.options`
-        // below (per .zig spec), and `WindowsStdioResult` is not `Copy`.
+        // On Windows the readers are wired via `Source::Pipe` taken from
+        // `spawned.stdout/stderr` below, and `WindowsStdioResult` is not `Copy`.
         #[cfg(unix)]
         let stdout_fd = spawned.stdout;
         #[cfg(unix)]
@@ -200,22 +200,19 @@ impl<'a> ProcessHandle<'a> {
         #[cfg(windows)]
         {
             // Zig: `this.stdout_reader.reader.source = .{ .pipe = this.options.stdout.buffer }`.
-            // On Windows `Stdio` is the `WindowsStdio` enum; the `.buffer` union
-            // payload maps to `Stdio::Buffer(*mut uv::Pipe)`. Ownership of the
-            // heap-allocated pipe (created via `heap::into_raw` at handle init)
-            // transfers into `Source::Pipe(Box<Pipe>)` here. `WindowsStdio` has
-            // no `Drop`, so the raw pointer left in `self.options` is inert.
-            if let spawn::Stdio::Buffer(pipe) = self.options.stdout {
-                // SAFETY: `pipe` was Box-allocated via `heap::into_raw` when
-                // `self.options` was constructed; sole ownership moves into the
-                // reader's `Source` (freed via `Pipe::close_and_destroy`).
-                self.stdout_reader.reader.source =
-                    Some(bun_io::Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+            // In the Rust port `spawn_process_windows` has *already* reclaimed
+            // sole ownership of that heap pipe into
+            // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
+            // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
+            // second Box from `self.options.stdout` here would alias the same
+            // allocation and double-free when `spawned` drops. Instead, move
+            // the Box out of the spawn *result* — `WindowsStdioResult::take()`
+            // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
+            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
+                self.stdout_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
             }
-            if let spawn::Stdio::Buffer(pipe) = self.options.stderr {
-                // SAFETY: see stdout above — same allocation/ownership contract.
-                self.stderr_reader.reader.source =
-                    Some(bun_io::Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
+                self.stderr_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
             }
         }
 

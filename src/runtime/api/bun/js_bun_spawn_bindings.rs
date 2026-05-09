@@ -1261,8 +1261,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 use bun_libuv_sys::UvHandle as _;
                 for r in [spawned_stdout, spawned_stderr] {
                     match r {
-                        spawn::WindowsStdioResult::Buffer(mut pipe) => {
-                            pipe.close(Subprocess::on_pipe_close)
+                        spawn::WindowsStdioResult::Buffer(pipe) => {
+                            // `uv_close` is async — libuv keeps the raw handle pointer
+                            // until the next loop tick and then calls `on_pipe_close`,
+                            // which reclaims the allocation via `heap::take`. Leak the
+                            // Box so it outlives this scope; dropping it here would be
+                            // a use-after-free + double-free when the callback fires.
+                            Box::leak(pipe).close(Subprocess::on_pipe_close)
                         }
                         spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
                         spawn::WindowsStdioResult::Unavailable => {}

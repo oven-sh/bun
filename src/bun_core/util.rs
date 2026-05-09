@@ -2108,12 +2108,17 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
         #[allow(unused_mut)]
         let mut path = std::env::current_exe().map_err(crate::Error::from)?;
         // PORT NOTE: Zig's `std.fs.selfExePath` resolves symlinks. Rust's
-        // `current_exe()` already does on Linux (`readlink /proc/self/exe`) and
-        // Windows, but on Darwin it returns the raw `_NSGetExecutablePath`
-        // result without `realpath`, so a symlinked argv0 leaks through to
-        // `process.execPath`. Canonicalize here to match Node/Zig semantics
-        // (test/js/node/test/parallel/test-process-execpath.js).
-        #[cfg(target_vendor = "apple")]
+        // `current_exe()` already does on Linux (`readlink /proc/self/exe`),
+        // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
+        // Windows it returns the raw `GetModuleFileNameW` result — neither
+        // realpaths, so a symlinked argv0 (Darwin) or an un-normalized
+        // `C:\a\.\b\bun.exe` load path (Windows) leaks through to
+        // `process.execPath` / `process.argv[0]`. Zig's Windows impl calls
+        // `realpathW` (GetFinalPathNameByHandle); match that here so parent and
+        // child agree on argv[0] regardless of how the binary was invoked
+        // (test/js/node/process/process-args.test.js,
+        //  test/js/node/test/parallel/test-process-execpath.js).
+        #[cfg(any(target_vendor = "apple", windows))]
         if let Ok(real) = path.canonicalize() {
             path = real;
         }
@@ -2127,8 +2132,17 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
             // PORT NOTE: Zig stored the WTF-8 form. `into_string()` rejects unpaired
             // surrogates; fall back to the lossy form (Windows exe paths are valid
             // Unicode in practice).
-            let s = path.into_os_string().into_string()
+            let mut s = path.into_os_string().into_string()
                 .unwrap_or_else(|os| os.to_string_lossy().into_owned());
+            // `canonicalize()` on Windows returns a verbatim `\\?\` path; Zig's
+            // `realpathW` strips that back to a plain DOS path before WTF-8
+            // encoding, so do the same (Node's `process.execPath` is never
+            // verbatim-prefixed).
+            if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+                s = format!(r"\\{}", rest);
+            } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+                s = rest.to_owned();
+            }
             Ok(ZBox::from_vec_with_nul(s.into_bytes()))
         }
     });

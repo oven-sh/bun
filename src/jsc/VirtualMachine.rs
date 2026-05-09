@@ -5280,11 +5280,36 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> Result<(), bun_core::Error> {
-        let mut exception_holder = crate::zig_exception::Holder::init();
+        // PORT NOTE: stack-safety guard for the Error recursion path.
+        // Zig's `printErrorInstance` is `comptime Writer`/`allow_ansi_color`/
+        // `allow_side_effects`-monomorphized so each instantiation carries
+        // only one branch's locals. The Rust port collapses those to runtime
+        // bools, so `print_error_instance_body` carries the union of all
+        // branches' locals (every `pretty_write!` expands to two `write!`s)
+        // and this frame stack-allocates a ~4 KB `Holder`. On Windows debug
+        // one cycle (print_as → print_error → here → body → format → print_as)
+        // can exceed the 256 KB headroom `is_safe_to_recurse()` leaves, so we
+        // re-check here — same parity-level protection the Object path gets
+        // from C++ `forEachProperty`'s `vm.isSafeToRecurse()`. The formatter's
+        // `stack_check` was seated by the caller (`format2` / `Bun.inspect`).
+        if !formatter.stack_check.is_safe_to_recurse() {
+            formatter.failed = true;
+            if formatter.can_throw_stack_overflow {
+                let _ = self.global().throw_stack_overflow();
+            }
+            return Ok(());
+        }
+
+        // PORT NOTE: `Holder` is ~4 KB (32 ZigStackFrames + 6 source lines +
+        // ZigException). Zig stack-allocates it inside a small monomorphized
+        // function; here it sits next to the large runtime-dispatched body, so
+        // box it to keep the per-level recursion frame small enough for the
+        // 16K-deep `bun-inspect.test.ts` Error chain on Windows debug.
+        let mut exception_holder = Box::new(crate::zig_exception::Holder::init());
         // PORT NOTE: reshaped for borrowck — `zig_exception()` returns a
         // `&mut` into the holder; we need to also borrow
         // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
-        // raw pointer (the holder is stack-pinned for the call).
+        // raw pointer (the holder is heap-pinned for the call).
         let exception: *mut ZigException = exception_holder.zig_exception();
         let mut source_code_slice: Option<bun_string::ZigStringSlice> = None;
 

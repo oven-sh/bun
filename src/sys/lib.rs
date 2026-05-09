@@ -5382,6 +5382,23 @@ pub fn open_file_at_windows_nt_path(
     }
 }
 
+/// sys.zig:1003-1012 — `normalizePathWindows(u8, …)` length-checks before
+/// `convertUTF8toUTF16InBuffer` because simdutf forwards only `output.ptr`
+/// (no output bounds checking). UTF-16 output length ≤ UTF-8 input byte
+/// length, so use `path.len()` as a cheap upper bound; on overflow compute
+/// the exact post-conversion length to avoid over-rejecting multi-byte
+/// inputs whose UTF-16 representation fits.
+#[cfg(windows)]
+#[inline]
+fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut [u16]> {
+    if path.len() > buf.len()
+        && bun_str::strings::element_length_utf8_into_utf16(path) > buf.len()
+    {
+        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open));
+    }
+    Ok(bun_str::strings::convert_utf8_to_utf16_in_buffer(buf, path))
+}
+
 #[cfg(windows)]
 pub fn open_dir_at_windows(dir_fd: Fd, path: &[u16], options: WindowsOpenDirOptions) -> Maybe<Fd> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
@@ -5397,7 +5414,7 @@ pub fn open_dir_at_windows_a(dir_fd: Fd, path: &[u8], options: WindowsOpenDirOpt
     // here (no NT-prefix, no normalization) so relative inputs stay relative
     // and resolve against `dir_fd`'s `RootDirectory`.
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wide = bun_str::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf.0[..], path);
+    let wide = convert_path_u8_to_u16(&mut wbuf.0[..], path)?;
     let mut buf2 = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir_fd, wide, &mut buf2.0[..])?;
     open_dir_at_windows_nt_path(dir_fd, norm, options)
@@ -5414,7 +5431,7 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
 #[cfg(windows)]
 pub fn open_file_at_windows_a(dir_fd: Fd, path: &[u8], opts: NtCreateFileOptions) -> Maybe<Fd> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wide = bun_str::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf.0[..], path);
+    let wide = convert_path_u8_to_u16(&mut wbuf.0[..], path)?;
     open_file_at_windows(dir_fd, wide, opts)
 }
 
@@ -5497,7 +5514,7 @@ pub fn openat_windows_a(dir: Fd, path: &[u8], flags: i32, perm: Mode) -> Maybe<F
     // UTF-8→UTF-16 conversion internally; mirror that with a plain transcode
     // (no NT-prefix) so relative paths stay relative against `dir`.
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wide = bun_str::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf.0[..], path);
+    let wide = convert_path_u8_to_u16(&mut wbuf.0[..], path)?;
     let mut buf2 = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir, wide, &mut buf2.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)

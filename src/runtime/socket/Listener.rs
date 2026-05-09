@@ -4,7 +4,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boring_sys;
 use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsClass, JsResult};
@@ -38,8 +38,8 @@ macro_rules! log {
 /// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
 /// `KeepAlive::ref_/unref`.
 #[inline]
-fn vm_event_loop_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 /// Bridge to the per-VM digest-keyed weak `SSL_CTX*` cache. The

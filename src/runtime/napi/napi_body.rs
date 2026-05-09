@@ -6,7 +6,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU8, Ordering};
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_jsc::{
@@ -30,8 +30,8 @@ use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 /// `*VirtualMachine` directly (anytype dispatch); the Rust split routes
 /// through the aio hook registered by `crate::init()`.
 #[inline]
-fn vm_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 /// Local extension shims for `JSValue` methods that exist in Zig but are not

@@ -383,32 +383,24 @@ impl fmt::Display for CrashReason {
 
 /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
 ///
-/// Cycle-break (b0): the bundler types (`LinkerContext` / `Chunk` / `PartRange`)
-/// live in a higher-tier crate, so this struct holds erased pointers and a
-/// vtable supplied by `bun_bundler`. The bundler constructs this with
-/// `bun_bundler::BUNDLE_GENERATE_CHUNK_VTABLE` (added by the move-in pass).
-// PERF(port): was inline switch — cold path (crash trace only).
+/// The bundler types (`LinkerContext` / `Chunk` / `PartRange`) live in a
+/// higher-tier crate; `chunk`/`part_range` stay erased and are reinterpreted by
+/// the `Linker` impl in `bun_bundler::LinkerContext`.
 #[cfg(feature = "show_crash_trace")]
 #[derive(Clone, Copy)]
 pub struct BundleGenerateChunk {
-    /// SAFETY: erased `&bun_bundler::LinkerContext`
-    pub context: *const (),
+    pub ctx: BundleGenerateChunkCtx,
     /// SAFETY: erased `&bun_bundler::Chunk`
     pub chunk: *const (),
     /// SAFETY: erased `&bun_bundler::PartRange`
     pub part_range: *const (),
-    pub vtable: &'static BundleGenerateChunkVTable,
 }
 
 #[cfg(feature = "show_crash_trace")]
-pub struct BundleGenerateChunkVTable {
-    /// Format the chunk context into `writer` (called from `Action::fmt`).
-    pub fmt: unsafe fn(
-        context: *const (),
-        chunk: *const (),
-        part_range: *const (),
-        writer: &mut fmt::Formatter<'_>,
-    ) -> fmt::Result,
+bun_dispatch::link_interface! {
+    pub BundleGenerateChunkCtx[Linker] {
+        fn fmt(chunk: *const (), part_range: *const (), writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result;
+    }
 }
 
 #[cfg(feature = "show_crash_trace")]
@@ -446,11 +438,7 @@ impl fmt::Display for Action {
             Action::Visit(path) => write!(writer, "visiting {}", bstr::BStr::new(path)),
             Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
             #[cfg(feature = "show_crash_trace")]
-            Action::BundleGenerateChunk(data) => {
-                // SAFETY: `data` was constructed by bun_bundler with matching
-                // erased pointer types; vtable.fmt casts them back.
-                unsafe { (data.vtable.fmt)(data.context, data.chunk, data.part_range, writer) }
-            }
+            Action::BundleGenerateChunk(data) => data.ctx.fmt(data.chunk, data.part_range, writer),
             #[cfg(not(feature = "show_crash_trace"))]
             Action::BundleGenerateChunk(()) => Ok(()),
             #[cfg(feature = "show_crash_trace")]
@@ -460,7 +448,7 @@ impl fmt::Display for Action {
                     "resolving {} from {} ({})",
                     bstr::BStr::new(res.import_path),
                     bstr::BStr::new(res.source_dir),
-                    res.kind.label(),
+                    bstr::BStr::new(res.kind.label()),
                 )
             }
             #[cfg(not(feature = "show_crash_trace"))]
@@ -1268,6 +1256,48 @@ pub fn install_hooks() {
     // so the trace-string + auto-report path runs — Zig's `bun.outOfMemory()`
     // calls `crash_handler.crashHandler` directly.
     bun_alloc::set_out_of_memory_handler(crate::out_of_memory);
+    // Route T0 `bun_core::dump_current_stack_trace()` to this crate's
+    // llvm-symbolizer / frame-filtered impl — Zig's `fd.zig` EBADF warn and
+    // `ref_count.zig` leak reports call `bun.crash_handler.dumpCurrentStackTrace`
+    // directly; the T0 fallback's `std::backtrace` DWARF parse costs ~8s on a
+    // debug binary, which made `closeSync(EBADF)` time out fs.test.ts.
+    bun_core::set_dump_stack_trace_hook(dump_current_stack_trace_from_core);
+}
+
+/// Adapter for non-fatal `bun_core::dump_current_stack_trace` callers
+/// (fd.rs EBADF debug-warn, ref_count leak reports). Zig routes these through
+/// `dumpStackTrace` which on Linux debug spawns `llvm-symbolizer` — but the
+/// Rust debug binary's .debug_info is large enough that the symbolizer parse
+/// alone costs ~5s, which is unacceptable on a hot non-fatal path
+/// (`closeSync(EBADF)` was timing out fs.test.ts at the 5s budget). For these
+/// advisory dumps we honour `frame_count` and use WTF's dladdr-based printer
+/// (sub-ms, function names only). The full `dump_stack_trace` (with
+/// llvm-symbolizer source lines) is kept for actual crash/panic paths, which
+/// call it directly.
+fn dump_current_stack_trace_from_core(
+    first_address: Option<usize>,
+    limits: bun_core::DumpStackTraceOptions,
+) {
+    Output::flush();
+    let mut addrs: [usize; 32] = [0; 32];
+    let n = debug::capture_stack_trace(
+        first_address.unwrap_or_else(debug::return_address),
+        &mut addrs,
+    );
+    let n = n.min(limits.frame_count);
+    if !Environment::SHOW_CRASH_TRACE {
+        // debug symbols aren't available, lets print a tracestring
+        let stderr = &mut stderr_writer();
+        let stack = StackTrace { index: n, instruction_addresses: &addrs };
+        let _ = write!(stderr, "View Debug Trace: {}\n", TraceString {
+            action: TraceStringAction::ViewTrace,
+            reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
+            trace: &stack,
+        });
+        return;
+    }
+    // SAFETY: `addrs[..n]` is a valid slice of captured return addresses.
+    unsafe { WTF__DumpStackTrace(addrs.as_ptr(), n); }
 }
 
 pub fn reset_segfault_handler() {

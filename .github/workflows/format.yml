@@ -104,4 +104,11 @@ jobs:
       - name: Ban Words
         run: |
           bun ./test/internal/ban-words.test.ts
+      - name: Verify checked-in codegen
+        # `*.generated.rs` are deterministic outputs of `*.string-map.ts`; the
+        # source `.ts` is the truth. This step regenerates and fails if the
+        # committed `.generated.rs` is stale, so a forgotten regen surfaces in
+        # CI rather than as a confusing behaviour diff later.
+        run: |
+          bun run codegen:verify
       - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

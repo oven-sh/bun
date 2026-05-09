@@ -1,6 +1,6 @@
 use core::mem::offset_of;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use crate::event_loop::ConcurrentTask;
@@ -110,7 +110,7 @@ impl SecretsJob {
 
     pub fn schedule(&mut self) {
         // TODO(port): KeepAlive::ref_ takes an `EventLoopCtx` vtable, not `*mut VM`.
-        // Phase-D: route through `bun_aio::get_vm_ctx` once the JSC vtable is wired.
+        // Phase-D: route through `bun_io::get_vm_ctx` once the JSC vtable is wired.
         // self.poll.ref_(self.vm);
         let _ = &mut self.poll;
         WorkPool::schedule(&raw mut self.task);

@@ -47,8 +47,8 @@ fn child_singleton() -> *mut InternalMsgHolder {
 /// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
 /// the aio hook registered by `crate::init()`.
 #[inline]
-fn vm_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 #[bun_jsc::host_fn]

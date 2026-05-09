@@ -6,7 +6,7 @@ use bun_collections::VecExt;
 use bun_core::{fmt as bun_fmt, Output, StackCheck, Timespec, TimespecMockMode, ZBox};
 use bun_sys::UV_E;
 use bun_event_loop::SpawnSyncEventLoop::TickState;
-use bun_io::max_buf::{MaxBuf, MaxBufOwnerVTable};
+use bun_io::max_buf::{MaxBuf, MaxBufOwner, MaxBufOwnerKind};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject,
     JSPropertyIterator, JSValue, JsError, JsResult, SystemError,
@@ -162,28 +162,23 @@ unsafe fn process_mut<'a>(p: *mut Process) -> &'a mut Process {
     unsafe { &mut *p }
 }
 
-/// `MaxBuf` owner vtable for `Subprocess` — routes max-buffer-exceeded
-/// notifications back to `Subprocess::on_max_buffer`.
-unsafe fn subprocess_maxbuf_on_overflow(owner: NonNull<()>, this: NonNull<MaxBuf>) {
-    // SAFETY: `owner` was set from a live `*mut Subprocess<'static>` in
-    // `MaxBuf::create_for_subprocess` below; the subprocess clears the
-    // maxbuf slot before drop. Determine which slot (`stdout` / `stderr`)
-    // overflowed, drop that slot, then notify.
-    unsafe {
-        let sp = &mut *owner.cast::<SubprocessT<'static>>().as_ptr();
-        let kind = if sp.stdout_maxbuf == Some(this) {
-            MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
-            bun_io::max_buf::Kind::Stdout
-        } else {
-            MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
-            bun_io::max_buf::Kind::Stderr
-        };
-        sp.on_max_buffer(kind);
+// `MaxBufOwner[Subprocess]` arm — routes max-buffer-exceeded notifications
+// back to `Subprocess::on_max_buffer`.
+bun_io::link_impl_MaxBufOwner! {
+    Subprocess for SubprocessT<'static> => |sp| {
+        on_overflow(this) => {
+            let sp = &mut *sp;
+            let kind = if sp.stdout_maxbuf == Some(this) {
+                MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
+                bun_io::max_buf::Kind::Stdout
+            } else {
+                MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
+                bun_io::max_buf::Kind::Stderr
+            };
+            sp.on_max_buffer(kind);
+        },
     }
 }
-static SUBPROCESS_MAXBUF_VTABLE: MaxBufOwnerVTable = MaxBufOwnerVTable {
-    on_overflow: subprocess_maxbuf_on_overflow,
-};
 
 bun_output::declare_scope!(Subprocess, hidden);
 
@@ -1240,18 +1235,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // PORT NOTE: pass the raw `*mut SubprocessT` captured above instead of the
     // live `&mut subprocess` alongside a `&mut subprocess.<field>` borrow
     // (PORTING.md §Forbidden aliased-&mut).
-    MaxBuf::create_for_subprocess(
-        subprocess_nn.cast(),
-        &SUBPROCESS_MAXBUF_VTABLE,
-        &mut subprocess.stderr_maxbuf,
-        max_buffer,
-    );
-    MaxBuf::create_for_subprocess(
-        subprocess_nn.cast(),
-        &SUBPROCESS_MAXBUF_VTABLE,
-        &mut subprocess.stdout_maxbuf,
-        max_buffer,
-    );
+    // SAFETY: `subprocess_nn` is the just-allocated stable address; the
+    // subprocess clears its maxbuf slots in finalize before being dropped.
+    let maxbuf_owner =
+        unsafe { MaxBufOwner::new(MaxBufOwnerKind::Subprocess, subprocess_nn.as_ptr()) };
+    MaxBuf::create_for_subprocess(maxbuf_owner, &mut subprocess.stderr_maxbuf, max_buffer);
+    MaxBuf::create_for_subprocess(maxbuf_owner, &mut subprocess.stdout_maxbuf, max_buffer);
 
     #[cfg(windows)]
     if !IS_SYNC {
@@ -1358,9 +1347,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    // SAFETY: see `process_mut` doc.
-    unsafe { process_mut(subprocess.process.as_ptr()) }
-        .set_exit_handler(subprocess_ptr.cast::<()>(), &Subprocess::PROCESS_EXIT_VTABLE);
+    // SAFETY: see `process_mut` doc; `subprocess_ptr` is the live JSC-allocated
+    // Subprocess that owns `process` and outlives it.
+    unsafe { process_mut(subprocess.process.as_ptr()) }.set_exit_handler(unsafe {
+        bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
+    });
 
     promise_for_stream.ensure_still_alive();
     subprocess.flags.set(

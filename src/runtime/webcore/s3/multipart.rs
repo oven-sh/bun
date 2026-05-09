@@ -95,7 +95,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
 use bun_core::{declare_scope, scoped_log};
@@ -401,7 +401,7 @@ impl Drop for MultiPartUpload {
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
         self.poll_ref
-            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            .unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
         // credentials: Arc<S3Credentials> — dropped automatically (== .deref())
         // uploadid_buffer: MutableString — Drop

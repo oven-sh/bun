@@ -31,66 +31,19 @@ use crate::Mutex;
 use crate::io;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Output sink vtable (CYCLEBREAK §Debug-hook / §Dispatch cold path)
+// Output sink (CYCLEBREAK §Debug-hook / §Dispatch cold path)
 //
-// GENUINE: bun_sys::{File, QuietWrite, file::QuietWriter, make_path, create_file,
-// deprecated::BufferedReader} are all higher-tier I/O primitives that bun_core
-// cannot name. The Source/QuietWriter machinery is reduced to an opaque sink
-// vtable installed by bun_sys at startup. bun_core only knows how to *write
-// bytes* and *flush*; the concrete file/adapter types live in bun_sys.
-// PERF(port): was inline switch over concrete File methods.
+// `bun_sys::{File, QuietWrite, file::QuietWriter, make_path, create_file,
+// deprecated::BufferedReader}` are higher-tier I/O primitives that `bun_core`
+// cannot name. The `bun_dispatch::link_interface!` `OutputSink[Sys]` (declared
+// at crate root) provides the seam; `bun_sys` supplies the `Sys` arm.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct OutputSinkVTable {
-    /// Returns a `File` wrapping stderr (used by Progress.rs).
-    pub stderr: unsafe fn() -> File,
-    /// mkdir -p `dir` relative to cwd. Debug-log file setup only.
-    pub make_path: unsafe fn(cwd: Fd, dir: &[u8]) -> Result<(), crate::Error>,
-    /// open/create `path` for writing (truncating). Debug-log file setup only.
-    pub create_file: unsafe fn(cwd: Fd, path: &[u8]) -> Result<Fd, crate::Error>,
-    /// Build a QuietWriter (opaque) from an fd. (`bun_sys::File::quietWriter`.)
-    pub quiet_writer_from_fd: unsafe fn(fd: Fd) -> QuietWriter,
-    /// Wrap a QuietWriter in the std-adapter with the given backing buffer.
-    /// (`bun_sys::QuietWrite(File).adaptToNewApi`.)
-    pub quiet_writer_adapt: unsafe fn(qw: QuietWriter, buf: *mut u8, len: usize) -> QuietWriterAdapter,
-    /// Flush a QuietWriter. (`QuietWriter.flush`.)
-    pub quiet_writer_flush: unsafe fn(qw: &mut QuietWriter),
-    /// Write bytes via a QuietWriter. Returns `false` on I/O error so
-    /// `ScopedLogger::log` can disable the scope (Zig: `print() catch { really_disable = true }`).
-    /// Callers that want Zig "quiet" semantics simply discard the bool.
-    pub quiet_writer_write_all: unsafe fn(qw: &mut QuietWriter, bytes: &[u8]) -> bool,
-    /// Read back the underlying fd from a QuietWriter (`.context.handle.handle`).
-    pub quiet_writer_fd: unsafe fn(qw: &QuietWriter) -> Fd,
-    /// Query the terminal's row/col size on `fd` (TIOCGWINSZ ioctl on unix,
-    /// GetConsoleScreenBufferInfo on Windows). `None` ⇒ not a tty / unknown.
-    /// Progress.rs polls this on each refresh.
-    pub tty_winsize: unsafe fn(fd: Fd) -> Option<crate::Winsize>,
-    /// `isatty(fd)`. Progress.rs uses this to gate ANSI output.
-    pub is_terminal: unsafe fn(fd: Fd) -> bool,
-    /// Blocking `read(2)` on `fd` into `buf`. Backs the stdin readers below
-    /// (`bun_sys::File::read` / `ReadFile` on Windows).
-    pub read: unsafe fn(fd: Fd, buf: &mut [u8]) -> Result<usize, crate::Error>,
-}
+pub use crate::OutputSink;
 
-// `OutputSinkVTable` is auto-`Sync`: every field is an `unsafe fn(...)`
-// pointer, and fn pointers are `Send + Sync`. No `unsafe impl` needed.
-const _: fn() = || { fn assert_sync<T: Sync>() {} assert_sync::<OutputSinkVTable>(); };
-
-unsafe extern "Rust" {
-    /// Link-time output sink. Defined `#[no_mangle]` in `bun_sys`
-    /// (stderr/mkdir/open/QuietWriter bodies). Replaces the former
-    /// runtime-registered `OUTPUT_SINK_VTABLE: AtomicPtr` — the only provider
-    /// was always `bun_sys`, so the indirection bought nothing but an
-    /// init-order hazard.
-    static __BUN_OUTPUT_SINK_VTABLE: OutputSinkVTable;
-}
-
-/// Load the installed sink. Link-time resolved; never null.
 #[inline]
-pub fn output_sink() -> &'static OutputSinkVTable {
-    // SAFETY: `__BUN_OUTPUT_SINK_VTABLE` is a `#[no_mangle]` `'static` in
-    // `bun_sys`; the linker guarantees it is defined.
-    unsafe { &__BUN_OUTPUT_SINK_VTABLE }
+pub fn output_sink() -> OutputSink {
+    OutputSink::SYS
 }
 
 /// Opaque handle to a `bun_sys::file::QuietWriter`. bun_core treats it as a
@@ -106,16 +59,15 @@ impl QuietWriter {
 
     #[inline]
     pub fn adapt_to_new_api(self, buf: &mut [u8]) -> QuietWriterAdapter {
-        // SAFETY: vtable installed at startup; buf may be empty (unbuffered).
-        unsafe { (output_sink().quiet_writer_adapt)(self, buf.as_mut_ptr(), buf.len()) }
+        output_sink().quiet_writer_adapt(self, buf.as_mut_ptr(), buf.len())
     }
     #[inline]
     pub fn flush(&mut self) {
-        unsafe { (output_sink().quiet_writer_flush)(self) }
+        output_sink().quiet_writer_flush(self)
     }
     #[inline]
     pub fn context_handle(&self) -> Fd {
-        unsafe { (output_sink().quiet_writer_fd)(self) }
+        output_sink().quiet_writer_fd(self)
     }
     /// Inherent forwarder so call sites don't need `use fmt::Write`.
     #[inline]
@@ -125,7 +77,7 @@ impl QuietWriter {
 }
 impl core::fmt::Write for QuietWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        if unsafe { (output_sink().quiet_writer_write_all)(self, s.as_bytes()) } {
+        if output_sink().quiet_writer_write_all(self, s.as_bytes()) {
             Ok(())
         } else {
             Err(core::fmt::Error)
@@ -167,19 +119,18 @@ impl File {
     /// `bun_sys::File::stderr()` via the sink (T0-safe).
     #[inline]
     pub fn stderr() -> Self {
-        // SAFETY: vtable installed at startup.
-        unsafe { (output_sink().stderr)() }
+        output_sink().stderr()
     }
     #[inline]
     pub fn quiet_writer(self) -> QuietWriter {
-        unsafe { (output_sink().quiet_writer_from_fd)(self.0) }
+        output_sink().quiet_writer_from_fd(self.0)
     }
     /// Write all bytes (best-effort; routes through QuietWriter so errors are
     /// swallowed per Zig `bun.Output` semantics). Progress.rs uses this.
     #[inline]
     pub fn write_all(&self, bytes: &[u8]) -> Result<(), crate::Error> {
         let mut qw = self.quiet_writer();
-        let _ = unsafe { (output_sink().quiet_writer_write_all)(&mut qw, bytes) };
+        let _ = output_sink().quiet_writer_write_all(&mut qw, bytes);
         Ok(())
     }
     #[inline]
@@ -2604,9 +2555,7 @@ pub fn init_scoped_debug_writer_at_startup() {
         if !path.is_empty() && path != b"0" && path != b"false" {
             // MOVE_DOWN: bun_paths::dirname → bun_core (bundled with SEP/PathBuffer move-in).
             if let Some(dir) = crate::dirname(path) {
-                // GENUINE: bun_sys::make_path — via output_sink() vtable (cold path).
-                // SAFETY: vtable fn-ptr has no preconditions.
-                let _ = unsafe { (output_sink().make_path)(Fd::cwd(), dir) };
+                let _ = output_sink().make_path(Fd::cwd(), dir);
             }
 
             // do not use libuv through this code path, since it might not be initialized yet.
@@ -2617,9 +2566,7 @@ pub fn init_scoped_debug_writer_at_startup() {
 
             let path_fmt = strings::replace_owned(path, b"{pid}", &pid);
 
-            // GENUINE: bun_sys::create_file — via output_sink() vtable (cold path).
-            // SAFETY: vtable fn-ptr has no preconditions.
-            let fd: Fd = match unsafe { (output_sink().create_file)(Fd::cwd(), &path_fmt) } {
+            let fd: Fd = match output_sink().create_file(Fd::cwd(), &path_fmt) {
                 Ok(fd) => fd,
                 Err(open_err) => panic(format_args!(
                     "Failed to open file for debug output: {} ({})",
@@ -2634,7 +2581,7 @@ pub fn init_scoped_debug_writer_at_startup() {
             // SAFETY: single-threaded startup.
             unsafe {
                 scoped_debug_writer::SCOPED_FILE_WRITER
-                    .write((output_sink().quiet_writer_from_fd)(fd));
+                    .write(output_sink().quiet_writer_from_fd(fd));
             }
             return;
         }
@@ -2643,7 +2590,7 @@ pub fn init_scoped_debug_writer_at_startup() {
     // SAFETY: single-threaded startup.
     unsafe {
         scoped_debug_writer::SCOPED_FILE_WRITER
-            .write((output_sink().quiet_writer_from_fd)(SOURCE.with_borrow(|s| s.raw_stream).0));
+            .write(output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
     }
 }
 
@@ -2740,8 +2687,7 @@ impl BufferedStdin {
             let remaining = dest.len() - written;
             if remaining >= self.buf.len() {
                 // Large dest tail: bypass the buffer.
-                // SAFETY: vtable installed at startup; fd is the process stdin.
-                let n = unsafe { (output_sink().read)(self.fd, &mut dest[written..]) }?;
+                let n = output_sink().read(self.fd, &mut dest[written..])?;
                 if n == 0 {
                     return Ok(written);
                 }
@@ -2751,8 +2697,7 @@ impl BufferedStdin {
                 }
                 continue;
             }
-            // SAFETY: vtable installed at startup; fd is the process stdin.
-            self.end = unsafe { (output_sink().read)(self.fd, &mut self.buf) }?;
+            self.end = output_sink().read(self.fd, &mut self.buf)?;
             self.start = 0;
             if self.end == 0 {
                 return Ok(written);
@@ -2809,8 +2754,7 @@ impl StdinReader {
     #[inline]
     pub fn take_byte(&mut self) -> Result<u8, crate::Error> {
         let mut one = [0u8; 1];
-        // SAFETY: vtable installed at startup; fd is the process stdin.
-        match unsafe { (output_sink().read)(self.fd, &mut one) }? {
+        match output_sink().read(self.fd, &mut one)? {
             0 => Err(crate::err!(EndOfStream)),
             _ => Ok(one[0]),
         }

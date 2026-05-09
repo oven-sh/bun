@@ -207,7 +207,7 @@ impl WriteFile {
         // Zig: `@atomicStore(?*const fn, &self.io_request.callback, &onRequestWritable, .seq_cst)`.
         self.io_request.store_callback_seq_cst(Self::on_request_writable);
         if !self.io_request.scheduled {
-            io::Loop::get().schedule(&mut self.io_request);
+            io::IoRequestLoop::get().schedule(&mut self.io_request);
         }
     }
 
@@ -532,7 +532,7 @@ mod windows_impl {
     use super::*;
     use core::ptr::null_mut;
 
-    use bun_aio::{self as aio, KeepAlive};
+    use bun_io::{self as aio, KeepAlive};
     // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (Zig-style namespace
     // re-exports); the structs live one level deeper.
     use bun_jsc::{ConcurrentTask, event_loop::EventLoop, ManagedTask::ManagedTask};

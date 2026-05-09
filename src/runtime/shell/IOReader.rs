@@ -182,10 +182,7 @@ impl IOReader {
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; vtable consumers treat the pointee as read-only
-        // (`*const bun_event_loop::EventLoopHandle`) and never write through
-        // it. The pointee lives inside `Arc<IOReader>` and outlives every
-        // FilePoll callback.
-        bun_io::EventLoopHandle(&raw const self.state().evtloop as *mut c_void)
+        self.state().evtloop.as_event_loop_ctx()
     }
 
     /// Only does things on windows. Spec: IOReader.zig `setReading`.
@@ -338,7 +335,9 @@ impl IOReader {
 // BufferedReaderParent — wires the bun_io BufferedReader vtable
 // ──────────────────────────────────────────────────────────────────────────
 
+bun_io::buffered_reader_parent_link!(ShellIoReader for IOReader);
 impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::ShellIoReader;
     const HAS_ON_READ_CHUNK: bool = true;
     // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
     // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader

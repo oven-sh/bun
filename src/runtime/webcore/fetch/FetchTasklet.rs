@@ -2,7 +2,7 @@ use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_boringssl as boringssl;
 use bun_core::{err, Error as BunError};
 use bun_event_loop::{ConcurrentTask::{AutoDeinit, ConcurrentTask}, AnyTask::AnyTask, Task, Taskable};
@@ -38,8 +38,8 @@ use boringssl::c::{d2i_X509, X509_free};
 /// anytype dispatch; the Rust split routes through the aio hook registered
 /// by `crate::init()`.
 #[inline]
-fn vm_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop

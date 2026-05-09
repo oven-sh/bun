@@ -1,6 +1,7 @@
 src/bun.js/WebKit
 vendor
 test/snapshots
+src/**/*.generated.rs
 test/js/deno
 test/node.js
 src/react-refresh.js

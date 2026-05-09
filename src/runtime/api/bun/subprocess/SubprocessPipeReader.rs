@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_aio::Loop as AsyncLoop;
+use bun_io::Loop as AsyncLoop;
 use bun_io::BufferedReader;
 use bun_io::FilePollFlag;
 use bun_io::max_buf::MaxBuf;
@@ -418,7 +418,9 @@ impl PipeReader {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
 // `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
+bun_io::buffered_reader_parent_link!(SubprocessPipeReader for PipeReader);
 impl BufferedReaderParent for PipeReader {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::SubprocessPipeReader;
     const HAS_ON_READ_CHUNK: bool = false;
 
     unsafe fn on_read_chunk(_this: *mut Self, _chunk: &[u8], _has_more: ReadState) -> bool {
@@ -444,12 +446,8 @@ impl BufferedReaderParent for PipeReader {
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
-        // SAFETY: `this` is non-null/live per trait contract; `event_loop_handle`
-        // is `Copy` and disjoint from the reader field.
-        bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of_mut!((*this).event_loop_handle).cast::<core::ffi::c_void>()
-        })
+        // SAFETY: `this` is non-null/live per trait contract.
+        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
 }
 

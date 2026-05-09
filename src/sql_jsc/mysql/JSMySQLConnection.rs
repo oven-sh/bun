@@ -173,11 +173,11 @@ impl JSMySQLConnection {
         unsafe { &mut *self.vm }
     }
 
-    /// `bun_aio::EventLoopCtx` for `KeepAlive::{ref_,unref}`. The JS-thread VM
+    /// `bun_io::EventLoopCtx` for `KeepAlive::{ref_,unref}`. The JS-thread VM
     /// is a singleton; route through the global hook (same target as
     /// `self.vm`).
     #[inline]
-    fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
+    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         self.vm().vm_ctx()
     }
 }

@@ -30,8 +30,8 @@ macro_rules! debug {
 /// `*VirtualMachine` directly (anytype dispatch); the Rust crate split routes
 /// through the aio hook registered by `bun_runtime::init()`.
 #[inline]
-fn vm_ctx() -> bun_aio::EventLoopCtx {
-    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+fn vm_ctx() -> bun_io::EventLoopCtx {
+    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
 /// `bunVM().transpiler.env.getHttpProxy(true, null, null)?.href` as an owned
@@ -477,7 +477,7 @@ impl BlobExt for Blob {
             struct Task<H> {
                 ctx: *mut H,
                 blob: Blob, // dupe for store ref + offset/size
-                poll: bun_aio::KeepAlive,
+                poll: bun_io::KeepAlive,
             }
             impl<H: ReadBytesHandler> Task<H> {
                 fn done(mut self: Box<Self>, r: ReadBytesResult) {
@@ -528,7 +528,7 @@ impl BlobExt for Blob {
             let mut t = Box::new(Task::<H> {
                 ctx,
                 blob: self.dupe(),
-                poll: bun_aio::KeepAlive::default(),
+                poll: bun_io::KeepAlive::default(),
             });
             t.poll.ref_(vm_ctx());
             let proxy = http_proxy_href(global);
@@ -5143,7 +5143,7 @@ pub struct S3BlobDownloadTask {
     pub blob: Blob,
     pub global_this: *const JSGlobalObject,
     pub promise: jsc::JSPromiseStrong,
-    pub poll_ref: bun_aio::KeepAlive,
+    pub poll_ref: bun_io::KeepAlive,
     pub handler: S3ReadHandler,
 }
 
@@ -5204,7 +5204,7 @@ impl S3BlobDownloadTask {
             global_this: global_this,
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(global_this),
-            poll_ref: bun_aio::KeepAlive::default(),
+            poll_ref: bun_io::KeepAlive::default(),
             handler,
         }));
         // SAFETY: just allocated.
@@ -6518,7 +6518,7 @@ pub trait FileCloser: Sized {
                 // fence (Rust has no `AtomicFnPtr`).
                 io_request.store_callback_seq_cst(Self::schedule_close);
                 if !io_request.scheduled {
-                    bun_io::Loop::get().schedule(io_request);
+                    bun_io::IoRequestLoop::get().schedule(io_request);
                 }
                 return true;
             }
@@ -6529,7 +6529,7 @@ pub trait FileCloser: Sized {
             && self.opened_fd().stdio_tag().is_none()
         {
             #[cfg(windows)]
-            bun_aio::Closer::close(self.opened_fd(), self.loop_());
+            bun_io::Closer::close(self.opened_fd(), self.loop_());
             #[cfg(not(windows))]
             {
                 use bun_sys::FdExt as _;

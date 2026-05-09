@@ -14,7 +14,7 @@ use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::sync::atomic::AtomicU32;
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::options;
 use bun_bundler::transpiler::ParseResult;
@@ -320,8 +320,8 @@ impl Queue {
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
-        module.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(
-            bun_aio::AllocatorType::Js,
+        module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
         ));
 
         // PORT NOTE: allocator arg dropped (Vec uses global mimalloc).
@@ -730,8 +730,8 @@ impl AsyncModule {
             jsc_vm.package_manager().end_progress_bar();
         }
         let mut log = logger::Log::init();
-        this.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(
-            bun_aio::AllocatorType::Js,
+        this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
         ));
         let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
             Ok(rs) => ErrorableResolvedSource::ok(rs),
@@ -977,8 +977,8 @@ impl AsyncModule {
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
         let _ = vm;
-        self.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(
-            bun_aio::AllocatorType::Js,
+        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
         ));
         // PORT NOTE: Zig called `this.deinit()` here; in Rust the caller
         // (Queue::retain_mut) returns `false` and Vec drops the element,
@@ -1196,8 +1196,8 @@ impl AsyncModule {
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
         let _ = vm;
-        self.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(
-            bun_aio::AllocatorType::Js,
+        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
         ));
         // PORT NOTE: Zig called `this.deinit()` here; caller drops via
         // retain_mut → false.

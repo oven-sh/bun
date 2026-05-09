@@ -58,7 +58,7 @@ use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::sink::SinkSignal;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
 use crate::webcore::BlobSizeType;
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_collections::IntegerBitSet;
 use bun_io::StreamBuffer;
 
@@ -314,12 +314,12 @@ pub fn list_objects(
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
         proxy_url: Box::default(),
-        poll_ref: bun_aio::KeepAlive::init(),
+        poll_ref: bun_io::KeepAlive::init(),
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
 
-    task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
 
     let proxy = proxy_url.unwrap_or(b"");
     task.proxy_url = if !proxy.is_empty() {
@@ -516,7 +516,7 @@ pub fn writable_stream(
     // SAFETY: freshly heap-allocated; exclusive access here.
     let task = unsafe { &mut *task_ptr };
 
-    task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
 
     // `NetworkSink.new(.{...}).toSink()` — heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
@@ -865,7 +865,7 @@ pub fn upload_stream(
     // SAFETY: freshly heap-allocated; exclusive access here.
     let task = unsafe { &mut *task_ptr };
 
-    task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
 
     let ctx_ptr: *mut S3UploadStreamWrapper = bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
         ref_count: core::cell::Cell::new(2), // +1 for the stream sink (only deinit after both sink and task ended)
@@ -988,7 +988,7 @@ pub fn download_stream(
         has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
         signal_store: Default::default(),
         signals: Default::default(),
-        poll_ref: bun_aio::KeepAlive::init(),
+        poll_ref: bun_io::KeepAlive::init(),
         response_buffer: MutableString::default(),
         mutex: Default::default(),
         reported_response_buffer: MutableString::default(),
@@ -1004,7 +1004,7 @@ pub fn download_stream(
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
     // (freed via heap::take in S3HttpDownloadStreamingTask::http_callback).
     let task = unsafe { &mut *task_ptr };
-    task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
 
     // SAFETY (lifetime extension): `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
     // fields of `*task` which the task outlives. See `execute_simple_s3_request`.

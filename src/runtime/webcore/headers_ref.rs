@@ -1,82 +1,72 @@
-//! Vtable adapters bridging concrete `FetchHeaders` / `blob::Any` (T6, this
-//! crate) into the cycle-break vtable refs `bun_http::headers::{FetchHeadersRef,
-//! AnyBlobRef}` (T5). Shared by `webcore::fetch` and `server::StaticRoute`.
-//!
-//! `bun_http::Headers::from()` can't name `bun_jsc::FetchHeaders` /
-//! `runtime::webcore::blob::Any` without a dep cycle, so it accepts a manual
-//! vtable; this module supplies the static instances.
+//! `bun_http::{FetchHeadersRef, AnyBlobRef}` link-interface impls bridging
+//! concrete `FetchHeaders` / `blob::Any` / `Blob` (T6, this crate) into the
+//! T5 `Headers::from()` constructor. Shared by `webcore::fetch`, `server::
+//! StaticRoute`, and `server::FileRoute`.
 
-use bun_http::headers::api::StringPointer;
-use bun_jsc::{FetchHeaders, HTTPHeaderName};
+use bun_jsc::FetchHeaders;
 
 use crate::webcore::blob::Any as AnyBlob;
+use crate::webcore::Blob;
 
-// ─── FetchHeaders vtable ────────────────────────────────────────────────────
-
-unsafe fn fh_count(owner: *const (), header_count: &mut u32, buf_len: &mut u32) {
-    // SAFETY: `owner` is `&FetchHeaders` erased; `count` mutates only internal
-    // scratch state on the C++ side, hence the const→mut cast.
-    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).count(header_count, buf_len) }
-}
-unsafe fn fh_fast_has(owner: *const (), _name: bun_http::headers::HeaderName) -> bool {
-    // SAFETY: see `fh_count`. `Headers::from` only ever queries Content-Type.
-    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).fast_has(HTTPHeaderName::ContentType) }
-}
-unsafe fn fh_copy_to(
-    owner: *const (),
-    names: *mut StringPointer,
-    values: *mut StringPointer,
-    buf: *mut u8,
-) {
-    // SAFETY: see `fh_count`. `bun_http::headers::api::StringPointer` and
-    // `bun_jsc`'s `StringPointer` param are the same `bun_core::StringPointer`.
-    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).copy_to(names, values, buf) }
-}
-
-static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
-    bun_http::headers::FetchHeadersVTable {
-        count: fh_count,
-        fast_has: fh_fast_has,
-        copy_to: fh_copy_to,
-    };
-
-#[inline]
-pub fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
-    bun_http::headers::FetchHeadersRef {
-        owner: std::ptr::from_ref::<FetchHeaders>(h).cast::<()>(),
-        vtable: &FETCH_HEADERS_VTABLE,
-        _phantom: core::marker::PhantomData,
-    }
-}
-
-// ─── AnyBlob vtable ─────────────────────────────────────────────────────────
-
-unsafe fn ab_has_content_type_from_user(owner: *const ()) -> bool {
-    // SAFETY: `owner` is `&AnyBlob` erased.
-    unsafe { (*owner.cast::<AnyBlob>()).has_content_type_from_user() }
-}
-unsafe fn ab_content_type(owner: *const ()) -> (*const u8, usize) {
-    // SAFETY: `owner` is `&AnyBlob` erased; the returned slice borrows blob
-    // storage that outlives the `AnyBlobRef`.
-    let s = unsafe { (*owner.cast::<AnyBlob>()).content_type() };
-    (s.as_ptr(), s.len())
-}
-
-static ANY_BLOB_VTABLE: bun_http::headers::AnyBlobVTable = bun_http::headers::AnyBlobVTable {
-    has_content_type_from_user: ab_has_content_type_from_user,
-    content_type: ab_content_type,
-};
-
-#[inline]
-pub fn any_blob_ref(b: &AnyBlob) -> bun_http::headers::AnyBlobRef<'_> {
-    bun_http::headers::AnyBlobRef {
-        owner: std::ptr::from_ref::<AnyBlob>(b).cast::<()>(),
-        vtable: &ANY_BLOB_VTABLE,
-        _phantom: core::marker::PhantomData,
+bun_http::link_impl_FetchHeadersRef! {
+    WebCore for FetchHeaders => |this| {
+        count(header_count, buf_len) => (*this).count(header_count, buf_len),
+        // `bun_http::headers::HeaderName` re-exports `bun_http_types::Method::HeaderName`,
+        // which is `#[repr(u8)]` with discriminants identical to `bun_jsc::HTTPHeaderName`
+        // (both mirror WebCore's `HTTPHeaderNames.in`); `fast_has_` takes the raw `u8`.
+        fast_has(name)               => (*this).fast_has_(name as u8),
+        copy_to(names, values, buf)  => (*this).copy_to(names, values, buf),
     }
 }
 
 #[inline]
-pub fn any_blob_ref_opt(b: Option<&AnyBlob>) -> Option<bun_http::headers::AnyBlobRef<'_>> {
+pub fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::FetchHeadersRef {
+    // SAFETY: `h` outlives the `Headers::from()` call this handle is passed to.
+    unsafe {
+        bun_http::FetchHeadersRef::new(
+            bun_http::FetchHeadersRefKind::WebCore,
+            core::ptr::from_ref(h).cast_mut(),
+        )
+    }
+}
+
+bun_http::link_impl_AnyBlobRef! {
+    Any for AnyBlob => |this| {
+        has_content_type_from_user() => (*this).has_content_type_from_user(),
+        content_type_ptr() => {
+            let s = (*this).content_type();
+            (s.as_ptr(), s.len())
+        },
+    }
+}
+
+// `server::FileRoute` wraps the blob in a stack-temporary `&.{ .Blob = blob }`
+// in Zig; here it erases `&Blob` directly — `Any::content_type` /
+// `has_content_type_from_user` for the `.Blob` arm just forward to the same
+// Blob methods.
+bun_http::link_impl_AnyBlobRef! {
+    Blob for Blob => |this| {
+        has_content_type_from_user() => (*this).has_content_type_from_user(),
+        content_type_ptr() => {
+            let s = (*this).content_type_slice();
+            (s.as_ptr(), s.len())
+        },
+    }
+}
+
+#[inline]
+pub fn any_blob_ref(b: &AnyBlob) -> bun_http::AnyBlobRef {
+    // SAFETY: `b` outlives the `Headers::from()` call this handle is passed to.
+    unsafe { bun_http::AnyBlobRef::new(bun_http::AnyBlobRefKind::Any, core::ptr::from_ref(b).cast_mut()) }
+}
+
+#[inline]
+pub fn blob_body_ref(b: &Blob) -> bun_http::AnyBlobRef {
+    // SAFETY: `b` outlives the `Headers::from()` call this handle is passed to.
+    unsafe { bun_http::AnyBlobRef::new(bun_http::AnyBlobRefKind::Blob, core::ptr::from_ref(b).cast_mut()) }
+}
+
+#[inline]
+pub fn any_blob_ref_opt(b: Option<&AnyBlob>) -> Option<bun_http::AnyBlobRef> {
     b.map(any_blob_ref)
 }

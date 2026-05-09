@@ -22,24 +22,7 @@ use crate::ast::{
 // was `Expr.Data.Store` / `*E.Foo`; some callers route through `expr::`).
 pub use crate::ast::StoreRef;
 
-// ───────────────────────────────────────────────────────────────────────────
-// Cycle-break: vtable for Blob (was bun_jsc::webcore::Blob — T6 upward ref).
-// `from_blob` is cold (macro-expansion path); high tier (bun_js_parser_jsc)
-// provides the static `BlobVTable` instance. PERF(port): was inline switch.
-// ───────────────────────────────────────────────────────────────────────────
-pub struct BlobVTable {
-    pub shared_view: unsafe fn(*const ()) -> &'static [u8],
-    pub content_type: unsafe fn(*const ()) -> &'static [u8],
-}
-#[derive(Clone, Copy)]
-pub struct BlobRef {
-    pub owner: *const (), // SAFETY: erased bun_jsc::webcore::Blob
-    pub vtable: &'static BlobVTable,
-}
-impl BlobRef {
-    #[inline] fn shared_view(&self) -> &[u8] { unsafe { (self.vtable.shared_view)(self.owner) } }
-    #[inline] fn content_type(&self) -> &[u8] { unsafe { (self.vtable.content_type)(self.owner) } }
-}
+pub use crate::BlobRef;
 
 use crate::StoreStr as Str;
 

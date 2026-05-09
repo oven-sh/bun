@@ -81,18 +81,18 @@ type IsSeparatorFunc = fn(char: u8) -> bool;
 // "fn<T>(T) -> bool" as a value, so callers dispatch via Platform methods.
 type LastSeparatorFunction = fn(slice: &[u8]) -> Option<usize>;
 
-#[inline]
+#[inline(always)]
 fn is_dotdot(slice: &[u8]) -> bool {
     slice.len() >= 2 && u16::from_le_bytes([slice[0], slice[1]]) == u16::from_le_bytes(*b"..")
 }
 
-#[inline]
+#[inline(always)]
 fn is_dotdot_with_type<T: PathChar>(slice: &[T]) -> bool {
     // TODO(port): specialization for T==u8 used @bitCast; generic path checks bytewise
     slice.len() >= 2 && slice[0] == T::from_u8(b'.') && slice[1] == T::from_u8(b'.')
 }
 
-#[inline]
+#[inline(always)]
 fn is_dotdot_slash(slice: &[u8]) -> bool {
     slice.starts_with(b"../")
 }
@@ -1308,12 +1308,12 @@ impl Platform {
     // TODO(port): get_last_separator_func_t — same as above; callers dispatch
     // via `last_index_of_separator_*_t::<T>` directly.
 
-    #[inline]
+    #[inline(always)]
     pub fn is_separator(self, char: u8) -> bool {
         self.is_separator_t::<u8>(char)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn is_separator_t<T: PathChar>(self, char: T) -> bool {
         match self {
             Platform::Loose => is_sep_any_t::<T>(char),
@@ -2065,27 +2065,32 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     &buf[0..result_len]
 }
 
+#[inline(always)]
 pub fn is_sep_posix(char: u8) -> bool {
     is_sep_posix_t::<u8>(char)
 }
 
+#[inline(always)]
 pub fn is_sep_posix_t<T: PathChar>(char: T) -> bool {
     char == T::from_u8(SEP_POSIX)
 }
 
+#[inline(always)]
 pub fn is_sep_win32(char: u8) -> bool {
     is_sep_win32_t::<u8>(char)
 }
 
+#[inline(always)]
 pub fn is_sep_win32_t<T: PathChar>(char: T) -> bool {
     char == T::from_u8(SEP_WINDOWS)
 }
 
+#[inline(always)]
 pub fn is_sep_any(char: u8) -> bool {
     is_sep_any_t::<u8>(char)
 }
 
-#[inline]
+#[inline(always)]
 pub fn is_sep_any_t<T: PathChar>(char: T) -> bool {
     is_sep_posix_t::<T>(char) || is_sep_win32_t::<T>(char)
 }
@@ -2702,11 +2707,11 @@ pub trait PathChar: Copy + Eq + Ord + 'static {
 
 impl PathChar for u8 {
     const IS_U16: bool = false;
-    #[inline]
+    #[inline(always)]
     fn from_u8(b: u8) -> Self {
         b
     }
-    #[inline]
+    #[inline(always)]
     fn to_u8(self) -> u8 {
         self
     }
@@ -2727,11 +2732,11 @@ impl PathChar for u8 {
 
 impl PathChar for u16 {
     const IS_U16: bool = true;
-    #[inline]
+    #[inline(always)]
     fn from_u8(b: u8) -> Self {
         b as u16
     }
-    #[inline]
+    #[inline(always)]
     fn to_u8(self) -> u8 {
         // narrowing u16→u8: callers only pass ASCII-range values
         u8::try_from(self).expect("int cast")

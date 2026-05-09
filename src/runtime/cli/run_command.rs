@@ -600,7 +600,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
-        if bun_aio::ParentDeathWatchdog::is_enabled() {
+        if bun_io::ParentDeathWatchdog::is_enabled() {
             env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1").expect("unreachable");
         }
 

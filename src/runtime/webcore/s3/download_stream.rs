@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use bun_aio::KeepAlive;
+use bun_io::KeepAlive;
 use bun_core::Error;
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
@@ -344,7 +344,7 @@ impl Drop for S3HttpDownloadStreamingTask {
         // via the global hook (registered by crate::init) — same pattern as
         // `S3HttpSimpleTask::drop` in simple_request.rs.
         self.poll_ref
-            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+            .unref(bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js));
         // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.

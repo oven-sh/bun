@@ -7,6 +7,7 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
+bun_dispatch.workspace = true
 parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true
@@ -57,7 +58,6 @@ bun_router.workspace = true
 bun_sourcemap.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
-bun_aio.workspace = true
 bun_threading.workspace = true
 bun_url.workspace = true
 bun_wyhash.workspace = true
@@ -69,4 +69,4 @@ bun_hash.workspace = true
 [features]
 default = []
 debug_logs = []
-show_crash_trace = []
+show_crash_trace = ["bun_crash_handler/show_crash_trace"]

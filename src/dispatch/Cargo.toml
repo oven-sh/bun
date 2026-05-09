@@ -1,0 +1,17 @@
+[package]
+name = "bun_dispatch"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "fold"] }
+quote = "1"
+proc-macro2 = "1"
+
+[[test]]
+name = "shape"
+path = "tests/shape.rs"

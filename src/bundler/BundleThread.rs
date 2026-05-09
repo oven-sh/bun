@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 use std::sync::Once;
 
-use bun_aio as Async;
+use bun_io as Async;
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, zstr, Output};
 use bun_js_parser as js_ast;

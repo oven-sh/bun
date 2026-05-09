@@ -1258,7 +1258,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         // SAFETY: `owner` is the `Box<Watcher>` leaked via `into_raw` in
         // `install_bun_watcher`; live for the process (the BundleV2 itself is
         // leaked under --watch — see `generate_from_cli`).
-        unsafe { &mut *handle.owner.as_ptr().cast::<Watcher>() }
+        unsafe { &mut *handle.owner.cast::<Watcher>() }
     }
 
     fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
@@ -1303,10 +1303,13 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         // (`owner` = `*mut Watcher`, `vtable` = `&BUNDLER_WATCHER_VTABLE`) so
         // `on_load_complete` can `add_file` without naming `bun_watcher::Watcher`.
         let watcher_ptr: *mut Watcher = bun_core::heap::into_raw(watcher);
-        // SAFETY: `watcher_ptr` is a fresh non-null heap allocation.
-        self.bun_watcher = Some(bun_bundler::dispatch::WatcherHandle {
-            owner: unsafe { core::ptr::NonNull::new_unchecked(watcher_ptr.cast()) },
-            vtable: &BUNDLER_WATCHER_VTABLE,
+        // SAFETY: `watcher_ptr` is a fresh non-null heap allocation; live for
+        // the process (BundleV2 is leaked under --watch — see `generate_from_cli`).
+        self.bun_watcher = Some(unsafe {
+            bun_bundler::dispatch::WatcherHandle::new(
+                bun_bundler::dispatch::WatcherHandleKind::Watcher,
+                watcher_ptr,
+            )
         });
         // SAFETY: `watcher_ptr` was just installed; live for the process.
         self.transpiler.resolver.watcher =
@@ -1324,38 +1327,26 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 }
 
-/// `WatcherHandle.vtable` for the `bun build --watch` watcher. The handle's
-/// `owner` is the bare `*mut bun_watcher::Watcher` (not wrapped in
-/// `ImportWatcher`); same shape as bake's `BAKE_WATCHER_VTABLE`.
-static BUNDLER_WATCHER_VTABLE: bun_bundler::dispatch::WatcherVTable =
-    bun_bundler::dispatch::WatcherVTable {
-        add_file: bundler_watcher_add_file,
-    };
-
-unsafe fn bundler_watcher_add_file(
-    watcher: *mut (),
-    fd: bun_sys::Fd,
-    file_path: &[u8],
-    hash: u32,
-    loader: bun_options_types::Loader,
-    dir_fd: bun_sys::Fd,
-    package_json: Option<*const ()>,
-    copy_file_path: bool,
-) -> Result<(), bun_core::Error> {
-    // SAFETY: `watcher` is the `*mut Watcher` registered by `install_bun_watcher`.
-    let w = unsafe { &mut *watcher.cast::<Watcher>() };
-    // SAFETY: `package_json` is an erased `*const PackageJSON` owned by the
-    // resolver's package-json cache (process lifetime); Watcher only stores it.
-    let pj = package_json.map(|p| unsafe { &*p.cast::<bun_watcher::PackageJSON>() });
-    // PORT NOTE: `bun_watcher::Loader` is a `#[repr(transparent)]` u8 newtype
-    // mirroring `bun_options_types::Loader` (`#[repr(u8)]`).
-    let loader = bun_watcher::Loader(loader as u8);
-    let r = if copy_file_path {
-        w.add_file::<true>(fd, file_path, hash, loader, dir_fd, pj)
-    } else {
-        w.add_file::<false>(fd, file_path, hash, loader, dir_fd, pj)
-    };
-    r.map_err(bun_core::Error::from)
+// `WatcherHandle[Watcher]` arm — both `bun build --watch` and bake register
+// the same bare `*mut bun_watcher::Watcher` owner.
+bun_bundler::link_impl_WatcherHandle! {
+    Watcher for Watcher => |this| {
+        add_file(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path) => {
+            let w = &mut *this;
+            // `package_json` is an erased `*const PackageJSON` owned by the
+            // resolver's package-json cache (process lifetime); Watcher only stores it.
+            let pj = package_json.map(|p| &*p.cast::<bun_watcher::PackageJSON>());
+            // `bun_watcher::Loader` is a `#[repr(transparent)]` u8 newtype
+            // mirroring `bun_options_types::Loader` (`#[repr(u8)]`).
+            let loader = bun_watcher::Loader(loader as u8);
+            let r = if copy_file_path {
+                w.add_file::<true>(fd, file_path, hash, loader, dir_fd, pj)
+            } else {
+                w.add_file::<false>(fd, file_path, hash, loader, dir_fd, pj)
+            };
+            r.map_err(bun_core::Error::from)
+        },
+    }
 }
 
 /// Zig: `bundle_v2.Watcher = NewHotReloader(BundleV2, EventLoop, true)`

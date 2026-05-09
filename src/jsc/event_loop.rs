@@ -12,7 +12,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
-use bun_aio::{self as Async, Waker};
+use bun_io::{self as Async, Waker};
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -32,7 +32,7 @@ pub use bun_event_loop::AnyTaskWithExtraContext;
 pub use bun_event_loop::ConcurrentTask::{self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue};
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
 pub use bun_event_loop::ManagedTask;
-pub use bun_event_loop::MiniEventLoop::{self, AbstractVM, EventLoopKind, JsVM, MiniVM};
+pub use bun_event_loop::MiniEventLoop::{self, AbstractVM, EventLoopKind, MiniVM};
 pub use bun_event_loop::Task;
 pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
@@ -1077,137 +1077,66 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 // to `*mut EventLoop` and forwards to the real method.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Recover `&mut EventLoop` from the erased vtable `owner`. Private to this
-/// module — every caller below is a `#[no_mangle]` trampoline whose contract
-/// (the `bun_event_loop` vtable) guarantees `owner` is a live `*mut EventLoop`.
-/// Centralizes the per-trampoline `unsafe { (*el(owner)).method() }` deref.
+/// SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
 #[inline(always)]
 fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
-    // SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`
-    // in `__bun_js_event_loop_current` / `EventLoopHandle::js`. All calls go
-    // through the trampolines below on the JS thread.
     unsafe { &mut *owner.cast::<EventLoop>() }
 }
 
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_iteration_number(owner: *mut ()) -> u64 {
-    // Spec event_loop.zig:359 reads the EventLoop's own `uws_loop` field; on
-    // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
-    // code paths. Route through `usockets_loop()` to match spec semantics.
-    // SAFETY: `usockets_loop()` returns the live VM-owned uws loop.
-    unsafe { &*el_ref(owner).usockets_loop() }.iteration_number()
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_file_polls(owner: *mut ()) -> *mut Async::file_poll::Store {
-    // Return raw to avoid asserting uniqueness — multiple handles may name the
-    // same VM (see `EventLoopHandle::file_polls` doc).
-    std::ptr::from_mut(
-        el_ref(owner)
-            .vm_ref()
-            .as_mut()
-            .rare_data()
-            .file_polls_
-            .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
-            .as_mut(),
-    )
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_put_file_poll(owner: *mut (), poll: *mut Async::FilePoll, was_ever_registered: bool) {
-    // Zig: `vm.rareData().filePolls(vm).put(poll, vm, was_ever_registered)`.
-    // `Store::put` only needs the VM as an opaque `EventLoopCtx` (for
-    // `after_event_loop_callback` recovery) — reach it via the JS-ctx hook so
-    // we don't form a competing `&mut VirtualMachine` while holding the store.
-    let store = __bun_js_event_loop_file_polls(owner);
-    let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-    // SAFETY: `store` is the live per-VM FilePoll store (see `vt_file_polls`).
-    unsafe { (*store).put(poll, ctx, was_ever_registered) };
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_uws_loop(owner: *mut ()) -> *mut uws::Loop {
-    el_ref(owner).usockets_loop()
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_pipe_read_buffer(owner: *mut ()) -> *mut [u8] {
-    // SAFETY: `pipe_read_buffer` reaches VM-owned scratch. Return a raw fat
-    // ptr — see method SAFETY doc re aliasing.
-    unsafe { std::ptr::from_mut::<[u8]>(el_ref(owner).pipe_read_buffer()) }
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_tick(owner: *mut ()) {
-    el_ref(owner).tick();
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_auto_tick(owner: *mut ()) {
-    el_ref(owner).auto_tick();
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_auto_tick_active(owner: *mut ()) {
-    el_ref(owner).auto_tick_active();
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_global_object(owner: *mut ()) -> *mut () {
-    el_ref(owner).global.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_bun_vm(owner: *mut ()) -> *mut () {
-    el_ref(owner).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_stdout(owner: *mut ()) -> *mut () {
-    el_ref(owner).vm_ref().as_mut().rare_data().stdout().cast()
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_stderr(owner: *mut ()) -> *mut () {
-    el_ref(owner).vm_ref().as_mut().rare_data().stderr().cast()
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_enter(owner: *mut ()) {
-    el_ref(owner).enter();
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_exit(owner: *mut ()) {
-    el_ref(owner).exit();
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_enqueue_task(owner: *mut (), task: Task) {
-    el_ref(owner).enqueue_task(task);
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_enqueue_task_concurrent(owner: *mut (), task: *mut ConcurrentTaskItem) {
-    el_ref(owner).enqueue_task_concurrent(task);
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_env(owner: *mut ()) -> *mut bun_dotenv::Loader<'static> {
-    el_ref(owner).vm_ref().transpiler.env
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_top_level_dir(owner: *mut ()) -> *const [u8] {
-    std::ptr::from_ref::<[u8]>(el_ref(owner).vm_ref().top_level_dir())
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_create_null_delimited_env_map(
-    owner: *mut (),
-) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
-    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-    unsafe { (*el_ref(owner).vm_ref().transpiler.env).map.create_null_delimited_env_map() }
+// `this: *mut EventLoop` — owner was erased from a live `*mut EventLoop` in
+// `__bun_js_event_loop_current` / `EventLoopHandle::js`. All calls run on the
+// JS thread.
+bun_event_loop::link_impl_JsEventLoop! {
+    Jsc for EventLoop => |this| {
+        // Spec event_loop.zig:359 reads the EventLoop's own `uws_loop` field; on
+        // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
+        // code paths. Route through `usockets_loop()` to match spec semantics.
+        iteration_number() => (&*(*this).usockets_loop()).iteration_number(),
+        // Return raw to avoid asserting uniqueness — multiple handles may name the
+        // same VM (see `EventLoopHandle::file_polls` doc).
+        file_polls() => core::ptr::from_mut(
+            (*this)
+                .vm_ref()
+                .as_mut()
+                .rare_data()
+                .file_polls_
+                .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
+                .as_mut(),
+        ),
+        put_file_poll(poll, was_ever_registered) => {
+            // `Store::put` only needs the VM as an opaque `EventLoopCtx`; reach it
+            // via the JS-ctx hook so we don't form a competing `&mut VirtualMachine`
+            // while holding the store.
+            let store = core::ptr::from_mut(
+                (*this)
+                    .vm_ref()
+                    .as_mut()
+                    .rare_data()
+                    .file_polls_
+                    .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
+                    .as_mut(),
+            );
+            let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
+            (*store).put(poll, ctx, was_ever_registered);
+        },
+        uws_loop() => (*this).usockets_loop(),
+        pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
+        tick() => (*this).tick(),
+        auto_tick() => (*this).auto_tick(),
+        auto_tick_active() => (*this).auto_tick_active(),
+        global_object() => (*this).global.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
+        bun_vm() => (*this).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
+        stdout() => (*this).vm_ref().as_mut().rare_data().stdout().cast(),
+        stderr() => (*this).vm_ref().as_mut().rare_data().stderr().cast(),
+        enter() => (*this).enter(),
+        exit() => (*this).exit(),
+        enqueue_task(task) => (*this).enqueue_task(task),
+        enqueue_task_concurrent(task) => (*this).enqueue_task_concurrent(task),
+        env() => (*this).vm_ref().transpiler.env,
+        top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
+        create_null_delimited_env_map() =>
+            (*(*this).vm_ref().transpiler.env).map.create_null_delimited_env_map(),
+    }
 }
 
 #[unsafe(no_mangle)]

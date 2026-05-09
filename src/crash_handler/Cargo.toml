@@ -21,6 +21,7 @@ bun_analytics.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
+bun_dispatch.workspace = true
 bun_collections.workspace = true
 bun_io.workspace = true
 bun_options_types.workspace = true
@@ -30,3 +31,6 @@ bun_string.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_zlib.workspace = true
+
+[features]
+show_crash_trace = []

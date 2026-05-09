@@ -12,7 +12,7 @@
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_aio::Loop as AsyncLoop;
+use bun_io::Loop as AsyncLoop;
 use bun_core::SignalCode;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
@@ -1550,14 +1550,7 @@ impl Terminal {
 
     fn update_ref(&mut self, add: bool) {
         self.reader.update_ref(add);
-        // `bun_io::EventLoopHandle` is opaque; pass the
-        // address of the stored bun_jsc::EventLoopHandle.
-        self.writer.update_ref(
-            bun_io::EventLoopHandle(
-                (&raw const self.event_loop_handle).cast_mut().cast::<c_void>(),
-            ),
-            add,
-        );
+        self.writer.update_ref(self.event_loop_handle.as_event_loop_ctx(), add);
     }
 
     /// Close the terminal
@@ -1867,7 +1860,9 @@ impl bun_ptr::RefCounted for Terminal {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Terminal declares
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` (Terminal.zig).
+bun_io::buffered_reader_parent_link!(Terminal for Terminal);
 impl BufferedReaderParent for Terminal {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::Terminal;
     const HAS_ON_READ_CHUNK: bool = true;
 
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
@@ -1890,12 +1885,8 @@ impl BufferedReaderParent for Terminal {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // `bun_io::EventLoopHandle` is opaque; pass the
-        // address of the stored bun_jsc::EventLoopHandle so the FilePoll vtable
-        // (registered by bun_runtime::init) can recover it.
-        // SAFETY: see on_read_chunk; shared-only read.
-        bun_io::EventLoopHandle(
-            unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
-        )
+        // SAFETY: see on_read_chunk.
+        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
 }
 
@@ -1904,7 +1895,7 @@ impl BufferedReaderParent for Terminal {
 // is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
-    const POLL_OWNER_TAG: u8 = bun_aio::posix_event_loop::poll_tag::TERMINAL_POLL;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         // SAFETY: `this` is the BACKREF set via `writer.parent = terminal`;
@@ -1926,12 +1917,8 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see on_write. Shared-only read of event_loop_handle.
-        // `bun_io::EventLoopHandle` is opaque; pass
-        // the address of the stored `bun_jsc::EventLoopHandle` so the
-        // (runtime-registered) FilePoll vtable can recover it.
-        bun_io::EventLoopHandle(
-            unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
-        )
+        // SAFETY: see on_write.
+        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: see on_write. Shared-only read of event_loop_handle.

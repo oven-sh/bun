@@ -538,9 +538,18 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
+        // Read everything needed from `*uv_handle` BEFORE creating
+        // `this: &mut Process`. The handle is the inline `Poller::Uv` payload
+        // inside the heap `Process`, so once `this` exclusively borrows the
+        // whole `Process`, any later raw read via `uv_handle` overlaps that
+        // borrow and pops `this`'s Unique tag under Stacked Borrows (see the
+        // matching comment in `on_exit_uv`).
+        // SAFETY: libuv passes the live handle; raw read of POD `pid` field.
+        let pid = unsafe { (*uv_handle).pid };
         // SAFETY: see `on_exit_uv` — `*mut Process` back-pointer in `data`.
+        // `uv_handle` is not dereferenced again after this point.
         let this: &mut Process = unsafe { &mut *(*uv_handle).data.cast::<Process>() };
-        bun_sys::windows::libuv::log!("Process.onClose({})", unsafe { (*uv_handle).pid });
+        bun_sys::windows::libuv::log!("Process.onClose({})", pid);
 
         if matches!(this.poller, Poller::Uv(_)) {
             this.poller = Poller::Detached;
@@ -2013,11 +2022,19 @@ pub fn spawn_process_windows(
         debug_assert!(uv_proc.exit_cb == Some(Process::on_exit_uv));
     }
 
+    // Explicit field init — `WindowsSpawnResult` now `impl Drop` (so its
+    // unconsumed `Buffer(Box<uv::Pipe>)` fields get a real `uv_close`
+    // instead of being freed while still in libuv's handle queue), and
+    // `..Default::default()` (E0509) can't move out of a `Drop` type.
     let mut result = WindowsSpawnResult {
         // Intrusive raw pointer; refcount lives inside `Process` (see field comment).
         process_: Some(process),
+        stdin: WindowsStdioResult::Unavailable,
+        stdout: WindowsStdioResult::Unavailable,
+        stderr: WindowsStdioResult::Unavailable,
         extra_pipes: Vec::with_capacity(options.extra_fds.len()),
-        ..Default::default()
+        stream: true,
+        sync: false,
     };
 
     for i in 0..3usize {

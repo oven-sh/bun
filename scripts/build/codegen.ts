@@ -36,7 +36,7 @@
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
@@ -531,16 +531,19 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
 /**
  * `*.string-map.ts` → length-bucketed lookup fns (`generate-string-map.ts`).
- * One ninja edge per source file so editing one map doesn't invalidate them
- * all. Output is `include!`d by Rust, so it goes into `rustInputs` to order
- * the cargo edge after this.
+ * Output lands **in-tree** as `<dir>/<stem>.generated.rs` (checked in) so
+ * plain `cargo check` / rust-analyzer work without `BUN_CODEGEN_DIR` or a
+ * per-crate `build.rs`. The `.string-map.ts` is the source of truth; the
+ * `.generated.rs` is a deterministic artifact whose drift is caught by
+ * `bun run codegen:verify` in CI (format job). `restat = 1` on the codegen
+ * rule + `writeIfNotChanged` in the script keep this a no-op when unchanged.
  */
 function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-string-map.ts");
   for (const src of sources.stringMaps) {
-    // `src/js_parser/defines_table.string-map.ts` → `defines_table_generated.rs`
+    // `src/js_parser/defines_table.string-map.ts` → `src/js_parser/defines_table.generated.rs`
     const stem = basename(src).replace(/\.string-map\.ts$/, "");
-    const out = resolve(cfg.codegenDir, `${stem}_generated.rs`);
+    const out = resolve(dirname(src), `${stem}.generated.rs`);
     n.build({
       outputs: [out],
       rule: "codegen",

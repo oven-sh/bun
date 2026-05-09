@@ -299,6 +299,6 @@ impl PureGlobalIdentifierValue {
     }
 }
 
-include!(concat!(env!("BUN_CODEGEN_DIR"), "/defines_table_generated.rs"));
+include!("defines_table.generated.rs");
 
 // ported from: src/bundler/defines-table.zig

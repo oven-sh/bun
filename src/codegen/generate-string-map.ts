@@ -2,9 +2,16 @@
 //
 // Replaces `phf::phf_map!` / `comptime_string_map!` for hot identifier-set
 // lookups. Output is a `match key.len() { … }` jump table whose buckets are
-// either a short compare chain (≤ LINEAR_MAX entries — LLVM turns fixed-size
-// `&[u8; N] == &[u8; N]` into a single wide compare or its own jump table) or
-// a binary search over a sorted const slice. No hashing.
+// either a discriminating-byte switch (one byte fully distinguishes the bucket
+// → single load + jump table + one fixed-width compare to confirm), a short
+// linear chain (≤ LINEAR_MAX entries — LLVM lowers `[u8; N] == [u8; N]` to one
+// wide compare), or a binary search over a sorted `[([u8; N], V); K]` slice.
+// No hashing.
+//
+// Output lands **in-tree** as `<dir>/<stem>.generated.rs` (checked in) so
+// plain `cargo check` / rust-analyzer work without `BUN_CODEGEN_DIR` or a
+// per-crate `build.rs`. The `.string-map.ts` is the source of truth; CI
+// verifies the `.generated.rs` is current.
 //
 // Input is a `*.string-map.ts` module that `export default`s a `StringMapSpec`
 // (or an array of them). The data lives in TS so it can be commented, share
@@ -32,8 +39,20 @@ export interface StringMapSpec<V = unknown> {
   emitValue?: (v: V) => string;
   /** Entries. Keys must be unique. */
   entries: ReadonlyArray<readonly [key: string, value: V]>;
-  /** Also emit `pub static <name>_KEYS: &[&[u8]]` (in entry order). */
+  /** Also emit `pub static <NAME>_KEYS: &[&[u8]]` (in entry order). */
   emitKeys?: boolean;
+  /**
+   * Also emit `pub fn <name>_ignore_ascii_case(key: &[u8]) -> Option<V>`.
+   * Bucketing is identical; the discriminating-byte switch matches
+   * `key[i] | 0x20` against the lowercased byte, and the confirm compare is
+   * `eq_ignore_ascii_case`. Keys must be ASCII (asserted).
+   */
+  emitCaseInsensitive?: boolean;
+  /**
+   * Also emit `pub fn <name>_index(key: &[u8]) -> Option<u16>` returning the
+   * entry's index in `<NAME>_KEYS` (declaration order). Implies `emitKeys`.
+   */
+  emitIndexOf?: boolean;
   /** Header comment to copy into the generated `mod`. */
   doc?: string;
 }
@@ -59,18 +78,15 @@ function discriminatingByte(bucket: ReadonlyArray<readonly [Buffer, unknown]>, l
       if (seen.size === bucket.length) return i; // fully discriminating — done
     }
   }
-  // Not fully discriminating; caller decides whether to recurse or fall back.
   return bestDistinct === bucket.length ? best : null;
 }
 
 function rsByte(b: number): string {
-  // `b'X'` for printable ASCII (clearer in match arms), `0xNN` otherwise.
   if (b >= 0x20 && b <= 0x7e && b !== 0x27 && b !== 0x5c) return `b'${String.fromCharCode(b)}'`;
   return `0x${b.toString(16).padStart(2, "0")}`;
 }
 
 function rsBytes(s: string): string {
-  // Emit as `b"…"` when printable-ASCII-only; else as `&[0x…, …]`.
   const bytes = Buffer.from(s, "utf8");
   let printable = true;
   for (const b of bytes) {
@@ -80,53 +96,70 @@ function rsBytes(s: string): string {
   return `&[${[...bytes].map(b => `0x${b.toString(16).padStart(2, "0")}`).join(", ")}]`;
 }
 
-function buildOne<V>(spec: StringMapSpec<V>): string {
-  const { name, valueTy, entries, emitKeys, doc } = spec;
-  const emitValue = spec.emitValue ?? ((v: V) => (typeof v === "string" ? JSON.stringify(v) : String(v)));
+interface EmitOpts {
+  /** `eq_ignore_ascii_case` instead of `==`; discriminator matches `b | 0x20`. */
+  ci: boolean;
+}
 
-  // Dedup-check.
-  const seen = new Set<string>();
-  for (const [k] of entries) {
-    if (seen.has(k)) throw new Error(`generate-string-map: duplicate key ${JSON.stringify(k)} in ${name}`);
-    seen.add(k);
-  }
-
-  // Bucket by UTF-8 byte length, then sort each bucket bytewise (for bsearch).
-  const buckets = new Map<number, Array<readonly [Buffer, V]>>();
-  for (const [k, v] of entries) {
-    const kb = Buffer.from(k, "utf8");
+/**
+ * Emit one lookup fn body. `entries` is `[keyBytes, valueLiteral]` so the same
+ * bucketer can serve `emitIndexOf` (where the "value" is the declaration index)
+ * without re-threading `emitValue`.
+ */
+function emitLookup(
+  out: string[],
+  fnName: string,
+  retTy: string,
+  entries: ReadonlyArray<readonly [Buffer, string]>,
+  { ci }: EmitOpts,
+): void {
+  // Bucket by byte length, then sort each bucket bytewise (for bsearch). For
+  // case-insensitive, sort by the *lowercased* key so bsearch can compare
+  // against a lowercased probe.
+  const sortKey = (kb: Buffer) => (ci ? Buffer.from(kb.toString("binary").toLowerCase(), "binary") : kb);
+  const buckets = new Map<number, Array<readonly [Buffer, string]>>();
+  for (const [kb, v] of entries) {
     const len = kb.length;
     if (!buckets.has(len)) buckets.set(len, []);
     buckets.get(len)!.push([kb, v]);
   }
-  for (const arr of buckets.values()) arr.sort((a, b) => Buffer.compare(a[0], b[0]));
+  for (const arr of buckets.values()) arr.sort((a, b) => Buffer.compare(sortKey(a[0]), sortKey(b[0])));
   const lens = [...buckets.keys()].sort((a, b) => a - b);
 
-  const out: string[] = [];
-  if (doc) for (const line of doc.split("\n")) out.push(`/// ${line}`.trimEnd());
+  // Parenthesised so `${eq(...)}.then(...)` doesn't mis-associate as
+  // `key == (lit.then(...))`.
+  const eq = (key: string, lit: string) => (ci ? `${key}.eq_ignore_ascii_case(${lit})` : `(${key} == ${lit})`);
+  // Fold to lowercase before discriminating so `key[i] | 0x20` matches either
+  // case of an ASCII letter. Non-letters with bit 5 differing (e.g. `_`/`?`)
+  // can collide here — that's fine, the full `eq_ignore_ascii_case` confirms.
+  const discProbe = (i: number) => (ci ? `key[${i}] | 0x20` : `key[${i}]`);
+  const discByte = (b: number) => rsByte(ci ? b | 0x20 : b);
+
   out.push(`#[inline]`);
   out.push(`#[allow(clippy::all, unused_unsafe)]`);
-  out.push(`pub fn ${name}(key: &[u8]) -> Option<${valueTy}> {`);
+  out.push(`pub fn ${fnName}(key: &[u8]) -> Option<${retTy}> {`);
   out.push(`    match key.len() {`);
   for (const len of lens) {
     const bucket = buckets.get(len)!;
     if (bucket.length === 1) {
       const [kb, v] = bucket[0];
-      out.push(`        ${len} => (key == ${rsBytes(kb.toString("binary"))}).then(|| ${emitValue(v)}),`);
+      out.push(`        ${len} => ${eq("key", rsBytes(kb.toString("binary")))}.then(|| ${v}),`);
     } else if (bucket.length <= LINEAR_MAX) {
-      const disc = discriminatingByte(bucket, len);
+      // For case-insensitive, the discriminator must still be unique after
+      // `| 0x20` folding — recompute on the folded keys.
+      const disc = discriminatingByte(ci ? bucket.map(([kb, v]) => [sortKey(kb), v] as const) : bucket, len);
       out.push(`        ${len} => {`);
       // SAFETY: `len` arm guarantees `key.len() == ${len}`; the cast gives
       // rustc a fixed-size array so the eq becomes a single wide compare.
       out.push(`            let key: &[u8; ${len}] = unsafe { &*key.as_ptr().cast() };`);
       if (disc !== null) {
         // One byte fully discriminates → `match key[i]` is a jump table; the
-        // per-arm `==` confirms the rest of the bytes (still needed — the
+        // per-arm compare confirms the rest of the bytes (still needed — the
         // discriminator only proves "if it's any of these, it's this one").
-        out.push(`            match key[${disc}] {`);
+        out.push(`            match ${discProbe(disc)} {`);
         for (const [kb, v] of bucket) {
           out.push(
-            `                ${rsByte(kb[disc])} => (key == ${rsBytes(kb.toString("binary"))}).then(|| ${emitValue(v)}),`,
+            `                ${discByte(kb[disc])} => ${eq("key", rsBytes(kb.toString("binary")))}.then(|| ${v}),`,
           );
         }
         out.push(`                _ => None,`);
@@ -137,32 +170,92 @@ function buildOne<V>(spec: StringMapSpec<V>): string {
         // that's competitive with bsearch and branchier code is easier on the
         // predictor when the hit distribution is skewed.
         for (const [kb, v] of bucket) {
-          out.push(`            if key == ${rsBytes(kb.toString("binary"))} { return Some(${emitValue(v)}); }`);
+          out.push(`            if ${eq("key", rsBytes(kb.toString("binary")))} { return Some(${v}); }`);
         }
         out.push(`            None`);
       }
       out.push(`        }`);
-    } else {
+    } else if (!ci) {
       // Binary search. The slice is `[u8; N]` (not `&[u8]`) so the compare is
       // a fixed-size memcmp; rustc/LLVM can vectorize it for small N.
-      const tableName = `__${name.toUpperCase()}_L${len}`;
+      const tableName = `__${fnName.toUpperCase()}_L${len}`;
       out.push(`        ${len} => {`);
       out.push(`            #[allow(non_upper_case_globals)]`);
-      out.push(`            static ${tableName}: [([u8; ${len}], ${valueTy}); ${bucket.length}] = [`);
+      out.push(`            static ${tableName}: [([u8; ${len}], ${retTy}); ${bucket.length}] = [`);
       for (const [kb, v] of bucket) {
-        out.push(`                (*${rsBytes(kb.toString("binary"))}, ${emitValue(v)}),`);
+        out.push(`                (*${rsBytes(kb.toString("binary"))}, ${v}),`);
       }
       out.push(`            ];`);
       out.push(`            let key: &[u8; ${len}] = unsafe { &*key.as_ptr().cast() };`);
       out.push(`            ${tableName}.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| ${tableName}[i].1)`);
+      out.push(`        }`);
+    } else {
+      // Case-insensitive bsearch: store keys lowercased, lower the probe into
+      // a stack `[u8; N]` (no alloc — N is the bucket's compile-time length),
+      // then bsearch as usual. ASCII-only by construction (asserted up-front).
+      const tableName = `__${fnName.toUpperCase()}_L${len}`;
+      out.push(`        ${len} => {`);
+      out.push(`            #[allow(non_upper_case_globals)]`);
+      out.push(`            static ${tableName}: [([u8; ${len}], ${retTy}); ${bucket.length}] = [`);
+      for (const [kb, v] of bucket) {
+        out.push(`                (*${rsBytes(sortKey(kb).toString("binary"))}, ${v}),`);
+      }
+      out.push(`            ];`);
+      out.push(`            let mut probe = [0u8; ${len}];`);
+      out.push(`            for (d, s) in probe.iter_mut().zip(key) { *d = s.to_ascii_lowercase(); }`);
+      out.push(`            ${tableName}.binary_search_by(|(k, _)| k.cmp(&probe)).ok().map(|i| ${tableName}[i].1)`);
       out.push(`        }`);
     }
   }
   out.push(`        _ => None,`);
   out.push(`    }`);
   out.push(`}`);
+}
 
-  if (emitKeys) {
+function buildOne<V>(spec: StringMapSpec<V>): string {
+  const { name, valueTy, entries, emitKeys, emitIndexOf, emitCaseInsensitive, doc } = spec;
+  const emitValue = spec.emitValue ?? ((v: V) => (typeof v === "string" ? JSON.stringify(v) : String(v)));
+
+  const seen = new Set<string>();
+  const seenCi = new Set<string>();
+  for (const [k] of entries) {
+    if (seen.has(k)) throw new Error(`generate-string-map: duplicate key ${JSON.stringify(k)} in ${name}`);
+    seen.add(k);
+    if (emitCaseInsensitive) {
+      // eslint-disable-next-line no-control-regex
+      if (!/^[\x00-\x7f]*$/.test(k)) {
+        throw new Error(
+          `generate-string-map: ${name}: emitCaseInsensitive requires ASCII keys; ${JSON.stringify(k)} is not`,
+        );
+      }
+      const lk = k.toLowerCase();
+      if (seenCi.has(lk)) {
+        throw new Error(`generate-string-map: ${name}: keys ${JSON.stringify(k)} collide under case folding`);
+      }
+      seenCi.add(lk);
+    }
+  }
+
+  const kvs: Array<readonly [Buffer, string]> = entries.map(([k, v]) => [Buffer.from(k, "utf8"), emitValue(v)]);
+  const out: string[] = [];
+  if (doc) for (const line of doc.split("\n")) out.push(`/// ${line}`.trimEnd());
+  emitLookup(out, name, valueTy, kvs, { ci: false });
+
+  if (emitCaseInsensitive) {
+    out.push(``);
+    emitLookup(out, `${name}_ignore_ascii_case`, valueTy, kvs, { ci: true });
+  }
+
+  if (emitIndexOf) {
+    // Index in *declaration order* — same as `<NAME>_KEYS` so
+    // `KEYS[index_of(k).unwrap()]` round-trips. u16 is plenty (asserted).
+    if (entries.length > 0xffff) throw new Error(`${name}: ${entries.length} entries exceed u16 indexOf range`);
+    const idxKvs: Array<readonly [Buffer, string]> = entries.map(([k], i) => [Buffer.from(k, "utf8"), `${i}u16`]);
+    out.push(``);
+    emitLookup(out, `${name}_index`, `u16`, idxKvs, { ci: false });
+  }
+
+  if (emitKeys || emitIndexOf) {
     out.push(``);
     out.push(`pub static ${name.toUpperCase()}_KEYS: &[&[u8]] = &[`);
     for (const [k] of entries) out.push(`    ${rsBytes(k)},`);

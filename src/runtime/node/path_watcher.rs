@@ -397,7 +397,7 @@ pub fn watch(
             let len = r.len();
             resolve_buf[len] = 0;
             // SAFETY: resolve_buf[len] == 0 written above; buf lives for the rest of this fn.
-            unsafe { ZStr::from_raw(resolve_buf.as_ptr(), len) }
+            ZStr::from_buf(&resolve_buf[..], len)
         }
     };
 
@@ -1269,7 +1269,7 @@ impl Kqueue {
         let kq = unsafe { (*plat).kq };
 
         // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD).
-        let mut kev: Kevent = unsafe { bun_core::ffi::zeroed() };
+        let mut kev: Kevent = bun_core::ffi::zeroed();
         kev.ident = fd.native() as usize;
         kev.filter = EVFILT::VNODE;
         kev.flags = EV::ADD | EV::CLEAR | EV::ENABLE;
@@ -1350,7 +1350,7 @@ impl Kqueue {
         let kq = unsafe { (*plat).kq };
         let running: &AtomicBool = unsafe { &(*plat).running };
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
-        let mut events: [Kevent; 128] = unsafe { bun_core::ffi::zeroed() };
+        let mut events: [Kevent; 128] = bun_core::ffi::zeroed();
         while running.load(Ordering::Acquire) {
             // SAFETY: thin wrapper over libc::kevent.
             let count = unsafe {

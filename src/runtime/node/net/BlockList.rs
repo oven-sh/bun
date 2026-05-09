@@ -150,9 +150,8 @@ impl BlockList {
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;
         }
-        let address = if let Some(sa) = address_js.as_::<SocketAddress>() {
-            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload).
-            unsafe { (*sa)._addr }
+        let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
+            sa._addr
         } else {
             validators::validate_string(global, address_js, format_args!("address"))?;
             validators::validate_string(global, family_js, format_args!("family"))?;
@@ -178,17 +177,15 @@ impl BlockList {
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;
         }
-        let start = if let Some(sa) = start_js.as_::<SocketAddress>() {
-            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload).
-            unsafe { (*sa)._addr }
+        let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
+            sa._addr
         } else {
             validators::validate_string(global, start_js, format_args!("start"))?;
             validators::validate_string(global, family_js, format_args!("family"))?;
             SocketAddress::init_from_addr_family(global, start_js, family_js)?._addr
         };
-        let end = if let Some(sa) = end_js.as_::<SocketAddress>() {
-            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload).
-            unsafe { (*sa)._addr }
+        let end = if let Some(sa) = end_js.as_class_ref::<SocketAddress>() {
+            sa._addr
         } else {
             validators::validate_string(global, end_js, format_args!("end"))?;
             validators::validate_string(global, family_js, format_args!("family"))?;
@@ -222,9 +219,8 @@ impl BlockList {
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;
         }
-        let network = if let Some(sa) = network_js.as_::<SocketAddress>() {
-            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload).
-            unsafe { (*sa)._addr }
+        let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
+            sa._addr
         } else {
             validators::validate_string(global, network_js, format_args!("network"))?;
             validators::validate_string(global, family_js, format_args!("family"))?;
@@ -264,10 +260,8 @@ impl BlockList {
             family_js = BunString::static_str("ipv4").to_js(global)?;
         }
         let address_val;
-        let address: &sockaddr = if let Some(sa) = address_js.as_::<SocketAddress>() {
-            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload);
-            // borrow is valid for the duration of this call (no GC yield).
-            unsafe { &(*sa)._addr }
+        let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
+            &sa._addr
         } else {
             validators::validate_string(global, address_js, format_args!("address"))?;
             validators::validate_string(global, family_js, format_args!("family"))?;

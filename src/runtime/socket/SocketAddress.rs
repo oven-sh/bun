@@ -348,8 +348,7 @@ impl SocketAddress {
                     // `defer alloc.free(slice)` → Box<ZStr> drops at scope exit
                     pton(global, inet::AF_INET, &slice, (&raw mut sin.addr).cast::<c_void>())?;
                 } else {
-                    // SAFETY: LOOPBACK_V4 is initialized as .sin
-                    sin.addr = unsafe { sockaddr::LOOPBACK_V4.sin.addr };
+                    sin.addr = sockaddr::LOOPBACK_V4.as_sin().unwrap().addr;
                 }
                 sockaddr { sin }
             }
@@ -560,8 +559,7 @@ impl SocketAddress {
         // `sa_family_t` width varies (u8 on Darwin/the BSDs, u16 on Linux/
         // Windows); widen to u16 and compare. `family` is always one of the
         // AF discriminants we constructed.
-        // SAFETY: family field is at the same offset in both union variants.
-        let raw = unsafe { self._addr.sin.family } as u16;
+        let raw = self._addr.family_raw() as u16;
         if raw == inet::AF_INET6 as u16 { AF::INET6 } else { AF::INET }
     }
 
@@ -575,8 +573,7 @@ impl SocketAddress {
         // NOTE: sockaddr_in and sockaddr_in6 have the same layout for port.
         // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
         // Switch back to `ntohs` when this issue gets resolved: https://github.com/ziglang/zig/issues/22804
-        // SAFETY: port field is at the same offset in both union variants
-        u16::from_be(unsafe { self._addr.sin.port })
+        u16::from_be(self._addr.port_raw())
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -589,12 +586,7 @@ impl SocketAddress {
     /// ## References
     /// - [RFC 6437](https://tools.ietf.org/html/rfc6437)
     pub fn flow_label(&self) -> Option<u32> {
-        if self.family() == AF::INET6 {
-            // SAFETY: family() == INET6 guarantees the `sin6` union variant is active.
-            Some(unsafe { self._addr.sin6 }.flowinfo)
-        } else {
-            None
-        }
+        self._addr.as_sin6().map(|s| s.flowinfo)
     }
 
     pub fn socklen(&self) -> inet::socklen_t {
@@ -682,16 +674,12 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
 impl SocketAddress {
     #[inline]
     fn as_v4(&self) -> &inet::sockaddr_in {
-        debug_assert!(self.family() == AF::INET);
-        // SAFETY: family() == INET guarantees sin variant is active
-        unsafe { &self._addr.sin }
+        self._addr.as_sin().expect("family() == INET")
     }
 
     #[inline]
     fn as_v6(&self) -> &inet::sockaddr_in6 {
-        debug_assert!(self.family() == AF::INET6);
-        // SAFETY: family() == INET6 guarantees sin6 variant is active
-        unsafe { &self._addr.sin6 }
+        self._addr.as_sin6().expect("family() == INET6")
     }
 }
 
@@ -776,6 +764,51 @@ pub union sockaddr {
 }
 
 impl sockaddr {
+    // ── Tagged-union safe accessors ───────────────────────────────────────
+    // `sockaddr_in` and `sockaddr_in6` share a common prefix (`sin_family`,
+    // `sin_port`); reading those fields via the `sin` projection is sound for
+    // either active variant. Centralizing the `unsafe` here removes per-site
+    // blocks across `SocketAddress` getters.
+
+    /// Raw `sa_family_t` from the shared prefix — valid for either variant.
+    #[inline]
+    pub fn family_raw(&self) -> inet::sa_family_t {
+        // SAFETY: `family` is the first field of both `sockaddr_in` and
+        // `sockaddr_in6` at the same offset/type; reading through `sin` is
+        // well-defined regardless of which variant was written.
+        unsafe { self.sin.family }
+    }
+
+    /// Raw network-byte-order port from the shared prefix — valid for either variant.
+    #[inline]
+    pub fn port_raw(&self) -> inet::in_port_t {
+        // SAFETY: `port` follows `family` in both `sockaddr_in` and
+        // `sockaddr_in6` at the same offset/type.
+        unsafe { self.sin.port }
+    }
+
+    /// Tag-checked borrow of the IPv4 payload.
+    #[inline]
+    pub fn as_sin(&self) -> Option<&inet::sockaddr_in> {
+        if self.family_raw() as u16 == inet::AF_INET as u16 {
+            // SAFETY: family == AF_INET ⇒ `sin` is the active variant.
+            Some(unsafe { &self.sin })
+        } else {
+            None
+        }
+    }
+
+    /// Tag-checked borrow of the IPv6 payload.
+    #[inline]
+    pub fn as_sin6(&self) -> Option<&inet::sockaddr_in6> {
+        if self.family_raw() as u16 == inet::AF_INET6 as u16 {
+            // SAFETY: family == AF_INET6 ⇒ `sin6` is the active variant.
+            Some(unsafe { &self.sin6 })
+        } else {
+            None
+        }
+    }
+
     pub const fn v4(port_: inet::in_port_t, addr: u32) -> sockaddr {
         sockaddr {
             sin: inet::sockaddr_in {
@@ -808,15 +841,11 @@ impl sockaddr {
     }
 
     pub fn as_v4(&self) -> Option<u32> {
-        // SAFETY: family field is at the same offset in both variants
-        let fam = unsafe { self.sin.family };
-        if fam == inet::AF_INET as inet::sa_family_t {
-            // SAFETY: fam == INET guarantees sin variant is active
-            return Some(unsafe { self.sin.addr });
+        if let Some(sin) = self.as_sin() {
+            return Some(sin.addr);
         }
-        if fam == inet::AF_INET6 as inet::sa_family_t {
-            // SAFETY: fam == INET6 guarantees sin6 variant is active
-            let sin6_addr = unsafe { &self.sin6.addr };
+        if let Some(sin6) = self.as_sin6() {
+            let sin6_addr = &sin6.addr;
             if !sin6_addr[0..10].iter().all(|&b| b == 0) { return None; }
             if sin6_addr[10] != 255 { return None; }
             if sin6_addr[11] != 255 { return None; }
@@ -826,8 +855,7 @@ impl sockaddr {
     }
 
     pub fn family(&self) -> AF {
-        // SAFETY: family field is at the same offset in both variants
-        match unsafe { self.sin.family } {
+        match self.family_raw() {
             v if v == inet::AF_INET as inet::sa_family_t => AF::INET,
             v if v == inet::AF_INET6 as inet::sa_family_t => AF::INET6,
             _ => unreachable!(),
@@ -849,7 +877,7 @@ impl sockaddr {
         // std.mem.sliceTo(..., 0)
         let len = buf.iter().position(|&b| b == 0).unwrap();
         // SAFETY: buf[len] == 0 written by ares_inet_ntop above
-        let formatted = unsafe { ZStr::from_raw(buf.as_ptr(), len) };
+        let formatted = ZStr::from_buf(&buf[..], len);
         let _ = ptr;
         if cfg!(debug_assertions) {
             debug_assert!(bun_str::strings::is_all_ascii(formatted.as_bytes()));

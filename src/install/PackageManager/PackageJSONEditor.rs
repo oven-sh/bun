@@ -433,10 +433,9 @@ pub fn edit_update_no_args(
                                     }
 
                                     let new_version: Vec<u8> = 'new_version: {
-                                        // SAFETY: `resolution.tag == Npm` checked above.
-                                        let version_fmt = unsafe {
-                                            resolution.value.npm.version.fmt(string_buf)
-                                        };
+                                        // `resolution.tag == Npm` checked above.
+                                        let version_fmt =
+                                            resolution.npm().version.fmt(string_buf);
                                         if options.exact_versions {
                                             let mut v = Vec::new();
                                             write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
@@ -1168,18 +1167,14 @@ pub fn edit(
                     if request.version.tag == dependency::Tag::DistTag
                         || (manager.subcommand == Subcommand::Update
                             && request.version.tag == dependency::Tag::Npm
-                            // SAFETY: `tag == Npm` checked just above.
-                            && unsafe { !request.version.value.npm.version.is_exact() })
+                            && !request.version.npm().version.is_exact())
                     {
                         let new_version: Vec<u8> = {
-                            // SAFETY: `tag == Npm` matched at the top of this arm.
-                            let version_fmt = unsafe {
-                                resolutions[request.package_id as usize]
-                                    .value
-                                    .npm
-                                    .version
-                                    .fmt(request.version_buf())
-                            };
+                            // `tag == Npm` matched at the top of this arm.
+                            let version_fmt = resolutions[request.package_id as usize]
+                                .npm()
+                                .version
+                                .fmt(request.version_buf());
                             let mut v = Vec::new();
                             if options.exact_versions {
                                 write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");

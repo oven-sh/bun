@@ -27,7 +27,7 @@ fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
-    let filepath = unsafe { ZStr::from_raw(buf.as_ptr(), len) };
+    let filepath = ZStr::from_buf(&buf[..], len);
     if !bun_sys::is_executable_file_path(filepath) {
         return None;
     }
@@ -66,7 +66,7 @@ pub fn which<'a>(
         buf[result_converted_len] = 0;
         debug_assert!(result_converted_ptr == buf.as_ptr());
         // SAFETY: buf[result_converted_len] == 0 written above
-        return Some(unsafe { ZStr::from_raw(buf.as_ptr(), result_converted_len) });
+        return Some(ZStr::from_buf(&buf[..], result_converted_len));
     }
 
     #[cfg(not(windows))]
@@ -101,7 +101,7 @@ pub fn which<'a>(
                     strings::without_prefix_comptime(bin, b"./"),
                 ) {
                     // SAFETY: is_valid wrote NUL at buf[len]
-                    return Some(unsafe { ZStr::from_raw(buf.as_ptr(), len as usize) });
+                    return Some(ZStr::from_buf(&buf[..], len as usize));
                 }
             }
             // Do not lookup paths with slashes in $PATH
@@ -111,7 +111,7 @@ pub fn which<'a>(
         for segment in path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty()) {
             if let Some(len) = is_valid(buf, segment, bin) {
                 // SAFETY: is_valid wrote NUL at buf[len]
-                return Some(unsafe { ZStr::from_raw(buf.as_ptr(), len as usize) });
+                return Some(ZStr::from_buf(&buf[..], len as usize));
             }
         }
 
@@ -163,7 +163,7 @@ fn search_bin(
             // On Windows, files without extensions are not executable
             // Therefore, we should only care about this check when the file already has an extension.
             // SAFETY: caller wrote NUL at buf[path_size]
-            if bun_sys::exists_os_path(unsafe { WStr::from_raw(buf.as_ptr(), path_size) }, true) {
+            if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), true) {
                 return Some(&mut buf[..path_size]);
             }
         }
@@ -175,7 +175,7 @@ fn search_bin(
                 buf[path_size + 1..path_size + 1 + 3].copy_from_slice(ext);
                 // SAFETY: buf[path_size + 1 + ext.len()] == 0 written above
                 if bun_sys::exists_os_path(
-                    unsafe { WStr::from_raw(buf.as_ptr(), path_size + 1 + ext.len()) },
+                    WStr::from_buf(&buf[..], path_size + 1 + ext.len()),
                     true,
                 ) {
                     return Some(&mut buf[..path_size + 1 + ext.len()]);

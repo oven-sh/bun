@@ -316,9 +316,7 @@ impl SubscriptionCtx {
         // SAFETY: callback runs on the JS thread; VM is alive for the duration.
         let vm = VirtualMachine::get().as_mut();
         let event_loop = vm.event_loop();
-        // SAFETY: VM-owned; non-null on the JS thread.
-        unsafe { (*event_loop).enter() };
-        let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
+        let _exit = vm.enter_event_loop_scope();
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
@@ -967,10 +965,7 @@ impl JSValkeyClient {
                         format_args!(" {} connecting to Valkey", err.name()),
                     )
                     .to_js();
-                let event_loop = self.vm().event_loop();
-                // SAFETY: VM-owned event loop, non-null on the JS thread.
-                unsafe { (*event_loop).enter() };
-                let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
+                let _exit = self.vm().enter_event_loop_scope();
                 promise_ptr.reject(global_object, Ok(err_value))?;
                 return Ok(promise);
             }
@@ -1242,10 +1237,7 @@ impl JSValkeyClient {
             (*p).update_poll_ref();
         });
         let global_object = self.global_object;
-        let event_loop = self.vm().event_loop();
-        // SAFETY: VM-owned; non-null on the JS thread.
-        unsafe { (*event_loop).enter() };
-        let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
+        let _exit = self.vm().enter_event_loop_scope();
 
         if let Some(this_value) = self.this_value.try_get() {
             let hello_value: JSValue = 'js_hello: {
@@ -1324,10 +1316,7 @@ impl JSValkeyClient {
         }
 
         let global_object = self.global_object;
-        let event_loop = self.vm().event_loop();
-        // SAFETY: VM-owned; non-null on the JS thread.
-        unsafe { (*event_loop).enter() };
-        let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
+        let _exit = self.vm().enter_event_loop_scope();
 
         // The message push should be an array with [channel, message]
         if value.len() < 2 {
@@ -1396,10 +1385,7 @@ impl JSValkeyClient {
             protocol::RedisError::ConnectionClosed,
         );
 
-        let loop_ = self.vm().event_loop();
-        // SAFETY: VM-owned; non-null on the JS thread.
-        unsafe { (*loop_).enter() };
-        let _exit = scopeguard::guard(loop_, |el| unsafe { (*el).exit() });
+        let _exit = self.vm().enter_event_loop_scope();
 
         if !this_jsvalue.is_undefined() {
             if let Some(promise) = Js::connection_promise_get_cached(this_jsvalue) {
@@ -1438,10 +1424,7 @@ impl JSValkeyClient {
         };
         let global_object = self.global_object;
         if let Some(on_close) = Js::onclose_get_cached(this_value) {
-            let loop_ = self.vm().event_loop();
-            // SAFETY: VM-owned; non-null on the JS thread.
-            unsafe { (*loop_).enter() };
-            let _exit = scopeguard::guard(loop_, |el| unsafe { (*el).exit() });
+            let _exit = self.vm().enter_event_loop_scope();
             if let Err(e) = on_close.call(&global_object, this_value, &[value]) {
                 global_object.report_active_exception_as_unhandled(e);
             }
@@ -1646,10 +1629,7 @@ impl JSValkeyClient {
                     )
                     .to_js();
                 let promise = JSPromise::create(global_this);
-                let event_loop = self.vm().event_loop();
-                // SAFETY: VM-owned; non-null on the JS thread.
-                unsafe { (*event_loop).enter() };
-                let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
+                let _exit = self.vm().enter_event_loop_scope();
                 promise.reject(global_this, Ok(err_value))?;
                 return Ok(promise);
             }
@@ -1946,10 +1926,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         err_value: JSValue,
     ) -> JsTerminatedResult<()> {
         this.client.flags.is_authenticated = false;
-        let loop_ = this.vm().event_loop();
-        // SAFETY: VM-owned; non-null on the JS thread.
-        unsafe { (*loop_).enter() };
-        let _exit = scopeguard::guard(loop_, |el| unsafe { (*el).exit() });
+        let _exit = this.vm().enter_event_loop_scope();
         this.client.flags.is_manually_closed = true;
         let this_ptr = std::ptr::from_mut::<JSValkeyClient>(this);
         let _close = scopeguard::guard(this_ptr, |p| unsafe { (*p).client.close() });

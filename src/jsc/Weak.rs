@@ -26,15 +26,16 @@ impl WeakImpl {
         ref_type: WeakRefType,
         ctx: Option<NonNull<c_void>>,
     ) -> NonNull<WeakImpl> {
-        // SAFETY: Bun__WeakRef__new never returns null.
-        unsafe {
-            NonNull::new_unchecked(Bun__WeakRef__new(
+        // SAFETY: FFI call; `global_this` is a live JSGlobalObject.
+        NonNull::new(unsafe {
+            Bun__WeakRef__new(
                 global_this,
                 value,
                 ref_type,
                 ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
-            ))
-        }
+            )
+        })
+        .expect("Bun__WeakRef__new returned null")
     }
 
     pub unsafe fn get(this: NonNull<WeakImpl>) -> JSValue {

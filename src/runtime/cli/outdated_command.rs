@@ -285,10 +285,9 @@ impl OutdatedCommand {
                             let res = &pkg_resolutions[workspace_pkg_id as usize];
                             let res_path: &[u8] = match res.tag {
                                 resolution::Tag::Workspace => {
-                                    // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
                                     // Borrow the field in-place so the returned slice (which may
                                     // point into the inline small-string storage) stays valid.
-                                    unsafe { &res.value.workspace }.slice(string_buf)
+                                    res.workspace().slice(string_buf)
                                 }
                                 resolution::Tag::Root => top_level_dir,
                                 _ => unreachable!(),
@@ -567,24 +566,21 @@ impl OutdatedCommand {
                     manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
 
                 let update_version = if resolved_version.tag == dependency::Tag::Npm {
-                    // SAFETY: tag == Npm ⇒ `value.npm` active.
                     manifest.find_best_version_with_filter(
-                        unsafe { &resolved_version.value.npm.version },
+                        &resolved_version.npm().version,
                         string_buf,
                         min_age_ms,
                         excludes,
                     )
                 } else {
-                    // SAFETY: tag == DistTag ⇒ `value.dist_tag` active.
                     manifest.find_by_dist_tag_with_filter(
-                        unsafe { resolved_version.value.dist_tag }.tag.slice(string_buf),
+                        resolved_version.dist_tag().tag.slice(string_buf),
                         min_age_ms,
                         excludes,
                     )
                 };
 
-                // SAFETY: resolution.tag == Npm ⇒ `value.npm` active.
-                let current_version = unsafe { resolution.value.npm }.version;
+                let current_version = resolution.npm().version;
                 if current_version.order(
                     actual_latest.version,
                     string_buf,
@@ -774,24 +770,22 @@ impl OutdatedCommand {
                     continue;
                 };
                 let update = if resolved_version.tag == dependency::Tag::Npm {
-                    // SAFETY: tag == Npm ⇒ `value.npm` active.
                     manifest.find_best_version_with_filter(
-                        unsafe { &resolved_version.value.npm.version },
+                        &resolved_version.npm().version,
                         string_buf,
                         min_age_ms,
                         excludes,
                     )
                 } else {
-                    // SAFETY: tag == DistTag ⇒ `value.dist_tag` active.
                     manifest.find_by_dist_tag_with_filter(
-                        unsafe { resolved_version.value.dist_tag }.tag.slice(string_buf),
+                        resolved_version.dist_tag().tag.slice(string_buf),
                         min_age_ms,
                         excludes,
                     )
                 };
 
-                // SAFETY: resolution.tag == Npm (verified in first pass).
-                let current_version = unsafe { resolution.value.npm }.version;
+                // resolution.tag == Npm (verified in first pass).
+                let current_version = resolution.npm().version;
 
                 table.print_line_separator();
 

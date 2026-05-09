@@ -19,7 +19,7 @@ use crate::create_bun_socket_error_t;
 #[cfg(unix)]
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // SAFETY: POD, zero-valid — `libc::stat` is all-integer; `stat(2)` writes it.
-    let mut st: libc::stat = unsafe { bun_core::ffi::zeroed() };
+    let mut st: libc::stat = bun_core::ffi::zeroed();
     // SAFETY: `path` is NUL-terminated (ZStr invariant).
     let rc = unsafe { libc::stat(path.as_ptr().cast::<c_char>(), &raw mut st) };
     if rc != 0 {
@@ -51,7 +51,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     }
     wbuf[n] = 0;
     // SAFETY: POD, zero-valid.
-    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = unsafe { bun_core::ffi::zeroed() };
+    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = unsafe { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: `wbuf` is NUL-terminated at `[n]`; `data` is a valid out-ptr.
     let ok = unsafe {
         fs::GetFileAttributesExW(wbuf.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())

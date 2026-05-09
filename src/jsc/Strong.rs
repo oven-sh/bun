@@ -188,8 +188,9 @@ pub struct Impl {
 impl Impl {
     pub fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
         crate::mark_binding!();
-        // SAFETY: Bun__StrongRef__new never returns null (allocates via HandleSet).
-        unsafe { NonNull::new_unchecked(Bun__StrongRef__new(global, value)) }
+        // SAFETY: FFI call; `global` is a live JSGlobalObject.
+        NonNull::new(unsafe { Bun__StrongRef__new(global, value) })
+            .expect("Bun__StrongRef__new returned null")
     }
 
     pub fn get(this: NonNull<Impl>) -> JSValue {

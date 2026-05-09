@@ -28,8 +28,11 @@ mod uv {
 
 bun_output::declare_scope!(WindowsNamedPipeContext, visible);
 
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = schedule_deinit)]
 pub struct WindowsNamedPipeContext {
-    // TODO(port): lifetime — intrusive refcount with custom drop = schedule_deinit
+    // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
+    // immediate `Box::from_raw`.
     ref_count: Cell<u32>,
     // PORT NOTE: `socket` deref'd manually in `Drop` before `named_pipe` field-drop
     // — matches Zig `deinit` order (socket.deref() then named_pipe.deinit()).
@@ -48,26 +51,8 @@ pub struct WindowsNamedPipeContext {
 }
 
 // Intrusive refcount: when count hits zero, calls `schedule_deinit` (NOT immediate free).
-// TODO(port): bun_ptr::IntrusiveRc<Self> with custom on_zero = schedule_deinit
+// `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]` above.
 pub type RefCount = bun_ptr::IntrusiveRc<WindowsNamedPipeContext>;
-
-impl WindowsNamedPipeContext {
-    pub fn ref_(this: *mut Self) {
-        // SAFETY: intrusive refcount; `this` is a live heap allocation managed by IntrusiveRc
-        unsafe { (*this).ref_count.set((*this).ref_count.get() + 1) };
-    }
-
-    pub fn deref(this: *mut Self) {
-        // SAFETY: intrusive refcount; `this` is a live heap allocation managed by IntrusiveRc
-        unsafe {
-            let n = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(n);
-            if n == 0 {
-                schedule_deinit(this);
-            }
-        }
-    }
-}
 
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
     // SAFETY: called from deref() when count hits zero; `this` still live until deinit_in_next_tick fires
@@ -257,7 +242,9 @@ impl WindowsNamedPipeContext {
             SocketType::None => {}
         }
 
-        Self::deref(this);
+        // SAFETY: `this` is the live ctx pointer registered in create();
+        // releasing the named-pipe's ref may schedule deinit.
+        unsafe { Self::deref(this) };
     }
 
     fn run_event(this: *mut Self) {
@@ -300,8 +287,11 @@ impl WindowsNamedPipeContext {
         // schedules deinit; the deref is exclusive for the callback's scope.
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
-            ref_ctx: |p| Self::ref_(p.cast::<Self>()),
-            deref_ctx: |p| Self::deref(p.cast::<Self>()),
+            // SAFETY: `p` is the `ctx` set above (`this.cast()`); the
+            // WindowsNamedPipe never invokes a handler after `on_close`
+            // schedules deinit, so the allocation is live for the call.
+            ref_ctx: |p| unsafe { (*p.cast::<Self>()).ref_() },
+            deref_ctx: |p| unsafe { Self::deref(p.cast::<Self>()) },
             on_open: |p| unsafe { (*p.cast::<Self>()).on_open() },
             on_data: |p, d| unsafe { (*p.cast::<Self>()).on_data(d) },
             on_handshake: |p, ok, err| unsafe { (*p.cast::<Self>()).on_handshake(ok, err) },
@@ -394,7 +384,9 @@ impl WindowsNamedPipeContext {
                 }
                 SocketType::None => {}
             }
-            Self::deref(this);
+            // SAFETY: `this` was just returned from `create()` (refcount==1);
+            // release the only ref on the errdefer path.
+            unsafe { Self::deref(this) };
         });
 
         // SAFETY: `this` is live and exclusively accessed here
@@ -429,7 +421,9 @@ impl WindowsNamedPipeContext {
                 }
                 SocketType::None => {}
             }
-            Self::deref(this);
+            // SAFETY: `this` was just returned from `create()` (refcount==1);
+            // release the only ref on the errdefer path.
+            unsafe { Self::deref(this) };
         });
 
         // SAFETY: `this` is live and exclusively accessed here
@@ -438,7 +432,7 @@ impl WindowsNamedPipeContext {
         if path[path.len() - 1] == 0 {
             // is already null terminated
             // SAFETY: path[path.len()-1] == 0 checked above
-            let slice_z = unsafe { ZStr::from_raw(path.as_ptr(), path.len() - 1) };
+            let slice_z = ZStr::from_slice_with_nul(&path[..]);
             named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
         } else {
             let mut path_buf = PathBuffer::uninit();
@@ -448,7 +442,7 @@ impl WindowsNamedPipeContext {
             path_buf[..len].copy_from_slice(&path[..len]);
             path_buf[len] = 0;
             // SAFETY: path_buf[len] == 0 written above
-            let slice_z = unsafe { ZStr::from_raw(path_buf.as_ptr(), len) };
+            let slice_z = ZStr::from_buf(&path_buf[..], len);
             named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
         }
 

@@ -28,6 +28,42 @@ use core::ptr::NonNull;
 
 use crate::{us_socket_t, ConnectingSocket};
 
+/// Marker for `#[repr(C)]` zero-sized opaque FFI handles
+/// (`UnsafeCell<[u8; 0]>` + `PhantomPinned`).
+///
+/// uWS hands us raw pointers to C++-owned objects that Rust models as ZST
+/// opaques: the `&mut Self` exists only to hang inherent methods off and is
+/// immediately re-erased to `*mut` at the FFI boundary. Because `Self` is
+/// zero-sized with align 1, **any** non-null pointer is trivially
+/// dereferenceable (zero bytes accessed) and `&mut Self` cannot alias any
+/// Rust-visible memory — so [`Self::as_handle`] is a *safe* fn even though it
+/// wraps `&mut *p`.
+///
+/// This is what lets `AnyResponse` be a plain `Copy` enum of raw pointers
+/// whose method bodies dispatch per-variant without an `unsafe` block at
+/// every call site (S019).
+///
+/// # Safety
+/// Implementor MUST be a `#[repr(C)]` zero-sized type with alignment 1 that
+/// owns no Rust bytes (i.e. an opaque-extern-type stand-in). Both invariants
+/// are additionally enforced at compile time by `const { assert! }` in
+/// [`Self::as_handle`], so a bad impl fails to build rather than causing UB.
+pub unsafe trait OpaqueHandle: Sized {
+    /// Re-type a raw uWS handle as `&mut Self` without `unsafe` at the call
+    /// site. See the trait docs for why this is sound for ZST opaques.
+    #[inline(always)]
+    fn as_handle<'a>(p: *mut Self) -> &'a mut Self {
+        const { assert!(core::mem::size_of::<Self>() == 0, "OpaqueHandle impl must be a ZST") };
+        const { assert!(core::mem::align_of::<Self>() == 1, "OpaqueHandle impl must be align-1") };
+        debug_assert!(!p.is_null(), "OpaqueHandle::as_handle: null uWS handle");
+        // SAFETY: per trait contract `Self` is a ZST with align 1, so `p` (a
+        // non-null pointer the caller obtained from uWS) is dereferenceable
+        // for zero bytes; the resulting `&mut` covers no memory and so cannot
+        // alias. C++ owns the real object; Rust never reads/writes through it.
+        unsafe { &mut *p }
+    }
+}
+
 /// Conjure a value of a zero-sized handler type.
 ///
 /// Replaces `// SAFETY: H is a ZST → core::mem::zeroed()` repeated at every
@@ -42,7 +78,7 @@ pub unsafe fn zst<H>() -> H {
     const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
     // SAFETY: `H` has zero size (asserted above) and is inhabited per caller
     // contract, so the empty bit-pattern is a valid value.
-    unsafe { bun_core::ffi::zeroed() }
+    unsafe { bun_core::ffi::zeroed_unchecked() }
 }
 
 /// Recover `&mut U` from a uWS user-data word, returning `None` for null.

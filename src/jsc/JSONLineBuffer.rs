@@ -63,18 +63,11 @@ impl JSONLineBuffer {
         if self.head == 0 {
             return;
         }
-        // PORT NOTE: reshaped for borrowck — capture ptr/len instead of holding active_slice()
-        // across the mutable write. Uses ptr::copy (memmove) because src/dst overlap.
         let head = self.head as usize;
-        let active_len = (self.data.len() as usize) - head;
-        // SAFETY: both ranges lie within the same allocation of `data` (cap >= len >= head);
-        // ptr::copy permits overlapping regions (memmove semantics), matching bun.copy.
-        unsafe {
-            let base = self.data.as_mut_ptr();
-            core::ptr::copy(base.add(head), base, active_len);
-        }
+        let active_len = self.data.len() - head;
+        self.data.copy_within(head.., 0);
         debug_assert!((active_len as u64) <= u32::MAX as u64);
-        unsafe { self.data.set_len(active_len) };
+        self.data.truncate(active_len);
         self.head = 0;
     }
 

@@ -19,6 +19,72 @@ use allocators::NOT_FOUND;
 
 pub type Index = IndexType;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DirInfoRef — arena handle into the DirInfo BSSMap singleton.
+//
+// Resolver code threads `*mut DirInfo` (Zig: `*DirInfo`) pervasively and
+// open-coded `unsafe { &*dir_info }` at ~50 read sites. The BSSMap backing
+// store is process-lifetime and append-only (slots are never freed; `reset()`
+// runs only at shutdown after all readers are gone), so a `Copy` handle that
+// `Deref`s to `&DirInfo` is sound: the pointee outlives every holder, and no
+// `&mut DirInfo` is ever materialized concurrently with a read — writes happen
+// only inside `dir_info_uncached` while filling a freshly-`put` slot, before
+// any handle to that slot escapes. All access is additionally serialized under
+// the resolver mutex.
+//
+// `as_ptr()` exposes the raw `*mut` for the few callers that still need it
+// (the `dir_info_uncached` fill path and `MatchResult.dir_info` round-trip).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Non-owning, `Copy` handle to a `DirInfo` slot in the BSSMap singleton.
+/// `Deref<Target = DirInfo>` so call sites read `dir.abs_path` instead of
+/// `unsafe { &*dir }.abs_path`.
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+pub struct DirInfoRef(NonNull<DirInfo>);
+
+impl DirInfoRef {
+    /// Wrap a raw BSSMap slot pointer.
+    ///
+    /// # Safety
+    /// `p` must be non-null and point to a `DirInfo` slot owned by the
+    /// process-lifetime BSSMap singleton (`HashMap` below) — i.e. obtained
+    /// from `BSSMapInner::put` / `at_index`. The slot must remain live for
+    /// the entire lifetime of every copy of the returned handle (always true
+    /// for BSSMap slots: they are never individually freed).
+    #[inline]
+    pub const unsafe fn from_raw(p: *mut DirInfo) -> Self {
+        // SAFETY: caller contract — `p` is a non-null BSSMap slot.
+        DirInfoRef(unsafe { NonNull::new_unchecked(p) })
+    }
+
+    /// Raw pointer to the underlying slot. Preserves mut-provenance from the
+    /// BSSMap allocation site for the `dir_info_uncached` fill path.
+    #[inline]
+    pub const fn as_ptr(self) -> *mut DirInfo {
+        self.0.as_ptr()
+    }
+}
+
+impl core::ops::Deref for DirInfoRef {
+    type Target = DirInfo;
+    #[inline]
+    fn deref(&self) -> &DirInfo {
+        // SAFETY: ARENA — `self.0` is a slot in the process-lifetime BSSMap
+        // singleton (see type-level doc). The slot is never freed and never
+        // aliased by a live `&mut DirInfo` while a `DirInfoRef` is held:
+        // writes occur only in `dir_info_uncached` against a freshly-`put`
+        // slot before any handle escapes, under the resolver mutex.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::fmt::Debug for DirInfoRef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("DirInfoRef").field(&self.0).finish()
+    }
+}
+
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again
@@ -146,8 +212,7 @@ impl DirInfo {
         let Some(parent) = self.get_parent() else {
             return false;
         };
-        // SAFETY: ARENA — DirInfo ptrs are arena-owned and outlive the resolver.
-        !unsafe { &*parent }.is_node_modules()
+        !parent.is_node_modules()
     }
 
     pub fn get_file_descriptor(&self) -> Fd {
@@ -182,20 +247,20 @@ impl DirInfo {
         }
     }
 
-    pub fn get_parent(&self) -> Option<*mut DirInfo> {
+    pub fn get_parent(&self) -> Option<DirInfoRef> {
         // SAFETY: BSSMap singleton lives for the process; resolver mutex held by caller.
-        unsafe { (*hash_map_instance()).at_index(self.parent).map(|p| std::ptr::from_mut(p)) }
+        // `at_index` yields a slot ptr satisfying `DirInfoRef::from_raw`'s contract.
+        unsafe { (*hash_map_instance()).at_index(self.parent).map(|p| DirInfoRef::from_raw(std::ptr::from_mut(p))) }
     }
 
-    /// Returns a raw `*mut DirInfo` into the BSSMap singleton. The enclosing
-    /// browser scope frequently resolves back to *this* slot (resolver.zig:4161),
-    /// so handing out `&'static mut` here would alias the caller's borrow under
-    /// Stacked Borrows. Callers re-borrow narrowly at the use site.
-    ///
-    /// SAFETY: caller must hold the resolver mutex.
-    pub unsafe fn get_enclosing_browser_scope(&self) -> Option<*mut DirInfo> {
+    /// Handle to the enclosing browser-scope `DirInfo` slot. Frequently
+    /// resolves back to *this* slot (resolver.zig:4161), which is why a
+    /// `Copy` arena handle (not `&mut`) is returned — overlapping shared
+    /// reads through `DirInfoRef::deref` are sound.
+    pub fn get_enclosing_browser_scope(&self) -> Option<DirInfoRef> {
         // SAFETY: BSSMap singleton lives for the process; resolver mutex held by caller.
-        unsafe { (*hash_map_instance()).at_index(self.enclosing_browser_scope).map(|p| std::ptr::from_mut(p)) }
+        // `at_index` yields a slot ptr satisfying `DirInfoRef::from_raw`'s contract.
+        unsafe { (*hash_map_instance()).at_index(self.enclosing_browser_scope).map(|p| DirInfoRef::from_raw(std::ptr::from_mut(p))) }
     }
 }
 

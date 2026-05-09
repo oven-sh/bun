@@ -1673,7 +1673,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         buf[path_len] = 0;
 
         // SAFETY: buf[path_len] == 0 written above
-        let buf_z = unsafe { bun_str::ZStr::from_raw(buf.as_ptr(), path_len) };
+        let buf_z = bun_str::ZStr::from_buf(&buf[..], path_len);
 
         // PORT NOTE: Zig used `std.c.MAP{ .TYPE = .SHARED }` (a packed bitfield
         // struct). Rust libc exposes raw `MAP_*` ints; build the flag word

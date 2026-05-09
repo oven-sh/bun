@@ -517,9 +517,7 @@ impl Builtin {
                     v
                 };
                 // SAFETY: `path_buf` ends in NUL by construction.
-                let path = unsafe {
-                    bun_core::ZStr::from_raw(path_buf.as_ptr(), path_buf.len() - 1)
-                };
+                let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;
@@ -719,9 +717,7 @@ impl Builtin {
                     if redirect.stderr() {
                         me.stderr = BuiltinIO::Blob(blob.clone());
                     }
-                } else if let Some(blob_ptr) = jsval.as_::<crate::webcore::Blob>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Blob`.
-                    let blob_ref = unsafe { &*blob_ptr };
+                } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     if (redirect.stdout() || redirect.stderr()) && !blob_ref.needs_to_read_file() {
                         let _ = global.throw(format_args!(
                             "Cannot redirect stdout/stderr to an immutable blob. Expected a file"

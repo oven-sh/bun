@@ -2118,7 +2118,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         Err(err) => {
             if !unsafe { (*process).has_exited() } {
                 // SAFETY: all-zero is a valid Rusage.
-                let rusage = unsafe { core::mem::zeroed::<Rusage>() };
+                let rusage = bun_core::ffi::zeroed::<Rusage>();
                 unsafe { (*process).on_exit(Status::Err(err), &rusage) };
             }
         }
@@ -2838,8 +2838,8 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Result<&'
     cursor.write_fmt(args).map_err(|_| core::fmt::Error)?;
     let remaining = cursor.len();
     let written = total - remaining;
-    // SAFETY: `written` bytes at the start of `buf` were just initialized.
-    Ok(unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) })
+    // NLL ends `cursor`'s reborrow here; safe sub-slice of the owning buffer.
+    Ok(&buf[..written])
 }
 
 // ported from: src/runtime/api/cron.zig

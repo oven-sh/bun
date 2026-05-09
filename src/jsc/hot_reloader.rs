@@ -969,9 +969,7 @@ where
                                             name_buf[..basename.len()].copy_from_slice(basename);
                                             name_buf[basename.len()] = 0;
                                             // SAFETY: name_buf[..=basename.len()] is NUL-terminated.
-                                            let z = unsafe {
-                                                ZStr::from_raw(name_buf.as_ptr(), basename.len())
-                                            };
+                                            let z = ZStr::from_buf(&name_buf[..], basename.len());
                                             bun_sys::faccessat(
                                                 file_descriptors[event.index as usize],
                                                 z,
@@ -1007,12 +1005,7 @@ where
                                                         .copy_from_slice(affected_path);
                                                     zbuf[affected_path.len()] = 0;
                                                     // SAFETY: zbuf is NUL-terminated at len.
-                                                    let z = unsafe {
-                                                        ZStr::from_raw(
-                                                            zbuf.as_ptr(),
-                                                            affected_path.len(),
-                                                        )
-                                                    };
+                                                    let z = ZStr::from_buf(&zbuf[..], affected_path.len(),);
                                                     bun_sys::access(z, libc::F_OK).is_err()
                                                 }
                                             };

@@ -694,7 +694,7 @@ pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr
     // PORT NOTE: reshaped for borrowck — drop `rel` borrow before mutating buf
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
-    unsafe { ZStr::from_raw(buf.as_ptr(), len) }
+    ZStr::from_buf(&buf[..], len)
 }
 
 pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
@@ -1816,11 +1816,11 @@ pub fn join_abs_string_buf_z_trailing_slash<'a, P: PlatformT>(
         buf[out_len] = P::P.separator();
         buf[out_len + 1] = 0;
         // SAFETY: NUL written at out_len + 1
-        return unsafe { ZStr::from_raw(buf.as_ptr(), out_len + 1) };
+        return ZStr::from_buf(&buf[..], out_len + 1);
     }
 
     // SAFETY: NUL written at out_len by _join_abs_string_buf::<true, _>
-    unsafe { ZStr::from_raw(buf.as_ptr(), out_len) }
+    ZStr::from_buf(&buf[..], out_len)
 }
 
 // TODO(port): Zig used `comptime ReturnType: type` to vary `[:0]const u8` vs
@@ -2485,7 +2485,7 @@ impl PosixToWinNormalizer {
                     buf[source_root.len() + mp.len() - 1] = 0;
                     let len = source_root.len() + mp.len() - 1;
                     // SAFETY: NUL written at buf[len]
-                    let res = unsafe { ZStr::from_raw(buf.as_ptr(), len) };
+                    let res = ZStr::from_buf(&buf[..], len);
                     debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(
                         res.as_bytes()
                     ));

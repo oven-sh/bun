@@ -58,9 +58,8 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [
     cursor.write_fmt(args).expect("unreachable");
     let remaining = cursor.len();
     let written = total - remaining;
-    // PORT NOTE: reshaped for borrowck — re-slice from original buffer
-    // SAFETY: `written` bytes were just written contiguously from buf[0]
-    unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr(), written) }
+    // NLL ends `cursor`'s reborrow here; safe sub-slice of the owning buffer.
+    &mut buf[..written]
 }
 
 pub fn view(

@@ -783,8 +783,7 @@ impl FileSink {
                 bun_event_loop::task_tag::FlushPendingFileSinkTask,
                 (&raw mut self.run_pending_later).cast::<()>(),
             );
-            // SAFETY: `owner` is the erased live `*mut jsc::EventLoop`.
-            unsafe { bun_event_loop::any_event_loop::js::enqueue_task(owner, task) };
+            owner.enqueue_task(task);
         }
     }
 

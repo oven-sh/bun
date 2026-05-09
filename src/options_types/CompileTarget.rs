@@ -199,10 +199,9 @@ impl CompileTarget {
         match res {
             Ok(()) => {
                 let remaining = cursor.len();
-                // PORT NOTE: reshaped for borrowck — re-slice via raw len arithmetic
                 let written = total - remaining;
-                // SAFETY: cursor is a suffix of buf; written = total - remaining is in-bounds
-                Ok(unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) })
+                // NLL ends `cursor`'s reborrow here; safe sub-slice of the owning buffer.
+                Ok(&buf[..written])
             }
             Err(e) => {
                 // Catch buffer overflow or other formatting errors
@@ -230,7 +229,7 @@ impl CompileTarget {
                 buf[self_exe_path.len()] = 0;
                 *needs_download = false;
                 // SAFETY: buf[self_exe_path.len()] == 0 written above
-                return unsafe { ZStr::from_raw(buf.as_ptr(), self_exe_path.len()) };
+                return ZStr::from_buf(&buf[..], self_exe_path.len());
             }
         }
 

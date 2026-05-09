@@ -387,9 +387,7 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
         js::source_js_set_cached(this_value, global, value);
         return Ok(Source::JsBuffer);
     }
-    if let Some(blob) = value.as_::<Blob>() {
-        // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `value`.
-        let blob = unsafe { &*blob };
+    if let Some(blob) = value.as_class_ref::<Blob>() {
         // In-memory blob: dupe its bytes (the store may be sliced/replaced
         // independently).
         let view = blob.shared_view();
@@ -1081,11 +1079,9 @@ impl Image {
         if let Source::Blob(strong) = &self.source {
             const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
             let blob_js = strong.get();
-            let Some(blob) = blob_js.as_::<Blob>() else {
+            let Some(blob) = blob_js.as_class_ref::<Blob>() else {
                 return Err(global.throw(format_args!("{REFUSE}")));
             };
-            // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
-            let blob = unsafe { &*blob };
             // Braced so the `else` can't dangle onto the inner `if` — a null
             // store would otherwise fall through to `pin_for_task`'s `.blob =>
             // unreachable`. (The Strong-held wrapper makes that nominally

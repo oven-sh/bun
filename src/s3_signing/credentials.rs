@@ -1281,8 +1281,8 @@ pub fn encode_uri_component<'b, const ENCODE_SLASH: bool>(
         }
     }
 
-    // SAFETY: `written <= buffer.len()` by construction; reborrow as immutable.
-    Ok(unsafe { core::slice::from_raw_parts(buffer.as_ptr(), written) })
+    // `written <= buffer.len()` by construction; safe sub-slice of the owning buffer.
+    Ok(&buffer[..written])
 }
 
 fn normalize_name(name: &[u8]) -> &[u8] {

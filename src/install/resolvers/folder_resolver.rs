@@ -49,10 +49,9 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
         let mut joined = [0u8; MAX_PATH_BYTES + 2];
         // Zig: `getPtr(@truncate(String.Builder.stringHash(...)))` — key type is
         // `PackageNameHash` (u64), so the @truncate is identity.
-        // SAFETY: caller constructs this formatter only when
-        // `self.version.tag == .workspace`, so the `workspace` union arm is
-        // initialized (Zig: `formatter.version.value.workspace`).
-        let workspace = unsafe { &self.version.value.workspace };
+        // Caller constructs this formatter only when
+        // `self.version.tag == .workspace` (Zig: `formatter.version.value.workspace`).
+        let workspace = self.version.workspace();
         let str_to_use = self
             .manager
             .lockfile
@@ -469,10 +468,10 @@ pub fn get_or_put(
         },
         GlobalOrRelative::CacheFolder(_) => 'cache_folder: {
             let mut resolver = CacheFolderResolver {
-                // SAFETY: `GlobalOrRelative::CacheFolder` is only passed by
+                // `GlobalOrRelative::CacheFolder` is only passed by
                 // `PackageManagerResolution` with a `version.tag == .npm`
                 // dependency (Zig: `version.value.npm.version.toVersion()`).
-                version: unsafe { version.value.npm.version.to_version() },
+                version: version.npm().version.to_version(),
             };
             break 'cache_folder read_package_json_from_disk(
                 manager,

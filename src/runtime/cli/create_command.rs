@@ -1612,7 +1612,7 @@ impl CreateCommand {
                 let len = outdir_path.len();
                 home_dir_buf[len] = 0;
                 // SAFETY: home_dir_buf[len] == 0 written above
-                let outdir_path_ = unsafe { bun_str::ZStr::from_raw(home_dir_buf.as_ptr(), len) };
+                let outdir_path_ = bun_str::ZStr::from_buf(&home_dir_buf[..], len);
                 if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                     break 'outer;
                 }
@@ -1643,7 +1643,7 @@ impl CreateCommand {
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = unsafe { bun_str::ZStr::from_raw(home_dir_buf.as_ptr(), len) };
+                        let outdir_path_ = bun_str::ZStr::from_buf(&home_dir_buf[..], len);
                         if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
@@ -1660,7 +1660,7 @@ impl CreateCommand {
                     let len = outdir_path.len();
                     home_dir_buf[len] = 0;
                     // SAFETY: home_dir_buf[len] == 0 written above
-                    let outdir_path_ = unsafe { bun_str::ZStr::from_raw(home_dir_buf.as_ptr(), len) };
+                    let outdir_path_ = bun_str::ZStr::from_buf(&home_dir_buf[..], len);
                     if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                         break 'outer;
                     }
@@ -1678,7 +1678,7 @@ impl CreateCommand {
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = unsafe { bun_str::ZStr::from_raw(home_dir_buf.as_ptr(), len) };
+                        let outdir_path_ = bun_str::ZStr::from_buf(&home_dir_buf[..], len);
                         if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
@@ -1773,12 +1773,12 @@ fn file_copier_copy(
             dst_buf[dst_base_len..][..entry.path.len()].copy_from_slice(entry.path);
             dst_buf[dst_base_len + entry.path.len()] = 0;
             // SAFETY: NUL written at [dst_base_len + entry.path.len()]
-            let dst = unsafe { bun_str::WStr::from_raw(dst_buf.as_ptr(), dst_base_len + entry.path.len()) };
+            let dst = bun_str::WStr::from_buf(&dst_buf[..], dst_base_len + entry.path.len());
 
             src_buf[src_base_len..][..entry.path.len()].copy_from_slice(entry.path);
             src_buf[src_base_len + entry.path.len()] = 0;
             // SAFETY: NUL written at [src_base_len + entry.path.len()]
-            let src = unsafe { bun_str::WStr::from_raw(src_buf.as_ptr(), src_base_len + entry.path.len()) };
+            let src = bun_str::WStr::from_buf(&src_buf[..], src_base_len + entry.path.len());
 
             match entry.kind {
                 bun_sys::FileKind::Directory => {

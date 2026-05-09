@@ -16,15 +16,15 @@ use bun_sys;
 fn create_js_string_t<T: PathChar>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
     use crate::jsc::{bun_string_jsc, StringJsc as _};
     if T::IS_U16 {
-        // SAFETY: T == u16 when IS_U16; same layout as &[u16].
-        let s16: &[u16] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len()) };
+        // T == u16 when IS_U16; bytemuck statically checks the layout.
+        let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
         let bs = bun_str::String::clone_utf16(s16);
         let r = bs.to_js(global);
         bs.deref();
         r
     } else {
-        // SAFETY: T == u8 when !IS_U16; same layout as &[u8].
-        let s8: &[u8] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) };
+        // T == u8 when !IS_U16; bytemuck statically checks the layout.
+        let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
         bun_string_jsc::create_utf8_for_js(global, s8)
     }
 }
@@ -60,7 +60,7 @@ const STACK_FALLBACK_SIZE_SMALL: usize = MAX_PATH_BYTES;
 
 /// Trait bound for path character types (`u8` or `u16`).
 /// Mirrors Zig's `comptime T: type` constraint via `validatePathT`.
-pub trait PathChar: Copy + Eq + Ord + Default + 'static {
+pub trait PathChar: Copy + Eq + Ord + Default + bytemuck::Pod + 'static {
     const IS_U16: bool;
     fn from_u8(c: u8) -> Self;
     fn as_u32(self) -> u32;
@@ -160,9 +160,9 @@ fn l<T: PathChar>(s: &'static [u8]) -> &'static [T] {
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eql_ignore_case_t<T: PathChar>(a: &[T], b: &[T]) -> bool {
     if !T::IS_U16 {
-        // SAFETY: T == u8 when !IS_U16; same layout as &[u8].
-        let a8: &[u8] = unsafe { core::slice::from_raw_parts(a.as_ptr().cast(), a.len()) };
-        let b8: &[u8] = unsafe { core::slice::from_raw_parts(b.as_ptr().cast(), b.len()) };
+        // T == u8 when !IS_U16; bytemuck statically checks the layout.
+        let a8: &[u8] = bytemuck::cast_slice::<T, u8>(a);
+        let b8: &[u8] = bytemuck::cast_slice::<T, u8>(b);
         return strings::eql_case_insensitive_ascii(a8, b8, true);
     }
     // Zig's `eqlIgnoreCaseT` body for `T == u16` falls through with no return (UB if reached);
@@ -278,20 +278,18 @@ pub const SEP_WINDOWS: u8 = CHAR_BACKWARD_SLASH;
 pub const SEP_STR_POSIX: &[u8] = CHAR_STR_FORWARD_SLASH;
 pub const SEP_STR_WINDOWS: &[u8] = CHAR_STR_BACKWARD_SLASH;
 
-/// Helper: `bun.memmove(dst, src)` — handles overlap (memmove semantics).
+/// Helper: `bun.memmove(dst, src)` — equal-length copy.
+/// (Rust's borrow rules forbid `&mut [T]`/`&[T]` overlap, so memmove ⇒ memcpy.)
 #[inline]
 fn memmove<T: Copy>(dst: &mut [T], src: &[T]) {
-    debug_assert_eq!(dst.len(), src.len());
-    // SAFETY: lengths equal; ptr::copy handles overlap.
-    unsafe { core::ptr::copy(src.as_ptr(), dst.as_mut_ptr(), src.len()) };
+    dst.copy_from_slice(src);
 }
 
-/// Helper: `bun.copy(T, dst, src)` — `dst.len() >= src.len()`, handles overlap.
+/// Helper: `bun.copy(T, dst, src)` — `dst.len() >= src.len()`.
+/// (Rust's borrow rules forbid `&mut [T]`/`&[T]` overlap, so memmove ⇒ memcpy.)
 #[inline]
 fn copy_overlapping<T: Copy>(dst: &mut [T], src: &[T]) {
-    debug_assert!(dst.len() >= src.len());
-    // SAFETY: dst has at least src.len() capacity; ptr::copy handles overlap.
-    unsafe { core::ptr::copy(src.as_ptr(), dst.as_mut_ptr(), src.len()) };
+    dst[..src.len()].copy_from_slice(src);
 }
 
 /// Based on Node v21.6.1 private helper formatExt:
@@ -1194,11 +1192,8 @@ fn _format_t<'a, T: PathChar>(
         buf_size = buf_offset + ext_len;
         if ext_len > 0 {
             // Move all bytes to the right by _name.len.
-            // Use copy_overlapping because formattedExt and buf overlap.
-            // SAFETY: ranges within buf; ptr::copy handles overlap.
-            unsafe {
-                core::ptr::copy(buf.as_ptr(), buf.as_mut_ptr().add(buf_offset), ext_len);
-            }
+            // Use copy_within because formattedExt and buf overlap.
+            buf.copy_within(0..ext_len, buf_offset);
         }
         if name_len > 0 {
             memmove(&mut buf[0..name_len], _name);
@@ -1221,15 +1216,8 @@ fn _format_t<'a, T: PathChar>(
         buf_offset = if dir_is_root { dir_len } else { dir_len + 1 };
         buf_size = buf_offset + base_len;
         // Move all bytes to the right by dirLen + (maybe 1 for the separator).
-        // Use copy_overlapping because baseOrNameExt and buf overlap.
-        // SAFETY: ranges within buf; ptr::copy handles overlap.
-        unsafe {
-            core::ptr::copy(
-                buf.as_ptr().add(base_or_name_ext_range.0),
-                buf.as_mut_ptr().add(buf_offset),
-                base_len,
-            );
-        }
+        // Use copy_within because baseOrNameExt and buf overlap.
+        buf.copy_within(base_or_name_ext_range.0..base_or_name_ext_range.1, buf_offset);
     }
     memmove(&mut buf[0..dir_len], dir_or_root);
     buf_size = dir_len + base_len;
@@ -1565,15 +1553,8 @@ pub fn join_windows_t<'a, T: PathChar>(
             buf_offset = 1;
             buf_size = buf_offset + (buf_size - slash_count);
             // Move all bytes to the right by slashCount - 1.
-            // Use copy_overlapping because joined and buf2 overlap.
-            // SAFETY: ranges within buf2; ptr::copy handles overlap.
-            unsafe {
-                core::ptr::copy(
-                    buf2.as_ptr().add(slash_count),
-                    buf2.as_mut_ptr().add(buf_offset),
-                    joined_len - slash_count,
-                );
-            }
+            // Use copy_within because joined and buf2 overlap.
+            buf2.copy_within(slash_count..joined_len, buf_offset);
             // Prepend the separator.
             buf2[0] = T::from_u8(CHAR_BACKWARD_SLASH);
 
@@ -1846,11 +1827,8 @@ pub fn normalize_posix_t<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a [
         let old_size = buf_size;
         buf_size += 1;
         // Move all bytes to the right by 1 for the separator.
-        // Use copy_overlapping because normalizedPath and buf overlap.
-        // SAFETY: ranges within buf; ptr::copy handles overlap.
-        unsafe {
-            core::ptr::copy(buf.as_ptr(), buf.as_mut_ptr().add(buf_offset), old_size);
-        }
+        // Use copy_within because normalizedPath and buf overlap.
+        buf.copy_within(0..old_size, buf_offset);
         // Prepend the separator.
         buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
         buf[buf_size] = T::default();
@@ -2561,15 +2539,8 @@ pub fn relative_posix_t<'a, T: PathChar>(
     if slice_size > 0 {
         buf_offset = buf_size;
         buf_size += slice_size;
-        // Use copy_overlapping because toOrig and buf overlap.
-        // SAFETY: ranges within buf; ptr::copy handles overlap.
-        unsafe {
-            core::ptr::copy(
-                buf.as_ptr().add(to_start),
-                buf.as_mut_ptr().add(buf_offset),
-                slice_size,
-            );
-        }
+        // Use copy_within because toOrig and buf overlap.
+        buf.copy_within(to_start..to_start + slice_size, buf_offset);
     }
     if out_len > 0 {
         memmove(&mut buf[0..out_len], &buf3[0..out_len]);
@@ -2752,15 +2723,8 @@ pub fn relative_windows_t<'a, T: PathChar>(
         if slice_size > 0 {
             buf_offset = buf_size;
             buf_size += slice_size;
-            // Use copy_overlapping because toOrig and buf overlap.
-            // SAFETY: ranges within buf; ptr::copy handles overlap.
-            unsafe {
-                core::ptr::copy(
-                    buf.as_ptr().add(to_start),
-                    buf.as_mut_ptr().add(buf_offset),
-                    slice_size,
-                );
-            }
+            // Use copy_within because toOrig and buf overlap.
+            buf.copy_within(to_start..to_start + slice_size, buf_offset);
         }
         memmove(&mut buf[0..out_len], &buf3[0..out_len]);
         buf[buf_size] = T::default();
@@ -2900,11 +2864,8 @@ pub fn resolve_posix_t<'a, T: PathChar>(
             buf_offset = len + 1;
             buf_size = buf_offset + resolved_path_len;
             // Move all bytes to the right by path.len + 1 for the separator.
-            // Use copy_overlapping because resolvedPath and buf2 overlap.
-            // SAFETY: ranges within buf2; ptr::copy handles overlap.
-            unsafe {
-                core::ptr::copy(buf2.as_ptr(), buf2.as_mut_ptr().add(buf_offset), resolved_path_len);
-            }
+            // Use copy_within because resolvedPath and buf2 overlap.
+            buf2.copy_within(0..resolved_path_len, buf_offset);
         }
         buf_size = len;
         memmove(&mut buf2[0..buf_size], path);
@@ -2943,11 +2904,8 @@ pub fn resolve_posix_t<'a, T: PathChar>(
     //   }
     if resolved_absolute {
         buf_size = resolved_path_len + 1;
-        // Use copy_overlapping because resolvedPath and buf overlap.
-        // SAFETY: ranges within buf; ptr::copy handles overlap.
-        unsafe {
-            core::ptr::copy(buf.as_ptr(), buf.as_mut_ptr().add(1), resolved_path_len);
-        }
+        // Use copy_within because resolvedPath and buf overlap.
+        buf.copy_within(0..resolved_path_len, 1);
         buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
         buf[buf_size] = T::default();
         return Ok(&buf[0..buf_size]);
@@ -3290,15 +3248,8 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 buf_offset = slice_len + 1;
                 buf_size = buf_offset + resolved_tail_len;
                 // Move all bytes to the right by path slice.len + 1 for the separator
-                // Use copy_overlapping because resolvedTail and buf2 overlap.
-                // SAFETY: ranges within buf2; ptr::copy handles overlap.
-                unsafe {
-                    core::ptr::copy(
-                        buf2.as_ptr(),
-                        buf2.as_mut_ptr().add(buf_offset),
-                        resolved_tail_len,
-                    );
-                }
+                // Use copy_within because resolvedTail and buf2 overlap.
+                buf2.copy_within(0..resolved_tail_len, buf_offset);
             }
             buf_size = slice_len;
             if slice_len > 0 {
@@ -3351,11 +3302,8 @@ pub fn resolve_windows_t<'a, T: PathChar>(
     if resolved_absolute {
         buf_offset = resolved_device_len + 1;
         buf_size = buf_offset + resolved_tail_len;
-        // Use copy_overlapping because resolvedTail and buf overlap.
-        // SAFETY: ranges within buf; ptr::copy handles overlap.
-        unsafe {
-            core::ptr::copy(buf.as_ptr(), buf.as_mut_ptr().add(buf_offset), resolved_tail_len);
-        }
+        // Use copy_within because resolvedTail and buf overlap.
+        buf.copy_within(0..resolved_tail_len, buf_offset);
         buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
         memmove(&mut buf[0..resolved_device_len], &tmp_buf[0..resolved_device_len]);
         buf[buf_size] = T::default();
@@ -3366,11 +3314,8 @@ pub fn resolve_windows_t<'a, T: PathChar>(
     if (resolved_device_len + resolved_tail_len) > 0 {
         buf_offset = resolved_device_len;
         buf_size = buf_offset + resolved_tail_len;
-        // Use copy_overlapping because resolvedTail and buf overlap.
-        // SAFETY: ranges within buf; ptr::copy handles overlap.
-        unsafe {
-            core::ptr::copy(buf.as_ptr(), buf.as_mut_ptr().add(buf_offset), resolved_tail_len);
-        }
+        // Use copy_within because resolvedTail and buf overlap.
+        buf.copy_within(0..resolved_tail_len, buf_offset);
         memmove(&mut buf[0..resolved_device_len], &tmp_buf[0..resolved_device_len]);
         buf[buf_size] = T::default();
         return Ok(&buf[0..buf_size]);
@@ -3541,11 +3486,8 @@ pub fn to_namespaced_path_windows_t<'a, T: PathChar>(
                 buf_size = len + 6;
                 // Move all bytes to the right by 6 so that the first two bytes are
                 // overwritten by "\\\\?\\UNC\\" which is 8 bytes long.
-                // Use copy_overlapping because resolvedPath and buf overlap.
-                // SAFETY: ranges within buf; ptr::copy handles overlap.
-                unsafe {
-                    core::ptr::copy(buf.as_ptr(), buf.as_mut_ptr().add(buf_offset), len);
-                }
+                // Use copy_within because resolvedPath and buf overlap.
+                buf.copy_within(0..len, buf_offset);
                 // Equiv to std.os.windows.NamespacePrefix.verbatim
                 // https://github.com/ziglang/zig/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.zig#L2358-L2374
                 buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
@@ -3571,11 +3513,8 @@ pub fn to_namespaced_path_windows_t<'a, T: PathChar>(
         buf_offset = 4;
         buf_size = len + 4;
         // Move all bytes to the right by 4
-        // Use copy_overlapping because resolvedPath and buf overlap.
-        // SAFETY: ranges within buf; ptr::copy handles overlap.
-        unsafe {
-            core::ptr::copy(buf.as_ptr(), buf.as_mut_ptr().add(buf_offset), len);
-        }
+        // Use copy_within because resolvedPath and buf overlap.
+        buf.copy_within(0..len, buf_offset);
         // Equiv to std.os.windows.NamespacePrefix.verbatim
         // https://github.com/ziglang/zig/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.zig#L2358-L2374
         buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);

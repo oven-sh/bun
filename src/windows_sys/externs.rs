@@ -461,9 +461,11 @@ pub mod kernel32 {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        pub fn GetLastError() -> DWORD;
+        /// No preconditions; reads thread-local Win32 error slot.
+        pub safe fn GetLastError() -> DWORD;
         pub fn ExitProcess(exit_code: u32) -> !;
-        pub fn GetCurrentProcess() -> HANDLE;
+        /// No preconditions; returns the pseudo-handle constant `(HANDLE)-1`.
+        pub safe fn GetCurrentProcess() -> HANDLE;
         pub fn DuplicateHandle(
             hSourceProcessHandle: HANDLE,
             hSourceHandle: HANDLE,
@@ -973,7 +975,7 @@ impl Win32Error {
     /// Zig: `pub fn get() Win32Error { @enumFromInt(@intFromEnum(kernel32.GetLastError())) }`
     #[inline]
     pub fn get() -> Win32Error {
-        Win32Error(unsafe { kernel32::GetLastError() } as u16)
+        Win32Error(kernel32::GetLastError() as u16)
     }
 
     #[inline]

@@ -106,7 +106,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
                     if !hoisted_decl_list.is_empty() {
                         let decls =
-                            unsafe { G::DeclList::from_bump_slice(hoisted_decl_list.into_bump_slice_mut()) };
+                            G::DeclList::from_bump_vec(hoisted_decl_list);
                         hoisted_stmts.push(self.s(
                             S::Local { kind, decls, ..Default::default() },
                             stmt.loc,
@@ -607,7 +607,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             ..Default::default()
         });
         let prop_list =
-            unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
+            G::PropertyList::from_bump_vec(properties);
         self.new_expr(E::Object { properties: prop_list, ..Default::default() }, expr.loc)
     }
 
@@ -690,7 +690,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     }
                 }
                 let item_list =
-                    unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
+                    ExprNodeList::from_bump_vec(items);
                 self.new_expr(
                     E::Array {
                         items: item_list,
@@ -721,7 +721,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     });
                 }
                 let prop_list =
-                    unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
+                    G::PropertyList::from_bump_vec(properties);
                 self.new_expr(
                     E::Object {
                         properties: prop_list,

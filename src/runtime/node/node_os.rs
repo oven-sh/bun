@@ -419,7 +419,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
             let remaining = cursor.len();
             let written = path_buf.len() - remaining;
             // SAFETY: we wrote a NUL terminator at path_buf[written-1]
-            unsafe { ZStr::from_raw(path_buf.as_ptr(), written - 1) }
+            ZStr::from_buf(&path_buf[..], written - 1)
         };
         if let Ok(file) = bun_sys::File::open(path, bun_sys::O::RDONLY, 0) {
             // file closed on Drop
@@ -686,7 +686,7 @@ pub fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
         let mut using_heap = false;
 
         // SAFETY: zeroed POD
-        let mut pw: libc::passwd = unsafe { bun_core::ffi::zeroed() };
+        let mut pw: libc::passwd = bun_core::ffi::zeroed();
         let mut result: *mut libc::passwd = core::ptr::null_mut();
 
         let ret: c_int = loop {
@@ -766,7 +766,7 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
         }
 
         // SAFETY: zeroed POD
-        let mut result: windows::ws2_32::WSADATA = unsafe { bun_core::ffi::zeroed() };
+        let mut result: windows::ws2_32::WSADATA = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: valid out-pointer
         if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
             // SAFETY: valid buffer
@@ -798,7 +798,7 @@ pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
     #[cfg(target_os = "macos")]
     let result: [f64; 3] = 'loadavg: {
         // SAFETY: zeroed POD
-        let mut avg: c::struct_loadavg = unsafe { bun_core::ffi::zeroed() };
+        let mut avg: c::struct_loadavg = bun_core::ffi::zeroed();
         let mut size: usize = core::mem::size_of::<c::struct_loadavg>();
 
         if bun_sys::posix::sysctlbyname(c"vm.loadavg", core::ptr::from_mut(&mut avg).cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
@@ -815,7 +815,7 @@ pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let result: [f64; 3] = 'loadavg: {
         // SAFETY: zeroed POD
-        let mut info: libc::sysinfo = unsafe { bun_core::ffi::zeroed() };
+        let mut info: libc::sysinfo = bun_core::ffi::zeroed();
         // SAFETY: valid out-pointer
         if unsafe { libc::sysinfo(&raw mut info) } == 0 {
             break 'loadavg [
@@ -1054,8 +1054,8 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                     // reinterpret as bytes — same width, same provenance.
                     let dl = unsafe { &*ll_addr.cast::<c::sockaddr_dl>() };
                     let raw = &dl.sdl_data[dl.sdl_nlen as usize..];
-                    // SAFETY: i8 and u8 have identical layout/size/align.
-                    unsafe { core::slice::from_raw_parts(raw.as_ptr().cast::<u8>(), raw.len()) }
+                    // c_char and u8 are both Pod; bytemuck statically checks the layout.
+                    bytemuck::cast_slice::<_, u8>(raw)
                 };
                 if addr_data.len() < 6 {
                     let mac = b"00:00:00:00:00:00";
@@ -1260,7 +1260,7 @@ pub fn release() -> BunString {
     let value: &[u8] = {
         // TODO(port): std.posix.uname → bun_sys::posix::uname
         // SAFETY: zeroed POD; uname(2) fills the struct on success
-        let mut uts: libc::utsname = unsafe { bun_core::ffi::zeroed() };
+        let mut uts: libc::utsname = bun_core::ffi::zeroed();
         unsafe { libc::uname(&raw mut uts) };
         // SAFETY: c_char[] reinterpreted as u8[]
         let release = unsafe {
@@ -1295,7 +1295,7 @@ pub fn release() -> BunString {
     #[cfg(windows)]
     let value: &[u8] = 'slice: {
         // SAFETY: zeroed POD
-        let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed() };
+        let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: valid out-pointer
         let err = unsafe { libuv::uv_os_uname(&mut info) };
         if err != 0 {
@@ -1401,7 +1401,7 @@ pub fn totalmem() -> u64 {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: zeroed POD
-        let mut info: libc::sysinfo = unsafe { bun_core::ffi::zeroed() };
+        let mut info: libc::sysinfo = bun_core::ffi::zeroed();
         // SAFETY: valid out-pointer
         if unsafe { libc::sysinfo(&raw mut info) } == 0 {
             return (info.totalram as u64).wrapping_mul(info.mem_unit as c_ulong as u64);
@@ -1445,7 +1445,7 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
         // SAFETY: zeroed POD
-        let mut boot_time: bun_sys::posix::timeval = unsafe { bun_core::ffi::zeroed() };
+        let mut boot_time: bun_sys::posix::timeval = bun_core::ffi::zeroed();
         let mut size: usize = core::mem::size_of::<bun_sys::posix::timeval>();
 
         if bun_sys::posix::sysctlbyname(c"kern.boottime", core::ptr::from_mut(&mut boot_time).cast::<c_void>(), &mut size, core::ptr::null_mut(), 0).is_err() {
@@ -1459,7 +1459,7 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
     {
         let _ = global;
         // SAFETY: zeroed POD
-        let mut info: libc::sysinfo = unsafe { bun_core::ffi::zeroed() };
+        let mut info: libc::sysinfo = bun_core::ffi::zeroed();
         // SAFETY: valid out-pointer
         if unsafe { libc::sysinfo(&raw mut info) } == 0 {
             return Ok(info.uptime as f64);
@@ -1527,7 +1527,7 @@ pub fn version() -> JsResult<BunString> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let slice: &[u8] = {
         // SAFETY: zeroed POD; uname(2) fills the struct on success
-        let mut uts: libc::utsname = unsafe { bun_core::ffi::zeroed() };
+        let mut uts: libc::utsname = bun_core::ffi::zeroed();
         unsafe { libc::uname(&raw mut uts) };
         // SAFETY: c_char[] reinterpreted as u8[]
         let version = unsafe {
@@ -1540,7 +1540,7 @@ pub fn version() -> JsResult<BunString> {
     #[cfg(windows)]
     let slice: &[u8] = 'slice: {
         // SAFETY: zeroed POD
-        let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed() };
+        let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: valid out-pointer
         let err = unsafe { libuv::uv_os_uname(&mut info) };
         if err != 0 {

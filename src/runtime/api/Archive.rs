@@ -460,9 +460,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     let options_compress = parse_compression_options(global, options_arg)?;
 
     // For Archive instances, use options override or archive's compression settings
-    if let Some(archive) = data_arg.as_::<Archive>() {
-        // SAFETY: archive came from a live JSValue; valid for this scope.
-        let archive = unsafe { &*archive };
+    if let Some(archive) = data_arg.as_class_ref::<Archive>() {
         let compress = if !matches!(options_compress, Compression::None) {
             options_compress
         } else {

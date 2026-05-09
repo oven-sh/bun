@@ -365,7 +365,7 @@ pub mod E {
             let buf = bump.alloc_slice_fill_copy(s.len() + 1, 0u8);
             buf[..s.len()].copy_from_slice(s);
             // SAFETY: `buf` is a bump-owned `len+1` byte slice with `buf[len] == 0`.
-            Ok(unsafe { bun_string::ZStr::from_raw(buf.as_ptr(), s.len()) })
+            Ok(bun_string::ZStr::from_buf(&buf[..], s.len()))
         }
         pub fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
             if self.is_utf8() {

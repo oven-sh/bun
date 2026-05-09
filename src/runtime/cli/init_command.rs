@@ -390,7 +390,7 @@ impl InitCommand {
             let mut ifdir_z = ifdir.to_vec();
             ifdir_z.push(0);
             // SAFETY: ifdir_z[len-1] == 0 written above.
-            let ifdir_zstr = unsafe { ZStr::from_raw(ifdir_z.as_ptr(), ifdir_z.len() - 1) };
+            let ifdir_zstr = ZStr::from_slice_with_nul(&ifdir_z[..]);
             if let Err(err) = bun_sys::chdir(ifdir_zstr) {
                 Output::pretty_errorln(format_args!(
                     "Failed to change directory to {}: {}",
@@ -895,7 +895,7 @@ impl InitCommand {
                     let mut ep_z = fields.entry_point.clone();
                     ep_z.push(0);
                     let ep_zstr =
-                        unsafe { ZStr::from_raw(ep_z.as_ptr(), ep_z.len() - 1) };
+                        ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
                     let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");");
                     // suppress
@@ -1488,7 +1488,7 @@ impl Template {
                 v
             };
             let result = Assets::create_new(
-                unsafe { ZStr::from_raw(asset_path_z.as_ptr(), asset_path_z.len() - 1) },
+                ZStr::from_slice_with_nul(&asset_path_z[..]),
                 // SAFETY: asset_path_z[len-1] == 0 written above
                 template_file.contents,
             );
@@ -1501,7 +1501,7 @@ impl Template {
                     let mut tp = template_file.path.to_vec();
                     tp.push(0);
                     let _ = Assets::create_new(
-                        unsafe { ZStr::from_raw(tp.as_ptr(), tp.len() - 1) },
+                        ZStr::from_slice_with_nul(&tp[..]),
                         // SAFETY: tp[len-1] == 0 written above
                         template_file.contents,
                     );
@@ -1526,10 +1526,10 @@ impl Template {
                         dest_z.push(0);
                         // SAFETY: NUL-terminated above.
                         let target_zstr =
-                            unsafe { ZStr::from_raw(target_z.as_ptr(), target_z.len() - 1) };
+                            ZStr::from_slice_with_nul(&target_z[..]);
                         // SAFETY: NUL-terminated above.
                         let dest_zstr =
-                            unsafe { ZStr::from_raw(dest_z.as_ptr(), dest_z.len() - 1) };
+                            ZStr::from_slice_with_nul(&dest_z[..]);
                         if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
                         }
@@ -1553,7 +1553,7 @@ impl Template {
             };
 
             let _ = Assets::create_new(
-                unsafe { ZStr::from_raw(b"CLAUDE.md\0".as_ptr(), 9) },
+                ZStr::from_static(b"CLAUDE.md\0"),
                 // SAFETY: literal is NUL-terminated
                 &Self::AGENT_RULE[end_of_frontmatter..],
             );
@@ -1604,7 +1604,7 @@ impl Template {
                     if written >= total { return false; }
                     pathbuf[written] = 0;
                     // SAFETY: NUL written at pathbuf[written].
-                    unsafe { ZStr::from_raw(pathbuf.as_ptr(), written) }
+                    ZStr::from_buf(&pathbuf[..], written)
                 };
 
                 if bun_sys::exists(path.as_bytes()) {
@@ -1658,7 +1658,7 @@ impl Template {
                 let mut p = path.to_vec();
                 p.push(0);
                 Assets::create_new(
-                    unsafe { ZStr::from_raw(p.as_ptr(), p.len() - 1) },
+                    ZStr::from_slice_with_nul(&p[..]),
                     // SAFETY: p[len-1] == 0 written above
                     contents,
                 )

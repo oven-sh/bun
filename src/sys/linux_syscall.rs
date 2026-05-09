@@ -211,7 +211,7 @@ pub fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
 fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
     // SAFETY: `libc::stat` is POD; zero is a valid bit-pattern for every field
     // (all integers). We overwrite every meaningful field below.
-    let mut out: libc::stat = unsafe { bun_core::ffi::zeroed() };
+    let mut out: libc::stat = bun_core::ffi::zeroed();
     out.st_dev = s.st_dev as _;
     out.st_ino = s.st_ino as _;
     out.st_nlink = s.st_nlink as _;

@@ -688,10 +688,6 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                // SAFETY: `read_dir_info` returns a pointer into the resolver's
-                // BSS-backed `DirInfo` cache; entries live for process lifetime
-                // and are never freed (resolver/dir_info.rs).
-                let root_dir = unsafe { &*root_dir };
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
@@ -750,8 +746,6 @@ impl<'a> Transpiler<'a> {
                     Ok(Some(d)) => d,
                     _ => return Ok(()),
                 };
-                // SAFETY: BSS-backed `DirInfo` cache entry — process-lifetime.
-                let dir_info = unsafe { &*dir_info };
 
                 if let Some(tsconfig) = dir_info.tsconfig_json() {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
@@ -1796,12 +1790,7 @@ impl<'a> Transpiler<'a> {
                                     // PathBuffer is zero-initialized so
                                     // `path_buf2[total] == 0` already; safe to
                                     // borrow as a NUL-terminated ZStr.
-                                    let zpath = unsafe {
-                                        bun_core::ZStr::from_raw(
-                                            path_buf2.as_ptr(),
-                                            total,
-                                        )
-                                    };
+                                    let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total,);
                                     // PORT NOTE: spec calls
                                     // `bun.sys.File.toSourceAt(...)` which is
                                     // `read_from` + wrap-in-`logger::Source`.

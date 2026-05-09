@@ -20,11 +20,7 @@ impl Ch for u16 {}
 /// contract as Zig `[:0]const u16` slicing). Mirrors [`ZStr::from_buf`].
 #[inline(always)]
 pub(crate) fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
-    debug_assert!(len < wbuf.len(), "wstr_in_buf: NUL must lie within wbuf");
-    debug_assert_eq!(wbuf[len], 0, "wstr_in_buf: missing NUL at wbuf[len]");
-    // SAFETY: `wbuf[..=len]` is in-bounds of a single allocation (slice
-    // bound, debug-asserted above); `wbuf[len] == 0` per caller contract.
-    unsafe { WStr::from_raw(wbuf.as_ptr(), len) }
+    WStr::from_buf(wbuf, len)
 }
 
 #[inline(always)]

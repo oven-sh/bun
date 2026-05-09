@@ -49,6 +49,18 @@ pub trait VecExt<T>: Sized {
     /// a double-drop (PTR_AUDIT.md class #1: bitwise-copy of Drop-carrying
     /// type while source is still live).
     unsafe fn from_bump_slice(items: &mut [T]) -> Self;
+    /// Safe sibling of [`from_bump_slice`]: consumes an `ArenaVec` (sole owner
+    /// of its elements + arena buffer), bitwise-moves every element into a
+    /// fresh global-allocator `Vec<T>`, and leaks the now-logically-empty
+    /// arena buffer back to the bump (reclaimed on arena reset, which never
+    /// runs element destructors). Ownership of every `T` transfers exactly
+    /// once, so no double-drop and no allocator-identity confusion is
+    /// possible at the call site.
+    ///
+    /// Prefer this over `unsafe { from_bump_slice(v.into_bump_slice_mut()) }`
+    /// — it encodes the "source is leaked, never dropped again" contract in
+    /// the type system instead of a `// SAFETY:` comment.
+    fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
     /// Arena pre-reservation: `Vec` cannot allocate from a bump arena, so this
     /// becomes a global-allocator `with_capacity`.  The arena is ignored.
     fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self;
@@ -177,6 +189,30 @@ impl<T> VecExt<T> for Vec<T> {
             v.set_len(items.len());
         }
         v
+    }
+    #[inline]
+    fn from_bump_vec(src: bun_alloc::ArenaVec<'_, T>) -> Self {
+        let len = src.len();
+        // Suppress `src`'s Drop: element destructors must NOT run (they are
+        // about to be bitwise-moved out), and the buffer deallocation is
+        // deferred to the arena's bulk reset.
+        let mut src = ManuallyDrop::new(src);
+        let mut out = Vec::with_capacity(len);
+        // SAFETY:
+        // - `src` is the unique owner of `len` initialized `T` at
+        //   `src.as_mut_ptr()`; `ManuallyDrop` guarantees neither the elements
+        //   nor the buffer will be touched again through `src`.
+        // - `out` has `cap >= len` uninit slots at `out.as_mut_ptr()`.
+        // - Source/dest are distinct allocations (arena heap vs global heap),
+        //   so they cannot overlap.
+        // After the copy, `out` is the sole logical owner of every `T`; its
+        // `Drop` will run their destructors exactly once. The arena buffer
+        // bytes are abandoned (leak-on-purpose, reclaimed on arena reset).
+        unsafe {
+            core::ptr::copy_nonoverlapping(src.as_mut_ptr(), out.as_mut_ptr(), len);
+            out.set_len(len);
+        }
+        out
     }
     #[inline]
     fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self {

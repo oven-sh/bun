@@ -49,7 +49,7 @@ mod zig_std_debug {
         {
             // SAFETY: context is a valid out-param; RtlCaptureContext writes to it.
             unsafe {
-                core::ptr::write(context, bun_core::ffi::zeroed());
+                core::ptr::write(context, bun_core::ffi::zeroed_unchecked());
                 bun_sys::windows::ntdll_context::RtlCaptureContext(context);
             }
             return true;
@@ -538,7 +538,7 @@ mod zig_std_debug {
             // PORT NOTE: Zig walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
             // gives the same `{base_address, fname}` pair on Darwin without the MachO walk.
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
-            let mut info: libc::Dl_info = unsafe { bun_core::ffi::zeroed() };
+            let mut info: libc::Dl_info = bun_core::ffi::zeroed();
             let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
             if rc == 0 {
                 return Err(err!("MissingDebugInfo"));
@@ -585,7 +585,7 @@ mod zig_std_debug {
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
             let _ = self.base_address;
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
-            let mut info: libc::Dl_info = unsafe { bun_core::ffi::zeroed() };
+            let mut info: libc::Dl_info = bun_core::ffi::zeroed();
             let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 || info.dli_sname.is_null() {
                 // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
@@ -673,7 +673,7 @@ mod zig_std_debug {
     #[cfg(target_vendor = "apple")]
     fn lookup_module_name_dyld(address: usize) -> Option<Box<[u8]>> {
         // SAFETY: dladdr only reads; out-param is a valid Dl_info.
-        let mut info: libc::Dl_info = unsafe { bun_core::ffi::zeroed() };
+        let mut info: libc::Dl_info = bun_core::ffi::zeroed();
         let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
         if rc == 0 || info.dli_fname.is_null() {
             return None;
@@ -832,7 +832,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let tty_config = tty::detect_config_stdout();
 
     // SAFETY: Zig used `= undefined`; getcontext fully initializes.
-    let mut context: ThreadContext = unsafe { bun_core::ffi::zeroed() };
+    let mut context: ThreadContext = unsafe { bun_core::ffi::zeroed_unchecked() };
     let has_context = get_context(&mut context);
 
     #[allow(unused_mut)]

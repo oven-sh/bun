@@ -1388,9 +1388,7 @@ pub mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { owner } => {
-                        // SAFETY: `owner` is the erased live `*mut jsc::EventLoop`.
-                        bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
-                            *owner,
+                        owner.enqueue_task_concurrent(
                             ConcurrentTask::from_callback(ctx, on_notify_defer_raw),
                         );
                     }

@@ -375,7 +375,7 @@ where
     debug_assert_eq!(core::mem::size_of::<H>(), 0, "handler must be a ZST fn item");
     // SAFETY: H is a zero-sized fn item — conjuring it is sound; ud/req/res
     // were registered by the matching `*_ctx` call below and outlive the route.
-    let h: H = unsafe { bun_core::ffi::zeroed() };
+    let h: H = unsafe { bun_core::ffi::zeroed_unchecked() };
     let ctx = unsafe { &mut *ud.cast::<T>() };
     let req = unsafe { &mut *req.cast::<uws::Request>() };
     let resp = unsafe { &mut *res.cast::<uws_sys::NewAppResponse<SSL>>() };

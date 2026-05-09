@@ -53,6 +53,9 @@ pub struct CONSOLE_SCREEN_BUFFER_INFO {
     pub srWindow: SMALL_RECT,
     pub dwMaximumWindowSize: COORD,
 }
+// SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
+// for `GetConsoleScreenBufferInfo` out-params.
+unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 
 /// Wrapper that returns `None` on `INVALID_HANDLE_VALUE` (matches
 /// `std.os.windows.GetStdHandle` error-union semantics).

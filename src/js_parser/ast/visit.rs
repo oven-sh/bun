@@ -905,8 +905,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.arena);
                     list.extend_from_slice(csb_stmts);
                     self.visit_stmts(&mut list, StmtsKind::FnBody).expect("unreachable");
-                    csb.stmts =
-                        unsafe { Vec::from_bump_slice(list.into_bump_slice_mut()) };
+                    csb.stmts = Vec::from_bump_vec(list);
                     self.pop_scope();
 
                     self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
@@ -1425,7 +1424,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if let_decls.len() > 0 {
                     let decls =
-                        unsafe { G::DeclList::from_bump_slice(let_decls.into_bump_slice_mut()) };
+                        G::DeclList::from_bump_vec(let_decls);
                     let loc = decls.at(0).value.unwrap().loc;
                     before.push(p.s(
                         S::Local { kind: LocalKind::KLet, decls, ..Default::default() },
@@ -1442,7 +1441,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                     } else {
                         let decls =
-                            unsafe { G::DeclList::from_bump_slice(var_decls.into_bump_slice_mut()) };
+                            G::DeclList::from_bump_vec(var_decls);
                         let loc = decls.at(0).value.unwrap().loc;
                         before.push(p.s(
                             S::Local { kind: LocalKind::KVar, decls, ..Default::default() },

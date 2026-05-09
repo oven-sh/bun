@@ -93,7 +93,7 @@ fn find_path_inner(
 ) -> Option<BunString> {
     // SAFETY: zero-init is the documented `ErrorableString` "empty" state; the
     // callee fully overwrites it on both ok/err paths.
-    let mut errorable: ErrorableString = unsafe { bun_core::ffi::zeroed() };
+    let mut errorable: ErrorableString = unsafe { bun_core::ffi::zeroed_unchecked() };
     // `bun_string::String` is `Copy` — passing by value here mirrors Zig's
     // by-value struct copy with no refcount change.
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(

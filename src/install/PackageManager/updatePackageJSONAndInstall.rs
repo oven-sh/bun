@@ -516,12 +516,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
 
         // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above
-        break 'root_package_json_path unsafe {
-            ZStr::from_raw(
-                root_package_json_path_buf.as_ptr(),
-                root_package_json_path_len,
-            )
-        };
+        break 'root_package_json_path ZStr::from_buf(&root_package_json_path_buf[..], root_package_json_path_len,);
     };
 
     install_with_manager::install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;

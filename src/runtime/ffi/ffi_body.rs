@@ -2166,7 +2166,7 @@ impl Function {
 
         // SAFETY: source_code was NUL-terminated above
         if state
-            .compile_string(unsafe { ZStr::from_raw(source_code.as_ptr(), source_code.len() - 1) })
+            .compile_string(ZStr::from_slice_with_nul(&source_code[..]))
             .is_err()
         {
             self.fail(b"Failed to compile source code");
@@ -2292,7 +2292,7 @@ impl Function {
 
         // SAFETY: source_code was NUL-terminated above
         if state
-            .compile_string(unsafe { ZStr::from_raw(source_code.as_ptr(), source_code.len() - 1) })
+            .compile_string(ZStr::from_slice_with_nul(&source_code[..]))
             .is_err()
         {
             self.fail(b"Failed to compile source code");

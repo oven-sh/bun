@@ -116,16 +116,12 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: BACKREF — `any_loop` outlives this parse task.
     match unsafe { &mut *any_loop.as_ptr() } {
         bun_event_loop::AnyEventLoop::Js { owner } => {
-            // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
-            unsafe {
-                bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
-                    *owner,
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        result,
-                        |p| { on_complete(p); Ok(()) },
-                    ),
-                );
-            }
+            owner.enqueue_task_concurrent(
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                    result,
+                    |p| { on_complete(p); Ok(()) },
+                ),
+            );
         }
         bun_event_loop::AnyEventLoop::Mini(mini) => {
             mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(

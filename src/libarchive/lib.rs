@@ -551,8 +551,7 @@ pub mod lib {
     impl ReadArchive {
         #[inline]
         pub fn new() -> Self {
-            // SAFETY: archive_read_new() never returns null on supported targets.
-            Self(unsafe { core::ptr::NonNull::new_unchecked(Archive::read_new()) })
+            Self(core::ptr::NonNull::new(Archive::read_new()).expect("archive_read_new returned null"))
         }
         #[inline]
         pub fn as_ptr(&self) -> *mut Archive { self.0.as_ptr() }
@@ -579,8 +578,7 @@ pub mod lib {
     impl WriteArchive {
         #[inline]
         pub fn new() -> Self {
-            // SAFETY: archive_write_new() never returns null on supported targets.
-            Self(unsafe { core::ptr::NonNull::new_unchecked(Archive::write_new()) })
+            Self(core::ptr::NonNull::new(Archive::write_new()).expect("archive_write_new returned null"))
         }
         #[inline]
         pub fn as_ptr(&self) -> *mut Archive { self.0.as_ptr() }
@@ -607,13 +605,11 @@ pub mod lib {
     impl OwnedEntry {
         #[inline]
         pub fn new() -> Self {
-            // SAFETY: archive_entry_new() never returns null on supported targets.
-            Self(unsafe { core::ptr::NonNull::new_unchecked(Entry::new()) })
+            Self(core::ptr::NonNull::new(Entry::new()).expect("archive_entry_new returned null"))
         }
         #[inline]
         pub fn new2(archive: *mut Archive) -> Self {
-            // SAFETY: archive_entry_new2() never returns null on supported targets.
-            Self(unsafe { core::ptr::NonNull::new_unchecked(Entry::new2(archive)) })
+            Self(core::ptr::NonNull::new(Entry::new2(archive)).expect("archive_entry_new2 returned null"))
         }
         #[inline]
         pub fn as_ptr(&self) -> *mut Entry { self.0.as_ptr() }

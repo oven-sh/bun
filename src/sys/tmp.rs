@@ -32,7 +32,7 @@ impl<'a> Tmpfile<'a> {
             // type-checks `if false` bodies, so the body must resolve.
             if ALLOW_TMPFILE {
                 // SAFETY: literal is NUL-terminated; len excludes the NUL.
-                let dot = unsafe { ZStr::from_raw(b".\0".as_ptr(), 1) };
+                let dot = ZStr::from_static(b".\0");
                 match crate::openat(
                     destination_dir,
                     dot,

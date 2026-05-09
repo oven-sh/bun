@@ -133,18 +133,10 @@ unsafe extern "C" {
 
 // ───────────────────────────── title ─────────────────────────────
 
-/// Guards reads/writes of `crate::cli::Bun__Node__ProcessTitle`. The static
-/// itself owns the `Box<[u8]>`; this mutex only provides exclusion between
-/// `get_title`/`set_title` (Zig: `var title_mutex = bun.Mutex{}`).
-static TITLE_MUTEX: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
-
 #[unsafe(export_name = "Bun__Process__getTitle")]
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
-    let _guard = TITLE_MUTEX.lock();
-    // SAFETY: TITLE_MUTEX held; the static is only mutated under this lock or
-    // during single-threaded CLI startup, so a shared read is sound.
-    let str_ = unsafe { (*crate::cli::Bun__Node__ProcessTitle.get()).as_deref() }
-        .unwrap_or(b"bun");
+    let guard = crate::cli::Bun__Node__ProcessTitle.lock();
+    let str_ = guard.as_deref().unwrap_or(b"bun");
     // SAFETY: title is a valid out-param provided by C++ caller
     unsafe {
         *title = BunString::clone_utf8(str_);
@@ -158,7 +150,6 @@ pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mu
     // returning. `String` is `Copy`, so read it out by value and let
     // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
     let newvalue = bun_str::OwnedString::new(unsafe { *newvalue });
-    let _guard = TITLE_MUTEX.lock();
 
     // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
     // the Zig OOM-throw path is unreachable here.
@@ -166,10 +157,7 @@ pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mu
 
     // Zig: `if (old) |slice| allocator.free(slice); Bun__Node__ProcessTitle = new_title;`
     // — assigning into the `Option<Box<[u8]>>` static drops the previous box.
-    // SAFETY: TITLE_MUTEX held; we are the exclusive writer.
-    unsafe {
-        *crate::cli::Bun__Node__ProcessTitle.get() = Some(new_title);
-    }
+    *crate::cli::Bun__Node__ProcessTitle.lock() = Some(new_title);
 }
 
 // ───────────────────────────── execArgv ─────────────────────────────

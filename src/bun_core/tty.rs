@@ -11,6 +11,8 @@ pub struct Winsize {
     pub xpixel: u16,
     pub ypixel: u16,
 }
+// SAFETY: four `u16` fields; all-zero is a valid `Winsize`.
+unsafe impl crate::ffi::Zeroable for Winsize {}
 
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]

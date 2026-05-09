@@ -762,9 +762,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // In this case, we can't distinguish between the two yet
             self_errors.merge_into(errors.unwrap());
         }
-        // PORT NOTE: BumpVec → Vec. `into_bump_slice()` leaks into the arena (freed at
-        // arena reset, matching Zig's ListManaged on `p.arena`).
-        let items_list = unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
+        let items_list = ExprNodeList::from_bump_vec(items);
         Ok(p.new_expr(
             E::Array {
                 items: items_list,
@@ -859,7 +857,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // PORT NOTE: BumpVec → Vec via arena slice; see pfx_t_open_bracket.
         let properties_list =
-            unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
+            G::PropertyList::from_bump_vec(properties);
         Ok(p.new_expr(
             E::Object {
                 properties: properties_list,

@@ -1455,7 +1455,7 @@ impl SendQueue {
                 owner: Some(self as *mut SendQueue),
                 write_slice: write_req_slice,
                 // SAFETY: all-zero is a valid uv_write_t (C struct, initialized by uv_write).
-                write_req: unsafe { bun_core::ffi::zeroed() },
+                write_req: unsafe { bun_core::ffi::zeroed_unchecked() },
                 write_buffer: uv::uv_buf_t::init(b""), // re-init below after slice address is stable
             });
             write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);

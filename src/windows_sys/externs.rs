@@ -917,6 +917,7 @@ impl Win32Error {
     pub const GEN_FAILURE: Win32Error = Win32Error(31);
     pub const SHARING_VIOLATION: Win32Error = Win32Error(32);
     pub const LOCK_VIOLATION: Win32Error = Win32Error(33);
+    pub const HANDLE_EOF: Win32Error = Win32Error(38);
     pub const HANDLE_DISK_FULL: Win32Error = Win32Error(39);
     pub const NOT_SUPPORTED: Win32Error = Win32Error(50);
     pub const NETNAME_DELETED: Win32Error = Win32Error(64);

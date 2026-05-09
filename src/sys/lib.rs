@@ -2602,21 +2602,35 @@ mod windows_impl {
             return sys_uv::read(fd, buf);
         }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
-        let mut amount_read: w::DWORD = 0;
-        // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
-        let rc = unsafe {
-            w::kernel32::ReadFile(
-                fd.cast(),
-                buf.as_mut_ptr(),
-                adjusted_len,
-                &mut amount_read,
-                core::ptr::null_mut(),
-            )
-        };
-        if rc == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::read).with_fd(fd));
+        // PORT NOTE: the Zig spec for `bun.sys.read` returns the raw error, but
+        // every Zig stdin caller (`run_command.zig`, `prompt.zig`, `init`, …)
+        // routes through `std.fs.File.readerStreaming` → `std.os.windows.ReadFile`,
+        // which maps BROKEN_PIPE/HANDLE_EOF → 0 (EOF) and retries on
+        // OPERATION_ABORTED. The Rust port consolidated those callers onto this
+        // function (via `File::stdin().read_to_end_into` / `output_sink().read`),
+        // so the stdlib-ReadFile EOF handling lives here.
+        loop {
+            let mut amount_read: w::DWORD = 0;
+            // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
+            let rc = unsafe {
+                w::kernel32::ReadFile(
+                    fd.cast(),
+                    buf.as_mut_ptr(),
+                    adjusted_len,
+                    &mut amount_read,
+                    core::ptr::null_mut(),
+                )
+            };
+            if rc == 0 {
+                let er = w::Win32Error::get();
+                match er {
+                    w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
+                    w::Win32Error::OPERATION_ABORTED => continue,
+                    _ => return Err(Error::new(er.to_e(), Tag::read).with_fd(fd)),
+                }
+            }
+            return Ok(amount_read as usize);
         }
-        Ok(amount_read as usize)
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         // sys.zig:1876-1909 — `.windows => { kernel32.WriteFile(fd.cast(), …) }`

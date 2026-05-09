@@ -86,3 +86,76 @@ test("http2 session does not retain closed streams", async () => {
     exitCode: 0,
   });
 });
+
+// Regression for the UAF that landed alongside the stream-reclamation fix:
+// `sendData`'s defer block dispatches the write callback before reading
+// `stream.state` / `stream.waitForTrailers` / `stream.getIdentifier()`. If
+// that write callback synchronously aborts the stream's AbortSignal, the
+// native listener runs inline — `SignalRef.abortListener` → `abortStream` →
+// `removeStreamByID` → `bun.destroy(stream)` — and the dereferences in the
+// defer become use-after-free. ASAN would trip here before the fix; release
+// builds would silently read reused heap memory.
+test("http2 write callback aborting the signal does not UAF the stream", async () => {
+  const script = /* js */ `
+    const http2 = require("node:http2");
+
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      // Drain any body the client writes so the peer-level flow stays sane.
+      stream.on("data", () => {});
+      stream.on("end", () => stream.end());
+      stream.on("error", () => {});
+    });
+
+    server.listen(0, "127.0.0.1", async () => {
+      const port = server.address().port;
+      const client = http2.connect("http://127.0.0.1:" + port);
+      client.on("error", err => {
+        console.error("client error:", err?.message || err);
+        process.exit(99);
+      });
+      await new Promise(r => client.on("connect", r));
+
+      const ITERATIONS = 20;
+      for (let i = 0; i < ITERATIONS; i++) {
+        const ac = new AbortController();
+        await new Promise(resolve => {
+          const req = client.request(
+            { ":path": "/", ":method": "POST" },
+            { signal: ac.signal },
+          );
+          req.on("error", () => {});
+          req.on("close", resolve);
+          req.on("response", () => {});
+          req.resume();
+          // Writable 'finish' fires synchronously from inside the internal
+          // callback that _final passes to native.writeStream(..., close=true).
+          // sendData's defer dispatches that callback before reading the
+          // stream's state/waitForTrailers/identifier — aborting the attached
+          // AbortSignal here runs SignalRef.abortListener synchronously,
+          // which reaches abortStream → removeStreamByID → bun.destroy
+          // before the defer is done.
+          req.on("finish", () => ac.abort());
+          req.end("x");
+        });
+      }
+
+      for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+      console.log("ok");
+      client.close(() => server.close(() => process.exit(0)));
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, stdout: stdout.trim().split("\n").pop(), exitCode }).toMatchObject({
+    stdout: "ok",
+    exitCode: 0,
+  });
+});

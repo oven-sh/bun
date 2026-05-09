@@ -3426,8 +3426,14 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
+        // Pre-PR, a closed stream lingered in the map and this method
+        // silently returned `.false` via the canSendData/canReceiveData
+        // check below. Now that closed entries are reclaimed, mirror that
+        // behavior for a removed id so `stream.priority({...})` doesn't
+        // throw in the brief window between native removal and JS
+        // `_destroy` nulling `bunHTTP2Session`.
         var stream = this.streams.get(stream_id) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+            return .false;
         };
 
         if (!stream.canSendData() and !stream.canReceiveData()) {
@@ -3578,22 +3584,30 @@ pub const H2FrameParser = struct {
 
         defer {
             if (!enqueued) {
+                // Dispatching the write callback re-enters JS. User code may
+                // synchronously abort the attached AbortSignal (→ SignalRef
+                // abortListener → abortStream → removeStreamByID) or destroy
+                // the session, either of which frees the *Stream. Re-resolve
+                // by id after dispatch and skip the close path if the stream
+                // is gone (abortStream already emitted the terminal event).
                 this.dispatchWriteCallback(callback);
                 var closed = false;
                 if (close) {
-                    if (stream.waitForTrailers) {
-                        this.dispatch(.onWantTrailers, stream.getIdentifier());
-                    } else {
-                        const identifier = stream.getIdentifier();
-                        identifier.ensureStillAlive();
-                        if (stream.state == .HALF_CLOSED_REMOTE) {
-                            stream.state = .CLOSED;
-                            stream.freeResources(this, false);
-                            closed = true;
+                    if (this.streams.get(stream_id)) |s| {
+                        if (s.waitForTrailers) {
+                            this.dispatch(.onWantTrailers, s.getIdentifier());
                         } else {
-                            stream.state = .HALF_CLOSED_LOCAL;
+                            const identifier = s.getIdentifier();
+                            identifier.ensureStillAlive();
+                            if (s.state == .HALF_CLOSED_REMOTE) {
+                                s.state = .CLOSED;
+                                s.freeResources(this, false);
+                                closed = true;
+                            } else if (s.state != .CLOSED) {
+                                s.state = .HALF_CLOSED_LOCAL;
+                            }
+                            this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(s.state)));
                         }
-                        this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
                     }
                 }
                 if (closed) this.removeStreamByID(stream_id);

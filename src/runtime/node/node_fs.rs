@@ -6279,13 +6279,13 @@ impl NodeFS {
                 if resolved_link_type == ResolvedLinkType::Junction {
                     // this is similar to the `const src` above, but these cases
                     // are mutually exclusive, so it isn't repeating any work.
-                    let cwd = match sys::getcwd(&mut to_buf) {
+                    let cwd_len = match sys::getcwd(&mut to_buf[..]) {
                         Ok(c) => c,
                         Err(_) => panic!("failed to resolve current working directory"),
                     };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
                     let target_len = paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
-                        cwd,
+                        &to_buf[..cwd_len],
                         &mut self.sync_error_buf[4..],
                         &[dir, target_path],
                     ).len();
@@ -6720,9 +6720,10 @@ impl NodeFS {
 
     fn _cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
-        // PORT NOTE: Rust `Syscall::readlink` returns the byte length, not the
-        // slice — reconstruct the `[:0]const u8` view from `target_buf`.
-        let link_len = match Syscall::readlink(src, &mut target_buf[..]) {
+        // PORT NOTE: `bun_sys::readlink` returns the byte length on every
+        // platform (the `Syscall` alias = `sys_uv` on Windows would return the
+        // slice itself); reconstruct the `[:0]const u8` view from `target_buf`.
+        let link_len = match sys::readlink(src, &mut target_buf[..]) {
             Ok(result) => result,
             Err(err) => {
                 self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
@@ -7098,8 +7099,8 @@ impl NodeFS {
             // before any branch. Re-deriving them inline inside `unwrap_or_else`
             // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
             // a borrow into `sync_error_buf`).
-            let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice()));
-            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(E::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()));
+            let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(SystemErrno::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(src.as_slice()));
+            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(SystemErrno::ENOENT, sys::Tag::copyfile, self.os_path_into_sync_error_buf(dest.as_slice()));
             let stat_ = match reuse_stat {
                 Some(a) => a,
                 None => {
@@ -7113,14 +7114,17 @@ impl NodeFS {
             };
             if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
                 if unsafe { sys::c::CopyFileW(src.as_ptr(), dest.as_ptr(), mode.shouldnt_overwrite() as i32) } == 0 {
-                    let mut err = unsafe { windows::GetLastError() };
+                    // Zig `windows.GetLastError()` returns the `Win32Error`
+                    // enum, not the raw DWORD — use the typed wrapper so the
+                    // associated-const match arms type-check.
+                    let mut err = windows::Win32Error::get();
                     match err {
                         windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS => {}
                         windows::Win32Error::PATH_NOT_FOUND => {
                             let _ = sys::make_path::make_path_u16(sys::Dir::cwd(), paths::dirname_w(dest.as_slice()));
                             let second_try = unsafe { sys::c::CopyFileW(src.as_ptr(), dest.as_ptr(), mode.shouldnt_overwrite() as i32) };
                             if second_try > 0 { return Ok(()); }
-                            err = unsafe { windows::GetLastError() };
+                            err = windows::Win32Error::get();
                         }
                         _ => {}
                     }
@@ -7137,7 +7141,7 @@ impl NodeFS {
                 };
                 let _close = scopeguard::guard(handle, |fd| fd.close());
                 let mut wbuf = paths::os_path_buffer_pool::get();
-                let len = unsafe { windows::GetFinalPathNameByHandleW(handle.cast(), wbuf.as_mut_ptr(), wbuf.len() as u32, 0) } as usize;
+                let len = unsafe { windows::GetFinalPathNameByHandleW(handle.native(), wbuf.as_mut_ptr(), wbuf.len() as u32, 0) } as usize;
                 if len == 0 || len >= wbuf.len() {
                     let p = self.os_path_into_sync_error_buf(dest.as_slice());
                     return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p).unwrap_or(dst_enoent_maybe);

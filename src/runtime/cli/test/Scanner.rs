@@ -226,11 +226,12 @@ impl<'a> Scanner<'a> {
             {
                 let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
                 let path2 = self.fs.abs_buf_z(&parts2, &mut self.open_dir_buf);
-                let Ok(child_dir) =
-                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, path2)
+                let Ok(child_fd) =
+                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, path2.as_bytes())
                 else {
                     continue;
                 };
+                let child_dir = bun_sys::Dir::from_fd(child_fd);
                 let stored = self
                     .fs
                     .dirname_store

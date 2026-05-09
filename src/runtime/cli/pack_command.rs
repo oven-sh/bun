@@ -3628,8 +3628,8 @@ pub mod bindings {
                     #[cfg(windows)]
                     let pathname_string = {
                         let pathname_w = archive_entry_ref.pathname_w();
-                        let result = strings::to_utf8_list_with_type(Vec::new(), pathname_w);
                         // bun.handleOom — panic on OOM
+                        let result = bun::handle_oom(strings::to_utf8_list_with_type(Vec::new(), pathname_w));
                         BunString::clone_utf8(&result)
                     };
                     #[cfg(not(windows))]

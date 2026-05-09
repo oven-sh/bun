@@ -2442,13 +2442,21 @@ pub const H2FrameParser = struct {
             const stream_id = stream.id;
             const identifier = stream.getIdentifier();
             identifier.ensureStillAlive();
+            // Unlink before freeResources runs: freeResources → cleanQueue
+            // dispatches queued DATA write callbacks, and a user callback
+            // that calls session.destroy() would reach
+            // emitErrorToAllStreams → removeAllClosedStreams and free this
+            // stream out from under us. Mirror the endStream/abortStream
+            // detach-then-destroy pattern.
+            this.detachStreamFromMap(stream_id);
             stream.freeResources(this, false);
+            const closed_state_value = @intFromEnum(@as(@FieldType(Stream, "state"), .CLOSED));
             if (rst_code == @intFromEnum(ErrorCode.NO_ERROR)) {
-                this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+                this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(closed_state_value));
             } else {
                 this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(rst_code));
             }
-            this.removeStreamByID(stream_id);
+            this.destroyDetachedStream(stream);
             return content.end;
         }
         return data.len;
@@ -3968,6 +3976,12 @@ pub const H2FrameParser = struct {
                         if (err == error.OutOfMemory) {
                             return globalObject.throw("Failed to allocate header buffer", .{});
                         }
+                        // `item.toJSString()` and `sensitive_arg.getTruthyPropertyValue()`
+                        // above (and in prior iterations) can invoke a user Proxy trap
+                        // / Symbol.toPrimitive that aborts the stream's AbortSignal →
+                        // SignalRef.abortListener → abortStream → bun.destroy(stream).
+                        // Re-resolve before touching `stream.*`.
+                        stream = this.streams.get(stream_id) orelse return .js_undefined;
                         stream.state = .CLOSED;
                         const identifier = stream.getIdentifier();
                         identifier.ensureStillAlive();
@@ -4009,6 +4023,8 @@ pub const H2FrameParser = struct {
                     if (err == error.OutOfMemory) {
                         return globalObject.throw("Failed to allocate header buffer", .{});
                     }
+                    // Same UAF concern as the sibling branch above.
+                    stream = this.streams.get(stream_id) orelse return .js_undefined;
                     stream.state = .CLOSED;
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();

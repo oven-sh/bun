@@ -128,8 +128,8 @@ pub struct Terminal {
     /// Global object reference
     // PORT NOTE: LIFETIMES.tsv says JSC_BORROW → `&JSGlobalObject`, but Terminal
     // is a heap-allocated `.classes.ts` m_ctx payload and cannot carry a lifetime
-    // param. Stored as raw; deref via `self.global()`.
-    global_this: core::ptr::NonNull<JSGlobalObject>,
+    // param. Stored as a `BackRef`; deref via `self.global()`.
+    global_this: bun_ptr::BackRef<JSGlobalObject>,
 
     /// Writer for sending data to the terminal
     writer: IOWriter,
@@ -339,9 +339,9 @@ impl From<InitError> for bun_core::Error {
 impl Terminal {
     #[inline]
     fn global(&self) -> &JSGlobalObject {
-        // SAFETY: global_this is set from a valid &JSGlobalObject in init_terminal
-        // and the VM outlives every Terminal (JSC_BORROW per LIFETIMES.tsv).
-        unsafe { self.global_this.as_ref() }
+        // `global_this` is a `BackRef` set from a valid `&JSGlobalObject` in
+        // `init_terminal`; the VM outlives every Terminal (JSC_BORROW).
+        self.global_this.get()
     }
 
     pub fn ref_(&self) {
@@ -408,7 +408,7 @@ impl Terminal {
             event_loop_handle: EventLoopHandle::init(
                 global_object.bun_vm().as_mut().event_loop().cast(),
             ),
-            global_this: core::ptr::NonNull::from(global_object),
+            global_this: bun_ptr::BackRef::new(global_object),
             writer: IOWriter::default(),
             reader: IOReader::init::<Terminal>(),
             this_value: JsRef::empty(),
@@ -1731,9 +1731,9 @@ impl Terminal {
         // First data received - upgrade to strong ref (connected)
         if !self.flags.contains(Flags::CONNECTED) {
             self.flags.insert(Flags::CONNECTED);
-            // Disjoint-borrow: inline global() so this_value can be &mut.
-            // SAFETY: see Terminal::global().
-            let global = unsafe { self.global_this.as_ref() };
+            // Disjoint-borrow: copy out the `BackRef` so `this_value` can be `&mut`.
+            let global_this = self.global_this;
+            let global = global_this.get();
             self.this_value.upgrade(global);
         }
 

@@ -7,14 +7,15 @@ bun_opaque::opaque_ffi! {
 
 impl SourceProvider {
     pub fn deref(&mut self) {
-        // SAFETY: self is a valid *mut SourceProvider obtained from JSC; C++ side handles refcount.
-        unsafe { JSC__SourceProvider__deref(self) }
+        JSC__SourceProvider__deref(self)
     }
 }
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn JSC__SourceProvider__deref(provider: *mut SourceProvider);
+    // safe: `SourceProvider` is an opaque `UnsafeCell`-backed ZST handle; `&mut` is
+    // ABI-identical to a non-null pointer and C++ refcount mutation is interior.
+    safe fn JSC__SourceProvider__deref(provider: &mut SourceProvider);
 }
 
 // ported from: src/jsc/SourceProvider.zig

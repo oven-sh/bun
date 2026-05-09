@@ -106,7 +106,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
         ) -> Result<(), Error> {
             // SAFETY: `ctx` was set to `&mut analyzer as *mut _ as *mut ()` below
             // and outlives the `BuildCommand::exec` call.
-            let analyzer = unsafe { &mut *ctx.cast::<Analyzer>() };
+            let analyzer = unsafe { bun_ptr::callback_ctx::<Analyzer>(ctx.cast()) };
             Analyzer::on_analyze(analyzer, result)
         }
 

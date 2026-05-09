@@ -340,7 +340,7 @@ impl Queue {
         err: bun_core::Error,
     ) {
         // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { &mut *ctx.cast::<Queue>() };
+        let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
         bun_core::scoped_log!(
             AsyncModule,
             "onDependencyError: {}",

@@ -258,9 +258,9 @@ impl Listener {
                     this,
                 ) {
                     Ok(named_pipe) => {
-                        // SAFETY: `listen` returns a non-null heap pointer.
-                        this_ref.listener =
-                            ListenerType::NamedPipe(unsafe { NonNull::new_unchecked(named_pipe) });
+                        this_ref.listener = ListenerType::NamedPipe(
+                            NonNull::new(named_pipe).expect("listen returns a non-null heap pointer"),
+                        );
                     }
                     Err(_) => {
                         // On error, clean up everything `this` owns *except* `this.handlers`: the outer

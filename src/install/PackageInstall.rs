@@ -1,5 +1,5 @@
 use core::ffi::c_int;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::{Global, Output};
@@ -239,13 +239,14 @@ impl Step {
 // (no `Atomic<Method>`) — writers are the CLI option-load and the
 // clonefile/hardlink fallback in `install_with_method`, all on the install
 // main thread; isolated_install workers snapshot via `supported_method()`
-// once at startup.
-pub static SUPPORTED_METHOD: bun_core::RacyCell<Method> =
-    bun_core::RacyCell::new(if cfg!(target_os = "macos") {
-        Method::Clonefile
-    } else {
-        Method::Hardlink
-    });
+// once at startup. Stored as the `repr(u8)` discriminant so reads/writes are
+// lock-free atomics (S015: AtomicU8 instead of RacyCell — single-writer path
+// so `Relaxed` adds no contention).
+pub static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
+    Method::Clonefile as u8
+} else {
+    Method::Hardlink as u8
+});
 
 impl PackageInstall<'_> {
     /// Read accessor for the [`SUPPORTED_METHOD`] global (Zig:
@@ -253,10 +254,14 @@ impl PackageInstall<'_> {
     /// callers keep the `PackageInstall::supported_method()` call shape.
     #[inline]
     pub fn supported_method() -> Method {
-        // SAFETY: written only on the install main thread before/between reads
-        // (fall-back from clonefile/hardlink → copyfile); concurrent readers
-        // (isolated_install workers) seed an atomic from this once at startup.
-        unsafe { SUPPORTED_METHOD.read() }
+        Method::from_u8(SUPPORTED_METHOD.load(Ordering::Relaxed))
+    }
+
+    /// Write accessor for [`SUPPORTED_METHOD`] (fallback path when
+    /// clonefile/hardlink fails). Relaxed — single-writer, advisory hint.
+    #[inline]
+    pub fn set_supported_method(m: Method) {
+        SUPPORTED_METHOD.store(m as u8, Ordering::Relaxed);
     }
 }
 
@@ -2381,8 +2386,7 @@ impl<'a> PackageInstall<'a> {
         {
             Method::Symlink
         } else {
-            // SAFETY: single-threaded install context.
-            unsafe { SUPPORTED_METHOD.read() }
+            Self::supported_method()
         }
     }
 
@@ -2511,8 +2515,7 @@ impl<'a> PackageInstall<'a> {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == bun_core::err!("NotSupported") {
-                                // SAFETY: single-threaded install context.
-                                unsafe { SUPPORTED_METHOD.write(Method::Copyfile) };
+                                Self::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == bun_core::err!("FileNotFound") {
                                 return InstallResult::fail(
@@ -2534,8 +2537,7 @@ impl<'a> PackageInstall<'a> {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == bun_core::err!("NotSupported") {
-                                // SAFETY: single-threaded install context.
-                                unsafe { SUPPORTED_METHOD.write(Method::Copyfile) };
+                                Self::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == bun_core::err!("FileNotFound") {
                                 return InstallResult::fail(
@@ -2557,8 +2559,7 @@ impl<'a> PackageInstall<'a> {
                         #[cfg(not(windows))]
                         {
                             if err == bun_core::err!("NotSameFileSystem") {
-                                // SAFETY: single-threaded install context.
-                                unsafe { SUPPORTED_METHOD.write(Method::Copyfile) };
+                                Self::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
                                 break 'outer;
                             }

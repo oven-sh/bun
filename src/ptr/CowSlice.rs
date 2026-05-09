@@ -380,11 +380,9 @@ struct DebugData {
 #[cfg(debug_assertions)]
 impl DebugData {
     fn new_boxed() -> NonNull<Self> {
-        let b = Box::new(Self {
+        bun_core::heap::into_raw_nn(Box::new(Self {
             mutex: parking_lot::Mutex::new(0),
-        });
-        // SAFETY: `heap::alloc` never returns null.
-        unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(b)) }
+        }))
     }
 }
 

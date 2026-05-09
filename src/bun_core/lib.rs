@@ -84,22 +84,22 @@ pub mod deprecated;
 // the safe wrapper below; keep `#[inline]` so cross-crate use stays a direct
 // libm call.
 unsafe extern "C" {
+    // safe: all args by-value; libm `powf` is defined for all f32 inputs.
     #[link_name = "powf"]
-    fn libm_powf(x: f32, y: f32) -> f32;
+    safe fn libm_powf(x: f32, y: f32) -> f32;
+    // safe: all args by-value; libm `pow` is defined for all f64 inputs.
     #[link_name = "pow"]
-    fn libm_pow(x: f64, y: f64) -> f64;
+    safe fn libm_pow(x: f64, y: f64) -> f64;
 }
 
 #[inline]
 pub fn powf(x: f32, y: f32) -> f32 {
-    // SAFETY: libm `powf` is defined for all f32 inputs.
-    unsafe { libm_powf(x, y) }
+    libm_powf(x, y)
 }
 
 #[inline]
 pub fn pow(x: f64, y: f64) -> f64 {
-    // SAFETY: libm `pow` is defined for all f64 inputs.
-    unsafe { libm_pow(x, y) }
+    libm_pow(x, y)
 }
 
 /// Safe `Vec` growth helpers — consolidate the
@@ -341,6 +341,37 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
     // SAFETY: per fn contract.
     unsafe { field.byte_sub(offset).cast::<P>() }
+}
+
+/// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
+///
+/// This is the canonical spelling for the ubiquitous trampoline pattern where
+/// a C library (libarchive, c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
+/// trips a Rust object through a `void *user_data` slot and hands it back to
+/// an `extern "C" fn` thunk. Phase-A open-coded this as
+/// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
+/// makes the pattern grep-able, attaches a uniform safety contract, and
+/// debug-asserts the non-null precondition the C side guarantees.
+///
+/// Re-exported from `bun_ptr` so callers can spell `bun_ptr::callback_ctx`.
+///
+/// # Safety
+/// - `ctx` must be non-null, properly aligned, and point to a live, fully
+///   initialised `T` for the entire returned lifetime `'a` (i.e. the body of
+///   the callback). The C library round-tripped the exact `*mut T` the Rust
+///   side registered, so type and provenance are correct by construction.
+/// - No other `&mut T` (or `&T` overlapping a mutated field) may be live for
+///   `'a`. C-callback user-data satisfies this on the runtime's single-
+///   threaded event loop: the callback is the unique re-entry point for `*ctx`
+///   while it runs. **Do not** use this for arbitrary pointer reinterpretation
+///   (struct-layout punning, lifetime laundering) — that is not the contract.
+#[inline(always)]
+#[track_caller]
+pub unsafe fn callback_ctx<'a, T>(ctx: *mut core::ffi::c_void) -> &'a mut T {
+    debug_assert!(!ctx.is_null(), "callback_ctx: null user-data pointer");
+    // SAFETY: per fn contract — `ctx` is the `*mut T` the caller registered as
+    // C user-data, non-null, live, and exclusively accessed for `'a`.
+    unsafe { &mut *ctx.cast::<T>() }
 }
 
 /// `from_field_ptr!(Parent, field, ptr)` → `*mut Parent`.

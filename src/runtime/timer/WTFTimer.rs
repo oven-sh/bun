@@ -46,11 +46,11 @@ pub struct WTFTimer {
     // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
     pub event_loop_timer: EventLoopTimer,
-    // TODO(port): lifetime — backref into `vm.eventLoop().imminent_gc_timer`.
-    // Low tier stores `AtomicPtr<()>` (PORTING.md §Dispatch); `self` is cast
-    // to `*mut ()` at each compare_exchange (the hook in `dispatch.rs` casts
-    // back to `*mut WTFTimer`).
-    imminent: NonNull<AtomicPtr<()>>,
+    // Backref into `vm.eventLoop().imminent_gc_timer`. Low tier stores
+    // `AtomicPtr<()>` (PORTING.md §Dispatch); `self` is cast to `*mut ()` at
+    // each compare_exchange (the hook in `dispatch.rs` casts back to
+    // `*mut WTFTimer`).
+    imminent: bun_ptr::BackRef<AtomicPtr<()>>,
     repeat: bool,
     lock: Mutex,
     script_execution_context_id: ScriptExecutionContextIdentifier,
@@ -100,8 +100,8 @@ impl WTFTimer {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             return true;
         }
-        // SAFETY: `imminent` points into the VM's event loop, which outlives this timer.
-        let loaded = unsafe { self.imminent.as_ref() }.load(Ordering::SeqCst);
+        // `imminent` is a `BackRef` into the VM's event loop, which outlives this timer.
+        let loaded = self.imminent.load(Ordering::SeqCst);
         // Zig: `(load orelse return false) == this` — null can never equal `this`,
         // so a single pointer compare suffices.
         loaded.cast_const().cast::<WTFTimer>() == ptr::from_ref(self)
@@ -127,8 +127,10 @@ impl WTFTimer {
     /// `this` must point at a live heap-allocated `WTFTimer`.
     pub unsafe fn update(this: *mut Self, seconds: f64, repeat: bool) {
         let self_opaque = this.cast::<()>();
-        // SAFETY: per fn contract.
-        let imminent = unsafe { (*this).imminent.as_ref() };
+        // SAFETY: per fn contract — `this` is live; copy the `BackRef` out so the
+        // subsequent `&AtomicPtr` borrow is detached from `*this`.
+        let imminent_br = unsafe { (*this).imminent };
+        let imminent = imminent_br.get();
 
         // There's only one of these per VM, and each VM has its own imminent_gc_timer.
         // Only set imminent if it's not already set to avoid overwriting another timer.
@@ -190,8 +192,10 @@ impl WTFTimer {
         if unsafe { (*this).script_execution_context_id }.valid() {
             // Only clear imminent if this timer was the one that set it.
             let self_opaque = this.cast::<()>();
-            // SAFETY: `imminent` points into the VM's event loop, which outlives this timer.
-            let _ = unsafe { (*this).imminent.as_ref() }.compare_exchange(
+            // SAFETY: per fn contract — `this` is live. `imminent` is a `BackRef`
+            // into the VM's event loop, which outlives this timer.
+            let imminent_br = unsafe { (*this).imminent };
+            let _ = imminent_br.compare_exchange(
                 self_opaque,
                 ptr::null_mut(),
                 Ordering::SeqCst,
@@ -223,8 +227,10 @@ impl WTFTimer {
         unsafe { (*this).event_loop_timer.state = EventLoopTimerState::FIRED };
         // Only clear imminent if this timer was the one that set it.
         let self_opaque = this.cast::<()>();
-        // SAFETY: `imminent` points into the VM's event loop, which outlives this timer.
-        let _ = unsafe { (*this).imminent.as_ref() }.compare_exchange(
+        // SAFETY: per fn contract — `this` is live. `imminent` is a `BackRef`
+        // into the VM's event loop, which outlives this timer.
+        let imminent_br = unsafe { (*this).imminent };
+        let _ = imminent_br.compare_exchange(
             self_opaque,
             ptr::null_mut(),
             Ordering::SeqCst,
@@ -261,7 +267,7 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
         let el = &*vm_ref.event_loop();
         Box::new(WTFTimer {
             vm: NonNull::new_unchecked(vm),
-            imminent: NonNull::from(&el.imminent_gc_timer),
+            imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec { sec: i64::MAX, nsec: 0 },
                 tag: EventLoopTimerTag::WTFTimer,

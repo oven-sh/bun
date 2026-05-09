@@ -79,15 +79,8 @@ pub fn find_imported_parts_in_js_order(
     // `MultiArrayList.bytes: *mut u8` raw-pointer field — see
     // `scanImportsAndExports.rs` for the same pattern). All other `c.*` accesses
     // are read-only.
-    let entry_point_chunk_indices: *mut [u32] = {
-        let files = this.graph.files.slice();
-        let len = files.len();
-        // SAFETY: `u32` is exactly the column type for
-        // `entry_point_chunk_index`; the derive guarantees the
-        // field-enum ↔ type pairing.
-        let p: *mut u32 = unsafe { files.items_raw::<"entry_point_chunk_index", u32>() };
-        core::ptr::slice_from_raw_parts_mut(p, len)
-    };
+    let entry_point_chunk_indices: *mut [u32] =
+        this.graph.files.slice().split_raw().entry_point_chunk_index;
 
     let (files_in_chunk_order, parts_in_chunk_order) = {
         let mut visitor = FindImportedPartsVisitor {

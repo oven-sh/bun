@@ -226,8 +226,7 @@ pub mod fs {
                 return Err(bun_core::err!("NoSpaceLeft"));
             }
             buf[written] = 0;
-            // SAFETY: buf[written] == 0 written above; ZStr wraps buf[0..written] with NUL sentinel.
-            Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), written) })
+            Ok(ZStr::from_buf_mut(buf, written))
         }
 
         #[inline]
@@ -6660,8 +6659,8 @@ impl<'a> Resolver<'a> {
         // retags below don't pop its provenance. Re-borrow `&mut *rfs` per use.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
-        // SAFETY: resolver mutex held; no aliased `EntriesMap` access in this scope.
-        let mut cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(dir_path) }?;
+        // resolver mutex held; `EntriesMap` methods are safe wrappers over the singleton.
+        let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
 
         // PORT NOTE: always assigned by either the cached-hit arm or the
         // `needs_iter` block below; null-init so rustc accepts the proof.
@@ -6682,8 +6681,7 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        // SAFETY: resolver mutex held; sole `&mut` to this slot.
-        if let Some(cached_entry) = unsafe { rfs!().entries.at_index(cached_dir_entry_result.index) } {
+        if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
                 if entries.generation >= self.generation {
                     dir_entries_option = cached_entry;
@@ -7347,8 +7345,7 @@ impl<'a> Resolver<'a> {
                 fd: FD::INVALID,
             });
 
-            // SAFETY: resolver mutex held; sole `&mut` to this slot.
-            if let Some(top_entry) = unsafe { rfs!().entries.get(top) } {
+            if let Some(top_entry) = rfs!().entries.get(top) {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
@@ -7382,8 +7379,7 @@ impl<'a> Resolver<'a> {
                     safe_path: std::ptr::from_ref::<[u8]>(b""),
                     fd: FD::INVALID,
                 });
-                // SAFETY: resolver mutex held; sole `&mut` to this slot.
-                if let Some(top_entry) = unsafe { rfs!().entries.get(top) } {
+                if let Some(top_entry) = rfs!().entries.get(top) {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
@@ -7525,16 +7521,14 @@ impl<'a> Resolver<'a> {
                             {
                                 return Ok(None);
                             }
-                            // SAFETY: resolver mutex held; no aliased map access.
-                            let cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(queue_top_unsafe_path) }.expect("unreachable");
+                            let cached_dir_entry_result = rfs!().entries.get_or_put(queue_top_unsafe_path).expect("unreachable");
                             // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
                             // which causes a perf trace that looks like this stupidity;
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
-                            // SAFETY: resolver mutex held; no aliased map access.
-                            unsafe { rfs!().entries.mark_not_found(cached_dir_entry_result) };
+                            rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if !(err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")) {
                                 if ENABLE_LOGGING {
                                     let pretty = queue_top_unsafe_path;
@@ -7594,15 +7588,13 @@ impl<'a> Resolver<'a> {
                 &safe_path[dir_path_i..end]
             };
 
-            // SAFETY: resolver mutex held; no aliased map access.
-            let mut cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(dir_path) }.expect("unreachable");
+            let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path).expect("unreachable");
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption = core::ptr::null_mut();
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
 
-            // SAFETY: resolver mutex held; sole `&mut` to this slot.
-            if let Some(cached_entry) = unsafe { rfs!().entries.at_index(cached_dir_entry_result.index) } {
+            if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
                     if entries.generation >= self.generation {
                         dir_entries_option = cached_entry;
@@ -9148,8 +9140,10 @@ impl<'a> Resolver<'a> {
                         // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
                         TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
                     }
-                    // SAFETY: `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
-                    info.tsconfig_json = Some(unsafe { core::ptr::NonNull::new_unchecked(merged_config) });
+                    // `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
+                    info.tsconfig_json = Some(
+                        core::ptr::NonNull::new(merged_config).expect("heap::alloc is non-null"),
+                    );
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json();
             }

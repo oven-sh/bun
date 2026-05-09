@@ -266,7 +266,7 @@ impl UploadPart {
 
     pub fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
-        let this = unsafe { &mut *this.cast::<Self>() };
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
         // Copy the BackRef out so the `&mut MultiPartUpload` borrow is detached
         // from `this` (Zig held both `*UploadPart` and `*MultiPartUpload` freely).
         let mut ctx_ref = this.ctx;
@@ -410,7 +410,7 @@ impl MultiPartUpload {
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
         // SAFETY: callback context — `this` was passed as opaque ctx and is live (holds final ref)
-        let this = unsafe { &mut *this.cast::<Self>() };
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
         if this.state == State::Finished {
             return Ok(());
         }

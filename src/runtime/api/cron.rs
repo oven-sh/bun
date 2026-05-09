@@ -353,8 +353,7 @@ impl CronRegisterJob {
             RegisterState::Done
         };
         this_ref.poll.unref(vm_ctx());
-        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-        let ev = unsafe { &mut *vm_mut().event_loop() };
+        let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
@@ -1084,8 +1083,7 @@ impl CronRemoveJob {
             RemoveState::Done
         };
         this_ref.poll.unref(vm_ctx());
-        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-        let ev = unsafe { &mut *vm_mut().event_loop() };
+        let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
@@ -2028,8 +2026,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
         ptr
     };
-    // SAFETY: per-thread VM singleton.
-    let cwd = unsafe { (*vm_mut().transpiler.fs).top_level_dir };
+    let cwd = FileSystem::get().top_level_dir;
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,

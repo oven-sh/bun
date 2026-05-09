@@ -373,8 +373,7 @@ impl S3Ext for S3 {
                         let err_val = err.to_js_with_async_stack(
                             global_object,
                             self_.store.get_path(),
-                            // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                            unsafe { self_.promise.get() },
+                            self_.promise.get(),
                         );
                         self_.promise.reject(global_object, err_val)?;
                     }
@@ -468,8 +467,7 @@ impl S3Ext for S3 {
                         let err_val = err.to_js_with_async_stack(
                             global_object,
                             self_.store.get_path(),
-                            // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                            unsafe { self_.promise.get() },
+                            self_.promise.get(),
                         );
                         self_.promise.reject(global_object, err_val)?;
                     }

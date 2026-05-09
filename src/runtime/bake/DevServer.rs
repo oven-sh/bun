@@ -677,8 +677,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         Ok(fs) => fs,
         Err(err) => return Err(global.throw_error(err, generic_action)),
     };
-    // SAFETY: `FileSystem::init` returns the process-global singleton; valid for `'static`.
-    let top_level_dir: &'static [u8] = unsafe { (*fs).top_level_dir };
+    let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
     // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
@@ -1323,7 +1322,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 ) {
     // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
     // route; uWS guarantees they are non-null in handler callbacks.
-    let dev = unsafe { &mut *ud.cast::<DevServer>() };
+    let dev = unsafe { bun_ptr::callback_ctx::<DevServer>(ud) };
     let req = unsafe { &mut *req.cast::<Request>() };
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
@@ -2832,7 +2831,7 @@ impl DeferredRequest {
 
     fn on_abort_wrapper(this: *mut c_void) {
         // SAFETY: this is &mut DeferredRequest registered in defer_request
-        let self_ = unsafe { &mut *this.cast::<DeferredRequest>() };
+        let self_ = unsafe { bun_ptr::callback_ctx::<DeferredRequest>(this) };
         if !self_.is_alive() {
             return;
         }
@@ -6228,8 +6227,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     fn ensure_promise(&mut self) -> jsc::JSPromiseStrong {
         if self.promise.is_none() {
             let strong = jsc::JSPromiseStrong::init(self.global);
-            // SAFETY: resolver-style accessor; only stored as raw ptr.
-            self.p = Some(std::ptr::from_mut(unsafe { strong.get() }));
+            self.p = Some(std::ptr::from_mut(strong.get()));
             self.promise = Some(strong);
         }
         // PORT NOTE: Zig returned the `Strong` by bitwise copy (shared
@@ -6250,8 +6248,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                         .route_bundle_indices
                         .put(route_bundle_index, ())
                         .expect("oom");
-                    // SAFETY: sole `&mut JSPromise` borrow; stored as raw pointer.
-                    self.p = Some(unsafe { cb.promise.strong.get() });
+                    self.p = Some(cb.promise.strong.get());
                     return Ok(());
                 }
                 let strong_promise = self.ensure_promise();
@@ -6271,8 +6268,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                         .route_bundle_indices
                         .put(route_bundle_index, ())
                         .expect("oom");
-                    // SAFETY: sole `&mut JSPromise` borrow; stored as raw pointer.
-                    self.p = Some(unsafe { self.dev_mut().next_bundle.promise.strong.get() });
+                    self.p = Some(self.dev_mut().next_bundle.promise.strong.get());
                     return Ok(());
                 }
                 let strong_promise = self.ensure_promise();

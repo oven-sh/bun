@@ -177,8 +177,7 @@ impl BunSocketContextOptions {
 
         let feed_arr = |hp: &mut Sha256, arr: *const *const c_char, n: u32| {
             hp.update(&[(!arr.is_null()) as u8]);
-            // SAFETY: u32 is POD, no padding.
-            hp.update(unsafe { bun_core::bytes_of(&n) });
+            hp.update(bun_core::bytes_of(&n));
             if !arr.is_null() {
                 // SAFETY: `arr` points to `n` (possibly null) C strings.
                 let slice = unsafe { bun_core::ffi::slice(arr, n as usize) };
@@ -213,8 +212,7 @@ impl BunSocketContextOptions {
                         meta = m;
                     }
                 }
-                // SAFETY: [i64; 3] is POD, no padding.
-                hp.update(unsafe { bun_core::bytes_of(&meta) });
+                hp.update(bun_core::bytes_of(&meta));
             }
             hp.update(&[0]);
         };
@@ -225,16 +223,15 @@ impl BunSocketContextOptions {
         feed_path(&mut h, self.dh_params_file_name);
         feed_path(&mut h, self.ca_file_name);
         feed_z(&mut h, self.ssl_ciphers);
-        // SAFETY: all fed fields are POD integers, no padding.
-        h.update(unsafe { bun_core::bytes_of(&self.ssl_prefer_low_memory_usage) });
+        h.update(bun_core::bytes_of(&self.ssl_prefer_low_memory_usage));
         feed_arr(&mut h, self.key, self.key_count);
         feed_arr(&mut h, self.cert, self.cert_count);
         feed_arr(&mut h, self.ca, self.ca_count);
-        h.update(unsafe { bun_core::bytes_of(&self.secure_options) });
-        h.update(unsafe { bun_core::bytes_of(&self.reject_unauthorized) });
-        h.update(unsafe { bun_core::bytes_of(&self.request_cert) });
-        h.update(unsafe { bun_core::bytes_of(&self.client_renegotiation_limit) });
-        h.update(unsafe { bun_core::bytes_of(&self.client_renegotiation_window) });
+        h.update(bun_core::bytes_of(&self.secure_options));
+        h.update(bun_core::bytes_of(&self.reject_unauthorized));
+        h.update(bun_core::bytes_of(&self.request_cert));
+        h.update(bun_core::bytes_of(&self.client_renegotiation_limit));
+        h.update(bun_core::bytes_of(&self.client_renegotiation_window));
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out

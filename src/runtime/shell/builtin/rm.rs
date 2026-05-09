@@ -301,13 +301,13 @@ impl Rm {
                             e.started = true;
                             (e.args_start, e.args_start + e.total_tasks)
                         };
-                        let (sig, out_count): (*const AtomicBool, *const AtomicUsize) =
-                            match &Self::state_mut(interp, cmd).state {
-                                RmState::Exec(e) => {
-                                    (&raw const e.error_signal, &raw const e.output_count)
-                                }
-                                _ => unreachable!(),
-                            };
+                        let (sig, out_count) = match &Self::state_mut(interp, cmd).state {
+                            RmState::Exec(e) => (
+                                bun_ptr::BackRef::new(&e.error_signal),
+                                bun_ptr::BackRef::new(&e.output_count),
+                            ),
+                            _ => unreachable!(),
+                        };
                         for i in args_start..argc {
                             let root = Builtin::of(interp, cmd).arg_bytes(i);
                             let is_absolute = Platform::AUTO.is_absolute(root);
@@ -631,10 +631,12 @@ pub struct ShellRmTask {
     pub root_task: *mut DirTask,
     pub root_path: ZBox,
     pub root_is_absolute: bool,
-    pub error_signal: *const AtomicBool,
+    /// Backref into `Rm::ExecState.error_signal`; the boxed `Rm` ExecState
+    /// outlives every in-flight `ShellRmTask`.
+    pub error_signal: bun_ptr::BackRef<AtomicBool>,
     /// Backref into `Rm::ExecState.output_count` so [`verbose_deleted`] can
     /// bump it from worker threads (Zig: `this.rm.state.exec.incrementOutputCount`).
-    output_count: *const AtomicUsize,
+    output_count: bun_ptr::BackRef<AtomicUsize>,
     /// Main-thread callbacks that must complete before this task can be freed:
     /// always one for `on_shell_rm_task_done` (via `finish_concurrently`), plus
     /// one per DirTask whose verbose output was queued. Decremented by
@@ -680,8 +682,8 @@ impl ShellRmTask {
         opts: Opts,
         root_path: &[u8],
         cwd: bun_sys::Fd,
-        error_signal: *const AtomicBool,
-        output_count: *const AtomicUsize,
+        error_signal: bun_ptr::BackRef<AtomicBool>,
+        output_count: bun_ptr::BackRef<AtomicUsize>,
         is_absolute: bool,
         evtloop: EventLoopHandle,
         interp: *mut Interpreter,
@@ -796,9 +798,9 @@ impl ShellRmTask {
 
     #[inline]
     fn error_signal(&self) -> &AtomicBool {
-        // SAFETY: `error_signal` points into the boxed `Rm` ExecState which
+        // `error_signal` is a `BackRef` into the boxed `Rm` ExecState which
         // outlives every in-flight ShellRmTask.
-        unsafe { &*self.error_signal }
+        self.error_signal.get()
     }
 
     /// Spec: rm.zig `enqueue` — joins `path` onto `parent_dir.path` and spawns
@@ -866,15 +868,12 @@ impl ShellRmTask {
         }
         // SAFETY: the calling worker thread has exclusive access to
         // `dir_task`'s non-atomic fields; `deleted_entries` is disjoint from
-        // every other live borrow (`&self`, `path`). `output_count` points
-        // into the boxed `Rm` ExecState.
-        let entries = unsafe {
-            let entries = &mut (*dir_task).deleted_entries;
-            if entries.is_empty() {
-                (*self.output_count).fetch_add(1, Ordering::SeqCst);
-            }
-            entries
-        };
+        // every other live borrow (`&self`, `path`).
+        let entries = unsafe { &mut (*dir_task).deleted_entries };
+        if entries.is_empty() {
+            // `output_count` is a `BackRef` into the boxed `Rm` ExecState.
+            self.output_count.fetch_add(1, Ordering::SeqCst);
+        }
         entries.extend_from_slice(path);
         entries.push(b'\n');
         Ok(())
@@ -1566,7 +1565,7 @@ impl bun_event_loop::Taskable for DirTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(_this: *mut Self) {
+    fn run_from_thread_pool(_this: &mut Self) {
         // Not reached: `ShellRmTask::schedule` installs `work_pool_callback`
         // directly (rm.zig does NOT use `InnerShellTask` — the generic
         // trampoline auto-posts back, which would race the recursive DirTask

@@ -990,6 +990,17 @@ impl DirectoryWatchStore {
         }
     }
 
+    /// Safe sibling-projection: borrow the owning [`DevServer`]'s
+    /// `bun_watcher` while holding `&mut self`. The two fields are disjoint,
+    /// so the returned `&mut Watcher` does not alias `self`.
+    #[inline]
+    fn dev_bun_watcher(&mut self) -> &mut bun_watcher::Watcher {
+        // SAFETY: `owner()` recovers the heap-allocated `DevServer`;
+        // `bun_watcher` is field-disjoint from `directory_watchers`, so
+        // `&mut self` and the returned borrow cover non-overlapping memory.
+        unsafe { &mut (*self.owner()).bun_watcher }
+    }
+
     /// `DirectoryWatchStore.freeDependencyIndex` — DirectoryWatchStore.zig.
     pub fn free_dependency_index(&mut self, index: u32) {
         // Zero out the slot so DevServer.deinit/memoryCost — which iterate
@@ -1010,16 +1021,12 @@ impl DirectoryWatchStore {
 
         bun_core::scoped_log!(DevServer, "DirectoryWatchStore.freeEntry({}, {:?})", entry_index, entry.dir);
 
-        // SAFETY: owner() returns a *mut DevServer; `bun_watcher` is a disjoint
-        // field from `directory_watchers` so this does not alias `&mut self`.
-        unsafe {
-            (*self.owner()).bun_watcher.remove_at_index(
-                bun_watcher::WatchItemKind::File,
-                entry.watch_index,
-                0,
-                &[],
-            );
-        }
+        self.dev_bun_watcher().remove_at_index(
+            bun_watcher::WatchItemKind::File,
+            entry.watch_index,
+            0,
+            &[],
+        );
 
         // Zig: alloc.free(store.watches.keys()[entry_index]) — Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);
@@ -1377,9 +1384,8 @@ impl DirectoryWatchStore {
         // boxed the trimmed key on insert above, so the reassignment is a
         // no-op here; `dir_name` is kept solely for `add_directory`/`get_hash`.
 
-        // SAFETY: `dev` is a valid *mut DevServer; `bun_watcher` is a disjoint
-        // field from `directory_watchers` so this does not alias `&mut self`.
-        let watch_index = match unsafe { &mut (*dev).bun_watcher }
+        let watch_index = match self
+            .dev_bun_watcher()
             .add_directory::<false>(fd, &dir_name, bun_watcher::Watcher::get_hash(&dir_name))
         {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),

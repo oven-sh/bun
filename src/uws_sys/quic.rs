@@ -23,13 +23,13 @@ pub use self::header::Header;
 pub use self::header::Qpack;
 
 unsafe extern "C" {
-    pub fn us_quic_global_init();
+    // safe: no args; idempotent C-side initialization with no preconditions.
+    pub safe fn us_quic_global_init();
 }
 
 #[inline]
 pub fn global_init() {
-    // SAFETY: us_quic_global_init is idempotent C-side initialization with no preconditions.
-    unsafe { us_quic_global_init() }
+    us_quic_global_init()
 }
 
 // ported from: src/uws_sys/quic.zig

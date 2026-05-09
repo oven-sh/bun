@@ -166,17 +166,16 @@ impl StringJoiner {
             self.watcher.needs_newline = data_slice[data_slice.len() - 1] != b'\n';
         }
 
-        let new_tail_ptr = bun_core::heap::into_raw(new_tail);
+        let new_tail_nn = bun_core::heap::into_raw_nn(new_tail);
         if let Some(current_tail) = self.tail {
             // SAFETY: `tail` always points to the last node in the chain owned via `head`.
-            unsafe { (*current_tail.as_ptr()).next = new_tail_ptr };
+            unsafe { (*current_tail.as_ptr()).next = new_tail_nn.as_ptr() };
         } else {
             debug_assert!(self.head.is_none());
-            // SAFETY: new_tail_ptr just came from heap::alloc above.
-            self.head = Some(unsafe { bun_core::heap::take(new_tail_ptr) });
+            // SAFETY: new_tail_nn just came from heap::into_raw_nn above.
+            self.head = Some(unsafe { bun_core::heap::take(new_tail_nn.as_ptr()) });
         }
-        // SAFETY: new_tail_ptr is non-null (from heap::alloc).
-        self.tail = Some(unsafe { NonNull::new_unchecked(new_tail_ptr) });
+        self.tail = Some(new_tail_nn);
     }
 
     /// This deinits the string joiner on success, the new string is owned by the caller.

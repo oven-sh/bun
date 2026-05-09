@@ -514,8 +514,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     in_out_str: *mut bun_string::String,
 ) -> bool {
     jsc::mark_binding();
-    // SAFETY: C++ passed the live per-thread VM.
-    if unsafe { (*vm).standalone_module_graph.is_none() } {
+    if VirtualMachine::get().standalone_module_graph.is_none() {
         return false;
     }
     // `ModuleLoader.resolveEmbeddedFile` reaches into `bun_runtime::node::fs` +

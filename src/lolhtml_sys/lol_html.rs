@@ -360,7 +360,7 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(ptr: *const u8, len: us
 
     // Zig: @setRuntimeSafety(false)
     // SAFETY: user_data was set to &mut S in build(); ptr[0..len] is valid for the duration of this call
-    let this = unsafe { &mut *user_data.cast::<S>() };
+    let this = unsafe { bun_core::callback_ctx::<S>(user_data) };
     match len {
         0 => this.done(),
         _ => this.write(unsafe { bun_core::ffi::slice(ptr, len) }),

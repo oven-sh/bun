@@ -461,10 +461,7 @@ impl ShellLsTask {
     }
 
     /// Spec: ls.zig `ShellLsTask.run`.
-    pub fn run_from_thread_pool(this: *mut ShellLsTask) {
-        // SAFETY: `this` is a live heap-allocated task.
-        let this = unsafe { &mut *this };
-
+    pub fn run_from_thread_pool(this: &mut ShellLsTask) {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
@@ -749,7 +746,7 @@ impl bun_event_loop::Taskable for ShellLsTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
         Self::run_from_main_thread(this, interp)
     }

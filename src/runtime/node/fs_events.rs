@@ -432,7 +432,7 @@ impl FSEventsLoop {
             return;
         }
         // SAFETY: arg was set to `this: *mut FSEventsLoop` in init()
-        let this = unsafe { &mut *arg.cast::<FSEventsLoop>() };
+        let this = unsafe { bun_ptr::callback_ctx::<FSEventsLoop>(arg) };
 
         let mut concurrent = this.tasks.pop_batch();
         let count = concurrent.count;
@@ -541,7 +541,7 @@ impl FSEventsLoop {
         let paths_ptr = event_paths as *const *const c_char;
         let paths = unsafe { bun_core::ffi::slice(paths_ptr, num_events) };
         // SAFETY: info was set to self in _schedule()
-        let loop_ = unsafe { &mut *info.cast::<FSEventsLoop>() };
+        let loop_ = unsafe { bun_ptr::callback_ctx::<FSEventsLoop>(info) };
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags =
             unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };

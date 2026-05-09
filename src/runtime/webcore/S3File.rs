@@ -516,7 +516,7 @@ impl S3BlobStatTask {
                     &err,
                     global,
                     Some(this.store.data.as_s3().path()),
-                    unsafe { this.promise.get() },
+                    this.promise.get(),
                 );
                 this.promise.reject(global, Ok(value))?;
             }
@@ -542,7 +542,7 @@ impl S3BlobStatTask {
                     &err,
                     global,
                     Some(this.store.data.as_s3().path()),
-                    unsafe { this.promise.get() },
+                    this.promise.get(),
                 );
                 this.promise.reject(global, Ok(value))?;
             }
@@ -578,7 +578,7 @@ impl S3BlobStatTask {
                     &err,
                     global,
                     Some(this.store.data.as_s3().path()),
-                    unsafe { this.promise.get() },
+                    this.promise.get(),
                 );
                 this.promise.reject(global, Ok(value))?;
             }

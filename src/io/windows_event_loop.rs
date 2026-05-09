@@ -495,7 +495,7 @@ impl Store {
         // SAFETY: `ctx` was set to `self as *mut Store` in `put` above. The thunk fires
         // from the event loop's after-tick hook with no other `&mut Store` borrow live,
         // so this is the unique accessor (safe-single-owner).
-        let this = unsafe { &mut *ctx.cast::<Store>() };
+        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
     }
 }

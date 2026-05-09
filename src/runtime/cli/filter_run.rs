@@ -704,8 +704,8 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     post_script_name[0..4].copy_from_slice(b"post");
     post_script_name[4..].copy_from_slice(script_name);
 
-    // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-    let fsinstance = unsafe { &*bun_resolver::fs::FileSystem::init(None)? };
+    let _ = bun_resolver::fs::FileSystem::init(None)?;
+    let fsinstance = bun_resolver::fs::FileSystem::get();
 
     // these things are leaked because we are going to exit
     // When --workspaces is set, we want to match all workspace packages
@@ -726,8 +726,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // Find package.json at workspace root
     let mut root_buf = bun_paths::PathBuffer::uninit();
     let resolve_root = FilterArg::get_candidate_package_patterns(
-        // SAFETY: `ctx.log` is the process-global Log; non-null and live for 'static.
-        unsafe { &mut *ctx.log },
+        unsafe { ctx.log_mut() },
         &mut patterns,
         fsinstance.top_level_dir,
         &mut root_buf,

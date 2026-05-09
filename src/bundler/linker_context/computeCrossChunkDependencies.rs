@@ -487,18 +487,12 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     c.sorted_cross_chunk_export_items(&chunk_meta.exports, &mut stable_ref_list);
                     let mut clause_items =
                         Vec::<js_ast::ClauseItem>::init_capacity(stable_ref_list.len())?;
-                    // SAFETY: capacity reserved above; elements written immediately below.
-                    unsafe { clause_items.set_len((stable_ref_list.len() as u32) as usize) };
                     repr.exports_to_other_chunks
                         .reserve(stable_ref_list.len());
                     // PERF(port): was ensureUnusedCapacity — profile in Phase B
                     r.clear_retaining_capacity();
 
-                    debug_assert_eq!(stable_ref_list.len(), clause_items.slice().len());
-                    for (stable_ref, clause_item) in stable_ref_list
-                        .iter()
-                        .zip(clause_items.slice_mut().iter_mut())
-                    {
+                    for stable_ref in stable_ref_list.iter() {
                         let ref_ = stable_ref.r#ref;
                         let original_name = c.graph.symbols.get_const(ref_).unwrap().original_name.slice();
                         // The alias is stored on the chunk (`exports_to_other_chunks`,
@@ -511,7 +505,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             js_ast::StoreStr::new(c.arena().alloc_slice_copy(r.next_renamed_name(original_name)))
                         };
 
-                        *clause_item = js_ast::ClauseItem {
+                        clause_items.push(js_ast::ClauseItem {
                             name: js_ast::LocRef {
                                 ref_: Some(ref_),
                                 loc: Logger::Loc::EMPTY,
@@ -519,7 +513,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             alias,
                             alias_loc: Logger::Loc::EMPTY,
                             original_name: js_ast::StoreStr::new(b"" as &[u8]),
-                        };
+                        });
 
                         // `alias` points into the link-pass arena (see PORT NOTE above),
                         // which outlives `exports_to_other_chunks`; `.slice()` re-borrows

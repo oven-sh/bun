@@ -481,28 +481,13 @@ impl LinkerGraph {
         unsafe { self.files.set_len(sources.len()) };
 
         // PORT NOTE: `Slice<T>` caches raw column pointers and does not borrow
-        // `self.files`, so `entry_point_kinds` can stay live across other
-        // `&mut self.*` accesses below. The columns are not reallocated during
-        // `load`.
-        let files_slice = self.files.slice();
-        let files_len = files_slice.len();
-        // SAFETY: `entry_point_kind` column; `files_len` initialized elements.
-        let entry_point_kinds: &mut [entry_point::Kind] = unsafe {
-            core::slice::from_raw_parts_mut(
-                files_slice.items_raw::<"entry_point_kind", entry_point::Kind>(),
-                files_len,
-            )
-        };
-        {
-            // SAFETY: `entry_point::Kind` is `#[repr(u8)]`; zero is `.None`.
-            let kinds = unsafe {
-                core::slice::from_raw_parts_mut(
-                    entry_point_kinds.as_mut_ptr().cast::<u8>(),
-                    core::mem::size_of_val(entry_point_kinds),
-                )
-            };
-            kinds.fill(0);
-        }
+        // `self.files`, so the `split_mut()` borrows (tied to the local
+        // `files_slice`) can stay live across other `&mut self.*` accesses
+        // below. The columns are not reallocated during `load`.
+        let mut files_slice = self.files.slice();
+        let files_cols = files_slice.split_mut();
+        let entry_point_kinds: &mut [entry_point::Kind] = files_cols.entry_point_kind;
+        entry_point_kinds.fill(entry_point::Kind::None);
 
         // Setup entry points
         {
@@ -516,34 +501,16 @@ impl LinkerGraph {
 
             // PORT NOTE: borrowck reshape — Zig held `source_indices` /
             // `path_strings` / `output_path_was_auto_generated` simultaneously
-            // (disjoint columns of the same `MultiArrayList`). Reach them via
-            // `Slice::items_raw` so the three `&mut [_]` do not alias `&mut
-            // self.entry_points`.
-            let ep_slice = self.entry_points.slice();
-            let ep_len = ep_slice.len();
-            // SAFETY: distinct columns; `self.entry_points` not reallocated
-            // until after `path_strings`/`source_indices` are done with.
-            let source_indices: &mut [index::Int] = unsafe {
-                core::slice::from_raw_parts_mut(
-                    ep_slice.items_raw::<"source_index", index::Int>(),
-                    ep_len,
-                )
-            };
-            let path_strings: &mut [PathString] = unsafe {
-                core::slice::from_raw_parts_mut(
-                    ep_slice.items_raw::<"output_path", PathString>(),
-                    ep_len,
-                )
-            };
-            {
-                let output_was_auto_generated: &mut [bool] = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        ep_slice.items_raw::<"output_path_was_auto_generated", bool>(),
-                        ep_len,
-                    )
-                };
-                output_was_auto_generated.fill(false);
-            }
+            // (disjoint columns of the same `MultiArrayList`). `split_mut()`
+            // hands out all three at once; `self.entry_points` is not
+            // reallocated until after `path_strings`/`source_indices` are done
+            // with (the next `append_assume_capacity` is within the
+            // pre-reserved capacity, so no realloc).
+            let mut ep_slice = self.entry_points.slice();
+            let ep_cols = ep_slice.split_mut();
+            let source_indices: &mut [index::Int] = ep_cols.source_index;
+            let path_strings: &mut [PathString] = ep_cols.output_path;
+            ep_cols.output_path_was_auto_generated.fill(false);
 
             debug_assert_eq!(entry_points.len(), path_strings.len());
             debug_assert_eq!(entry_points.len(), source_indices.len());
@@ -676,13 +643,7 @@ impl LinkerGraph {
                 stable_source_indices[source_index.get() as usize] = Index::source(i as u32);
             }
 
-            // SAFETY: `distance_from_entry_point` column; `files_len` elements.
-            let distances: &mut [u32] = unsafe {
-                core::slice::from_raw_parts_mut(
-                    files_slice.items_raw::<"distance_from_entry_point", u32>(),
-                    files_len,
-                )
-            };
+            let distances: &mut [u32] = files_cols.distance_from_entry_point;
             distances.fill(File::default().distance_from_entry_point);
             // SAFETY: `Index` is `#[repr(transparent)]` over `u32`;
             // reinterpreting `[Index]` as `[u32]` is sound. The arena-allocated

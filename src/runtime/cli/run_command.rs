@@ -533,17 +533,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         this_transpiler.configure_linker();
 
-        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
                     if !log_errors {
                         return Err(bun_core::err!("CouldntReadCurrentDirectory"));
                     }
-                    // SAFETY: `ctx.log` set in `create_context_data` (single-
-                    // threaded CLI startup), process-lifetime.
-                    let _ = unsafe { ctx.log() }
+                    let _ = unsafe { ctx.log_mut() }
                         .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
@@ -554,8 +551,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     return Err(err);
                 }
                 Ok(None) => {
-                    // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }
+                    let _ = unsafe { ctx.log_mut() }
                         .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     pretty_errorln!("error loading current directory");
                     Output::flush();
@@ -1022,7 +1018,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
             // opaque slot; the API lock is held for the full call so no
             // other thread touches the VM.
-            let this = unsafe { &mut *ctx.cast::<Run>() };
+            let this = unsafe { bun_ptr::callback_ctx::<Run>(ctx) };
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
@@ -1166,7 +1162,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         extern "C" fn trampoline(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
             // opaque slot; the API lock is held for the full call.
-            let this = unsafe { &mut *ctx.cast::<Run>() };
+            let this = unsafe { bun_ptr::callback_ctx::<Run>(ctx) };
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
@@ -1244,9 +1240,9 @@ impl Run {
             fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
             fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
         }
-        // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
-        // `boot()` before the API-lock trampoline runs.
-        let vm = unsafe { &*self.vm };
+        // `self.vm` is the per-thread VM written by `boot()` before the
+        // API-lock trampoline runs; route through the safe singleton accessor.
+        let vm = VirtualMachine::get();
         let ro = unsafe { &(*self.ctx).runtime_options };
         if !ro.eval.script.is_empty() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
@@ -1265,10 +1261,11 @@ impl Run {
     fn start(&mut self) -> ! {
         // PORT NOTE: deref the raw VM/ctx pointers once so the rest of this
         // body can borrow `vm` and `ctx` alongside `self.entry_path`.
-        // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; `self.ctx`
-        // is the CLI's process-lifetime `ContextData`. Both are written by
-        // `boot()`/`boot_standalone()` before the API-lock trampoline runs.
-        let vm = unsafe { &mut *self.vm };
+        // `self.vm` is the boxed-and-leaked main-thread VM; route through the
+        // safe singleton accessor. `self.ctx` is the CLI's process-lifetime
+        // `ContextData`, written by `boot()`/`boot_standalone()` before the
+        // API-lock trampoline runs.
+        let vm = VirtualMachine::get().as_mut();
         let ctx = unsafe { &*self.ctx };
         // SAFETY: `entry_path` is process-lifetime (heap from `heap::alloc`
         // or a borrow into the standalone graph); deref to a `'static` slice
@@ -1291,8 +1288,7 @@ impl Run {
                 interval: opts.interval,
             });
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-            // SAFETY: `vm.jsc_vm` set in `init`.
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
+            bun_jsc::bun_cpu_profiler::start_cpu_profiler(vm.jsc_vm_mut());
             bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -1398,9 +1394,7 @@ impl Run {
 
         // Zig: `if entry_path == "." { entry_path = fs.top_level_dir }`.
         if entry == b"." {
-            // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
-            // singleton (set in `Transpiler::init`).
-            let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
+            let tld = bun_resolver::fs::FileSystem::get().top_level_dir;
             if !tld.is_empty() {
                 entry = tld;
             }
@@ -1413,11 +1407,9 @@ impl Run {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
-                    // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
-                    let result = promise.result(unsafe { &mut *vm.jsc_vm });
-                    let global = vm.global;
-                    // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                    let result = promise.result(vm.jsc_vm_mut());
+                    let global = vm.global();
+                    let handled = vm.uncaught_exception(global, result, true);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -1659,14 +1651,11 @@ impl RunCommand {
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
         if let Err(err) = Self::boot(ctx, owned, loader) {
-            // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
-            // CLI startup) and is process-lifetime.
-            
             // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
             // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
             // returns the process-global writer; cast to the raw pointer the
             // trait expects.
-            let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
+            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
 
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -1820,10 +1809,7 @@ impl RunCommand {
                     'inner: {
                         // SAFETY: argv0 is a valid NUL-terminated C string
                         // (points at argv[0], `self_exe_path`, or `optional_bun_path`).
-                        let target = unsafe {
-                            let cstr = bun_core::ffi::cstr(argv0);
-                            ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
-                        };
+                        let target = ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv0) });
                         // PATHS entries are NUL-terminated string literals.
                         let link = ZStr::from_slice_with_nul(p.as_bytes());
                         if let Err(err) = sys::symlink(target, link) {
@@ -1835,10 +1821,7 @@ impl RunCommand {
                             }
 
                             // Zig: std.fs.makeDirAbsoluteZ(BUN_NODE_DIR) — best-effort.
-                            // SAFETY: BUN_NODE_DIR_Z is a NUL-terminated literal.
-                            let dir_z = unsafe {
-                                ZStr::from_raw(BUN_NODE_DIR_Z.as_ptr(), BUN_NODE_DIR_Z.len() - 1)
-                            };
+                            let dir_z = ZStr::from_slice_with_nul(BUN_NODE_DIR_Z.as_bytes());
                             let _ = sys::mkdir(dir_z, 0o755);
 
                             retried = true;
@@ -2293,10 +2276,8 @@ impl RunCommand {
                         {
                             // SAFETY: `executable_z` is the NUL-terminated form
                             // of `executable` (caller invariant).
-                            let exec_z = unsafe {
-                                let cstr = bun_core::ffi::cstr(executable_z);
-                                ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
-                            };
+                            let exec_z =
+                                ZStr::from_cstr(unsafe { bun_core::ffi::cstr(executable_z) });
                             match sys::stat(exec_z) {
                                 Ok(stat) => {
                                     if sys::S::ISDIR(stat.st_mode as _) {
@@ -2661,7 +2642,7 @@ impl RunCommand {
             RUN_LOG,
             "Try resolve `{}` in `{}`",
             bstr::BStr::new(target_name),
-            bstr::BStr::new(unsafe { (*this_transpiler.fs).top_level_dir }),
+            bstr::BStr::new(bun_resolver::fs::FileSystem::get().top_level_dir),
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve. Zig: `defer resolver.opts.preserve_symlinks = saved`.
@@ -2671,8 +2652,7 @@ impl RunCommand {
                 .runtime_options
                 .preserve_symlinks_main
                 || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN.get().unwrap_or(false);
-            // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2822,11 +2802,9 @@ impl RunCommand {
         }
 
         // `bun feedback` (run_command.zig:1921-1925).
-        // SAFETY: `cli::CMD` is a single-threaded process-static written once
-        // during CLI startup (mod.rs:693).
         if ctx.filters.is_empty()
             && !ctx.workspaces
-            && unsafe { cli::CMD.read() } == Some(CommandTag::AutoCommand)
+            && cli::CMD.get().copied() == Some(CommandTag::AutoCommand)
             && target_name == b"feedback"
         {
             Self::bun_feedback(ctx)?;
@@ -3037,9 +3015,7 @@ impl RunCommand {
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, owned, None) {
-            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
-            // CLI startup), process-lifetime.
-            let _ = unsafe { ctx.log() }
+            let _ = unsafe { ctx.log_mut() }
                 .print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -3139,9 +3115,7 @@ impl RunCommand {
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, normalized, None) {
-            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
-            // CLI startup), process-lifetime.
-            let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
+            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
 
             Output::err(
                 err,
@@ -3669,8 +3643,7 @@ impl RunCommand {
         this_transpiler.resolver.store_fd = true;
         this_transpiler.configure_linker();
 
-        // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let Some(root_dir_info) = this_transpiler
             .resolver
             .read_dir_info(top_level_dir)
@@ -4185,8 +4158,7 @@ impl BunXFastPath {
             Err(_) => return,
         };
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
-            // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = unsafe { ctx.log_mut() }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

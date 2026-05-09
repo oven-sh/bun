@@ -693,22 +693,17 @@ impl FileReader {
                     } else {
                         // SAFETY: see `reader_buffer` decl.
                         unsafe { (*reader_buffer).clear() };
-                        self.pending.result = streams::Result::Temporary(unsafe {
-                            Vec::<u8>::from_borrowed_slice_dangerous(buf)
-                        });
+                        self.pending.result =
+                            streams::Result::Temporary(bun_ptr::RawSlice::new(buf));
                     }
                     break 'pending !was_done;
                 }
 
                 if !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
                     self.pending.result = if self.reader().is_done() {
-                        streams::Result::TemporaryAndDone(unsafe {
-                            Vec::<u8>::from_borrowed_slice_dangerous(buf)
-                        })
+                        streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
                     } else {
-                        streams::Result::Temporary(unsafe {
-                            Vec::<u8>::from_borrowed_slice_dangerous(buf)
-                        })
+                        streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
                     };
                     break 'pending !was_done;
                 }
@@ -849,14 +844,10 @@ impl FileReader {
                 ReadDuringJSOnPullResult::Temporary(buf) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
                     if self.reader().is_done() {
-                        return streams::Result::TemporaryAndDone(unsafe {
-                            Vec::<u8>::from_borrowed_slice_dangerous(buf)
-                        });
+                        return streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf));
                     }
 
-                    return streams::Result::Temporary(unsafe {
-                        Vec::<u8>::from_borrowed_slice_dangerous(buf)
-                    });
+                    return streams::Result::Temporary(bun_ptr::RawSlice::new(buf));
                 }
                 ReadDuringJSOnPullResult::UseBuffered(_) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, self.buffered.len());

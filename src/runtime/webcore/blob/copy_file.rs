@@ -1766,7 +1766,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     bun_sys::syslog!("mkdirp complete");
     // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
     // by `mkdirp` above; sole owner on this concurrent path.
-    let this = unsafe { &mut *ctx.cast::<CopyFileWindows>() };
+    let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
     debug_assert!(this.err.is_none());
     this.err = match err_ {
         bun_sys::Result::Err(e) => Some(e),

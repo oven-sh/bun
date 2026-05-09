@@ -643,18 +643,15 @@ impl Route {
                     }
 
                     let cached_blob_size = blob.size() as u64;
-                    // SAFETY: heap::alloc never returns null.
-                    let static_route = unsafe {
-                        core::ptr::NonNull::new_unchecked(bun_core::heap::into_raw(Box::new(StaticRoute {
-                            ref_count: Cell::new(1),
-                            blob,
-                            server: Cell::new(Some(server)),
-                            status_code: 200,
-                            headers,
-                            cached_blob_size,
-                            has_content_disposition: false,
-                        })))
-                    };
+                    let static_route = bun_core::heap::into_raw_nn(Box::new(StaticRoute {
+                        ref_count: Cell::new(1),
+                        blob,
+                        server: Cell::new(Some(server)),
+                        status_code: 200,
+                        headers,
+                        cached_blob_size,
+                        has_content_disposition: false,
+                    }));
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;
                     // The route path gets cloned inside of appendStaticRoute.

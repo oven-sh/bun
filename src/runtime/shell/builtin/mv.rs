@@ -433,9 +433,7 @@ pub struct ShellMvCheckTargetTask {
 
 impl ShellMvCheckTargetTask {
     /// Spec: mv.zig `ShellMvCheckTargetTask.runFromThreadPool`.
-    pub fn run_from_thread_pool(this: *mut ShellMvCheckTargetTask) {
-        // SAFETY: `this` is a live boxed task held in `MvState::CheckTarget`.
-        let this = unsafe { &mut *this };
+    pub fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
         this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
             Ok(fd) => Ok(Some(fd)),
@@ -473,9 +471,7 @@ impl ShellMvBatchedTask {
     pub const BATCH_SIZE: usize = 5;
 
     /// Spec: mv.zig `ShellMvBatchedTask.runFromThreadPool`.
-    pub fn run_from_thread_pool(this: *mut ShellMvBatchedTask) {
-        // SAFETY: `this` is a live boxed task held in `MvState::Executing`.
-        let this = unsafe { &mut *this };
+    pub fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
         // Moving multiple entries into a directory.
         if this.sources.len() > 1 {
             return this.move_multiple_into_dir();
@@ -580,7 +576,7 @@ impl bun_event_loop::Taskable for ShellMvBatchedTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
@@ -588,7 +584,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
         Self::run_from_main_thread(this, interp)
     }

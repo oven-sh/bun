@@ -649,9 +649,9 @@ impl Debugger {
             ..Default::default()
         })
         .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
-        // SAFETY: `init` returns the freshly-boxed thread-local VM; this thread
-        // is its sole owner.
-        let vm = unsafe { &mut *vm_ptr };
+        let _ = vm_ptr;
+        // `init` installs the freshly-boxed VM as this thread's singleton.
+        let vm = VirtualMachine::get().as_mut();
 
         vm.transpiler
             .configure_defines()

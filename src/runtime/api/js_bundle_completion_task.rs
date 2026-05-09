@@ -111,8 +111,7 @@ pub fn create_and_schedule_completion_task(
     event_loop: *mut EventLoop,
 ) -> Result<*mut JSBundleCompletionTask, bun_core::Error> {
     let vm = global_this.bun_vm_ptr();
-    // SAFETY: `bun_vm()` returns the JS-thread VirtualMachine; non-null for a Bun global.
-    let env = unsafe { (*vm).transpiler.env };
+    let env = global_this.bun_vm().transpiler.env;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,

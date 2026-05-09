@@ -314,9 +314,7 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn top_level_dir(self) -> &'a [u8] {
-        // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.fs` is a
-        // long-lived `*mut FileSystem` singleton.
-        unsafe { (*self.global_this.bun_vm().as_mut().transpiler.fs).top_level_dir }
+        bun_resolver::fs::FileSystem::get().top_level_dir
     }
 
     #[inline]

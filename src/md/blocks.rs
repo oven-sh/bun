@@ -852,13 +852,9 @@ impl Parser<'_> {
         let needed = aligned + size_of::<BlockHeader>();
         self.block_bytes
             .reserve(needed.saturating_sub(self.block_bytes.len()));
-        // Zero-pad
-        while self.block_bytes.len() < aligned {
-            self.block_bytes.push(0);
-        }
-        // SAFETY: capacity reserved above; bytes between aligned..needed are immediately
+        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
         // overwritten by the BlockHeader write below.
-        unsafe { self.block_bytes.set_len(needed) };
+        self.block_bytes.resize(needed, 0);
 
         let hdr = self.get_block_header_at(aligned);
         *hdr = BlockHeader {

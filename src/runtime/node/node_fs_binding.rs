@@ -147,11 +147,10 @@ impl Binding {
     }
 
     pub fn finalize(self: Box<Self>) {
-        if let Some(vm) = self.node_fs.vm {
-            // SAFETY: `vm` is the JSC-owned `VirtualMachine`; live for the
-            // process. `node_fs` is a type-erased `*mut NodeFS` (see
-            // `RuntimeHooks::create_node_fs`).
-            let vm_node_fs = unsafe { vm.as_ref() }.node_fs;
+        if self.node_fs.vm.is_some() {
+            // `node_fs.vm` is always the per-thread VM when set; route the
+            // read through the safe singleton accessor.
+            let vm_node_fs = VirtualMachine::get().node_fs;
             if vm_node_fs == Some((&raw const self.node_fs).cast_mut().cast()) {
                 // VM-owned singleton — keep alive.
                 let _ = bun_core::heap::release(self);

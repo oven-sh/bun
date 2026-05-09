@@ -671,12 +671,12 @@ impl MachoSigner {
         // Position writer at signature offset
         // (Zig used `self.data.writer()`; here we extend the Vec directly.)
 
-        // Write signature components
-        // SAFETY: SuperBlob / BlobIndex / CodeDirectory are #[repr(C)] POD with
-        // no padding; byte-serialized verbatim into the Mach-O signature.
-        self.data.extend_from_slice(unsafe { bun_core::bytes_of(&super_blob) });
-        self.data.extend_from_slice(unsafe { bun_core::bytes_of(&blob_index) });
-        self.data.extend_from_slice(unsafe { bun_core::bytes_of(&code_dir) });
+        // Write signature components — SuperBlob / BlobIndex / CodeDirectory are
+        // `NoUninit` (#[repr(C)] POD, no padding); byte-serialized verbatim into
+        // the Mach-O signature.
+        self.data.extend_from_slice(bun_core::bytes_of(&super_blob));
+        self.data.extend_from_slice(bun_core::bytes_of(&blob_index));
+        self.data.extend_from_slice(bun_core::bytes_of(&code_dir));
         self.data.extend_from_slice(id);
 
         // Hash and write pages

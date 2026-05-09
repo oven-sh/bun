@@ -91,10 +91,11 @@ fn read_from_blob(
         _ => return Err(ReadFromBlobError::NotAFile),
     };
     let mut fs = node_fs::NodeFS::default();
-    let read_args = node_fs::args::ReadFile {
-        path: file.pathlike.clone(),
-        ..Default::default()
-    };
+    // `ReadFile` has a `Drop` impl (releases its `signal` ref), so functional
+    // record update from `..Default::default()` would partially move out of a
+    // `Drop` type. Mutate-after-default instead.
+    let mut read_args = node_fs::args::ReadFile::default();
+    read_args.path = file.pathlike.clone();
     let maybe = fs.read_file_with_options(
         &read_args,
         node_fs::Flavor::Sync,

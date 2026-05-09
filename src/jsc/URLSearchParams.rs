@@ -43,7 +43,7 @@ impl URLSearchParams {
         unsafe extern "C" fn cb<Ctx>(c: *mut c_void, str: *const ZigString) {
             // SAFETY: `c` is the &mut Wrap<Ctx> we passed below; `str` is a valid
             // *const ZigString for the duration of this callback (borrowed from C++).
-            let w = unsafe { &mut *c.cast::<Wrap<'_, Ctx>>() };
+            let w = unsafe { bun_ptr::callback_ctx::<Wrap<'_, Ctx>>(c) };
             let str = unsafe { *str };
             (w.callback)(w.ctx, str);
         }

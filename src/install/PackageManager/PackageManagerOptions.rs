@@ -774,9 +774,10 @@ impl Options {
             }
 
             if let Some(backend) = cli.backend {
-                // SAFETY: main-thread CLI option load — single writer
-                // (Zig: `PackageInstall.supported_method = backend`).
-                unsafe { crate::package_install::SUPPORTED_METHOD.write(backend); }
+                // Zig: `PackageInstall.supported_method = backend` — atomic store,
+                // main-thread CLI option load (single writer).
+                crate::package_install::SUPPORTED_METHOD
+                    .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
             }
 
             // CPU and OS are now parsed as enums in CommandLineArguments, just copy them

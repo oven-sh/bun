@@ -302,6 +302,9 @@ mod advanced {
         SerializedInternalMessage = 3,
         // Zig: `_` (non-exhaustive)
     }
+    // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
+    // `Copy + 'static`; the single byte is always an initialized discriminant.
+    unsafe impl bytemuck::NoUninit for IPCMessageType {}
 
     impl IPCMessageType {
         fn tag_name(raw: u8) -> &'static str {

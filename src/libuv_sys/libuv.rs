@@ -785,7 +785,7 @@ pub unsafe trait UvStream: UvHandle {
         ) {
             // SAFETY: `req.data` was set to `context` above; libuv calls this
             // on the loop thread before `uv_readcb`.
-            let ctx: &mut T = unsafe { &mut *(*req).data.cast::<T>() };
+            let ctx: &mut T = unsafe { bun_core::callback_ctx::<T>((*req).data) };
             let buf = T::on_read_alloc(ctx, suggested_size);
             // SAFETY: `buffer` is libuv's out-param.
             unsafe { *buffer = uv_buf_t::init(buf) };

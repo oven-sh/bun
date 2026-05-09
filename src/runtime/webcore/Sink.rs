@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::mem::ManuallyDrop;
 
 use bun_collections::{ByteVecExt, VecExt, TaggedPtrUnion};
 use bun_core::Output;
@@ -205,8 +204,8 @@ impl UTF8Fallback {
             buf[..str_.len()].copy_from_slice(str_);
 
             strings::replace_latin1_with_utf8(&mut buf[..str_.len()]);
-            // SAFETY: borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(&buf[..str_.len()]) };
+            // Borrowed view is consumed by `write_fn` before `buf` drops.
+            let borrowed = bun_ptr::RawSlice::new(&buf[..str_.len()]);
             if input.is_done() {
                 let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -256,9 +255,8 @@ impl UTF8Fallback {
             let copied = strings::copy_utf16_into_utf8_impl::<true>(&mut buf, str_);
             debug_assert!(copied.written as usize <= Self::STACK_SIZE);
             debug_assert!(copied.read as usize <= Self::STACK_SIZE);
-            // SAFETY: borrowed view is consumed by `write_fn` before `buf` drops.
-            let borrowed =
-                unsafe { Vec::<u8>::from_borrowed_slice_dangerous(&buf[..copied.written as usize]) };
+            // Borrowed view is consumed by `write_fn` before `buf` drops.
+            let borrowed = bun_ptr::RawSlice::new(&buf[..copied.written as usize]);
             if input.is_done() {
                 let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
                 return result;
@@ -782,8 +780,8 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             if slice.is_empty() {
                 return Ok(JSValue::js_number(0.0));
             }
-            // SAFETY: borrowed view over GC-kept buffer for the duration of the call.
-            let data = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(slice) };
+            // Borrowed view over GC-kept buffer for the duration of the call.
+            let data = bun_ptr::RawSlice::new(slice);
             return Ok(this
                 .sink
                 .write_bytes(streams::Result::Temporary(data))
@@ -808,16 +806,16 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         if view.is_16bit() {
             let utf16 = view.utf16_slice_aligned();
             let bytes: &[u8] = bytemuck::cast_slice(utf16);
-            // SAFETY: borrowed view over GC-kept JSString.
-            let data = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(bytes) };
+            // Borrowed view over GC-kept JSString.
+            let data = bun_ptr::RawSlice::new(bytes);
             return Ok(this
                 .sink
                 .write_utf16(streams::Result::Temporary(data))
                 .to_js(global));
         }
 
-        // SAFETY: borrowed view over GC-kept JSString (Latin-1 path).
-        let data = unsafe { Vec::<u8>::from_borrowed_slice_dangerous(view.slice()) };
+        // Borrowed view over GC-kept JSString (Latin-1 path).
+        let data = bun_ptr::RawSlice::new(view.slice());
         Ok(this
             .sink
             .write_latin1(streams::Result::Temporary(data))
@@ -1194,7 +1192,7 @@ macro_rules! js_sink {
             // Symbol owned by generated_jssink.rs (`${abi_name}__finalize`).
             pub extern "C" fn finalize(ptr: *mut c_void) {
                 // SAFETY: ptr is a ThisSink* allocated by us (create_object).
-                let this = unsafe { &mut *ptr.cast::<ThisSink>() };
+                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(ptr) };
                 this.sink.finalize();
             }
 
@@ -1297,7 +1295,7 @@ macro_rules! js_sink {
                     return this
                         .sink
                         .write_bytes(streams::Result::Temporary(
-                            Vec::<u8>::from_borrowed_slice_dangerous(slice),
+                            bun_ptr::RawSlice::new(slice),
                         ))
                         .to_js(global);
                 }
@@ -1324,14 +1322,14 @@ macro_rules! js_sink {
                     return this
                         .sink
                         .write_utf16(streams::Result::Temporary(
-                            Vec::<u8>::from_borrowed_slice_dangerous(bytes),
+                            bun_ptr::RawSlice::new(bytes),
                         ))
                         .to_js(global);
                 }
 
                 this.sink
                     .write_latin1(streams::Result::Temporary(
-                        Vec::<u8>::from_borrowed_slice_dangerous(view.slice()),
+                        bun_ptr::RawSlice::new(view.slice()),
                     ))
                     .to_js(global)
             }
@@ -1382,14 +1380,14 @@ macro_rules! js_sink {
                     return this
                         .sink
                         .write_utf16(streams::Result::Temporary(
-                            Vec::<u8>::from_borrowed_slice_dangerous(bytes),
+                            bun_ptr::RawSlice::new(bytes),
                         ))
                         .to_js(global);
                 }
 
                 this.sink
                     .write_latin1(streams::Result::Temporary(
-                        Vec::<u8>::from_borrowed_slice_dangerous(view.slice()),
+                        bun_ptr::RawSlice::new(view.slice()),
                     ))
                     .to_js(global)
             }
@@ -1401,7 +1399,7 @@ macro_rules! js_sink {
                     return JSValue::UNDEFINED;
                 };
                 // SAFETY: sink_ptr is a ThisSink* from C++.
-                let this = unsafe { &mut *sink_ptr.as_ptr().cast::<ThisSink>() };
+                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(sink_ptr.as_ptr()) };
 
                 if let Some(err) = this.sink.get_pending_error() {
                     // VM::throw_error returns JsError (no payload); set pending
@@ -1507,7 +1505,7 @@ macro_rules! js_sink {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
 
                 // SAFETY: ptr is a ThisSink* from C++.
-                let this = unsafe { &mut *ptr.cast::<ThisSink>() };
+                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(ptr) };
 
                 if let Some(err) = this.sink.get_pending_error() {
                     return match global.throw_value(err) {
@@ -1524,7 +1522,7 @@ macro_rules! js_sink {
             pub extern "C" fn update_ref(ptr: *mut c_void, value: bool) {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
                 // SAFETY: ptr is a ThisSink*.
-                let this = unsafe { &mut *ptr.cast::<ThisSink>() };
+                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(ptr) };
                 if <$SinkType as JsSinkType>::HAS_UPDATE_REF {
                     this.sink.update_ref(value);
                 }
@@ -1541,7 +1539,7 @@ macro_rules! js_sink {
             // Symbol owned by generated_jssink.rs (`${abi_name}__getInternalFd`).
             extern "C" fn js_get_internal_fd(ptr: *mut c_void) -> JSValue {
                 // SAFETY: ptr is a ThisSink*.
-                let this = unsafe { &mut *ptr.cast::<ThisSink>() };
+                let this = unsafe { bun_ptr::callback_ctx::<ThisSink>(ptr) };
                 if <$SinkType as JsSinkType>::HAS_GET_FD {
                     return JSValue::js_number(this.sink.get_fd());
                 }

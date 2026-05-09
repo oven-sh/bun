@@ -233,11 +233,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         offer_permessage_deflate: bool,
     ) -> Option<*mut Self> {
         let vm_ptr = global.bun_vm_ptr();
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
-        // outlives this call. `vm` is rebound as a fresh `&mut` at each use
-        // site below to avoid stacking exclusive borrows across re-entrant
-        // calls.
-        let vm = unsafe { &mut *vm_ptr };
+        let vm = global.bun_vm().as_mut();
 
         debug_assert!(vm.event_loop_handle.is_some());
 

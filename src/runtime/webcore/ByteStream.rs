@@ -203,14 +203,14 @@ impl ByteStream {
                 self.buffer.extend_from_slice(stream.slice());
                 // Zig `defer { if owned* allocator.free(stream.slice()) }` — owned `Vec<u8>`
                 // payload of `stream` is freed by its Drop glue at the explicit `drop` below
-                // (Temporary* variants are `ManuallyDrop` and so are left alone, matching Zig).
+                // (Temporary* variants are non-owning `RawSlice` and so are left alone, matching Zig).
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
                 return action.fulfill(self.parent().global_this, &mut blob);
             } else {
                 self.buffer.extend_from_slice(stream.slice());
                 // Zig: `if owned* allocator.free(stream.slice())` — owned `Vec<u8>` payload of
-                // `stream` is freed by its Drop glue (Temporary* are `ManuallyDrop`, left alone).
+                // `stream` is freed by its Drop glue (Temporary* are non-owning `RawSlice`, left alone).
                 drop(stream);
             }
 

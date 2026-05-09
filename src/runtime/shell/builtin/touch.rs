@@ -302,13 +302,9 @@ impl ShellTouchTask {
 
     /// Spec: touch.zig `runFromThreadPool`. utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
-    pub fn run_from_thread_pool(this: *mut ShellTouchTask) {
+    pub fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, platform, Platform};
         use bun_sys::FdExt as _;
-        // SAFETY: `this` is a live heap-allocated task; the worker thread
-        // has exclusive access until `shell_task_trampoline` posts back.
-        let this = unsafe { &mut *this };
-
         // We have to give an absolute path.
         let mut buf = bun_paths::PathBuffer::uninit();
         let filepath: &bun_str::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
@@ -366,7 +362,7 @@ impl bun_event_loop::Taskable for ShellTouchTask {
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_thread_pool(this: &mut Self) { Self::run_from_thread_pool(this) }
     fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
         Self::run_from_main_thread(this, interp)
     }

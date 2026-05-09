@@ -8,7 +8,7 @@ use crate::shell::ExitCode;
 
 pub struct If {
     pub base: Base,
-    pub node: *const ast::If,
+    pub node: bun_ptr::BackRef<ast::If>,
     pub io: IO,
     pub state: IfState,
 }
@@ -24,9 +24,10 @@ pub enum IfState {
 
 pub struct Exec {
     pub state: ExecBranch,
-    /// Pointer to the current `SmolList<ast::Stmt, 1>` being walked. Points
-    /// into the AST arena.
-    pub stmts: *const ast::SmolList<ast::Stmt, 1>,
+    /// Back-reference to the current `SmolList<ast::Stmt, 1>` being walked.
+    /// Points into the AST arena, which the interpreter holds for its entire
+    /// lifetime — it outlives every state node.
+    pub stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt, 1>>,
     pub stmt_idx: u32,
     pub last_exit_code: ExitCode,
 }
@@ -34,13 +35,12 @@ pub struct Exec {
 impl Exec {
     /// Borrow the current `SmolList<Stmt, 1>` being walked.
     ///
-    /// SAFETY (invariant): `stmts` always points into the AST arena
-    /// (`ShellArgs::__arena`), which the interpreter holds for its entire
-    /// lifetime — it outlives every state node.
+    /// `stmts` always points into the AST arena (`ShellArgs::__arena`), which
+    /// the interpreter holds for its entire lifetime — it outlives every state
+    /// node (BackRef invariant).
     #[inline]
     fn stmts(&self) -> &ast::SmolList<ast::Stmt, 1> {
-        // SAFETY: see doc comment — arena-backed, non-null, outlives `self`.
-        unsafe { &*self.stmts }
+        self.stmts.get()
     }
 
     #[inline]
@@ -60,13 +60,13 @@ impl If {
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::If,
+        node: &ast::If,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::If(If {
             base: Base::new(StateKind::IfClause, parent, shell),
-            node,
+            node: bun_ptr::BackRef::new(node),
             io,
             state: IfState::Idle,
         }))
@@ -84,15 +84,15 @@ impl If {
             // before calling back into `interp`.
             let action = {
                 let me = interp.as_if_mut(this);
-                // SAFETY: `me.node` points into the AST arena
-                // (`ShellArgs::__arena`), which the interpreter holds for its
-                // entire lifetime.
-                let n = unsafe { &*me.node };
+                // Copy the BackRef out so `n` borrows a local, leaving `me`
+                // free for the disjoint `&mut me.state` borrow below.
+                let node = me.node;
+                let n = node.get();
                 match &mut me.state {
                     IfState::Idle => {
                         me.state = IfState::Exec(Exec {
                             state: ExecBranch::Cond,
-                            stmts: &raw const n.cond,
+                            stmts: bun_ptr::BackRef::new(&n.cond),
                             stmt_idx: 0,
                             last_exit_code: 0,
                         });
@@ -104,7 +104,7 @@ impl If {
                                 ExecBranch::Cond => {
                                     if exec.last_exit_code == 0 {
                                         exec.state = ExecBranch::Then;
-                                        exec.stmts = &raw const n.then;
+                                        exec.stmts = bun_ptr::BackRef::new(&n.then);
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -113,13 +113,13 @@ impl If {
                                         0 => Action::Done(0),
                                         1 => {
                                             exec.state = ExecBranch::Else;
-                                            exec.stmts = &raw const n.else_parts[0];
+                                            exec.stmts = bun_ptr::BackRef::new(&n.else_parts[0]);
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
                                         _ => {
                                             exec.state = ExecBranch::Elif { idx: 0 };
-                                            exec.stmts = &raw const n.else_parts[0];
+                                            exec.stmts = bun_ptr::BackRef::new(&n.else_parts[0]);
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
@@ -132,7 +132,7 @@ impl If {
                                         // `elif` cond at `idx + 1`.
                                         let then_idx = *idx + 1;
                                         exec.state = ExecBranch::Then;
-                                        exec.stmts = &raw const n.else_parts[then_idx as usize];
+                                        exec.stmts = bun_ptr::BackRef::new(&n.else_parts[then_idx as usize]);
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -142,11 +142,11 @@ impl If {
                                         Action::Done(0)
                                     } else if *idx == else_len - 1 {
                                         exec.state = ExecBranch::Else;
-                                        exec.stmts = &raw const n.else_parts[(else_len - 1) as usize];
+                                        exec.stmts = bun_ptr::BackRef::new(&n.else_parts[(else_len - 1) as usize]);
                                         exec.stmt_idx = 0;
                                         continue;
                                     } else {
-                                        exec.stmts = &raw const n.else_parts[*idx as usize];
+                                        exec.stmts = bun_ptr::BackRef::new(&n.else_parts[*idx as usize]);
                                         exec.stmt_idx = 0;
                                         continue;
                                     }

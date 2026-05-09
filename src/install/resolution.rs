@@ -402,40 +402,23 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             return self.tag.0.cmp(&rhs.tag.0);
         }
 
-        // SAFETY: tag was checked equal above; each arm reads the union field
-        // corresponding to that tag.
-        unsafe {
-            match self.tag {
-                Tag::Npm => self.value.npm.order(&rhs.value.npm, lhs_buf, rhs_buf),
-                Tag::LocalTarball => {
-                    self.value
-                        .local_tarball
-                        .order(&rhs.value.local_tarball, lhs_buf, rhs_buf)
-                }
-                Tag::Folder => self.value.folder.order(&rhs.value.folder, lhs_buf, rhs_buf),
-                Tag::RemoteTarball => {
-                    self.value
-                        .remote_tarball
-                        .order(&rhs.value.remote_tarball, lhs_buf, rhs_buf)
-                }
-                Tag::Workspace => {
-                    self.value
-                        .workspace
-                        .order(&rhs.value.workspace, lhs_buf, rhs_buf)
-                }
-                Tag::Symlink => self
-                    .value
-                    .symlink
-                    .order(&rhs.value.symlink, lhs_buf, rhs_buf),
-                Tag::SingleFileModule => self.value.single_file_module.order(
-                    &rhs.value.single_file_module,
-                    lhs_buf,
-                    rhs_buf,
-                ),
-                Tag::Git => self.value.git.order(&rhs.value.git, lhs_buf, rhs_buf),
-                Tag::Github => self.value.github.order(&rhs.value.github, lhs_buf, rhs_buf),
-                _ => Ordering::Equal,
-            }
+        match self.tag {
+            Tag::Npm => self.npm().order(rhs.npm(), lhs_buf, rhs_buf),
+            Tag::LocalTarball => self
+                .local_tarball()
+                .order(rhs.local_tarball(), lhs_buf, rhs_buf),
+            Tag::Folder => self.folder().order(rhs.folder(), lhs_buf, rhs_buf),
+            Tag::RemoteTarball => self
+                .remote_tarball()
+                .order(rhs.remote_tarball(), lhs_buf, rhs_buf),
+            Tag::Workspace => self.workspace().order(rhs.workspace(), lhs_buf, rhs_buf),
+            Tag::Symlink => self.symlink().order(rhs.symlink(), lhs_buf, rhs_buf),
+            Tag::SingleFileModule => self
+                .single_file_module()
+                .order(rhs.single_file_module(), lhs_buf, rhs_buf),
+            Tag::Git => self.git().order(rhs.git(), lhs_buf, rhs_buf),
+            Tag::Github => self.github().order(rhs.github(), lhs_buf, rhs_buf),
+            _ => Ordering::Equal,
         }
     }
 
@@ -443,20 +426,17 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     where
         B: StringBuilderLike,
     {
-        // SAFETY: each arm reads the union field corresponding to self.tag.
-        unsafe {
-            match self.tag {
-                Tag::Npm => self.value.npm.count(buf, builder),
-                Tag::LocalTarball => builder.count(self.value.local_tarball.slice(buf)),
-                Tag::Folder => builder.count(self.value.folder.slice(buf)),
-                Tag::RemoteTarball => builder.count(self.value.remote_tarball.slice(buf)),
-                Tag::Workspace => builder.count(self.value.workspace.slice(buf)),
-                Tag::Symlink => builder.count(self.value.symlink.slice(buf)),
-                Tag::SingleFileModule => builder.count(self.value.single_file_module.slice(buf)),
-                Tag::Git => self.value.git.count(buf, builder),
-                Tag::Github => self.value.github.count(buf, builder),
-                _ => {}
-            }
+        match self.tag {
+            Tag::Npm => self.npm().count(buf, builder),
+            Tag::LocalTarball => builder.count(self.local_tarball().slice(buf)),
+            Tag::Folder => builder.count(self.folder().slice(buf)),
+            Tag::RemoteTarball => builder.count(self.remote_tarball().slice(buf)),
+            Tag::Workspace => builder.count(self.workspace().slice(buf)),
+            Tag::Symlink => builder.count(self.symlink().slice(buf)),
+            Tag::SingleFileModule => builder.count(self.single_file_module().slice(buf)),
+            Tag::Git => self.git().count(buf, builder),
+            Tag::Github => self.github().count(buf, builder),
+            _ => {}
         }
     }
 
@@ -467,36 +447,33 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     where
         B: StringBuilderLike,
     {
-        // SAFETY: each arm reads the union field corresponding to self.tag.
-        let value = unsafe {
-            match self.tag {
-                Tag::Npm => Value::init(TaggedValue::Npm(self.value.npm.clone(buf, builder))),
-                Tag::LocalTarball => Value::init(TaggedValue::LocalTarball(
-                    builder.append::<String>(self.value.local_tarball.slice(buf)),
-                )),
-                Tag::Folder => Value::init(TaggedValue::Folder(
-                    builder.append::<String>(self.value.folder.slice(buf)),
-                )),
-                Tag::RemoteTarball => Value::init(TaggedValue::RemoteTarball(
-                    builder.append::<String>(self.value.remote_tarball.slice(buf)),
-                )),
-                Tag::Workspace => Value::init(TaggedValue::Workspace(
-                    builder.append::<String>(self.value.workspace.slice(buf)),
-                )),
-                Tag::Symlink => Value::init(TaggedValue::Symlink(
-                    builder.append::<String>(self.value.symlink.slice(buf)),
-                )),
-                Tag::SingleFileModule => Value::init(TaggedValue::SingleFileModule(
-                    builder.append::<String>(self.value.single_file_module.slice(buf)),
-                )),
-                Tag::Git => Value::init(TaggedValue::Git(self.value.git.clone(buf, builder))),
-                Tag::Github => {
-                    Value::init(TaggedValue::Github(self.value.github.clone(buf, builder)))
-                }
-                Tag::Root => Value::init(TaggedValue::Root),
-                Tag::Uninitialized => Value::init(TaggedValue::Uninitialized),
-                _ => panic!("Internal error: unexpected resolution tag: {}", self.tag.0),
+        let value = match self.tag {
+            Tag::Npm => Value::init(TaggedValue::Npm(self.npm().clone(buf, builder))),
+            Tag::LocalTarball => Value::init(TaggedValue::LocalTarball(
+                builder.append::<String>(self.local_tarball().slice(buf)),
+            )),
+            Tag::Folder => Value::init(TaggedValue::Folder(
+                builder.append::<String>(self.folder().slice(buf)),
+            )),
+            Tag::RemoteTarball => Value::init(TaggedValue::RemoteTarball(
+                builder.append::<String>(self.remote_tarball().slice(buf)),
+            )),
+            Tag::Workspace => Value::init(TaggedValue::Workspace(
+                builder.append::<String>(self.workspace().slice(buf)),
+            )),
+            Tag::Symlink => Value::init(TaggedValue::Symlink(
+                builder.append::<String>(self.symlink().slice(buf)),
+            )),
+            Tag::SingleFileModule => Value::init(TaggedValue::SingleFileModule(
+                builder.append::<String>(self.single_file_module().slice(buf)),
+            )),
+            Tag::Git => Value::init(TaggedValue::Git(self.git().clone(buf, builder))),
+            Tag::Github => {
+                Value::init(TaggedValue::Github(self.github().clone(buf, builder)))
             }
+            Tag::Root => Value::init(TaggedValue::Root),
+            Tag::Uninitialized => Value::init(TaggedValue::Uninitialized),
+            _ => panic!("Internal error: unexpected resolution tag: {}", self.tag.0),
         };
         Self {
             tag: self.tag,
@@ -506,28 +483,25 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
 
     pub fn copy(&self) -> Self {
-        // SAFETY: each arm reads the union field corresponding to self.tag.
-        unsafe {
-            match self.tag {
-                Tag::Npm => Self::init(TaggedValue::Npm(self.value.npm)),
-                Tag::LocalTarball => {
-                    Self::init(TaggedValue::LocalTarball(self.value.local_tarball))
-                }
-                Tag::Folder => Self::init(TaggedValue::Folder(self.value.folder)),
-                Tag::RemoteTarball => {
-                    Self::init(TaggedValue::RemoteTarball(self.value.remote_tarball))
-                }
-                Tag::Workspace => Self::init(TaggedValue::Workspace(self.value.workspace)),
-                Tag::Symlink => Self::init(TaggedValue::Symlink(self.value.symlink)),
-                Tag::SingleFileModule => {
-                    Self::init(TaggedValue::SingleFileModule(self.value.single_file_module))
-                }
-                Tag::Git => Self::init(TaggedValue::Git(self.value.git)),
-                Tag::Github => Self::init(TaggedValue::Github(self.value.github)),
-                Tag::Root => Self::init(TaggedValue::Root),
-                Tag::Uninitialized => Self::init(TaggedValue::Uninitialized),
-                _ => panic!("Internal error: unexpected resolution tag: {}", self.tag.0),
+        match self.tag {
+            Tag::Npm => Self::init(TaggedValue::Npm(*self.npm())),
+            Tag::LocalTarball => {
+                Self::init(TaggedValue::LocalTarball(*self.local_tarball()))
             }
+            Tag::Folder => Self::init(TaggedValue::Folder(*self.folder())),
+            Tag::RemoteTarball => {
+                Self::init(TaggedValue::RemoteTarball(*self.remote_tarball()))
+            }
+            Tag::Workspace => Self::init(TaggedValue::Workspace(*self.workspace())),
+            Tag::Symlink => Self::init(TaggedValue::Symlink(*self.symlink())),
+            Tag::SingleFileModule => {
+                Self::init(TaggedValue::SingleFileModule(*self.single_file_module()))
+            }
+            Tag::Git => Self::init(TaggedValue::Git(*self.git())),
+            Tag::Github => Self::init(TaggedValue::Github(*self.github())),
+            Tag::Root => Self::init(TaggedValue::Root),
+            Tag::Uninitialized => Self::init(TaggedValue::Uninitialized),
+            _ => panic!("Internal error: unexpected resolution tag: {}", self.tag.0),
         }
     }
 
@@ -569,53 +543,40 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             return false;
         }
 
-        // SAFETY: tag was checked equal above; each arm reads the union field
-        // corresponding to that tag.
-        unsafe {
-            match self.tag {
-                Tag::Root => true,
-                Tag::Npm => self.value.npm.eql(&rhs.value.npm),
-                Tag::LocalTarball => self.value.local_tarball.eql(
-                    rhs.value.local_tarball,
-                    lhs_string_buf,
-                    rhs_string_buf,
-                ),
-                Tag::Folder => {
-                    self.value
-                        .folder
-                        .eql(rhs.value.folder, lhs_string_buf, rhs_string_buf)
-                }
-                Tag::RemoteTarball => self.value.remote_tarball.eql(
-                    rhs.value.remote_tarball,
-                    lhs_string_buf,
-                    rhs_string_buf,
-                ),
-                Tag::Workspace => {
-                    self.value
-                        .workspace
-                        .eql(rhs.value.workspace, lhs_string_buf, rhs_string_buf)
-                }
-                Tag::Symlink => {
-                    self.value
-                        .symlink
-                        .eql(rhs.value.symlink, lhs_string_buf, rhs_string_buf)
-                }
-                Tag::SingleFileModule => self.value.single_file_module.eql(
-                    rhs.value.single_file_module,
-                    lhs_string_buf,
-                    rhs_string_buf,
-                ),
-                Tag::Git => self
-                    .value
-                    .git
-                    .eql(&rhs.value.git, lhs_string_buf, rhs_string_buf),
-                Tag::Github => {
-                    self.value
-                        .github
-                        .eql(&rhs.value.github, lhs_string_buf, rhs_string_buf)
-                }
-                _ => unreachable!(),
-            }
+        match self.tag {
+            Tag::Root => true,
+            Tag::Npm => self.npm().eql(rhs.npm()),
+            Tag::LocalTarball => self.local_tarball().eql(
+                *rhs.local_tarball(),
+                lhs_string_buf,
+                rhs_string_buf,
+            ),
+            Tag::Folder => self
+                .folder()
+                .eql(*rhs.folder(), lhs_string_buf, rhs_string_buf),
+            Tag::RemoteTarball => self.remote_tarball().eql(
+                *rhs.remote_tarball(),
+                lhs_string_buf,
+                rhs_string_buf,
+            ),
+            Tag::Workspace => self
+                .workspace()
+                .eql(*rhs.workspace(), lhs_string_buf, rhs_string_buf),
+            Tag::Symlink => self
+                .symlink()
+                .eql(*rhs.symlink(), lhs_string_buf, rhs_string_buf),
+            Tag::SingleFileModule => self.single_file_module().eql(
+                *rhs.single_file_module(),
+                lhs_string_buf,
+                rhs_string_buf,
+            ),
+            Tag::Git => self
+                .git()
+                .eql(rhs.git(), lhs_string_buf, rhs_string_buf),
+            Tag::Github => self
+                .github()
+                .eql(rhs.github(), lhs_string_buf, rhs_string_buf),
+            _ => unreachable!(),
         }
     }
 }
@@ -634,38 +595,35 @@ pub struct StorePathFormatter<'a, SemverInt: VersionInt> {
 impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let string_buf = self.string_buf;
-        let res = &self.res.value;
-        // SAFETY: each arm reads the union field corresponding to self.res.tag.
-        unsafe {
-            match self.res.tag {
-                Tag::Root => writer.write_str("root"),
-                Tag::Npm => write!(writer, "{}", res.npm.version.fmt(string_buf)),
-                Tag::LocalTarball => {
-                    write!(writer, "{}", res.local_tarball.fmt_store_path(string_buf))
-                }
-                Tag::RemoteTarball => {
-                    write!(writer, "{}", res.remote_tarball.fmt_store_path(string_buf))
-                }
-                Tag::Folder => write!(writer, "{}", res.folder.fmt_store_path(string_buf)),
-                Tag::Git => write!(writer, "{}", res.git.fmt_store_path("git+", string_buf)),
-                Tag::Github => {
-                    write!(
-                        writer,
-                        "{}",
-                        res.github.fmt_store_path("github+", string_buf)
-                    )
-                }
-                Tag::Workspace => write!(writer, "{}", res.workspace.fmt_store_path(string_buf)),
-                Tag::Symlink => write!(writer, "{}", res.symlink.fmt_store_path(string_buf)),
-                Tag::SingleFileModule => {
-                    write!(
-                        writer,
-                        "{}",
-                        res.single_file_module.fmt_store_path(string_buf)
-                    )
-                }
-                _ => Ok(()),
+        let res = self.res;
+        match res.tag {
+            Tag::Root => writer.write_str("root"),
+            Tag::Npm => write!(writer, "{}", res.npm().version.fmt(string_buf)),
+            Tag::LocalTarball => {
+                write!(writer, "{}", res.local_tarball().fmt_store_path(string_buf))
             }
+            Tag::RemoteTarball => {
+                write!(writer, "{}", res.remote_tarball().fmt_store_path(string_buf))
+            }
+            Tag::Folder => write!(writer, "{}", res.folder().fmt_store_path(string_buf)),
+            Tag::Git => write!(writer, "{}", res.git().fmt_store_path("git+", string_buf)),
+            Tag::Github => {
+                write!(
+                    writer,
+                    "{}",
+                    res.github().fmt_store_path("github+", string_buf)
+                )
+            }
+            Tag::Workspace => write!(writer, "{}", res.workspace().fmt_store_path(string_buf)),
+            Tag::Symlink => write!(writer, "{}", res.symlink().fmt_store_path(string_buf)),
+            Tag::SingleFileModule => {
+                write!(
+                    writer,
+                    "{}",
+                    res.single_file_module().fmt_store_path(string_buf)
+                )
+            }
+            _ => Ok(()),
         }
     }
 }
@@ -679,40 +637,37 @@ pub struct URLFormatter<'a, SemverInt: VersionInt> {
 impl<'a, SemverInt: VersionInt> fmt::Display for URLFormatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let buf = self.buf;
-        let value = &self.resolution.value;
-        // SAFETY: each arm reads the union field corresponding to self.resolution.tag.
-        unsafe {
-            match self.resolution.tag {
-                Tag::Npm => write!(writer, "{}", BStr::new(value.npm.url.slice(buf))),
-                Tag::LocalTarball => fmt_path(
-                    value.local_tarball.slice(buf),
-                    PathFormatOptions {
-                        path_sep: PathSep::Posix,
-                        ..Default::default()
-                    },
-                )
-                .fmt(writer),
-                Tag::Folder => write!(writer, "{}", BStr::new(value.folder.slice(buf))),
-                Tag::RemoteTarball => {
-                    write!(writer, "{}", BStr::new(value.remote_tarball.slice(buf)))
-                }
-                Tag::Git => value.git.format_as("git+", buf, writer),
-                Tag::Github => value.github.format_as("github:", buf, writer),
-                Tag::Workspace => {
-                    write!(
-                        writer,
-                        "workspace:{}",
-                        BStr::new(value.workspace.slice(buf))
-                    )
-                }
-                Tag::Symlink => write!(writer, "link:{}", BStr::new(value.symlink.slice(buf))),
-                Tag::SingleFileModule => write!(
-                    writer,
-                    "module:{}",
-                    BStr::new(value.single_file_module.slice(buf))
-                ),
-                _ => Ok(()),
+        let res = self.resolution;
+        match res.tag {
+            Tag::Npm => write!(writer, "{}", BStr::new(res.npm().url.slice(buf))),
+            Tag::LocalTarball => fmt_path(
+                res.local_tarball().slice(buf),
+                PathFormatOptions {
+                    path_sep: PathSep::Posix,
+                    ..Default::default()
+                },
+            )
+            .fmt(writer),
+            Tag::Folder => write!(writer, "{}", BStr::new(res.folder().slice(buf))),
+            Tag::RemoteTarball => {
+                write!(writer, "{}", BStr::new(res.remote_tarball().slice(buf)))
             }
+            Tag::Git => res.git().format_as("git+", buf, writer),
+            Tag::Github => res.github().format_as("github:", buf, writer),
+            Tag::Workspace => {
+                write!(
+                    writer,
+                    "workspace:{}",
+                    BStr::new(res.workspace().slice(buf))
+                )
+            }
+            Tag::Symlink => write!(writer, "link:{}", BStr::new(res.symlink().slice(buf))),
+            Tag::SingleFileModule => write!(
+                writer,
+                "module:{}",
+                BStr::new(res.single_file_module().slice(buf))
+            ),
+            _ => Ok(()),
         }
     }
 }
@@ -726,61 +681,58 @@ pub struct Formatter<'a, SemverInt: VersionInt> {
 impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let buf = self.buf;
-        let value = &self.resolution.value;
-        // SAFETY: each arm reads the union field corresponding to self.resolution.tag.
-        unsafe {
-            match self.resolution.tag {
-                Tag::Npm => value.npm.version.fmt(buf).fmt(writer),
-                Tag::LocalTarball => fmt_path(
-                    value.local_tarball.slice(buf),
-                    PathFormatOptions {
-                        path_sep: self.path_sep,
-                        ..Default::default()
-                    },
-                )
-                .fmt(writer),
-                Tag::Folder => fmt_path(
-                    value.folder.slice(buf),
-                    PathFormatOptions {
-                        path_sep: self.path_sep,
-                        ..Default::default()
-                    },
-                )
-                .fmt(writer),
-                Tag::RemoteTarball => {
-                    write!(writer, "{}", BStr::new(value.remote_tarball.slice(buf)))
-                }
-                Tag::Git => value.git.format_as("git+", buf, writer),
-                Tag::Github => value.github.format_as("github:", buf, writer),
-                Tag::Workspace => write!(
-                    writer,
-                    "workspace:{}",
-                    fmt_path(
-                        value.workspace.slice(buf),
-                        PathFormatOptions {
-                            path_sep: self.path_sep,
-                            ..Default::default()
-                        },
-                    )
-                ),
-                Tag::Symlink => write!(
-                    writer,
-                    "link:{}",
-                    fmt_path(
-                        value.symlink.slice(buf),
-                        PathFormatOptions {
-                            path_sep: self.path_sep,
-                            ..Default::default()
-                        },
-                    )
-                ),
-                Tag::SingleFileModule => write!(
-                    writer,
-                    "module:{}",
-                    BStr::new(value.single_file_module.slice(buf))
-                ),
-                _ => Ok(()),
+        let res = self.resolution;
+        match res.tag {
+            Tag::Npm => res.npm().version.fmt(buf).fmt(writer),
+            Tag::LocalTarball => fmt_path(
+                res.local_tarball().slice(buf),
+                PathFormatOptions {
+                    path_sep: self.path_sep,
+                    ..Default::default()
+                },
+            )
+            .fmt(writer),
+            Tag::Folder => fmt_path(
+                res.folder().slice(buf),
+                PathFormatOptions {
+                    path_sep: self.path_sep,
+                    ..Default::default()
+                },
+            )
+            .fmt(writer),
+            Tag::RemoteTarball => {
+                write!(writer, "{}", BStr::new(res.remote_tarball().slice(buf)))
             }
+            Tag::Git => res.git().format_as("git+", buf, writer),
+            Tag::Github => res.github().format_as("github:", buf, writer),
+            Tag::Workspace => write!(
+                writer,
+                "workspace:{}",
+                fmt_path(
+                    res.workspace().slice(buf),
+                    PathFormatOptions {
+                        path_sep: self.path_sep,
+                        ..Default::default()
+                    },
+                )
+            ),
+            Tag::Symlink => write!(
+                writer,
+                "link:{}",
+                fmt_path(
+                    res.symlink().slice(buf),
+                    PathFormatOptions {
+                        path_sep: self.path_sep,
+                        ..Default::default()
+                    },
+                )
+            ),
+            Tag::SingleFileModule => write!(
+                writer,
+                "module:{}",
+                BStr::new(res.single_file_module().slice(buf))
+            ),
+            _ => Ok(()),
         }
     }
 }
@@ -795,58 +747,52 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
         writer.write_str("Resolution{ .")?;
         writer.write_str(self.resolution.tag.name().unwrap_or("invalid"))?;
         writer.write_str(" = ")?;
-        // SAFETY: each arm reads the union field corresponding to self.resolution.tag.
-        unsafe {
-            match self.resolution.tag {
-                Tag::Npm => self
-                    .resolution
-                    .value
-                    .npm
-                    .version
-                    .fmt(self.buf)
-                    .fmt(writer)?,
-                Tag::LocalTarball => write!(
-                    writer,
-                    "{}",
-                    BStr::new(self.resolution.value.local_tarball.slice(self.buf))
-                )?,
-                Tag::Folder => write!(
-                    writer,
-                    "{}",
-                    BStr::new(self.resolution.value.folder.slice(self.buf))
-                )?,
-                Tag::RemoteTarball => write!(
-                    writer,
-                    "{}",
-                    BStr::new(self.resolution.value.remote_tarball.slice(self.buf))
-                )?,
-                Tag::Git => self
-                    .resolution
-                    .value
-                    .git
-                    .format_as("git+", self.buf, writer)?,
-                Tag::Github => self
-                    .resolution
-                    .value
-                    .github
-                    .format_as("github:", self.buf, writer)?,
-                Tag::Workspace => write!(
-                    writer,
-                    "workspace:{}",
-                    BStr::new(self.resolution.value.workspace.slice(self.buf))
-                )?,
-                Tag::Symlink => write!(
-                    writer,
-                    "link:{}",
-                    BStr::new(self.resolution.value.symlink.slice(self.buf))
-                )?,
-                Tag::SingleFileModule => write!(
-                    writer,
-                    "module:{}",
-                    BStr::new(self.resolution.value.single_file_module.slice(self.buf))
-                )?,
-                _ => writer.write_str("{}")?,
-            }
+        match self.resolution.tag {
+            Tag::Npm => self
+                .resolution
+                .npm()
+                .version
+                .fmt(self.buf)
+                .fmt(writer)?,
+            Tag::LocalTarball => write!(
+                writer,
+                "{}",
+                BStr::new(self.resolution.local_tarball().slice(self.buf))
+            )?,
+            Tag::Folder => write!(
+                writer,
+                "{}",
+                BStr::new(self.resolution.folder().slice(self.buf))
+            )?,
+            Tag::RemoteTarball => write!(
+                writer,
+                "{}",
+                BStr::new(self.resolution.remote_tarball().slice(self.buf))
+            )?,
+            Tag::Git => self
+                .resolution
+                .git()
+                .format_as("git+", self.buf, writer)?,
+            Tag::Github => self
+                .resolution
+                .github()
+                .format_as("github:", self.buf, writer)?,
+            Tag::Workspace => write!(
+                writer,
+                "workspace:{}",
+                BStr::new(self.resolution.workspace().slice(self.buf))
+            )?,
+            Tag::Symlink => write!(
+                writer,
+                "link:{}",
+                BStr::new(self.resolution.symlink().slice(self.buf))
+            )?,
+            Tag::SingleFileModule => write!(
+                writer,
+                "module:{}",
+                BStr::new(self.resolution.single_file_module().slice(self.buf))
+            )?,
+            _ => writer.write_str("{}")?,
         }
         writer.write_str(" }")
     }

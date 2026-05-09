@@ -1401,10 +1401,10 @@ pub struct FilePollRef(pub core::ptr::NonNull<FilePoll>);
 impl FilePollRef {
     #[inline]
     pub fn init(ev: EventLoopHandle, fd: Fd, owner: Owner) -> FilePollRef {
-        // SAFETY: `FilePoll::init` returns a fresh hive slot; never null.
-        FilePollRef(unsafe {
-            core::ptr::NonNull::new_unchecked(FilePoll::init(ev, fd, PollFlagsSet::empty(), owner))
-        })
+        FilePollRef(
+            core::ptr::NonNull::new(FilePoll::init(ev, fd, PollFlagsSet::empty(), owner))
+                .expect("FilePoll::init returns a fresh hive slot"),
+        )
     }
     /// SAFETY: caller must not hold another live `&mut` to this slot (the event
     /// loop is single-threaded, so the only hazard is re-entrancy through a

@@ -230,7 +230,7 @@ impl FileCloser for ReadFile {
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut ReadFile` set below.
-            let this = unsafe { &mut *ctx.cast::<ReadFile>() };
+            let this = unsafe { bun_ptr::callback_ctx::<ReadFile>(ctx.cast()) };
             <ReadFile as FileCloser>::on_io_request_closed(this);
         }
         // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
@@ -1103,7 +1103,7 @@ impl<'a> ReadFileUV<'a> {
     extern "C" fn on_file_initial_stat(req: *mut libuv::fs_t) {
         log!("ReadFileUV.onFileInitialStat");
         // SAFETY: req.data was set to *mut Self in on_file_open().
-        let this: &mut ReadFileUV = unsafe { &mut *(*req).data.cast::<ReadFileUV>() };
+        let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
 
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
@@ -1290,7 +1290,7 @@ impl<'a> ReadFileUV<'a> {
 
     pub extern "C" fn on_read(req: *mut libuv::fs_t) {
         // SAFETY: req.data was set to *mut Self in queue_read().
-        let this: &mut ReadFileUV = unsafe { &mut *(*req).data.cast::<ReadFileUV>() };
+        let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
 
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.

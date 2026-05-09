@@ -107,12 +107,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let mut batch = ThreadPoolLib::Batch::default();
             // PERF(port): was c.arena().alloc — using Vec on global mimalloc
             let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
-            // SAFETY: we fully initialize `total_count` slots below before scheduling.
-            unsafe { tasks.set_len(total_count) };
-            let mut i: usize = 0;
             for chunk in chunks.iter_mut() {
                 if chunk.content.is_css() {
-                    tasks[i] = PrepareCssAstTask {
+                    tasks.push(PrepareCssAstTask {
                         task: ThreadPoolLib::Task {
                             node: ThreadPoolLib::Node::default(),
                             callback: prepare_css_asts_for_chunk,
@@ -121,11 +118,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // PORT NOTE: `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
                         // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
                         linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
-                    };
-                    batch.push(ThreadPoolLib::Batch::from(&raw mut tasks[i].task));
-                    i += 1;
+                    });
+                    // Capacity pre-reserved → push never reallocates → ptr stays stable.
+                    let task = tasks.last_mut().unwrap();
+                    batch.push(ThreadPoolLib::Batch::from(&raw mut task.task));
                 }
             }
+            debug_assert_eq!(tasks.len(), total_count);
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
             let worker_pool = c.worker_pool();
@@ -143,19 +142,16 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     {
         // PERF(port): was c.arena().alloc — using Vec on global mimalloc
         let mut chunk_contexts: Vec<GenerateChunkCtx> = Vec::with_capacity(chunks.len());
-        // SAFETY: every element is written in the zip loop below before any read.
-        unsafe { chunk_contexts.set_len(chunks.len()) };
 
         {
             let mut total_count: usize = 0;
-            debug_assert_eq!(chunks.len(), chunk_contexts.len());
             // PORT NOTE: `GenerateChunkCtx` fields are raw pointers; capture them
             // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
             // stored in every ctx (Zig stores `[]Chunk` by value).
             let c_ptr: *mut LinkerContext = std::ptr::from_mut::<LinkerContext>(c);
             let chunks_ptr: *mut [Chunk] = std::ptr::from_mut::<[Chunk]>(chunks);
-            for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
-                *chunk_ctx = GenerateChunkCtx { c: c_ptr, chunks: chunks_ptr, chunk: std::ptr::from_mut::<Chunk>(chunk) };
+            for chunk in chunks.iter_mut() {
+                chunk_contexts.push(GenerateChunkCtx { c: c_ptr, chunks: chunks_ptr, chunk: std::ptr::from_mut::<Chunk>(chunk) });
                 match &mut chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();
@@ -178,6 +174,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     }
                 }
             }
+
+            debug_assert_eq!(chunks.len(), chunk_contexts.len());
 
             debug!(" START {} compiling part ranges", total_count);
             // PERF(port): was c.arena().alloc — using Vec on global mimalloc
@@ -783,8 +781,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     buf.extend_from_slice(source_map_start);
 
                     let old_len = buf.len();
-                    // SAFETY: capacity reserved above; bytes are written by base64::encode below.
-                    unsafe { buf.set_len(old_len + encode_len) };
+                    // Capacity reserved above; resize zero-fills then base64 overwrites.
+                    buf.resize(old_len + encode_len, 0);
                     let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
 
                     buf.push(b'\n');

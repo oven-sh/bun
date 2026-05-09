@@ -144,9 +144,7 @@ impl OutdatedCommand {
                             (cause.value.name(),),
                         ),
                     }
-                    // SAFETY: `ctx.log` is set by `Command::init` for every
-                    // subcommand and is non-null for the command's lifetime.
-                    if unsafe { (*ctx.log).has_errors() } {
+                    if ctx.log_ref().has_errors() {
                         // SAFETY: `log_ptr` aliases `manager.log` which is the
                         // `*logger.Log` borrowed from `Command::Context`; no
                         // other `&mut Log` is live here.

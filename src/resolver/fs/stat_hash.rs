@@ -40,11 +40,10 @@ impl StatHash {
     pub fn hash(&mut self, stat: &Stat, path: &[u8]) {
         let mut stat_hasher = XxHash64::new(42);
         let mtime = stat_mtime(stat);
-        // SAFETY: all fed values are padding-free POD integers / Timespec.
-        stat_hasher.update(unsafe { bun_core::bytes_of(&stat.st_size) });
-        stat_hasher.update(unsafe { bun_core::bytes_of(&stat.st_mode) });
-        stat_hasher.update(unsafe { bun_core::bytes_of(&mtime) });
-        stat_hasher.update(unsafe { bun_core::bytes_of(&stat.st_ino) });
+        stat_hasher.update(bun_core::bytes_of(&stat.st_size));
+        stat_hasher.update(bun_core::bytes_of(&stat.st_mode));
+        stat_hasher.update(bun_core::bytes_of(&mtime));
+        stat_hasher.update(bun_core::bytes_of(&stat.st_ino));
         stat_hasher.update(path);
 
         let prev = self.value;

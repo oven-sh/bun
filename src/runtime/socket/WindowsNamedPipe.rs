@@ -720,8 +720,7 @@ impl WindowsNamedPipe {
 
         if let Some(tls) = ssl_ctx {
             self.flags.set_is_ssl(true);
-            // SAFETY: caller passes Some only for a live SSL_CTX*.
-            let tls_nn = unsafe { NonNull::new_unchecked(tls) };
+            let tls_nn = NonNull::new(tls).expect("caller passes Some only for a live SSL_CTX*");
             self.wrapper = match WrapperType::init_with_ctx(
                 tls_nn,
                 false,
@@ -955,8 +954,7 @@ impl WindowsNamedPipe {
         };
         if let Some(ctx) = owned_ctx {
             self.flags.set_is_ssl(true);
-            // SAFETY: caller passes Some only for a live SSL_CTX*; null would be a bug.
-            let ctx_nn = unsafe { NonNull::new_unchecked(ctx) };
+            let ctx_nn = NonNull::new(ctx).expect("caller passes Some only for a live SSL_CTX*");
             self.wrapper = match WrapperType::init_with_ctx(ctx_nn, true, handlers) {
                 Ok(w) => Some(w),
                 Err(_) => {

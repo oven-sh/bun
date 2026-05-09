@@ -765,8 +765,7 @@ impl CreateCommand {
 
                 let source = logger::Source::init_path_string(b"package.json", package_json_contents.list.as_slice());
 
-                // SAFETY: ctx.log is a process-global Log pointer (Zig: `Context = *ContextData`).
-                let log: &mut logger::Log = unsafe { &mut *ctx.log };
+                let log: &mut logger::Log = unsafe { ctx.log_mut() };
                 let bump = bun_alloc::Arena::new();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
@@ -1953,7 +1952,7 @@ fn analyzer_on_fetch_trampoline(
 ) -> Result<(), bun_core::Error> {
     // SAFETY: `ctx` is `&mut analyzer as *mut _ as *mut ()` set by the caller in
     // `run_on_entry_point`; lives for the duration of the scan call.
-    let analyzer = unsafe { &mut *ctx.cast::<Analyzer<'_>>() };
+    let analyzer = unsafe { bun_ptr::callback_ctx::<Analyzer<'_>>(ctx.cast()) };
     Analyzer::on_analyze(analyzer, result)
 }
 
@@ -2394,8 +2393,7 @@ impl Example {
         refresher.refresh();
         initialize_store();
         let source = logger::Source::init_path_string(b"package.json", mutable.list.as_slice());
-        // SAFETY: ctx.log is set in single-threaded CLI startup; non-null for process lifetime.
-        let log = unsafe { &mut *ctx.log };
+        let log = unsafe { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
@@ -2562,8 +2560,7 @@ impl Example {
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // SAFETY: ctx.log is set by Command::create() before any subcommand runs.
-        let log = unsafe { &mut *ctx.log };
+        let log = unsafe { ctx.log_mut() };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {

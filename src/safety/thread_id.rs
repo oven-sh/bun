@@ -143,31 +143,34 @@ pub fn current() -> ThreadId {
     #[cfg(target_os = "freebsd")]
     {
         unsafe extern "C" {
-            fn pthread_getthreadid_np() -> core::ffi::c_int;
+            // safe: no args; infallible.
+            safe fn pthread_getthreadid_np() -> core::ffi::c_int;
         }
-        // SAFETY: infallible.
-        return unsafe { pthread_getthreadid_np() } as u32;
+        return pthread_getthreadid_np() as u32;
     }
     #[cfg(target_os = "netbsd")]
     {
         unsafe extern "C" {
-            fn _lwp_self() -> core::ffi::c_int;
+            // safe: no args; infallible.
+            safe fn _lwp_self() -> core::ffi::c_int;
         }
-        return unsafe { _lwp_self() } as u32;
+        return _lwp_self() as u32;
     }
     #[cfg(target_os = "openbsd")]
     {
         unsafe extern "C" {
-            fn getthrid() -> core::ffi::c_int;
+            // safe: no args; infallible.
+            safe fn getthrid() -> core::ffi::c_int;
         }
-        return unsafe { getthrid() } as u32;
+        return getthrid() as u32;
     }
     #[cfg(target_os = "dragonfly")]
     {
         unsafe extern "C" {
-            fn lwp_gettid() -> core::ffi::c_int;
+            // safe: no args; infallible.
+            safe fn lwp_gettid() -> core::ffi::c_int;
         }
-        return unsafe { lwp_gettid() } as u32;
+        return lwp_gettid() as u32;
     }
     #[cfg(not(any(
         target_os = "linux",
@@ -185,9 +188,10 @@ pub fn current() -> ThreadId {
     {
         // Zig fallback: `@intFromPtr(c.pthread_self())`.
         unsafe extern "C" {
-            fn pthread_self() -> usize;
+            // safe: no args; infallible.
+            safe fn pthread_self() -> usize;
         }
-        return unsafe { pthread_self() } as ThreadId;
+        return pthread_self() as ThreadId;
     }
 }
 

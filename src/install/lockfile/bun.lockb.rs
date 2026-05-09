@@ -157,39 +157,36 @@ pub fn save(
 
     if cfg!(debug_assertions) {
         for res in this.packages.items_resolution() {
-            // SAFETY: `res.tag` discriminates which union field is active.
-            unsafe {
-                match res.tag {
-                    ResolutionTag::Folder => {
-                        debug_assert!(strings::index_of_char(
-                            this.str(&res.value.folder),
-                            bun_paths::SEP_WINDOWS,
-                        )
-                        .is_none());
-                    }
-                    ResolutionTag::Symlink => {
-                        debug_assert!(strings::index_of_char(
-                            this.str(&res.value.symlink),
-                            bun_paths::SEP_WINDOWS,
-                        )
-                        .is_none());
-                    }
-                    ResolutionTag::LocalTarball => {
-                        debug_assert!(strings::index_of_char(
-                            this.str(&res.value.local_tarball),
-                            bun_paths::SEP_WINDOWS,
-                        )
-                        .is_none());
-                    }
-                    ResolutionTag::Workspace => {
-                        debug_assert!(strings::index_of_char(
-                            this.str(&res.value.workspace),
-                            bun_paths::SEP_WINDOWS,
-                        )
-                        .is_none());
-                    }
-                    _ => {}
+            match res.tag {
+                ResolutionTag::Folder => {
+                    debug_assert!(strings::index_of_char(
+                        this.str(res.folder()),
+                        bun_paths::SEP_WINDOWS,
+                    )
+                    .is_none());
                 }
+                ResolutionTag::Symlink => {
+                    debug_assert!(strings::index_of_char(
+                        this.str(res.symlink()),
+                        bun_paths::SEP_WINDOWS,
+                    )
+                    .is_none());
+                }
+                ResolutionTag::LocalTarball => {
+                    debug_assert!(strings::index_of_char(
+                        this.str(res.local_tarball()),
+                        bun_paths::SEP_WINDOWS,
+                    )
+                    .is_none());
+                }
+                ResolutionTag::Workspace => {
+                    debug_assert!(strings::index_of_char(
+                        this.str(res.workspace()),
+                        bun_paths::SEP_WINDOWS,
+                    )
+                    .is_none());
+                }
+                _ => {}
             }
         }
     }

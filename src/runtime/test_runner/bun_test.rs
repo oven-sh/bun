@@ -1125,9 +1125,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        // SAFETY: `vm` is the live per-thread VM; `event_loop()` returns its
-        // owning EventLoop pointer (non-null after VM init).
-        let result: JSValue = match unsafe { &mut *(*vm).event_loop() }.run_callback_with_result_and_forcefully_drain_microtasks(
+        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
@@ -1183,8 +1181,8 @@ impl BunTest {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(&this_strong, cfg_data.clone());
-                    // SAFETY: `ref_()` returns a freshly-boxed RefData; `as_ptr` is non-null.
-                    let alias = unsafe { NonNull::new_unchecked(r.as_ptr()) };
+                    let alias = NonNull::new(r.as_ptr())
+                        .expect("ref_() returns a freshly-boxed RefData");
                     // SAFETY: see above. Move the sole +1 into the DoneCallback.
                     unsafe { (*dcb_data).r#ref = Some(r) };
                     dcb_ref = Some(alias);

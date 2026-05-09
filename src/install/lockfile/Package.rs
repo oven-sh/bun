@@ -3191,44 +3191,41 @@ pub mod serializer {
                     dependencies: old.dependencies,
                     resolutions: old.resolutions,
                     scripts: old.scripts,
-                    // SAFETY: `tag` selects the active union member.
-                    resolution: unsafe {
-                        match old.resolution.tag {
-                            ResolutionTag::Uninitialized => {
-                                Resolution::init(TaggedValue::Uninitialized)
-                            }
-                            ResolutionTag::Root => Resolution::init(TaggedValue::Root),
-                            ResolutionTag::Npm => Resolution::init(TaggedValue::Npm(
-                                old.resolution.value.npm.migrate(),
-                            )),
-                            ResolutionTag::Folder => {
-                                Resolution::init(TaggedValue::Folder(old.resolution.value.folder))
-                            }
-                            ResolutionTag::LocalTarball => Resolution::init(
-                                TaggedValue::LocalTarball(old.resolution.value.local_tarball),
-                            ),
-                            ResolutionTag::Github => {
-                                Resolution::init(TaggedValue::Github(old.resolution.value.github))
-                            }
-                            ResolutionTag::Git => {
-                                Resolution::init(TaggedValue::Git(old.resolution.value.git))
-                            }
-                            ResolutionTag::Symlink => Resolution::init(TaggedValue::Symlink(
-                                old.resolution.value.symlink,
-                            )),
-                            ResolutionTag::Workspace => Resolution::init(
-                                TaggedValue::Workspace(old.resolution.value.workspace),
-                            ),
-                            ResolutionTag::RemoteTarball => Resolution::init(
-                                TaggedValue::RemoteTarball(old.resolution.value.remote_tarball),
-                            ),
-                            ResolutionTag::SingleFileModule => {
-                                Resolution::init(TaggedValue::SingleFileModule(
-                                    old.resolution.value.single_file_module,
-                                ))
-                            }
-                            _ => Resolution::init(TaggedValue::Uninitialized),
+                    resolution: match old.resolution.tag {
+                        ResolutionTag::Uninitialized => {
+                            Resolution::init(TaggedValue::Uninitialized)
                         }
+                        ResolutionTag::Root => Resolution::init(TaggedValue::Root),
+                        ResolutionTag::Npm => Resolution::init(TaggedValue::Npm(
+                            old.resolution.npm().migrate(),
+                        )),
+                        ResolutionTag::Folder => {
+                            Resolution::init(TaggedValue::Folder(*old.resolution.folder()))
+                        }
+                        ResolutionTag::LocalTarball => Resolution::init(
+                            TaggedValue::LocalTarball(*old.resolution.local_tarball()),
+                        ),
+                        ResolutionTag::Github => {
+                            Resolution::init(TaggedValue::Github(*old.resolution.github()))
+                        }
+                        ResolutionTag::Git => {
+                            Resolution::init(TaggedValue::Git(*old.resolution.git()))
+                        }
+                        ResolutionTag::Symlink => Resolution::init(TaggedValue::Symlink(
+                            *old.resolution.symlink(),
+                        )),
+                        ResolutionTag::Workspace => Resolution::init(
+                            TaggedValue::Workspace(*old.resolution.workspace()),
+                        ),
+                        ResolutionTag::RemoteTarball => Resolution::init(
+                            TaggedValue::RemoteTarball(*old.resolution.remote_tarball()),
+                        ),
+                        ResolutionTag::SingleFileModule => {
+                            Resolution::init(TaggedValue::SingleFileModule(
+                                *old.resolution.single_file_module(),
+                            ))
+                        }
+                        _ => Resolution::init(TaggedValue::Uninitialized),
                     },
                 };
 

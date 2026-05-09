@@ -138,11 +138,10 @@ type BlobSizeType = u64;
 const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
 
 /// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer. Zig
-/// stored this as `?*AbortSignal` and called `.ref()`/`.unref()` manually; the
-/// generic `bun_ptr::RefPtr<T>` requires `T: AnyRefCounted` which `AbortSignal`
-/// (an opaque FFI struct) does not implement, so model it as the raw pointer
-/// shape and keep the manual ref-counting at the call sites (matches the .zig).
-type AbortSignalRef = NonNull<AbortSignal>;
+/// stored this as `?*AbortSignal` and called `.ref()`/`.unref()` manually.
+/// Now backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
+/// from `bun_jsc`): `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → `&AbortSignal`.
+use bun_jsc::AbortSignalRef;
 
 // PORT NOTE: Zig referenced these via `bun.api.node.*`. The Phase-A draft
 // pulled them through `bun_jsc::node` (a re-export shim that no longer exists
@@ -467,26 +466,10 @@ pub const DEFAULT_PERMISSION: Mode = sys::S::IRUSR as Mode
 // Windows does not have permissions
 pub const DEFAULT_PERMISSION: Mode = 0;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local extension shims for upstream methods not yet on `NonNull<AbortSignal>`.
-// Bodies mirror the `.zig` spec exactly so it stays the source of truth; swap
-// to direct upstream calls once `bun_jsc` grows them.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Forward `&self` AbortSignal methods through the `NonNull` wrapper used as
-/// [`AbortSignalRef`] so call sites keep the `signal.unref()` Zig spelling.
-trait AbortSignalRefExt {
-    fn pending_activity_ref(self);
-    fn pending_activity_unref(self);
-    fn unref(self);
-    fn aborted(self) -> bool;
-}
-impl AbortSignalRefExt for NonNull<AbortSignal> {
-    #[inline] fn pending_activity_ref(self) { unsafe { self.as_ref() }.pending_activity_ref() }
-    #[inline] fn pending_activity_unref(self) { unsafe { self.as_ref() }.pending_activity_unref() }
-    #[inline] fn unref(self) { unsafe { self.as_ref() }.unref() }
-    #[inline] fn aborted(self) -> bool { unsafe { self.as_ref() }.aborted() }
-}
+// `AbortSignalRef` (= `ExternalShared<AbortSignal>`) implements `Deref`, so
+// `signal.pending_activity_ref()` / `signal.aborted()` resolve directly to the
+// `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
+// per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
 
 /// All async FS functions are run in a thread pool, but some implementations may
 /// decide to do something slightly different. For example, reading a file has
@@ -811,7 +794,7 @@ where
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
         scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-        let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
+        let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
         let mut node_fs = NodeFS::default();
         // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
         // `this: &mut Self` is live, re-deriving through the raw `req` would create a
@@ -829,7 +812,7 @@ where
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
         scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-        let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
+        let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
         let mut node_fs = NodeFS::default();
         // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
         // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
@@ -851,8 +834,7 @@ where
         let global_object = self.global_object();
         let success = matches!(result, Ok(_));
         let promise_value = self.promise.value();
-        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
-        let promise = unsafe { self.promise.get() };
+        let promise = self.promise.get();
         let result = match &mut result {
             Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
@@ -966,8 +948,7 @@ impl FsArgument for args::ReadFile {
     #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { args::ReadFile::from_js(ctx, arguments) }
     #[inline] fn to_thread_safe(&mut self) { args::ReadFile::to_thread_safe(self) }
     #[inline] fn signal(&self) -> Option<&AbortSignal> {
-        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `Drop`.
-        self.signal.map(|s| unsafe { s.as_ref() })
+        self.signal.as_deref()
     }
 }
 impl FsArgument for args::WriteFile {
@@ -975,8 +956,7 @@ impl FsArgument for args::WriteFile {
     #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { args::WriteFile::from_js(ctx, arguments) }
     #[inline] fn to_thread_safe(&mut self) { args::WriteFile::to_thread_safe(self) }
     #[inline] fn signal(&self) -> Option<&AbortSignal> {
-        // SAFETY: `signal` was `ref_()`-ed in `from_js`; live until `Drop`.
-        self.signal.map(|s| unsafe { s.as_ref() })
+        self.signal.as_deref()
     }
 }
 
@@ -1181,8 +1161,7 @@ where
 
         let success = matches!(result, Ok(_));
         let promise_value = self.promise.value();
-        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
-        let promise = unsafe { self.promise.get() };
+        let promise = self.promise.get();
         let result = match &mut result {
             Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
@@ -1542,11 +1521,10 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
         let success = matches!(*self.result.get_mut(), Ok(_));
         let promise_value = self.promise.value();
-        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
         // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
         // resolve/reject (matching Zig). The `JSPromise` itself lives on the JS heap
         // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
-        let promise: *mut bun_jsc::JSPromise = unsafe { self.promise.get() };
+        let promise: *mut bun_jsc::JSPromise = self.promise.get();
         let result = match self.result.get_mut() {
             // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
             Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
@@ -2292,11 +2270,10 @@ impl AsyncReaddirRecursiveTask {
         let global_object = global_object.get();
         let success = self.pending_err.is_none();
         let promise_value = self.promise.value();
-        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
         // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` for rationale —
         // `Self::destroy` must run before resolve/reject, and the `JSPromise` cell
         // outlives the `Strong` wrapper via `promise_value.ensure_still_alive()`.
-        let promise: *mut bun_jsc::JSPromise = unsafe { self.promise.get() };
+        let promise: *mut bun_jsc::JSPromise = self.promise.get();
         let result = if let Some(err) = &mut self.pending_err {
             // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
             match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
@@ -3399,7 +3376,7 @@ pub mod args {
             // `path: PathOrFileDescriptor` releases via its inner `PathLike` Drop.
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
-                signal.unref();
+                // `signal.unref()` — handled by `AbortSignalRef::Drop`.
             }
         }
     }
@@ -3418,7 +3395,7 @@ pub mod args {
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
-                if let Some(signal) = s { signal.pending_activity_unref(); signal.unref(); }
+                if let Some(signal) = s { signal.pending_activity_unref(); /* unref via Drop */ }
             });
             if let Some(arg) = arguments.next() {
                 arguments.eat();
@@ -3430,11 +3407,9 @@ pub mod args {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| ctx.throw_invalid_arguments(format_args!("Invalid flag")))?;
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal_ptr) = AbortSignal::from_js(value) {
-                            // SAFETY: from_js returns a live C++ AbortSignal*.
-                            let signal = unsafe { &*signal_ptr };
-                            *abort_signal = NonNull::new(signal.ref_());
+                        if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
+                            *abort_signal = Some(signal);
                         } else {
                             return Err(ctx.throw_invalid_argument_type_value(b"signal", b"AbortSignal", value));
                         }
@@ -3445,7 +3420,7 @@ pub mod args {
             Ok(ReadFile { path, encoding, flag, limit_size_for_javascript: true, signal: abort_signal, ..Default::default() })
         }
         pub fn aborted(&self) -> bool {
-            if let Some(signal) = self.signal { return signal.aborted(); }
+            if let Some(signal) = &self.signal { return signal.aborted(); }
             false
         }
     }
@@ -3467,7 +3442,7 @@ pub mod args {
             // `file`/`data` release via their own `Drop` (PathLike/StringOrBuffer).
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
-                signal.unref();
+                // `signal.unref()` — handled by `AbortSignalRef::Drop`.
             }
         }
     }
@@ -3491,7 +3466,7 @@ pub mod args {
             let mut flag = FileSystemFlags::W;
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
-                if let Some(signal) = s { signal.pending_activity_unref(); signal.unref(); }
+                if let Some(signal) = s { signal.pending_activity_unref(); /* unref via Drop */ }
             });
             let mut flush = false;
             if data_value.is_string() { encoding = Encoding::Utf8; }
@@ -3508,11 +3483,9 @@ pub mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal_ptr) = AbortSignal::from_js(value) {
-                            // SAFETY: from_js returns a live C++ AbortSignal*.
-                            let signal = unsafe { &*signal_ptr };
-                            *abort_signal = NonNull::new(signal.ref_());
+                        if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
+                            *abort_signal = Some(signal);
                         } else {
                             return Err(ctx.throw_invalid_argument_type_value(b"signal", b"AbortSignal", value));
                         }
@@ -3537,7 +3510,7 @@ pub mod args {
             Ok(WriteFile { file: path, encoding, flag, mode, data, dirfd: FD::cwd(), signal: abort_signal, flush })
         }
         pub fn aborted(&self) -> bool {
-            if let Some(signal) = self.signal { return signal.aborted(); }
+            if let Some(signal) = &self.signal { return signal.aborted(); }
             false
         }
     }

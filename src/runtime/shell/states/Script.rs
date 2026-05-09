@@ -11,11 +11,11 @@ use crate::shell::ExitCode;
 
 pub struct Script {
     pub base: Base,
-    /// Raw pointer into the bumpalo-allocated AST (`ShellArgs::__arena`). The
-    /// arena outlives every state node (it's dropped only when the interpreter
-    /// is finalized), so dereferencing is sound. Stored raw to keep `Node`
-    /// lifetime-free.
-    pub node: *const ast::Script,
+    /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
+    /// The arena outlives every state node (it's dropped only when the
+    /// interpreter is finalized), so the BackRef invariant holds. Stored
+    /// lifetime-erased to keep `Node` lifetime-free.
+    pub node: bun_ptr::BackRef<ast::Script>,
     pub io: IO,
     pub state: ScriptState,
 }
@@ -40,7 +40,12 @@ impl Script {
     ) -> NodeId {
         let id = interp.alloc_node(Node::Script(Script {
             base: Base::new(StateKind::Script, parent, shell),
-            node,
+            // SAFETY: `node` is non-null and points into the AST arena
+            // (`ShellArgs::__arena`), which the interpreter holds for its
+            // entire lifetime — strictly outliving every state node (the
+            // BackRef invariant). Callers pass `&raw const` only to escape
+            // borrowck across the `&mut Interpreter` reborrow.
+            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Script) },
             io,
             state: ScriptState::default(),
         }));
@@ -140,18 +145,13 @@ impl Script {
 
     #[inline]
     fn stmt_count_of(me: &Script) -> usize {
-        // SAFETY: `me.node` points into the AST arena, which the interpreter
-        // holds for its entire lifetime (`ShellArgs::__arena`). Explicit `&*`
-        // before field access to satisfy `dangerous_implicit_autorefs`.
-        unsafe { (&*me.node).stmts.len() }
+        me.node.stmts.len()
     }
 
     #[inline]
     fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> *const ast::Stmt {
         let me = interp.as_script(this);
-        // SAFETY: see `stmt_count_of`; `idx` was bounds-checked against
-        // `stmt_count` by the caller.
-        unsafe { &raw const (*me.node).stmts[idx] }
+        &me.node.stmts[idx]
     }
 }
 

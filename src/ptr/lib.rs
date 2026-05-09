@@ -65,6 +65,11 @@ pub use weak_ptr::WeakPtr;
 // spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.
 pub use bun_core::{container_of, container_of_const, from_field_ptr};
 
+// C-callback `void *user_data` → `&mut T` recovery — same tiering rationale
+// as `container_of`; canonical impl lives in `bun_core`, re-exported here so
+// runtime crates spell `bun_ptr::callback_ctx::<T>(ctx)`.
+pub use bun_core::callback_ctx;
+
 pub mod meta; // small, used by other crates
 
 // ported from: src/ptr/ptr.zig

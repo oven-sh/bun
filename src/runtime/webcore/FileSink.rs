@@ -15,6 +15,8 @@ use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::api::bun::process::Status as SpawnStatus;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(windows)]
+use bun_sys::windows::libuv::UvHandle as _;
 
 bun_core::declare_scope!(FileSink, visible);
 

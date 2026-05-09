@@ -20,6 +20,35 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::mimalloc;
 
+// ── Debug-only mi_heap accounting ─────────────────────────────────────────
+//
+// Tracks `mi_heap_new`/`mi_heap_destroy` calls so leak tests can assert the
+// live-heap count is bounded. Gated on `debug_assertions` (zero cost in
+// release). The runtime exposes `bun_alloc::live_arena_heaps()` for ad-hoc
+// probes; nothing reads these counters in production.
+#[cfg(debug_assertions)]
+pub static HEAP_NEW_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+#[cfg(debug_assertions)]
+pub static HEAP_DESTROY_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Debug-only: number of live `MimallocArena` heaps (`mi_heap_new` minus
+/// `mi_heap_destroy`). Returns 0 in release builds.
+#[inline]
+pub fn live_arena_heaps() -> usize {
+    #[cfg(debug_assertions)]
+    {
+        HEAP_NEW_COUNT
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .saturating_sub(HEAP_DESTROY_COUNT.load(core::sync::atomic::Ordering::Relaxed))
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        0
+    }
+}
+
 // ── Debug-only thread-ownership guard (Zig: `bun.safety.ThreadLock`) ──────
 //
 // `bun_alloc` sits below `bun_core` in the crate graph, so we cannot reuse
@@ -81,6 +110,8 @@ impl MimallocArena {
     /// Zig: `MimallocArena.init()` — `mi_heap_new() orelse bun.outOfMemory()`.
     #[inline]
     pub fn new() -> Self {
+        #[cfg(debug_assertions)]
+        HEAP_NEW_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: FFI call with no preconditions.
         let heap = unsafe { mimalloc::mi_heap_new() };
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
@@ -138,6 +169,11 @@ impl MimallocArena {
     ///
     /// Any pointers previously returned by this arena are invalidated.
     pub fn reset(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
+            HEAP_NEW_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
         // SAFETY: `self.heap` was obtained from `mi_heap_new` and has not been
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
@@ -401,6 +437,8 @@ impl MimallocArena {
 impl Drop for MimallocArena {
     #[inline]
     fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
         // Zig: `deinit` → `mi_heap_destroy`. Destroys the heap and bulk-frees
         // every block still allocated in it without running per-block free.
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and

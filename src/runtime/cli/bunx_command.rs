@@ -369,7 +369,7 @@ impl BunxCommand {
         };
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above
-        let subpath_z = unsafe { ZStr::from_raw(subpath.as_ptr(), len) };
+        let subpath_z = ZStr::from_buf(&subpath[..], len);
         Self::get_bin_name_from_subpath(transpiler, dir_fd, subpath_z)
     }
 
@@ -395,7 +395,7 @@ impl BunxCommand {
             };
             subpath[len] = 0;
             // SAFETY: subpath[len] == 0 written above
-            let subpath_z = unsafe { ZStr::from_raw(subpath.as_ptr(), len) };
+            let subpath_z = ZStr::from_buf(&subpath[..], len);
             let target_package_json_fd = match bun_sys::openat(Fd::cwd(), subpath_z, O::RDONLY, 0) {
                 Ok(fd) => fd,
                 Err(_) => return Err(bun_core::err!("NeedToInstall")),
@@ -407,9 +407,9 @@ impl BunxCommand {
                 {
                     use bun_sys::windows as win;
                     // SAFETY: all-zero is a valid IO_STATUS_BLOCK (repr(C) POD, no niches)
-                    let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+                    let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
                     // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION (repr(C) POD, no niches)
-                    let mut info: win::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed() };
+                    let mut info: win::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
                     // SAFETY: FFI call with valid out-params
                     let rc = unsafe {
                         win::ntdll::NtQueryInformationFile(
@@ -465,7 +465,7 @@ impl BunxCommand {
         };
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above
-        let subpath_z = unsafe { ZStr::from_raw(subpath.as_ptr(), len) };
+        let subpath_z = ZStr::from_buf(&subpath[..], len);
 
         Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), subpath_z)
     }
@@ -563,8 +563,7 @@ impl BunxCommand {
         } else if &*update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
         } else if update_request.version.tag == VersionTag::Github {
-            // SAFETY: tag == Github guarantees the `github` union arm is active.
-            unsafe { update_request.version.value.github.repo.slice(update_request.version_buf()) }
+            update_request.version.github().repo.slice(update_request.version_buf())
         } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
             &update_request.name[usize::try_from(index + 1).expect("int cast")..]
@@ -591,16 +590,13 @@ impl BunxCommand {
         // initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
 
-        // SAFETY: `configure_env_for_run` returns a valid pointer into the
-        // resolver's process-lifetime directory cache.
-        let root_dir_info_ref = unsafe { &*root_dir_info };
         let force_using_bun = ctx.debug.run_in_bun;
         Run::configure_path_for_run(
             ctx,
             root_dir_info,
             this_transpiler,
             Some(&mut original_path),
-            root_dir_info_ref.abs_path,
+            root_dir_info.abs_path,
             force_using_bun,
         )?;
         // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
@@ -886,9 +882,9 @@ impl BunxCommand {
                                 // any `break 'is_stale` (no early-return between open & close).
 
                                 // SAFETY: all-zero is a valid IO_STATUS_BLOCK (repr(C) POD, no niches)
-                                let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+                                let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
                                 // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION (repr(C) POD, no niches)
-                                let mut info: win::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed() };
+                                let mut info: win::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
                                 // SAFETY: FFI call with valid out-params
                                 let rc = unsafe {
                                     win::ntdll::NtQueryInformationFile(
@@ -950,7 +946,7 @@ impl BunxCommand {
 
                 // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
                 // BUT: Skip this if --package was used, as the user explicitly specified the binary name
-                let root_dir_fd = root_dir_info_ref.get_file_descriptor();
+                let root_dir_fd = root_dir_info.get_file_descriptor();
                 debug_assert!(root_dir_fd.is_valid());
                 if opts.binary_name.is_none() {
                     match Self::get_bin_name(this_transpiler, root_dir_fd, bunx_cache_dir, result_package_name) {

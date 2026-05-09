@@ -151,13 +151,15 @@ impl FetchHeaders {
     }
 
     pub fn create_from_uws(uws_request: *mut c_void) -> NonNull<FetchHeaders> {
-        // SAFETY: uws_request must point to a live uWS HttpRequest; C++ allocates a new FetchHeaders and never returns null
-        unsafe { NonNull::new_unchecked(WebCore__FetchHeaders__createFromUWS(uws_request)) }
+        // SAFETY: uws_request must point to a live uWS HttpRequest.
+        NonNull::new(unsafe { WebCore__FetchHeaders__createFromUWS(uws_request) })
+            .expect("WebCore__FetchHeaders__createFromUWS returned null")
     }
 
     pub fn create_from_h3(h3_request: *mut c_void) -> NonNull<FetchHeaders> {
-        // SAFETY: h3_request must point to a live H3 request; C++ allocates a new FetchHeaders and never returns null
-        unsafe { NonNull::new_unchecked(WebCore__FetchHeaders__createFromH3(h3_request)) }
+        // SAFETY: h3_request must point to a live H3 request.
+        NonNull::new(unsafe { WebCore__FetchHeaders__createFromH3(h3_request) })
+            .expect("WebCore__FetchHeaders__createFromH3 returned null")
     }
 
     pub fn to_uws_response(&mut self, kind: ResponseKind, uws_response: *mut c_void) {
@@ -172,8 +174,8 @@ impl FetchHeaders {
     }
 
     pub fn create_empty() -> NonNull<FetchHeaders> {
-        // SAFETY: C++ allocates a new empty FetchHeaders and never returns null.
-        unsafe { NonNull::new_unchecked(WebCore__FetchHeaders__createEmpty()) }
+        NonNull::new(WebCore__FetchHeaders__createEmpty())
+            .expect("WebCore__FetchHeaders__createEmpty returned null")
     }
 
     // PORT NOTE: reshaped for borrowck — Zig took `pico_headers: anytype` and read
@@ -183,17 +185,17 @@ impl FetchHeaders {
             ptr: pico_headers_list.as_ptr().cast::<c_void>(),
             len: pico_headers_list.len(),
         };
-        // SAFETY: &out lives across the call; C++ copies the headers synchronously and never returns null
-        unsafe {
-            NonNull::new_unchecked(WebCore__FetchHeaders__createFromPicoHeaders_(
-                (&raw const out).cast::<c_void>(),
-            ))
-        }
+        // SAFETY: &out lives across the call; C++ copies the headers synchronously.
+        NonNull::new(unsafe {
+            WebCore__FetchHeaders__createFromPicoHeaders_((&raw const out).cast::<c_void>())
+        })
+        .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 
     pub fn create_from_pico_headers_(pico_headers: *const c_void) -> NonNull<FetchHeaders> {
-        // SAFETY: pico_headers must point to a valid PicoHeaders struct; C++ never returns null
-        unsafe { NonNull::new_unchecked(WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers)) }
+        // SAFETY: pico_headers must point to a valid PicoHeaders struct.
+        NonNull::new(unsafe { WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers) })
+            .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 
     pub fn append(&mut self, name_: &ZigString, value: &ZigString, global: &JSGlobalObject) {

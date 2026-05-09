@@ -3,11 +3,11 @@
 
 
 #[inline]
-#[allow(clippy::all, unused_unsafe)]
+#[allow(clippy::all)]
 pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierValue> {
     match key.len() {
         3 => {
-            let key: &[u8; 3] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 3] = key.try_into().unwrap();
             match key[0] {
                 b'C' => (key == b"CSS").then(|| PureGlobalIdentifierValue::Other),
                 b'M' => (key == b"Map").then(|| PureGlobalIdentifierValue::Other),
@@ -39,7 +39,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"self", PureGlobalIdentifierValue::Other),
                 (*b"stop", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 4] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 4] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L4.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L4[i].1)
         }
         5 => {
@@ -60,7 +60,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"isNaN", PureGlobalIdentifierValue::Other),
                 (*b"print", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 5] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 5] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L5.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L5[i].1)
         }
         6 => {
@@ -101,7 +101,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"status", PureGlobalIdentifierValue::Other),
                 (*b"window", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 6] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 6] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L6.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L6[i].1)
         }
         7 => {
@@ -143,7 +143,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"screenY", PureGlobalIdentifierValue::Other),
                 (*b"toolbar", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 7] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 7] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L7.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L7[i].1)
         }
         8 => {
@@ -185,7 +185,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"scrollTo", PureGlobalIdentifierValue::Other),
                 (*b"unescape", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 8] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 8] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L8.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L8[i].1)
         }
         9 => {
@@ -235,7 +235,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"undefined", PureGlobalIdentifierValue::StrictUndefined),
                 (*b"webkitURL", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 9] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 9] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L9.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L9[i].1)
         }
         10 => {
@@ -280,7 +280,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"scrollbars", PureGlobalIdentifierValue::Other),
                 (*b"setTimeout", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 10] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 10] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L10.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L10[i].1)
         }
         11 => {
@@ -334,7 +334,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"postMessage", PureGlobalIdentifierValue::Other),
                 (*b"setInterval", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 11] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 11] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L11.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L11[i].1)
         }
         12 => {
@@ -383,7 +383,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"onratechange", PureGlobalIdentifierValue::Other),
                 (*b"ontimeupdate", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 12] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 12] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L12.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L12[i].1)
         }
         13 => {
@@ -429,7 +429,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"onpointerover", PureGlobalIdentifierValue::Other),
                 (*b"releaseEvents", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 13] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 13] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L13.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L13[i].1)
         }
         14 => {
@@ -480,7 +480,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"onvolumechange", PureGlobalIdentifierValue::Other),
                 (*b"queueMicrotask", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 14] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 14] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L14.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L14[i].1)
         }
         15 => {
@@ -526,7 +526,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"ontransitionrun", PureGlobalIdentifierValue::Other),
                 (*b"speechSynthesis", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 15] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 15] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L15.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L15[i].1)
         }
         16 => {
@@ -582,7 +582,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"onlanguagechange", PureGlobalIdentifierValue::Other),
                 (*b"onloadedmetadata", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 16] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 16] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L16.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L16[i].1)
         }
         17 => {
@@ -629,7 +629,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"WebGLRenderbuffer", PureGlobalIdentifierValue::Other),
                 (*b"ontransitionstart", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 17] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 17] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L17.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L17[i].1)
         }
         18 => {
@@ -657,7 +657,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"onrejectionhandled", PureGlobalIdentifierValue::Other),
                 (*b"ontransitioncancel", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 18] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 18] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L18.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L18[i].1)
         }
         19 => {
@@ -684,7 +684,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"ScriptProcessorNode", PureGlobalIdentifierValue::Other),
                 (*b"ongotpointercapture", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 19] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 19] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L19.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L19[i].1)
         }
         20 => {
@@ -707,7 +707,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"onunhandledrejection", PureGlobalIdentifierValue::Other),
                 (*b"onwebkitanimationend", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 20] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 20] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L20.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L20[i].1)
         }
         21 => {
@@ -732,7 +732,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"onwebkittransitionend", PureGlobalIdentifierValue::Other),
                 (*b"requestAnimationFrame", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 21] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 21] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L21.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L21[i].1)
         }
         22 => {
@@ -749,11 +749,11 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"SVGPreserveAspectRatio", PureGlobalIdentifierValue::Other),
                 (*b"onwebkitanimationstart", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 22] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 22] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L22.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L22[i].1)
         }
         23 => {
-            let key: &[u8; 23] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 23] = key.try_into().unwrap();
             match key[9] {
                 b'C' => (key == b"HTMLTableCaptionElement").then(|| PureGlobalIdentifierValue::Other),
                 b'S' => (key == b"HTMLTableSectionElement").then(|| PureGlobalIdentifierValue::Other),
@@ -776,11 +776,11 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
                 (*b"SVGRadialGradientElement", PureGlobalIdentifierValue::Other),
                 (*b"SpeechSynthesisUtterance", PureGlobalIdentifierValue::Other),
             ];
-            let key: &[u8; 24] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 24] = key.try_into().unwrap();
             __LOOKUP_PURE_GLOBAL_IDENTIFIER_L24.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| __LOOKUP_PURE_GLOBAL_IDENTIFIER_L24[i].1)
         }
         25 => {
-            let key: &[u8; 25] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 25] = key.try_into().unwrap();
             match key[0] {
                 b'B' => (key == b"ByteLengthQueuingStrategy").then(|| PureGlobalIdentifierValue::Other),
                 b'I' => (key == b"IntersectionObserverEntry").then(|| PureGlobalIdentifierValue::Other),
@@ -792,7 +792,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
             }
         }
         26 => {
-            let key: &[u8; 26] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 26] = key.try_into().unwrap();
             match key[3] {
                 b'L' => (key == b"HTMLFormControlsCollection").then(|| PureGlobalIdentifierValue::Other),
                 b'i' => (key == b"MediaStreamAudioSourceNode").then(|| PureGlobalIdentifierValue::Other),
@@ -804,7 +804,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
             }
         }
         27 => {
-            let key: &[u8; 27] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 27] = key.try_into().unwrap();
             match key[7] {
                 b'e' => (key == b"MediaElementAudioSourceNode").then(|| PureGlobalIdentifierValue::Other),
                 b'A' => (key == b"OfflineAudioCompletionEvent").then(|| PureGlobalIdentifierValue::Other),
@@ -814,7 +814,7 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
             }
         }
         28 => {
-            let key: &[u8; 28] = unsafe { &*key.as_ptr().cast() };
+            let key: &[u8; 28] = key.try_into().unwrap();
             match key[2] {
                 b'r' => (key == b"PerformanceObserverEntryList").then(|| PureGlobalIdentifierValue::Other),
                 b'G' => (key == b"SVGFESpecularLightingElement").then(|| PureGlobalIdentifierValue::Other),

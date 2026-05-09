@@ -1002,7 +1002,7 @@ fn create_overlapped_pipe_pair(
     name_w_buf[name_w_len] = 0;
     // SAFETY: name_w_buf[name_w_len] == 0 written above.
     let name_w =
-        unsafe { bun_str::WStr::from_raw(name_w_buf.as_ptr(), name_w_len) };
+        bun_str::WStr::from_buf(&name_w_buf[..], name_w_len);
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
     let server = unsafe {

@@ -2594,7 +2594,10 @@ unsafe extern "C" {
     pub fn uv_tty_get_winsize(handle: *mut uv_tty_t, width: *mut c_int, height: *mut c_int) -> c_int;
     pub fn uv_tty_set_vterm_state(state: uv_tty_vtermstate_t);
     pub fn uv_tty_get_vterm_state(state: *mut uv_tty_vtermstate_t) -> c_int;
-    pub fn uv_guess_handle(file: uv_file) -> uv_handle_type;
+    /// Total over any `uv_file` (CRT fd int); returns one of the documented
+    /// `uv_handle_type` discriminants (0..=17), so the `#[repr(C)]` enum
+    /// round-trip is sound → `safe fn`.
+    pub safe fn uv_guess_handle(file: uv_file) -> uv_handle_type;
 
     // pipe
     pub fn uv_pipe_init(loop_: *mut Loop, handle: *mut Pipe, ipc: c_int) -> ReturnCode;

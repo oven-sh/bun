@@ -171,9 +171,7 @@ impl FileRoute {
                 }))));
             }
         }
-        if let Some(blob_ptr) = argument.as_::<Blob>() {
-            // SAFETY: non-null per JsClass::from_js contract.
-            let blob = unsafe { &*blob_ptr };
+        if let Some(blob) = argument.as_class_ref::<Blob>() {
             if blob.needs_to_read_file() {
                 let mut b = blob.dupe();
                 b.global_this = std::ptr::from_ref(global);
@@ -327,7 +325,7 @@ impl FileRoute {
                 path_buffer[path.len()] = 0;
                 bun_sys::open(
                     // SAFETY: path_buffer[path.len()] == 0 written above
-                    unsafe { bun_str::ZStr::from_raw(path_buffer.as_ptr(), path.len()) },
+                    bun_str::ZStr::from_buf(&path_buffer[..], path.len()),
                     open_flags,
                     0,
                 )

@@ -752,7 +752,7 @@ impl JunitReporter {
         junit_path_buf[path.len()] = 0;
 
         // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = unsafe { bun_str::ZStr::from_raw(junit_path_buf.as_ptr(), path.len()) };
+        let zpath = bun_str::ZStr::from_buf(&junit_path_buf[..], path.len());
         match File::openat(Fd::cwd(), zpath, bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC, 0o664) {
             bun_sys::Result::Err(err) => {
                 Output::err(bun_core::err!("JUnitReportFailed"), "Failed to write JUnit report to {}\n{}", (bstr::BStr::new(path), err));
@@ -1498,7 +1498,7 @@ impl CommandLineReporter {
                     let _ = cursor.write_all(b".tmp\0");
                     let len = shortname_buf.iter().position(|&b| b == 0).unwrap();
                     // SAFETY: NUL written above
-                    unsafe { bun_str::ZStr::from_raw(shortname_buf.as_ptr(), len) }
+                    bun_str::ZStr::from_buf(&shortname_buf[..], len)
                 };
                 let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(relative_dir, &mut lcov_name_buf, &[&opts.reports_directory, tmpname.as_bytes()]);
                 let file = File::openat(

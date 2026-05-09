@@ -1968,7 +1968,7 @@ pub fn install_isolated_packages(
             is_new_bun_modules,
             global_store_path: global_store_path.as_deref().map(|b: &[u8]| -> &bun_str::ZStr {
                 // SAFETY: `global_store_path` was built with a trailing NUL above.
-                unsafe { bun_str::ZStr::from_raw(b.as_ptr(), b.len() - 1) }
+                bun_str::ZStr::from_slice_with_nul(&b[..])
             }),
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),

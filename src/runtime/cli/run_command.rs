@@ -194,7 +194,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 path_buf[..shell.len()].copy_from_slice(shell);
                 path_buf[shell.len()] = 0;
                 // SAFETY: NUL-terminated above.
-                let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), shell.len()) };
+                let z = ZStr::from_buf(&path_buf[..], shell.len());
                 if bun_sys::is_executable_file_path(z) {
                     return Some(shell.len());
                 }
@@ -220,7 +220,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let len = Self::find_shell_impl(path, cwd, buf)?;
             buf[len] = 0;
             // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.
-            Some(unsafe { ZStr::from_raw(buf.as_ptr(), len) })
+            Some(ZStr::from_buf(&buf[..], len))
         })
     }
 
@@ -504,7 +504,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env: Option<*mut DotEnv::Loader<'static>>,
         log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<*mut DirInfo, bun_core::Error> {
+    ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
         // PORT NOTE: process-lifetime arena singleton for the runner's
@@ -536,7 +536,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
-        let root_dir_info: *mut DirInfo =
+        let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
                     if !log_errors {
@@ -638,10 +638,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        // SAFETY: `read_dir_info` returned `Some(ptr)`; entry lives in the
-        // resolver's `DirInfoCache` for the process lifetime.
-        let root_dir = unsafe { &*root_dir_info };
-        if let Some(package_json) = root_dir.enclosing_package_json {
+        if let Some(package_json) = root_dir_info.enclosing_package_json {
             if !package_json.name.is_empty() {
                 if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
                     env_loader
@@ -824,7 +821,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         path_buf[..entry_path.len()].copy_from_slice(entry_path);
         path_buf[entry_path.len()] = 0;
         // SAFETY: NUL-terminated above; `path_buf` outlives the call.
-        let path_z = unsafe { ZStr::from_raw(path_buf.as_ptr(), entry_path.len()) };
+        let path_z = ZStr::from_buf(&path_buf[..], entry_path.len());
         let src = match sys::File::read_from(Fd::cwd(), path_z) {
             Ok(bytes) => bytes,
             Err(err) => return Err(err.into()),
@@ -1766,7 +1763,7 @@ impl RunCommand {
                 runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
             // SAFETY: `stored[total] == 0` (written above before the copy);
             // arena-backed slice lives for process lifetime.
-            Ok(unsafe { ZStr::from_raw(stored.as_ptr(), total) })
+            Ok(ZStr::from_buf(&stored[..], total))
         }
     }
 
@@ -1831,8 +1828,8 @@ impl RunCommand {
                             let cstr = bun_core::ffi::cstr(argv0);
                             ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
                         };
-                        // SAFETY: PATHS entries are NUL-terminated string literals.
-                        let link = unsafe { ZStr::from_raw(p.as_ptr(), p.len() - 1) };
+                        // PATHS entries are NUL-terminated string literals.
+                        let link = ZStr::from_slice_with_nul(p.as_bytes());
                         if let Err(err) = sys::symlink(target, link) {
                             if err.get_errno() == sys::E::EEXIST {
                                 break 'inner;
@@ -1957,12 +1954,7 @@ impl RunCommand {
                                 // SAFETY: we just wrote a NUL terminator at
                                 // `dir_slice_len`; `target_path_buffer[..dir_slice_len]`
                                 // is initialised wide-string data → valid `WStr`.
-                                let dir_w = unsafe {
-                                    bun_core::WStr::from_raw(
-                                        target_path_buffer.as_ptr(),
-                                        dir_slice_len,
-                                    )
-                                };
+                                let dir_w = bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len,);
                                 let _ = sys::mkdir_w(dir_w);
                                 target_path_buffer[dir_slice_len] = b'\\' as u16;
                             }
@@ -2001,7 +1993,7 @@ impl RunCommand {
     /// PATH back through `original_path`.
     pub fn configure_path_for_run(
         ctx: &mut ContextData,
-        root_dir_info: *mut DirInfo,
+        root_dir_info: bun_resolver::DirInfoRef,
         this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
@@ -2009,10 +2001,8 @@ impl RunCommand {
     ) -> Result<(), bun_core::Error> {
         let mut package_json_dir: &[u8] = b"";
 
-        // SAFETY: resolver cache owns the DirInfo for the process lifetime.
-        let root_dir = unsafe { &*root_dir_info };
-        if let Some(package_json) = root_dir.enclosing_package_json {
-            if root_dir.package_json.is_none() {
+        if let Some(package_json) = root_dir_info.enclosing_package_json {
+            if root_dir_info.package_json.is_none() {
                 // no trailing slash
                 package_json_dir =
                     strings::without_trailing_slash(package_json.source.path.name.dir);
@@ -2542,15 +2532,14 @@ impl RunCommand {
             root_dir_info,
             this_transpiler,
             Some(&mut original_path),
-            unsafe { (*root_dir_info).abs_path },
+            root_dir_info.abs_path,
             force_using_bun,
         )?;
         // SAFETY: `Transpiler::init` always sets `env`.
         let env_loader: &mut DotEnv::Loader<'static> = unsafe { &mut *this_transpiler.env };
         env_loader.map.put(b"npm_command", b"run-script").expect("unreachable");
 
-        // SAFETY: `read_dir_info` returned non-null; resolver-cache lifetime.
-        let root_dir = unsafe { &*root_dir_info };
+        let root_dir = root_dir_info;
 
         // ── empty command → print help ──────────────────────────────────────
         if target_name.is_empty() {
@@ -2947,7 +2936,7 @@ impl RunCommand {
         script_name_buf[open_len] = 0;
         // SAFETY: `script_name_buf[open_len] == 0` written above;
         // `script_name_buf[..open_len]` is init.
-        let open_z = unsafe { bun_core::ZStr::from_raw(script_name_buf.as_ptr(), open_len) };
+        let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
 
         // Open read-only. `catch return false` in Zig.
         let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
@@ -3292,7 +3281,7 @@ impl RunCommand {
         zbuf[..path.len()].copy_from_slice(path);
         zbuf[path.len()] = 0;
         // SAFETY: NUL-terminated above.
-        let z = unsafe { ZStr::from_raw(zbuf.as_ptr(), path.len()) };
+        let z = ZStr::from_buf(&zbuf[..], path.len());
         let _ = sys::unlink(z);
     }
 
@@ -3529,7 +3518,7 @@ impl RunCommand {
             #[cfg(unix)]
             {
                 // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
-                let mut size: libc::winsize = unsafe { bun_core::ffi::zeroed() };
+                let mut size: libc::winsize = bun_core::ffi::zeroed();
                 // SAFETY: ioctl with valid winsize ptr
                 if unsafe {
                     libc::ioctl(
@@ -3549,7 +3538,7 @@ impl RunCommand {
                 if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
                     // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
                     let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
-                        unsafe { bun_core::ffi::zeroed() };
+                        unsafe { bun_core::ffi::zeroed_unchecked() };
                     // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
                     // is a valid console output HANDLE from GetStdHandle and
                     // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
@@ -3688,8 +3677,6 @@ impl RunCommand {
             this_transpiler.resolver.care_about_scripts = false;
             return Ok(shell_out);
         };
-        // SAFETY: resolver cache owns the DirInfo for the process lifetime.
-        let root_dir_info = unsafe { &*root_dir_info };
 
         {
             // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
@@ -3760,12 +3747,7 @@ impl RunCommand {
                                     .copy_from_slice(base);
                                 path_buf[dir_slice_len + base.len()] = 0;
                                 // SAFETY: NUL terminator written above
-                                let slice = unsafe {
-                                    ZStr::from_raw(
-                                        path_buf.as_ptr(),
-                                        dir_slice_len + base.len(),
-                                    )
-                                };
+                                let slice = ZStr::from_buf(&path_buf[..], dir_slice_len + base.len(),);
                                 if !sys::is_executable_file_path(slice) {
                                     continue;
                                 }
@@ -3791,8 +3773,7 @@ impl RunCommand {
                 .ok()
                 .flatten()
             {
-                // SAFETY: resolver cache owns the DirInfo for the process lifetime.
-                if let Some(entries) = unsafe { &*dir_info }.get_entries_const() {
+                if let Some(entries) = dir_info.get_entries_const() {
                     let mut iter = entries.data.iter();
 
                     while let Some(entry) = iter.next() {

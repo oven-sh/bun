@@ -76,9 +76,10 @@ impl<'a> Borrowed<'a> {
         let heap = unsafe { mimalloc::mi_heap_main() };
         #[cfg(not(feature = "ci_assert"))]
         {
-            // SAFETY: mi_heap_main() returns a non-null pointer to the process-wide main heap
-            // with 'static lifetime.
-            return Borrowed { heap: unsafe { NonNull::new_unchecked(heap) }, _lt: PhantomData };
+            return Borrowed {
+                heap: NonNull::new(heap).expect("mi_heap_main returned null"),
+                _lt: PhantomData,
+            };
         }
         #[cfg(feature = "ci_assert")]
         {
@@ -98,8 +99,7 @@ impl<'a> Borrowed<'a> {
                 unsafe {
                     if (*cell).is_none() {
                         *cell = Some(DebugHeap {
-                            // SAFETY: mi_heap_main() never returns null.
-                            inner: NonNull::new_unchecked(heap),
+                            inner: NonNull::new(heap).expect("mi_heap_main returned null"),
                             thread_lock: bun_core::ThreadLock::init_locked(),
                         });
                     }

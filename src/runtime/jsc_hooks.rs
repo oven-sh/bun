@@ -1307,7 +1307,6 @@ mod vm_loader_ctx {
                 // the call — narrows the borrow re-entrant JS could alias.
                 match (&mut (*this).transpiler.resolver).read_dir_info(dir) {
                     Ok(Some(dir_info)) => {
-                        let dir_info = &*dir_info;
                         dir_info
                             .package_json()
                             .or(dir_info.enclosing_package_json)
@@ -1677,14 +1676,14 @@ fn console_print_runtime_object_inner<const C: bool>(
         let _ = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
-    if let Some(s3client) = value.as_::<S3Client>() {
+    if let Some(s3client) = value.as_class_ref::<S3Client>() {
         let mut w = IoAsFmt(writer_);
-        let _ = unsafe { &*s3client }.write_format::<_, _, C>(formatter, &mut w);
+        let _ = s3client.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
-    if let Some(archive) = value.as_::<Archive>() {
+    if let Some(archive) = value.as_class_ref::<Archive>() {
         let mut w = IoAsFmt(writer_);
-        let _ = unsafe { &*archive }.write_format::<_, _, C>(formatter, &mut w);
+        let _ = archive.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
     if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
@@ -1713,9 +1712,8 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
-    if let Some(timer) = value.as_::<crate::timer::TimeoutObject>() {
-        // SAFETY: `as_` returned non-null; cell is live while `value` is on stack.
-        let internals = unsafe { &(*timer).internals };
+    if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
+        let internals = &timer.internals;
         let id = internals.id;
         formatter.add_for_new_line(
             "Timeout(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
@@ -1741,9 +1739,8 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         return Ok(true);
     }
-    if let Some(immediate) = value.as_::<crate::timer::ImmediateObject>() {
-        // SAFETY: `as_` returned non-null; cell is live while `value` is on stack.
-        let id = unsafe { &(*immediate).internals }.id;
+    if let Some(immediate) = value.as_class_ref::<crate::timer::ImmediateObject>() {
+        let id = immediate.internals.id;
         formatter.add_for_new_line(
             "Immediate(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
         );
@@ -1756,16 +1753,14 @@ fn console_print_runtime_object_inner<const C: bool>(
         );
         return Ok(true);
     }
-    if let Some(build_log) = value.as_::<bun_jsc::BuildMessage>() {
+    if let Some(build_log) = value.as_class_ref::<bun_jsc::BuildMessage>() {
         let mut w = IoAsFmt(writer_);
-        // SAFETY: `as_` returned a live cell.
-        let _ = unsafe { &(*build_log).msg }.write_format::<C>(&mut w);
+        let _ = build_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
-    if let Some(resolve_log) = value.as_::<bun_jsc::ResolveMessage>() {
+    if let Some(resolve_log) = value.as_class_ref::<bun_jsc::ResolveMessage>() {
         let mut w = IoAsFmt(writer_);
-        // SAFETY: `as_` returned a live cell.
-        let _ = unsafe { &(*resolve_log).msg }.write_format::<C>(&mut w);
+        let _ = resolve_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
     {
@@ -2576,10 +2571,6 @@ fn transpile_source_code_inner(
                                 .read_dir_info(source.path.name.dir)
                         } {
                             Ok(Some(dir_info)) => {
-                                // SAFETY: `*mut DirInfo` is interned in the
-                                // resolver's arena; `PackageJSON` refs are
-                                // `'static` (dir_info.rs).
-                                let dir_info = unsafe { &*dir_info };
                                 dir_info
                                     .package_json()
                                     .or(dir_info.enclosing_package_json)
@@ -2804,9 +2795,6 @@ fn transpile_source_code_inner(
                                     (*jsc_vm).transpiler.resolver.read_dir_info(dir)
                                 } {
                                     Ok(Some(dir_info)) => {
-                                        // SAFETY: `*mut DirInfo` is interned in
-                                        // the resolver's arena.
-                                        let dir_info = unsafe { &*dir_info };
                                         dir_info
                                             .package_json()
                                             .or(dir_info.enclosing_package_json)
@@ -3664,10 +3652,6 @@ unsafe fn get_loader_and_virtual_source<'a>(
         // the VM; `read_dir_info` is re-entrant on the JS thread.
         match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
             Ok(Some(dir_info)) => {
-                // SAFETY: `read_dir_info` returns a stable cache slot
-                // (`*mut DirInfo`) owned by the resolver's interned arena; the
-                // PackageJSON it points at is `'static` per dir_info.rs.
-                let dir_info = unsafe { &*dir_info };
                 dir_info.package_json().or(dir_info.enclosing_package_json)
             }
             _ => None,

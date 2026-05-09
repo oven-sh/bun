@@ -637,7 +637,7 @@ where
             result: Err(sys::Error::default()),
             global_object: bun_ptr::BackRef::new(global_object),
             // SAFETY: all-zero is a valid uv::fs_t (libuv `#[repr(C)]` POD).
-            req: unsafe { bun_core::ffi::zeroed() },
+            req: unsafe { bun_core::ffi::zeroed_unchecked() },
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
         });
@@ -6073,7 +6073,7 @@ impl NodeFS {
             let parts = [fs.top_level_dir, path_slice];
             let path_len = fs.abs_buf(&parts, &mut inbuf[..]).len();
             inbuf[path_len] = 0;
-            let path = unsafe { ZStr::from_raw(inbuf.as_ptr(), path_len) };
+            let path = ZStr::from_buf(&inbuf[..], path_len);
 
             #[cfg(target_os = "linux")]
             let flags = sys::O::PATH; // O_PATH is faster
@@ -6732,7 +6732,7 @@ impl NodeFS {
         };
         target_buf[link_len] = 0;
         // SAFETY: NUL written at `target_buf[link_len]`.
-        let link_target = unsafe { ZStr::from_raw(target_buf.as_ptr(), link_len) };
+        let link_target = ZStr::from_buf(&target_buf[..], link_len);
         if paths::is_absolute(link_target.as_bytes()) {
             return Syscall::symlink(link_target, dest);
         }
@@ -6755,7 +6755,7 @@ impl NodeFS {
         let resolved_len = resolved.len();
         resolved_buf[resolved_len] = 0;
         // SAFETY: NUL written at `resolved_buf[resolved_len]`.
-        Syscall::symlink(unsafe { ZStr::from_raw(resolved_buf.as_ptr(), resolved_len) }, dest)
+        Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
@@ -7632,7 +7632,7 @@ fn dt_open_dir(parent: sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
     path_buf[..len].copy_from_slice(&name[..len]);
     path_buf[len] = 0;
     // SAFETY: NUL written at [len].
-    let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), len) };
+    let z = ZStr::from_buf(&path_buf[..], len);
     match Syscall::openat(parent.fd, z, sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW, 0) {
         Ok(fd) => Ok(sys::Dir::from_fd(fd)),
         Err(e) => Err(e.get_errno()),
@@ -7646,7 +7646,7 @@ fn dt_delete_file(parent: sys::Dir, name: &[u8]) -> Result<(), E> {
     path_buf[..len].copy_from_slice(&name[..len]);
     path_buf[len] = 0;
     // SAFETY: NUL written at [len].
-    let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), len) };
+    let z = ZStr::from_buf(&path_buf[..], len);
     match Syscall::unlinkat(parent.fd, z) {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -7684,7 +7684,7 @@ fn dt_delete_dir(parent: sys::Dir, name: &[u8]) -> Result<(), E> {
     path_buf[..len].copy_from_slice(&name[..len]);
     path_buf[len] = 0;
     // SAFETY: NUL written at [len].
-    let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), len) };
+    let z = ZStr::from_buf(&path_buf[..], len);
     #[cfg(unix)]
     let flags: i32 = libc::AT_REMOVEDIR;
     #[cfg(not(unix))]

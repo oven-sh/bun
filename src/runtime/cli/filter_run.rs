@@ -179,7 +179,7 @@ impl<'a> ProcessHandle<'a> {
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = unsafe { core::mem::zeroed::<Rusage>() };
+                    let rusage = bun_core::ffi::zeroed::<Rusage>();
                     process.on_exit(Status::Err(err), &rusage);
                 }
             }
@@ -646,7 +646,7 @@ impl AbortHandler {
         #[cfg(unix)]
         {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
-            let mut act: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
+            let mut act: libc::sigaction = bun_core::ffi::zeroed();
             act.sa_sigaction = Self::posix_signal_handler as *const () as usize;
             act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
             // SAFETY: sa_mask is a valid out-pointer; act is on the stack.
@@ -827,7 +827,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             let interned: &'static [u8] = crate::cli::cli_dupe(&copy_script);
             let combined_len = interned.len() - 1;
             // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
-            let combined = unsafe { ZStr::from_raw(interned.as_ptr(), combined_len) };
+            let combined = ZStr::from_buf(&interned[..], combined_len);
 
             let dep_source_buf = pkgjson.dependencies.source_buf;
             let deps: Vec<Box<[u8]>> = pkgjson

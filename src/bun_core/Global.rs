@@ -387,24 +387,25 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
 // Zig: src/cli/cli.zig::debug_flags — debug-build-only breakpoint matchers.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
-    pub static RESOLVE_BREAKPOINTS: crate::RacyCell<&[&[u8]]> = crate::RacyCell::new(&[]);
+    pub static RESOLVE_BREAKPOINTS: std::sync::OnceLock<&'static [&'static [u8]]> =
+        std::sync::OnceLock::new();
     #[cfg(debug_assertions)]
-    pub static PRINT_BREAKPOINTS: crate::RacyCell<&[&[u8]]> = crate::RacyCell::new(&[]);
+    pub static PRINT_BREAKPOINTS: std::sync::OnceLock<&'static [&'static [u8]]> =
+        std::sync::OnceLock::new();
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
         #[cfg(debug_assertions)]
-        // SAFETY: written once during single-threaded CLI startup.
-        for bp in unsafe { RESOLVE_BREAKPOINTS.read() } {
+        for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
             if crate::strings::includes(str_, bp) { return true; }
         }
+        let _ = str_;
         false
     }
     #[inline]
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
-        // SAFETY: written once during single-threaded CLI startup.
-        for bp in unsafe { PRINT_BREAKPOINTS.read() } {
+        for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
             if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
                 return true;
             }

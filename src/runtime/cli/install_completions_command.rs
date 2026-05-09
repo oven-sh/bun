@@ -136,9 +136,7 @@ impl InstallCompletionsCommand {
             &[&windows::NT_OBJECT_PREFIX, image_dirname, exe_suffix_z],
         )?;
         // SAFETY: exe_suffix_z ends in NUL, so bunx_path_with_z[len-1] == 0
-        let bunx_path = unsafe {
-            WStr::from_raw(bunx_path_with_z.as_ptr(), bunx_path_with_z.len() - 1)
-        };
+        let bunx_path = WStr::from_slice_with_nul(&bunx_path_with_z[..]);
         let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
 
         if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) == 0 {
@@ -150,9 +148,7 @@ impl InstallCompletionsCommand {
                 &[&windows::NT_OBJECT_PREFIX, image_dirname, exe_suffix_z],
             )?;
             // SAFETY: exe_suffix_z ends in NUL
-            let bunx_cmd = unsafe {
-                WStr::from_raw(bunx_cmd_with_z.as_ptr(), bunx_cmd_with_z.len() - 1)
-            };
+            let bunx_cmd = WStr::from_slice_with_nul(&bunx_cmd_with_z[..]);
             // TODO: fix this zig bug, it is one line change to a few functions.
             // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
@@ -691,9 +687,8 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [
     cursor.write_fmt(args).expect("unreachable");
     let remaining = cursor.len();
     let written = total - remaining;
-    // PORT NOTE: reshaped for borrowck — re-slice from original buffer
-    // SAFETY: `written` bytes were just written contiguously from buf[0]
-    unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr(), written) }
+    // NLL ends `cursor`'s reborrow here; safe sub-slice of the owning buffer.
+    &mut buf[..written]
 }
 
 /// Like [`buf_print`] but appends a NUL terminator and returns a `&ZStr`.

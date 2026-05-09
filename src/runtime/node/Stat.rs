@@ -218,7 +218,7 @@ pub type StatsBig = StatType<true>;
 pub fn create_stats_for_ino(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [ino_arg, big_arg] = frame.arguments_as_array::<2>();
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
-    let mut stat_: PosixStat = unsafe { core::mem::zeroed::<PosixStat>() };
+    let mut stat_: PosixStat = bun_core::ffi::zeroed();
     stat_.ino = ino_arg.to_uint64_no_truncate();
     Stats::init(&stat_, big_arg.to_boolean()).to_js_newly_created(global)
 }

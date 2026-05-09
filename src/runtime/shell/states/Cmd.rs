@@ -723,9 +723,8 @@ impl Cmd {
                             stdio[STDERR_NO] = mk();
                         }
                     }
-                } else if let Some(blob_ptr) = jsval.as_::<crate::webcore::Blob>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Blob`.
-                    let blob = unsafe { &*blob_ptr }.dupe();
+                } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
+                    let blob = blob_ref.dupe();
                     if flags.stdin() {
                         stdio[STDIN_NO].extract_blob(
                             global,

@@ -253,31 +253,25 @@ impl DependencyExt for Dependency {
     /// Get the name of the package as it should appear in a remote registry.
     #[inline]
     fn realname(&self) -> String {
-        // SAFETY: union field access guarded by tag
-        unsafe {
-            match self.version.tag {
-                Tag::DistTag => self.version.value.dist_tag.name,
-                Tag::Git => self.version.value.git.package_name,
-                Tag::Github => self.version.value.github.package_name,
-                Tag::Npm => self.version.value.npm.name,
-                Tag::Tarball => self.version.value.tarball.package_name,
-                _ => self.name,
-            }
+        match self.version.tag {
+            Tag::DistTag => self.version.dist_tag().name,
+            Tag::Git => self.version.git().package_name,
+            Tag::Github => self.version.github().package_name,
+            Tag::Npm => self.version.npm().name,
+            Tag::Tarball => self.version.tarball().package_name,
+            _ => self.name,
         }
     }
 
     #[inline]
     fn is_aliased(&self, buf: &[u8]) -> bool {
-        // SAFETY: union field access guarded by tag
-        unsafe {
-            match self.version.tag {
-                Tag::Npm => !self.version.value.npm.name.eql(self.name, buf, buf),
-                Tag::DistTag => !self.version.value.dist_tag.name.eql(self.name, buf, buf),
-                Tag::Git => !self.version.value.git.package_name.eql(self.name, buf, buf),
-                Tag::Github => !self.version.value.github.package_name.eql(self.name, buf, buf),
-                Tag::Tarball => !self.version.value.tarball.package_name.eql(self.name, buf, buf),
-                _ => false,
-            }
+        match self.version.tag {
+            Tag::Npm => !self.version.npm().name.eql(self.name, buf, buf),
+            Tag::DistTag => !self.version.dist_tag().name.eql(self.name, buf, buf),
+            Tag::Git => !self.version.git().package_name.eql(self.name, buf, buf),
+            Tag::Github => !self.version.github().package_name.eql(self.name, buf, buf),
+            Tag::Tarball => !self.version.tarball().package_name.eql(self.name, buf, buf),
+            _ => false,
         }
     }
 

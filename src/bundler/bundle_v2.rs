@@ -1625,8 +1625,7 @@ impl<'a> BundleV2<'a> {
         // SAFETY: BACKREF — `any_loop` outlives this bundle pass.
         match unsafe { &*any_loop } {
             bun_event_loop::AnyEventLoop::Js { owner } => {
-                // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
-                unsafe { bun_event_loop::any_event_loop::js::enqueue_task_concurrent(*owner, task) };
+                owner.enqueue_task_concurrent(task);
             }
             bun_event_loop::AnyEventLoop::Mini(_) => {
                 panic!("No JavaScript event loop for transpiler plugins to run on");
@@ -3784,16 +3783,12 @@ impl<'a> BundleV2<'a> {
         // mutate `graph` / allocate from `graph.heap` off-thread.
         match self.any_loop_mut() {
             bun_event_loop::AnyEventLoop::Js { owner } => {
-                // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
-                unsafe {
-                    bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
-                        *owner,
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                            std::ptr::from_mut(load),
-                            on_load_from_js_loop_raw,
-                        ),
-                    );
-                }
+                owner.enqueue_task_concurrent(
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        std::ptr::from_mut(load),
+                        on_load_from_js_loop_raw,
+                    ),
+                );
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
@@ -3809,16 +3804,12 @@ impl<'a> BundleV2<'a> {
         // See `on_load_async` — must dispatch on the bundler's own loop.
         match self.any_loop_mut() {
             bun_event_loop::AnyEventLoop::Js { owner } => {
-                // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
-                unsafe {
-                    bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
-                        *owner,
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                            std::ptr::from_mut(resolve),
-                            on_resolve_from_js_loop_raw,
-                        ),
-                    );
-                }
+                owner.enqueue_task_concurrent(
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        std::ptr::from_mut(resolve),
+                        on_resolve_from_js_loop_raw,
+                    ),
+                );
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(

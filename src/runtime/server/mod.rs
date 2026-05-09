@@ -2945,12 +2945,18 @@ impl AnyServer {
         bun_ptr::TaggedPointer::init(self.ptr, tag).to() as u64
     }
 
-    pub fn vm(&self) -> *const jsc::VirtualMachine {
-        any_server_dispatch!(self, |s| s.vm)
+    /// Shared borrow of the process-static VM. Routes through
+    /// [`NewServer::vm`], which centralizes the SAFETY invariant (`vm` is a
+    /// STATIC backref set in `init()`; non-null for the server's lifetime).
+    pub fn vm(&self) -> &jsc::VirtualMachine {
+        any_server_dispatch!(self, |s| s.vm())
     }
 
-    pub fn global_this(&self) -> *const jsc::JSGlobalObject {
-        any_server_dispatch!(self, |s| s.global_this)
+    /// Shared borrow of the per-process `JSGlobalObject`. Routes through
+    /// [`NewServer::global_this`] (same SAFETY contract: never-null backref,
+    /// never moved or freed while any `NewServer` exists).
+    pub fn global_this(&self) -> &jsc::JSGlobalObject {
+        any_server_dispatch!(self, |s| s.global_this())
     }
 
     pub fn config(&self) -> &ServerConfig {
@@ -3278,12 +3284,12 @@ pub mod http_server_agent {
             });
         }
 
-        // SAFETY: `agent` is a live C++ handle; `vm()` is the live process VM.
+        // SAFETY: `agent` is a live C++ handle.
         unsafe {
             InspectorHTTPServerAgent::notify_server_routes_updated(
                 agent.as_ptr(),
                 server.inspector_server_id(),
-                (*server.vm()).hot_reload_counter as i32,
+                server.vm().hot_reload_counter as i32,
                 &mut routes,
             );
         }

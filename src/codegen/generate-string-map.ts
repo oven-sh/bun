@@ -136,7 +136,7 @@ function emitLookup(
   const discByte = (b: number) => rsByte(ci ? b | 0x20 : b);
 
   out.push(`#[inline]`);
-  out.push(`#[allow(clippy::all, unused_unsafe)]`);
+  out.push(`#[allow(clippy::all)]`);
   out.push(`pub fn ${fnName}(key: &[u8]) -> Option<${retTy}> {`);
   out.push(`    match key.len() {`);
   for (const len of lens) {
@@ -149,9 +149,10 @@ function emitLookup(
       // `| 0x20` folding — recompute on the folded keys.
       const disc = discriminatingByte(ci ? bucket.map(([kb, v]) => [sortKey(kb), v] as const) : bucket, len);
       out.push(`        ${len} => {`);
-      // SAFETY: `len` arm guarantees `key.len() == ${len}`; the cast gives
-      // rustc a fixed-size array so the eq becomes a single wide compare.
-      out.push(`            let key: &[u8; ${len}] = unsafe { &*key.as_ptr().cast() };`);
+      // The `len` match arm guarantees `key.len() == ${len}`, so `try_into`
+      // is infallible (LLVM elides the check). Widening to `&[u8; N]` lets
+      // rustc lower the eq to a single wide compare.
+      out.push(`            let key: &[u8; ${len}] = key.try_into().unwrap();`);
       if (disc !== null) {
         // One byte fully discriminates → `match key[i]` is a jump table; the
         // per-arm compare confirms the rest of the bytes (still needed — the
@@ -186,7 +187,7 @@ function emitLookup(
         out.push(`                (*${rsBytes(kb.toString("binary"))}, ${v}),`);
       }
       out.push(`            ];`);
-      out.push(`            let key: &[u8; ${len}] = unsafe { &*key.as_ptr().cast() };`);
+      out.push(`            let key: &[u8; ${len}] = key.try_into().unwrap();`);
       out.push(`            ${tableName}.binary_search_by(|(k, _)| k.cmp(key)).ok().map(|i| ${tableName}[i].1)`);
       out.push(`        }`);
     } else {

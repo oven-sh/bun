@@ -328,7 +328,7 @@ impl Source {
     // SAFETY: byte arrays and raw `*mut` pointers are valid all-zero (null fat ptr =
     // `(null, 0)`); only read after `init()` overwrites every field. See TODO above for
     // the adapter/stream caveat.
-    pub const ZEROED: Self = unsafe { crate::ffi::zeroed() };
+    pub const ZEROED: Self = unsafe { crate::ffi::zeroed_unchecked() };
 
     /// Accessors replacing the self-referential `*std.Io.Writer` fields.
     #[inline]
@@ -355,8 +355,7 @@ impl Source {
         // are gated in bun_alloc; re-enable once bun_alloc/basic.rs is un-gated.
         
         if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
-            // SAFETY: FFI call with no preconditions; sets a global mimalloc option.
-            unsafe { bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1) };
+            bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1);
         }
         SOURCE_SET.set(true);
 
@@ -439,9 +438,7 @@ impl Source {
     }
 
     pub fn color_depth() -> ColorDepth {
-        COLOR_DEPTH_ONCE.call_once(get_color_depth_once);
-        // SAFETY: written exactly once under COLOR_DEPTH_ONCE.
-        unsafe { LAZY_COLOR_DEPTH.read() }
+        *LAZY_COLOR_DEPTH.get_or_init(compute_color_depth)
     }
 
     pub fn set_init(stdout: StreamType, stderr: StreamType) {
@@ -455,14 +452,12 @@ impl Source {
                 // SAFETY: bun_stdio_tty is plain data written at startup.
                 let is_stdout_tty = unsafe { (*bun_stdio_tty.get())[1] } != 0;
                 if is_stdout_tty {
-                    // SAFETY: write-once at startup under STDOUT_STREAM_SET guard before threads.
-                    unsafe { STDOUT_DESCRIPTOR_TYPE.write(OutputStreamDescriptor::Terminal) };
+                    let _ = STDOUT_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
 
                 let is_stderr_tty = unsafe { (*bun_stdio_tty.get())[2] } != 0;
                 if is_stderr_tty {
-                    // SAFETY: write-once at startup under STDOUT_STREAM_SET guard before threads.
-                    unsafe { STDERR_DESCRIPTOR_TYPE.write(OutputStreamDescriptor::Terminal) };
+                    let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
 
                 let mut enable_color: Option<bool> = None;
@@ -697,35 +692,28 @@ pub enum ColorDepth {
     C16m,
 }
 
-static LAZY_COLOR_DEPTH: crate::RacyCell<ColorDepth> = crate::RacyCell::new(ColorDepth::None);
-static COLOR_DEPTH_ONCE: std::sync::Once = std::sync::Once::new();
+static LAZY_COLOR_DEPTH: std::sync::OnceLock<ColorDepth> = std::sync::OnceLock::new();
 
-fn get_color_depth_once() {
-    // SAFETY: only called under COLOR_DEPTH_ONCE.
-    let set = |d| unsafe { LAZY_COLOR_DEPTH.write(d) };
-
+fn compute_color_depth() -> ColorDepth {
     if let Some(depth) = Source::get_force_color_depth() {
-        set(depth);
-        return;
+        return depth;
     }
 
     if Source::is_no_color() {
-        return;
+        return ColorDepth::None;
     }
 
     let term = env_var::TERM.get().unwrap_or(b"");
     if term == b"dumb" {
-        return;
+        return ColorDepth::None;
     }
 
     if env_var::TMUX.get().is_some() {
-        set(ColorDepth::C256);
-        return;
+        return ColorDepth::C256;
     }
 
     if env_var::CI.get().is_some() {
-        set(ColorDepth::C16);
-        return;
+        return ColorDepth::C16;
     }
 
     if let Some(term_program) = env_var::TERM_PROGRAM.get() {
@@ -738,8 +726,7 @@ fn get_color_depth_once() {
         ];
         for program in USE_16M {
             if term_program == program {
-                set(ColorDepth::C16m);
-                return;
+                return ColorDepth::C16m;
             }
         }
     }
@@ -748,16 +735,14 @@ fn get_color_depth_once() {
 
     if let Some(color_term) = env_var::COLORTERM.get() {
         if color_term == b"truecolor" || color_term == b"24bit" {
-            set(ColorDepth::C16m);
-            return;
+            return ColorDepth::C16m;
         }
         has_color_term_set = true;
     }
 
     if !term.is_empty() {
         if term.starts_with(b"xterm-256") {
-            set(ColorDepth::C256);
-            return;
+            return ColorDepth::C256;
         }
         const PAIRS: [(&[u8], ColorDepth); 17] = [
             (b"st", ColorDepth::C16),
@@ -780,8 +765,7 @@ fn get_color_depth_once() {
         ];
         for (name, depth) in PAIRS {
             if term == name {
-                set(depth);
-                return;
+                return depth;
             }
         }
 
@@ -794,17 +778,15 @@ fn get_color_depth_once() {
             || strings::includes(term, b"xterm")
             || strings::includes(term, b"screen")
         {
-            set(ColorDepth::C16);
-            return;
+            return ColorDepth::C16;
         }
     }
 
     if has_color_term_set {
-        set(ColorDepth::C16);
-        return;
+        return ColorDepth::C16;
     }
 
-    set(ColorDepth::None);
+    ColorDepth::None
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -831,26 +813,30 @@ pub static ENABLE_BUFFERING: AtomicBool = AtomicBool::new(Environment::IS_NATIVE
 pub static IS_VERBOSE: AtomicBool = AtomicBool::new(false);
 pub static IS_GITHUB_ACTION: AtomicBool = AtomicBool::new(false);
 
-pub static STDERR_DESCRIPTOR_TYPE: crate::RacyCell<OutputStreamDescriptor> =
-    crate::RacyCell::new(OutputStreamDescriptor::Unknown);
-pub static STDOUT_DESCRIPTOR_TYPE: crate::RacyCell<OutputStreamDescriptor> =
-    crate::RacyCell::new(OutputStreamDescriptor::Unknown);
+pub static STDERR_DESCRIPTOR_TYPE: std::sync::OnceLock<OutputStreamDescriptor> =
+    std::sync::OnceLock::new();
+pub static STDOUT_DESCRIPTOR_TYPE: std::sync::OnceLock<OutputStreamDescriptor> =
+    std::sync::OnceLock::new();
 
 /// Downstream alias (Zig: `Output.OutputStreamDescriptor`). Several call sites
 /// refer to it as `Output::DescriptorType` for brevity.
 pub type DescriptorType = OutputStreamDescriptor;
 
-/// Safe getter for the `static mut` (Zig: `Output.stderr_descriptor_type`).
+/// Safe getter (Zig: `Output.stderr_descriptor_type`).
 #[inline]
 pub fn stderr_descriptor_type() -> OutputStreamDescriptor {
-    // SAFETY: written once during single-threaded startup (Source::set_init).
-    unsafe { STDERR_DESCRIPTOR_TYPE.read() }
+    STDERR_DESCRIPTOR_TYPE
+        .get()
+        .copied()
+        .unwrap_or(OutputStreamDescriptor::Unknown)
 }
 /// Safe getter (Zig: `Output.stdout_descriptor_type`).
 #[inline]
 pub fn stdout_descriptor_type() -> OutputStreamDescriptor {
-    // SAFETY: written once during single-threaded startup (Source::set_init).
-    unsafe { STDOUT_DESCRIPTOR_TYPE.read() }
+    STDOUT_DESCRIPTOR_TYPE
+        .get()
+        .copied()
+        .unwrap_or(OutputStreamDescriptor::Unknown)
 }
 
 #[inline]

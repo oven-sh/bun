@@ -1712,7 +1712,7 @@ impl EString {
         buf.push(0);
         let s = buf.into_bump_slice();
         // SAFETY: `s[len-1] == 0` (just pushed) and `s[..len-1]` is readable for `'b`.
-        Ok(unsafe { bun_string::ZStr::from_raw(s.as_ptr(), s.len() - 1) })
+        Ok(bun_string::ZStr::from_slice_with_nul(&s[..]))
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.

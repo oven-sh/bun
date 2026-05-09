@@ -919,7 +919,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     Ok(()) => {
                         let written = 32 - cursor.len();
                         // SAFETY: NUL written above at buf[written-1]
-                        unsafe { ZStr::from_raw(ipc_env_buf.as_ptr(), written - 1) }
+                        ZStr::from_buf(&ipc_env_buf[..], written - 1)
                     }
                     Err(_) => return Err(global_this.throw_out_of_memory()),
                 }
@@ -1208,10 +1208,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
-    // SAFETY: subprocess_ptr is non-null (just boxed). Erase the borrow lifetime
-    // to 'static for the intrusive back-pointer (PipeReader stores it as raw NonNull).
+    // Erase the borrow lifetime to 'static for the intrusive back-pointer
+    // (PipeReader stores it as raw NonNull). subprocess_ptr is non-null (just boxed).
     let subprocess_nn: NonNull<SubprocessT<'static>> =
-        unsafe { NonNull::new_unchecked(subprocess_ptr.cast()) };
+        NonNull::new(subprocess_ptr.cast()).expect("Box::into_raw returned null");
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
     MaxBuf::create_for_subprocess(&mut subprocess.stderr_maxbuf, max_buffer);
@@ -1297,8 +1297,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     };
 
     // PORT NOTE: Zig passed `allocator` (unused/autofix) — dropped in Rust port of Readable::init.
-    // SAFETY: event_loop points to the live JSC EventLoop for this thread.
-    let event_loop_nn = unsafe { NonNull::new_unchecked(event_loop) };
+    // event_loop points to the live JSC EventLoop for this thread.
+    let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
     subprocess.stdout = Readable::init(
         core::mem::replace(&mut stdio[1], Stdio::Ignore),
         event_loop_nn,
@@ -1543,7 +1543,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
                 let status = proc.status.clone();
-                proc.on_exit(status, &unsafe { core::mem::zeroed::<Rusage>() });
+                proc.on_exit(status, &bun_core::ffi::zeroed::<Rusage>());
             } else {
                 // process has already exited, but we haven't called wait4() yet
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007

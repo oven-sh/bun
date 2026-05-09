@@ -423,29 +423,19 @@ pub fn install_with_manager(
                         old_resolutions_list.get(lf.resolutions).to_vec();
 
                     // PORT NOTE: Zig slices raw spare capacity via `.items.ptr[off .. off + len]`,
-                    // `@memset`s it (no drop), then extends `.items.len`. Mirror that ordering:
-                    // write into `spare_capacity_mut()` (MaybeUninit) and only then `set_len`, so we
+                    // `@memset`s it (no drop), then extends `.items.len`. `extend_from_fn`
+                    // mirrors that: writes into `spare_capacity_mut()` then bumps `len`, so we
                     // never form `&mut [T]` over uninitialized storage and never drop garbage.
                     debug_assert_eq!(lf.dependencies.len(), off as usize);
                     debug_assert_eq!(lf.resolutions.len(), off as usize);
-                    {
-                        let spare = lf.dependencies.spare_capacity_mut();
-                        for slot in &mut spare[..len as usize] {
-                            slot.write(Dependency::default());
-                        }
-                    }
-                    {
-                        let spare = lf.resolutions.spare_capacity_mut();
-                        for slot in &mut spare[..len as usize] {
-                            slot.write(invalid_package_id);
-                        }
-                    }
-                    // SAFETY: capacity reserved above and the `[off .. off+len)` tail was just
-                    // initialized via `MaybeUninit::write`.
-                    unsafe {
-                        lf.dependencies.set_len((off + len) as usize);
-                        lf.resolutions.set_len((off + len) as usize);
-                    }
+                    bun_core::vec::extend_from_fn(lf.dependencies, len as usize, |_| {
+                        Dependency::default()
+                    });
+                    bun_core::vec::extend_from_fn(lf.resolutions, len as usize, |_| {
+                        invalid_package_id
+                    });
+                    debug_assert_eq!(lf.dependencies.len(), (off + len) as usize);
+                    debug_assert_eq!(lf.resolutions.len(), (off + len) as usize);
 
                     for (i, new_dep) in new_dependencies.iter().enumerate() {
                         let cloned =

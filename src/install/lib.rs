@@ -843,12 +843,7 @@ impl RunCommand {
                             target_path_buffer[dir_slice_len] = 0;
                             // SAFETY: `dir_slice_len` is in-bounds; the byte at
                             // `dir_slice_len` was just set to NUL.
-                            let dir_w = unsafe {
-                                bun_core::WStr::from_raw(
-                                    target_path_buffer.as_ptr(),
-                                    dir_slice_len,
-                                )
-                            };
+                            let dir_w = bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len,);
                             let _ = bun_sys::mkdir_w(dir_w);
                             target_path_buffer[dir_slice_len] = b'\\' as u16;
 

@@ -33,7 +33,7 @@ impl Default for WindowsWatcher {
             iocp: w::INVALID_HANDLE_VALUE,
             watcher: DirWatcher {
                 // SAFETY: all-zero is a valid OVERLAPPED (#[repr(C)] POD).
-                overlapped: unsafe { bun_core::ffi::zeroed() },
+                overlapped: unsafe { bun_core::ffi::zeroed_unchecked() },
                 buf: [0u8; 64 * 1024],
                 dir_handle: w::INVALID_HANDLE_VALUE,
             },
@@ -224,7 +224,7 @@ impl WindowsWatcher {
         let mut io: w::IO_STATUS_BLOCK = unsafe {
             // SAFETY: IO_STATUS_BLOCK is a #[repr(C)] POD output parameter; NtCreateFile
             // writes it before any read.
-            bun_core::ffi::zeroed()
+            bun_core::ffi::zeroed_unchecked()
         };
         // SAFETY: all pointer params point to valid stack locals for the duration of the call.
         let rc = unsafe {

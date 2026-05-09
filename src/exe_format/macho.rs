@@ -76,8 +76,8 @@ impl MachoFile {
             header,
             data,
             // SAFETY: all-zero is a valid segment_command_64 / section_64 (#[repr(C)] POD, no NonZero/NonNull fields)
-            segment: unsafe { bun_core::ffi::zeroed() },
-            section: unsafe { bun_core::ffi::zeroed() },
+            segment: unsafe { bun_core::ffi::zeroed_unchecked() },
+            section: unsafe { bun_core::ffi::zeroed_unchecked() },
         }))
     }
 
@@ -536,8 +536,8 @@ impl MachoSigner {
         let mut linkedit_off: usize = 0;
 
         // SAFETY: all-zero is a valid segment_command_64 (#[repr(C)] POD)
-        let mut text_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed() };
-        let mut linkedit_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed() };
+        let mut text_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut linkedit_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed_unchecked() };
 
         let mut it = macho::LoadCommandIterator::new(
             header.ncmds,
@@ -667,7 +667,7 @@ impl MachoSigner {
 
         // Setup CodeDirectory
         // SAFETY: all-zero is a valid CodeDirectory (#[repr(C)] POD)
-        let mut code_dir: CodeDirectory = unsafe { bun_core::ffi::zeroed() };
+        let mut code_dir: CodeDirectory = unsafe { bun_core::ffi::zeroed_unchecked() };
         code_dir.magic = CSMAGIC_CODEDIRECTORY.swap_bytes();
         code_dir.length = (code_dir_length as u32).swap_bytes();
         code_dir.version = 0x20400u32.swap_bytes();

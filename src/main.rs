@@ -40,7 +40,7 @@ pub fn main() {
     {
         // TODO(port): route through bun_sys once sigaction wrappers exist
         // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
-        let mut act: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
+        let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = libc::SIG_IGN;
         // SAFETY: act is fully initialized; passing null for oldact is allowed.
         unsafe {
@@ -114,22 +114,12 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // root-module mechanism. Rust has no equivalent override hook; kept as plain fns for
 // any direct callers. Phase B: confirm whether anything still references them.
 pub fn copy_forwards<T: Copy>(dest: &mut [T], source: &[T]) {
-    if source.is_empty() {
-        return;
-    }
-    // SAFETY: dest.len() >= source.len() is the caller's contract (matches Zig); regions may overlap.
-    unsafe {
-        core::ptr::copy(source.as_ptr(), dest.as_mut_ptr(), source.len());
-    }
+    // Rust's borrow rules forbid `&mut [T]`/`&[T]` overlap; memmove ⇒ memcpy.
+    dest[..source.len()].copy_from_slice(source);
 }
 pub fn copy_backwards<T: Copy>(dest: &mut [T], source: &[T]) {
-    if source.is_empty() {
-        return;
-    }
-    // SAFETY: dest.len() >= source.len() is the caller's contract (matches Zig); regions may overlap.
-    unsafe {
-        core::ptr::copy(source.as_ptr(), dest.as_mut_ptr(), source.len());
-    }
+    // Rust's borrow rules forbid `&mut [T]`/`&[T]` overlap; memmove ⇒ memcpy.
+    dest[..source.len()].copy_from_slice(source);
 }
 pub fn eql_bytes(src: &[u8], dest: &[u8]) -> bool {
     // SAFETY: both slices are valid for src.len() bytes; caller contract is src.len() == dest.len().

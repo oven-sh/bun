@@ -748,7 +748,7 @@ fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Option<
     }
     buf[n] = 0;
     // SAFETY: buf[n] == 0 written immediately above; buf[..n] is valid for 'a.
-    Some(unsafe { ZStr::from_raw(buf.as_ptr(), n) })
+    Some(ZStr::from_buf(&buf[..], n))
 }
 
 /// Parse an ASCII decimal pid from bytes. Port helper for

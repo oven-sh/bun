@@ -789,6 +789,36 @@ impl JSValue {
         debug_assert!(self.is_cell());
         T::from_js_direct(self)
     }
+    /// Safe shared-borrow downcast — `as_<T>()` followed by `&*ptr`.
+    ///
+    /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
+    /// sound because JSC's conservative stack scanner keeps the cell alive
+    /// while `self` (the encoded `JSValue`) is on the stack, and the
+    /// `#[JsClass]` payload is pinned at a stable address inside the GC cell
+    /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
+    /// for as long as the caller holds `self`.
+    ///
+    /// The `'static` lifetime is a pragmatic over-approximation (there is no
+    /// stack-root guard type to tie it to); callers MUST NOT stash the
+    /// reference past the point where `self` is last used. This mirrors the
+    /// raw-pointer contract of [`as_`](Self::as_) but lets read-only callers
+    /// drop their `unsafe { &*p }` boilerplate.
+    ///
+    /// There is intentionally **no** `as_class_mut`: re-entry into JS (via a
+    /// getter, `toString`, etc.) can produce a second `JSValue` for the same
+    /// cell and thus a second `&mut T`, which is instant UB. Callers needing
+    /// mutation must keep using [`as_`](Self::as_) and scope the `&mut`
+    /// themselves.
+    #[inline]
+    pub fn as_class_ref<T: JsClass>(self) -> Option<&'static T> {
+        // SAFETY: `T::from_js` returns either `None` or a non-null, properly
+        // aligned pointer to the `T` payload owned by the live JSC cell that
+        // `self` encodes. The cell is kept alive by JSC's conservative stack
+        // scan for as long as `self` is reachable on the stack, so the shared
+        // borrow is valid for the caller's frame. We never hand out `&mut`,
+        // so aliasing with other `as_class_ref` borrows is fine.
+        self.as_::<T>().map(|p| unsafe { &*p })
+    }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     /// Returns a raw pointer (mirrors Zig `?*JSPromise`); conjuring a
     /// `&'static mut` here would permit aliased `&mut` UB across two calls on

@@ -686,7 +686,7 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     let path = FileSystem::instance().dirname_store().append(result.as_bytes_with_nul())?;
     // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
     // and lives for program lifetime in the dirname store.
-    manager.options.bin_path = unsafe { ZStr::from_raw(path.as_ptr(), path.len() - 1) };
+    manager.options.bin_path = ZStr::from_slice_with_nul(&path[..]);
     Ok(())
 }
 
@@ -1222,8 +1222,8 @@ fn cached_package_folder_name_buf() -> &'static mut [u8] {
 /// `&'static ZStr` from a NUL-terminated literal.
 #[inline]
 const fn z_static(bytes_with_nul: &'static [u8]) -> &'static ZStr {
-    // SAFETY: caller passes a literal with trailing `\0`.
-    unsafe { ZStr::from_raw(bytes_with_nul.as_ptr(), bytes_with_nul.len() - 1) }
+    // `from_static` is the const-eval-safe form of `from_slice_with_nul`.
+    ZStr::from_static(bytes_with_nul)
 }
 
 // TODO(port): move to bun_str / bun_core if not already provided

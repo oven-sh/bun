@@ -1117,7 +1117,7 @@ pub fn is_missing_io_uring() -> bool {
 #[inline]
 pub unsafe fn zero<T>() -> T {
     // SAFETY: caller asserts all-zero is a valid T
-    unsafe { bun_core::ffi::zeroed() }
+    unsafe { bun_core::ffi::zeroed_unchecked() }
 }
 
 // ─── getFdPath ────────────────────────────────────────────────────────────────
@@ -2000,9 +2000,7 @@ pub fn make_path(dir: bun_sys::Dir, sub_path: &[u8]) -> Result<(), bun_core::Err
                 path_buf2[..component.path.len()].copy_from_slice(component.path);
                 path_buf2[component.path.len()] = 0;
                 // SAFETY: NUL written above
-                let path_to_use = unsafe {
-                    bun_str::ZStr::from_raw(path_buf2.as_ptr(), component.path.len())
-                };
+                let path_to_use = bun_str::ZStr::from_buf(&path_buf2[..], component.path.len());
                 let result = sys::lstat(path_to_use).unwrap()?;
                 let is_dir = S::ISDIR(result.mode as u32);
                 // dangling symlink
@@ -2391,12 +2389,12 @@ pub fn self_exe_path() -> Result<&'static bun_str::ZStr, bun_core::Error> {
     if SET.load(Ordering::Acquire) {
         // SAFETY: `SET` acquire pairs with the release below; payload is frozen.
         let memo = unsafe { &*MEMO.get() };
-        return Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) });
+        return Ok(bun_str::ZStr::from_buf(&memo.value[..], memo.len));
     }
     let _guard = LOCK.lock_guard();
     if SET.load(Ordering::Acquire) {
         let memo = unsafe { &*MEMO.get() };
-        return Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) });
+        return Ok(bun_str::ZStr::from_buf(&memo.value[..], memo.len));
     }
     // SAFETY: exclusive access under `LOCK` while `SET` is false.
     let memo = unsafe { &mut *MEMO.get() };
@@ -2404,7 +2402,7 @@ pub fn self_exe_path() -> Result<&'static bun_str::ZStr, bun_core::Error> {
     memo.len = init.len();
     memo.value[memo.len] = 0;
     SET.store(true, Ordering::Release);
-    Ok(unsafe { bun_str::ZStr::from_raw(memo.value.as_ptr(), memo.len) })
+    Ok(bun_str::ZStr::from_buf(&memo.value[..], memo.len))
 }
 
 #[cfg(windows)]
@@ -2792,13 +2790,8 @@ pub fn memmove(output: &mut [u8], input: &[u8]) {
     if output.is_empty() {
         return;
     }
-    if cfg!(debug_assertions) {
-        debug_assert!(output.len() >= input.len());
-    }
-    // SAFETY: memmove handles overlap; output.len() >= input.len()
-    unsafe {
-        core::ptr::copy(input.as_ptr(), output.as_mut_ptr(), input.len());
-    }
+    // Rust's borrow rules forbid `&mut [u8]`/`&[u8]` overlap; memmove ⇒ memcpy.
+    output[..input.len()].copy_from_slice(input);
 }
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.

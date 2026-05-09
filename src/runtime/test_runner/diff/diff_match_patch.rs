@@ -69,7 +69,9 @@ impl Default for Config {
 }
 
 /// Marker trait for the element type a diff operates over (`u8` or `usize`).
-pub trait DiffUnit: Copy + Eq + 'static {}
+/// `Pod` lets the `Unit == u8` fast paths reinterpret `&[Unit]` as `&[u8]`
+/// via `bytemuck::cast_slice` instead of raw `from_raw_parts`.
+pub trait DiffUnit: Copy + Eq + bytemuck::Pod + 'static {}
 impl DiffUnit for u8 {}
 impl DiffUnit for usize {}
 
@@ -866,8 +868,8 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
     if TypeId::of::<Unit>() != TypeId::of::<u8>() {
         panic!("Unit must be u8");
     }
-    // SAFETY: Unit == u8 verified above; layout-identical reinterpret.
-    let text_u8: &[u8] = unsafe { core::slice::from_raw_parts(text.as_ptr().cast::<u8>(), text.len()) };
+    // Unit == u8 verified above; bytemuck statically checks the layout.
+    let text_u8: &[u8] = bytemuck::cast_slice::<Unit, u8>(text);
 
     let mut line_start: isize = 0;
     let mut line_end: isize = -1;
@@ -883,9 +885,8 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
         };
         let mut line = &text[usize::try_from(line_start).unwrap()
             ..usize::try_from(line_start + (line_end + 1 - line_start)).unwrap()];
-        // SAFETY: Unit == u8 verified above.
-        let line_u8: &[u8] =
-            unsafe { core::slice::from_raw_parts(line.as_ptr().cast::<u8>(), line.len()) };
+        // Unit == u8 verified above; bytemuck statically checks the layout.
+        let line_u8: &[u8] = bytemuck::cast_slice::<Unit, u8>(line);
 
         if let Some(&value) = line_hash.get(line_u8) {
             chars.push(value);
@@ -895,9 +896,8 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
                 line_end = isize::try_from(text.len()).unwrap();
             }
             line_array.push(std::ptr::from_ref::<[Unit]>(line));
-            // SAFETY: Unit == u8 verified above.
-            let line_u8: &[u8] =
-                unsafe { core::slice::from_raw_parts(line.as_ptr().cast::<u8>(), line.len()) };
+            // Unit == u8 verified above; bytemuck statically checks the layout.
+            let line_u8: &[u8] = bytemuck::cast_slice::<Unit, u8>(line);
             // TODO(port): StringHashMap key ownership — Zig stored a borrowed slice.
             line_hash.insert(line_u8.into(), line_array.len() - 1);
             chars.push(line_array.len() - 1);
@@ -1350,9 +1350,9 @@ fn diff_cleanup_semantic_score<Unit: DiffUnit>(one: &[Unit], two: &[Unit]) -> us
     if TypeId::of::<Unit>() != TypeId::of::<u8>() {
         return 5;
     }
-    // SAFETY: Unit == u8 verified above; layout-identical reinterpret.
-    let one: &[u8] = unsafe { core::slice::from_raw_parts(one.as_ptr().cast::<u8>(), one.len()) };
-    let two: &[u8] = unsafe { core::slice::from_raw_parts(two.as_ptr().cast::<u8>(), two.len()) };
+    // Unit == u8 verified above; bytemuck statically checks the layout.
+    let one: &[u8] = bytemuck::cast_slice::<Unit, u8>(one);
+    let two: &[u8] = bytemuck::cast_slice::<Unit, u8>(two);
 
     // Each port of this function behaves slightly differently due to
     // subtle differences in each language's definition of things like

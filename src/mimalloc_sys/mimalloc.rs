@@ -391,19 +391,21 @@ pub enum Option {
 }
 
 unsafe extern "C" {
-    pub fn mi_option_is_enabled(option: Option) -> bool;
-    pub fn mi_option_enable(option: Option);
-    pub fn mi_option_disable(option: Option);
-    pub fn mi_option_set_enabled(option: Option, enable: bool);
-    pub fn mi_option_set_enabled_default(option: Option, enable: bool);
-    pub fn mi_option_get(option: Option) -> c_long;
-    pub fn mi_option_get_clamp(option: Option, min: c_long, max: c_long) -> c_long;
-    pub fn mi_option_set(option: Option, value: c_long);
-    pub fn mi_option_set_default(option: Option, value: c_long);
+    // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
+    // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
+    pub safe fn mi_option_is_enabled(option: Option) -> bool;
+    pub safe fn mi_option_enable(option: Option);
+    pub safe fn mi_option_disable(option: Option);
+    pub safe fn mi_option_set_enabled(option: Option, enable: bool);
+    pub safe fn mi_option_set_enabled_default(option: Option, enable: bool);
+    pub safe fn mi_option_get(option: Option) -> c_long;
+    pub safe fn mi_option_get_clamp(option: Option, min: c_long, max: c_long) -> c_long;
+    pub safe fn mi_option_set(option: Option, value: c_long);
+    pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_cfree(p: *mut c_void);
     pub fn mi__expand(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_malloc_size(p: *const c_void) -> usize;
-    pub fn mi_malloc_good_size(size: usize) -> usize;
+    pub safe fn mi_malloc_good_size(size: usize) -> usize;
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;
     pub fn mi_posix_memalign(p: *mut *mut c_void, alignment: usize, size: usize) -> c_int;
     pub fn mi_memalign(alignment: usize, size: usize) -> *mut c_void;

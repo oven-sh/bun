@@ -398,7 +398,7 @@ impl Watcher {
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         // SAFETY: all-zero is a valid KEvent
-        let mut event: KEvent = unsafe { bun_core::ffi::zeroed() };
+        let mut event: KEvent = bun_core::ffi::zeroed();
 
         event.flags = (EV_ADD | EV_CLEAR | EV_ENABLE) as _;
         // we want to know about the vnode
@@ -499,7 +499,7 @@ impl Watcher {
                 buf[0..file_path.len()].copy_from_slice(file_path);
                 buf[file_path.len()] = 0;
                 // SAFETY: buf[file_path.len()] == 0 written above
-                unsafe { ZStr::from_raw(buf.as_ptr(), file_path.len()) }
+                ZStr::from_buf(&buf[..], file_path.len())
             } else {
                 // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
                 // interned in `bun.fs.FileSystem` with a NUL sentinel at [len];
@@ -581,7 +581,7 @@ impl Watcher {
                 && file_path[file_path.len() - 1] == 0
             {
                 // SAFETY: last byte is 0, slice len excludes it
-                unsafe { ZStr::from_raw(file_path.as_ptr(), file_path.len() - 1) }
+                ZStr::from_slice_with_nul(&file_path[..])
             } else {
                 let trailing_slash = if file_path.len() > 1 {
                     strings::trim_right(file_path, &[0, b'/'])
@@ -591,7 +591,7 @@ impl Watcher {
                 buf[0..trailing_slash.len()].copy_from_slice(trailing_slash);
                 buf[trailing_slash.len()] = 0;
                 // SAFETY: buf[len] == 0 written above
-                unsafe { ZStr::from_raw(buf.as_ptr(), trailing_slash.len()) }
+                ZStr::from_buf(&buf[..], trailing_slash.len())
             };
 
             item.eventlist_index = self

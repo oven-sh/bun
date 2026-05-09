@@ -400,11 +400,22 @@ impl Package<u64> {
         let end = prev_len + (old_dependencies.len() as u32);
         let max_package_id = old.packages.len() as PackageID;
 
-        // SAFETY: capacity reserved above; setting len to expose uninitialized slots that are written below.
-        unsafe {
-            new.buffers.dependencies.set_len(end as usize);
-            new.buffers.resolutions.set_len(end as usize);
-        }
+        // Grow both buffers by `old_dependencies.len()`, default-filling the
+        // new tail. The zip-loops further below overwrite each slot with the
+        // real cloned value; pre-filling avoids ever forming `&mut T` over
+        // uninitialized storage (the old `set_len`-then-assign dropped uninit).
+        bun_core::vec::extend_from_fn(
+            &mut new.buffers.dependencies,
+            old_dependencies.len(),
+            |_| Dependency::default(),
+        );
+        bun_core::vec::extend_from_fn(
+            &mut new.buffers.resolutions,
+            old_dependencies.len(),
+            |_| invalid_package_id,
+        );
+        debug_assert_eq!(new.buffers.dependencies.len(), end as usize);
+        debug_assert_eq!(new.buffers.resolutions.len(), end as usize);
 
         let extern_strings_old_len = new.buffers.extern_strings.len();
         // SAFETY: capacity reserved above; written by `bin.clone` below.
@@ -558,14 +569,16 @@ impl Package<u64> {
                 debug_assert!(dependencies_list.len() == resolutions_list.len());
             }
 
-            // SAFETY: capacity reserved above; slots are filled by @memset/loop below.
             let dep_start = dependencies_list.len();
-            unsafe { dependencies_list.set_len(total_len) };
+            // Zig: `@memset(items.ptr[len..total_len], .{})` then bump `.items.len`.
+            bun_core::vec::extend_from_fn(
+                dependencies_list,
+                total_dependencies_count as usize,
+                |_| Dependency::default(),
+            );
+            debug_assert_eq!(dependencies_list.len(), total_len);
             let mut dependencies: &mut [Dependency] =
                 &mut dependencies_list[dep_start..total_len];
-            for d in dependencies.iter_mut() {
-                *d = Dependency::default();
-            }
 
             let package_dependencies = package_json.dependencies.map.values();
             let source_buf = package_json.dependencies.source_buf;
@@ -597,14 +610,16 @@ impl Package<u64> {
 
             let new_length = package.dependencies.len as usize + dep_start;
 
-            // SAFETY: capacity reserved above; slots are filled by fill() below.
-            unsafe { resolutions_list.set_len(new_length) };
-            resolutions_list[package.dependencies.off as usize
-                ..(package.dependencies.off + package.dependencies.len) as usize]
-                .fill(invalid_package_id);
+            debug_assert_eq!(resolutions_list.len(), dep_start);
+            bun_core::vec::extend_from_fn(
+                resolutions_list,
+                package.dependencies.len as usize,
+                |_| invalid_package_id,
+            );
+            debug_assert_eq!(resolutions_list.len(), new_length);
 
-            // SAFETY: shrink dependencies_list to actual filled length
-            unsafe { dependencies_list.set_len(new_length) };
+            // Shrink off the unused default-initialized tail (`new_length <= total_len`).
+            dependencies_list.truncate(new_length);
 
             string_builder.clamp();
             return Ok(package);
@@ -721,12 +736,14 @@ impl Package<u64> {
             }
 
             let dep_start = dependencies_list.len();
-            // SAFETY: capacity reserved above; slots are filled below.
-            unsafe { dependencies_list.set_len(total_len) };
+            // Zig: `@memset(items.ptr[len..total_len], .{})` then bump `.items.len`.
+            bun_core::vec::extend_from_fn(
+                dependencies_list,
+                total_dependencies_count as usize,
+                |_| Dependency::default(),
+            );
+            debug_assert_eq!(dependencies_list.len(), total_len);
             let dependencies = &mut dependencies_list[dep_start..total_len];
-            for d in dependencies.iter_mut() {
-                *d = Dependency::default();
-            }
 
             total_dependencies_count = 0;
             // PERF(port): was `inline for` — profile in Phase B
@@ -854,14 +871,16 @@ impl Package<u64> {
 
             let new_length = package.dependencies.len as usize + dep_start;
 
-            // SAFETY: capacity reserved above; filled below.
-            unsafe { resolutions_list.set_len(new_length) };
-            resolutions_list[package.dependencies.off as usize
-                ..(package.dependencies.off + package.dependencies.len) as usize]
-                .fill(invalid_package_id);
+            debug_assert_eq!(resolutions_list.len(), dep_start);
+            bun_core::vec::extend_from_fn(
+                resolutions_list,
+                package.dependencies.len as usize,
+                |_| invalid_package_id,
+            );
+            debug_assert_eq!(resolutions_list.len(), new_length);
 
-            // SAFETY: shrink to filled length.
-            unsafe { dependencies_list.set_len(new_length) };
+            // Shrink off the unused default-initialized tail (`new_length <= total_len`).
+            dependencies_list.truncate(new_length);
 
             #[cfg(debug_assertions)]
             {

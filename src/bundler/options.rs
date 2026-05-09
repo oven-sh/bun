@@ -2610,7 +2610,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
             buf.0[..len].copy_from_slice(&output_dir[..len]);
             buf.0[len] = 0;
             // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
-            let z = unsafe { bun_core::ZStr::from_raw(buf.0.as_ptr(), len) };
+            let z = bun_core::ZStr::from_buf(&buf.0[..], len);
             if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
                 let err: bun_core::Error = err.into();
                 Output::print_errorln(format_args!(

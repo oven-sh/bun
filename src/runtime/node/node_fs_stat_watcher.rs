@@ -697,7 +697,7 @@ impl StatWatcher {
         let res = match stat {
             Ok(res) => res,
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
-            Err(_) => unsafe { core::mem::zeroed::<PosixStat>() },
+            Err(_) => bun_core::ffi::zeroed::<PosixStat>(),
         };
 
         let last_stat = self.get_last_stat();
@@ -807,7 +807,7 @@ impl StatWatcher {
             poll_ref: KeepAlive::default(),
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
-            last_stat: Guarded::init(unsafe { core::mem::zeroed::<PosixStat>() }),
+            last_stat: Guarded::init(bun_core::ffi::zeroed::<PosixStat>()),
             scheduler: Self::lazy_scheduler(vm),
         });
         let this_ptr = bun_core::heap::into_raw(this);
@@ -992,7 +992,7 @@ impl InitialStatTask {
                 // on enoent, eperm, we call cb with two zeroed stat objects
                 // and store previous stat as a zeroed stat object, and then call the callback.
                 // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
-                this_ref.set_last_stat(&unsafe { core::mem::zeroed::<PosixStat>() });
+                this_ref.set_last_stat(&bun_core::ffi::zeroed::<PosixStat>());
                 this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
                     this,
                     StatWatcher::initial_stat_error_on_main_thread,

@@ -287,11 +287,9 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     // `array_buffer` lived for the whole function; mirror that scope here).
     let array_buffer;
     if let Some(arg) = args.next_eat() {
-        if let Some(blob) = arg.as_::<Blob>() {
+        if let Some(blob) = arg.as_class_ref::<Blob>() {
             // TODO: files
-            // SAFETY: `as_::<Blob>()` returns a non-null `*mut Blob` owned by
-            // the live JS wrapper; valid for the duration of this call.
-            input = unsafe { (*blob).shared_view() };
+            input = blob.shared_view();
         } else {
             match arg.js_type_loose() {
                 jsc::JSType::ArrayBuffer

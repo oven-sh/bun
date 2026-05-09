@@ -166,8 +166,7 @@ impl HpackHandle {
     #[inline]
     pub fn new(max_capacity: u32) -> Self {
         // `HPACK::init` already panics (out_of_memory) on null.
-        // SAFETY: `init` never returns null (it diverges on OOM).
-        Self(unsafe { core::ptr::NonNull::new_unchecked(HPACK::init(max_capacity)) })
+        Self(core::ptr::NonNull::new(HPACK::init(max_capacity)).expect("lshpack_wrapper_init returned null"))
     }
 }
 

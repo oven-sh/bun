@@ -900,7 +900,7 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
     #[cfg(unix)]
     fn getrlimit_nofile() -> Option<libc::rlimit> {
         // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
-        let mut lim: libc::rlimit = unsafe { bun_core::ffi::zeroed() };
+        let mut lim: libc::rlimit = bun_core::ffi::zeroed();
         // SAFETY: &mut lim is a valid out-pointer.
         if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } == 0 { Some(lim) } else { None }
     }
@@ -1012,7 +1012,7 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
         #[cfg(unix)]
         {
             // SAFETY: zeroed rlimit is valid POD (integers).
-            let limit = getrlimit_nofile().unwrap_or(unsafe { bun_core::ffi::zeroed() });
+            let limit = getrlimit_nofile().unwrap_or(bun_core::ffi::zeroed());
 
             if limit.rlim_cur > 0 && limit.rlim_cur < (8192 * 2) {
                 pretty_error!(
@@ -1205,7 +1205,7 @@ pub fn reset_on_posix() {
     }
     // Zig: std.posix.Sigaction{ .handler = .{ .sigaction = handleSegfaultPosix }, ... }.
     // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
-    let mut act: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
+    let mut act: libc::sigaction = bun_core::ffi::zeroed();
     act.sa_sigaction = handle_segfault_posix as *const () as usize;
     act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
     // SAFETY: sa_mask is a valid out-pointer.
@@ -1326,7 +1326,7 @@ pub fn reset_segfault_handler() {
     #[cfg(unix)]
     {
         // SAFETY: zeroed sigaction is valid POD; handler = SIG_DFL (= 0), flags = 0.
-        let mut act: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
+        let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = libc::SIG_DFL;
         // SAFETY: sa_mask is a valid out-pointer.
         unsafe { libc::sigemptyset(&raw mut act.sa_mask); }
@@ -1636,12 +1636,10 @@ const VERSION_CHAR: &str = if Environment::IS_CANARY { "2" } else { "1" };
 // shift every following VLQ byte, making bun.report unable to decode the URL.
 const GIT_SHA: &str = {
     const fn sha7(s: &'static str) -> &'static str {
-        let bytes = s.as_bytes();
-        // SAFETY: GIT_SHA is ASCII hex; the first 7 bytes are a valid UTF-8 prefix
-        // and `bytes` is at least 7 long when non-empty (full 40-char commit hash).
-        unsafe {
-            core::str::from_utf8_unchecked(core::slice::from_raw_parts(bytes.as_ptr(), 7))
-        }
+        let (head, _) = s.as_bytes().split_at(7);
+        // SAFETY: GIT_SHA is ASCII hex; the first 7 bytes are a valid UTF-8
+        // prefix. `split_at` const-panics if the input is shorter than 7.
+        unsafe { core::str::from_utf8_unchecked(head) }
     }
     if !Environment::GIT_SHA.is_empty() { sha7(Environment::GIT_SHA) } else { "unknown" }
 };
@@ -2052,7 +2050,7 @@ fn report(url: &[u8]) {
         // TODO(b2-blocked): bun_str::w! / strings::convert_utf8_to_utf16_in_buffer
         use bun_sys::windows;
         // SAFETY: all-zero is a valid PROCESS_INFORMATION (#[repr(C)] POD, no NonNull/NonZero fields)
-        let mut process: windows::PROCESS_INFORMATION = unsafe { bun_core::ffi::zeroed() };
+        let mut process: windows::PROCESS_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
         let mut startup_info = windows::STARTUPINFOW {
             cb: core::mem::size_of::<windows::STARTUPINFOW>() as u32,
             lpReserved: core::ptr::null_mut(),
@@ -2181,7 +2179,7 @@ fn crash() -> ! {
         // Zig: std.posix.Sigaction{ .handler = SIG.DFL, .mask = sigemptyset(), .flags = 0 }.
         // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
         // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
-        let mut sigact: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
+        let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
         sigact.sa_sigaction = libc::SIG_DFL;
         // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
         unsafe { libc::sigemptyset(&raw mut sigact.sa_mask); }
@@ -2451,7 +2449,7 @@ pub fn suppress_core_dumps_if_necessary() {
         // Zig: std.posix.getrlimit / setrlimit. bun_sys::posix has no rlimit
         // surface yet — go straight to libc (already a dep, async-signal-safe).
         // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
-        let mut existing_limit: libc::rlimit = unsafe { bun_core::ffi::zeroed() };
+        let mut existing_limit: libc::rlimit = bun_core::ffi::zeroed();
         // SAFETY: &mut existing_limit is a valid out-pointer.
         if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &raw mut existing_limit) } != 0 {
             return;

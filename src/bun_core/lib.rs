@@ -63,6 +63,46 @@ pub fn os_environ_ptr() -> *const *mut core::ffi::c_char {
 pub mod feature_flags;
 pub mod env_var;
 pub mod deprecated;
+
+/// Safe `Vec` growth helpers — consolidate the
+/// `reserve(n); spare_capacity_mut(); MaybeUninit::write…; unsafe set_len(n)`
+/// pattern (S025) so the single `unsafe { set_len }` lives here behind a
+/// locally-proven invariant instead of being open-coded at every fill site.
+pub mod vec {
+    /// Extend `v` by `n` elements, each produced by `f(i)` for `i in 0..n`.
+    ///
+    /// Equivalent to `for i in 0..n { v.push(f(i)) }` but reserves once and
+    /// writes through `spare_capacity_mut()` so no per-element capacity check
+    /// or length bump occurs in the hot loop. Replaces the Zig-ported
+    /// `reserve; ptr::write…; set_len` blocks where the fill is a pure
+    /// per-index function (constant, default, or `i`-derived).
+    ///
+    /// Panic-safety: if `f` panics at index `k`, `v.len()` is left at its
+    /// original value plus `k` — every exposed element is initialized, and the
+    /// partially-written tail stays in spare capacity (never dropped).
+    #[inline]
+    pub fn extend_from_fn<T>(v: &mut Vec<T>, n: usize, mut f: impl FnMut(usize) -> T) {
+        v.reserve(n);
+        let prev = v.len();
+        let spare = v.spare_capacity_mut();
+        debug_assert!(spare.len() >= n);
+        for (i, slot) in spare[..n].iter_mut().enumerate() {
+            // `MaybeUninit::write` never drops the (uninitialized) prior
+            // contents — it is a raw `ptr::write`.
+            slot.write(f(i));
+        }
+        // SAFETY:
+        // - `reserve(n)` guarantees `capacity >= prev + n`.
+        // - Every slot in `spare[..n]` (i.e. `v[prev .. prev+n]`) was just
+        //   initialized via `MaybeUninit::write` in the loop above, so the
+        //   newly-exposed range contains only valid `T`.
+        // Panic note: if `f` panics mid-loop, `len` is still `prev`, so the
+        // already-written prefix stays in spare capacity and is *leaked* (not
+        // dropped) — sound, and acceptable for the constant/`Default`/index
+        // fills this helper targets.
+        unsafe { v.set_len(prev + n) };
+    }
+}
 // ── B-2 gate ── remaining heavy modules ────────────────────────────────────
 #[path = "Progress.rs"] pub mod Progress;
 pub mod fmt;
@@ -191,6 +231,7 @@ pub use util::*;
 pub use result::*;
 pub use Global::*;
 pub use tty::Winsize;
+pub use ffi::Zeroable;
 
 // ── intrusive-container parent recovery ───────────────────────────────────
 //
@@ -336,19 +377,15 @@ pub use env as Environment;
 /// Zig: `pub const FeatureFlags = @import("./bun_core/feature_flags.zig")`.
 pub use feature_flags as FeatureFlags;
 /// Process start time in nanoseconds. Written once during single-threaded
-/// startup (`main`/`Cli::start`) and read freely thereafter. `i128` has no
-/// atomic; `RacyCell` is sound because the write happens before any thread
-/// spawn.
-static START_TIME: util::RacyCell<i128> = util::RacyCell::new(0);
+/// startup (`main`/`Cli::start`) and read freely thereafter.
+static START_TIME: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
 #[inline]
 pub fn start_time() -> i128 {
-    // SAFETY: written once during single-threaded startup.
-    unsafe { START_TIME.read() }
+    START_TIME.get().copied().unwrap_or(0)
 }
 #[inline]
 pub fn set_start_time(ns: i128) {
-    // SAFETY: called once from `main` before any thread spawn.
-    unsafe { START_TIME.write(ns) }
+    let _ = START_TIME.set(ns);
 }
 
 /// `bun.Timer` / `std.time.Timer` — minimal monotonic stopwatch. Mirrors Zig's
@@ -954,7 +991,7 @@ pub fn linux_kernel_version() -> Version {
     }
     // SAFETY: utsname is plain C struct of NUL-terminated char arrays; uname(2)
     // fills it on success. Zero-init so a failed call leaves release == "".
-    let mut uts: libc::utsname = unsafe { core::mem::zeroed() };
+    let mut uts: libc::utsname = crate::ffi::zeroed();
     // SAFETY: `uts` is valid for writes for sizeof(utsname); uname(2) always
     // succeeds on Linux per POSIX (may set EFAULT on bad ptr only).
     let _ = unsafe { libc::uname(&mut uts) };
@@ -1052,21 +1089,104 @@ pub mod ffi {
     /// each open-code an `unsafe` block. This is the Rust spelling of Zig's
     /// `std.mem.zeroes(T)` / `= .{}` for `extern struct`.
     ///
-    /// Prefer `T::default()` when `T` implements (or can derive) `Default` —
-    /// reserve this for foreign POD where the orphan rule blocks a `Default`
-    /// impl (libc, bindgen output) or where `Default` would be wrong but
-    /// zero-init matches the C API contract.
+    /// The `T: Zeroable` bound discharges the `mem::zeroed` safety obligation
+    /// once per type (at the `unsafe impl`), so callers need no `unsafe`
+    /// block. Prefer `T::default()` when `T` implements (or can derive)
+    /// `Default` — reserve this for foreign POD where the orphan rule blocks a
+    /// `Default` impl (libc, bindgen output) or where `Default` would be wrong
+    /// but zero-init matches the C API contract.
+    #[inline(always)]
+    pub const fn zeroed<T: Zeroable>() -> T {
+        // SAFETY: `T: Zeroable` is exactly the assertion that the all-zero bit
+        // pattern is a valid `T` (no `NonNull`/`NonZero`/ref/fn-ptr fields, no
+        // niche enums). `core::mem::zeroed` is therefore sound for `T`.
+        unsafe { core::mem::zeroed() }
+    }
+
+    /// Marker: the all-zero bit pattern is a valid value of `Self`.
+    ///
+    /// Local re-spelling of `bytemuck::Zeroable` so we can blanket-`impl` it
+    /// for foreign `libc` POD (orphan rule blocks impl-ing the upstream trait
+    /// on `libc::sigaction` et al.). Once a type carries this marker,
+    /// [`zeroed`] is a *safe* call — the audit happens once at the `unsafe
+    /// impl`, not at every out-param init site.
     ///
     /// # Safety
-    /// `T` must be inhabited at the all-zero bit pattern: no non-nullable
+    /// `Self` must be inhabited at the all-zero bit pattern: no non-nullable
     /// pointers (`&T`, `Box<T>`, `NonNull<T>`, fn ptrs), no `bool`/`char`
-    /// outside their valid range, no uninhabited enums. `#[repr(C)]` structs
-    /// of integers, raw pointers, and nested POD satisfy this.
+    /// outside their valid range, no niche-optimised enums. `#[repr(C)]`
+    /// structs of integers, raw pointers, and nested `Zeroable` POD satisfy
+    /// this. Padding bytes are fine (zero is a valid padding value).
+    pub unsafe trait Zeroable: Sized {}
+
+    /// Unchecked all-bits-zero — escape hatch for types not yet proven
+    /// [`Zeroable`] (libuv handles, bindgen structs in `_sys` crates that
+    /// don't depend on `bun_core`, generic `T` where the bound can't be
+    /// threaded). Prefer [`zeroed`] + an `unsafe impl Zeroable` whenever the
+    /// type is reachable.
+    ///
+    /// # Safety
+    /// `T` must be inhabited at the all-zero bit pattern (same contract as
+    /// [`Zeroable`], but asserted per-call instead of per-type).
     #[inline(always)]
-    pub const unsafe fn zeroed<T>() -> T {
+    pub const unsafe fn zeroed_unchecked<T>() -> T {
         // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
         unsafe { core::mem::zeroed() }
     }
+
+    // ── Zeroable impls ──────────────────────────────────────────────────────
+    // Primitives, raw pointers, arrays — match `bytemuck::Zeroable` blankets.
+    macro_rules! zeroable_prim {
+        ($($t:ty),* $(,)?) => { $( unsafe impl Zeroable for $t {} )* };
+    }
+    zeroable_prim!(
+        (), u8, u16, u32, u64, u128, usize,
+        i8, i16, i32, i64, i128, isize, f32, f64,
+    );
+    // SAFETY: null is a valid raw pointer.
+    unsafe impl<T: ?Sized> Zeroable for *const T {}
+    // SAFETY: null is a valid raw pointer.
+    unsafe impl<T: ?Sized> Zeroable for *mut T {}
+    // SAFETY: array of zero-valid elements is zero-valid.
+    unsafe impl<T: Zeroable, const N: usize> Zeroable for [T; N] {}
+
+    // libc POD — every field is an integer / raw pointer / nested C POD; the
+    // C API contract for each is "zero-init before the kernel/libc fills it".
+    // SAFETY: each `unsafe impl` below was audited against the libc crate's
+    // struct definition for that target; none contain `NonNull`/`NonZero`/
+    // references/fn-ptrs (bare `extern fn` fields in `sigaction` are stored as
+    // `usize` sighandler_t on every libc target).
+    #[cfg(unix)] unsafe impl Zeroable for libc::sigaction {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::sigset_t {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::utsname {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::winsize {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::rlimit {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::passwd {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::stat {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::rusage {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::timespec {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::timeval {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::pollfd {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::Dl_info {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::sockaddr {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::sockaddr_in {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::sockaddr_in6 {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::sockaddr_storage {}
+    #[cfg(unix)] unsafe impl Zeroable for libc::addrinfo {}
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe impl Zeroable for libc::sysinfo {}
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe impl Zeroable for libc::epoll_event {}
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe impl Zeroable for libc::signalfd_siginfo {}
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd"))]
+    unsafe impl Zeroable for libc::statfs {}
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+    unsafe impl Zeroable for libc::kevent {}
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    unsafe impl Zeroable for libc::kevent64_s {}
+    #[cfg(target_os = "freebsd")]
+    unsafe impl Zeroable for libc::_umtx_time {}
 
     /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
     /// boundary (C++ out-params, `extern "C"` callback args, `#[repr(C)]`
@@ -1256,9 +1376,11 @@ pub extern "C" fn __wrap_gettid() -> libc::pid_t {
 /// `bun_runtime` (node:fs preallocation guard) and the binary root can
 /// call it without re-declaring the C ABI.
 pub fn get_total_memory_size() -> usize {
-    unsafe extern "C" { fn Bun__ramSize() -> usize; }
-    // SAFETY: pure FFI into Bun's C++ bindings; no invariants required.
-    unsafe { Bun__ramSize() }
+    unsafe extern "C" {
+        // Pure FFI into Bun's C++ bindings; no arguments, no invariants.
+        safe fn Bun__ramSize() -> usize;
+    }
+    Bun__ramSize()
 }
 
 /// PHASE-C: stack capture for `Global::StoredTrace` / `bun_crash_handler`.

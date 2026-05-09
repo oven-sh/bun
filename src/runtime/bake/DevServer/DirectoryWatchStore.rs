@@ -232,8 +232,7 @@ impl DirectoryWatchStore {
             .resolver
             .read_dir_info(dir_name_to_watch)
         {
-            // SAFETY: read_dir_info returns a live *mut DirInfo on Some.
-            Ok(Some(cache)) => unsafe { (*cache).get_file_descriptor() }.unwrap_valid(),
+            Ok(Some(cache)) => cache.get_file_descriptor().unwrap_valid(),
             Ok(None) | Err(_) => None,
         };
 

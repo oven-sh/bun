@@ -26,6 +26,7 @@ use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 // onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
 // preserve write provenance through the FFI userdata round-trip so the eventual
 // `heap::take` in `deref_` is sound.
+#[derive(bun_ptr::CellRefCounted)]
 pub struct StaticRoute {
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
@@ -60,28 +61,18 @@ impl<'a> Default for InitFromBytesOptions<'a> {
 
 impl StaticRoute {
     // pub const ref / deref — intrusive refcount accessors.
-    // `ref` is a Rust keyword; use ref_/deref_ for parity with Zig call sites.
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
+    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; `deref_`
+    // is kept as a thin alias so existing call sites (and Zig parity) keep
+    // working without renaming.
     /// # Safety
     /// `this` must have been produced by `heap::alloc` in one of the
     /// constructors below (write provenance preserved through FFI userdata
     /// round-trips). Caller must not hold any live `&`/`&mut` to `*this` across
     /// this call when the refcount may reach zero.
+    #[inline]
     pub unsafe fn deref_(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live and uniquely held when n→0.
-        unsafe {
-            let n = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(n);
-            if n == 0 {
-                // ref_count hit zero; `this` was created via heap::alloc and
-                // retains write provenance (no `&self` in the chain), so
-                // reconstituting the Box and dropping it is sound.
-                drop(bun_core::heap::take(this));
-            }
-        }
+        // SAFETY: forwarded caller contract — see `CellRefCounted::deref`.
+        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 
     /// Ownership of `blob` is transferred to this function.

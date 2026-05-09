@@ -184,7 +184,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 link_path_buf.0[top_level.len()] = 0;
                 // SAFETY: NUL written at link_path_buf[top_level.len()] above.
                 let link_path =
-                    unsafe { ZStr::from_raw(link_path_buf.0.as_ptr(), top_level.len()) };
+                    ZStr::from_buf(&link_path_buf.0[..], top_level.len());
                 let global_path = pm::global_link_dir_path(manager);
                 let dest_path = resolve_path::join_abs_string_z::<platform::Windows>(
                     global_path,

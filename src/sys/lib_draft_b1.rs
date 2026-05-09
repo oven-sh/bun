@@ -526,7 +526,7 @@ pub fn chdir_os_path(
         let wbuf = bun_paths::w_path_buffer_pool().get();
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         if unsafe { c::SetCurrentDirectoryW(strings::to_w_dir_path(&mut *wbuf, destination).as_ptr()) } == windows::FALSE {
-            log!("SetCurrentDirectory({}) = {}", bstr::BStr::new(destination), unsafe { kernel32::GetLastError() });
+            log!("SetCurrentDirectory({}) = {}", bstr::BStr::new(destination), kernel32::GetLastError());
             return Result::<()>::errno_sys_pd(0, Tag::chdir, path, destination).unwrap_or(Result::Ok(()));
         }
 
@@ -809,7 +809,7 @@ fn statx_fallback(fd: Fd, path: Option<*const c_char>, flags: u32) -> Result<Pos
 #[cfg(target_os = "linux")]
 fn statx_impl(fd: Fd, path: Option<*const c_char>, flags: u32, mask: u32) -> Result<PosixStat> {
     // SAFETY: all-zero is a valid Statx (repr(C) POD).
-    let mut buf: syscall::Statx = unsafe { bun_core::ffi::zeroed() };
+    let mut buf: syscall::Statx = unsafe { bun_core::ffi::zeroed_unchecked() };
 
     loop {
         // SAFETY: FFI call with valid fd, NUL-terminated path (or empty), and zeroed out-buffer.
@@ -1183,7 +1183,7 @@ pub fn normalize_path_windows<T: WinPathChar>(
                 buf[0..nul.len()].copy_from_slice(nul);
                 buf[nul.len()] = 0;
                 // SAFETY: we just wrote NUL at buf[nul.len()].
-                return Result::Ok(unsafe { WStr::from_raw(buf.as_ptr(), nul.len()) });
+                return Result::Ok(WStr::from_buf(&buf[..], nul.len()));
             }
             if (path[1] == b'/' as u16 || path[1] == b'\\' as u16)
                 && (path[3] == b'/' as u16 || path[3] == b'\\' as u16)
@@ -1199,7 +1199,7 @@ pub fn normalize_path_windows<T: WinPathChar>(
                     buf[4..4 + rest.len()].copy_from_slice(rest);
                     buf[path.len()] = 0;
                     // SAFETY: NUL written at buf[path.len()].
-                    return Result::Ok(unsafe { WStr::from_raw(buf.as_ptr(), path.len()) });
+                    return Result::Ok(WStr::from_buf(&buf[..], path.len()));
                 }
                 // For long paths and nt object paths, conver the prefix into an nt object, then resolve.
                 // TODO: NT object paths technically mean they are already resolved. Will that break?
@@ -1230,7 +1230,7 @@ pub fn normalize_path_windows<T: WinPathChar>(
         buf[0..path.len()].copy_from_slice(path);
         buf[path.len()] = 0;
         // SAFETY: NUL written at buf[path.len()].
-        return Result::Ok(unsafe { WStr::from_raw(buf.as_ptr(), path.len()) });
+        return Result::Ok(WStr::from_buf(&buf[..], path.len()));
     }
 
     let base_fd = if dir_fd == Fd::invalid() {
@@ -1314,7 +1314,7 @@ fn open_dir_at_windows_nt_path(
     };
     let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
     // SAFETY: all-zero is a valid value for this repr(C) POD type.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
 
     // SAFETY: FFI call; arguments are valid for the duration of the call.
     let rc = unsafe {
@@ -1530,7 +1530,7 @@ pub fn open_file_at_windows_nt_path(
         SecurityQualityOfService: core::ptr::null_mut(),
     };
     // SAFETY: all-zero is a valid value for this repr(C) POD type.
-    let mut io: windows::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+    let mut io: windows::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
 
     let mut attributes = options.attributes;
     loop {
@@ -1952,8 +1952,7 @@ pub fn write(fd: Fd, bytes: &[u8]) -> Result<usize> {
         };
         if rc == 0 {
             log!("WriteFile({}, {}) = {}", fd, adjusted_len, <&str>::from(windows::get_last_errno()));
-            // SAFETY: FFI call; arguments are valid for the duration of the call.
-            let er = unsafe { kernel32::GetLastError() };
+            let er = kernel32::GetLastError();
             if er == windows::Win32Error::ACCESS_DENIED {
                 // file is not writable
                 return Result::Err(Error {
@@ -1963,7 +1962,7 @@ pub fn write(fd: Fd, bytes: &[u8]) -> Result<usize> {
                     ..Default::default()
                 });
             }
-            let errno = SystemErrno::init(unsafe { kernel32::GetLastError() })
+            let errno = SystemErrno::init(kernel32::GetLastError())
                 .unwrap_or(SystemErrno::EUNKNOWN)
                 .to_e();
             return Result::Err(Error {
@@ -2463,7 +2462,7 @@ pub fn ftruncate(fd: Fd, size: isize) -> Result<()> {
     #[cfg(windows)]
     {
         // SAFETY: all-zero is a valid value for this repr(C) POD type.
-        let mut io_status_block: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+        let mut io_status_block: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
         let mut eof_info = w::FILE_END_OF_FILE_INFORMATION { EndOfFile: size as i64 };
 
         // SAFETY: FFI call; arguments are valid for the duration of the call.
@@ -3045,7 +3044,7 @@ fn get_fd_path_freebsd_linuxulator<'a>(fd: Fd, out_buffer: &'a mut PathBuffer) -
         write!(cursor, "/dev/fd/{}\0", fd.cast()).expect("unreachable");
         let len = buf.len() - cursor.len() - 1;
         // SAFETY: NUL written by format string.
-        unsafe { ZStr::from_raw(buf.as_ptr(), len) }
+        ZStr::from_buf(&buf[..], len)
     };
     match readlink(path, &mut out_buffer[..]) {
         Result::Ok(r) => Result::Ok(r.as_bytes_mut()),
@@ -3089,7 +3088,7 @@ pub fn get_fd_path<'a>(fd: Fd, out_buffer: &'a mut PathBuffer) -> Result<&'a mut
             write!(cursor, "/proc/self/fd/{}\0", fd.cast()).expect("unreachable");
             let len = buf.len() - cursor.len() - 1;
             // SAFETY: buffer is NUL-terminated at the given length (written above).
-            unsafe { ZStr::from_raw(buf.as_ptr(), len) }
+            ZStr::from_buf(&buf[..], len)
         };
         return match readlink(path, &mut out_buffer[..]) {
             Result::Ok(r) => Result::Ok(r.as_bytes_mut()),
@@ -3113,7 +3112,7 @@ pub fn get_fd_path<'a>(fd: Fd, out_buffer: &'a mut PathBuffer) -> Result<&'a mut
         // /dev/fd readlink trick used for the Linuxulator path doesn't
         // resolve to an absolute path on native FreeBSD, so go via fcntl.
         // SAFETY: all-zero is a valid value for this repr(C) POD type.
-        let mut info: c::struct_kinfo_file = unsafe { bun_core::ffi::zeroed() };
+        let mut info: c::struct_kinfo_file = unsafe { bun_core::ffi::zeroed_unchecked() };
         info.kf_structsize = mem::size_of::<c::struct_kinfo_file>() as _;
         if let Result::Err(err) = fcntl(fd, c::F_KINFO, core::ptr::from_mut(&mut info) as usize) {
             return Result::Err(err);
@@ -3842,7 +3841,7 @@ pub fn exists_at_type(fd: Fd, subpath: impl AsRef<[u8]>) -> Result<ExistsAtType>
             SecurityQualityOfService: core::ptr::null_mut(),
         };
         // SAFETY: all-zero is a valid value for this repr(C) POD type.
-        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed() };
+        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         let rc = unsafe { ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
         if let Some(err) = Result::<bool>::errno_sys(rc, Tag::access) {
@@ -3880,7 +3879,7 @@ pub fn exists_at_type(fd: Fd, subpath: impl AsRef<[u8]>) -> Result<ExistsAtType>
         path_buf[0..subpath.len()].copy_from_slice(subpath);
         path_buf[subpath.len()] = 0;
         // SAFETY: NUL written above.
-        let slice = unsafe { ZStr::from_raw(path_buf.as_ptr(), subpath.len()) };
+        let slice = ZStr::from_buf(&path_buf[..], subpath.len());
 
         match fstatat(fd, slice) {
             Result::Err(err) => Result::Err(err),
@@ -4053,8 +4052,7 @@ pub fn dup_with_flags(fd: Fd, _flags: i32) -> Result<Fd> {
     #[cfg(windows)]
     {
         let mut target: windows::HANDLE = core::ptr::null_mut();
-        // SAFETY: FFI call; arguments are valid for the duration of the call.
-        let process = unsafe { kernel32::GetCurrentProcess() };
+        let process = kernel32::GetCurrentProcess();
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         let out = unsafe {
             kernel32::DuplicateHandle(
@@ -4507,7 +4505,7 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
             return Result::<()>::errno(E::NAMETOOLONG, Tag::GetFinalPathNameByHandle);
         }
         // SAFETY: GetFinalPathNameByHandleW NUL-terminates.
-        let src = unsafe { WStr::from_raw(buf1.as_ptr(), src_len as usize) };
+        let src = WStr::from_buf(&buf1[..], src_len as usize);
         return bun_core::copy_file(src, dest);
     }
     #[cfg(not(windows))]
@@ -4987,7 +4985,7 @@ pub mod generate_header {
             let uts = LINUX_OS_NAME.get_or_init(|| {
                 // SAFETY: `uname(2)` fills the struct on success; zero-init beforehand
                 // so a (theoretical) failure leaves a valid all-zero utsname.
-                let mut name: libc::utsname = unsafe { bun_core::ffi::zeroed() };
+                let mut name: libc::utsname = bun_core::ffi::zeroed();
                 unsafe { libc::uname(&mut name) };
                 name
             });
@@ -5092,7 +5090,7 @@ pub mod os {
         #[cfg(target_os = "linux")]
         {
             // SAFETY: zero-init is a valid `sysinfo` repr; sysinfo(2) overwrites it.
-            let mut info: libc::sysinfo = unsafe { bun_core::ffi::zeroed() };
+            let mut info: libc::sysinfo = bun_core::ffi::zeroed();
             // SAFETY: FFI call; out-param is valid for the duration.
             if unsafe { libc::sysinfo(&mut info) } == 0 {
                 return (info.totalram as u64).wrapping_mul(info.mem_unit as u64);

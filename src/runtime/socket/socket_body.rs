@@ -3765,12 +3765,10 @@ pub fn js_is_named_pipe_socket(global: &JSGlobalObject, callframe: &CallFrame) -
         return Err(global.throw_not_enough_arguments("isNamedPipeSocket", 1, arguments.len));
     }
     let socket = arguments.ptr[0];
-    if let Some(this) = socket.as_::<TCPSocket>() {
-        // SAFETY: `as_` returned a non-null `*mut TCPSocket` owned by the JS wrapper.
-        return Ok(JSValue::from(unsafe { &*this }.socket.is_named_pipe()));
-    } else if let Some(this) = socket.as_::<TLSSocket>() {
-        // SAFETY: see above.
-        return Ok(JSValue::from(unsafe { &*this }.socket.is_named_pipe()));
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        return Ok(JSValue::from(this.socket.is_named_pipe()));
+    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        return Ok(JSValue::from(this.socket.is_named_pipe()));
     }
     Ok(JSValue::FALSE)
 }
@@ -3784,12 +3782,10 @@ pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) ->
         return Err(global.throw_not_enough_arguments("getBufferedAmount", 1, arguments.len));
     }
     let socket = arguments.ptr[0];
-    if let Some(this) = socket.as_::<TCPSocket>() {
-        // SAFETY: `as_` returned a non-null `*mut TCPSocket` owned by the JS wrapper.
-        return Ok(JSValue::js_number(unsafe { &*this }.buffered_data_for_node_net.len() as f64));
-    } else if let Some(this) = socket.as_::<TLSSocket>() {
-        // SAFETY: see above.
-        return Ok(JSValue::js_number(unsafe { &*this }.buffered_data_for_node_net.len() as f64));
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        return Ok(JSValue::js_number(this.buffered_data_for_node_net.len() as f64));
+    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        return Ok(JSValue::js_number(this.buffered_data_for_node_net.len() as f64));
     }
     Ok(JSValue::js_number(0.0))
 }

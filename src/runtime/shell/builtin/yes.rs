@@ -231,12 +231,12 @@ impl YesTask {
         unsafe {
             match (*this).evtloop {
                 EventLoopHandle::Js { owner } => {
-                    bun_event_loop::any_event_loop::js::tick(owner);
+                    owner.tick();
                     let ct: *mut ConcurrentTask = match &mut (*this).concurrent_task {
                         EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
                         EventLoopTask::Mini(_) => unreachable!(),
                     };
-                    bun_event_loop::any_event_loop::js::enqueue_task_concurrent(owner, ct);
+                    owner.enqueue_task_concurrent(ct);
                 }
                 EventLoopHandle::Mini(mini) => {
                     (*(*mini).loop_).tick();

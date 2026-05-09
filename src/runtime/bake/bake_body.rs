@@ -152,7 +152,9 @@ pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
     buf[..bytes.len()].copy_from_slice(bytes);
     buf[bytes.len()] = 0;
     // SAFETY: buf is NUL-terminated; arena outlives all borrowers per the
-    // self-referential UserOptions pattern. Phase B threads `'bump`.
+    // self-referential UserOptions pattern. Not `from_buf`: the `'static`
+    // return type intentionally erases the arena lifetime — Phase B threads
+    // `'bump` and replaces this with `from_buf`.
     unsafe { ZStr::from_raw(buf.as_ptr(), bytes.len()) }
 }
 
@@ -1481,7 +1483,7 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
             v.into_boxed_slice()
         });
         // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
-        unsafe { ZStr::from_raw(buf.as_ptr(), buf.len() - 1) }
+        ZStr::from_slice_with_nul(&buf[..])
     }
     static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
     static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();

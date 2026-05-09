@@ -628,9 +628,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     .copy_from_slice(b".map");
                 load_path_buf[source_filename.len() + 4] = 0;
                 // SAFETY: byte at `len` was just set to NUL; buffer outlives `load_path`.
-                let load_path = unsafe {
-                    bun_core::ZStr::from_raw(load_path_buf.as_ptr(), source_filename.len() + 4)
-                };
+                let load_path = bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
                 // PORT NOTE: Zig passed the arena allocator; the Rust
                 // `bun_sys::File::read_from` returns an owned `Vec<u8>`. The

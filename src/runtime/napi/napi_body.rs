@@ -602,6 +602,30 @@ macro_rules! get_out {
     };
 }
 
+/// Write `v` through an optional N-API out-param pointer.
+///
+/// N-API "info" entry points take a family of nullable `*mut T` out-params where
+/// `NULL` means "caller doesn't want this field". This helper centralizes the
+/// `if let Some(r) = ptr.as_mut() { *r = v }` pattern so the per-site `unsafe`
+/// blocks collapse into one audited location.
+///
+/// # Safety
+/// The caller (the native addon) must pass either `NULL` or a pointer that is:
+/// - valid for a single write of `T`,
+/// - properly aligned for `T`,
+/// - not aliased by any other live `&`/`&mut` borrow for the duration of the call.
+///
+/// These are exactly the N-API ABI guarantees for out-params, so call sites in
+/// `extern "C" fn napi_*` bodies need no additional justification.
+#[inline]
+pub(crate) fn write_out<T>(p: *mut T, v: T) {
+    // SAFETY: see doc comment — `p` is either null (skipped) or a valid,
+    // exclusively-owned out-param per the N-API contract.
+    if let Some(r) = unsafe { p.as_mut() } {
+        *r = v;
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Exported / extern NAPI functions
 // ──────────────────────────────────────────────────────────────────────────
@@ -1292,12 +1316,8 @@ pub extern "C" fn napi_get_arraybuffer_info(
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     }
 
-    if let Some(dat) = unsafe { data.as_mut() } {
-        *dat = array_buffer.ptr;
-    }
-    if let Some(len) = unsafe { byte_length.as_mut() } {
-        *len = array_buffer.byte_len;
-    }
+    write_out(data, array_buffer.ptr);
+    write_out(byte_length, array_buffer.byte_len);
     env.ok()
 }
 
@@ -1338,13 +1358,8 @@ pub extern "C" fn napi_get_typedarray_info(
     }
 
     // TODO: handle detached
-    if let Some(data) = unsafe { maybe_data.as_mut() } {
-        *data = array_buffer.ptr;
-    }
-
-    if let Some(length) = unsafe { maybe_length.as_mut() } {
-        *length = array_buffer.len;
-    }
+    write_out(maybe_data, array_buffer.ptr);
+    write_out(maybe_length, array_buffer.len);
 
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
         arraybuffer.set(
@@ -1359,12 +1374,9 @@ pub extern "C" fn napi_get_typedarray_info(
         );
     }
 
-    if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
-        // `jsc::ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
-        // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
-        // *byte_offset = array_buffer.offset;
-        *byte_offset = 0;
-    }
+    // `jsc::ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
+    // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
+    write_out(maybe_byte_offset, 0);
     env.ok()
 }
 
@@ -1398,12 +1410,8 @@ pub extern "C" fn napi_get_dataview_info(
     let Some(array_buffer) = dataview.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     };
-    if let Some(bytelength) = unsafe { maybe_bytelength.as_mut() } {
-        *bytelength = array_buffer.byte_len;
-    }
-    if let Some(data) = unsafe { maybe_data.as_mut() } {
-        *data = array_buffer.ptr;
-    }
+    write_out(maybe_bytelength, array_buffer.byte_len);
+    write_out(maybe_data, array_buffer.ptr);
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
         arraybuffer.set(
             env,
@@ -1416,12 +1424,9 @@ pub extern "C" fn napi_get_dataview_info(
             }),
         );
     }
-    if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
-        // `jsc::ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
-        // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
-        // *byte_offset = array_buffer.offset;
-        *byte_offset = 0;
-    }
+    // `jsc::ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
+    // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
+    write_out(maybe_byte_offset, 0);
 
     env.ok()
 }
@@ -1860,13 +1865,10 @@ pub extern "C" fn napi_create_buffer_copy(
             let src = unsafe { core::slice::from_raw_parts(data, length) };
             array_buf.slice_mut()[..length].copy_from_slice(src);
         }
-        if let Some(ptr_out) = unsafe { result_data.as_mut() } {
-            *ptr_out = if length > 0 {
-                array_buf.ptr.cast::<c_void>()
-            } else {
-                ptr::null_mut()
-            };
-        }
+        write_out(
+            result_data,
+            if length > 0 { array_buf.ptr.cast::<c_void>() } else { ptr::null_mut() },
+        );
     }
 
     result.set(env, buffer);
@@ -1892,13 +1894,8 @@ pub extern "C" fn napi_get_buffer_info(
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
 
-    if let Some(dat) = unsafe { data.as_mut() } {
-        *dat = array_buf.ptr;
-    }
-
-    if let Some(len) = unsafe { length.as_mut() } {
-        *len = array_buf.byte_len;
-    }
+    write_out(data, array_buf.ptr);
+    write_out(length, array_buf.byte_len);
 
     env.ok()
 }

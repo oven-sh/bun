@@ -686,10 +686,7 @@ pub mod command {
     pub fn start(log: &mut logger::Log) -> Result<(), bun_core::Error> {
         if cfg!(debug_assertions) {
             if !bun_core::env_var::MI_VERBOSE::get().unwrap_or(false) {
-                // SAFETY: FFI call into mimalloc; option enum is #[repr(C)].
-                unsafe {
-                    bun_alloc::mimalloc::mi_option_set_enabled(bun_alloc::mimalloc::Option::verbose, false);
-                }
+                bun_alloc::mimalloc::mi_option_set_enabled(bun_alloc::mimalloc::Option::verbose, false);
             }
         }
 
@@ -1440,7 +1437,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                 path_buf[0..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;
                 // SAFETY: NUL written at path_buf[entry.len()] above
-                let lockfile_path = unsafe { ZStr::from_raw(path_buf.as_ptr(), entry.len()) };
+                let lockfile_path = ZStr::from_buf(&path_buf[..], entry.len());
                 let file = match File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
                     Ok(f) => f,
                     Err(err) => {

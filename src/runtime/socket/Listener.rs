@@ -992,8 +992,7 @@ impl Listener {
                 }
                 UnixOrHost::Fd(fd) => {
                     let uvfd = fd.uv();
-                    // SAFETY: FFI — `uv_guess_handle` is total over any int.
-                    let fd_type = unsafe { uv::uv_guess_handle(uvfd) };
+                    let fd_type = uv::uv_guess_handle(uvfd);
                     if fd_type == uv::HandleType::NamedPipe {
                         true
                     } else if fd_type == uv::HandleType::Unknown {
@@ -1521,7 +1520,9 @@ impl WindowsNamedPipeListeningContext {
         };
         if result.is_err() {
             // connection dropped
-            WindowsNamedPipeContext::deref(client);
+            // SAFETY: `client` was just allocated via `WindowsNamedPipeContext::create`
+            // with refcount==1; releasing the only ref schedules deinit.
+            unsafe { WindowsNamedPipeContext::deref(client) };
         }
     }
 
@@ -1563,7 +1564,7 @@ impl WindowsNamedPipeListeningContext {
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
             // SAFETY: all-zero is a valid pre-init `uv_pipe_t` (C struct,
             // initialised by `uv_pipe_init`).
-            uv_pipe: unsafe { bun_core::ffi::zeroed() },
+            uv_pipe: unsafe { bun_core::ffi::zeroed_unchecked() },
             listener: NonNull::new(listener),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm_ptr(),

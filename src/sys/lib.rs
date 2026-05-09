@@ -496,7 +496,7 @@ pub mod dir_iterator {
                     // is left untouched, so zero-initialize it rather than
                     // reading uninitialized stack if the call fails.
                     // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-                    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+                    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
                     if self.first {
                         // > Any bytes inserted for alignment SHOULD be set to
                         // > zero, and the receiver MUST ignore them.
@@ -683,7 +683,7 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
         buf[..len].copy_from_slice(path);
         buf[len] = 0;
         // SAFETY: NUL-terminated above.
-        let z = unsafe { ZStr::from_raw(buf.as_ptr(), len) };
+        let z = ZStr::from_buf(&buf[..], len);
         // bun.zig:883 — exactly `O_DIRECTORY | O_CLOEXEC | O_RDONLY` (no NONBLOCK).
         let flags = libc::O_DIRECTORY | libc::O_RDONLY | libc::O_CLOEXEC;
         openat(dir, z, flags, 0)
@@ -751,7 +751,7 @@ pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
     debug_assert!(len < buf.len());
     buf[len] = 0;
     // SAFETY: NUL written at buf[len]; slice is within buf.
-    Ok(unsafe { ZStr::from_raw(buf.as_ptr(), len) })
+    Ok(ZStr::from_buf(&buf[..], len))
 }
 
 pub mod coreutils_error_map;
@@ -1835,7 +1835,7 @@ mod posix_impl {
         loop {
             // SAFETY: buf[0..=peel] is NUL-terminated (initial buf[end]=0 or a
             // peeled '/' overwritten below).
-            let z = unsafe { ZStr::from_raw(buf.as_ptr(), peel) };
+            let z = ZStr::from_buf(&buf[..], peel);
             match mkdirat(dir, z, mode) {
                 Ok(()) => break,
                 Err(e) if e.get_errno() == E::EEXIST => break,
@@ -1861,7 +1861,7 @@ mod posix_impl {
             // stack (or `end`), which is exactly the next component boundary.
             let next_end = if nuls_len > 0 { nuls[nuls_len - 1] as usize } else { end };
             // SAFETY: buf[next_end] == 0 (still un-restored or the original sentinel).
-            let z = unsafe { ZStr::from_raw(buf.as_ptr(), next_end) };
+            let z = ZStr::from_buf(&buf[..], next_end);
             match mkdirat(dir, z, mode) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == E::EEXIST => {}
@@ -2627,7 +2627,7 @@ mod windows_impl {
         // sys_uv::ftruncate requires a CRT fd via `fd.uv()`, which fails for
         // HANDLE-backed `Fd`s that have no uv mapping).
         // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-        let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+        let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
         let mut eof = bun_windows_sys::FILE_END_OF_FILE_INFORMATION { EndOfFile: len };
         // SAFETY: FFI; fd is a valid HANDLE, eof/io valid for the call.
         let rc = unsafe {
@@ -2672,7 +2672,7 @@ mod windows_impl {
     }
     pub fn dup(fd: Fd) -> Maybe<Fd> {
         // sys.zig:3911 — DuplicateHandle on the underlying HANDLE.
-        let process = unsafe { w::kernel32::GetCurrentProcess() };
+        let process = w::kernel32::GetCurrentProcess();
         let mut target: w::HANDLE = core::ptr::null_mut();
         let out = unsafe {
             w::kernel32::DuplicateHandle(
@@ -2777,7 +2777,7 @@ mod windows_impl {
             n += comp.len();
             buf.0[n] = 0;
             // SAFETY: NUL-terminated above; `n` bytes valid in `buf`.
-            let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), n) };
+            let z = ZStr::from_buf(&buf.0[..], n);
             match mkdirat(dir, z, mode) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == E::EEXIST => {}
@@ -2952,7 +2952,7 @@ mod windows_impl {
     }
     pub fn isatty(fd: Fd) -> bool {
         // sys.zig — windows: uv_guess_handle == UV_TTY.
-        unsafe { uv::uv_guess_handle(fd.uv()) == uv::UV_TTY }
+        uv::uv_guess_handle(fd.uv()) == uv::UV_TTY
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         // sys.zig:2339 — windows: SetFilePointerEx.
@@ -2992,7 +2992,7 @@ mod windows_impl {
         zb.0[..p.len()].copy_from_slice(p);
         zb.0[p.len()] = 0;
         // SAFETY: NUL-terminated above.
-        chdir(unsafe { ZStr::from_raw(zb.0.as_ptr(), p.len()) })
+        chdir(ZStr::from_buf(&zb.0[..], p.len()))
     }
     pub fn umask(mode: Mode) -> Mode {
         // sys.zig: `_umask` (msvcrt).
@@ -3653,7 +3653,7 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     loop {
         // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
         // field on success); `path` is NUL-terminated by `ZStr`.
-        let mut st: StatFS = unsafe { bun_core::ffi::zeroed() };
+        let mut st: StatFS = unsafe { bun_core::ffi::zeroed_unchecked() };
         let rc = unsafe { libc::statfs(path.as_ptr(), &raw mut st) };
         if rc < 0 {
             let e = last_errno();
@@ -3881,6 +3881,9 @@ pub mod c {
         pub ldavg: [u32; 3],
         pub fscale: core::ffi::c_long,
     }
+    // SAFETY: integers only; all-zero is valid pre-`sysctl` state.
+    #[cfg(target_os = "macos")]
+    unsafe impl bun_core::ffi::Zeroable for struct_loadavg {}
 
     // ── <mach/mach_init.h> / <mach-o/dyld.h> — declared directly because the
     // `libc` crate has deprecated these in favour of the `mach2` crate. We
@@ -3998,6 +4001,9 @@ pub mod c {
         pub pbi_start_tvsec: u64,
         pub pbi_start_tvusec: u64,
     }
+    // SAFETY: integers + byte arrays only; all-zero is valid pre-`proc_pidinfo` state.
+    #[cfg(target_os = "macos")]
+    unsafe impl bun_core::ffi::Zeroable for struct_proc_bsdinfo {}
     #[cfg(target_os = "macos")]
     pub const PROC_PIDTBSDINFO: c_int = 3;
     #[cfg(target_os = "macos")]
@@ -4626,7 +4632,7 @@ impl DynLib {
         buf.0[..len].copy_from_slice(path);
         buf.0[len] = 0;
         // SAFETY: NUL-terminated above.
-        let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
+        let z = ZStr::from_buf(&buf.0[..], len);
         match dlopen(z, RTLD::LAZY) {
             Some(h) => Ok(Self { handle: h }),
             None => Err(bun_core::err!("FileNotFound")),
@@ -4733,7 +4739,7 @@ pub fn openat_a(dir: Fd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     buf.0[..path.len()].copy_from_slice(path);
     buf.0[path.len()] = 0;
     // SAFETY: NUL-terminated above.
-    let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), path.len()) };
+    let z = ZStr::from_buf(&buf.0[..], path.len());
     openat(dir, z, flags, perm)
 }
 /// sys.zig:1705 `openatOSPath` — `openat` taking a platform-native path
@@ -4930,7 +4936,7 @@ pub fn normalize_path_windows_opts<'a>(
         buf[..path.len()].copy_from_slice(path);
         buf[path.len()] = 0;
         // SAFETY: NUL written at buf[path.len()].
-        return Ok(unsafe { WStr::from_raw(buf.as_ptr(), path.len()) });
+        return Ok(WStr::from_buf(&buf[..], path.len()));
     }
 
     // Otherwise: resolve `dir_fd` to its full path, join, normalize.
@@ -5048,7 +5054,7 @@ pub fn open_dir_at_windows_nt_path(
     };
     let mut fd: w::HANDLE = bun_windows_sys::INVALID_HANDLE_VALUE;
     // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: FFI; all pointer args valid for the call.
     let rc = unsafe {
         w::ntdll::NtCreateFile(
@@ -5123,7 +5129,7 @@ pub fn open_file_at_windows_nt_path(
         SecurityQualityOfService: core::ptr::null_mut(),
     };
     // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
+    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
 
     let mut attributes = options.attributes;
     loop {
@@ -5414,7 +5420,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
             SecurityQualityOfService: core::ptr::null_mut(),
         };
         // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION.
-        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed() };
+        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: FFI; attr/basic_info valid for the call duration.
         let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
         if rc != w::NTSTATUS::SUCCESS {
@@ -5646,7 +5652,7 @@ fn linux_kernel_is_freebsd() -> bool {
     if v != 0 { return v == 2; }
     let detected: u8 = 'detect: {
         // SAFETY: literal is NUL-terminated.
-        let z = unsafe { ZStr::from_raw(b"/proc/version\0".as_ptr(), 13) };
+        let z = ZStr::from_static(b"/proc/version\0");
         let Ok(fd) = open(z, O::RDONLY | O::NOCTTY, 0) else { break 'detect 1 };
         let mut buf = [0u8; 512];
         let n = read(fd, &mut buf).unwrap_or(0);
@@ -5669,7 +5675,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
             c.position() as usize - 1
         };
         // SAFETY: NUL written above.
-        let z = unsafe { ZStr::from_raw(proc.as_ptr(), n) };
+        let z = ZStr::from_buf(&proc[..], n);
         match readlink(z, &mut out.0) {
             Ok(len) => return Ok(&mut out.0[..len]),
             Err(e) => {
@@ -5684,7 +5690,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
                         c.position() as usize - 1
                     };
                     // SAFETY: NUL written above.
-                    let z = unsafe { ZStr::from_raw(dev.as_ptr(), n) };
+                    let z = ZStr::from_buf(&dev[..], n);
                     let len = readlink(z, &mut out.0)?;
                     return Ok(&mut out.0[..len]);
                 }
@@ -6017,6 +6023,9 @@ pub mod posix {
     #[cfg(unix)]
     #[repr(C)] #[derive(Clone, Copy)]
     pub struct Rlimit { pub cur: u64, pub max: u64 }
+    // SAFETY: two `u64`; all-zero is a valid `Rlimit`.
+    #[cfg(unix)]
+    unsafe impl bun_core::ffi::Zeroable for Rlimit {}
     #[cfg(unix)]
     #[derive(Clone, Copy)] #[repr(i32)]
     pub enum RlimitResource {
@@ -6087,7 +6096,7 @@ pub mod net {
         /// Construct from a borrowed `*const sockaddr` (Zig: `Address.initPosix`).
         /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
         pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
-            let mut storage: sockaddr_storage = unsafe { bun_core::ffi::zeroed() };
+            let mut storage: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
             let len = match unsafe { (*addr).sa_family } as i32 {
                 AF_INET => core::mem::size_of::<sockaddr_in>(),
                 AF_INET6 => core::mem::size_of::<sockaddr_in6>(),
@@ -6116,7 +6125,7 @@ pub mod net {
     }
     impl Default for Address {
         // SAFETY: POD, zero-valid — sockaddr union of integer fields.
-        fn default() -> Self { Self { any: unsafe { bun_core::ffi::zeroed() } } }
+        fn default() -> Self { Self { any: unsafe { bun_core::ffi::zeroed_unchecked() } } }
     }
     impl fmt::Debug for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -6456,7 +6465,7 @@ fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
     buf.0[..len].copy_from_slice(&path[..len]);
     buf.0[len] = 0;
     // SAFETY: NUL-terminated above.
-    let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
+    let z = ZStr::from_buf(&buf.0[..], len);
     unlinkat_with_flags(dirfd, z, flags)
 }
 
@@ -6502,7 +6511,7 @@ impl Dir {
         buf.0[..len].copy_from_slice(&sub_path[..len]);
         buf.0[len] = 0;
         // SAFETY: NUL-terminated above.
-        let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
+        let z = ZStr::from_buf(&buf.0[..], len);
         match mkdirat(self.fd, z, 0o755) {
             Ok(()) => Ok(()),
             Err(e) if e.get_errno() == E::EEXIST => Err(bun_core::err!("PathAlreadyExists")),
@@ -6525,14 +6534,14 @@ impl Dir {
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
         tbuf.0[tlen] = 0;
         // SAFETY: NUL-terminated above.
-        let tz = unsafe { ZStr::from_raw(tbuf.0.as_ptr(), tlen) };
+        let tz = ZStr::from_buf(&tbuf.0[..], tlen);
 
         let mut lbuf = bun_paths::PathBuffer::default();
         let llen = link_name.len().min(lbuf.0.len() - 1);
         lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
         lbuf.0[llen] = 0;
         // SAFETY: NUL-terminated above.
-        let lz = unsafe { ZStr::from_raw(lbuf.0.as_ptr(), llen) };
+        let lz = ZStr::from_buf(&lbuf.0[..], llen);
 
         symlinkat(tz, self.fd, lz).map_err(Into::into)
     }
@@ -6963,7 +6972,7 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
     let len = get_fd_path(fd, out)?.len();
     out.0[len] = 0;
     // SAFETY: NUL written at out[len]; bytes [0..len] initialised by get_fd_path.
-    Ok(unsafe { ZStr::from_raw(out.0.as_ptr(), len) })
+    Ok(ZStr::from_buf(&out.0[..], len))
 }
 
 /// `&[u8]`-taking convenience over [`renameat_concurrently`] — Z-terminates both
@@ -6981,14 +6990,14 @@ pub fn renameat_concurrently_a(
     from_buf.0[..from_len].copy_from_slice(&from[..from_len]);
     from_buf.0[from_len] = 0;
     // SAFETY: NUL-terminated above.
-    let from_z = unsafe { ZStr::from_raw(from_buf.0.as_ptr(), from_len) };
+    let from_z = ZStr::from_buf(&from_buf.0[..], from_len);
 
     let mut to_buf = bun_paths::PathBuffer::default();
     let to_len = to.len().min(to_buf.0.len() - 1);
     to_buf.0[..to_len].copy_from_slice(&to[..to_len]);
     to_buf.0[to_len] = 0;
     // SAFETY: NUL-terminated above.
-    let to_z = unsafe { ZStr::from_raw(to_buf.0.as_ptr(), to_len) };
+    let to_z = ZStr::from_buf(&to_buf.0[..], to_len);
 
     renameat_concurrently(from_dir_fd, from_z, to_dir_fd, to_z, opts)
 }
@@ -7009,7 +7018,7 @@ pub fn exists(path: &[u8]) -> bool {
     buf.0[..path.len()].copy_from_slice(path);
     buf.0[path.len()] = 0;
     // SAFETY: NUL-terminated above.
-    let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), path.len()) };
+    let z = ZStr::from_buf(&buf.0[..], path.len());
     exists_z(z)
 }
 /// sys.zig:4246 — `moveFileZ`. Tries the rename first (no source open on the
@@ -7262,7 +7271,7 @@ pub fn write_file_with_path_buffer(
             path_buf.0[..bytes.len()].copy_from_slice(bytes);
             path_buf.0[bytes.len()] = 0;
             // SAFETY: NUL-terminated above.
-            let z = unsafe { ZStr::from_raw(path_buf.0.as_ptr(), bytes.len()) };
+            let z = ZStr::from_buf(&path_buf.0[..], bytes.len());
             openat(args.dirfd, z, O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC, args.mode)?
         }
     };
@@ -7382,7 +7391,7 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer)
 #[cfg(unix)]
 unsafe fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
     // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
-    let mut ws: libc::winsize = unsafe { bun_core::ffi::zeroed() };
+    let mut ws: libc::winsize = bun_core::ffi::zeroed();
     // SAFETY: TIOCGWINSZ expects a *mut winsize.
     let rc = unsafe { libc::ioctl(fd.native(), libc::TIOCGWINSZ, &raw mut ws) };
     if rc != 0 { return None; }

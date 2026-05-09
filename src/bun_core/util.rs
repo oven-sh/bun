@@ -367,6 +367,20 @@ impl ZStr {
         // precondition, same contract as Zig `[:0]const u8` slicing).
         unsafe { Self::from_raw(buf.as_ptr(), len) }
     }
+    /// Borrow `buf[..buf.len()-1]` as a `&ZStr`, where the last byte of `buf`
+    /// is the NUL terminator. This is [`from_buf`] specialized for the second
+    /// most common call shape: a slice that already includes its trailing NUL
+    /// (e.g. a `Vec<u8>` with `0` pushed, or `CStr::to_bytes_with_nul`).
+    /// Debug-asserts the trailing NUL; release relies on the documented
+    /// precondition (same contract as Zig `[:0]const u8` slicing).
+    #[inline]
+    pub fn from_slice_with_nul(buf: &[u8]) -> &ZStr {
+        debug_assert!(!buf.is_empty(), "ZStr::from_slice_with_nul: empty slice");
+        debug_assert_eq!(buf[buf.len() - 1], 0, "ZStr::from_slice_with_nul: missing trailing NUL");
+        // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
+        // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
+        unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
+    }
     /// Mutable variant of [`from_buf`].
     #[inline]
     pub fn from_buf_mut(buf: &mut [u8], len: usize) -> &mut ZStr {
@@ -540,6 +554,30 @@ impl WStr {
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
         unsafe { &*(std::ptr::from_ref::<[u16]>(core::slice::from_raw_parts(ptr, len)) as *const WStr) }
+    }
+    /// Borrow `buf[..len]` as a `&WStr`, where `buf[len] == 0`. Safe-surface
+    /// form of [`from_raw`] for the dominant call shape: a stack `WPathBuffer`
+    /// filled to `len` with a NUL written at `buf[len]`. The slice bound proves
+    /// `buf[..=len]` lies in one allocation; the NUL is debug-asserted (release
+    /// relies on the documented `buf[len] == 0` precondition — same contract as
+    /// Zig `[:0]const u16` slicing). Mirrors [`ZStr::from_buf`].
+    #[inline]
+    pub fn from_buf(buf: &[u16], len: usize) -> &WStr {
+        debug_assert!(len < buf.len(), "WStr::from_buf: NUL must lie within buf");
+        debug_assert_eq!(buf[len], 0, "WStr::from_buf: missing NUL at buf[len]");
+        // SAFETY: `buf[..=len]` is in-bounds (debug-asserted above; caller
+        // contract in release).
+        unsafe { Self::from_raw(buf.as_ptr(), len) }
+    }
+    /// Borrow `buf[..buf.len()-1]` as a `&WStr`, where the last unit of `buf`
+    /// is the NUL terminator. Mirrors [`ZStr::from_slice_with_nul`].
+    #[inline]
+    pub fn from_slice_with_nul(buf: &[u16]) -> &WStr {
+        debug_assert!(!buf.is_empty(), "WStr::from_slice_with_nul: empty slice");
+        debug_assert_eq!(buf[buf.len() - 1], 0, "WStr::from_slice_with_nul: missing trailing NUL");
+        // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
+        // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
+        unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
     #[inline] pub const fn as_slice(&self) -> &[u16] { &self.0 }
     #[inline] pub const fn len(&self) -> usize { self.0.len() }
@@ -3049,15 +3087,16 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // Signal the watcher-manager parent via magic exit code.
         unsafe extern "system" {
             fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
-            fn GetCurrentProcess() -> *mut core::ffi::c_void;
-            fn GetLastError() -> u32;
+            // No preconditions; pseudo-handle / thread-local error slot.
+            safe fn GetCurrentProcess() -> *mut core::ffi::c_void;
+            safe fn GetLastError() -> u32;
         }
         // = 3224497970, bun.windows.watcher_reload_exit (windows.zig). Parent
         // watcher-manager compares the child's exit code against exactly this.
         const WATCHER_RELOAD_EXIT: u32 = 0xC031_EF32;
         let rc = unsafe { TerminateProcess(GetCurrentProcess(), WATCHER_RELOAD_EXIT) };
         if rc == 0 {
-            let err = unsafe { GetLastError() };
+            let err = GetLastError();
             if may_return {
                 crate::output::err_generic("Failed to reload process: {}", (err,));
                 return;
@@ -3313,6 +3352,8 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Timespec { pub sec: i64, pub nsec: i64 }
+// SAFETY: two `i64` fields; all-zero is the epoch.
+unsafe impl crate::ffi::Zeroable for Timespec {}
 
 /// Lowercase alias (Zig spells it `bun.timespec`).
 #[allow(non_camel_case_types)]

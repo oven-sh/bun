@@ -82,7 +82,7 @@ pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error
     let len = outpath.len();
     buf[len] = 0;
     // SAFETY: `buf[len] == 0` written above; `buf` outlives the call.
-    let path_z = unsafe { ZStr::from_raw(buf.as_ptr(), len) };
+    let path_z = ZStr::from_buf(&buf[..], len);
     match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_z) {
         bun_sys::Result::Ok(bytes) => Ok(bytes),
         bun_sys::Result::Err(err) => Err(err.into()),
@@ -1046,9 +1046,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
-            // SAFETY: single-threaded startup; argv slices returned by
-            // `clap::Args::option` borrow process-lifetime `argv` storage.
-            unsafe { bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.write(user_agent) };
+            // argv slices returned by `clap::Args::option` borrow
+            // process-lifetime `argv` storage.
+            let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
         ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
@@ -1249,10 +1249,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if let Some(title) = args.option(b"--title") {
-            // SAFETY: single-threaded startup. Static is `Option<Box<[u8]>>` so
-            // `process.title = "..."` can drop the previous value; box the
-            // argv-borrowed slice up front (Zig: `CLI.Bun__Node__ProcessTitle = title;`).
-            unsafe { *cli::Bun__Node__ProcessTitle.get() = Some(title.into()) };
+            // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`
+            // can drop the previous value; box the argv-borrowed slice up
+            // front (Zig: `CLI.Bun__Node__ProcessTitle = title;`).
+            *cli::Bun__Node__ProcessTitle.lock() = Some(title.into());
         }
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
@@ -2045,13 +2045,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     }
 
     if bun_core::env::SHOW_CRASH_TRACE {
-        // SAFETY: single-threaded CLI startup; argv slices are process-lifetime.
-        unsafe {
-            *cli::debug_flags::RESOLVE_BREAKPOINTS.get() =
-                args.options(b"--breakpoint-resolve").to_vec();
-            *cli::debug_flags::PRINT_BREAKPOINTS.get() =
-                args.options(b"--breakpoint-print").to_vec();
-        }
+        // argv slices are process-lifetime.
+        let _ = cli::debug_flags::RESOLVE_BREAKPOINTS
+            .set(args.options(b"--breakpoint-resolve").to_vec());
+        let _ = cli::debug_flags::PRINT_BREAKPOINTS
+            .set(args.options(b"--breakpoint-print").to_vec());
     }
 
     Ok(opts)

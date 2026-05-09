@@ -2223,11 +2223,9 @@ pub fn parse_into_binary_lockfile(
 
                     let resolved = sbuf!(lockfile).append(bun_tag_str)?;
                     if tag == ResolutionTag::Git {
-                        // SAFETY: `tag == Git` in this branch.
-                        unsafe { res.value.git.resolved = resolved; }
+                        res.git_mut().resolved = resolved;
                     } else {
-                        // SAFETY: `tag == Github` in this branch.
-                        unsafe { res.value.github.resolved = resolved; }
+                        res.github_mut().resolved = resolved;
                     }
 
                     // Optional integrity hash (added to pin tarball content)

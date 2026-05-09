@@ -6371,20 +6371,21 @@ pub trait FileOpener: Sized {
                     scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
                     // SAFETY: req is the live uv_fs_t from the open request.
                     let result = unsafe { (*req).result };
-                    if let Some(err_enum) = result.err_enum() {
+                    if let Some(err_enum) = result.err_enum_e() {
                         let path_string_2 = match self_.pathlike() {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
                         };
-                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as _));
+                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as i32));
                         self_.set_system_error(
                             bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
                                 .with_path(path_string_2.slice())
-                                .to_system_error(),
+                                .to_system_error()
+                                .into(),
                         );
                         self_.set_opened_fd(bun_sys::Fd::INVALID);
                     } else {
-                        self_.set_opened_fd(result.to_fd());
+                        self_.set_opened_fd(Fd::from_uv(result.to_fd()));
                     }
                 }
                 let cb = self_.open_callback();

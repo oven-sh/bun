@@ -560,26 +560,20 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         const _: () =
             assert!(core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>());
 
-        // PORT NOTE: Zig allocates the libuv pipes (`bun.new(uv.Pipe, zeroes)`),
-        // stashes them in `this.stdout.source.?.pipe`, and then reuses the same
-        // heap pointer for `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`.
-        // The Rust `bun_io::Source::Pipe` owns a `Box<uv::Pipe>`; capture the
-        // stable heap address before moving the Box into `source` so the
-        // `Stdio::Buffer` arm can name it without re-borrowing through the enum.
-        #[cfg(windows)]
-        let (stdout_pipe_ptr, stderr_pipe_ptr): (*mut uv::Pipe, *mut uv::Pipe) = {
-            // SAFETY: all-zero is a valid uv::Pipe (POD libuv handle; matches
-            // Zig `std.mem.zeroes(uv.Pipe)`).
-            let mut stdout_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
-            // SAFETY: as above.
-            let mut stderr_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
-            let stdout_ptr: *mut uv::Pipe = core::ptr::from_mut(stdout_pipe.as_mut());
-            let stderr_ptr: *mut uv::Pipe = core::ptr::from_mut(stderr_pipe.as_mut());
-            (*this).stdout.source = Some(bun_io::Source::Pipe(stdout_pipe));
-            (*this).stderr.source = Some(bun_io::Source::Pipe(stderr_pipe));
-            (stdout_ptr, stderr_ptr)
-        };
-
+        // PORT NOTE / OWNERSHIP: Zig allocates the libuv pipes
+        // (`bun.new(uv.Pipe, zeroes)`), stashes the *non-owning* `*uv.Pipe`
+        // in `this.stdout.source.?.pipe`, and reuses the same heap pointer for
+        // `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`. In Rust,
+        // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
+        // `spawn_process_windows` does `heap::take(ptr)` on the
+        // `Stdio::Buffer` pointer to produce a SECOND `Box<uv::Pipe>` in
+        // `WindowsStdioResult::Buffer` — pre-stashing here would create two
+        // `Box`es over one allocation (UAF + double-free when `spawned`
+        // drops). Instead allocate the raw heap pipe inline in the
+        // `Stdio::Buffer` arm below (so it is only allocated when actually
+        // passed to libuv) and take SOLE ownership from
+        // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
+        // block below and `filter_run.rs` for the canonical pattern.
         let spawn_options = SpawnOptions {
             stdin: if (*this).foreground {
                 bun_spawn::Stdio::Inherit
@@ -598,7 +592,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    bun_spawn::Stdio::Buffer(stdout_pipe_ptr as bun_spawn::windows::UvPipePtr)
+                    // SAFETY: all-zero is a valid uv::Pipe (POD libuv handle;
+                    // matches Zig `std.mem.zeroes(uv.Pipe)`). Ownership of this
+                    // raw heap allocation transfers to `spawn_process_windows`,
+                    // which `heap::take`s it into `spawned.stdout`.
+                    bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
+                        core::mem::zeroed::<uv::Pipe>(),
+                    )) as bun_spawn::windows::UvPipePtr)
                 }
             },
             stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
@@ -612,7 +612,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    bun_spawn::Stdio::Buffer(stderr_pipe_ptr as bun_spawn::windows::UvPipePtr)
+                    // SAFETY: as above; ownership transfers to `spawned.stderr`.
+                    bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
+                        core::mem::zeroed::<uv::Pipe>(),
+                    )) as bun_spawn::windows::UvPipePtr)
                 }
             },
             cwd: Box::<[u8]>::from(cwd),
@@ -683,12 +686,22 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
         #[cfg(windows)]
         {
-            if matches!(spawned.stdout, bun_spawn::SpawnedStdio::Buffer(_)) {
+            // `spawn_process_windows` has already `heap::take`n the raw pipe
+            // pointers out of `Stdio::Buffer` into `spawned.{stdout,stderr}`
+            // as `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box
+            // out *here* (sole owner) and stash it in `source` BEFORE
+            // `start_with_current_pipe` (which reads `source.?.pipe`) and
+            // BEFORE `spawned` drops — otherwise the `Box<uv::Pipe>` is freed
+            // while libuv still has the handle queued (UAF) and the later
+            // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
+            if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
+                (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stdout.set_parent(this.cast::<c_void>());
                 (*this).remaining_fds += 1;
                 (*this).stdout.start_with_current_pipe()?;
             }
-            if matches!(spawned.stderr, bun_spawn::SpawnedStdio::Buffer(_)) {
+            if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
+                (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stderr.set_parent(this.cast::<c_void>());
                 (*this).remaining_fds += 1;
                 (*this).stderr.start_with_current_pipe()?;

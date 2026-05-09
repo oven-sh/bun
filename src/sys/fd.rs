@@ -157,10 +157,13 @@ impl FdExt for Fd {
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
                         // SAFETY: synchronous libuv fs call (cb = None); req lives on the
-                        // stack for the duration. fs_t::Drop calls uv_fs_req_cleanup.
+                        // stack for the duration of the call.
                         let rc = unsafe {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
+                        // Zig: `defer req.deinit();` — fs_t has no Drop impl, so cleanup
+                        // must be explicit (uv_fs_req_cleanup).
+                        req.deinit();
                         if let Some(errno) = rc.errno() {
                             Some(sys::Error {
                                 errno,

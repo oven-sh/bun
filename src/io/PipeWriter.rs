@@ -1136,14 +1136,30 @@ pub trait BaseWindowsPipeWriter {
             false
         };
         match source {
-            Source::SyncFile(mut file) | Source::File(mut file) => {
-                // Use state machine to handle close after operation completes
-                if self.owns_fd() {
-                    file.detach();
-                } else {
-                    // Don't own fd, just stop operations and detach parent
-                    file.stop();
-                    file.fs.data = core::ptr::null_mut();
+            Source::SyncFile(file) | Source::File(file) => {
+                // Hand the Box off to libuv; the embedded uv_fs_t may still have
+                // an in-flight write (on_fs_write_complete) or will receive an
+                // async uv_fs_close callback (File::on_close_complete). Dropping
+                // the Box here would free that memory before the callback fires.
+                // Zig stores a raw `*File` so `this.source = null` is non-owning;
+                // mirror that by leaking via into_raw. on_close_detached path
+                // reclaims via heap::take in File::on_close_complete.
+                let raw = bun_core::heap::into_raw(file);
+                // SAFETY: raw is heap-allocated by Source::open_file; libuv holds
+                // the only remaining reference via the fs_t it points into.
+                unsafe {
+                    if self.owns_fd() {
+                        // Use state machine to handle close after operation completes.
+                        // detach() schedules start_close() (now or after the pending
+                        // op completes); on_close_complete heap::take()s `raw`.
+                        (*raw).detach();
+                    } else {
+                        // Don't own fd, just stop operations and detach parent.
+                        // Matches Zig: the File outlives any pending cancel callback
+                        // (on_fs_write_complete sees parent_ptr null and returns).
+                        (*raw).stop();
+                        (*raw).fs.data = core::ptr::null_mut();
+                    }
                 }
             }
             Source::Pipe(pipe) => {

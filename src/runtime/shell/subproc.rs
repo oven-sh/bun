@@ -639,6 +639,20 @@ impl ShellSubprocess {
             spawn_args.env_array.as_ptr(),
         ) {
             Err(err) => {
+                // Zig: `spawn_options.deinit()`. WindowsSpawnOptions has no Drop
+                // (its Stdio::Buffer/Ipc carry FFI-owned `*mut uv::Pipe` already
+                // `uv_pipe_init`ed by spawn_process_windows before uv_spawn fails),
+                // so an implicit `drop(spawn_options)` is a no-op and leaks the
+                // pipe handles open in the uv loop. POSIX deinit is a no-op.
+                #[cfg(windows)]
+                {
+                    spawn_options.stdin.deinit();
+                    spawn_options.stdout.deinit();
+                    spawn_options.stderr.deinit();
+                    for extra in spawn_options.extra_fds.iter_mut() {
+                        extra.deinit();
+                    }
+                }
                 drop(spawn_options);
                 let mut msg = Vec::<u8>::new();
                 use std::io::Write;
@@ -647,6 +661,15 @@ impl ShellSubprocess {
             }
             Ok(r) => match r {
                 bun_sys::Result::Err(err) => {
+                    #[cfg(windows)]
+                    {
+                        spawn_options.stdin.deinit();
+                        spawn_options.stdout.deinit();
+                        spawn_options.stderr.deinit();
+                        for extra in spawn_options.extra_fds.iter_mut() {
+                            extra.deinit();
+                        }
+                    }
                     drop(spawn_options);
                     return Err(ShellErr::Sys(err.to_shell_system_error()));
                 }

@@ -2848,6 +2848,10 @@ mod windows_impl {
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
         let rc = unsafe { uv::uv_fs_futime(core::ptr::null_mut(), &mut req, fd.uv(), a, m, None) };
+        // Zig: `defer req.deinit()` — fs_t has no Drop impl; uv_fs_req_cleanup
+        // must run before any return (fd-based, so no path buffer is captured,
+        // but keep the pattern uniform with utimens/lutimens below).
+        req.deinit();
         if let Some(err) = Error::from_uv_rc(rc, Tag::futimens) { return Err(err.with_fd(fd)); }
         Ok(())
     }
@@ -2856,6 +2860,11 @@ mod windows_impl {
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
         let rc = unsafe { uv::uv_fs_utime(core::ptr::null_mut(), &mut req, path.as_ptr().cast::<_>(), a, m, None) };
+        // Zig: `defer req.deinit()` — uv_fs_utime runs fs__capture_path which
+        // uv__malloc's the WTF-16 path into the req even for sync (cb=NULL)
+        // calls; only uv_fs_req_cleanup frees it. fs_t has no Drop impl, so
+        // call it explicitly before any return.
+        req.deinit();
         if let Some(err) = Error::from_uv_rc(rc, Tag::utime) { return Err(err.with_path(path.as_bytes())); }
         Ok(())
     }
@@ -2864,6 +2873,8 @@ mod windows_impl {
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
         let rc = unsafe { uv::uv_fs_lutime(core::ptr::null_mut(), &mut req, path.as_ptr().cast::<_>(), a, m, None) };
+        // Zig: `defer req.deinit()` — same fs__capture_path leak as utimens.
+        req.deinit();
         if let Some(err) = Error::from_uv_rc(rc, Tag::lutime) { return Err(err.with_path(path.as_bytes())); }
         Ok(())
     }

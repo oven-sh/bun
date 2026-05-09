@@ -493,11 +493,16 @@ impl UDPSocket {
             // and we hold the only mutable reference.
             let this = unsafe { &mut *ptr };
             this.closed = true;
+            // Hoist before `(*socket).close()`: that call SYNCHRONOUSLY re-enters
+            // `on_close` (udp.c `s->on_close(s)`), which re-derives `&mut UDPSocket`
+            // from the uws user pointer and — under Stacked Borrows — invalidates
+            // this outer `&mut`. `downgrade()` is idempotent (on_close repeats it),
+            // so ordering is unobservable. `this` MUST NOT be touched after close().
+            this.this_value.downgrade();
             if let Some(socket) = this.socket.take() {
                 // SAFETY: socket created by uws::udp::Socket::create; valid until close().
                 unsafe { (*socket).close() };
             }
-            this.this_value.downgrade();
         });
 
         // PORT NOTE: `JsClass::to_js(self)` boxes by value, but we already own
@@ -1369,9 +1374,15 @@ impl UDPSocket {
             let Some(socket) = this.socket.take() else {
                 return Ok(JSValue::UNDEFINED);
             };
+            // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
+            // `s->on_close(s)`), which re-derives `&mut UDPSocket` from the uws
+            // user pointer. Under Stacked Borrows that sibling re-derive
+            // invalidates this outer `&mut Self`, so any use of `this` after the
+            // call is UB. Hoist the (idempotent) downgrade — `on_close` repeats
+            // it — and never touch `this` past this point. Spec: udp_socket.zig:915-920.
+            this.this_value.downgrade();
             // SAFETY: socket created by uws::udp::Socket::create; valid until close().
             unsafe { (*socket).close() };
-            this.this_value.downgrade();
         }
 
         Ok(JSValue::UNDEFINED)

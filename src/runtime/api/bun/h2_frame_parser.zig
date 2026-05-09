@@ -1273,17 +1273,24 @@ pub const H2FrameParser = struct {
         this.usedWindowSize +|= payloadSize;
         log("adjustWindowSize {} {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer, payloadSize });
         if (this.usedWindowSize > this.windowSize) {
-            // we are receiving more data than we are allowed to
-            this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+            // we are receiving more data than we are allowed to.
+            // sendGoAway dispatches onError/onEnd to JS; if the JS handler
+            // destroys the session (which is typical), every stream — including
+            // the one passed in here — is removed via emitErrorToAllStreams →
+            // removeAllClosedStreams. Roll back usedWindowSize *before*
+            // dispatch and bail afterwards so we never touch `stream` again.
             this.usedWindowSize -= payloadSize;
+            this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+            return;
         }
 
         if (stream) |s| {
             s.usedWindowSize += payloadSize;
             if (s.usedWindowSize > s.windowSize) {
-                // we are receiving more data than we are allowed to
-                this.sendGoAway(s.id, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                // Same UAF concern as above: roll back first, then dispatch.
+                const stream_id = s.id;
                 s.usedWindowSize -= payloadSize;
+                this.sendGoAway(stream_id, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
             }
         }
     }
@@ -2122,8 +2129,13 @@ pub const H2FrameParser = struct {
 
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
         var payload = data[0..end];
-        // window size considering the full frame.length received so far
+        // window size considering the full frame.length received so far.
+        // On a flow-control violation adjustWindowSize sends GOAWAY and the
+        // JS onError handler may synchronously destroy the session, removing
+        // every stream. Re-resolve afterwards and bail if the stream is gone.
+        const stream_id = stream.id;
         this.adjustWindowSize(stream, @truncate(payload.len));
+        stream = this.streams.get(stream_id) orelse return data.len;
         const previous_remaining_length: isize = this.remainingLength;
 
         this.remainingLength -= @intCast(end);
@@ -2197,10 +2209,13 @@ pub const H2FrameParser = struct {
         }
         if (this.remainingLength == 0) {
             this.currentFrame = null;
-            stream.padding = null;
+            // `dispatchWithExtra(.onStreamData, ...)` above may have re-entered
+            // JS and freed this stream (user destroy/abort inside an on("data")
+            // listener). Re-resolve before any further *Stream access.
             if (emitted) {
                 stream = this.streams.get(frame.streamIdentifier) orelse return end;
             }
+            stream.padding = null;
             if (frame.flags & @intFromEnum(DataFrameFlags.END_STREAM) != 0) {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();

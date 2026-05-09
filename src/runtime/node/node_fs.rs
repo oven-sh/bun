@@ -6252,13 +6252,13 @@ impl NodeFS {
                 args::SymlinkLinkType::Dir => ResolvedLinkType::Dir,
                 args::SymlinkLinkType::Junction => ResolvedLinkType::Junction,
                 args::SymlinkLinkType::Unspecified => 'auto_detect: {
-                    let cwd = match sys::getcwd(&mut to_buf) {
+                    let cwd_len = match sys::getcwd(&mut to_buf[..]) {
                         Ok(c) => c,
                         Err(_) => panic!("failed to resolve current working directory"),
                     };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
                     let src_len = paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
-                        cwd,
+                        &to_buf[..cwd_len],
                         &mut self.sync_error_buf[..],
                         &[dir, target_path],
                     ).len();

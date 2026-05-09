@@ -395,17 +395,19 @@ pub const Source = struct {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
                 }
 
-                var enable_color: ?bool = null;
                 if (isForceColor()) {
-                    enable_color = true;
+                    enable_ansi_colors_stdout = true;
+                    enable_ansi_colors_stderr = true;
                 } else if (isNoColor()) {
-                    enable_color = false;
-                } else if (isColorTerminal() and (is_stdout_tty or is_stderr_tty)) {
-                    enable_color = true;
+                    enable_ansi_colors_stdout = false;
+                    enable_ansi_colors_stderr = false;
+                } else {
+                    // Each stream gets color only when it is a tty itself.
+                    // The old code used a single flag for both, so a tty on
+                    // stderr would also enable colors on a piped stdout.
+                    enable_ansi_colors_stdout = is_stdout_tty;
+                    enable_ansi_colors_stderr = is_stderr_tty;
                 }
-
-                enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
-                enable_ansi_colors_stderr = enable_color orelse is_stderr_tty;
             }
 
             stdout_stream = stdout;

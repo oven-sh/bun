@@ -343,7 +343,13 @@ fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32;
 }
 
 // TODO(port): move to sourcemap_jsc_sys (or bun_jsc_sys)
-unsafe extern "C" {
+//
+// Codegen-emitted helpers (`SourceMap__create`, `*SetCachedValue`) are defined
+// in ZigGeneratedClasses.cpp with `extern JSC_CALLCONV` (= `"C" SYSV_ABI` on
+// Windows-x64), so they must be imported via `jsc_abi_extern!` to get the
+// matching `extern "sysv64"` cfg-arm — plain `extern "C"` here would call them
+// with the win64 ABI and corrupt arguments.
+bun_jsc::jsc_abi_extern! {
     // Codegen-emitted constructor thunk (`js.toJS` → `SourceMap__create` in
     // ZigGeneratedClasses.zig); ownership of `ctx` transfers to the C++ JSCell.
     // `ctx` is type-erased to `*mut ()` (C++ stores it as `void* m_ctx`) to keep
@@ -362,7 +368,12 @@ unsafe extern "C" {
         globalObject: *mut JSGlobalObject,
         value: JSValue,
     );
+}
 
+// These two are hand-written in `src/jsc/modules/NodeModuleModule.cpp` as
+// plain `extern "C"` (no `JSC_CALLCONV`/`SYSV_ABI`), so they use the platform
+// default — keep them in a separate `extern "C"` block.
+unsafe extern "C" {
     fn Bun__createNodeModuleSourceMapOriginObject(
         globalObject: *mut JSGlobalObject,
         name: JSValue,

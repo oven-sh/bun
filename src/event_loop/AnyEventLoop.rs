@@ -19,72 +19,41 @@ use crate::MiniEventLoop::{EventLoopKind, MiniEventLoop};
 ///
 /// `owner` is always an erased `*mut jsc::EventLoop`; the `bun_jsc` side casts
 /// it back.
+unsafe extern "Rust" {
+    /// `jsc::VirtualMachine::get().event_loop()` — erased `*mut jsc::EventLoop`
+    /// for the current thread. Kept as a bare extern (no owner).
+    pub(crate) fn __bun_js_event_loop_current() -> *mut ();
+}
+
+// Thin compat shim over `crate::JsEventLoop` so existing `js::method(owner)`
+// call sites (and downstream crates that spell `bun_event_loop::any_event_loop
+// ::js::*`) keep working. SAFETY on each: `o` must be a live erased
+// `*mut jsc::EventLoop` (the value stored in the `Js` variant).
 pub mod js {
     use super::*;
+    use crate::{JsEventLoop, JsEventLoopKind};
 
-    unsafe extern "Rust" {
-        // ── AnyEventLoop slots ─────────────────────────────────────────────
-        fn __bun_js_event_loop_iteration_number(owner: *mut ()) -> u64;
-        fn __bun_js_event_loop_file_polls(owner: *mut ()) -> *mut bun_io::file_poll::Store;
-        fn __bun_js_event_loop_put_file_poll(
-            owner: *mut (),
-            poll: *mut FilePoll,
-            was_ever_registered: bool,
-        );
-        fn __bun_js_event_loop_uws_loop(owner: *mut ()) -> *mut UwsLoop;
-        fn __bun_js_event_loop_pipe_read_buffer(owner: *mut ()) -> *mut [u8];
-        fn __bun_js_event_loop_tick(owner: *mut ());
-        fn __bun_js_event_loop_auto_tick(owner: *mut ());
-        fn __bun_js_event_loop_auto_tick_active(owner: *mut ());
-        // ── EventLoopHandle slots ──────────────────────────────────────────
-        /// `el.global` — erased `*mut jsc::JSGlobalObject` or null.
-        fn __bun_js_event_loop_global_object(owner: *mut ()) -> *mut ();
-        /// `el.virtual_machine` — erased `*mut jsc::VirtualMachine`.
-        fn __bun_js_event_loop_bun_vm(owner: *mut ()) -> *mut ();
-        /// `el.virtual_machine.rareData().stdout()` — erased `*mut webcore::blob::Store`.
-        fn __bun_js_event_loop_stdout(owner: *mut ()) -> *mut ();
-        /// `el.virtual_machine.rareData().stderr()` — erased `*mut webcore::blob::Store`.
-        fn __bun_js_event_loop_stderr(owner: *mut ()) -> *mut ();
-        fn __bun_js_event_loop_enter(owner: *mut ());
-        fn __bun_js_event_loop_exit(owner: *mut ());
-        /// `el.enqueueTask(jsc.Task)` — same-thread task enqueue (no wakeup).
-        fn __bun_js_event_loop_enqueue_task(owner: *mut (), task: crate::Task);
-        fn __bun_js_event_loop_enqueue_task_concurrent(owner: *mut (), task: *mut ConcurrentTask);
-        /// `el.virtual_machine.transpiler.env`.
-        fn __bun_js_event_loop_env(owner: *mut ()) -> *mut DotEnvLoader<'static>;
-        /// `el.virtual_machine.transpiler.fs.top_level_dir` — borrowed for VM lifetime.
-        fn __bun_js_event_loop_top_level_dir(owner: *mut ()) -> *const [u8];
-        /// `el.virtual_machine.transpiler.env.map.createNullDelimitedEnvMap(alloc)`.
-        fn __bun_js_event_loop_create_null_delimited_env_map(
-            owner: *mut (),
-        ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;
-        /// `jsc::VirtualMachine::get().event_loop()` — erased `*mut jsc::EventLoop`
-        /// for the current thread.
-        fn __bun_js_event_loop_current() -> *mut ();
-    }
+    #[inline] unsafe fn h(o: *mut ()) -> JsEventLoop { unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, o) } }
 
-    // Thin wrappers so callers outside this module (bundler, etc.) don't spell
-    // the mangled extern names. SAFETY on each: `o` must be a live erased
-    // `*mut jsc::EventLoop` (the value stored in the `Js` variant).
-    #[inline] pub unsafe fn iteration_number(o: *mut ()) -> u64 { unsafe { __bun_js_event_loop_iteration_number(o) } }
-    #[inline] pub unsafe fn file_polls(o: *mut ()) -> *mut bun_io::file_poll::Store { unsafe { __bun_js_event_loop_file_polls(o) } }
-    #[inline] pub unsafe fn put_file_poll(o: *mut (), p: *mut FilePoll, w: bool) { unsafe { __bun_js_event_loop_put_file_poll(o, p, w) } }
-    #[inline] pub unsafe fn uws_loop(o: *mut ()) -> *mut UwsLoop { unsafe { __bun_js_event_loop_uws_loop(o) } }
-    #[inline] pub unsafe fn pipe_read_buffer(o: *mut ()) -> *mut [u8] { unsafe { __bun_js_event_loop_pipe_read_buffer(o) } }
-    #[inline] pub unsafe fn tick(o: *mut ()) { unsafe { __bun_js_event_loop_tick(o) } }
-    #[inline] pub unsafe fn auto_tick(o: *mut ()) { unsafe { __bun_js_event_loop_auto_tick(o) } }
-    #[inline] pub unsafe fn auto_tick_active(o: *mut ()) { unsafe { __bun_js_event_loop_auto_tick_active(o) } }
-    #[inline] pub unsafe fn global_object(o: *mut ()) -> *mut () { unsafe { __bun_js_event_loop_global_object(o) } }
-    #[inline] pub unsafe fn bun_vm(o: *mut ()) -> *mut () { unsafe { __bun_js_event_loop_bun_vm(o) } }
-    #[inline] pub unsafe fn stdout(o: *mut ()) -> *mut () { unsafe { __bun_js_event_loop_stdout(o) } }
-    #[inline] pub unsafe fn stderr(o: *mut ()) -> *mut () { unsafe { __bun_js_event_loop_stderr(o) } }
-    #[inline] pub unsafe fn enter(o: *mut ()) { unsafe { __bun_js_event_loop_enter(o) } }
-    #[inline] pub unsafe fn exit(o: *mut ()) { unsafe { __bun_js_event_loop_exit(o) } }
-    #[inline] pub unsafe fn enqueue_task(o: *mut (), t: crate::Task) { unsafe { __bun_js_event_loop_enqueue_task(o, t) } }
-    #[inline] pub unsafe fn enqueue_task_concurrent(o: *mut (), t: *mut ConcurrentTask) { unsafe { __bun_js_event_loop_enqueue_task_concurrent(o, t) } }
-    #[inline] pub unsafe fn env(o: *mut ()) -> *mut DotEnvLoader<'static> { unsafe { __bun_js_event_loop_env(o) } }
-    #[inline] pub unsafe fn top_level_dir(o: *mut ()) -> *const [u8] { unsafe { __bun_js_event_loop_top_level_dir(o) } }
-    #[inline] pub unsafe fn create_null_delimited_env_map(o: *mut ()) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> { unsafe { __bun_js_event_loop_create_null_delimited_env_map(o) } }
+    #[inline] pub unsafe fn iteration_number(o: *mut ()) -> u64 { unsafe { h(o) }.iteration_number() }
+    #[inline] pub unsafe fn file_polls(o: *mut ()) -> *mut bun_io::file_poll::Store { unsafe { h(o) }.file_polls() }
+    #[inline] pub unsafe fn put_file_poll(o: *mut (), p: *mut FilePoll, w: bool) { unsafe { h(o) }.put_file_poll(p, w) }
+    #[inline] pub unsafe fn uws_loop(o: *mut ()) -> *mut UwsLoop { unsafe { h(o) }.uws_loop() }
+    #[inline] pub unsafe fn pipe_read_buffer(o: *mut ()) -> *mut [u8] { unsafe { h(o) }.pipe_read_buffer() }
+    #[inline] pub unsafe fn tick(o: *mut ()) { unsafe { h(o) }.tick() }
+    #[inline] pub unsafe fn auto_tick(o: *mut ()) { unsafe { h(o) }.auto_tick() }
+    #[inline] pub unsafe fn auto_tick_active(o: *mut ()) { unsafe { h(o) }.auto_tick_active() }
+    #[inline] pub unsafe fn global_object(o: *mut ()) -> *mut () { unsafe { h(o) }.global_object() }
+    #[inline] pub unsafe fn bun_vm(o: *mut ()) -> *mut () { unsafe { h(o) }.bun_vm() }
+    #[inline] pub unsafe fn stdout(o: *mut ()) -> *mut () { unsafe { h(o) }.stdout() }
+    #[inline] pub unsafe fn stderr(o: *mut ()) -> *mut () { unsafe { h(o) }.stderr() }
+    #[inline] pub unsafe fn enter(o: *mut ()) { unsafe { h(o) }.enter() }
+    #[inline] pub unsafe fn exit(o: *mut ()) { unsafe { h(o) }.exit() }
+    #[inline] pub unsafe fn enqueue_task(o: *mut (), t: crate::Task) { unsafe { h(o) }.enqueue_task(t) }
+    #[inline] pub unsafe fn enqueue_task_concurrent(o: *mut (), t: *mut ConcurrentTask) { unsafe { h(o) }.enqueue_task_concurrent(t) }
+    #[inline] pub unsafe fn env(o: *mut ()) -> *mut DotEnvLoader<'static> { unsafe { h(o) }.env() }
+    #[inline] pub unsafe fn top_level_dir(o: *mut ()) -> *const [u8] { unsafe { h(o) }.top_level_dir() }
+    #[inline] pub unsafe fn create_null_delimited_env_map(o: *mut ()) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> { unsafe { h(o) }.create_null_delimited_env_map() }
     #[inline] pub unsafe fn current() -> *mut () { unsafe { __bun_js_event_loop_current() } }
 }
 

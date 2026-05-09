@@ -590,66 +590,7 @@ impl<'a> Drop for MiniEventLoop<'a> {
     }
 }
 
-// ───────────────────────────── JsVM / MiniVM ─────────────────────────────
-
-/// Manual vtable for the JS-VM arm of `AbstractVM` (cold dispatch — see
-/// PORTING.md §Dispatch). `bun_runtime` provides the static instance.
-// PERF(port): was inline switch
-pub struct JsVmVTable {
-    /// Returns erased `*mut jsc::EventLoop`.
-    pub event_loop: unsafe fn(*mut ()) -> *mut (),
-    pub file_polls: unsafe fn(*mut ()) -> *mut FilePollStore,
-    pub platform_event_loop: unsafe fn(*mut ()) -> *mut PlatformEventLoop,
-    pub inc_pending_unref: unsafe fn(*mut ()),
-}
-
-pub struct JsVM {
-    // SAFETY: erased `*mut jsc::VirtualMachine`.
-    pub vm: *mut (),
-    pub vtable: &'static JsVmVTable,
-}
-
-impl JsVM {
-    #[inline]
-    pub fn init(vm: *mut (), vtable: &'static JsVmVTable) -> JsVM {
-        JsVM { vm, vtable }
-    }
-
-    /// Returns erased `*mut jsc::EventLoop` — tier-6 callers cast back.
-    #[inline]
-    pub fn loop_(&self) -> *mut () {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.event_loop)(self.vm) }
-    }
-
-    #[inline]
-    pub fn alloc_file_poll(&self) -> *mut FilePoll {
-        // SAFETY: vtable contract — returns a valid &mut FilePollStore owned by the VM.
-        unsafe { (*(self.vtable.file_polls)(self.vm)).get() }
-    }
-
-    #[inline]
-    pub fn platform_event_loop(&self) -> *mut PlatformEventLoop {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.platform_event_loop)(self.vm) }
-    }
-
-    #[inline]
-    pub fn increment_pending_unref_counter(&self) {
-        // Zig: `this.vm.pending_unref_counter +|= 1;`
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.inc_pending_unref)(self.vm) };
-    }
-
-    /// SAFETY: `JsVM` holds a raw `*mut ()`; two calls would otherwise produce
-    /// aliased `&mut FilePollStore` (UB). Caller must not hold another live
-    /// `&mut` to the store across this borrow.
-    #[inline]
-    pub unsafe fn file_polls(&self) -> &mut FilePollStore {
-        // SAFETY: vtable contract.
-        unsafe { &mut *(self.vtable.file_polls)(self.vm) }
-    }
-}
+// ───────────────────────────── MiniVM ─────────────────────────────
 
 pub struct MiniVM<'a> {
     // PORT NOTE: LIFETIMES.tsv classifies this BORROW_PARAM `&'a`, but `file_polls()` /

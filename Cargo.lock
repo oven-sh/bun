@@ -727,6 +727,7 @@ dependencies = [
  "bstr",
  "bun_collections",
  "bun_core",
+ "bun_dispatch",
  "bun_dotenv",
  "bun_io",
  "bun_paths",

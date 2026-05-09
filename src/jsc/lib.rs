@@ -1477,7 +1477,7 @@ pub use self::event_loop::{
     ConcurrentPromiseTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle,
     EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsTerminated,
     JsTerminatedResult,
-    JsVM, ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
+    ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask, Task, WorkPool,
     WorkPoolTask, WorkTask, WorkTaskContext,
 };
 #[cfg(unix)]

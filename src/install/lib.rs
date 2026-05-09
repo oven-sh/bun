@@ -943,11 +943,10 @@ impl RunCommand {
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = store_root_fd;
 
-        // SAFETY: `Transpiler::init` always sets `env` (caller-provided or
-        // singleton); never null. Re-derive per-use rather than holding a
-        // long-lived `&mut` (matches Zig's per-statement `this_transpiler.env`
-        // deref and avoids Stacked-Borrows overlap with `run_env_loader`).
-        let env_loader = unsafe { &mut *this_transpiler.env };
+        // Re-derive per-use rather than holding a long-lived `&mut` (matches
+        // Zig's per-statement `this_transpiler.env` deref and avoids
+        // Stacked-Borrows overlap with `run_env_loader`).
+        let env_loader = this_transpiler.env_mut();
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
         // Bun process the script spawns enables its own watchdog. The env

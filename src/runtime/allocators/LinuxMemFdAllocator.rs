@@ -236,11 +236,8 @@ impl LinuxMemFdAllocator {
                     Ok(()) => {
                         let written = cursor.position() as usize;
                         label_buf[written] = 0;
-                        // SAFETY: we wrote `written` ASCII bytes (no interior NUL) and a NUL
-                        // at `label_buf[written]`.
-                        unsafe {
-                            core::ffi::CStr::from_bytes_with_nul_unchecked(&label_buf[..=written])
-                        }
+                        // `written` ASCII bytes (no interior NUL) + NUL at `label_buf[written]`.
+                        bun_core::ZStr::from_buf(&label_buf, written).as_cstr()
                     }
                     Err(_) => c"",
                 }

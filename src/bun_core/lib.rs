@@ -6,6 +6,20 @@ pub mod result;
 pub mod tty;
 pub mod util;
 pub mod Global;
+
+/// Shared state-machine tag for the streaming (de)compressors in
+/// `bun_brotli` / `bun_zlib` / `bun_zstd`. Mirrors the identical
+/// `pub const State = enum { Uninitialized, Inflating, End, Error }`
+/// nested in each Zig reader/compressor struct.
+pub mod compress {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum State {
+        Uninitialized,
+        Inflating,
+        End,
+        Error,
+    }
+}
 pub mod heap;
 
 pub mod env;
@@ -125,6 +139,20 @@ pub mod vec {
         // dropped) — sound, and acceptable for the constant/`Default`/index
         // fills this helper targets.
         unsafe { v.set_len(prev + n) };
+    }
+
+    /// Extend `v` by `n` `T::default()` elements and return a mutable slice
+    /// of the newly-appended tail (`&mut v[prev_len .. prev_len + n]`).
+    ///
+    /// Replaces the Zig-ported `reserve(n); set_len(len+n); &mut v[len..]`
+    /// pattern (S022) where the tail is immediately overwritten by a clone/
+    /// fill loop — the default-fill keeps every exposed `T` valid even if the
+    /// caller bails partway through writing.
+    #[inline]
+    pub fn grow_default<T: Default>(v: &mut Vec<T>, n: usize) -> &mut [T] {
+        let prev = v.len();
+        extend_from_fn(v, n, |_| T::default());
+        &mut v[prev..]
     }
 }
 
@@ -280,6 +308,7 @@ pub use bun_alloc::{
     is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory, range_of_slice_in_buffer, AllocError,
     Alignment, Allocator, page_size, ZigString,
 };
+pub use bun_alloc::oom_from_alloc;
 pub use util::*;
 pub use result::*;
 pub use Global::*;
@@ -487,7 +516,6 @@ pub use fmt::{js_lexer, js_printer};
 
 /// Minimal `bun.strings` subset (full SIMD impl in bun_str via highway FFI).
 pub mod strings {
-    pub use crate::fmt::strings::*; // pulls in fmt.rs's larger subset
     #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { ::bstr::ByteSlice::find(h, n).is_some() }
     #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool { includes(h, n) }
     #[inline] pub fn index_of_char(h: &[u8], c: u8) -> Option<usize> { h.iter().position(|&b| b == c) }
@@ -511,10 +539,63 @@ pub mod strings {
         out.extend_from_slice(&haystack[i..]);
         out
     }
+    /// Zig: `strings.copyLowercase` (src/string/immutable.zig). ASCII-lowercase
+    /// `in_` into `out` (which must be at least `in_.len()`), returning the
+    /// written prefix. Memcpy-runs + per-uppercase-byte fixup; identical output
+    /// to a byte-at-a-time `to_ascii_lowercase` zip.
+    pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
+        let mut in_slice = in_;
+        // PORT NOTE: reshaped for borrowck — track output offset instead of reslicing &mut.
+        let mut out_off: usize = 0;
+
+        'begin: loop {
+            for (i, &c) in in_slice.iter().enumerate() {
+                if let b'A'..=b'Z' = c {
+                    out[out_off..out_off + i].copy_from_slice(&in_slice[0..i]);
+                    out[out_off + i] = c.to_ascii_lowercase();
+                    let end = i + 1;
+                    in_slice = &in_slice[end..];
+                    out_off += end;
+                    continue 'begin;
+                }
+            }
+
+            out[out_off..out_off + in_slice.len()].copy_from_slice(in_slice);
+            break;
+        }
+
+        &out[0..in_.len()]
+    }
+    /// Zig: `strings.eqlCaseInsensitiveASCII` (src/string/immutable.zig).
+    /// Spec-faithful port: defers to libc `strncasecmp`/`_strnicmp` for the
+    /// hot path (CSS parser, HTTP header matching). When `check_len` is false
+    /// the caller guarantees `a.len() <= b.len()` and both are non-empty
+    /// (matches Zig's `bun.unsafeAssert`).
     #[inline]
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
-        if check_len && a.len() != b.len() { return false; }
-        a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
+        if check_len {
+            if a.len() != b.len() {
+                return false;
+            }
+            if a.is_empty() {
+                return true;
+            }
+        }
+
+        debug_assert!(!b.is_empty());
+        debug_assert!(!a.is_empty());
+
+        // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
+        #[cfg(not(windows))]
+        unsafe { libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 }
+        // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
+        #[cfg(windows)]
+        unsafe {
+            unsafe extern "C" {
+                fn _strnicmp(a: *const core::ffi::c_char, b: *const core::ffi::c_char, n: usize) -> core::ffi::c_int;
+            }
+            _strnicmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
+        }
     }
     /// Zig: `strings.containsCaseInsensitiveASCII` — naive O(n·m) windowed
     /// case-insensitive ASCII substring search (matches the Zig scalar impl;
@@ -1028,6 +1109,227 @@ pub mod strings {
         eql_case_insensitive_ascii(a, b, true)
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Scanners / sniffers used by fmt.rs (URL redaction, path quoting, etc.).
+    // Formerly a duplicate `mod strings` in fmt.rs; merged here so the crate
+    // has a single `bun_core::strings` and fmt.rs picks up the simdutf-backed
+    // `first_non_ascii`/`is_all_ascii` instead of scalar shims.
+    // ──────────────────────────────────────────────────────────────────────
+
+    #[inline]
+    pub fn index_of_any(s: &[u8], chars: &[u8]) -> Option<usize> {
+        s.iter().position(|b| chars.contains(b))
+    }
+
+    /// Zig: `bun.strings.isIPV6Address` — heuristic (contains ':', not parseable as v4).
+    #[inline]
+    pub fn is_ipv6_address(s: &[u8]) -> bool {
+        index_of_char(s, b':').is_some()
+    }
+
+    pub fn starts_with_uuid(s: &[u8]) -> bool {
+        // 8-4-4-4-12 hex with dashes
+        if s.len() < 36 { return false; }
+        for (i, &b) in s[..36].iter().enumerate() {
+            let ok = match i { 8 | 13 | 18 | 23 => b == b'-', _ => b.is_ascii_hexdigit() };
+            if !ok { return false; }
+        }
+        true
+    }
+    #[inline]
+    pub fn is_uuid(s: &[u8]) -> bool {
+        s.len() == 36 && starts_with_uuid(s)
+    }
+    pub fn starts_with_npm_secret(s: &[u8]) -> usize {
+        // Port of bun.strings.startsWithNpmSecret (immutable.zig): case-insensitive
+        // `npm`, then `_` or `s_`/`S_`, then 36..=48 alnum. Returns consumed length or 0.
+        if s.len() < 3 { return 0; }
+        if !(s[0] == b'n' || s[0] == b'N') { return 0; }
+        if !(s[1] == b'p' || s[1] == b'P') { return 0; }
+        if !(s[2] == b'm' || s[2] == b'M') { return 0; }
+        let mut i = 3usize;
+        if i < s.len() && (s[i] == b's' || s[i] == b'S') { i += 1; }
+        if i >= s.len() || s[i] != b'_' { return 0; }
+        i += 1;
+        let prefix_len = i;
+        while i < s.len() && (i - prefix_len) < 48 && s[i].is_ascii_alphanumeric() {
+            i += 1;
+        }
+        if i - prefix_len < 36 { return 0; }
+        i
+    }
+    fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize, usize)> {
+        if text.len() < item.len() || &text[..item.len()] != item {
+            return None;
+        }
+
+        let mut whitespace = false;
+        let mut offset = item.len();
+        while offset < text.len() && text[offset].is_ascii_whitespace() {
+            offset += 1;
+            whitespace = true;
+        }
+        if offset == text.len() {
+            return None;
+        }
+        let cont = crate::js_lexer::is_identifier_continue(text[offset] as i32);
+
+        // must be another identifier
+        if !whitespace && cont {
+            return None;
+        }
+
+        // `null` is not returned after this point. Redact to the next
+        // newline if anything is unexpected
+        if cont {
+            let rest = &text[offset..];
+            return Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())));
+        }
+        offset += 1;
+
+        let mut end = offset;
+        while end < text.len() && text[end].is_ascii_whitespace() {
+            end += 1;
+        }
+
+        if end == text.len() {
+            return Some((offset, text.len() - offset));
+        }
+
+        match text[end] {
+            q @ (b'\'' | b'"' | b'`') => {
+                // attempt to find closing
+                let opening = end;
+                end += 1;
+                while end < text.len() {
+                    match text[end] {
+                        b'\\' => {
+                            // skip
+                            end += 1;
+                            end += 1;
+                        }
+                        c if c == q => {
+                            // closing
+                            return Some((opening + 1, (end - 1) - opening));
+                        }
+                        _ => end += 1,
+                    }
+                }
+
+                let rest = &text[offset..];
+                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
+            }
+            _ => {
+                let rest = &text[offset..];
+                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
+            }
+        }
+    }
+
+    /// Returns offset and length of first secret found.
+    pub fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
+        if let Some(r) = starts_with_redacted_item(str, b"_auth") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"_authToken") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"email") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"_password") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"token") {
+            return Some(r);
+        }
+
+        if starts_with_uuid(str) {
+            return Some((0, 36));
+        }
+
+        let npm_secret_len = starts_with_npm_secret(str);
+        if npm_secret_len > 0 {
+            return Some((0, npm_secret_len));
+        }
+
+        if let Some(r) = find_url_password(str) {
+            return Some(r);
+        }
+
+        None
+    }
+
+    /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
+    /// `(offset, len)` of the password segment, or None.
+    /// Zig only matches http:// and https:// schemes and rejects empty pw.
+    pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
+        // Zig uses case-sensitive `hasPrefixComptime` and truncates the search
+        // region at the first '\n' before scanning for '@'/':'.
+        let scheme_end = if s.starts_with(b"http://") {
+            7
+        } else if s.starts_with(b"https://") {
+            8
+        } else {
+            return None;
+        };
+        let mut rest = &s[scheme_end..];
+        if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
+            rest = &rest[..nl];
+        }
+        let at = rest.iter().position(|&b| b == b'@')?;
+        let userinfo = &rest[..at];
+        let colon = userinfo.iter().position(|&b| b == b':')?;
+        // Reject empty password (`user:@host`).
+        if colon == at - 1 {
+            return None;
+        }
+        Some((scheme_end + colon + 1, at - colon - 1))
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Encoding { Ascii, Latin1, Utf8, Utf16 }
+
+    /// Port of `bun.strings.wtf8ByteSequenceLength`.
+    #[inline]
+    pub const fn wtf8_byte_sequence_length(b: u8) -> u8 {
+        if b < 0x80 { 1 }
+        else if b & 0xE0 == 0xC0 { 2 }
+        else if b & 0xF0 == 0xE0 { 3 }
+        else if b & 0xF8 == 0xF0 { 4 }
+        else { 1 } // invalid lead → treat as 1 (replacement)
+    }
+
+    /// Zig: aliases `indexOfNewlineOrNonASCII`, which matches any control byte
+    /// or non-ASCII (`< 0x20 || > 0x7F`). Scalar fallback; highway override
+    /// via bun_string when linked.
+    pub fn index_of_newline_or_non_ascii_or_ansi(s: &[u8]) -> Option<usize> {
+        s.iter().position(|&b| b < 0x20 || b > 0x7F)
+    }
+
+    /// Zig delegates to highway: `b < 0x20 || b > 127 || b == '"'`
+    /// (highway_strings.cpp:438). Do NOT match `'` or `` ` ``.
+    pub fn contains_newline_or_non_ascii_or_quote(s: &[u8]) -> bool {
+        s.iter().any(|&b| b < 0x20 || b > 0x7F || b == b'"')
+    }
+
+    // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
+    #[derive(Default, Clone, Copy)]
+    pub struct CodepointIteratorCursor { pub i: usize, pub c: i32, pub width: u8 }
+    pub struct CodepointIterator<'a> { bytes: &'a [u8] }
+    impl<'a> CodepointIterator<'a> {
+        #[inline] pub fn init(bytes: &'a [u8]) -> Self { Self { bytes } }
+        pub fn next(&self, cursor: &mut CodepointIteratorCursor) -> bool {
+            let i = cursor.i + cursor.width as usize;
+            if i >= self.bytes.len() { return false; }
+            let b = self.bytes[i];
+            // TODO(port): full UTF-8 decode — bun_str owns the table-driven impl.
+            let (cp, w) = if b < 0x80 { (b as i32, 1u8) } else { (b as i32, 1u8) };
+            cursor.i = i; cursor.c = cp; cursor.width = w;
+            true
+        }
+    }
+
     /// Port of `convertUTF8ToUTF16InBuffer`. Writes WTF-16 into `out`; returns
     /// the slice written. Caller must size `out` ≥ utf8.len() (worst case 1:1).
     /// `strings.convertUTF16ToUTF8InBuffer` — write WTF-8 into `out`, return
@@ -1167,18 +1469,8 @@ pub fn linux_kernel_version() -> Version {
             patch: packed & 0x3ff,
         };
     }
-    // SAFETY: utsname is plain C struct of NUL-terminated char arrays; uname(2)
-    // fills it on success. Zero-init so a failed call leaves release == "".
-    let mut uts: libc::utsname = crate::ffi::zeroed();
-    // SAFETY: `uts` is valid for writes for sizeof(utsname); uname(2) always
-    // succeeds on Linux per POSIX (may set EFAULT on bad ptr only).
-    let _ = unsafe { libc::uname(&mut uts) };
-    let release = {
-        let raw = &uts.release;
-        let len = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
-        // SAFETY: c_char[] reinterpret as u8[] — same layout, len bounded above.
-        unsafe { core::slice::from_raw_parts(raw.as_ptr().cast::<u8>(), len) }
-    };
+    let uts = crate::ffi::uname();
+    let release = crate::ffi::c_field_bytes(&uts.release);
     // Parse leading "MAJOR.MINOR.PATCH"; stop at first non-digit per component.
     let mut nums = [0u32; 3];
     let mut idx = 0usize;
@@ -1258,6 +1550,30 @@ pub mod ffi {
     pub unsafe fn cstr_bytes<'a>(p: *const core::ffi::c_char) -> &'a [u8] {
         // SAFETY: forwarded to `cstr`.
         unsafe { cstr(p) }.to_bytes()
+    }
+
+    /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return
+    /// it by value. On the (theoretical) error path the struct stays all-zero,
+    /// so every `c_char[]` field reads as an empty NUL-terminated string.
+    #[cfg(unix)]
+    #[inline]
+    pub fn uname() -> libc::utsname {
+        let mut u: libc::utsname = zeroed();
+        // SAFETY: `u` is a valid, exclusive pointer to a fully-initialised
+        // `utsname`; uname(2) only writes within `sizeof(utsname)`.
+        let _ = unsafe { libc::uname(&mut u) };
+        u
+    }
+
+    /// Borrow a fixed-size `[c_char; N]` C-struct field as `&[u8]`, truncated at
+    /// the first NUL (or full length if none). This is the `&[c_char]` analogue
+    /// of [`cstr_bytes`] for inline arrays like `utsname::release`.
+    #[inline]
+    pub fn c_field_bytes(s: &[core::ffi::c_char]) -> &[u8] {
+        // SAFETY: `c_char` is `i8`/`u8`; both are byte-sized and every bit
+        // pattern is a valid `u8`. Same length, same provenance.
+        let b = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) };
+        &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
     }
 
     /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
@@ -1370,6 +1686,53 @@ pub mod ffi {
     unsafe impl Zeroable for libc::kevent64_s {}
     #[cfg(target_os = "freebsd")]
     unsafe impl Zeroable for libc::_umtx_time {}
+
+    // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are
+    // zero-init before the kernel fills them. All fields are integers / raw
+    // pointers / nested POD; audited against the Win32 SDK headers (S016).
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::IO_STATUS_BLOCK {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::UNICODE_STRING {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::WSADATA {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in6 {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::addrinfo {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::IO_COUNTERS {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_BASIC_LIMIT_INFORMATION {}
+    #[cfg(windows)] unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
+
+    /// Conjure a value of a zero-sized type without `unsafe` at the call site.
+    ///
+    /// This is the monomorphised-ZST-handler trick: a fn item or capture-less
+    /// closure has `size_of == 0`, so the empty bit-pattern is its only
+    /// (trivially valid) value. The size constraint is a `const { assert! }`,
+    /// so passing a non-ZST `H` is a *compile* error at the monomorphisation
+    /// site rather than runtime UB — which is what makes this fn safe (S016).
+    ///
+    /// Replaces the `// SAFETY: H is a ZST → mem::zeroed()` comment repeated
+    /// at every callback trampoline that smuggles a generic `H: Fn*` through C
+    /// (`uws_sys::thunk`, `sql_jsc::IntoJSHostFn`, `server_body::route_thunk`).
+    #[inline(always)]
+    pub fn conjure_zst<H>() -> H {
+        const {
+            assert!(
+                core::mem::size_of::<H>() == 0,
+                "conjure_zst: H must be a ZST (fn item or capture-less closure)"
+            )
+        };
+        // SAFETY: `size_of::<H>() == 0` (compile-time asserted above), so the
+        // value occupies no bytes and `zeroed()` writes nothing. Every call
+        // site bounds `H: Fn*` (fn items / capture-less closures), and those
+        // are always inhabited — uninhabited ZSTs (`!`, `Infallible`) do not
+        // implement the `Fn` traits and so cannot reach a real instantiation.
+        unsafe { core::mem::zeroed() }
+    }
 
     /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
     /// boundary (C++ out-params, `extern "C"` callback args, `#[repr(C)]`
@@ -1691,3 +2054,24 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
 /// caller (incl. `bun_crash_handler::debug::return_address`) picks it up.
 #[inline(always)]
 pub fn return_address() -> usize { 0 }
+
+/// Ports of `std.debug.{SourceLocation,SymbolInfo}` — pure data structs shared by
+/// crash_handler's stub `debug` mod and btjs's `zig_std_debug`. Neither of those
+/// crates can depend on the other, so the canonical home is here (alongside
+/// `capture_stack_trace`/`return_address`) pending a dedicated `bun_debug` crate.
+pub mod debug {
+    /// Zig: `std.debug.SourceLocation`.
+    #[derive(Clone)]
+    pub struct SourceLocation {
+        pub file_name: Box<[u8]>,
+        pub line: u32,
+        pub column: u32,
+    }
+
+    /// Zig: `std.debug.SymbolInfo`.
+    pub struct SymbolInfo {
+        pub name: Box<[u8]>,
+        pub compile_unit_name: Box<[u8]>,
+        pub source_location: Option<SourceLocation>,
+    }
+}

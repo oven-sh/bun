@@ -63,15 +63,8 @@ impl PathWatcherManager {
     }
 
     /// unregister is always called from main thread
-    ///
-    /// PORT NOTE: takes `*mut Self` (not `&mut self`) because the trailing
-    /// `deinit()` may `heap::take(this)`. Holding a live `&mut Self` across that
-    /// free is UB under Stacked Borrows even if never dereferenced afterward;
-    /// Zig's `*T` carries no such validity invariant.
-    unsafe fn unregister_watcher(this: *mut Self, watcher: *mut PathWatcher, path: &ZStr) {
-        // SAFETY: caller guarantees `this` is a live heap-allocated pointer (see `init`).
-        let me = unsafe { &mut *this };
-        if let Some(index) = me
+    fn unregister_watcher(&mut self, watcher: *mut PathWatcher, path: &ZStr) {
+        if let Some(index) = self
             .watchers
             .values()
             .iter()
@@ -80,22 +73,20 @@ impl PathWatcherManager {
             #[cfg(debug_assertions)]
             {
                 if !path.as_bytes().is_empty() {
-                    debug_assert!(&*me.watchers.keys()[index] == path.as_bytes());
+                    debug_assert!(&*self.watchers.keys()[index] == path.as_bytes());
                 }
             }
 
             // Key is `Box<[u8]>`; swap_remove drops it (replaces `allocator.free(keys[index])`).
-            me.watchers.swap_remove_at(index);
+            self.watchers.swap_remove_at(index);
         }
 
         // Zig: `defer { if (deinit_on_last_watcher and count == 0) this.deinit(); }`.
-        // No early returns above, so this runs in the same place a defer would.
-        let should_deinit = me.deinit_on_last_watcher && me.watchers.len() == 0;
-        // End the `&mut` borrow before potentially freeing the allocation.
-        let _ = me;
-        if should_deinit {
-            // SAFETY: `this` was heap-allocated in `init`; no live borrows remain.
-            unsafe { Self::deinit(this) };
+        // No early returns above, so this runs in the same place a defer would — and avoids the
+        // overlapping `&mut self` borrow a closure-based guard would require.
+        if self.deinit_on_last_watcher && self.watchers.len() == 0 {
+            // SAFETY: self was heap-allocated in `init`; no other live borrows after this point.
+            unsafe { Self::deinit(core::ptr::from_mut(self)) };
         }
     }
 
@@ -190,48 +181,39 @@ impl PathWatcher {
         events: c_int,
         status: uv::ReturnCode,
     ) {
-        // SAFETY: libuv guarantees `event` is the handle we registered.
-        let event_ref = unsafe { &mut *event };
-        if event_ref.data.is_null() {
+        // SAFETY: libuv guarantees `event` is the handle we registered; read `.data`
+        // through the raw pointer so we don't form a `&mut uv_fs_event_t` that would
+        // alias the `&mut PathWatcher` we derive below (Stacked Borrows).
+        if unsafe { (*event).data }.is_null() {
             Output::debug_warn("uvEventCallback called with null data");
             return;
         }
         // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
-        // PORT NOTE: kept as a raw `*mut` (not `&mut *this`) for the whole function because
-        // `emit`/`maybe_deinit` may `heap::take(this)`; a `&mut` outliving that free is UB.
         let this: *mut PathWatcher = unsafe {
             bun_core::from_field_ptr!(PathWatcher, handle, event)
         };
+        // SAFETY: `this` was heap-allocated in `init` and is kept alive until uv_close fires.
+        // This is the *only* live `&mut` covering the embedded handle for the rest of this fn.
+        let this = unsafe { &mut *this };
         #[cfg(debug_assertions)]
         {
-            debug_assert!(event_ref.data == this.cast::<c_void>());
+            debug_assert!(this.handle.data == this as *mut PathWatcher as *mut c_void);
         }
 
         // SAFETY: libuv contract — `loop_` is valid while the handle is open.
-        let timestamp = unsafe { (*event_ref.loop_).time };
+        let timestamp = unsafe { (*this.handle.loop_).time };
 
         if let Some(err) = status.to_error(sys::Tag::watch) {
-            // SAFETY: `this` was heap-allocated in `init` and is kept alive until uv_close fires.
-            unsafe { (*this).emit_in_progress = true };
+            this.emit_in_progress = true;
 
-            // SAFETY: short-lived borrow of `handlers`; no callee mutates it (handlers detach via
-            // an enqueued task, not synchronously).
-            for &ctx in unsafe { (*this).handlers.keys() } {
+            for &ctx in this.handlers.keys() {
                 // Zig: `bun.sys.Error` is a value type — implicitly copied per handler.
                 on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
                 on_update_end_fn(Some(ctx));
             }
 
-            // Zig (win_watcher.zig:111-119): `defer this.emit_in_progress = false;` fires AFTER
-            // `this.maybeDeinit()`, so `maybe_deinit` always observes `emit_in_progress == true`
-            // here and is a guaranteed no-op (re-entrancy guard). Preserve that ordering exactly —
-            // the no-op invariant is what makes the trailing field write sound.
-            // SAFETY: `maybe_deinit` is a no-op (guard above), so `this` is still live for the
-            // `emit_in_progress = false` write.
-            unsafe {
-                Self::maybe_deinit(this);
-                (*this).emit_in_progress = false;
-            }
+            this.emit_in_progress = false;
+            this.maybe_deinit();
             return;
         }
 
@@ -247,48 +229,40 @@ impl PathWatcher {
             return;
         };
 
-        // SAFETY: `this` is live; `emit` may free it as its last action.
-        unsafe {
-            Self::emit(
-                this,
-                path.as_bytes(),
-                // @truncate — intentional wrap to bun_watcher::HashType
-                event_ref.hash(path.as_bytes(), events, status) as bun_watcher::HashType,
-                timestamp,
-                !event_ref.is_dir(),
-                if events & uv::UV_RENAME != 0 {
-                    EventType::Rename
-                } else {
-                    EventType::Change
-                },
-            );
-        }
+        // @truncate — intentional wrap to bun_watcher::HashType
+        let hash = this.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
+        let is_file = !this.handle.is_dir();
+        this.emit(
+            path.as_bytes(),
+            hash,
+            timestamp,
+            is_file,
+            if events & uv::UV_RENAME != 0 {
+                EventType::Rename
+            } else {
+                EventType::Change
+            },
+        );
     }
 
-    /// PORT NOTE: takes `*mut Self` (not `&mut self`) because the trailing
-    /// `maybe_deinit` may `heap::take(this)`. Zig's `*PathWatcher` is a raw
-    /// pointer with no validity invariant; mirroring that avoids a `&mut`
-    /// outliving its allocation (Stacked Borrows UB).
-    pub unsafe fn emit(
-        this: *mut Self,
+    pub fn emit(
+        &mut self,
         path: &[u8],
         hash: bun_watcher::HashType,
         timestamp: u64,
         is_file: bool,
         event_type: EventType,
     ) {
-        // SAFETY: caller guarantees `this` is a live heap-allocated pointer.
-        let me = unsafe { &mut *this };
-        me.emit_in_progress = true;
+        self.emit_in_progress = true;
         #[cfg(debug_assertions)]
         let mut debug_count: usize = 0;
 
         // PORT NOTE: reshaped for borrowck — Zig iterates `values()` while indexing `keys()[i]`;
         // here we snapshot `keys()` length-contract via index iteration.
-        for i in 0..me.handlers.len() {
-            let event = &mut me.handlers.values_mut()[i];
+        for i in 0..self.handlers.len() {
+            let event = &mut self.handlers.values_mut()[i];
             if event.emit(hash, timestamp, event_type) {
-                let ctx: *mut FSWatcher = me.handlers.keys()[i].cast::<FSWatcher>();
+                let ctx: *mut FSWatcher = self.handlers.keys()[i].cast::<FSWatcher>();
                 // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
                 let encoding = unsafe { (*ctx).encoding };
                 // Zig builds the tagged payload `{ .string | .bytes_to_free }` then calls
@@ -322,11 +296,8 @@ impl PathWatcher {
             debug_count,
         );
 
-        me.emit_in_progress = false;
-        // End the `&mut` borrow before potentially freeing the allocation.
-        let _ = me;
-        // SAFETY: `this` is live; `maybe_deinit` may free it as its last action.
-        unsafe { Self::maybe_deinit(this) };
+        self.emit_in_progress = false;
+        self.maybe_deinit();
     }
 
     pub fn init(
@@ -341,12 +312,7 @@ impl PathWatcher {
         let readlink_result = sys::readlink(path, &mut outbuf);
         let event_path: &ZStr = match readlink_result {
             sys::Result::Err(err) => 'brk: {
-                // PORT NOTE: Zig's `ReturnCode.errno()` (libuv.zig:2886) translates UV_* → bun.sys.E
-                // before storing into `Error.errno`, so `err.errno == @intFromEnum(E.NOENT)` works.
-                // The Rust `sys_uv::readlink` path also translates via `err_enum_e()`, but compare
-                // through `get_errno()` to stay robust against any code path that stores the raw
-                // |UV_ENOENT| (4058) magnitude.
-                if err.get_errno() == sys::E::NOENT {
+                if err.errno == sys::E::NOENT as _ {
                     return sys::Result::Err(sys::Error {
                         errno: err.errno,
                         syscall: sys::Tag::open,
@@ -369,8 +335,7 @@ impl PathWatcher {
         }
 
         let this_box = Box::new(PathWatcher {
-            // SAFETY: all-zero is a valid uv_fs_event_t (POD C struct).
-            handle: unsafe { bun_core::ffi::zeroed_unchecked() },
+            handle: bun_core::ffi::zeroed(),
             manager: Some(manager_ptr),
             emit_in_progress: false,
             handlers: ArrayHashMap::default(),
@@ -439,26 +404,16 @@ impl PathWatcher {
     pub fn detach(this: *mut PathWatcher, handler: *mut c_void) {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
-        // Scope the `&mut` borrow so it ends before `maybe_deinit` may free `this`.
-        let removed = unsafe { (*this).handlers.swap_remove(&handler) };
-        if removed {
-            // SAFETY: see above; `maybe_deinit` may free `this`.
-            unsafe { Self::maybe_deinit(this) };
+        let me = unsafe { &mut *this };
+        if me.handlers.swap_remove(&handler) {
+            me.maybe_deinit();
         }
     }
 
-    /// PORT NOTE: takes `*mut Self` (not `&mut self`) because `deinit` may
-    /// `heap::take(this)` synchronously when the handle is already closed.
-    /// Holding a live `&mut Self` across that free is UB under Stacked Borrows;
-    /// Zig's `*PathWatcher` carries no such validity invariant.
-    unsafe fn maybe_deinit(this: *mut Self) {
-        // SAFETY: caller guarantees `this` is a live heap-allocated pointer.
-        let should_deinit = unsafe {
-            (*this).handlers.len() == 0 && !(*this).emit_in_progress
-        };
-        if should_deinit {
-            // SAFETY: `this` was heap-allocated in `init`; no live borrows remain.
-            unsafe { Self::deinit(this) };
+    fn maybe_deinit(&mut self) {
+        if self.handlers.len() == 0 && !self.emit_in_progress {
+            // SAFETY: self was heap-allocated in `init`; no other live borrows after this point.
+            unsafe { Self::deinit(core::ptr::from_mut(self)) };
         }
     }
 
@@ -482,7 +437,7 @@ impl PathWatcher {
                 ZStr::EMPTY
             };
             // SAFETY: manager backref is valid until the manager deinits (see PathWatcherManager::deinit).
-            unsafe { PathWatcherManager::unregister_watcher(manager, this, path) };
+            unsafe { (*manager).unregister_watcher(this, path) };
         }
 
         // `UvHandle::is_closed` reads `flags & UV_HANDLE_CLOSED` via the handle prefix.

@@ -242,8 +242,7 @@ impl SupportsCondition {
                 let mut p = css::VendorPrefix::empty();
                 p |= flag;
                 let _ = p;
-                css::serializer::serialize_name(name, dest)
-                    .map_err(|_| dest.add_fmt_error())?;
+                dest.serialize_name(name)?;
                 dest.delim(b':', false)?;
                 dest.write_str(value)?;
             }
@@ -285,11 +284,7 @@ impl SupportsCondition {
             // capturing `&mut expected_type` is the direct equivalent.
             let _condition = input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                 let location = i.current_source_location();
-                // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
-                let s: &'static [u8] = match i.expect_ident() {
-                    Ok(vv) => unsafe { css::css_parser::src_str(vv) },
-                    Err(e) => return Err(e),
-                };
+                let s = i.expect_ident_cloned()?;
                 let found_type: i32 = 'found_type: {
                     // todo_stuff.match_ignore_ascii_case
                     if strings::eql_case_insensitive_ascii_check_length(b"and", s) {
@@ -377,8 +372,7 @@ impl SupportsCondition {
         input.skip_whitespace();
         let pos = input.position();
         input.expect_no_error_token()?;
-        // SAFETY: borrows parser source/arena; see `css_parser::src_str`.
-        let value = unsafe { css::css_parser::src_str(input.slice_from(pos)) };
+        let value = input.slice_from_cloned(pos);
         Ok(SupportsCondition::Declaration(Declaration {
             property_id,
             value,
@@ -398,8 +392,7 @@ impl SupportsCondition {
                         i.parse_nested_block(|i2| {
                             let p = i2.position();
                             i2.expect_no_error_token()?;
-                            // SAFETY: borrows parser source/arena; see `css_parser::src_str`.
-                            let s = unsafe { css::css_parser::src_str(i2.slice_from(p)) };
+                            let s = i2.slice_from_cloned(p);
                             Ok(SupportsCondition::Selector(s))
                         })
                     });
@@ -421,8 +414,7 @@ impl SupportsCondition {
 
         input.parse_nested_block(|i| i.expect_no_error_token())?;
 
-        // SAFETY: borrows parser source/arena; see `css_parser::src_str`.
-        let s = unsafe { css::css_parser::src_str(input.slice_from(pos)) };
+        let s = input.slice_from_cloned(pos);
         Ok(SupportsCondition::Unknown(s))
     }
 }

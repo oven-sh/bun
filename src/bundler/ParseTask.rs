@@ -263,11 +263,10 @@ impl ParseTask {
                 file: resolve_result.file_fd,
             },
             side_effects: resolve_result.primary_side_effects_data,
-            // `_resolver::Result.jsx` is the resolver-side TYPE_ONLY
-            // mirror; `From<_> for options::jsx::Pragma` bridges field-by-field
-            // (options.rs:jsx::From). Preserves jsxImportSource/runtime/etc.
-            // from tsconfig.json (.zig:122).
-            jsx: resolve_result.jsx.clone().into(),
+            // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
+            // nominal type (`bun_options_types::jsx::Pragma`). Preserves
+            // jsxImportSource/runtime/etc. from tsconfig.json (.zig:122).
+            jsx: resolve_result.jsx.clone(),
             source_index,
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
@@ -613,7 +612,9 @@ fn get_empty_css_ast(
         js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
             .unwrap(),
     );
-    ast.css = Some(std::ptr::from_mut(bump.alloc(bun_css::BundlerStyleSheet::empty())));
+    ast.css = Some(bun_js_parser::ast::bundled_ast::CssAstRef::from_bump(
+        bump.alloc(bun_css::BundlerStyleSheet::empty()),
+    ));
     Ok(ast)
 }
 
@@ -671,14 +672,14 @@ fn css_symbols_to_parser_symbols(
         };
         // `bun_js_parser::ast::Ref` is a re-export of `bun_logger::Ref` (ast/base.rs:172)
         // — same nominal type, no bridge needed.
-        let link: bun_js_parser::ast::Ref = s.link;
+        let link: bun_js_parser::ast::Ref = s.link.get();
         out.append_assume_capacity(PSym {
             original_name: bun_js_parser::StoreStr::new(s.original_name),
             // CSS-module locals are never ES6 namespace-aliased (the CSS parser
             // never assigns `namespace_alias`); drop rather than bridge the
             // distinct `NamespaceAlias` mirrors.
             namespace_alias: None,
-            link,
+            link: std::cell::Cell::new(link),
             use_count_estimate: s.use_count_estimate,
             chunk_index: s.chunk_index,
             nested_scope_slot: s.nested_scope_slot,
@@ -888,9 +889,12 @@ fn get_ast(
                     let mut buf = bun_alloc::ArenaString::new_in(bump);
                     write!(
                         &mut buf,
-                        "{}A{:08}",
-                        bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
-                        source.index.0
+                        "{}",
+                        crate::chunk::UniqueKey {
+                            prefix: unique_key_prefix,
+                            kind: crate::chunk::QueryKind::Asset,
+                            index: source.index.0,
+                        },
                     )
                     .expect("unreachable");
                     let embedded_path = buf.into_bump_str().as_bytes();
@@ -980,9 +984,12 @@ fn get_ast(
             let mut buf = bun_alloc::ArenaString::new_in(bump);
             write!(
                 &mut buf,
-                "{}A{:08}",
-                bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
-                source.index.0
+                "{}",
+                crate::chunk::UniqueKey {
+                    prefix: unique_key_prefix,
+                    kind: crate::chunk::QueryKind::Asset,
+                    index: source.index.0,
+                },
             )
             .expect("unreachable");
             let unique_key = buf.into_bump_str().as_bytes();
@@ -1150,7 +1157,7 @@ fn get_ast(
             }
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
             let root = Expr::init(E::Object::default(), Loc { start: 0 });
-            let css_ast_heap = std::ptr::from_mut(bump.alloc(css_ast));
+            let css_ast_heap = bun_js_parser::ast::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
             // PORT NOTE: `StylesheetExtra.symbols` is
             // `Vec<bun_logger::Symbol>`; `new_lazy_export_ast_impl` takes
             // `Vec<bun_js_parser::Symbol>`. Both port the same Zig
@@ -1209,9 +1216,12 @@ fn get_ast(
                 let mut buf = bun_alloc::ArenaString::new_in(bump);
                 write!(
                     &mut buf,
-                    "{}A{:08}",
-                    bun_core::fmt::hex_int_lower::<16>(unique_key_prefix),
-                    source.index.0
+                    "{}",
+                    crate::chunk::UniqueKey {
+                        prefix: unique_key_prefix,
+                        kind: crate::chunk::QueryKind::Asset,
+                        index: source.index.0,
+                    },
                 )
                 .expect("unreachable");
                 buf.into_bump_str().as_bytes()
@@ -2007,8 +2017,8 @@ fn get_source_code(
     // `ThreadPool::Worker::create`); the worker is pinned for the bundle pass.
     let bump: &Bump = unsafe { &*this.arena };
 
-    // SAFETY: `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
-    let data = unsafe { this.data.assume_init_mut() };
+    // `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
+    let data = this.data.as_mut().expect("Worker.data set in create()");
     // PORT NOTE: `resolver` is a field of `*transpiler` (Zig
     // `&transpiler.resolver`). Hold both as raw `*mut` and never materialize
     // `&mut Transpiler` while `resolver` is live — the callee chain takes raw
@@ -2234,10 +2244,11 @@ fn run_with_source_code(
 
     let output_format = topts.output_format;
 
-    // `crate::options::jsx::Pragma` → `bun_js_parser::options::JSX::Pragma`
-    // via `From` (options.rs jsx mod). Preserves jsxImportSource/runtime/etc.
-    // (.zig:1207).
-    let mut opts = ParserOptions::init(task.jsx.clone().into(), loader);
+    // D042: `crate::options::jsx::Pragma` IS `bun_js_parser::options::JSX::Pragma`
+    // (both re-export `bun_options_types::jsx::Pragma`). `to_parser_jsx_pragma`
+    // applies the `_None → Automatic` runtime fold the old `From` bridge did so
+    // parser-side `== Automatic` checks keep their semantics (.zig:1207).
+    let mut opts = ParserOptions::init(crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()), loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
     // `AllowUnresolved` is the same nominal type on

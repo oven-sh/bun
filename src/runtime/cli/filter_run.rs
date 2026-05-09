@@ -658,9 +658,7 @@ impl AbortHandler {
         #[cfg(not(unix))]
         {
             // TODO(port): move to <area>_sys
-            // SAFETY: FFI call; `windows_ctrl_handler` is `extern "system"` with the
-            // `PHANDLER_ROUTINE` signature and has 'static lifetime (free fn).
-            let res = unsafe { bun_sys::c::SetConsoleCtrlHandler(Some(Self::windows_ctrl_handler), bun_sys::windows::TRUE) };
+            let res = bun_sys::c::SetConsoleCtrlHandler(Some(Self::windows_ctrl_handler), bun_sys::windows::TRUE);
             if res == 0 {
                 if cfg!(debug_assertions) {
                     Output::warn("Failed to set abort handler\n");
@@ -674,8 +672,7 @@ impl AbortHandler {
         #[cfg(windows)]
         {
             // restores default Ctrl+C behavior
-            // SAFETY: FFI call; passing NULL handler with FALSE restores default per Win32 docs.
-            let _ = unsafe { bun_sys::c::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE) };
+            let _ = bun_sys::c::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
         }
     }
 }
@@ -946,15 +943,13 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
                 stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
-                    unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
+                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
                 ))),
                 #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
                 stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
-                    unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
+                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
                 ))),
                 cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&script.package_json_path).into(),
                 #[cfg(windows)]

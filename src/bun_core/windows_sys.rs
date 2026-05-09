@@ -1,9 +1,9 @@
 //! Minimal Win32 ABI surface for `bun_core`'s `#[cfg(windows)]` paths.
 //!
 //! `bun_core` is tier-0 and may not depend on `bun_sys` (cycle). Shared Win32
-//! POD typedefs/structs are re-exported from the tier-0 leaf `bun_windows_sys`
-//! (which has zero `bun_*` deps, so no cycle); only the `bun_core`-specific
-//! console consts, PEB view, and kernel32 externs live here. All declarations
+//! POD typedefs/structs and kernel32 externs are re-exported from the tier-0
+//! leaf `bun_windows_sys` (which has zero `bun_*` deps, so no cycle); only the
+//! `bun_core`-specific console consts and PEB view live here. All declarations
 //! are zero-cost FFI (`extern "system"` = `__stdcall`, which on x64 is the
 //! same as `extern "C"`).
 #![cfg(windows)]
@@ -27,16 +27,11 @@ pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
 pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
 /// Wrapper that returns `None` on `INVALID_HANDLE_VALUE` (matches
-/// `std.os.windows.GetStdHandle` error-union semantics). NULL is a *valid*
-/// success value (no associated console / detached process) and is passed
-/// through as `Some(null)` exactly like the Zig std wrapper — folding NULL
-/// into the error path would diverge from `output.zig`'s `Fd.fromSystem(null)`
-/// caching behavior.
+/// `std.os.windows.GetStdHandle` error-union semantics).
 #[inline]
 pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
-    // SAFETY: kernel32 GetStdHandle has no preconditions.
-    let h = unsafe { kernel32::GetStdHandle(std_handle) };
-    if h == INVALID_HANDLE_VALUE { None } else { Some(h) }
+    let h = kernel32::GetStdHandle(std_handle);
+    if h == INVALID_HANDLE_VALUE || h.is_null() { None } else { Some(h) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -62,9 +57,8 @@ pub struct ProcessParameters {
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
-    // CURDIR CurrentDirectory — UNICODE_STRING DosPath (16) + HANDLE Handle (8).
-    pub CurrentDirectoryPath: UnicodeString,
-    pub CurrentDirectoryHandle: HANDLE,
+    // CURDIR CurrentDirectory — UNICODE_STRING (16) + HANDLE (8).
+    _current_directory: [u8; 24],
     pub DllPath: UnicodeString,
     pub ImagePathName: UnicodeString,
     pub CommandLine: UnicodeString,
@@ -81,76 +75,31 @@ pub struct PebView {
     _reserved2: [u8; 1],
     _reserved3: [*mut c_void; 2],
     pub Ldr: *mut c_void,
-    // Raw pointer, not `&'static`: RTL_USER_PROCESS_PARAMETERS is mutated by
-    // the OS/CRT (SetStdHandle, SetCurrentDirectoryW, …) behind Rust's back,
-    // so materializing an immutable reference would be UB under Stacked/Tree
-    // Borrows. Zig's `std.os.windows.peb()` likewise exposes a raw `*PEB`.
-    pub ProcessParameters: *const ProcessParameters,
+    pub ProcessParameters: &'static ProcessParameters,
 }
 
 /// `std.os.windows.peb()` — reads `gs:[0x60]` (x64) / `__readgsqword(0x60)`.
-///
-/// Returns a raw `*const PebView` (not `&'static PebView`): the PEB and its
-/// `ProcessParameters` are written by the OS, CRT, loader, and debuggers for
-/// the life of the process (`SetStdHandle`, `SetCurrentDirectoryW`,
-/// `BeingDebugged`, `Ldr` updates). A `&'static T` would assert to the
-/// optimizer that the pointee is immutable forever, which is false. Callers
-/// must dereference under `unsafe` and treat fields as externally-mutable.
 #[inline]
-pub unsafe fn peb() -> *const PebView {
+pub unsafe fn peb() -> &'static PebView {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         let p: *const PebView;
-        // `readonly` (asm reads memory) but NOT `pure`: the result address is
-        // stable, yet `pure` would let LLVM CSE/hoist as if the *pointee* were
-        // invariant, which it is not.
-        core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, readonly, preserves_flags));
-        p
+        core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, pure, readonly));
+        &*p
     }
     #[cfg(target_arch = "aarch64")]
     unsafe {
         // TEB at x18; PEB at TEB+0x60.
         let teb: *const u8;
-        core::arch::asm!("mov {}, x18", out(reg) teb, options(nostack, readonly, preserves_flags));
-        *(teb.add(0x60) as *const *const PebView)
+        core::arch::asm!("mov {}, x18", out(reg) teb, options(nostack, pure, readonly));
+        &*(*(teb.add(0x60) as *const *const PebView))
     }
 }
 
-pub mod kernel32 {
-    use super::*;
-    unsafe extern "system" {
-        pub fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
-        pub fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: *mut DWORD) -> BOOL;
-        pub fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
-        pub fn GetConsoleOutputCP() -> u32;
-        pub fn SetConsoleOutputCP(wCodePageID: u32) -> BOOL;
-        pub fn GetConsoleCP() -> u32;
-        pub fn SetConsoleCP(wCodePageID: u32) -> BOOL;
-        pub fn ExitProcess(uExitCode: u32) -> !;
-        pub fn ExitThread(dwExitCode: u32) -> !;
-        pub fn GetConsoleScreenBufferInfo(
-            hConsoleOutput: HANDLE,
-            lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
-        ) -> BOOL;
-        pub fn FillConsoleOutputAttribute(
-            hConsoleOutput: HANDLE,
-            wAttribute: WORD,
-            nLength: DWORD,
-            dwWriteCoord: COORD,
-            lpNumberOfAttrsWritten: *mut DWORD,
-        ) -> BOOL;
-        pub fn FillConsoleOutputCharacterW(
-            hConsoleOutput: HANDLE,
-            cCharacter: WCHAR,
-            nLength: DWORD,
-            dwWriteCoord: COORD,
-            lpNumberOfCharsWritten: *mut DWORD,
-        ) -> BOOL;
-        pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;
-    }
-}
-// Re-export the console fns at module root under the `c::` alias used by
-// `output.rs` (Zig's `bun.c` namespace).
+// kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
+// so existing `crate::windows_sys::kernel32::*` / `c::*` callers resolve.
+pub use bun_windows_sys::kernel32;
+// `c::` alias used by `output.rs` (Zig's `bun.c` namespace).
 pub use kernel32 as c;
 
 /// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from

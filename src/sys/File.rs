@@ -11,7 +11,7 @@ use bun_paths::PathBuffer;
 use bun_str::ZStr;
 
 use crate::{
-    self as sys, Error as SysError, Fd, Mode, Result as SysResult, Stat, SystemErrno, O,
+    self as sys, Error as SysError, Fd, FileKind, Mode, Result as SysResult, Stat, SystemErrno, O,
 };
 // TODO(port): OsPathZ is the cfg-dependent NUL-terminated OS path slice
 // (`&ZStr` on POSIX, `&WStr` on Windows). Confirm exact name/location in Phase B.
@@ -559,19 +559,6 @@ impl ReadToEndResult {
 pub enum SizeGuess {
     ProbablySmall,
     UnknownSize,
-}
-
-// TODO(port): Zig used std.fs.File.Kind. Define here (or hoist to crate root) since std::fs is banned.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FileKind {
-    BlockDevice,
-    CharacterDevice,
-    Directory,
-    NamedPipe,
-    SymLink,
-    File,
-    UnixDomainSocket,
-    Unknown,
 }
 
 #[derive(Default)]

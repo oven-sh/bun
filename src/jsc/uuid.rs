@@ -10,11 +10,7 @@ pub enum UuidError {
     #[error("InvalidUUID")]
     InvalidUUID,
 }
-impl From<UuidError> for bun_core::Error {
-    fn from(e: UuidError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(UuidError);
 
 #[derive(Clone, Copy)]
 pub struct UUID {

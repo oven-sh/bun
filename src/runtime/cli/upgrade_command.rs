@@ -177,8 +177,7 @@ impl Version {
             Version::BASELINE_ZIP_FILENAME,
             "\0"
         );
-        // SAFETY: `S` ends with an embedded NUL; `len() - 1` excludes it.
-        unsafe { ZStr::from_raw(S.as_ptr(), S.len() - 1) }
+        ZStr::from_static(S.as_bytes())
     };
 
     pub fn is_current(&self) -> bool {
@@ -1504,8 +1503,7 @@ pub mod upgrade_js_bindings {
                 | w::FILE_TRAVERSE;
 
             let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
-            // SAFETY: zeroed IO_STATUS_BLOCK is valid for output
-            let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
 
             // SAFETY: FFI call to NtCreateFile with valid pointers
             let rc = unsafe {

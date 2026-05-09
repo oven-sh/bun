@@ -25,11 +25,7 @@ pub enum OverflowError {
     Overflow,
 }
 
-impl From<OverflowError> for bun_core::Error {
-    fn from(_: OverflowError) -> Self {
-        bun_core::err!("Overflow")
-    }
-}
+bun_core::named_error_set!(OverflowError);
 
 /// A structure with an array and a length, that can be used as a slice.
 ///

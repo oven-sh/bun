@@ -21,7 +21,7 @@ use bun_uws_sys as uws_sys;
 use crate::api::bun_secure_context::SecureContext;
 use crate::node::path as node_path;
 use crate::socket::{Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket};
-use crate::socket::SSLConfig;
+use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
 use crate::socket::WindowsNamedPipeContext;
@@ -396,8 +396,7 @@ impl Listener {
                 // NUL-terminate for the C `&CStr` parameter.
                 let mut hostz = host.to_vec();
                 hostz.push(0);
-                // SAFETY: just appended NUL; bytes contain no interior NUL by construction.
-                let host_cstr = unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&hostz) };
+                let host_cstr = bun_core::ZStr::from_slice_with_nul(&hostz).as_cstr();
                 let ls = this_ref.group.listen(
                     kind,
                     secure_ctx_ptr,
@@ -408,8 +407,8 @@ impl Listener {
                     &mut errno,
                 );
                 if !ls.is_null() {
-                    // SAFETY: ls is non-null, just returned from listen.
-                    *port = u16::try_from(unsafe { &mut *ls }.get_local_port()).expect("int cast");
+                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port()).expect("int cast");
                 }
                 ls
             }
@@ -476,13 +475,13 @@ impl Listener {
         if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
             // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
             let secure = this_ref.secure_ctx.expect("unreachable");
-            if let Some(server_name) = ssl_config.server_name.as_deref() {
+            if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
                     // Registering the default cert under its own server_name is a
                     // hint for sni_cb, not load-bearing — sni_find() miss falls
                     // through to the default SSL_CTX anyway.
-                    // SAFETY: listen_socket is non-null, just returned from listen.
-                    let _ = unsafe { &mut *listen_socket }.add_server_name(
+                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                    let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
                         server_name,
                         secure.as_ptr().cast(),
                         core::ptr::null_mut(),
@@ -591,8 +590,8 @@ impl Listener {
             unsafe { *ctx = this_socket.cast::<c_void>() };
         }
         if let uws::InternalSocket::Connected(s) = socket.socket {
-            // SAFETY: s is a live us_socket_t* from the accept callback.
-            unsafe { &mut *s }.set_kind(if SSL {
+            // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+            bun_opaque::opaque_deref_mut(s).set_kind(if SSL {
                 uws_sys::SocketKind::BunSocketTls
             } else {
                 uws_sys::SocketKind::BunSocketTcp
@@ -622,8 +621,7 @@ impl Listener {
         // NUL-terminate for the C `&CStr` parameter.
         let mut server_name_buf = server_name_bytes.to_vec();
         server_name_buf.push(0);
-        // SAFETY: just appended NUL.
-        let server_name = unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&server_name_buf) };
+        let server_name = bun_core::ZStr::from_slice_with_nul(&server_name_buf).as_cstr();
 
         let ListenerType::Uws(ls) = this.listener else {
             return Ok(JSValue::UNDEFINED);
@@ -663,8 +661,8 @@ impl Listener {
         };
 
         // The C SNI tree SSL_CTX_up_ref()s; drop our build/borrow ref once added.
-        // SAFETY: ls is non-null (Uws variant); the listener is live.
-        let ls_ref = unsafe { &mut *ls };
+        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        let ls_ref = bun_opaque::opaque_deref_mut(ls);
         ls_ref.remove_server_name(server_name);
         let ok = ls_ref.add_server_name(server_name, sni_ctx.cast(), core::ptr::null_mut());
         // SAFETY: FFI — drop the +1 ref we took via borrow()/get_or_create(); SNI tree up_ref'd its own
@@ -732,8 +730,8 @@ impl Listener {
         }
 
         match listener {
-            // SAFETY: socket is non-null (Uws variant invariant).
-            ListenerType::Uws(socket) => unsafe { &mut *socket }.close(),
+            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+            ListenerType::Uws(socket) => bun_opaque::opaque_deref_mut(socket).close(),
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
                 // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
@@ -752,8 +750,8 @@ impl Listener {
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&mut self);
-                // SAFETY: socket is non-null (Uws variant invariant).
-                unsafe { &mut *socket }.close();
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(socket).close();
             }
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
@@ -847,17 +845,13 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        use bun_sys_jsc::FdJsc as _;
         match &this.listener {
             ListenerType::Uws(uws_listener) => {
-                // SAFETY: uws_listener is non-null (Uws variant invariant).
-                let socket = unsafe { &mut **uws_listener }.socket::<false>();
-                // PORT NOTE: on Windows the listener fd is a system-kind SOCKET
-                // handle. `Fd::uv()` panics on a non-stdio system handle, so
-                // route through `to_js_without_making_lib_uv_owned()` which
-                // dispatches on kind (system→u64, uv→i32) without allocating a
-                // CRT fd. Mirrors Zig `fd().toJSWithoutMakingLibUVOwned()`.
-                socket.fd().to_js_without_making_lib_uv_owned()
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                let socket = bun_opaque::opaque_deref_mut(*uws_listener).socket::<false>();
+                let fd = socket.fd();
+                // TODO(port): `Fd::to_js_without_making_libuv_owned` — direct uv() encode for now.
+                JSValue::js_number(fd.uv() as f64)
             }
             _ => JSValue::js_number(-1.0),
         }
@@ -1024,11 +1018,6 @@ impl Listener {
                 // SAFETY: socket_config.handlers is valid; we forget socket_config below.
                 let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
                 let mut ssl_taken = socket_config.ssl.take();
-                // PORT NOTE: Zig's function-scope `defer socket_config.deinitExcludingHandlers()`
-                // frees `hostname_or_unix` on the named-pipe early-return. The
-                // `Fd` connect arm above never `take()`s it into `connection`,
-                // so drop it explicitly before `forget` suppresses Drop.
-                drop(core::mem::take(&mut socket_config.hostname_or_unix));
                 core::mem::forget(socket_config);
 
                 let mut handlers_box = Box::new(handlers_moved);
@@ -1530,12 +1519,8 @@ impl WindowsNamedPipeListeningContext {
         if result.is_err() {
             // connection dropped
             // SAFETY: `client` was just allocated via `WindowsNamedPipeContext::create`
-            // with refcount==1 and is not yet registered with libuv (accept failed
-            // before `uv_pipe_init`/`uv_accept` hooked it up). Tear it down
-            // synchronously — Zig calls `client.deinit()` here, bypassing the
-            // refcount/`scheduleDeinit` next-tick path so the wrapped NewSocket's
-            // +1 ref and the uv_pipe handle are released before returning to libuv.
-            unsafe { WindowsNamedPipeContext::deinit(client) };
+            // with refcount==1; releasing the only ref schedules deinit.
+            unsafe { WindowsNamedPipeContext::deref(client) };
         }
     }
 
@@ -1575,9 +1560,7 @@ impl WindowsNamedPipeListeningContext {
         // `bun.TrivialNew` — heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
-            // SAFETY: all-zero is a valid pre-init `uv_pipe_t` (C struct,
-            // initialised by `uv_pipe_init`).
-            uv_pipe: unsafe { bun_core::ffi::zeroed_unchecked() },
+            uv_pipe: bun_core::ffi::zeroed(),
             listener: NonNull::new(listener),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm_ptr(),

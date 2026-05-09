@@ -72,16 +72,7 @@ mod c {
     }
 }
 
-// TODO(b1): bun_str crate missing — local stub for the few helpers used here.
-mod strings {
-    #[inline] pub(crate) fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], _check_len: bool) -> bool {
-        a.eq_ignore_ascii_case(b)
-    }
-    #[inline] pub(crate) fn has_prefix(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
-    #[inline] pub(crate) fn contains(h: &[u8], n: &[u8]) -> bool {
-        ::bstr::ByteSlice::find(h, n).is_some()
-    }
-}
+use bun_string::strings;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Header
@@ -131,27 +122,18 @@ impl Header {
     #[inline]
     pub fn name(&self) -> &[u8] {
         // picohttpparser sets `name = NULL, name_len = 0` for multiline /
-        // continuation headers. `from_raw_parts(null, 0)` is UB in Rust even
-        // though Zig's `[]const u8{ptr=null, len=0}` is well-defined, so guard
-        // the zero-length case explicitly.
-        if self.name_len == 0 {
-            return &[];
-        }
+        // continuation headers. `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: ptr/len originate from picohttpparser pointing into the
         // caller-provided buffer, or from StringBuilder::append.
-        unsafe { core::slice::from_raw_parts(self.name_ptr, self.name_len) }
+        unsafe { bun_core::ffi::slice(self.name_ptr, self.name_len) }
     }
 
     #[inline]
     pub fn value(&self) -> &[u8] {
         // Defensive: picohttpparser always points `value` into `buf` on
-        // success, but mirror the name() guard so a zero-length value never
-        // constructs a slice from a null pointer.
-        if self.value_len == 0 {
-            return &[];
-        }
+        // success; `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: same as name()
-        unsafe { core::slice::from_raw_parts(self.value_ptr, self.value_len) }
+        unsafe { bun_core::ffi::slice(self.value_ptr, self.value_len) }
     }
 
     pub fn is_multiline(&self) -> bool {
@@ -291,11 +273,7 @@ impl fmt::Display for ParseRequestError {
     }
 }
 impl std::error::Error for ParseRequestError {}
-impl From<ParseRequestError> for bun_core::Error {
-    fn from(e: ParseRequestError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseRequestError);
 
 pub struct Request<'a> {
     pub method: &'a [u8],
@@ -388,8 +366,8 @@ impl<'a> Request<'a> {
             -2 => Err(ParseRequestError::ShortRead),
             _ => Ok(Request {
                 // SAFETY: on success, ptr/len point into `buf`.
-                method: unsafe { core::slice::from_raw_parts(method_ptr, method_len) },
-                path: unsafe { core::slice::from_raw_parts(path_ptr, path_len) },
+                method: unsafe { bun_core::ffi::slice(method_ptr, method_len) },
+                path: unsafe { bun_core::ffi::slice(path_ptr, path_len) },
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 headers: &src[0..num_headers],
                 bytes_read: u32::try_from(rc).expect("int cast"),
@@ -523,11 +501,7 @@ impl fmt::Display for ParseResponseError {
     }
 }
 impl std::error::Error for ParseResponseError {}
-impl From<ParseResponseError> for bun_core::Error {
-    fn from(e: ParseResponseError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseResponseError);
 
 #[derive(Clone, Copy)]
 pub struct Response<'a> {
@@ -638,7 +612,7 @@ impl<'a> Response<'a> {
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 status_code: u32::try_from(status_code).expect("int cast"),
                 // SAFETY: on success, ptr/len point into `buf`.
-                status: unsafe { core::slice::from_raw_parts(status_ptr, status_len) },
+                status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
                 headers: HeaderList { list: &src[0..num_headers.min(src.len())] },
                 bytes_read: rc,
             }),
@@ -691,11 +665,7 @@ impl fmt::Display for ParseHeadersError {
     }
 }
 impl std::error::Error for ParseHeadersError {}
-impl From<ParseHeadersError> for bun_core::Error {
-    fn from(e: ParseHeadersError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ParseHeadersError);
 
 pub struct Headers<'a> {
     pub headers: &'a [Header],

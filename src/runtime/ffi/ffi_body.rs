@@ -9,7 +9,7 @@ use std::sync::{Once, OnceLock};
 use bstr::BStr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{env_var, fmt as bun_fmt, Output, ZBox};
+use bun_core::{env_var, fmt as bun_fmt, zstr, Output, ZBox};
 use bun_jsc::{
     self as jsc, host_fn, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
     JsClass, JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc,
@@ -21,27 +21,6 @@ use bun_str::{strings, ZStr, ZigString};
 use bun_sys::{self, Fd};
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
-
-/// Compile-time `&'static ZStr` from a byte literal. The literal need not be
-/// NUL-terminated; we tack one on by emitting a fresh `[u8; N+1]` const and
-/// rvalue-promoting it to `'static` via a `&'static` borrow.
-macro_rules! zstr {
-    ($lit:literal) => {{
-        const __SRC: &[u8] = $lit;
-        const __N: usize = __SRC.len();
-        const __BUF: &[u8; __N + 1] = &{
-            let mut out = [0u8; __N + 1];
-            let mut i = 0;
-            while i < __N {
-                out[i] = __SRC[i];
-                i += 1;
-            }
-            out
-        };
-        // SAFETY: `__BUF[__N] == 0` and `__BUF` has `'static` storage.
-        unsafe { ::bun_str::ZStr::from_raw(__BUF.as_ptr(), __N) }
-    }};
-}
 
 /// `bun.sys.directoryExistsAt(FD.cwd(), path).isTrue()` — local helper while
 /// `bun_core::Fd` lacks an inherent forwarder.
@@ -724,7 +703,7 @@ impl CompileC {
             // the process env block, so a sentinel byte follows it.
             unsafe { ZStr::from_raw(tcc_options.as_ptr(), tcc_options.len()) }
         } else {
-            zstr!(b"-std=c11 -Wl,--export-all-symbols -g -O2")
+            zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
         };
 
         // TODO: correctly handle invalid user-provided options
@@ -794,7 +773,7 @@ impl CompileC {
             {
                 if dir_exists(b"/opt/homebrew/include") {
                     if state
-                        .add_sys_include_path(zstr!(b"/opt/homebrew/include"))
+                        .add_sys_include_path(zstr!("/opt/homebrew/include"))
                         .is_err()
                     {
                         bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
@@ -803,7 +782,7 @@ impl CompileC {
 
                 if dir_exists(b"/opt/homebrew/lib") {
                     if state
-                        .add_library_path(zstr!(b"/opt/homebrew/lib"))
+                        .add_library_path(zstr!("/opt/homebrew/lib"))
                         .is_err()
                     {
                         bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
@@ -830,7 +809,7 @@ impl CompileC {
         {
             if dir_exists(b"/usr/local/include") {
                 if state
-                    .add_sys_include_path(zstr!(b"/usr/local/include"))
+                    .add_sys_include_path(zstr!("/usr/local/include"))
                     .is_err()
                 {
                     bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
@@ -839,7 +818,7 @@ impl CompileC {
 
             if dir_exists(b"/usr/local/lib") {
                 if state
-                    .add_library_path(zstr!(b"/usr/local/lib"))
+                    .add_library_path(zstr!("/usr/local/lib"))
                     .is_err()
                 {
                     bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
@@ -899,7 +878,7 @@ impl CompileC {
             if symbol.needs_napi_env() {
                 state
                     .add_symbol(
-                        zstr!(b"Bun__thisFFIModuleNapiEnv"),
+                        zstr!("Bun__thisFFIModuleNapiEnv"),
                         global_this.make_napi_env_for_ffi().cast_const(),
                     )
                     .map_err(|_| bun_core::err!("DeferredErrors"))?;
@@ -2122,9 +2101,9 @@ impl Function {
         // is not required by `Config::options` (NonNull<ZStr> derefs len-only),
         // but we route through `zstr!` for correctness.
         let tcc_options: &'static ZStr = if cfg!(debug_assertions) {
-            zstr!(b"-std=c11 -nostdlib -Wl,--export-all-symbols -g")
+            zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols -g")
         } else {
-            zstr!(b"-std=c11 -nostdlib -Wl,--export-all-symbols")
+            zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
         let state = match TCC::State::init::<Function, false>(TCC::Config {
             options: Some(NonNull::from(tcc_options)),
@@ -2154,7 +2133,7 @@ impl Function {
 
         if let Some(env) = napi_env {
             if state
-                .add_symbol(zstr!(b"Bun__thisFFIModuleNapiEnv"), std::ptr::from_ref(env).cast::<c_void>())
+                .add_symbol(zstr!("Bun__thisFFIModuleNapiEnv"), std::ptr::from_ref(env).cast::<c_void>())
                 .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
@@ -2191,7 +2170,7 @@ impl Function {
             return Ok(());
         }
 
-        let Some(symbol) = state.get_symbol(zstr!(b"JSFunctionCall")) else {
+        let Some(symbol) = state.get_symbol(zstr!("JSFunctionCall")) else {
             self.fail(b"missing generated symbol in source code");
             return Ok(());
         };
@@ -2239,9 +2218,9 @@ impl Function {
         // defer source_code.deinit();
 
         let tcc_options: &'static ZStr = if cfg!(debug_assertions) {
-            zstr!(b"-std=c11 -nostdlib -Wl,--export-all-symbols -g")
+            zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols -g")
         } else {
-            zstr!(b"-std=c11 -nostdlib -Wl,--export-all-symbols")
+            zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
         let state = match TCC::State::init::<Function, false>(TCC::Config {
             options: Some(NonNull::from(tcc_options)),
@@ -2278,7 +2257,7 @@ impl Function {
         if self.needs_napi_env() {
             if state
                 .add_symbol(
-                    zstr!(b"Bun__thisFFIModuleNapiEnv"),
+                    zstr!("Bun__thisFFIModuleNapiEnv"),
                     js_context.make_napi_env_for_ffi().cast_const(),
                 )
                 .is_err()
@@ -2316,7 +2295,7 @@ impl Function {
                 _ => FFI_Callback_call as *const c_void,
             }
         };
-        if state.add_symbol(zstr!(b"FFI_Callback_call"), callback_sym).is_err() {
+        if state.add_symbol(zstr!("FFI_Callback_call"), callback_sym).is_err() {
             self.fail(b"Failed to add FFI callback symbol");
             return Ok(());
         }
@@ -2326,7 +2305,7 @@ impl Function {
             return Ok(());
         }
 
-        let Some(symbol) = state.get_symbol(zstr!(b"my_callback_function")) else {
+        let Some(symbol) = state.get_symbol(zstr!("my_callback_function")) else {
             self.fail(b"missing generated symbol in source code");
             return Ok(());
         };
@@ -3130,15 +3109,15 @@ impl CompilerRT {
     extern "C" fn memcpy(dest: *mut u8, source: *const u8, byte_count: usize) {
         // SAFETY: caller (TCC-compiled code) guarantees non-overlapping valid ranges
         unsafe {
-            core::slice::from_raw_parts_mut(dest, byte_count)
-                .copy_from_slice(core::slice::from_raw_parts(source, byte_count));
+            bun_core::ffi::slice_mut(dest, byte_count)
+                .copy_from_slice(bun_core::ffi::slice(source, byte_count));
         }
     }
 
     pub fn define(state: &mut TCC::State) {
         #[cfg(target_arch = "x86_64")]
         {
-            state.define_symbol(zstr!(b"NEEDS_COMPILER_RT_FUNCTIONS"), zstr!(b"1"));
+            state.define_symbol(zstr!("NEEDS_COMPILER_RT_FUNCTIONS"), zstr!("1"));
             // SAFETY: `libtcc1.c` is embedded with a manual trailing NUL guaranteed
             // by `include_bytes!` + the explicit length math below.
             const LIBTCC1: &[u8] = include_bytes!("libtcc1.c");
@@ -3183,10 +3162,10 @@ impl CompilerRT {
 
     pub fn inject(state: &mut TCC::State) {
         state
-            .add_symbol(zstr!(b"memset"), Self::memset as *const c_void)
+            .add_symbol(zstr!("memset"), Self::memset as *const c_void)
             .expect("unreachable");
         state
-            .add_symbol(zstr!(b"memcpy"), Self::memcpy as *const c_void)
+            .add_symbol(zstr!("memcpy"), Self::memcpy as *const c_void)
             .expect("unreachable");
         // Re-declare the C++ NapiHandleScope hooks locally — the canonical
         // declarations live in `crate::napi::napi_body` which is private, and
@@ -3200,28 +3179,28 @@ impl CompilerRT {
         }
         state
             .add_symbol(
-                zstr!(b"NapiHandleScope__open"),
+                zstr!("NapiHandleScope__open"),
                 NapiHandleScope__open as *const c_void,
             )
             .expect("unreachable");
         state
             .add_symbol(
-                zstr!(b"NapiHandleScope__close"),
+                zstr!("NapiHandleScope__close"),
                 NapiHandleScope__close as *const c_void,
             )
             .expect("unreachable");
 
         state
-            .add_symbol(zstr!(b"JSVALUE_TO_INT64_SLOW"), WORKAROUND.jsvalue_to_int64 as *const c_void)
+            .add_symbol(zstr!("JSVALUE_TO_INT64_SLOW"), WORKAROUND.jsvalue_to_int64 as *const c_void)
             .expect("unreachable");
         state
-            .add_symbol(zstr!(b"JSVALUE_TO_UINT64_SLOW"), WORKAROUND.jsvalue_to_uint64 as *const c_void)
+            .add_symbol(zstr!("JSVALUE_TO_UINT64_SLOW"), WORKAROUND.jsvalue_to_uint64 as *const c_void)
             .expect("unreachable");
         state
-            .add_symbol(zstr!(b"INT64_TO_JSVALUE_SLOW"), WORKAROUND.int64_to_jsvalue as *const c_void)
+            .add_symbol(zstr!("INT64_TO_JSVALUE_SLOW"), WORKAROUND.int64_to_jsvalue as *const c_void)
             .expect("unreachable");
         state
-            .add_symbol(zstr!(b"UINT64_TO_JSVALUE_SLOW"), WORKAROUND.uint64_to_jsvalue as *const c_void)
+            .add_symbol(zstr!("UINT64_TO_JSVALUE_SLOW"), WORKAROUND.uint64_to_jsvalue as *const c_void)
             .expect("unreachable");
     }
 }

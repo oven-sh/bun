@@ -913,11 +913,11 @@ pub mod utils {
 pub const BUN_COMPILED_SECTION_NAME: &str = ".bun";
 
 /// External C interface declarations - these are implemented in C++ bindings
-/// The C++ code uses Windows PE APIs to directly access the .bun section
-/// from the current process memory without loading the entire executable
-// TODO(port): move to exe_format_sys
+/// (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to
+/// directly access the .bun section from the current process memory without
+/// loading the entire executable.
 unsafe extern "C" {
-    pub fn Bun__getStandaloneModuleGraphPELength() -> u32;
+    pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
 }
 

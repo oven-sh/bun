@@ -277,12 +277,8 @@ pub fn platform_iovec_const_create(input: &[u8]) -> PlatformIOVecConst {
 
 pub fn platform_iovec_to_slice(iovec: &PlatformIOVec) -> &mut [u8] {
     #[cfg(windows)]
-    unsafe {
-        // SAFETY: iovec.base/len describe a valid mutable buffer owned by caller.
-        // Spec (bun.zig:272): `uv_buf_t.slice()` returns Zig `[]u8` (mutable). The
-        // bun_libuv_sys::uv_buf_t::slice() wrapper is `&self -> &[u8]` (immutable),
-        // so build the &mut slice directly. `len` is ULONG on Windows.
-        core::slice::from_raw_parts_mut(iovec.base, iovec.len as usize)
+    {
+        bun_sys::windows::libuv::uv_buf_t::slice(iovec)
     }
     #[cfg(not(windows))]
     unsafe {
@@ -542,98 +538,12 @@ pub fn ensure_non_blocking(fd: FD) {
     let _ = bun_sys::fcntl(fd, bun_sys::F::SETFL, current | O::NONBLOCK);
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-pub enum PollFlag {
-    ready,
-    not_ready,
-    hup,
-}
-
-pub fn is_readable(fd: FD) -> PollFlag {
-    #[cfg(windows)]
-    {
-        panic!("TODO on Windows");
-    }
-    #[cfg(not(windows))]
-    {
-        debug_assert!(fd != invalid_fd);
-        let mut polls = [bun_sys::pollfd {
-            fd: fd.cast(),
-            events: bun_sys::POLL::IN | bun_sys::POLL::ERR | bun_sys::POLL::HUP,
-            revents: 0,
-        }];
-        let result = bun_sys::poll(&mut polls, 0).unwrap_or(0) != 0;
-        let rc = if result && polls[0].revents & (bun_sys::POLL::HUP | bun_sys::POLL::ERR) != 0 {
-            PollFlag::hup
-        } else if result {
-            PollFlag::ready
-        } else {
-            PollFlag::not_ready
-        };
-        bun_sys::syslog!(
-            "poll({}, .readable): {} ({}{})",
-            fd,
-            result,
-            <&'static str>::from(rc),
-            if polls[0].revents & bun_sys::POLL::ERR != 0 { " ERR " } else { "" }
-        );
-        rc
-    }
-}
-
-pub fn is_writable(fd: FD) -> PollFlag {
-    #[cfg(windows)]
-    {
-        // Spec (bun.zig:672/679): `std.posix.POLL.WRNORM` on Windows is winsock's
-        // POLLWRNORM (0x0010). There is no `bun_sys::POLL` namespace on Windows;
-        // use the ws2_32 constant directly.
-        let mut polls = [bun_sys::windows::ws2_32::WSAPOLLFD {
-            fd: fd.as_socket_fd(),
-            events: bun_sys::windows::ws2_32::POLLWRNORM,
-            revents: 0,
-        }];
-        // SAFETY: polls is a valid 1-element WSAPOLLFD array; len=1 matches the buffer
-        let rc = unsafe { bun_sys::windows::ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
-        let result = (if rc != bun_sys::windows::ws2_32::SOCKET_ERROR {
-            usize::try_from(rc).expect("int cast")
-        } else {
-            0
-        }) != 0;
-        bun_sys::syslog!("poll({}) writable: {} ({})", fd, result, polls[0].revents);
-        if result && polls[0].revents & bun_sys::windows::ws2_32::POLLWRNORM != 0 {
-            return PollFlag::hup;
-        } else if result {
-            return PollFlag::ready;
-        } else {
-            return PollFlag::not_ready;
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        debug_assert!(fd != invalid_fd);
-        let mut polls = [bun_sys::pollfd {
-            fd: fd.cast(),
-            events: bun_sys::POLL::OUT | bun_sys::POLL::ERR | bun_sys::POLL::HUP,
-            revents: 0,
-        }];
-        let result = bun_sys::poll(&mut polls, 0).unwrap_or(0) != 0;
-        let rc = if result && polls[0].revents & (bun_sys::POLL::HUP | bun_sys::POLL::ERR) != 0 {
-            PollFlag::hup
-        } else if result {
-            PollFlag::ready
-        } else {
-            PollFlag::not_ready
-        };
-        bun_sys::syslog!(
-            "poll({}, .writable): {} ({}{})",
-            fd,
-            result,
-            <&'static str>::from(rc),
-            if polls[0].revents & bun_sys::POLL::ERR != 0 { " ERR " } else { "" }
-        );
-        rc
-    }
-}
+// Dedup D050/D051: canonical impl lives in bun_core::util (re-exported at
+// bun_core root). Zero callers reference `bun::PollFlag`/`bun::is_{readable,
+// writable}` directly; the WSAPoll Windows branch + POLLOUT|ERR|HUP events
+// mask + `[sys]` debug log (via a locally-declared scope, since bun_core sits
+// below bun_sys) have all been folded into the canonical.
+pub use bun_core::{Pollable, PollFlag, is_readable, is_writable};
 
 /// Do not use this function, call `panic!` directly.
 #[inline]
@@ -839,47 +749,12 @@ pub fn open_dir_absolute_not_for_deleting_or_renaming(
 }
 
 // ─── getenv (legacy; prefer env_var) ──────────────────────────────────────────
-/// TODO(markovejnovic): Sunset this function when its last usage is removed.
-pub fn getenv_z_any_case(key: &bun_str::ZStr) -> Option<&'static [u8]> {
-    // SAFETY: std::os::environ is a NUL-terminated array of NUL-terminated strings
-    for line_z in bun_sys::environ() {
-        let line = unsafe { span(*line_z) };
-        let key_end = bun_str::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
-        if bun_str::strings::eql_case_insensitive_ascii(&line[..key_end], key.as_bytes(), true) {
-            return Some(&line[(key_end + 1).min(line.len())..]);
-        }
-    }
-    None
-}
-
-/// TODO(markovejnovic): Sunset this function when its last usage is removed.
-pub fn getenv_z(key: &bun_str::ZStr) -> Option<&'static [u8]> {
-    #[cfg(not(any(unix, windows)))]
-    {
-        return None;
-    }
-    #[cfg(windows)]
-    {
-        return getenv_z_any_case(key);
-    }
-    #[cfg(unix)]
-    {
-        // SAFETY: getenv returns null or a NUL-terminated string with static lifetime
-        let pointer = unsafe { libc::getenv(key.as_ptr().cast::<c_char>()) };
-        if pointer.is_null() {
-            return None;
-        }
-        Some(unsafe { span(pointer) })
-    }
-}
-
-/// TODO(markovejnovic): Sunset this function when its last usage is removed.
-pub fn getenv_truthy(key: &bun_str::ZStr) -> bool {
-    if let Some(value) = getenv_z(key) {
-        return value == b"true" || value == b"1";
-    }
-    false
-}
+// Canonical impls live in `bun_core::util` (re-exported via `bun_core::{getenv_z,
+// getenv_z_any_case}`). The local copies that used to live here delegated through
+// `bun_sys::environ()` on Windows, but `bun_core` cannot depend on `bun_sys`
+// (tier inversion) and the only consumer (`getenv_truthy`) had zero callers, so
+// the duplicates were dropped in favour of a re-export.
+pub use bun_core::{getenv_z, getenv_z_any_case};
 
 // ─── hash-map contexts ────────────────────────────────────────────────────────
 pub struct U32HashMapContext;
@@ -1156,177 +1031,15 @@ impl<T> DebugOnlyDisabler<T> {
 // TODO(port): failing_allocator — replace with panic-on-use pool if needed
 
 // ─── reload process ───────────────────────────────────────────────────────────
-static RELOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
-thread_local! {
-    static RELOAD_IN_PROGRESS_ON_CURRENT_THREAD: Cell<bool> = const { Cell::new(false) };
-}
-
-pub fn is_process_reload_in_progress_on_another_thread() -> bool {
-    RELOAD_IN_PROGRESS.load(Ordering::Relaxed)
-        && !RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get())
-}
-
-#[cold]
-pub fn maybe_handle_panic_during_process_reload() {
-    if is_process_reload_in_progress_on_another_thread() {
-        Output::flush();
-        if cfg!(debug_assertions) {
-            Output::debug_warn(format_args!("panic() called during process reload, ignoring\n"));
-        }
-        exit_thread();
-    }
-
-    // This shouldn't be reachable, but it can technically be because
-    // pthread_exit is a request and not guaranteed.
-    if is_process_reload_in_progress_on_another_thread() {
-        loop {
-            core::hint::spin_loop();
-            #[cfg(unix)]
-            bun_sys::nanosleep(1, 0);
-        }
-    }
-}
-
-unsafe extern "C" {
-    fn on_before_reload_process_linux();
-}
-
-/// Reload Bun's process. This clones envp, argv, and gets the current
-/// executable path.
-///
-/// On posix, this overwrites the current process with the new process using
-/// `execve`. On Windows, we don't have this API, instead relying on a dummy
-/// parent process that we can signal via a special exit code.
-pub fn reload_process<const MAY_RETURN: bool>(clear_terminal: bool) {
-    RELOAD_IN_PROGRESS.store(true, Ordering::Relaxed);
-    RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
-
-    if clear_terminal {
-        Output::flush();
-        Output::disable_buffering();
-        Output::reset_terminal_all();
-    }
-
-    Output::Source::Stdio::restore();
-
-    #[cfg(windows)]
-    {
-        // on windows we assume that we have a parent process that is monitoring us
-        //
-        // Spec (bun.zig:1593): `c.TerminateProcess(c.GetCurrentProcess(), windows.watcher_reload_exit)`.
-        // `bun_sys::c` does not re-export TerminateProcess/GetCurrentProcess, and the
-        // exit code constant is ported as `bun_sys::windows::WATCHER_RELOAD_EXIT`.
-        // Declare the kernel32 externs locally (matches bun_core/util.rs:3113).
-        unsafe extern "system" {
-            fn TerminateProcess(hProcess: *mut core::ffi::c_void, uExitCode: u32) -> i32;
-            fn GetCurrentProcess() -> *mut core::ffi::c_void;
-        }
-        let rc = unsafe { TerminateProcess(GetCurrentProcess(), bun_sys::windows::WATCHER_RELOAD_EXIT) };
-        if rc == 0 {
-            let err = bun_sys::windows::GetLastError();
-            if MAY_RETURN {
-                Output::err_generic(format_args!("Failed to reload process: {}", <&str>::from(err)));
-                return;
-            }
-            Output::panic(format_args!("Error while reloading process: {}", <&str>::from(err)));
-        } else {
-            if MAY_RETURN {
-                Output::err_generic(format_args!("Failed to reload process"));
-                return;
-            }
-            Output::panic(format_args!("Unexpected error while reloading process\n"));
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        let mut dupe_argv: Vec<*const c_char> = Vec::with_capacity(argv().len() + 1);
-        for src in argv() {
-            let z = bun_str::ZStr::from_bytes(src.as_bytes());
-            dupe_argv.push(Box::leak(z).as_ptr().cast::<c_char>());
-        }
-        dupe_argv.push(core::ptr::null());
-
-        let environ_slice = bun_sys::environ();
-        let mut environ: Vec<*const c_char> = Vec::with_capacity(environ_slice.len() + 1);
-        for src in environ_slice {
-            if src.is_null() {
-                environ.push(core::ptr::null());
-            } else {
-                let s = unsafe { span(*src) };
-                let z = bun_str::ZStr::from_bytes(s);
-                environ.push(Box::leak(z).as_ptr().cast::<c_char>());
-            }
-        }
-        environ.push(core::ptr::null());
-
-        // we must clone selfExePath in case the argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable").as_ptr().cast::<c_char>();
-        let newargv = dupe_argv.as_ptr();
-        let envp = environ.as_ptr();
-
-        #[cfg(target_os = "macos")]
-        {
-            let mut actions = spawn::Actions::init().expect("unreachable");
-            actions.inherit(FD::stdin()).expect("unreachable");
-            actions.inherit(FD::stdout()).expect("unreachable");
-            actions.inherit(FD::stderr()).expect("unreachable");
-
-            let mut attrs = spawn::Attr::init().expect("unreachable");
-            let _ = attrs.reset_signals();
-
-            attrs
-                .set(
-                    c::POSIX_SPAWN_CLOEXEC_DEFAULT
-                        | c::POSIX_SPAWN_SETEXEC
-                        | c::POSIX_SPAWN_SETSIGDEF
-                        | c::POSIX_SPAWN_SETSIGMASK,
-                )
-                .expect("unreachable");
-            match spawn::spawn_z(exec_path, &actions, &attrs, newargv, envp) {
-                bun_sys::Result::Err(err) => {
-                    if MAY_RETURN {
-                        Output::err_generic(format_args!(
-                            "Failed to reload process: {}",
-                            <&str>::from(err.get_errno())
-                        ));
-                        return;
-                    }
-                    Output::panic(format_args!(
-                        "Unexpected error while reloading: {} {}",
-                        err.errno,
-                        <&str>::from(err.get_errno())
-                    ));
-                }
-                bun_sys::Result::Ok(_) => {
-                    if MAY_RETURN {
-                        Output::err_generic(format_args!("Failed to reload process"));
-                        return;
-                    }
-                    Output::panic(format_args!(
-                        "Unexpected error while reloading: posix_spawn returned a result"
-                    ));
-                }
-            }
-        }
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            // SAFETY: FFI call with no preconditions; closes inherited fds before exec
-            unsafe {
-                on_before_reload_process_linux();
-            }
-            let err = bun_sys::execve_z(exec_path, newargv, envp);
-            if MAY_RETURN {
-                Output::err_generic(format_args!("Failed to reload process: {}", err.name()));
-                return;
-            }
-            Output::panic(format_args!("Unexpected error while reloading: {}", err.name()));
-        }
-    }
-}
-
-pub use bun_core::{auto_reload_on_crash, set_auto_reload_on_crash};
+// Canonical impl lives in bun_core (tier-0) so crash_handler can read the same
+// RELOAD_IN_PROGRESS atomic. A second copy here was a split-brain hazard.
+// TODO(port): bun_core::reload_process currently uses plain execve on macOS;
+// the spec-faithful posix_spawn(SETEXEC|CLOEXEC_DEFAULT) path should be ported
+// into bun_core using raw libc::posix_spawn* (libc is a tier-0 dep).
+pub use bun_core::{
+    auto_reload_on_crash, exit_thread, is_process_reload_in_progress_on_another_thread,
+    maybe_handle_panic_during_process_reload, reload_process, set_auto_reload_on_crash,
+};
 
 // ─── StringSet ────────────────────────────────────────────────────────────────
 pub struct StringSet {
@@ -1793,16 +1506,6 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
                 _ => Err(bun_core::err!("Unknown")),
             };
         }
-        // MSDN: CommandLineToArgvW allocates a contiguous block via LocalAlloc that
-        // the caller must free with a single LocalFree (the comment in bun.zig:2173
-        // quotes the GetCommandLineW docs, not CommandLineToArgvW). We copy every
-        // argument into our own StringBuilder storage below, so the source block is
-        // safe to release once copied — including on early-return paths.
-        unsafe extern "system" {
-            fn LocalFree(hMem: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
-        }
-        let _argvu16_free =
-            scopeguard::guard(argvu16_ptr, |p| unsafe { LocalFree(p.cast()); });
         let argvu16 =
             unsafe { core::slice::from_raw_parts(argvu16_ptr, usize::try_from(length).expect("int cast")) };
         let mut out_argv: Vec<Box<bun_str::ZStr>> = Vec::with_capacity(argvu16.len());
@@ -2036,24 +1739,7 @@ pub fn dupe<T: Clone>(t: &T) -> Box<T> {
 // TrivialNew / TrivialDeinit — in Rust these are just `Box::new` / `Drop`.
 // TODO(port): TrivialNew/TrivialDeinit — replace call sites with Box::new/drop
 
-pub fn exit_thread() -> ! {
-    unsafe extern "C" {
-        #[cfg(unix)]
-        fn pthread_exit(retval: *mut c_void) -> !;
-    }
-    #[cfg(windows)]
-    unsafe extern "system" {
-        fn ExitThread(code: u32) -> !;
-    }
-    #[cfg(windows)]
-    unsafe {
-        ExitThread(0);
-    }
-    #[cfg(unix)]
-    unsafe {
-        pthread_exit(core::ptr::null_mut());
-    }
-}
+// exit_thread: re-exported from bun_core above (reload-process group).
 
 pub fn delete_all_pools_for_thread_exit() {
     bun_jsc::WebCore::ByteListPool::delete_all();
@@ -2327,7 +2013,7 @@ pub fn get_rough_tick_count_ms(mock_mode: TimespecMockMode) -> u64 {
 }
 
 const NS_PER_S: u64 = 1_000_000_000;
-const NS_PER_MS: u64 = 1_000_000;
+use bun_core::time::NS_PER_MS;
 const MS_PER_S: i64 = 1_000;
 
 #[derive(Copy, Clone)]
@@ -2569,46 +2255,7 @@ pub fn index_of_pointer_in_slice<T>(slice: &[T], item: &T) -> usize {
 pub use bun_core::get_thread_count;
 
 // ─── Once ─────────────────────────────────────────────────────────────────────
-/// An object that executes the function `f` just once.
-pub struct Once<R> {
-    pub done: AtomicBool,
-    pub payload: core::mem::MaybeUninit<R>,
-    pub mutex: Mutex,
-}
-
-impl<R: Copy> Once<R> {
-    pub const fn new() -> Self {
-        Self {
-            done: AtomicBool::new(false),
-            payload: core::mem::MaybeUninit::uninit(),
-            mutex: Mutex::new(),
-        }
-    }
-
-    pub fn call(&self, f: impl FnOnce() -> R) -> R {
-        if self.done.load(Ordering::Acquire) {
-            // SAFETY: done==true implies payload was written
-            return unsafe { self.payload.assume_init() };
-        }
-        self.call_slow(f)
-    }
-
-    #[cold]
-    fn call_slow(&self, f: impl FnOnce() -> R) -> R {
-        let _guard = self.mutex.lock_guard();
-        if !self.done.load(Ordering::Acquire) {
-            // SAFETY: exclusive under mutex
-            unsafe {
-                (self.payload.as_ptr().cast_mut().cast::<R>()).write(f());
-            }
-            self.done.store(true, Ordering::Release);
-        }
-        // SAFETY: done==true implies payload was written
-        unsafe { self.payload.assume_init() }
-    }
-}
-// PORT NOTE: Zig's `once(f)` bound the fn at type-construction; Rust passes the
-// closure to `call`. Phase B may want `OnceLock<R>` instead.
+pub use bun_core::Once;
 
 /// Takes the value out of an Option, replacing it with None.
 #[inline]
@@ -2655,63 +2302,7 @@ pub fn item_or_null<T: Copy>(slice: &[T], index: usize) -> Option<T> {
 }
 
 // ─── StackCheck ───────────────────────────────────────────────────────────────
-#[derive(Copy, Clone, Default)]
-pub struct StackCheck {
-    pub cached_stack_end: usize,
-}
-
-impl StackCheck {
-    pub fn configure_thread() {
-        // SAFETY: FFI call into bun cpp bindings, no invariants required
-        unsafe { cpp::Bun__StackCheck__initialize() };
-    }
-    fn get_stack_end() -> usize {
-        // SAFETY: FFI call into bun cpp bindings, no invariants required
-        unsafe { cpp::Bun__StackCheck__getMaxStack() as usize }
-    }
-    pub fn init() -> StackCheck {
-        StackCheck { cached_stack_end: Self::get_stack_end() }
-    }
-    pub fn update(&mut self) {
-        self.cached_stack_end = Self::get_stack_end();
-    }
-    /// Is there at least 128 KB of stack space available?
-    #[inline]
-    pub fn is_safe_to_recurse(&self) -> bool {
-        let stack_ptr = Self::frame_address();
-        let remaining_stack = stack_ptr.saturating_sub(self.cached_stack_end);
-        let limit = if cfg!(windows) { 256 } else { 128 };
-        remaining_stack > 1024 * limit
-    }
-
-    /// Port of Zig `@frameAddress()`. Reads the frame-pointer register
-    /// directly so the result is always on the real machine stack — taking
-    /// the address of a local instead lands on ASAN's heap-backed fake stack
-    /// when use-after-return detection is on, which makes the comparison
-    /// against `cached_stack_end` meaningless.
-    #[inline(always)]
-    fn frame_address() -> usize {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let fp: usize;
-            // SAFETY: reading rbp is side-effect-free.
-            unsafe { core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags)) };
-            fp
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            let fp: usize;
-            // SAFETY: reading x29 (fp) is side-effect-free.
-            unsafe { core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags)) };
-            fp
-        }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            let probe = 0u8;
-            core::ptr::from_ref::<u8>(&probe) as usize
-        }
-    }
-}
+pub use bun_core::StackCheck;
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
 pub enum StackOverflow {

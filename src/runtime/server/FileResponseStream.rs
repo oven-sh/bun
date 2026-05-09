@@ -25,6 +25,7 @@ use crate::server::jsc::{AnyTask, EventLoopHandle, Task, VirtualMachine};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: AnyResponse,
@@ -176,7 +177,7 @@ impl FileResponseStream {
         this.reader.set_parent(this_parent);
 
         // SAFETY: `this` reborrows the live heap::alloc allocation above.
-        let _guard = unsafe { Self::ref_guard(this) };
+        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
 
         let start_result = if opts.offset > 0 {
             this.reader
@@ -204,7 +205,7 @@ impl FileResponseStream {
         }
 
         // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
-        this.r#ref();
+        this.ref_();
         this.reader.read();
     }
 
@@ -213,7 +214,7 @@ impl FileResponseStream {
     pub fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
         let this: *mut Self = self;
         // SAFETY: `this` is the live intrusive allocation owning `self`.
-        let _guard = unsafe { Self::ref_guard(this) };
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
 
         if self.state.contains(State::RESPONSE_DONE) {
             return false;
@@ -271,8 +272,9 @@ impl FileResponseStream {
         match self.resp.write(chunk) {
             WriteResult::Backpressure(_) => {
                 // release the read ref; on_writable re-takes it. Adopts the ref
-                // taken before `reader.read()` — no fresh `r#ref()` here.
-                let _guard2 = DerefOnDrop(this);
+                // taken before `reader.read()` — no fresh `ref_()` here.
+                // SAFETY: `this` is the live intrusive allocation owning `self`.
+                let _guard2 = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
                 self.resp.on_writable(
                     |p: *mut FileResponseStream, off, r| {
                         // SAFETY: uWS hands back the userdata pointer set below.
@@ -290,20 +292,22 @@ impl FileResponseStream {
 
     pub fn on_reader_done(&mut self) {
         // Adopts the in-flight read ref taken before `reader.read()`.
-        let _guard = DerefOnDrop(self);
+        // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
+        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
         self.finish();
     }
 
     pub fn on_reader_error(&mut self, err: sys::Error) {
         // Adopts the in-flight read ref taken before `reader.read()`.
-        let _guard = DerefOnDrop(self);
+        // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
+        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
         self.fail_with(err);
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
         bun_output::scoped_log!(FileResponseStream, "onWritable");
         // SAFETY: `self` is the live intrusive allocation (uWS userdata ptr).
-        let _guard = unsafe { Self::ref_guard(self) };
+        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(self) };
 
         if self.mode == Mode::Sendfile {
             return self.on_sendfile();
@@ -314,7 +318,7 @@ impl FileResponseStream {
             return true;
         }
         self.resp.timeout(self.idle_timeout);
-        self.r#ref();
+        self.ref_();
         self.reader.read();
         true
     }
@@ -530,59 +534,8 @@ impl FileResponseStream {
     }
 
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread RC.
-    pub fn r#ref(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// RAII pair for `r#ref()` / `deref()`: bumps the intrusive refcount now and
-    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
-    /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
-    /// reference is live across the potential free in `deref()`.
-    ///
-    /// # Safety
-    /// `this` must satisfy the contract of [`Self::deref`] for the guard's
-    /// entire lifetime.
-    #[inline]
-    unsafe fn ref_guard(this: *mut Self) -> DerefOnDrop {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).r#ref() };
-        DerefOnDrop(this)
-    }
-    /// # Safety
-    /// `this` must point to a live `FileResponseStream` allocated via
-    /// `heap::alloc` in `start()`. Mirrors Zig `RefCount.deref(*Self)` —
-    /// takes a raw mut pointer (not `&self`) so the `heap::take` on the
-    /// zero-ref path has write provenance back to the original allocation
-    /// instead of being laundered through a `&T -> *const T -> *mut T` cast.
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: per fn contract — `this` is live and exclusive at zero-ref.
-        unsafe {
-            let n = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(n);
-            if n == 0 {
-                // Intrusive ref_count just reached zero — no other live
-                // references. Dropping the Box runs `impl Drop` (fd close) and
-                // field drops.
-                drop(bun_core::heap::take(this));
-            }
-        }
-    }
-}
-
-/// RAII owner for one intrusive refcount on a `FileResponseStream`. Dropping
-/// calls [`FileResponseStream::deref`], which may free `*self.0` — so callers
-/// must not hold a live `&`/`&mut FileResponseStream` across the guard's drop
-/// point. Construct via [`FileResponseStream::ref_guard`] (which also bumps the
-/// count) or directly when adopting a ref taken elsewhere (e.g. the in-flight
-/// read ref taken before `reader.read()`).
-#[must_use = "dropping immediately releases the ref"]
-struct DerefOnDrop(*mut FileResponseStream);
-impl Drop for DerefOnDrop {
-    fn drop(&mut self) {
-        // SAFETY: constructor contract — `self.0` is a live `heap::alloc`
-        // pointer with at least one outstanding ref owned by this guard.
-        unsafe { FileResponseStream::deref(self.0) }
-    }
+    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; the former
+    // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_ptr::ScopedRef<Self>`.
 }
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig

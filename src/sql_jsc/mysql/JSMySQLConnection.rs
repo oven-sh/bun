@@ -32,7 +32,7 @@ use super::protocol::result_set::{self as ResultSet};
 
 bun_core::declare_scope!(MySQLConnection, visible);
 
-const NS_PER_MS: u64 = 1_000_000;
+use bun_core::time::NS_PER_MS;
 
 // PORT NOTE: #[bun_jsc::JsClass] proc-macro is not applied because this type
 // already has its `to_js`/`from_js` wired through `crate::jsc::codegen::
@@ -1181,11 +1181,7 @@ impl core::fmt::Display for OnResultRowError {
     }
 }
 impl core::error::Error for OnResultRowError {}
-impl From<OnResultRowError> for bun_core::Error {
-    fn from(e: OnResultRowError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(OnResultRowError);
 impl From<OnResultRowError> for AnyMySQLErrorT {
     fn from(e: OnResultRowError) -> Self {
         match e {

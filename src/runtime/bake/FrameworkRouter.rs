@@ -1109,11 +1109,7 @@ pub enum InsertError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-impl From<AllocError> for InsertError {
-    fn from(_: AllocError) -> Self {
-        InsertError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(InsertError);
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum InsertKind {
@@ -1928,7 +1924,7 @@ impl JSFrameworkRouter {
         let abs_root: Box<[u8]> = strings::without_trailing_slash(
             paths::resolve_path::join_abs::<paths::platform::Auto>(
                 // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-                unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir },
+                bun_resolver::fs::FileSystem::get().top_level_dir,
                 root.slice(),
             ),
         )

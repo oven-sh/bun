@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, CommonAbortReason, DOMFormData, JSGlobalObject, JSPromise, JSValue,
+    self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData, JSGlobalObject, JSPromise, JSValue,
     JsResult, Strong, SystemError, URLSearchParams, VirtualMachine,
 };
 use crate::webcore::{
@@ -153,9 +153,7 @@ impl Body {
                 blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(false, size, writer)?;
             }
             Value::Locked(locked) => {
-                // SAFETY: `locked.global` is stored from a live `&JSGlobalObject` at
-                // construction time; the JSC global object outlives every Body that holds it.
-                let global = unsafe { &*locked.global };
+                let global = locked.global();
                 if let Some(stream) = locked.readable.get(global) {
                     formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                     writer.write_str("\n")?;
@@ -248,14 +246,21 @@ impl Default for PendingValue {
 }
 
 impl PendingValue {
+    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
+    #[inline]
+    pub fn global(&self) -> &JSGlobalObject {
+        // SAFETY: `self.global` is stored from a live `&JSGlobalObject` at
+        // construction time; the JSC global object outlives every Body that
+        // holds it (process-lifetime singleton on the JS thread).
+        unsafe { &*self.global }
+    }
+
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
     /// If the size is unknown will be 0
     fn size_hint(&self) -> blob::SizeType {
-        // SAFETY: `self.global` is stored from a live `&JSGlobalObject` at
-        // construction time; the JSC global object outlives every Body that holds it.
-        if let Some(readable) = self.readable.get(unsafe { &*self.global }) {
+        if let Some(readable) = self.readable.get(self.global()) {
             if let webcore::readable_stream::Source::Bytes(bytes) = readable.ptr {
                 // SAFETY: `Source::Bytes` holds a live `*mut ByteStream` for the
                 // lifetime of the ReadableStream JS wrapper (rooted via `self.readable`).
@@ -320,10 +325,7 @@ impl PendingValue {
     // TODO(b2-blocked): ReadableStream::to_any_blob (see above).
     
     pub fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
-        // SAFETY: `self.global` is stored from a live `&JSGlobalObject` at
-        // construction time (see `PendingValue::new`); the JSC global object
-        // outlives every Body that holds it.
-        let global = unsafe { &*self.global };
+        let global = self.global();
         let mut stream = self.readable.get(global)?;
 
         if let Some(blob) = stream.to_any_blob(global) {

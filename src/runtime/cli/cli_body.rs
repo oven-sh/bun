@@ -720,12 +720,11 @@ pub mod command {
                 };
                 // TODO(port): move to cli_sys
                 unsafe extern "C" {
+                    // By-value `i32` only; noreturn entry point — no preconditions.
                     #[link_name = "Bun__WebView__hostMain"]
-                    fn host_main(fd: i32) -> !;
+                    safe fn host_main(fd: i32) -> !;
                 }
-                // SAFETY: Bun__WebView__hostMain is a noreturn extern that takes
-                // ownership of the IPC fd; `fd` validated above to fit i32.
-                unsafe { host_main(i32::try_from(fd).expect("int cast")) };
+                host_main(i32::try_from(fd).expect("int cast"));
             }
         }
 
@@ -1734,12 +1733,8 @@ To create a project with the official Next.js scaffolding tool, run
         let cli = bun_install::CommandLineArguments::parse(PmSubcommand::Info)?;
         let cli_json_output = cli.json_output;
         let ctx = init::<{ Tag::InfoCommand }>(log)?;
-        let (pm_ptr, _) =
+        let (pm, _) =
             bun_install::package_manager::init(&mut *ctx, cli, PmSubcommand::Info)?;
-        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
-        // non-null and exclusively owned by this thread for the command's
-        // duration (mirrors Zig's `*PackageManager`).
-        let pm: &mut bun_install::PackageManager = unsafe { &mut *pm_ptr };
 
         // Handle arguments correctly for standalone info command
         let mut package_name: &[u8] = b"";

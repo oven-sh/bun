@@ -12,6 +12,7 @@ use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
 use bun_io::KeepAlive;
+use bun_ptr::BackRef;
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
     dispatch, BundleThread, BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
@@ -55,7 +56,7 @@ pub struct JSBundleCompletionTask {
     pub config: JSBundlerConfig,
     pub jsc_event_loop: *mut EventLoop,
     pub task: AnyTask,
-    pub global_this: *const JSGlobalObject,
+    pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub env: *mut bun_dotenv::Loader<'static>,
@@ -117,7 +118,7 @@ pub fn create_and_schedule_completion_task(
         config,
         jsc_event_loop: event_loop,
         task: AnyTask::default(),
-        global_this,
+        global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
         env,
@@ -281,7 +282,7 @@ impl JSBundleCompletionTask {
         // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
         // initialized during VM startup before any `Bun.build` is reachable.
         let top_level_dir =
-            unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir };
+            bun_resolver::fs::FileSystem::get().top_level_dir;
 
         // Always get an absolute path for the outfile to ensure it works
         // correctly with PE metadata operations.
@@ -531,10 +532,10 @@ impl JSBundleCompletionTask {
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
-        let _drop_ref = scopeguard::guard(ctx, |p| unsafe { RefCount::<Self>::deref(p) });
+        // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
+        let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
 
-        // SAFETY: bun_vm() is non-null for a Bun global.
-        let vm = unsafe { (*this.global_this).bun_vm_ptr() };
+        let vm = this.global_this.bun_vm_ptr();
         this.poll_ref.unref(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm));
         if this.cancelled {
             return Ok(());
@@ -548,9 +549,10 @@ impl JSBundleCompletionTask {
             return Ok(());
         }
 
-        // SAFETY: `global_this` was stashed at construction on the JS thread; this
-        // callback runs on that same thread (enqueued via `enqueue_task_concurrent`).
-        let global_this = unsafe { &*this.global_this };
+        // Copy the BackRef out (it is `Copy`) so `global_this` borrows a local
+        // instead of `*this` — `do_compilation`/`to_js_error` below need `&mut *this`.
+        let global_this_ref = this.global_this;
+        let global_this = global_this_ref.get();
         // PORT NOTE: `Strong::swap` ties the returned `&mut JSPromise` to
         // `&mut this.promise` even though the cell lives on the GC heap (raw
         // ptr deref inside). Detach via raw ptr so `this` can be reborrowed
@@ -630,7 +632,7 @@ impl JSBundleCompletionTask {
                 // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
                 // initialized during VM startup before any `Bun.build` is reachable.
                 let top_level_dir =
-                    unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir };
+                    bun_resolver::fs::FileSystem::get().top_level_dir;
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {

@@ -9,7 +9,7 @@ use bun_core::Timespec;
 pub use bun_sys::PosixStat;
 
 const MS_PER_S: i64 = 1000;
-const NS_PER_MS: i64 = 1_000_000;
+const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 
 /// Stats and BigIntStats classes from node:fs
 // PORT NOTE: Zig `fn StatType(comptime big: bool) type` → const-generic struct.

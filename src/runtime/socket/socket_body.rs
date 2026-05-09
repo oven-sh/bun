@@ -27,7 +27,7 @@ use bun_boringssl_sys as boringssl_sys;
 use bun_event_loop::AnyTask::AnyTask;
 use crate::node::{StringOrBuffer, BlobOrStringOrBuffer};
 use crate::webcore::blob::BlobExt;
-use crate::socket::SSLConfig;
+use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers};
 
@@ -73,8 +73,8 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
     fn resume_stream(&self) -> bool {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: non-null FFI handle owned by uSockets.
-                unsafe { (*s).resume() };
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).resume();
                 true
             }
             uws::InternalSocket::Detached => true,
@@ -90,8 +90,8 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
     fn pause_stream(&self) -> bool {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: non-null FFI handle owned by uSockets.
-                unsafe { (*s).pause() };
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).pause();
                 true
             }
             uws::InternalSocket::Detached => true,
@@ -106,8 +106,8 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
     fn set_no_delay(&self, enabled: bool) -> bool {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: non-null FFI handle owned by uSockets.
-                unsafe { (*s).set_nodelay(enabled) };
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).set_nodelay(enabled);
                 true
             }
             _ => false,
@@ -116,8 +116,8 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
     fn set_keep_alive(&self, enabled: bool, delay: u32) -> bool {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: non-null FFI handle owned by uSockets.
-                unsafe { (*s).set_keepalive(enabled, delay) == 0 }
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).set_keepalive(enabled, delay) == 0
             }
             _ => false,
         }
@@ -133,8 +133,8 @@ impl<const SSL: bool> SocketHandlerAddrExt for uws::NewSocketHandler<SSL> {
     fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-                unsafe { (*s).local_address(buf) }.ok()
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).local_address(buf).ok()
             }
             _ => None,
         }
@@ -142,8 +142,8 @@ impl<const SSL: bool> SocketHandlerAddrExt for uws::NewSocketHandler<SSL> {
     fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         match self.socket {
             uws::InternalSocket::Connected(s) => {
-                // SAFETY: `s` is a non-null FFI handle owned by uSockets.
-                unsafe { (*s).remote_address(buf) }.ok()
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(s).remote_address(buf).ok()
             }
             _ => None,
         }
@@ -482,11 +482,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let hostz = bun_core::ZBox::from_bytes(clean);
                 let port = *port;
                 // `host` borrow ends here; `self.connection` no longer borrowed.
-                // SAFETY: `ZBox` guarantees a trailing NUL and contains no
-                // interior NUL (host bytes were `[` stripped slice).
-                let host_c = unsafe {
-                    core::ffi::CStr::from_bytes_with_nul_unchecked(hostz.as_bytes_with_nul())
-                };
+                // `ZBox` guarantees a trailing NUL; host bytes contain no interior NUL.
+                let host_c = hostz.as_zstr().as_cstr();
 
                 self.socket = match group.connect(
                     kind,
@@ -964,10 +961,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // The error is effectively handled, but we should still reject the promise.
             // UFCS so rustc can back-infer `val: JSValue` even if the
             // `promise` field's `try_swap()` resolution is in flux upstream.
-            let promise: *mut jsc::JSPromise = JSValue::as_promise(val).unwrap();
-            // SAFETY: `as_promise` returned non-null; promise lives for this call.
-            let err_ = err.to_error_instance_with_async_stack(&global, unsafe { &*promise });
-            unsafe { (*promise).reject_as_handled(&global, err_) }?;
+            let promise = jsc::JSPromise::opaque_mut(JSValue::as_promise(val).unwrap());
+            let err_ = err.to_error_instance_with_async_stack(&global, promise);
+            promise.reject_as_handled(&global, err_)?;
         }
 
         // `_scope_guard` (declared after `cleanup`) drops first → scope.exit();
@@ -1646,19 +1642,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::NULL);
         }
 
-        let code: &[u8] = if ssl_error.code.is_null() {
-            b""
-        } else {
-            // SAFETY: ssl_error.code is a NUL-terminated C string from BoringSSL.
-            unsafe { bun_core::ffi::cstr(ssl_error.code) }.to_bytes()
-        };
-
-        let reason: &[u8] = if ssl_error.reason.is_null() {
-            b""
-        } else {
-            // SAFETY: ssl_error.reason is a NUL-terminated C string from BoringSSL.
-            unsafe { bun_core::ffi::cstr(ssl_error.reason) }.to_bytes()
-        };
+        let code: &[u8] = ssl_error.code_bytes();
+        let reason: &[u8] = ssl_error.reason_bytes();
 
         let fallback = SystemError {
             errno: 0,
@@ -2799,12 +2784,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             socket: SocketHandler::<true>::DETACHED,
             owned_ssl_ctx: owned_ctx_taken,
             connection: this.connection.as_ref().map(|c| c.clone()),
-            protos: cfg.and_then(|c| {
-                c.protos.as_ref().map(|p| Box::<[u8]>::from(p.as_bytes()))
-            }),
-            server_name: cfg.and_then(|c| {
-                c.server_name.as_ref().map(|sn| Box::<[u8]>::from(sn.as_bytes()))
-            }),
+            protos: cfg.and_then(|c| c.protos_bytes().map(Box::<[u8]>::from)),
+            server_name: cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             flags: Flags::default(),
             this_value: JsRef::empty(),
             poll_ref: KeepAlive::init(),
@@ -2822,7 +2803,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // alias the `&mut TLSSocket` those calls materialise from ext.
         // Reborrow short-lived `unsafe { &mut *tls_ptr }` per use instead.
 
-        let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name.as_deref());
+        let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name_cstr());
         // SAFETY: per-thread VM singleton; no aliasing `&mut` held.
         let group = VirtualMachine::get().as_mut()
             .rare_data()
@@ -3632,16 +3613,8 @@ pub fn js_upgrade_duplex_to_tls(
         socket: SocketHandler::<true>::DETACHED,
         owned_ssl_ctx: None,
         connection: None,
-        protos: socket_config.and_then(|cfg| {
-            cfg.protos
-                .as_ref()
-                .map(|p| Box::<[u8]>::from(p.as_bytes()))
-        }),
-        server_name: socket_config.and_then(|cfg| {
-            cfg.server_name
-                .as_ref()
-                .map(|sn| Box::<[u8]>::from(sn.as_bytes()))
-        }),
+        protos: socket_config.and_then(|cfg| cfg.protos_bytes().map(Box::<[u8]>::from)),
+        server_name: socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         flags: Flags::default(),
         this_value: JsRef::empty(),
         poll_ref: KeepAlive::init(),

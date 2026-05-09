@@ -10,7 +10,7 @@ use bun_jsc::{
     JsResult,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
-use crate::socket::SSLConfig;
+use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_str::{self as strings, String as BunString};
 use bun_uws as uws;
@@ -454,9 +454,7 @@ impl JSValkeyClient {
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
             arguments[0].to_bun_string(&global_object)?
         } else {
-            // SAFETY: `vm.transpiler.env` is set during VM init and points at the
-            // process-lifetime `bun_dotenv::Loader`; never null on the JS thread.
-            let env = unsafe { &*vm_ref.transpiler.env };
+            let env = vm_ref.env_loader();
             match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
                 Some(url) => BunString::borrow_utf8(url),
                 None => BunString::static_(b"valkey://localhost:6379"),
@@ -1806,18 +1804,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
             "onHandshake: {} error={} reason={} code={}",
             success,
             ssl_error.error_no,
-            if !ssl_error.reason.is_null() {
-                // SAFETY: NUL-terminated C string from BoringSSL
-                bstr::BStr::new(unsafe { bun_core::ffi::cstr(ssl_error.reason) }.to_bytes())
-            } else {
-                bstr::BStr::new(b"no reason")
-            },
-            if !ssl_error.code.is_null() {
-                // SAFETY: NUL-terminated C string from BoringSSL
-                bstr::BStr::new(unsafe { bun_core::ffi::cstr(ssl_error.code) }.to_bytes())
-            } else {
-                bstr::BStr::new(b"no code")
-            },
+            bstr::BStr::new(ssl_error.reason().map_or(b"no reason" as &[u8], |c| c.to_bytes())),
+            bstr::BStr::new(ssl_error.code().map_or(b"no code" as &[u8], |c| c.to_bytes())),
         );
         let handshake_success = success == 1;
         this.ref_();

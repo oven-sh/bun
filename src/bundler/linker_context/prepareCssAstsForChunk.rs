@@ -350,10 +350,9 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     // to make a shallow copy and be careful not to modify shared
                     // references.
                     let ast: &mut BundlerStyleSheet = 'ast: {
-                        // SAFETY: asts[idx] is Some for source_index entries (invariant of imports_in_chunk_in_order).
-                        let original_stylesheet: &BundlerStyleSheet = unsafe {
-                            &*asts[source_index.get() as usize].expect("css ast present")
-                        };
+                        // asts[idx] is Some for source_index entries (invariant of imports_in_chunk_in_order).
+                        let original_stylesheet: &BundlerStyleSheet =
+                            asts[source_index.get() as usize].as_deref().expect("css ast present");
                         // SAFETY: Zig `original_stylesheet.*` — bitwise shallow copy of the
                         // stylesheet header. All interior allocations are arena-owned and never
                         // freed via this view, so the duplicated `Vec`/`Vec` headers are

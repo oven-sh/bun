@@ -360,7 +360,7 @@ impl ResponseLike for bun_uws::AnyResponse {
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
-    pub dev: NonNull<DevServer>,
+    pub dev: bun_ptr::BackRef<DevServer>,
     pub underlying: Option<bun_uws::AnyWebSocket>,
     pub subscriptions: super::dev_server_body::HmrTopicBits,
     /// Allows actions which inspect or mutate sensitive DevServer state.
@@ -431,8 +431,8 @@ impl HotReloadEvent {
         dev: &mut DevServer,
         entry_points: &mut EntryPointList,
     ) {
-        // RAII: `ThreadLockGuard` stores a raw `*mut ThreadLock` and unlocks on
-        // drop, so it does not hold a unique borrow of `dev` for the scope.
+        // RAII: `ThreadLockGuard` stores a raw `*const ThreadLock` and unlocks on
+        // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
 
         // First handle directories, because this may mutate `event.files`
@@ -1186,11 +1186,7 @@ enum DirectoryWatchInsertError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-impl From<bun_alloc::AllocError> for DirectoryWatchInsertError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        DirectoryWatchInsertError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(DirectoryWatchInsertError);
 
 impl DirectoryWatchStore {
     /// `DirectoryWatchStore.trackResolutionFailure` — DirectoryWatchStore.zig:28.

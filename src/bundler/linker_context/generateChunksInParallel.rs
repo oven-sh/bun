@@ -48,10 +48,7 @@ bun_core::declare_scope!(PartRanges, hidden);
 // PORT NOTE: `Chunk.final_rel_path` / `metafile_chunk_json` are owned
 // `Box<[u8]>` (Zig stored them as linker-arena `[]const u8`); assignments
 // below move the boxed buffer directly — no lifetime promotion needed.
-use crate::linker_context_mod::LinkerCtx;
-macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
-}
+use crate::linker_context_mod::debug;
 
 // TODO(port): Zig's return type is `!if (is_dev_server) void else ArrayList(OutputFile)`.
 // Rust const generics cannot vary the return type, so we always return
@@ -1020,7 +1017,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     // Zig: `@ptrCast(dupe(u32, js.css_chunks))` — `output_file::Index`
                     // is `#[repr(transparent)]` over u32.
                     crate::chunk::Content::Javascript(js) => {
-                        js.css_chunks.iter().map(|&i| crate::output_file::Index(i)).collect()
+                        js.css_chunks.iter().map(|&i| crate::output_file::Index::init(i)).collect()
                     }
                     crate::chunk::Content::Css(_) => Box::default(),
                     crate::chunk::Content::Html => Box::default(),

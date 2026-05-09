@@ -1,7 +1,9 @@
 use core::mem::size_of;
 
 // `std.macho` types ported locally (see macho_types.rs).
+use crate::align_up as align_size;
 use crate::macho_types as macho;
+use crate::{read_struct, write_struct};
 use crate::macho_types::{BlobIndex, CodeDirectory, SuperBlob};
 
 use bun_core::env_var::feature_flag;
@@ -29,11 +31,7 @@ pub enum MachoError {
     OutOfMemory,
 }
 bun_core::named_error_set!(MachoError);
-impl From<bun_alloc::AllocError> for MachoError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        MachoError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(MachoError);
 
 pub struct MachoFile {
     pub header: macho::mach_header_64,
@@ -62,11 +60,9 @@ impl MachoFile {
         let mut data: Vec<u8> = Vec::with_capacity(obj_file.len() + blob_to_embed_length);
         data.extend_from_slice(obj_file);
 
-        // SAFETY: data.len() >= sizeof(mach_header_64) is assumed by caller (obj_file is a Mach-O);
-        // mach_header_64 is #[repr(C)] POD. read_unaligned mirrors Zig's @ptrCast(@alignCast(...)).*
-        let header: macho::mach_header_64 = unsafe {
-            core::ptr::read_unaligned(data.as_ptr().cast::<macho::mach_header_64>())
-        };
+        // data.len() >= sizeof(mach_header_64) is assumed by caller (obj_file is a Mach-O);
+        // the slice index panics on a short input rather than reading OOB.
+        let header: macho::mach_header_64 = read_struct(&data[..size_of::<macho::mach_header_64>()]);
 
         Ok(Box::new(MachoFile {
             header,
@@ -243,28 +239,19 @@ impl MachoFile {
         padding_bytes.fill(0);
 
         if let Some(idx) = code_sign_cmd_idx {
-            // SAFETY: idx is a byte offset into self.data computed above; linkedit_data_command is POD.
-            let cs = unsafe {
-                &*(self.data.as_ptr().add(idx).cast::<macho::linkedit_data_command>())
-            };
+            let cs: macho::linkedit_data_command =
+                read_struct(&self.data[idx..][..size_of::<macho::linkedit_data_command>()]);
             sig_size = cs.datasize as usize;
         }
 
         if size_diff != 0 {
             // We move the offsets of the LINKEDIT segment ahead by `size_diff`
-            // SAFETY: linkedit_seg_idx is a valid byte offset into self.data; segment_command_64 is POD.
-            // Unaligned access mirrors Zig *align(1).
-            unsafe {
-                let seg = self
-                    .data
-                    .as_mut_ptr()
-                    .add(linkedit_seg_idx)
-                    .cast::<macho::segment_command_64>();
-                let mut v = core::ptr::read_unaligned(seg);
-                v.fileoff += usize::try_from(size_diff).expect("int cast") as u64;
-                v.vmaddr += usize::try_from(size_diff).expect("int cast") as u64;
-                core::ptr::write_unaligned(seg, v);
-            }
+            let seg_sz = size_of::<macho::segment_command_64>();
+            let mut v: macho::segment_command_64 =
+                read_struct(&self.data[linkedit_seg_idx..][..seg_sz]);
+            v.fileoff += usize::try_from(size_diff).expect("int cast") as u64;
+            v.vmaddr += usize::try_from(size_diff).expect("int cast") as u64;
+            write_struct(&mut self.data[linkedit_seg_idx..][..seg_sz], &v);
         }
 
         if let Some(idx) = code_sign_cmd_idx {
@@ -281,54 +268,40 @@ impl MachoFile {
                 // with a different page size / identifier / blob set, so its
                 // `cs.datasize` can be smaller than what `sign()` will produce, which
                 // the trailing truncation in `sign()` then chops (issue #29120).
-                // SAFETY: idx is a valid byte offset into self.data; both commands are POD; unaligned access.
-                unsafe {
-                    let cs_ptr = self
-                        .data
-                        .as_mut_ptr()
-                        .add(idx)
-                        .cast::<macho::linkedit_data_command>();
-                    let mut cs = core::ptr::read_unaligned(cs_ptr);
-                    let new_sig_dataoff: u64 =
-                        cs.dataoff as u64 + u64::try_from(size_diff).expect("int cast");
-                    let new_sig_size = MachoSigner::compute_signature_size(new_sig_dataoff);
+                let cs_sz = size_of::<macho::linkedit_data_command>();
+                let seg_sz = size_of::<macho::segment_command_64>();
 
-                    let seg_ptr = self
-                        .data
-                        .as_mut_ptr()
-                        .add(linkedit_seg_idx)
-                        .cast::<macho::segment_command_64>();
-                    let mut seg = core::ptr::read_unaligned(seg_ptr);
+                let mut cs: macho::linkedit_data_command =
+                    read_struct(&self.data[idx..][..cs_sz]);
+                let new_sig_dataoff: u64 =
+                    cs.dataoff as u64 + u64::try_from(size_diff).expect("int cast");
+                let new_sig_size = MachoSigner::compute_signature_size(new_sig_dataoff);
 
-                    // The template signature is the tail of __LINKEDIT; swap its footprint.
-                    // vmsize must be page-aligned and >= filesize, so derive it from the
-                    // freshly-computed filesize rather than the pre-update vmsize (otherwise
-                    // an old vmsize that was already page-aligned to a wider page can leave
-                    // the segment one page larger than necessary).
-                    seg.filesize = seg.filesize - sig_size as u64 + new_sig_size as u64;
-                    seg.vmsize = align_size(seg.filesize, PAGE_SIZE);
-                    core::ptr::write_unaligned(seg_ptr, seg);
+                let mut seg: macho::segment_command_64 =
+                    read_struct(&self.data[linkedit_seg_idx..][..seg_sz]);
 
-                    // Stamp datasize directly so the `size_diff == 0` path — which skips
-                    // `updateLoadCommandOffsets` below — still records the new size.
-                    cs.datasize = u32::try_from(new_sig_size).expect("int cast");
-                    core::ptr::write_unaligned(cs_ptr, cs);
-                    sig_size = new_sig_size;
-                }
+                // The template signature is the tail of __LINKEDIT; swap its footprint.
+                // vmsize must be page-aligned and >= filesize, so derive it from the
+                // freshly-computed filesize rather than the pre-update vmsize (otherwise
+                // an old vmsize that was already page-aligned to a wider page can leave
+                // the segment one page larger than necessary).
+                seg.filesize = seg.filesize - sig_size as u64 + new_sig_size as u64;
+                seg.vmsize = align_size(seg.filesize, PAGE_SIZE);
+                write_struct(&mut self.data[linkedit_seg_idx..][..seg_sz], &seg);
+
+                // Stamp datasize directly so the `size_diff == 0` path — which skips
+                // `updateLoadCommandOffsets` below — still records the new size.
+                cs.datasize = u32::try_from(new_sig_size).expect("int cast");
+                write_struct(&mut self.data[idx..][..cs_sz], &cs);
+                sig_size = new_sig_size;
             }
         }
 
         if size_diff != 0 {
-            // SAFETY: linkedit_seg_idx is valid; read fileoff/filesize for the call below.
-            let (le_fileoff, le_filesize) = unsafe {
-                let seg = core::ptr::read_unaligned(
-                    self.data
-                        .as_ptr()
-                        .add(linkedit_seg_idx)
-                        .cast::<macho::segment_command_64>(),
-                );
-                (seg.fileoff, seg.filesize)
-            };
+            let seg: macho::segment_command_64 = read_struct(
+                &self.data[linkedit_seg_idx..][..size_of::<macho::segment_command_64>()],
+            );
+            let (le_fileoff, le_filesize) = (seg.fileoff, seg.filesize);
             self.update_load_command_offsets(
                 original_fileoff,
                 u64::try_from(size_diff).expect("int cast"),
@@ -521,10 +494,8 @@ pub struct MachoSigner {
 
 impl MachoSigner {
     pub fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
-        // SAFETY: obj is a Mach-O image; mach_header_64 is #[repr(C)] POD.
-        let header: macho::mach_header_64 =
-            unsafe { core::ptr::read_unaligned(obj.as_ptr().cast::<macho::mach_header_64>()) };
         let header_size = size_of::<macho::mach_header_64>();
+        let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
 
         let mut sig_off: usize = 0;
         let mut sig_sz: usize = 0;
@@ -701,9 +672,11 @@ impl MachoSigner {
         // (Zig used `self.data.writer()`; here we extend the Vec directly.)
 
         // Write signature components
-        self.data.extend_from_slice(as_bytes(&super_blob));
-        self.data.extend_from_slice(as_bytes(&blob_index));
-        self.data.extend_from_slice(as_bytes(&code_dir));
+        // SAFETY: SuperBlob / BlobIndex / CodeDirectory are #[repr(C)] POD with
+        // no padding; byte-serialized verbatim into the Mach-O signature.
+        self.data.extend_from_slice(unsafe { bun_core::bytes_of(&super_blob) });
+        self.data.extend_from_slice(unsafe { bun_core::bytes_of(&blob_index) });
+        self.data.extend_from_slice(unsafe { bun_core::bytes_of(&code_dir) });
         self.data.extend_from_slice(id);
 
         // Hash and write pages
@@ -749,15 +722,6 @@ impl MachoSigner {
     }
 }
 
-fn align_size(size: u64, base: u64) -> u64 {
-    let over = size % base;
-    if over == 0 {
-        size
-    } else {
-        size + (base - over)
-    }
-}
-
 fn align_vmsize(size: u64, page_size: u64) -> u64 {
     align_size(if size > 0x4000 { size } else { 0x4000 }, page_size)
 }
@@ -794,12 +758,5 @@ fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
     bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut());
 }
 
-/// Reinterpret a `#[repr(C)]` POD value as bytes (port of `std.mem.asBytes`).
-#[inline]
-fn as_bytes<T>(v: &T) -> &[u8] {
-    // SAFETY: T is #[repr(C)] POD with no padding-sensitive readers (callers pass SuperBlob /
-    // BlobIndex / CodeDirectory which are byte-serialized verbatim into the Mach-O signature).
-    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), size_of::<T>()) }
-}
 
 // ported from: src/exe_format/macho.zig

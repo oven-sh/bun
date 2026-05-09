@@ -365,12 +365,12 @@ impl LengthValue {
 
     pub fn is_sign_negative(&self) -> bool {
         let Some(s) = self.try_sign() else { return false };
-        css::signfns::is_sign_negative(s)
+        s.is_sign_negative()
     }
 
     pub fn is_sign_positive(&self) -> bool {
         let Some(s) = self.try_sign() else { return false };
-        css::signfns::is_sign_positive(s)
+        s.is_sign_positive()
     }
 
     pub fn try_sign(&self) -> Option<f32> {
@@ -714,12 +714,12 @@ impl Length {
 
     pub fn is_sign_negative(&self) -> bool {
         let Some(s) = self.try_sign() else { return false };
-        css::signfns::is_sign_negative(s)
+        s.is_sign_negative()
     }
 
     pub fn is_sign_positive(&self) -> bool {
         let Some(s) = self.try_sign() else { return false };
-        css::signfns::is_sign_positive(s)
+        s.is_sign_positive()
     }
 
     pub fn partial_cmp(&self, other: &Length) -> Option<Ordering> {
@@ -825,9 +825,9 @@ impl protocol::TryOp for LengthValue {
         None
     }
 }
-impl<R> protocol::TryOpTo<R> for LengthValue {
+impl protocol::TryOpTo for LengthValue {
     #[inline]
-    fn try_op_to<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
+    fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             return Some(f(ctx, self.value(), rhs.value()));
         }
@@ -887,9 +887,9 @@ impl protocol::TryOp for Angle {
         })
     }
 }
-impl<R> protocol::TryOpTo<R> for Angle {
+impl protocol::TryOpTo for Angle {
     #[inline]
-    fn try_op_to<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
+    fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
         Some(match (self, rhs) {
             (Angle::Deg(a), Angle::Deg(b)) => f(ctx, *a, *b),
             (Angle::Rad(a), Angle::Rad(b)) => f(ctx, *a, *b),

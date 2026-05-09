@@ -1641,15 +1641,14 @@ impl WindowsBufferedReader {
             match source {
                 Source::SyncFile(file) | Source::File(file) => {
                     // Detach - file will close itself after operation completes.
-                    // Hand the Box off to libuv as a raw pointer (mirroring the
-                    // Pipe arm) so Drop never runs here: `detach()` schedules an
-                    // async `uv_fs_close` (or leaves a pending `uv_fs_read`) whose
-                    // callback later reclaims the allocation via
-                    // `File::on_close_complete` → `heap::take`. In Zig the match
-                    // capture is a raw `*Source.File`, so no implicit free occurs.
+                    // Hand the Box off to libuv: detach() leaves either an
+                    // in-flight uv_fs_read (on_file_read) or a scheduled
+                    // uv_fs_close (on_close_complete) pending; the callback
+                    // reclaims the allocation via heap::take. Dropping the
+                    // Box here would free the uv_fs_t out from under libuv.
                     let raw = bun_core::heap::into_raw(file);
-                    // SAFETY: raw is a live heap-allocated File*; the libuv
-                    // callback (`on_file_read` / `on_close_complete`) frees it.
+                    // SAFETY: raw is a live heap File*; the pending fs callback
+                    // is the sole reclaimer (heap::take in on_close_complete).
                     unsafe { (*raw).detach() };
                 }
                 #[cfg(windows)]
@@ -1724,18 +1723,19 @@ impl WindowsBufferedReader {
         };
         if !source.is_closed() {
             // closeImpl will take care of freeing the source.
-            // PORT NOTE: Zig nulls `this.source` *before* calling closeImpl,
-            // making the call a no-op and *leaking* the raw `*Pipe`/`*File`
-            // (latent Zig bug). In Rust `Source` owns `Box<Pipe>`/`Box<File>`,
-            // so dropping `source` here would *free* a handle libuv still
-            // references → UAF. Restore it and route through close_impl so each
-            // variant hands ownership to libuv's close callback.
+            // PORT NOTE: Zig nulls `source` *before* calling closeImpl, which
+            // makes that call a no-op (latent Zig leak). We cannot mirror that
+            // verbatim: in Zig nulling a `?*Pipe` leaks; in Rust dropping
+            // `Box<Pipe>` frees a uv_pipe_t still linked into the loop's
+            // handle queue → UAF. Restore the source so close_impl can do the
+            // proper take + hand-off to libuv (into_raw + uv_close).
             self.source = Some(source);
             self.close_impl::<false>();
         } else {
-            // Already closed: match Zig's raw-pointer drop (no-op leak) rather
-            // than freeing a Box libuv's close cb may still reclaim.
-            mem::forget(source);
+            // Already closing/closed: a uv close callback may still be pending
+            // on this allocation. Zig leaks here (pointer nulled, no dtor);
+            // match that — dropping the Box would free memory libuv still owns.
+            core::mem::forget(source);
         }
     }
 
@@ -1814,21 +1814,10 @@ impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         // _buffer freed by Vec Drop.
-        let Some(source) = self.source.take() else {
-            return;
-        };
-        if !source.is_closed() {
-            // closeImpl will take care of freeing the source.
-            // PORT NOTE: see deinit() — Zig leaks the raw pointer here; in Rust
-            // dropping `source` would free a live libuv handle (UAF). Restore it
-            // and let close_impl hand each variant to libuv's close callback.
-            self.source = Some(source);
-            self.close_impl::<false>();
-        } else {
-            // Already closed: match Zig's raw-pointer drop (no-op leak) rather
-            // than freeing a Box libuv's close cb may still reclaim.
-            mem::forget(source);
-        }
+        // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
+        // live uv handles registered with the loop. Let close_impl perform the
+        // take + into_raw hand-off so the uv close callback reclaims them.
+        self.close_impl::<false>();
     }
 }
 

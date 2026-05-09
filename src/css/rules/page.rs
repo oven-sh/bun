@@ -47,9 +47,8 @@ impl PageSelector {
 // ─── PageSelector parse ───────────────────────────────────────────────────
 impl PageSelector {
     pub fn parse(input: &mut css::Parser) -> css::Result<PageSelector> {
-        // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
         let name: Option<&'static [u8]> = input
-            .try_parse(|i| i.expect_ident().map(|s| unsafe { css::css_parser::src_str(s) }))
+            .try_parse(|i| i.expect_ident_cloned())
             .ok();
         let mut pseudo_classes: ArrayList<PagePseudoClass> = ArrayList::new();
 

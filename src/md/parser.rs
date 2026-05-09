@@ -11,14 +11,7 @@ use bun_collections::bit_set::{num_masks_for, ArrayBitSet};
 // stub here makes every byte fall through the fast path and disables all
 // inline-span recognition (emphasis, links, code, entities, breaks).
 pub type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
-// TODO(b1): bun_core::StackCheck — confirm crate; local stub for now
-#[derive(Default)]
-pub struct StackCheck(());
-impl StackCheck {
-    pub fn init() -> Self { Self(()) }
-    // TODO(b2-blocked): bun_core::StackCheck::is_safe_to_recurse
-    pub fn is_safe_to_recurse(&self) -> bool { true }
-}
+use bun_core::StackCheck;
 
 use super::blocks as blocks_mod;
 use super::containers as containers_mod;
@@ -140,11 +133,7 @@ pub enum ParserError {
     StackOverflow,
 }
 
-impl From<bun_alloc::AllocError> for ParserError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        ParserError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ParserError);
 
 impl From<ParserError> for bun_core::Error {
     fn from(_e: ParserError) -> Self {

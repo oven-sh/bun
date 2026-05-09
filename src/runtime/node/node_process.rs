@@ -15,23 +15,22 @@ unsafe extern "C" {
 
 // ───────────────────────────── argv0 / execPath ─────────────────────────────
 
+// `&JSGlobalObject` is ABI-identical to `*const JSGlobalObject` (non-null) in
+// `extern "C"`; the C++ caller guarantees a live pointer, so the reference
+// param discharges the non-null obligation at the type level.
 #[unsafe(export_name = "Bun__Process__createArgv0")]
-pub extern "C" fn create_argv0(global_object: *const JSGlobalObject) -> JSValue {
-    // SAFETY: global_object is valid for the duration of this call
-    let global = unsafe { &*global_object };
+pub extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     let argv0 = bun_core::argv().get(0).map(|z| z.as_bytes()).unwrap_or(b"bun");
-    ZigString::from_utf8(argv0).to_js(global)
+    ZigString::from_utf8(argv0).to_js(global_object)
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
-pub extern "C" fn get_exec_path(global_object: *const JSGlobalObject) -> JSValue {
+pub extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
     let Ok(out) = bun_core::self_exe_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
-    // SAFETY: global_object is valid for the duration of this call
-    let global = unsafe { &*global_object };
-    ZigString::from_utf8(out.as_bytes()).to_js(global)
+    ZigString::from_utf8(out.as_bytes()).to_js(global_object)
 }
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
@@ -48,9 +47,7 @@ pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 
 // TODO(@190n) this may need to be noreturn
 #[unsafe(export_name = "Bun__Process__exit")]
-pub extern "C" fn exit(global_object: *const JSGlobalObject, code: u8) {
-    // SAFETY: global_object is valid for the duration of this call
-    let global_object = unsafe { &*global_object };
+pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
     // SAFETY: vm is the live per-thread VirtualMachine for this global.
     unsafe { (*vm).exit_handler.exit_code = code };
@@ -166,9 +163,7 @@ pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mu
 // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
 // not a `JSHostFunctionType`. Hand-roll the wrap1 shim instead of `#[bun_jsc::host_fn]`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Process__createExecArgv(global_object: *const JSGlobalObject) -> JSValue {
-    // SAFETY: global_object is valid for the duration of this call
-    let global_object = unsafe { &*global_object };
+pub extern "C" fn Bun__Process__createExecArgv(global_object: &JSGlobalObject) -> JSValue {
     bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
 }
 
@@ -314,9 +309,7 @@ fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
 // ───────────────────────────── argv ─────────────────────────────
 
 #[unsafe(export_name = "Bun__Process__createArgv")]
-pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
-    // SAFETY: global_object is valid for the duration of this call
-    let global_object = unsafe { &*global_object };
+pub extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
     let vm = global_object.bun_vm();
 
@@ -385,9 +378,7 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
 // ───────────────────────────── eval ─────────────────────────────
 
 #[unsafe(export_name = "Bun__Process__getEval")]
-pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
-    // SAFETY: global_object is valid for the duration of this call
-    let global_object = unsafe { &*global_object };
+pub extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
     let vm = global_object.bun_vm();
     if let Some(source) = vm.module_loader.eval_source.as_deref() {
@@ -402,9 +393,7 @@ pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
 // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`. Hand-roll the wrap1
 // shim instead of `#[bun_jsc::host_fn]` (caller is not a JSHostFunction).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Process__getCwd(global_object: *const JSGlobalObject) -> JSValue {
-    // SAFETY: global_object is valid for the duration of this call
-    let global_object = unsafe { &*global_object };
+pub extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
     bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))
 }
 
@@ -421,12 +410,9 @@ fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
 // the wrap2 shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Process__setCwd(
-    global_object: *const JSGlobalObject,
-    to: *mut ZigString,
+    global_object: &JSGlobalObject,
+    to: &ZigString,
 ) -> JSValue {
-    // SAFETY: global_object/to are valid for the duration of this call (C++ caller contract)
-    let global_object = unsafe { &*global_object };
-    let to = unsafe { &*to };
     bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
 }
 

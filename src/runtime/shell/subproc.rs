@@ -128,6 +128,26 @@ impl FileSinkPtr {
     }
 }
 
+impl core::ops::Deref for FileSinkPtr {
+    type Target = FileSink;
+    #[inline]
+    fn deref(&self) -> &FileSink {
+        // SAFETY: `adopt` contract — `self.0` is a live `FileSink` from
+        // `FileSink::create*`; the held intrusive ref keeps it alive for `'_`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for FileSinkPtr {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut FileSink {
+        // SAFETY: `adopt` contract — `self.0` is live; `&mut self` is exclusive
+        // on this owning handle (FileSinkPtr is non-`Copy`, single-threaded
+        // shell), so no other `&`/`&mut` to the `FileSink` overlaps.
+        unsafe { self.0.as_mut() }
+    }
+}
+
 impl Drop for FileSinkPtr {
     #[inline]
     fn drop(&mut self) {
@@ -403,10 +423,9 @@ impl ShellSubprocess {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
-                    // SAFETY: shell is single-threaded; no other borrow of the
-                    // FileSink is live across this call (mirrors Zig
-                    // `this.stdin.pipe.signal.clear()`).
-                    unsafe { pipe.as_mut() }.signal.clear();
+                    // Mirrors Zig `this.stdin.pipe.signal.clear()` — DerefMut
+                    // on the owning `&mut FileSinkPtr` encapsulates the access.
+                    pipe.signal.clear();
                     // FileSinkPtr::drop derefs (Zig: `pipe.deref()`).
                     self.stdin = Writable::Ignore;
                 }
@@ -639,18 +658,19 @@ impl ShellSubprocess {
             spawn_args.env_array.as_ptr(),
         ) {
             Err(err) => {
-                // Zig: `spawn_options.deinit()` (subproc.zig:872). On Windows,
-                // WindowsSpawnOptions has no Drop — WindowsStdio::Buffer holds a
-                // raw heap `*mut uv::Pipe` from `as_spawn_option` that must be
-                // closed+freed explicitly via `WindowsStdio::deinit` or it leaks
-                // (process.rs: "callers must invoke WindowsStdio::deinit
-                // explicitly on the error path"). POSIX `deinit` is a no-op.
-                // `extra_fds` is empty (Default) here so stdin/out/err suffice.
+                // Zig: `spawn_options.deinit()`. WindowsSpawnOptions has no Drop
+                // (its Stdio::Buffer/Ipc carry FFI-owned `*mut uv::Pipe` already
+                // `uv_pipe_init`ed by spawn_process_windows before uv_spawn fails),
+                // so an implicit `drop(spawn_options)` is a no-op and leaks the
+                // pipe handles open in the uv loop. POSIX deinit is a no-op.
                 #[cfg(windows)]
                 {
                     spawn_options.stdin.deinit();
                     spawn_options.stdout.deinit();
                     spawn_options.stderr.deinit();
+                    for extra in spawn_options.extra_fds.iter_mut() {
+                        extra.deinit();
+                    }
                 }
                 drop(spawn_options);
                 let mut msg = Vec::<u8>::new();
@@ -665,6 +685,9 @@ impl ShellSubprocess {
                         spawn_options.stdin.deinit();
                         spawn_options.stdout.deinit();
                         spawn_options.stderr.deinit();
+                        for extra in spawn_options.extra_fds.iter_mut() {
+                            extra.deinit();
+                        }
                     }
                     drop(spawn_options);
                     return Err(ShellErr::Sys(err.to_shell_system_error()));
@@ -784,10 +807,8 @@ impl ShellSubprocess {
                 // path that drops the FileSinkPtr. `init_with_type` is
                 // `unsafe fn` (caller asserts the handler outlives the
                 // `Signal`).
-                unsafe {
-                    pipe.as_mut().signal =
-                        webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr);
-                }
+                pipe.signal =
+                    unsafe { webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr) };
             }
         }
 
@@ -905,8 +926,7 @@ impl Writable {
     fn update_ref(&mut self, add: bool) {
         match self {
             Writable::Pipe(pipe) => {
-                // SAFETY: single-thread; raw mut access mirrors Zig.
-                unsafe { pipe.as_mut() }.update_ref(add);
+                pipe.update_ref(add);
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
@@ -1146,8 +1166,7 @@ impl Writable {
     pub fn close(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                // SAFETY: single-thread; raw mut access mirrors Zig.
-                let _ = unsafe { pipe.as_mut() }.end(None);
+                let _ = pipe.end(None);
             }
             Writable::Memfd(fd) | Writable::Fd(fd) => {
                 fd.close();

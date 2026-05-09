@@ -575,14 +575,10 @@ impl AbortHandler {
         #[cfg(not(unix))]
         {
             // TODO(port): move to <area>_sys
-            // SAFETY: handler is extern "system" with matching signature; FFI call has no
-            // preconditions beyond a valid fn pointer.
-            let res = unsafe {
-                bun_sys::windows::SetConsoleCtrlHandler(
-                    Some(Self::windows_ctrl_handler),
-                    bun_sys::windows::TRUE,
-                )
-            };
+            let res = bun_sys::windows::SetConsoleCtrlHandler(
+                Some(Self::windows_ctrl_handler),
+                bun_sys::windows::TRUE,
+            );
             if res == 0 {
                 if cfg!(debug_assertions) {
                     Output::warn("Failed to set abort handler\n");
@@ -594,10 +590,7 @@ impl AbortHandler {
     pub fn uninstall() {
         #[cfg(windows)]
         {
-            // SAFETY: passing None/FALSE removes the previously-installed handler; no invariants.
-            unsafe {
-                let _ = bun_sys::windows::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
-            }
+            let _ = bun_sys::windows::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
         }
     }
 }
@@ -1140,15 +1133,13 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
                 stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
-                    unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
+                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
                 ))),
                 #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
                 stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
-                    unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
+                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
                 ))),
                 cwd: config.cwd.clone(),
                 #[cfg(windows)]

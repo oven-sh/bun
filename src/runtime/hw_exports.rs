@@ -99,9 +99,9 @@ pub fn set_override_module_run_main_promise(
 pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
     // allow esm evaluate to set value multiple times
     if !this.entry_point_result.cjs_set_value {
-        // PORT NOTE: reshaped for borrowck — split disjoint &mut/& borrows.
-        // SAFETY: `global` is the VM's owned global (STATIC ref per LIFETIMES.tsv).
-        let global = unsafe { &*this.global };
+        // `global()` returns `&'static`, decoupled from `this` for the
+        // disjoint `&mut this.entry_point_result` borrow.
+        let global = this.global();
         this.entry_point_result.value.set(global, result);
     }
 }
@@ -110,9 +110,9 @@ pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValu
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
 pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue) {
     if !this.entry_point_result.value.has() {
-        // PORT NOTE: reshaped for borrowck — split disjoint &mut/& borrows.
-        // SAFETY: `global` is the VM's owned global (STATIC ref per LIFETIMES.tsv).
-        let global = unsafe { &*this.global };
+        // `global()` returns `&'static`, decoupled from `this` for the
+        // disjoint `&mut this.entry_point_result` borrow.
+        let global = this.global();
         this.entry_point_result.value.set(global, value);
         this.entry_point_result.cjs_set_value = true;
     }
@@ -211,6 +211,7 @@ pub(crate) mod sql_hooks {
         cache.get_or_create_opts(*opts, err).unwrap_or(core::ptr::null_mut())
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
+        use crate::socket::SSLConfigFromJs;
         match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value) {
             Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
             Ok(None) => core::ptr::null_mut(),
@@ -235,11 +236,8 @@ pub(crate) mod sql_hooks {
     }
     unsafe fn ssl_config_server_name(this: *const c_void) -> *const core::ffi::c_char {
         // SAFETY: `this` is a live boxed `SSLConfig`; returned ptr borrows its
-        // `Option<CString>` field, valid until `ssl_config_free`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }
-            .server_name
-            .as_deref()
-            .map_or(core::ptr::null(), |s| s.as_ptr())
+        // heap-owned C-string field, valid until `ssl_config_free`.
+        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.server_name
     }
     unsafe fn ssl_config_reject_unauthorized(this: *const c_void) -> i32 {
         // SAFETY: `this` is a live boxed `SSLConfig`.

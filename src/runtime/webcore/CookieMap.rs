@@ -85,17 +85,14 @@ impl core::ops::Deref for CookieMapRef {
     type Target = CookieMap;
     #[inline]
     fn deref(&self) -> &CookieMap {
-        // SAFETY: held +1 ref keeps the C++ object alive for `'_`.
-        unsafe { self.0.as_ref() }
+        CookieMap::opaque_ref(self.0.as_ptr())
     }
 }
 
 impl core::ops::DerefMut for CookieMapRef {
     #[inline]
     fn deref_mut(&mut self) -> &mut CookieMap {
-        // SAFETY: held +1 ref keeps the C++ object alive; `&mut self` makes
-        // this the unique live handle to that ref.
-        unsafe { self.0.as_mut() }
+        CookieMap::opaque_mut(self.0.as_ptr())
     }
 }
 
@@ -109,8 +106,9 @@ impl Clone for CookieMapRef {
 impl Drop for CookieMapRef {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: held +1 ref keeps the C++ object alive until this deref.
-        CookieMap__deref(unsafe { self.0.as_ref() })
+        // Held +1 ref keeps the C++ object alive until this deref; `Deref`
+        // (above) encapsulates the NonNull access.
+        CookieMap__deref(self)
     }
 }
 

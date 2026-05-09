@@ -363,13 +363,17 @@ impl Default for Debugger {
 }
 
 // TODO(port): move to jsc_sys
+//
+// SAFETY (safe fn): `JSGlobalObject` is an opaque `UnsafeCell`-backed handle
+// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]` POD
+// out-param. Remaining args are by-value scalars.
 unsafe extern "C" {
-    fn Bun__createJSDebugger(global: *mut JSGlobalObject) -> u32;
-    fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
-    fn Bun__startJSDebuggerThread(
-        global: *mut JSGlobalObject,
+    safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
+    safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
+    safe fn Bun__startJSDebuggerThread(
+        global: &JSGlobalObject,
         ctx_id: u32,
-        url: *mut BunString,
+        url: &mut BunString,
         from_env: c_int,
         is_connect: bool,
     );
@@ -430,9 +434,7 @@ impl Debugger {
             );
         }
 
-        // SAFETY: `Bun__ensureDebugger` is the C++ inspector setup hook;
-        // `ctx_id` was returned by `Bun__createJSDebugger` in `create()`.
-        unsafe { Bun__ensureDebugger(ctx_id, wait != Wait::Off) };
+        Bun__ensureDebugger(ctx_id, wait != Wait::Off);
 
         // Sleep up to 30ms for automatic inspection.
         const WAIT_FOR_CONNECTION_DELAY_MS: i64 = 30;
@@ -458,10 +460,8 @@ impl Debugger {
                 // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
                 unsafe { uv::uv_update_time(uv_loop) };
                 // Spec: `bun.handleOom(allocator.create(Timer))` + zero-init.
-                // SAFETY: all-zero is a valid pre-`uv_timer_init` state (C POD,
-                // matches `std.mem.zeroes`).
                 let timer: *mut uv::Timer =
-                    bun_core::heap::into_raw(Box::new(unsafe { bun_core::ffi::zeroed_unchecked() }));
+                    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed()));
                 // SAFETY: `timer` freshly allocated; `uv_loop` valid.
                 unsafe { (*timer).init(uv_loop) };
 
@@ -585,9 +585,7 @@ impl Debugger {
         let dbg = this_ref
             .debugger_mut()
             .expect("Debugger::create: vm.debugger is None");
-        // SAFETY: `global_object` is a live opaque JSC handle.
-        dbg.script_execution_context_id =
-            unsafe { Bun__createJSDebugger(std::ptr::from_ref(global_object).cast_mut()) };
+        dbg.script_execution_context_id = Bun__createJSDebugger(global_object);
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
@@ -667,9 +665,8 @@ impl Debugger {
             // for why we never form `&mut VirtualMachine` to the parent VM.
             Debugger::start(ctx.cast::<VirtualMachine>());
         }
-        // SAFETY: `vm.global` set by `init()` (non-null).
         #[allow(deprecated)]
-        unsafe { &*vm.global }
+        vm.global()
             .vm()
             .hold_api_lock(other_vm.cast(), start_trampoline);
     }
@@ -710,7 +707,7 @@ impl Debugger {
         // calls below. `wakeup()` takes `&self` and is the documented
         // thread-safe path (event_loop.rs:779).
         let other_loop: *mut crate::event_loop::EventLoop = unsafe { (*other_vm).event_loop() };
-        let global: *mut JSGlobalObject = this.global;
+        let global: &JSGlobalObject = this.global();
 
         // PORT NOTE: copy the four scalars we need from the parent VM's
         // debugger before re-entering JS or waking the parent. Spec `.?` would
@@ -737,16 +734,13 @@ impl Debugger {
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            // SAFETY: `global` non-null; `url` lives across the call (C++
-            // clones it).
-            unsafe { Bun__startJSDebuggerThread(global, ctx_id, &raw mut url, 1, is_connect) };
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect);
         }
 
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            // SAFETY: see above.
-            unsafe { Bun__startJSDebuggerThread(global, ctx_id, &raw mut url, 0, is_connect) };
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect);
         }
 
         this.global().handle_rejected_promises();
@@ -878,16 +872,20 @@ pub enum AsyncCallType {
 }
 
 // TODO(port): move to jsc_sys
+//
+// SAFETY (safe fn): `JSGlobalObject` is an opaque `UnsafeCell`-backed handle
+// (`&` is ABI-identical to non-null `*const`); remaining args are by-value
+// scalars / `#[repr(u8)]` enums.
 unsafe extern "C" {
-    fn Debugger__didScheduleAsyncCall(
-        global: *const JSGlobalObject,
+    safe fn Debugger__didScheduleAsyncCall(
+        global: &JSGlobalObject,
         call: AsyncCallType,
         id: u64,
         single_shot: bool,
     );
-    fn Debugger__didCancelAsyncCall(global: *const JSGlobalObject, call: AsyncCallType, id: u64);
-    fn Debugger__didDispatchAsyncCall(global: *const JSGlobalObject, call: AsyncCallType, id: u64);
-    fn Debugger__willDispatchAsyncCall(global: *const JSGlobalObject, call: AsyncCallType, id: u64);
+    safe fn Debugger__didCancelAsyncCall(global: &JSGlobalObject, call: AsyncCallType, id: u64);
+    safe fn Debugger__didDispatchAsyncCall(global: &JSGlobalObject, call: AsyncCallType, id: u64);
+    safe fn Debugger__willDispatchAsyncCall(global: &JSGlobalObject, call: AsyncCallType, id: u64);
 }
 
 pub fn did_schedule_async_call(
@@ -897,35 +895,19 @@ pub fn did_schedule_async_call(
     single_shot: bool,
 ) {
     jsc::mark_binding();
-    // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
-    // any mutation happens in C++-owned memory outside Rust's aliasing model.
-    unsafe {
-        Debugger__didScheduleAsyncCall(global_object, call, id, single_shot);
-    }
+    Debugger__didScheduleAsyncCall(global_object, call, id, single_shot);
 }
 pub fn did_cancel_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
     jsc::mark_binding();
-    // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
-    // any mutation happens in C++-owned memory outside Rust's aliasing model.
-    unsafe {
-        Debugger__didCancelAsyncCall(global_object, call, id);
-    }
+    Debugger__didCancelAsyncCall(global_object, call, id);
 }
 pub fn did_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
     jsc::mark_binding();
-    // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
-    // any mutation happens in C++-owned memory outside Rust's aliasing model.
-    unsafe {
-        Debugger__didDispatchAsyncCall(global_object, call, id);
-    }
+    Debugger__didDispatchAsyncCall(global_object, call, id);
 }
 pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
     jsc::mark_binding();
-    // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
-    // any mutation happens in C++-owned memory outside Rust's aliasing model.
-    unsafe {
-        Debugger__willDispatchAsyncCall(global_object, call, id);
-    }
+    Debugger__willDispatchAsyncCall(global_object, call, id);
 }
 
 // ─── TestReporterAgent ────────────────────────────────────────────────────
@@ -1128,34 +1110,34 @@ pub struct LifecycleAgent {
 bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 
 // TODO(port): move to jsc_sys
+//
+// SAFETY (safe fn): `LifecycleHandle` is an `opaque_ffi!` ZST handle (`!Freeze`
+// via `UnsafeCell`); `ZigException` is a `#[repr(C)]` out-param the C++ side
+// reads/fills in-place.
 unsafe extern "C" {
-    fn Bun__LifecycleAgentReportReload(agent: *mut LifecycleHandle);
-    fn Bun__LifecycleAgentReportError(agent: *mut LifecycleHandle, exception: *mut ZigException);
-    fn Bun__LifecycleAgentPreventExit(agent: *mut LifecycleHandle);
-    fn Bun__LifecycleAgentStopPreventingExit(agent: *mut LifecycleHandle);
+    safe fn Bun__LifecycleAgentReportReload(agent: &mut LifecycleHandle);
+    safe fn Bun__LifecycleAgentReportError(agent: &mut LifecycleHandle, exception: &mut ZigException);
+    safe fn Bun__LifecycleAgentPreventExit(agent: &mut LifecycleHandle);
+    safe fn Bun__LifecycleAgentStopPreventingExit(agent: &mut LifecycleHandle);
 }
 
 impl LifecycleHandle {
     pub fn prevent_exit(&mut self) {
-        // SAFETY: self is a live C++ handle
-        unsafe { Bun__LifecycleAgentPreventExit(self) }
+        Bun__LifecycleAgentPreventExit(self)
     }
 
     pub fn stop_preventing_exit(&mut self) {
-        // SAFETY: self is a live C++ handle
-        unsafe { Bun__LifecycleAgentStopPreventingExit(self) }
+        Bun__LifecycleAgentStopPreventingExit(self)
     }
 
     pub fn report_reload(&mut self) {
         bun_core::scoped_log!(LifecycleAgent, "reportReload");
-        // SAFETY: self is a live C++ handle
-        unsafe { Bun__LifecycleAgentReportReload(self) }
+        Bun__LifecycleAgentReportReload(self)
     }
 
     pub fn report_error(&mut self, exception: &mut ZigException) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
-        // SAFETY: self is a live C++ handle
-        unsafe { Bun__LifecycleAgentReportError(self, exception) }
+        Bun__LifecycleAgentReportError(self, exception)
     }
 }
 

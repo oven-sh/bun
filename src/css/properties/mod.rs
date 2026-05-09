@@ -56,15 +56,22 @@ macro_rules! handler_stub {
     )+};
 }
 
-// ─── Rect / Size shorthand parse+to_css impl macros ────────────────────────
+// ─── Rect / Size shorthand impl + define macros ────────────────────────────
 // Shared by `border.rs` and `margin_padding.rs`. These are the Rust port of
 // Zig's `css.DefineRectShorthand` / `css.DefineSizeShorthand` comptime mixins
-// (src/css/css_parser.zig:502 / :532) — they stamp out the inherent
+// (src/css/css_parser.zig:502 / :532).
+//
+// `impl_rect_shorthand!` / `impl_size_shorthand!` stamp out the inherent
 // `parse`/`to_css` pair (and the `generic::{Parse,ToCss}` forwarders) for a
 // pre-existing struct. Rust has no field reflection, so the size-shorthand
 // field names are passed in (`start`/`end` for border, `block_start`/… for
-// margin_padding). Struct definitions, `PROPERTY_FIELD_MAP`, `deep_clone`,
-// `eql` stay in the per-file wrapper macros / hand-written impls.
+// margin_padding).
+//
+// `define_rect_shorthand!` is the full mixin: it emits the struct
+// `{top,right,bottom,left}`, `PROPERTY_FIELD_MAP`, `deep_clone`/`eql`, the
+// `RectShorthand` marker impl, *and* calls `impl_rect_shorthand!`. Used by
+// the 8 rect-shorthand value types in border.rs / margin_padding.rs so the
+// boilerplate isn't hand-copied per type.
 //
 // Declared here (textually before `pub mod border;` / `pub mod
 // margin_padding;`) so macro_rules! scoping makes them visible in both
@@ -84,6 +91,44 @@ macro_rules! impl_rect_shorthand {
             }
         }
         $crate::impl_parse_tocss_via_inherent!($T);
+    };
+}
+
+macro_rules! define_rect_shorthand {
+    (
+        $(#[$meta:meta])*
+        $name:ident, $inner:ty,
+        top: $top_id:ident,
+        right: $right_id:ident,
+        bottom: $bottom_id:ident,
+        left: $left_id:ident
+        $(, fallbacks)?
+    ) => {
+        $(#[$meta])*
+        #[derive(Clone, PartialEq)]
+        pub struct $name {
+            pub top: $inner,
+            pub right: $inner,
+            pub bottom: $inner,
+            pub left: $inner,
+        }
+
+        impl $name {
+            // TODO(port): bring this back
+            // (old using name space) css::DefineShorthand(@This(), PropertyIdTag::$shorthand_id);
+
+            pub const PROPERTY_FIELD_MAP: &[(&str, $crate::properties::PropertyIdTag)] = &[
+                ("top", $crate::properties::PropertyIdTag::$top_id),
+                ("right", $crate::properties::PropertyIdTag::$right_id),
+                ("bottom", $crate::properties::PropertyIdTag::$bottom_id),
+                ("left", $crate::properties::PropertyIdTag::$left_id),
+            ];
+        }
+        impl $crate::properties::margin_padding::RectShorthand for $name {
+            type Value = $inner;
+        }
+        // Zig `css.DefineRectShorthand(@This(), V)` — parse/to_css via `Rect<V>`.
+        impl_rect_shorthand!($name, $inner);
     };
 }
 

@@ -117,8 +117,8 @@ impl<T> StoreRef<T> {
     /// Borrow the pointee (explicit form of `Deref`).
     #[inline]
     pub fn get(&self) -> &T {
-        // SAFETY: StoreRef invariant — points into a live Store/arena block.
-        unsafe { self.0.as_ref() }
+        // Route through `Deref` so the single `unsafe` lives there.
+        self
     }
 }
 impl<T> Clone for StoreRef<T> {
@@ -404,12 +404,7 @@ pub mod E {
             if self.is_utf8() {
                 bun_wyhash::hash(self.data)
             } else {
-                let s16 = self.slice16();
-                // SAFETY: reinterpreting &[u16] as &[u8] of double length for hashing.
-                let bytes = unsafe {
-                    core::slice::from_raw_parts(s16.as_ptr().cast::<u8>(), s16.len() * 2)
-                };
-                bun_wyhash::hash(bytes)
+                bun_wyhash::hash(bytemuck::cast_slice::<u16, u8>(self.slice16()))
             }
         }
     }
@@ -624,11 +619,7 @@ pub mod E {
         OutOfMemory,
         Clobber,
     }
-    impl From<AllocError> for SetError {
-        fn from(_: AllocError) -> Self {
-            SetError::OutOfMemory
-        }
-    }
+    bun_core::oom_from_alloc!(SetError);
     impl From<SetError> for bun_core::Error {
         fn from(e: SetError) -> Self {
             match e {
@@ -918,6 +909,12 @@ impl Expr {
         if let expr::Data::EBoolean(b) = self.data { Some(b.value) } else { None }
     }
 
+    /// Zig: `Expr.asNumber()`.
+    #[inline]
+    pub fn as_number(&self) -> Option<f64> {
+        if let expr::Data::ENumber(n) = self.data { Some(n.value) } else { None }
+    }
+
     /// Zig: `Expr.asStringCloned(allocator)`.
     #[inline]
     pub fn as_string_cloned<'b>(
@@ -1057,6 +1054,11 @@ pub mod expr {
                 Data::EUndefined(_) => ExprTag::EUndefined,
                 Data::EMissing(_) => ExprTag::EMissing,
             }
+        }
+        /// `@tagName(self)` — snake-case discriminant string (`"e_array"`, …).
+        #[inline]
+        pub fn tag_name(&self) -> &'static str {
+            self.tag().into()
         }
         /// Zig `Expr.Data.deepClone` — recursively re-allocate boxed payloads
         /// into the thread-local `DATA_STORE` so the result outlives a

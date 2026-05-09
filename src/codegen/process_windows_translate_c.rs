@@ -24,15 +24,11 @@ static SYMBOL_REPLACEMENTS: phf::Map<&'static [u8], &'static [u8]> = phf::phf_ma
 
 pub fn main() -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
-    // Zig: std.process.argsWithAllocator yields WTF-8 on Windows and never rejects valid
-    // NTFS paths. std::env::args() panics on unpaired surrogates, so use args_os() and keep
-    // the paths as OsString -> Path (std::fs::read/write accept AsRef<Path>).
-    let mut args = std::env::args_os();
+    let mut args = std::env::args();
     assert(args.next().is_some()); // skip argv[0]
 
     let input: Vec<u8> = 'brk: {
-        let in_path: std::path::PathBuf =
-            args.next().unwrap_or_else(|| panic!("missing argument")).into();
+        let in_path = args.next().unwrap_or_else(|| panic!("missing argument"));
         // Zig: openFile + readToEndAllocOptions(.., sentinel 0). Sentinel was only
         // needed for std.zig.Tokenizer; the inline scan below doesn't require it.
         break 'brk std::fs::read(&in_path)
@@ -67,10 +63,7 @@ pub fn main() -> Result<(), bun_core::Error> {
             i = end_of_line;
             continue;
         }
-        // include the \n. Zig reads with a 0 sentinel so in[..len+1] stays in-bounds when the
-        // file ends with `;` and no trailing newline; clamp here so the Rust slices below
-        // (and the next index_of_pos(haystack[start..])) never index past len.
-        end_of_line = (end_of_line + 1).min(in_bytes.len());
+        end_of_line += 1; // include the \n
 
         if let Some(replace) = SYMBOL_REPLACEMENTS.get(symbol_name) {
             write!(&mut out, " = {};\n", BStr::new(replace)).expect("unreachable");
@@ -88,9 +81,9 @@ pub fn main() -> Result<(), bun_core::Error> {
     }
     out.extend_from_slice(&in_bytes[i..]);
 
-    let out_path: std::path::PathBuf =
-        args.next().unwrap_or_else(|| panic!("missing argument")).into();
-    std::fs::write(&out_path, &out).map_err(|_| bun_core::err!("WriteFailed"))?;
+    let out_path = args.next().unwrap_or_else(|| panic!("missing argument"));
+    use bun_core::OrWriteFailed as _;
+    std::fs::write(&out_path, &out).or_write_failed()?;
     Ok(())
 }
 

@@ -29,7 +29,7 @@ impl UnlinkCommand {
 fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
-    let (manager_ptr, _original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
+    let (manager, _original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
         Ok(v) => v,
         Err(e) if e == err!(MissingPackageJSON) => {
             attempt_to_create_package_json()?;
@@ -42,12 +42,6 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         Err(e) => return Err(e),
     };
     // `defer ctx.allocator.free(original_cwd)` — `_original_cwd: Box<[u8]>` drops at scope exit.
-
-    // SAFETY: `pm::init` returns the freshly populated process-global
-    // `*mut PackageManager` (singleton). No worker thread derefs it yet — the
-    // unlink command never schedules tasks — so a scoped `&mut` here is
-    // exclusive for the remainder of this function.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
 
     if manager.options.should_print_command_name() {
         Output::prettyln(format_args!(
@@ -84,11 +78,9 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             lockfile.init_empty();
 
             let mut resolver: () = ();
-            // SAFETY: `manager.log` is set to a non-null `*mut Log` by `pm::init`;
-            // mirrors Zig's non-optional `*logger.Log`. The borrow does not alias
-            // the `&mut PackageManager` passed alongside (raw-ptr field, disjoint
-            // storage owned by the CLI `Context`).
-            let log = unsafe { &mut *manager.log };
+            // `log_mut()` returns a borrow decoupled from `&self`; disjoint
+            // storage from `&mut PackageManager` (owned by the CLI `Context`).
+            let log = manager.log_mut();
             package.parse::<()>(
                 &mut lockfile,
                 manager,

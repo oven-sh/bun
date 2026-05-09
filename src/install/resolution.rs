@@ -1014,17 +1014,9 @@ pub enum FromTextLockfileError {
     InvalidSemver,
 }
 
-impl From<AllocError> for FromTextLockfileError {
-    fn from(_: AllocError) -> Self {
-        FromTextLockfileError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(FromTextLockfileError);
 
-impl From<FromTextLockfileError> for bun_core::Error {
-    fn from(e: FromTextLockfileError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(FromTextLockfileError);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum FromPnpmLockfileError {
@@ -1034,16 +1026,8 @@ pub enum FromPnpmLockfileError {
     InvalidPnpmLockfile,
 }
 
-impl From<AllocError> for FromPnpmLockfileError {
-    fn from(_: AllocError) -> Self {
-        FromPnpmLockfileError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(FromPnpmLockfileError);
 
-impl From<FromPnpmLockfileError> for bun_core::Error {
-    fn from(e: FromPnpmLockfileError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(FromPnpmLockfileError);
 
 // ported from: src/install/resolution.zig

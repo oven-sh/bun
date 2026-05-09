@@ -111,10 +111,9 @@ impl<'a> Coordinator<'a> {
             {
                 // Bound the wait so we wake to scale up even if no I/O arrives.
                 const MS_PER_S: i64 = 1000;
-                const NS_PER_MS: i64 = 1_000_000;
                 let ts = bun_core::Timespec {
                     sec: self.scale_up_after_ms / MS_PER_S,
-                    nsec: (self.scale_up_after_ms % MS_PER_S) * NS_PER_MS,
+                    nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
                 // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
                 unsafe {
@@ -599,8 +598,7 @@ impl<'a> Coordinator<'a> {
             if job.is_null() {
                 return None;
             }
-            // SAFETY: all-zero is a valid JOBOBJECT_EXTENDED_LIMIT_INFORMATION.
-            let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed_unchecked();
+            let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
             jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             if windows::SetInformationJobObject(
                 job,
@@ -751,13 +749,10 @@ pub mod abort_handler {
         }
         #[cfg(windows)]
         {
-            // SAFETY: Win32 FFI.
-            unsafe {
-                let _ = bun_sys::c::SetConsoleCtrlHandler(
-                    Some(windows_ctrl_handler),
-                    bun_sys::windows::TRUE,
-                );
-            }
+            let _ = bun_sys::c::SetConsoleCtrlHandler(
+                Some(windows_ctrl_handler),
+                bun_sys::windows::TRUE,
+            );
         }
         Guard(())
     }
@@ -782,13 +777,10 @@ pub mod abort_handler {
         }
         #[cfg(windows)]
         {
-            // SAFETY: Win32 FFI.
-            unsafe {
-                let _ = bun_sys::c::SetConsoleCtrlHandler(
-                    Some(windows_ctrl_handler),
-                    bun_sys::windows::FALSE,
-                );
-            }
+            let _ = bun_sys::c::SetConsoleCtrlHandler(
+                Some(windows_ctrl_handler),
+                bun_sys::windows::FALSE,
+            );
         }
     }
 }

@@ -632,8 +632,7 @@ impl<'a> ImportScanner<'a> {
                             p.arena.alloc_slice_fill_default::<Expr>(2);
                         export_default_args[0] = p.module_exports(expr.loc);
                         export_default_args[1] = expr;
-                        let args =
-                            unsafe { js_ast::ExprNodeList::from_bump_slice(export_default_args) };
+                        let args = js_ast::ExprNodeList::from_arena_slice(export_default_args);
                         let value = p.call_runtime(expr.loc, b"__exportDefault", args);
                         stmt = p.s(
                             S::SExpr { value, does_not_affect_tree_shaking: false },

@@ -217,8 +217,7 @@ fn count_files_in_archive(data: &[u8]) -> u32 {
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
     while archive.read_next_header(&mut entry) == lib::Result::Ok {
-        // SAFETY: read_next_header returned Ok, so entry is valid until the next call.
-        if unsafe { (*entry).filetype() } == FILETYPE_REGULAR {
+        if lib::Entry::opaque_ref(entry).filetype() == FILETYPE_REGULAR {
             count += 1;
         }
     }
@@ -1142,8 +1141,7 @@ impl FilesContext {
 
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
         while archive.read_next_header(&mut entry) == lib::Result::Ok {
-            // SAFETY: read_next_header returned Ok; entry valid until next call.
-            let entry_ref = unsafe { &*entry };
+            let entry_ref = lib::Entry::opaque_ref(entry);
             if entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
             }
@@ -1450,8 +1448,7 @@ fn extract_to_disk_filtered(
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
 
     while archive.read_next_header(&mut entry) == lib::Result::Ok {
-        // SAFETY: read_next_header returned Ok; entry valid until next call.
-        let entry_ref = unsafe { &*entry };
+        let entry_ref = lib::Entry::opaque_ref(entry);
         let pathname_z = entry_ref.pathname_utf8();
         let pathname = pathname_z.as_bytes();
 

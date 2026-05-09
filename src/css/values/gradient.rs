@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_parser::{src_str, CssResult as Result, EnumProperty, Parser, Token};
+use crate::css_parser::{CssResult as Result, EnumProperty, Parser, Token};
 use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
 use crate::values::length::{Length, LengthPercentage};
@@ -9,6 +9,7 @@ use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
 };
 use crate::{PrintErr, Printer, VendorPrefix};
+use crate::generics::DeepClone as _;
 use bun_string::strings;
 use bun_alloc::Arena;
 
@@ -106,8 +107,7 @@ pub enum Gradient {
 impl Gradient {
     pub fn parse(input: &mut css::Parser) -> Result<Gradient> {
         let location = input.current_source_location();
-        // SAFETY: see `src_str` — borrow detached so `input` is reusable below.
-        let func = unsafe { src_str(input.expect_function()?) };
+        let func = input.expect_function_cloned()?;
         input.parse_nested_block(|input_: &mut css::Parser| -> Result<Gradient> {
             // TODO(port): bun.ComptimeEnumMap(...).getAnyCase — case-insensitive perfect hash.
             // Using a chain of case-insensitive comparisons for now; Phase B can swap to phf.
@@ -732,8 +732,7 @@ pub enum WebKitGradient {
 impl WebKitGradient {
     pub fn parse(input: &mut css::Parser) -> Result<WebKitGradient> {
         let location = input.current_source_location();
-        // SAFETY: see `src_str` — borrow detached so `input` is reusable below.
-        let ident = unsafe { src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
         input.expect_comma()?;
 
         // todo_stuff.match_ignore_ascii_case
@@ -1272,8 +1271,7 @@ pub struct WebKitColorStop {
 impl WebKitColorStop {
     pub fn parse(input: &mut css::Parser) -> Result<WebKitColorStop> {
         let location = input.current_source_location();
-        // SAFETY: see `src_str` — borrow detached so `input` is reusable below.
-        let function = unsafe { src_str(input.expect_function()?) };
+        let function = input.expect_function_cloned()?;
         input.parse_nested_block(|i: &mut css::Parser| -> Result<WebKitColorStop> {
             // todo_stuff.match_ignore_ascii_case
             let position: f32 = if strings::eql_case_insensitive_ascii_check_length(function, b"color-stop") {

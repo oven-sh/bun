@@ -71,8 +71,7 @@ impl GetAddrInfo {
     }
 
     pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
-        // SAFETY: all-zero is a valid AddrInfo_hints (C POD struct)
-        let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
 
         hints.ai_family = self.options.family.to_libc();
         hints.ai_socktype = self.options.socktype.to_libc();
@@ -136,8 +135,7 @@ impl Options {
             return None;
         }
 
-        // SAFETY: all-zero is a valid sock::addrinfo (C POD struct)
-        let mut hints: sock::addrinfo = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut hints: sock::addrinfo = bun_core::ffi::zeroed();
 
         hints.ai_family = self.family.to_libc();
         hints.ai_socktype = self.socktype.to_libc();
@@ -198,15 +196,6 @@ pub static FAMILY_MAP: phf::Map<&'static [u8], Family> = phf::phf_map! {
     b"any"  => Family::Unspecified,
 };
 
-// TODO(b1): thiserror not in deps — dropped Error derive
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum FamilyFromJsError {
-    //     #[error("InvalidFamily")]
-    InvalidFamily,
-    //     #[error("JSError")]
-    JSError,
-}
-
 impl Family {
     pub fn to_libc(self) -> i32 {
         match self {
@@ -243,15 +232,6 @@ impl SocketType {
     }
 }
 
-// TODO(b1): thiserror not in deps — dropped Error derive
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum SocketTypeFromJsError {
-    //     #[error("InvalidSocketType")]
-    InvalidSocketType,
-    //     #[error("JSError")]
-    JSError,
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
@@ -264,15 +244,6 @@ pub static PROTOCOL_MAP: phf::Map<&'static [u8], Protocol> = phf::phf_map! {
     b"tcp" => Protocol::Tcp,
     b"udp" => Protocol::Udp,
 };
-
-// TODO(b1): thiserror not in deps — dropped Error derive
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum ProtocolFromJsError {
-    //     #[error("InvalidProtocol")]
-    InvalidProtocol,
-    //     #[error("JSError")]
-    JSError,
-}
 
 impl Protocol {
     pub fn to_libc(self) -> i32 {
@@ -328,18 +299,9 @@ impl Default for Backend {
     }
 }
 
-// TODO(b1): thiserror not in deps — dropped Error derive
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum BackendFromJsError {
-    //     #[error("InvalidBackend")]
-    InvalidBackend,
-    //     #[error("JSError")]
-    JSError,
-}
-
 // TODO(port): std.net.Address — std::net is banned. `bun_sys::net::Address`
-// wraps `libc::sockaddr_storage`; `.in/.in6/.un` views are accessed via raw
-// casts on `as_sockaddr()` here until bun_sys grows typed accessors.
+// wraps `libc::sockaddr_storage`; `.in/.in6` views go through the typed
+// `as_in4()`/`as_in6()` accessors. `.un` still casts on `as_sockaddr()`.
 pub type Address = bun_sys::net::Address;
 
 pub struct GetAddrInfoResult {
@@ -407,12 +369,11 @@ impl GetAddrInfoResult {
 }
 
 pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
-    // PORT NOTE: reshaped — bun_sys::net::Address exposes family()/as_sockaddr()
-    // rather than .in/.in6/.un union views, so each arm casts the raw sockaddr.
+    // PORT NOTE: reshaped — bun_sys::net::Address exposes family()/as_in4()/
+    // as_in6() rather than .in/.in6/.un union views.
     match address.family() {
         sock::AF_INET => {
-            // SAFETY: family() == AF_INET, storage holds a sockaddr_in.
-            let v4 = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_in>() };
+            let v4 = address.as_in4().unwrap(); // family() just checked
             let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
             Ok(BunString::create_format(format_args!(
                 "{}.{}.{}.{}",
@@ -420,8 +381,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             )))
         }
         sock::AF_INET6 => {
-            // SAFETY: family() == AF_INET6, storage holds a sockaddr_in6.
-            let v6 = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_in6>() };
+            let v6 = address.as_in6().unwrap(); // family() just checked
             // PERF(port): was stack-fallback alloc — profile in Phase B
             // PORT NOTE: Zig formatted via std.net.Address Display ("[addr]:port")
             // then sliced the brackets/port off ("TODO: this is a hack"). Here we
@@ -429,18 +389,10 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             // without the post-slice.
             let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46)
             // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
-            let p = unsafe {
-                bun_cares_sys::c_ares::ares_inet_ntop(
-                    sock::AF_INET6,
-                    (&raw const v6.sin6_addr).cast(),
-                    buf.as_mut_ptr(),
-                    buf.len() as bun_cares_sys::c_ares::ares_socklen_t,
-                )
-            };
-            if p.is_null() {
-                return Ok(BunString::EMPTY);
+            match unsafe { bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf) } {
+                Some(s) => Ok(BunString::clone_latin1(s)),
+                None => Ok(BunString::EMPTY),
             }
-            Ok(BunString::clone_latin1(bun_string::slice_to_nul(&buf)))
         }
         sock::AF_UNIX => {
             // Zig spec gates this on `comptime std.net.has_unix_sockets`, which is

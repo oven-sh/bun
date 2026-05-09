@@ -353,7 +353,7 @@ pub(super) fn custom_ident_to_css(
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {
     // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-    let v = unsafe { &*ident.v };
+    let v = unsafe { crate::arena_str(ident.v) };
     // blocked_on: Printer::write_ident — css-module custom-ident scoping path
     // is gated; fall through to its unscoped tail.
     
@@ -361,7 +361,7 @@ pub(super) fn custom_ident_to_css(
         let enabled = dest.css_module.as_ref().is_some_and(|m| m.config.custom_idents);
         return dest.write_ident(v, enabled);
     }
-    css::serializer::serialize_identifier(v, dest).map_err(|_| dest.add_fmt_error())
+    dest.serialize_identifier(v)
 }
 
 /// Port of `DashedIdentFns.toCss` → `Printer.writeDashedIdent`. The real
@@ -377,7 +377,7 @@ pub(super) fn dashed_ident_to_css(
     dest.write_str("--")?;
     // blocked_on: Printer::write_dashed_ident — css-module dashed-ident scoping
     // path is gated; fall through to the unscoped tail it shares.
-    css::serializer::serialize_name(&v[2..], dest).map_err(|_| dest.add_fmt_error())
+    dest.serialize_name(&v[2..])
 }
 
 /// Shim: `MediaRule::minify` is gated in `media.rs` until that file's full

@@ -759,15 +759,23 @@ impl VirtualMachine {
         &mut self.transpiler
     }
 
+    /// Safe accessor for the process-lifetime resolver `FileSystem` singleton
+    /// (`vm.transpiler.fs`). Allocated once during VM init and never freed;
+    /// callers previously open-coded `unsafe { &*vm.transpiler.fs }`.
+    #[inline]
+    pub fn fs(&self) -> &'static bun_resolver::fs::FileSystem {
+        // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
+        // process-lifetime `Fs::FileSystem` singleton; never null while a VM
+        // is installed.
+        unsafe { &*self.transpiler.fs }
+    }
+
     /// Safe accessor for the process-lifetime cwd string
     /// (`vm.transpiler.fs.top_level_dir`). The `FileSystem` singleton is
     /// allocated once during VM init and never freed.
     #[inline]
     pub fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
-        // process-lifetime `Fs::FileSystem` singleton; never null while a VM
-        // is installed. `top_level_dir` borrows that singleton's storage.
-        unsafe { &*self.transpiler.fs }.top_level_dir
+        self.fs().top_level_dir
     }
 
     /// Safe `&mut Debugger` accessor — the [`JsCell`] escape hatch applied to
@@ -1131,9 +1139,7 @@ impl VirtualMachine {
         // (low-tier unit tests), fail loudly: PORTING.md §Forbidden bans a
         // silent no-op here since the .zig has real, observable logic.
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook contract — `self` is the live per-thread VM;
-            // `exception_list` (if any) borrows caller stack for this call.
-            unsafe { (hooks.print_exception)(self, result, exception_list) };
+            (hooks.print_exception)(self, result, exception_list);
         } else {
             // Low-tier fallback (no `bun_runtime` installed — unit tests):
             // we cannot reach `ConsoleObject::Formatter`, so emit a degraded
@@ -1417,9 +1423,9 @@ impl VirtualMachine {
             // below frees those singletons, so request termination of every
             // live worker and wait for each to reach shutdown() first.
             if let Some(hooks) = runtime_hooks() {
-                // SAFETY: hook contract — main-thread only; futex-waits on
-                // every registered worker until each unparks at shutdown().
-                unsafe { (hooks.terminate_all_workers_and_wait)(10_000) };
+                // Main-thread only; futex-waits on every registered worker
+                // until each unparks at shutdown().
+                (hooks.terminate_all_workers_and_wait)(10_000);
             }
 
             // Embedded per-VM socket groups must drain while JSC is still
@@ -1495,7 +1501,7 @@ pub struct RuntimeHooks {
     /// `bun:main` module body for `entry_path`. Returns `false` on error
     /// (error already logged into `vm.log`).
     pub generate_entry_point:
-        unsafe fn(vm: *mut VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
+        fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate like Zig's
     /// `try this.loadPreloads()` (resolver failures / `ModuleNotFound`).
@@ -1518,7 +1524,7 @@ pub struct RuntimeHooks {
     /// owns the formatter; low tier dispatches here from
     /// [`VirtualMachine::run_error_handler`].
     pub print_exception:
-        unsafe fn(vm: *mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
+        fn(vm: &mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
     /// `vm.timer.insert(&mut event_loop_timer)` — `Timer::All` lives in
     /// `bun_runtime::RuntimeState` (b2-cycle); low-tier callers
     /// (`AbortSignal::Timeout`) reach it through this slot.
@@ -1554,7 +1560,7 @@ pub struct RuntimeHooks {
         unsafe fn(vm: *mut VirtualMachine, body: *mut c_void) -> *mut c_void,
     /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
     /// spec VirtualMachine.zig:1760. Registry lives in `bun_runtime::webcore`.
-    pub has_blob_url: unsafe fn(blob_id: &[u8]) -> bool,
+    pub has_blob_url: fn(blob_id: &[u8]) -> bool,
     /// `Response::get_blob_without_call_frame` /
     /// `Request::get_blob_without_call_frame` — spec Macro.zig:331-334. If
     /// `value` downcasts to a `Response` or `Request` (both live in
@@ -1562,7 +1568,7 @@ pub struct RuntimeHooks {
     /// Promise; `Ok(None)` to fall through to the `Blob`/`BuildMessage`/
     /// `ResolveMessage` arms in `Macro::Run::coerce`.
     pub body_mixin_get_blob:
-        unsafe fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
+        fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
     /// `bun.api.node.process.exit(global, code)` — spec
     /// `runtime/node/node_process.zig`. Main-thread is `noreturn`; in a worker
     /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
@@ -1574,13 +1580,13 @@ pub struct RuntimeHooks {
     pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
     /// `node_cluster_binding.child_singleton.deinit()` — spec
     /// VirtualMachine.zig:3972 (IPCInstance.handleIPCClose).
-    pub ipc_child_singleton_deinit: unsafe fn(),
+    pub ipc_child_singleton_deinit: fn(),
     /// `Jest.runner.?.bun_test_root.onBeforePrint()` — spec
     /// ConsoleObject.zig:170. The `bun:test` runner lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
     /// before user output interleaves with it. No-op when `bun test` isn't
     /// running.
-    pub console_on_before_print: unsafe fn(),
+    pub console_on_before_print: fn(),
     /// `ConsoleObject.Formatter.printAs(.Object, …)` runtime-type dispatch —
     /// spec ConsoleObject.zig `printAs` `.Object` arm: the long `if (value.as(T))`
     /// chain over `Response`/`Request`/`Blob`/`S3Client`/`Archive`/
@@ -1591,7 +1597,7 @@ pub struct RuntimeHooks {
     /// Returns `Ok(true)` when `value` was one of the runtime types and was
     /// fully formatted into `writer`; `Ok(false)` to fall through to the
     /// generic object printer.
-    pub console_print_runtime_object: for<'a, 'f> unsafe fn(
+    pub console_print_runtime_object: for<'a, 'f> fn(
         formatter: &'a mut crate::console_object::Formatter<'f>,
         writer: &'a mut dyn bun_io::Write,
         value: JSValue,
@@ -1617,7 +1623,7 @@ pub struct RuntimeHooks {
         unsafe fn(exec_argv: &[bun_string::WTFStringImpl]) -> Option<bool>,
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
     /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
-    pub cron_clear_all_teardown: unsafe fn(vm: *mut VirtualMachine),
+    pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),
     /// `webcore.WebWorker.terminateAllAndWait(timeout_ms)` — spec
     /// VirtualMachine.zig:975. `WebWorker` lives in this crate but the
     /// `web_worker` module is above `virtual_machine` in the dep graph
@@ -1625,12 +1631,12 @@ pub struct RuntimeHooks {
     /// thread's `event_loop().auto_tick()`, so [`global_exit`] reaches it
     /// through this slot. Prevents detached worker threads from racing the
     /// freed resolver BSSMap singletons during `transpiler.deinit()`.
-    pub terminate_all_workers_and_wait: unsafe fn(timeout_ms: u64),
+    pub terminate_all_workers_and_wait: fn(timeout_ms: u64),
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` — spec
     /// VirtualMachine.zig:815. Same impl as `cron_clear_all_teardown` but
     /// the `.reload` mode preserves the next-fire schedule across the new
     /// global so timers re-register instead of being torn down.
-    pub cron_clear_all_reload: unsafe fn(vm: *mut VirtualMachine),
+    pub cron_clear_all_reload: fn(vm: &mut VirtualMachine),
     /// `graph.find(path).?.sourcemap.load()` — spec VirtualMachine.zig:3875.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier reaches them via the graph's own
@@ -1641,7 +1647,7 @@ pub struct RuntimeHooks {
     /// caches it into `source_mappings` so subsequent lookups hit the fast
     /// path. The caller gates the call on `vm.standalone_module_graph`.
     pub load_standalone_sourcemap:
-        unsafe fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
+        fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
     /// `bake::production::PerThread` source-map JSON lookup — spec
     /// sourcemap_jsc/source_provider.zig:24
     /// (`pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()`).
@@ -2144,8 +2150,7 @@ impl VirtualMachine {
         if !self.main_is_html_entrypoint {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
-                // SAFETY: hook contract.
-                if !unsafe { (hooks.generate_entry_point)(self, watch, entry_path) } {
+                if !(hooks.generate_entry_point)(self, watch, entry_path) {
                     return Err(bun_core::err!("ServerEntryPointGenerate"));
                 }
             }
@@ -2719,8 +2724,7 @@ impl IPCInstance {
         let vm = VirtualMachine::get().as_mut();
         let event_loop = vm.event_loop_mut();
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook fn is supplied by `bun_runtime` at startup.
-            unsafe { (hooks.ipc_child_singleton_deinit)() };
+            (hooks.ipc_child_singleton_deinit)();
         }
         event_loop.enter();
         // SAFETY: extern "C" FFI; `vm.global` is the live VM global.
@@ -2929,10 +2933,7 @@ impl VirtualMachine {
         if let Some(v) = self.default_tls_reject_unauthorized {
             return v;
         }
-        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
-        // SAFETY: `transpiler.env` is a process-lifetime allocation; `&mut`
-        // needed for the cached-result write inside.
-        unsafe { &mut *self.transpiler.env }.get_tls_reject_unauthorized()
+        self.transpiler.env_mut().get_tls_reject_unauthorized()
     }
 
     /// Spec VirtualMachine.zig:302 `onSubprocessSpawn`.
@@ -3301,10 +3302,9 @@ impl VirtualMachine {
         }
 
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `self` is valid for the call; the hook walks the VM's
-            // cron-job list and detaches each job from the old global so the
-            // new global can re-register them post-reload.
-            unsafe { (hooks.cron_clear_all_reload)(self) };
+            // The hook walks the VM's cron-job list and detaches each job from
+            // the old global so the new global can re-register them post-reload.
+            (hooks.cron_clear_all_reload)(self);
         }
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.
@@ -3849,8 +3849,7 @@ impl VirtualMachine {
             // `WebCore.ObjectURLRegistry` lives in `bun_runtime`; routed
             // through [`RuntimeHooks::has_blob_url`].
             let has = runtime_hooks()
-                // SAFETY: hook contract — `blob_id` borrows `specifier`.
-                .map(|h| unsafe { (h.has_blob_url)(blob_id) })
+                .map(|h| (h.has_blob_url)(blob_id))
                 .unwrap_or(false);
             if has {
                 ret.path = Self::dupe_resolved_path(specifier);
@@ -4203,8 +4202,7 @@ impl VirtualMachine {
 
         if let Some(rare) = self.rare_data.take() {
             if let Some(hooks) = runtime_hooks() {
-                // SAFETY: hook contract — `self` is the live per-thread VM.
-                unsafe { (hooks.cron_clear_all_teardown)(std::ptr::from_mut(self)) };
+                (hooks.cron_clear_all_teardown)(self);
             }
             // Paired with `rare_data()`'s register_root_region. Without this,
             // every terminated Worker leaves a stale LSAN root entry pointing
@@ -5429,12 +5427,7 @@ impl VirtualMachine {
 
         // SAFETY: `source_lines_numbers[..source_lines_len]` is the
         // caller-owned buffer (see ZigStackTrace contract).
-        let line_numbers = unsafe {
-            bun_core::ffi::slice(
-                exception.stack.source_lines_numbers,
-                exception.stack.source_lines_len as usize,
-            )
-        };
+        let line_numbers = exception.stack.source_line_numbers();
         let max_line: i32 = line_numbers.iter().copied().fold(-1, i32::max);
         let max_line_number_pad = count_digits(max_line + 1);
 
@@ -6101,9 +6094,9 @@ impl VirtualMachine {
         // trait object.
         let _ = self.standalone_module_graph?;
         let hooks = runtime_hooks()?;
-        // SAFETY: JS-thread call; hook mutates only per-`File` lazy caches
-        // under the standalone graph's internal `INIT_LOCK`.
-        let map = unsafe { (hooks.load_standalone_sourcemap)(path) }?;
+        // JS-thread call; hook mutates only per-`File` lazy caches under the
+        // standalone graph's internal `INIT_LOCK`.
+        let map = (hooks.load_standalone_sourcemap)(path)?;
 
         // Spec: `map.ref(); this.source_mappings.putValue(path, Value.init(map))`.
         // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong

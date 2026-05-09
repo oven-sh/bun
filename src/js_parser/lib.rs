@@ -1429,12 +1429,7 @@ impl fmt::Display for ToJSError {
 }
 impl core::error::Error for ToJSError {}
 
-impl From<ToJSError> for bun_core::Error {
-    fn from(e: ToJSError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-        // TODO(port): bun_core::Error construction API (interned tag).
-    }
-}
+bun_core::named_error_set!(ToJSError);
 
 /// Say you need to allocate a bunch of tiny arrays
 /// You could just do separate allocations for each, but that is slow

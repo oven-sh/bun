@@ -153,9 +153,7 @@ pub enum Transform {
 
 impl Transform {
     pub fn parse(input: &mut Parser) -> Result<Transform> {
-        // SAFETY: `expect_function` returns a sub-slice of `input.tokenizer.src`;
-        // detach the borrow so `input` is reusable for `parse_nested_block` below.
-        let function = unsafe { crate::css_parser::src_str(input.expect_function()?) };
+        let function = input.expect_function_cloned()?;
 
         // PORT NOTE: Zig used a Closure struct + nested anon-struct fn passed to
         // parseNestedBlock; Rust closures capture `function` directly.
@@ -800,7 +798,7 @@ impl Rotate {
 
         let xyz = match input.try_parse(|i| -> Result<Xyz> {
             let location = i.current_source_location();
-            let ident = i.expect_ident()?;
+            let ident = i.expect_ident_cloned()?;
             if strings::eql_case_insensitive_ascii_check_length(ident, b"x") {
                 return Ok(Xyz { x: 1.0, y: 0.0, z: 0.0 });
             } else if strings::eql_case_insensitive_ascii_check_length(ident, b"y") {
@@ -808,9 +806,7 @@ impl Rotate {
             } else if strings::eql_case_insensitive_ascii_check_length(ident, b"z") {
                 return Ok(Xyz { x: 0.0, y: 0.0, z: 1.0 });
             }
-            Err(location.new_unexpected_token_error(Token::Ident(unsafe {
-                crate::css_parser::src_str(ident)
-            })))
+            Err(location.new_unexpected_token_error(Token::Ident(ident)))
         }) {
             Ok(v) => v,
             Err(_) => input

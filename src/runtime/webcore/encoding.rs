@@ -136,7 +136,7 @@ pub extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(input: *const u8, len: u
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(input: *const u16, len: usize) -> usize {
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input = unsafe { slice::from_raw_parts(input, len) };
+    let input = unsafe { bun_core::ffi::slice(input, len) };
     strings::element_length_utf16_into_utf8(input)
 }
 
@@ -197,7 +197,7 @@ pub extern "C" fn Bun__encoding__toStringUTF8(
     global_object: &JSGlobalObject,
 ) -> JSValue {
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input = unsafe { slice::from_raw_parts(input, len) };
+    let input = unsafe { bun_core::ffi::slice(input, len) };
     match to_string_comptime::<{ enc::UTF8 }>(input, global_object) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
@@ -212,7 +212,7 @@ pub extern "C" fn Bun__encoding__toString(
     encoding: u8,
 ) -> JSValue {
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input = unsafe { slice::from_raw_parts(input, len) };
+    let input = unsafe { bun_core::ffi::slice(input, len) };
     match to_string(input, global_object, encoding_from_u8(encoding)) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
@@ -486,7 +486,7 @@ pub fn write_u8<const ENCODING: u8>(
     // if (comptime encoding.isBinaryToText()) {}
 
     // SAFETY: caller guarantees `input[..len]` and `to_ptr[..to_len]` are valid; len/to_len > 0.
-    let input_slice = unsafe { slice::from_raw_parts(input, len) };
+    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
     let to_slice = unsafe { slice::from_raw_parts_mut(to_ptr, to_len) };
 
     match encoding_from_u8(ENCODING) {
@@ -559,7 +559,7 @@ pub fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize
     }
 
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input_slice = unsafe { slice::from_raw_parts(input, len) };
+    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => strings::element_length_latin1_into_utf8(input_slice),
@@ -613,7 +613,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         Encoding::Utf8 => {
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { slice::from_raw_parts(input, len) };
+            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
             let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
             Ok(strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(
                 to_slice,
@@ -625,7 +625,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             let out = len.min(to_len);
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { slice::from_raw_parts(input, out) };
+            let input_slice = unsafe { bun_core::ffi::slice(input, out) };
             let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
             strings::copy_u16_into_u8(to_slice, input_slice);
             Ok(out)
@@ -660,7 +660,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         Encoding::Hex => {
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { slice::from_raw_parts(input, len) };
+            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
             let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
             Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice))
         }
@@ -674,7 +674,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             // shouldn't really happen though
             // SAFETY: caller guarantees `input[..len]` is valid; only an immutable view is
             // needed here since the output goes through `write_u8` with raw `to`.
-            let input_slice = unsafe { slice::from_raw_parts(input, len) };
+            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
             let transcoded = strings::to_utf8_alloc(input_slice);
             // transcoded dropped at end of scope
             write_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len(), to, to_len)
@@ -698,7 +698,7 @@ pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Ve
     }
 
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input_slice = unsafe { slice::from_raw_parts(input, len) };
+    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer => {
@@ -776,7 +776,7 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
     }
 
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input_slice = unsafe { slice::from_raw_parts(input, len) };
+    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => strings::to_utf8_alloc_with_type(input_slice),
@@ -796,7 +796,7 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
                 Vec::from_raw_parts(v.as_mut_ptr().cast::<u8>(), len * 2, v.capacity() * 2)
             };
             // SAFETY: input is &[u16]; reinterpret as &[u8] of len*2.
-            let bytes = unsafe { slice::from_raw_parts(input.cast::<u8>(), len * 2) };
+            let bytes = unsafe { bun_core::ffi::slice(input.cast::<u8>(), len * 2) };
             to[..bytes.len()].copy_from_slice(bytes);
             to
         }

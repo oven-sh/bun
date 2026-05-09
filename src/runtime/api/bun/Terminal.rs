@@ -741,34 +741,33 @@ mod lib_util {
     use bun_core::ZStr;
 
     // PORT NOTE: Zig used non-atomic file-level vars (single-threaded init).
-    // PORTING.md §Global mutable state: bool→AtomicBool; handle slot stays a
-    // RacyCell because `Option<*mut c_void>` has no `Atomic` form. JS-thread-only.
-    static HANDLE: bun_core::RacyCell<Option<*mut c_void>> = bun_core::RacyCell::new(None);
+    // PORTING.md §Global mutable state: bool→AtomicBool; handle slot is an
+    // AtomicPtr (null ⇔ None — dlopen never yields a null Some). JS-thread-only.
+    static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
     static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
     pub fn get_handle() -> Option<*mut c_void> {
-        // SAFETY: called only from the JS thread; matches Zig's unsynchronized globals.
-        unsafe {
-            if LOADED.load(core::sync::atomic::Ordering::Relaxed) {
-                return HANDLE.read();
-            }
-            LOADED.store(true, core::sync::atomic::Ordering::Relaxed);
-
-            // Try libutil.so first (most common), then libutil.so.1
-            const LIB_NAMES: [&ZStr; 3] = [
-                bun_core::zstr!("libutil.so"),
-                bun_core::zstr!("libutil.so.1"),
-                bun_core::zstr!("libc.so.6"),
-            ];
-            for lib_name in LIB_NAMES {
-                let h = sys::dlopen(lib_name, sys::RTLD::LAZY);
-                if h.is_some() {
-                    HANDLE.write(h);
-                    return h;
-                }
-            }
-            None
+        use core::sync::atomic::Ordering::Relaxed;
+        if LOADED.load(Relaxed) {
+            let h = HANDLE.load(Relaxed);
+            return if h.is_null() { None } else { Some(h) };
         }
+        LOADED.store(true, Relaxed);
+
+        // Try libutil.so first (most common), then libutil.so.1
+        const LIB_NAMES: [&ZStr; 3] = [
+            bun_core::zstr!("libutil.so"),
+            bun_core::zstr!("libutil.so.1"),
+            bun_core::zstr!("libc.so.6"),
+        ];
+        for lib_name in LIB_NAMES {
+            if let Some(h) = sys::dlopen(lib_name, sys::RTLD::LAZY) {
+                HANDLE.store(h, Relaxed);
+                return Some(h);
+            }
+        }
+        None
     }
 
     pub fn get_open_pty() -> Option<OpenPtyFn> {

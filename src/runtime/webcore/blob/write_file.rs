@@ -594,8 +594,7 @@ mod windows_impl {
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
                 mkdirp_if_not_exists: mkdirp,
-                // SAFETY: all-zero is a valid uv::fs_t (C struct)
-                io_request: unsafe { core::mem::zeroed::<uv::fs_t>() },
+                io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t { base: null_mut(), len: 0 }],
                 event_loop,
                 fd: -1,

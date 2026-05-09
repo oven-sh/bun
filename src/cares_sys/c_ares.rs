@@ -279,10 +279,13 @@ pub struct Options {
     pub server_failover_opts: struct_ares_server_failover_options,
 }
 
+// SAFETY: `#[repr(C)]` POD — every field is an integer, raw pointer, or
+// `Option<extern fn>`; all-zero is the documented "no options set" state
+// passed to `ares_init_options` (S021).
+unsafe impl bun_core::ffi::Zeroable for Options {}
 impl Default for Options {
     fn default() -> Self {
-        // SAFETY: all-zero is a valid Options (raw pointers, ints, Option<fn>).
-        unsafe { core::mem::zeroed() }
+        bun_core::ffi::zeroed()
     }
 }
 
@@ -432,6 +435,11 @@ impl Default for hostent_with_ttls {
 }
 
 pub trait HostentWithTtlsHandler: Sized {
+    /// `hostent_with_ttls::parse_a` or `parse_aaaa` — selects the c-ares reply
+    /// parser for [`hostent_with_ttls::callback_wrapper`]. Mirrors the Zig
+    /// `callbackWrapper(comptime lookup_name, ...)` parameterization.
+    const PARSE: fn(*mut u8, c_int) -> Result<Box<hostent_with_ttls>, Error>;
+
     fn on_hostent_with_ttls(
         &mut self,
         status: Option<Error>,
@@ -461,7 +469,7 @@ impl hostent_with_ttls {
         this.on_hostent_with_ttls(None, timeouts, hostent);
     }
 
-    pub unsafe extern "C" fn callback_wrapper_a<T: HostentWithTtlsHandler>(
+    pub unsafe extern "C" fn callback_wrapper<T: HostentWithTtlsHandler>(
         ctx: *mut c_void,
         status: c_int,
         timeouts: c_int,
@@ -474,26 +482,7 @@ impl hostent_with_ttls {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
             return;
         }
-        match Self::parse_a(buffer, buffer_length) {
-            Ok(result) => this.on_hostent_with_ttls(None, timeouts, Some(result)),
-            Err(err) => this.on_hostent_with_ttls(Some(err), timeouts, None),
-        }
-    }
-
-    pub unsafe extern "C" fn callback_wrapper_aaaa<T: HostentWithTtlsHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *ctx.cast::<T>() };
-        if status != ARES_SUCCESS {
-            this.on_hostent_with_ttls(Error::get(status), timeouts, None);
-            return;
-        }
-        match Self::parse_aaaa(buffer, buffer_length) {
+        match T::PARSE(buffer, buffer_length) {
             Ok(result) => this.on_hostent_with_ttls(None, timeouts, Some(result)),
             Err(err) => this.on_hostent_with_ttls(Some(err), timeouts, None),
         }
@@ -683,6 +672,8 @@ pub struct AddrInfo_hints {
     pub ai_socktype: c_int,
     pub ai_protocol: c_int,
 }
+// SAFETY: four `c_int` fields; all-zero is a valid hints value (S021).
+unsafe impl bun_core::ffi::Zeroable for AddrInfo_hints {}
 
 impl AddrInfo_hints {
     pub fn is_empty(&self) -> bool {
@@ -732,6 +723,19 @@ pub trait ResolveHandler: Sized {
         buffer: *mut u8,
         buffer_length: c_int,
     );
+}
+
+/// Copy `src` into the caller-owned stack `buf`, NUL-terminate, and return a
+/// `*const c_char` suitable for c-ares FFI. Truncates silently at
+/// `buf.len() - 1`; callers that must reject overlong input do so before
+/// calling. The buffer lives in the caller's frame so the returned pointer is
+/// valid for the FFI call that follows.
+#[inline]
+fn copy_nul_terminated(buf: &mut [u8], src: &[u8]) -> *const c_char {
+    let len = src.len().min(buf.len() - 1);
+    buf[..len].copy_from_slice(&src[..len]);
+    buf[len] = 0;
+    buf.as_ptr().cast::<c_char>()
 }
 
 impl Channel {
@@ -795,12 +799,7 @@ impl Channel {
     ) {
         let mut host_buf = [0u8; 1024];
         let mut port_buf = [0u8; 52];
-        let host_ptr: *const c_char = {
-            let len = host.len().min(host_buf.len() - 1);
-            host_buf[..len].copy_from_slice(&host[..len]);
-            host_buf[len] = 0;
-            host_buf.as_ptr().cast::<c_char>()
-        };
+        let host_ptr = copy_nul_terminated(&mut host_buf, host);
 
         let port_ptr: *const c_char = 'brk: {
             if port == 0 {
@@ -843,12 +842,7 @@ impl Channel {
         }
 
         let mut name_buf = [0u8; 1024];
-        let name_ptr: *const c_char = {
-            let len = name.len().min(name_buf.len() - 1);
-            name_buf[..len].copy_from_slice(&name[..len]);
-            name_buf[len] = 0;
-            name_buf.as_ptr().cast::<c_char>()
-        };
+        let name_ptr = copy_nul_terminated(&mut name_buf, name);
 
         // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; ctx outlives the channel.
         unsafe {
@@ -871,10 +865,7 @@ impl Channel {
             if ip_addr.is_empty() || ip_addr.len() >= BUF_SIZE {
                 break 'brk ptr::null();
             }
-            let len = ip_addr.len().min(addr_buf.len() - 1);
-            addr_buf[..len].copy_from_slice(&ip_addr[..len]);
-            addr_buf[len] = 0;
-            addr_buf.as_ptr().cast::<c_char>()
+            copy_nul_terminated(&mut addr_buf, ip_addr)
         };
 
         // https://c-ares.org/ares_inet_pton.html
@@ -1093,12 +1084,13 @@ pub struct struct_ares_addr6ttl {
     pub ttl: c_int,
 }
 
+// SAFETY: `#[repr(C)]` POD — 16-byte byte-array union + `c_int`. All-zero is a
+// valid bit pattern (matches Zig `std.mem.zeroes`) (S021).
+unsafe impl bun_core::ffi::Zeroable for struct_ares_addr6ttl {}
 impl Default for struct_ares_addr6ttl {
     #[inline]
     fn default() -> Self {
-        // SAFETY: `#[repr(C)]` POD — 16-byte union of u8 + c_int. All-zero is
-        // a valid bit pattern (matches Zig `std.mem.zeroes`).
-        unsafe { core::mem::zeroed() }
+        bun_core::ffi::zeroed()
     }
 }
 
@@ -1163,6 +1155,33 @@ impl AresReply for struct_ares_caa_reply {
     }
 }
 
+impl struct_ares_caa_reply {
+    /// Safe view of the c-ares-owned property tag bytes.
+    #[inline]
+    pub fn property_bytes(&self) -> &[u8] {
+        // SAFETY: c-ares allocates `property` as a contiguous buffer of
+        // `plength` bytes that lives until `ares_free_data` is called on the
+        // list head; the `&self` borrow is shorter than that. c-ares never
+        // sets a non-zero length with a null pointer.
+        if self.property.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.property, self.plength) }
+        }
+    }
+    /// Safe view of the c-ares-owned value bytes.
+    #[inline]
+    pub fn value_bytes(&self) -> &[u8] {
+        // SAFETY: same invariant as `property_bytes` — `value` points to
+        // `length` bytes owned by the reply node for `&self`'s lifetime.
+        if self.value.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.value, self.length) }
+        }
+    }
+}
+
 #[repr(C)]
 pub struct struct_ares_srv_reply {
     pub next: *mut struct_ares_srv_reply,
@@ -1204,12 +1223,40 @@ impl AresReply for struct_ares_txt_reply {
     }
 }
 
+impl struct_ares_txt_reply {
+    /// Safe view of the c-ares-owned TXT record bytes.
+    #[inline]
+    pub fn txt_bytes(&self) -> &[u8] {
+        // SAFETY: c-ares allocates `txt` as `length` bytes that live until
+        // `ares_free_data` on the list head; `&self` is the shorter borrow.
+        if self.txt.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
+        }
+    }
+}
+
 #[repr(C)]
 pub struct struct_ares_txt_ext {
     pub next: *mut struct_ares_txt_ext,
     pub txt: *mut u8,
     pub length: usize,
     pub record_start: u8,
+}
+
+impl struct_ares_txt_ext {
+    /// Safe view of the c-ares-owned TXT record bytes.
+    #[inline]
+    pub fn txt_bytes(&self) -> &[u8] {
+        // SAFETY: c-ares allocates `txt` as `length` bytes that live until
+        // `ares_free_data` on the list head; `&self` is the shorter borrow.
+        if self.txt.is_null() {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
+        }
+    }
 }
 
 #[repr(C)]
@@ -1474,6 +1521,9 @@ pub struct struct_ares_addr_port_node {
     pub udp_port: c_int,
     pub tcp_port: c_int,
 }
+// SAFETY: `#[repr(C)]` POD — raw ptr, `c_int`s, and a byte-array union.
+// All-zero is the state callers fill before `ares_inet_pton` (S021).
+unsafe impl bun_core::ffi::Zeroable for struct_ares_addr_port_node {}
 
 impl struct_ares_addr_port_node {
     /// Type-erased pointer to the in_addr/in6_addr union, for `ares_inet_ntop`.
@@ -1575,25 +1625,7 @@ impl Error {
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
-            // `UV_EAI_*` constants — inlined (this `*_sys` crate is leaf and
-            // may not depend on `bun_libuv_sys`). Values are platform-stable
-            // (uv-errno.h, defined identically on all targets).
-            mod libuv {
-                pub const UV_EAI_ADDRFAMILY: i32 = -3000;
-                pub const UV_EAI_AGAIN: i32 = -3001;
-                pub const UV_EAI_BADFLAGS: i32 = -3002;
-                pub const UV_EAI_CANCELED: i32 = -3003;
-                pub const UV_EAI_FAIL: i32 = -3004;
-                pub const UV_EAI_FAMILY: i32 = -3005;
-                pub const UV_EAI_MEMORY: i32 = -3006;
-                pub const UV_EAI_NODATA: i32 = -3007;
-                pub const UV_EAI_NONAME: i32 = -3008;
-                pub const UV_EAI_OVERFLOW: i32 = -3009;
-                pub const UV_EAI_SERVICE: i32 = -3010;
-                pub const UV_EAI_SOCKTYPE: i32 = -3011;
-                pub const UV_EAI_BADHINTS: i32 = -3013;
-                pub const UV_EAI_PROTOCOL: i32 = -3014;
-            }
+            use bun_libuv_sys as libuv;
             // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
             if rc == libuv::UV_EAI_NODATA || rc == libuv::UV_EAI_NONAME {
                 return Some(Error::ENOTFOUND);
@@ -1866,15 +1898,10 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     const BUF_SIZE: usize = 128;
 
     let mut buf = [0u8; BUF_SIZE];
-    let addr_ptr: *const c_char = 'brk: {
-        if addr.is_empty() || addr.len() >= BUF_SIZE {
-            return -1;
-        }
-        let len = addr.len().min(buf.len() - 1);
-        buf[..len].copy_from_slice(&addr[..len]);
-        buf[len] = 0;
-        break 'brk buf.as_ptr().cast::<c_char>();
-    };
+    if addr.is_empty() || addr.len() >= BUF_SIZE {
+        return -1;
+    }
+    let addr_ptr = copy_nul_terminated(&mut buf, addr);
 
     {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.

@@ -58,9 +58,7 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
             if bun_paths::is_absolute(to) {
                 let _ = write_bytes(writer, to);
             } else {
-                // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem
-                // singleton, set during VM init and never freed.
-                let fs = unsafe { &*VirtualMachine::get().as_mut().transpiler.fs };
+                let fs = VirtualMachine::get().fs();
                 let _ = write_bytes(writer, fs.abs(&[to]));
             }
         } else {
@@ -79,8 +77,7 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
 pub fn get_public_path<W: core::fmt::Write>(to: &[u8], origin: &bun_url::URL, writer: &mut W) {
     get_public_path_with_asset_prefix(
         to,
-        // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem singleton.
-        unsafe { (*VirtualMachine::get().as_mut().transpiler.fs).top_level_dir },
+        VirtualMachine::get().top_level_dir(),
         origin,
         b"",
         writer,
@@ -556,9 +553,7 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     path_str = ZigStringSlice::from_utf8_never_free(
         vm.env_loader().get(b"PATH").unwrap_or(b""),
     );
-    cwd_str = ZigStringSlice::from_utf8_never_free(
-        unsafe { &*vm.transpiler.fs }.top_level_dir,
-    );
+    cwd_str = ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
 
     if let Some(arg) = arguments.next_eat() {
         if !arg.is_empty_or_undefined_or_null() && arg.is_object() {
@@ -954,8 +949,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
         let mut slot = cell.borrow_mut();
         let slot = &mut *slot;
         let edit = &mut slot.ctx;
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-        let env = unsafe { &mut *vm.transpiler.env };
+        let env = vm.transpiler.env_mut();
 
         if let Some(opts) = arguments.next_eat() {
             if !opts.is_undefined_or_null() {
@@ -1535,14 +1529,13 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__escapeHTML16(
-    global_object: *mut JSGlobalObject,
+    global_object: &JSGlobalObject,
     input_value: JSValue,
     ptr: *const u16,
     len: usize,
 ) -> JSValue {
     debug_assert!(len > 0);
-    // SAFETY: caller passes a valid global and a valid [ptr, len) UTF-16 slice.
-    let global_object = unsafe { &*global_object };
+    // SAFETY: caller passes a valid [ptr, len) UTF-16 slice.
     let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     use bun_str::immutable::escape_html::{escape_html_for_utf16_input, Escaped};
     let escaped = match escape_html_for_utf16_input(input_slice) {
@@ -1569,14 +1562,13 @@ pub extern "C" fn Bun__escapeHTML16(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__escapeHTML8(
-    global_object: *mut JSGlobalObject,
+    global_object: &JSGlobalObject,
     input_value: JSValue,
     ptr: *const u8,
     len: usize,
 ) -> JSValue {
     debug_assert!(len > 0);
-    // SAFETY: caller passes a valid global and a valid [ptr, len) byte slice.
-    let global_object = unsafe { &*global_object };
+    // SAFETY: caller passes a valid [ptr, len) byte slice.
     let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     // PERF(port): was stack-fallback (256 bytes) — profile in Phase B
 
@@ -2079,19 +2071,17 @@ pub mod environment_variables {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__getEnvCount(
-        global_object: *mut JSGlobalObject,
-        ptr: *mut *const Box<[u8]>,
+        global_object: &JSGlobalObject,
+        ptr: &mut core::mem::MaybeUninit<*const Box<[u8]>>,
     ) -> usize {
-        // SAFETY: caller is C++ with live global; ptr is a valid out-param.
-        let bun_vm = unsafe { (*global_object).bun_vm() }.as_mut();
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-        let env = unsafe { &*bun_vm.transpiler.env };
+        let bun_vm = global_object.bun_vm().as_mut();
+        let env = bun_vm.env_loader();
         let keys: &[Box<[u8]>] = env.map.map.keys();
         // C++ declares this out-param as `void**` and only ever round-trips it
         // back into `Bun__getEnvKey` below; the element layout is opaque to it.
-        // SAFETY: the backing Vec lives for the VM lifetime and is not
-        // reallocated between this call and `Bun__getEnvKey`.
-        unsafe { *ptr = keys.as_ptr() };
+        // The backing Vec lives for the VM lifetime and is not reallocated
+        // between this call and `Bun__getEnvKey`.
+        ptr.write(keys.as_ptr());
         keys.len()
     }
 
@@ -2099,24 +2089,22 @@ pub mod environment_variables {
     pub extern "C" fn Bun__getEnvKey(
         ptr: *const Box<[u8]>,
         i: usize,
-        data_ptr: *mut *const u8,
+        data_ptr: &mut core::mem::MaybeUninit<*const u8>,
     ) -> usize {
         // SAFETY: ptr was returned from Bun__getEnvCount; i < count.
         let item: &[u8] = unsafe { &**ptr.add(i) };
-        unsafe { *data_ptr = item.as_ptr() };
+        data_ptr.write(item.as_ptr());
         item.len()
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__getEnvValue(
-        global_object: *mut JSGlobalObject,
-        name: *mut ZigString,
-        value: *mut ZigString,
+        global_object: &JSGlobalObject,
+        name: &ZigString,
+        value: &mut core::mem::MaybeUninit<ZigString>,
     ) -> bool {
-        // SAFETY: caller is C++ with live global; name/value are valid pointers.
-        let global_object = unsafe { &*global_object };
-        if let Some(val) = get_env_value(global_object, unsafe { *name }) {
-            unsafe { *value = val };
+        if let Some(val) = get_env_value(global_object, *name) {
+            value.write(val);
             return true;
         }
 
@@ -2127,19 +2115,16 @@ pub mod environment_variables {
     /// the env map; caller must copy before the map can mutate.
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__getEnvValueBunString(
-        global_object: *mut JSGlobalObject,
-        name: *mut BunString,
-        value: *mut BunString,
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        value: &mut core::mem::MaybeUninit<BunString>,
     ) -> bool {
-        // SAFETY: caller is C++ with live pointers.
-        let global_object = unsafe { &*global_object };
-        // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
-        let name_slice = unsafe { (*name).to_utf8() };
+        let name_slice = name.to_utf8();
         let Some(val) = vm.env_loader().get(name_slice.slice()) else {
             return false;
         };
-        unsafe { *value = BunString::borrow_utf8(val) };
+        value.write(BunString::borrow_utf8(val));
         true
     }
 
@@ -2155,15 +2140,12 @@ pub mod environment_variables {
     /// bytes while a worker still holds a ref.
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__setEnvValue(
-        global_object: *mut JSGlobalObject,
-        name: *mut BunString,
-        value: *mut BunString,
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        value: &BunString,
     ) {
-        // SAFETY: caller is C++ with live pointers.
-        let global_object = unsafe { &*global_object };
-        // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm().as_mut();
-        let name_slice = unsafe { (*name).to_utf8() };
+        let name_slice = name.to_utf8();
 
         // Synchronize the slot swap + env.map.put against a concurrently
         // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
@@ -2179,13 +2161,11 @@ pub mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
         // PORT NOTE: `Loader.map` is `&'a mut Map` (a mutable reference field);
         // re-borrow as `&mut *` to avoid moving the reference out of the loader.
-        let env_map = &mut *unsafe { &mut *vm.transpiler.env }.map;
+        let env_map = &mut *vm.transpiler.env_mut().map;
 
-        // SAFETY: `value` is a live `bun.String` from C++.
-        if unsafe { (*value).is_empty() } {
+        if value.is_empty() {
             // Store a static empty string rather than removing, so that
             // process.env.X reads back as "" (Node.js semantics) instead
             // of undefined. isNoProxy treats empty strings the same as
@@ -2194,7 +2174,7 @@ pub mod environment_variables {
             return;
         }
 
-        let value_slice = unsafe { (*value).to_utf8() };
+        let value_slice = value.to_utf8();
         let new_val = bun_jsc::rare_data::RefCountedEnvValue::create(value_slice.slice());
         let stored = slot.ptr.insert(new_val);
         // slot.key is a static-lifetime string literal (the struct field name).
@@ -2227,11 +2207,10 @@ pub mod environment_variables {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSValue) {
-    // SAFETY: caller is C++ with a live global.
+pub extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
     // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
     let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
-    let _ = vm.uncaught_exception(unsafe { &*global_object }, err, false);
+    let _ = vm.uncaught_exception(global_object, err, false);
 }
 
 #[allow(non_snake_case)]
@@ -2956,9 +2935,7 @@ pub mod JSZstd {
                 return Ok(());
             }
 
-            // SAFETY: vm.global is the live thread-local global; non-null while
-            // the VM is alive (checked via is_shutting_down above).
-            let global_this: &JSGlobalObject = unsafe { &*this.vm.global };
+            let global_this: &JSGlobalObject = this.vm.global();
             let promise = this.promise.swap();
 
             if let Some(err_msg) = this.error_message {

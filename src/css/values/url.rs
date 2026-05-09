@@ -17,11 +17,7 @@ impl Url {
     pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
         let start_pos = input.position();
         let loc = input.current_source_location();
-        let url = input.expect_url()?;
-        // SAFETY: `url` borrows the parser source/arena which outlives the
-        // `add_import_record` call. Detach the borrow so `input` is reusable
-        // (Token payloads are arena-static).
-        let url: &'static [u8] = unsafe { css::src_str(url) };
+        let url = input.expect_url_cloned()?;
         let import_record_idx =
             input.add_import_record(url, start_pos, bun_options_types::ImportKind::Url)?;
         Ok(Url {
@@ -90,10 +86,8 @@ impl Url {
         if let Some(d) = dep {
             dest.write_str("url(")?;
             // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { &*d.placeholder };
-            if css::serializer::serialize_string(placeholder, dest).is_err() {
-                return Err(dest.add_fmt_error());
-            }
+            let placeholder = unsafe { crate::arena_str(d.placeholder) };
+            dest.serialize_string(placeholder)?;
             dest.write_char(b')')?;
 
             if let Some(dependencies) = &mut dest.dependencies {
@@ -136,9 +130,8 @@ impl Url {
             if buf.len() > url.len() + 7 {
                 let mut buf2: Vec<u8> = Vec::new();
                 // PERF(alloc) we could use stack fallback here?
-                if css::serializer::serialize_string(url, &mut buf2).is_err() {
-                    return Err(dest.add_fmt_error());
-                }
+                // `Vec<u8>: WriteAll<Error = Infallible>` — cannot fail.
+                let _ = css::serializer::serialize_string(url, &mut buf2);
                 if buf2.len() + 5 < buf.len() {
                     dest.write_str("url(")?;
                     dest.write_str(&buf2)?;
@@ -149,9 +142,7 @@ impl Url {
             dest.write_str(&buf)?;
         } else {
             dest.write_str("url(")?;
-            if css::serializer::serialize_string(url, dest).is_err() {
-                return Err(dest.add_fmt_error());
-            }
+            dest.serialize_string(url)?;
             dest.write_char(b')')?;
         }
         Ok(())

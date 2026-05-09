@@ -1048,14 +1048,6 @@ impl FetchTasklet {
         }
 
         if let Some(reason) = self.result.abort_reason() {
-            // PORT NOTE: `HTTPClientResult::abort_reason` returns
-            // `bun_http_types::CommonAbortReason`; `BodyValueError::AbortReason`
-            // wraps `bun_jsc::CommonAbortReason`. Same `repr(u8)` layout.
-            let reason = match reason {
-                bun_http_types::FetchRedirect::CommonAbortReason::Timeout => jsc::CommonAbortReason::Timeout,
-                bun_http_types::FetchRedirect::CommonAbortReason::UserAbort => jsc::CommonAbortReason::UserAbort,
-                bun_http_types::FetchRedirect::CommonAbortReason::ConnectionClosed => jsc::CommonAbortReason::ConnectionClosed,
-            };
             return BodyValueError::AbortReason(reason);
         }
 
@@ -1415,9 +1407,7 @@ impl FetchTasklet {
 
         let mut url = fetch_options.url;
         let mut proxy: Option<ZigURL> = None;
-        // SAFETY: `transpiler.env` is a `*mut bun_dotenv::Loader` self-ptr field on the VM;
-        // uniquely accessed here on the JS thread.
-        let env = unsafe { &mut *global_this.bun_vm().as_mut().transpiler.env };
+        let env = global_this.bun_vm().as_mut().transpiler.env_mut();
         if let Some(proxy_opt) = &fetch_options.proxy {
             if !proxy_opt.is_empty() {
                 //if is empty just ignore proxy

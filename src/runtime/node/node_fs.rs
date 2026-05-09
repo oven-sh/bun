@@ -636,8 +636,7 @@ where
             // `R`; never construct an all-zero `Result` value.
             result: Err(sys::Error::default()),
             global_object: bun_ptr::BackRef::new(global_object),
-            // SAFETY: all-zero is a valid uv::fs_t (libuv `#[repr(C)]` POD).
-            req: unsafe { bun_core::ffi::zeroed_unchecked() },
+            req: bun_core::ffi::zeroed(),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
         });
@@ -780,8 +779,10 @@ where
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
-        // SAFETY: req is the live libuv request passed to this callback
-        this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, unsafe { (*req).result }.int());
+        // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
+        // `this: &mut Self` is live, re-deriving through the raw `req` would create a
+        // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
+        this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result.int());
         // Zig clones `err` here so its `.path` outlives the stack `node_fs.sync_error_buf`
         // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
         // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
@@ -791,17 +792,17 @@ where
 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
         // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
-        // Copy the raw pointer for the cleanup guard so the `defer!` closure
-        // captures `req_cleanup` (not `req`) — borrowck otherwise treats the
-        // closure's `&req` capture as conflicting with `&mut *req` below.
-        let req_cleanup: *mut uv::fs_t = req;
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req_cleanup) } };
+        scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
         // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
-        // SAFETY: req is the live libuv request passed to this callback
-        this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
+        // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
+        // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
+        // borrow alongside `&this.args` / `this.result =`. Hoist the result read so it isn't
+        // evaluated after `&mut this.req` is formed in the same call expression.
+        let rc = this.req.result.int();
+        this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
         // No `err.clone()` needed — see `uv_callback` above.
         let this_ptr: *mut Self = this;
         this.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(this_ptr));
@@ -1708,8 +1709,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         #[cfg(target_os = "macos")]
         {
             if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
-                unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
+                bun_sys::c::clonefile_rc(src, dest, 0),
                 sys::Tag::clonefile,
                 src.as_bytes(),
             ) {
@@ -4121,8 +4121,7 @@ impl NodeFS {
 
             if args.mode.is_force_clone() {
                 // https://www.manpagez.com/man/2/clonefile/
-                // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
-                return Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) }, sys::Tag::copyfile, src)
+                return Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, dest, 0), sys::Tag::copyfile, src)
                     .unwrap_or(Ok(()));
             } else {
                 let stat_ = match Syscall::stat(src) {
@@ -4141,8 +4140,7 @@ impl NodeFS {
                         // clonefile() will fail if it already exists
                         let _ = Syscall::unlink(dest);
                     }
-                    // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
-                    if Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) }, sys::Tag::copyfile, src).is_none() {
+                    if Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, dest, 0), sys::Tag::copyfile, src).is_none() {
                         let _ = Syscall::chmod(dest, stat_.st_mode as u32);
                         return Ok(());
                     }
@@ -4181,8 +4179,7 @@ impl NodeFS {
             // nor is it supported across devices
             let mut mode: u32 = bun_sys::c::COPYFILE_ACL | bun_sys::c::COPYFILE_DATA;
             if args.mode.shouldnt_overwrite() { mode |= bun_sys::c::COPYFILE_EXCL; }
-            // SAFETY: src/dest are NUL-terminated; copyfile(3) is the libc FFI
-            return Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode) }, sys::Tag::copyfile, src)
+            return Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::copyfile_rc(src, dest, mode), sys::Tag::copyfile, src)
                 .unwrap_or(Ok(()));
         }
 
@@ -4881,7 +4878,7 @@ impl NodeFS {
     pub fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
         let path = if cfg!(windows) && args.path.slice() == b"/dev/null" {
             // SAFETY: literal is NUL-terminated; len excludes the sentinel.
-            unsafe { ZStr::from_raw(b"\\\\.\\NUL\0".as_ptr(), b"\\\\.\\NUL".len()) }
+            ZStr::from_static(b"\\\\.\\NUL\0")
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
@@ -6069,7 +6066,7 @@ impl NodeFS {
 
             let path_slice = args.path.slice();
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
-            let fs = unsafe { &*FileSystem::instance() };
+            let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
             let path_len = fs.abs_buf(&parts, &mut inbuf[..]).len();
             inbuf[path_len] = 0;
@@ -6263,8 +6260,7 @@ impl NodeFS {
                         &[dir, target_path],
                     ).len();
                     self.sync_error_buf[src_len] = 0;
-                    // SAFETY: NUL just written at [src_len].
-                    let src_z = unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), src_len) };
+                    let src_z = ZStr::from_buf(&self.sync_error_buf[..], src_len);
                     break 'auto_detect match sys::directory_exists_at(FD::INVALID, src_z) {
                         Err(_) => ResolvedLinkType::File,
                         Ok(is_dir) => if is_dir { ResolvedLinkType::Dir } else { ResolvedLinkType::File },
@@ -6291,8 +6287,7 @@ impl NodeFS {
                     ).len();
                     self.sync_error_buf[0..4].copy_from_slice(&paths::windows::LONG_PATH_PREFIX_U8);
                     self.sync_error_buf[4 + target_len] = 0;
-                    // SAFETY: NUL written; bytes [0..4+target_len] initialised above.
-                    break 'target unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), 4 + target_len) };
+                    break 'target ZStr::from_buf(&self.sync_error_buf[..], 4 + target_len);
                 }
                 if paths::is_absolute(target_path) {
                     // This normalizes slashes and adds the long path prefix
@@ -6303,8 +6298,7 @@ impl NodeFS {
                 paths::resolve_path::dangerously_convert_path_to_windows_in_place::<u8>(
                     &mut self.sync_error_buf[..target_path.len()],
                 );
-                // SAFETY: NUL written at [target_path.len()].
-                break 'target unsafe { ZStr::from_raw(self.sync_error_buf.as_ptr(), target_path.len()) };
+                break 'target ZStr::from_buf(&self.sync_error_buf[..], target_path.len());
             };
             return match Syscall::symlink_uv(
                 processed_target,
@@ -6589,7 +6583,7 @@ impl NodeFS {
         #[cfg(target_os = "macos")]
         'try_with_clonefile: {
             if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
+                bun_sys::c::clonefile_rc(src, dest, 0),
                 sys::Tag::clonefile, src.as_bytes(),
             ) {
                 match err.get_errno() {
@@ -6775,7 +6769,7 @@ impl NodeFS {
             if mode.is_force_clone() {
                 // https://www.manpagez.com/man/2/clonefile/
                 return Maybe::<ret::CopyFile>::errno_sys_p(
-                    unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
+                    bun_sys::c::clonefile_rc(src, dest, 0),
                     sys::Tag::clonefile, src.as_bytes(),
                 ).unwrap_or(Ok(()));
             }
@@ -6795,7 +6789,7 @@ impl NodeFS {
                     let mut mode_: u32 = bun_sys::c::COPYFILE_ACL | bun_sys::c::COPYFILE_DATA | bun_sys::c::COPYFILE_NOFOLLOW_SRC;
                     if mode.shouldnt_overwrite() { mode_ |= bun_sys::c::COPYFILE_EXCL; }
                     return Maybe::<ret::CopyFile>::errno_sys_p(
-                        unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
+                        bun_sys::c::copyfile_rc(src, dest, mode_),
                         sys::Tag::copyfile, src.as_bytes(),
                     ).unwrap_or(Ok(()));
                 }
@@ -6816,7 +6810,7 @@ impl NodeFS {
                     let _ = Syscall::unlink(dest);
                 }
                 if Maybe::<ret::CopyFile>::errno_sys_p(
-                    unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
+                    bun_sys::c::clonefile_rc(src, dest, 0),
                     sys::Tag::clonefile, src.as_bytes(),
                 ).is_none() {
                     let _ = Syscall::chmod(dest, stat_.st_mode as u32);
@@ -6859,7 +6853,7 @@ impl NodeFS {
             if mode.shouldnt_overwrite() { mode_ |= bun_sys::c::COPYFILE_EXCL; }
 
             let first_try = Maybe::<ret::CopyFile>::errno_sys_p(
-                unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
+                bun_sys::c::copyfile_rc(src, dest, mode_),
                 sys::Tag::copyfile, src.as_bytes(),
             );
             match first_try {
@@ -6867,7 +6861,7 @@ impl NodeFS {
                 Some(err) if err.get_errno() == E::ENOENT => {
                     let _ = sys::Dir::cwd().make_path(paths::resolve_path::dirname::<paths::platform::Auto>(dest.as_bytes()));
                     return Maybe::<ret::CopyFile>::errno_sys_p(
-                        unsafe { bun_sys::c::copyfile(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut(), mode_) },
+                        bun_sys::c::copyfile_rc(src, dest, mode_),
                         sys::Tag::copyfile, src.as_bytes(),
                     ).unwrap_or(Ok(()));
                 }
@@ -7566,9 +7560,7 @@ fn throw_invalid_fd_error(global: &JSGlobalObject, value: JSValue) -> JsError {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__mkdirp(global_this: *mut JSGlobalObject, path: *const c_char) -> bool {
-    // SAFETY: caller (C++) passes a valid JSGlobalObject*
-    let global_this = unsafe { &*global_this };
+pub extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached

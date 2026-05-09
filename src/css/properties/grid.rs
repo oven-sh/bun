@@ -247,7 +247,7 @@ impl TrackBreadth {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        let ident = input.expect_ident_cloned()?;
 
         if strings::eql_case_insensitive_ascii(ident, b"auto", true) {
             return Ok(TrackBreadth::Auto);
@@ -257,12 +257,7 @@ impl TrackBreadth {
             return Ok(TrackBreadth::MaxContent);
         }
 
-        // SAFETY: arena-owned slice valid for the parser's source lifetime;
-        // erased to 'static to fit `Token::Ident`'s `&'static [u8]` payload
-        // (matches the `src_str` pattern in css_parser.rs).
-        Err(location.new_unexpected_token_error(css::Token::Ident(unsafe {
-            crate::css_parser::src_str(ident)
-        })))
+        Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
     }
 
     fn parse_flex(input: &mut Parser) -> css::Result<CSSNumber> {
@@ -381,7 +376,7 @@ fn serialize_line_names(names: &[CustomIdent], dest: &mut Printer) -> Result<(),
             dest.write_char(b' ')?;
         }
         // SAFETY: arena-owned slice valid for 'bump.
-        write_ident(unsafe { &*name.v }, dest)?;
+        write_ident(unsafe { crate::arena_str(name.v) }, dest)?;
     }
     dest.write_char(b']')
 }
@@ -448,17 +443,14 @@ impl RepeatCount {
             return Ok(RepeatCount::Number(n));
         }
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        let ident = input.expect_ident_cloned()?;
         if strings::eql_case_insensitive_ascii(ident, b"auto-fill", true) {
             return Ok(RepeatCount::AutoFill);
         }
         if strings::eql_case_insensitive_ascii(ident, b"auto-fit", true) {
             return Ok(RepeatCount::AutoFit);
         }
-        // SAFETY: see TrackBreadth::parse_internal — erase ident lifetime for Token::Ident.
-        Err(location.new_unexpected_token_error(css::Token::Ident(unsafe {
-            crate::css_parser::src_str(ident)
-        })))
+        Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
     }
 
     // PORT NOTE: `css.DeriveToCss(@This()).toCss` — hand-expanded.
@@ -508,7 +500,7 @@ impl GridTemplateAreas {
             .try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
             .ok()
         {
-            let s = unsafe { &*s };
+            let s = unsafe { crate::arena_str(s) };
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {

@@ -8,7 +8,7 @@ pub mod alloc;
 pub use critical_section::CriticalSection;
 
 #[path = "ThreadLock.rs"] mod thread_lock;
-pub use thread_lock::ThreadLock;
+pub use thread_lock::{ThreadLock, ThreadLockGuard};
 
 pub mod thread_id;
 

@@ -528,11 +528,7 @@ impl From<JsError> for MacroError {
     }
 }
 
-impl From<bun_alloc::AllocError> for MacroError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        MacroError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(MacroError);
 
 impl From<MacroError> for Error {
     fn from(e: MacroError) -> Self {
@@ -699,10 +695,8 @@ impl<'a> Run<'a> {
                     // established §Dispatch cycle-break) so the data shapes
                     // stay in the high tier.
                     let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-                    // SAFETY: `value` is a live encoded JSValue; `self.global`
-                    // is the per-thread global, live for this call.
                     if let Some(body_blob) =
-                        unsafe { (hooks.body_mixin_get_blob)(value, self.global) }?
+                        (hooks.body_mixin_get_blob)(value, self.global)?
                     {
                         return self.run(body_blob);
                     } else if let Some(resp) = value.as_::<WebCore::Blob>() {

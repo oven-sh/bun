@@ -34,33 +34,26 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // must match Zig `extern struct { tag: Tag, value: StringImpl }` (= C++
 // `BunString` in BunString.cpp), 24 bytes on 64-bit.
 // ──────────────────────────────────────────────────────────────────────────
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tag {
-    Dead = 0,
-    WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
-    Empty = 4,
-}
+// Canonical layout lives in `bun_alloc` (T0 TYPE_ONLY landing for
+// `bun.String`); re-exported so existing `bun_string::{Tag, StringImpl}` paths
+// keep working. `String` is a `#[repr(transparent)]` newtype over
+// `bun_alloc::String` so the FFI layout has ONE source of truth while this
+// crate retains its inherent impl block (toJS/toUTF8/WTF refcounting).
+pub use bun_alloc::{StringImpl, Tag};
 
-#[repr(C)]
+#[repr(transparent)]
 #[derive(Clone, Copy)]
-pub union StringImpl {
-    zig: ZigString,
-    wtf: WTFStringImpl, // *mut WTFStringImplStruct
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct String {
-    tag: Tag,
-    // repr(C) inserts 7 bytes padding here (StringImpl is 8-aligned).
-    value: StringImpl,
-}
+pub struct String(pub bun_alloc::String);
 
 const _: () = assert!(core::mem::size_of::<String>() == 24);
 const _: () = assert!(core::mem::align_of::<String>() == 8);
+// The `as_zig()` accessor reinterprets `&bun_alloc::ZigString` as
+// `&crate::ZigString`; both are `#[repr(C)] { *const u8, usize }` with the
+// same pointer-tag-bit scheme.
+const _: () = assert!(
+    core::mem::size_of::<bun_alloc::ZigString>() == core::mem::size_of::<ZigString>()
+        && core::mem::align_of::<bun_alloc::ZigString>() == core::mem::align_of::<ZigString>()
+);
 
 // FFI surface from `src/jsc/bindings/BunString.cpp`. All return a fresh
 // WTF-backed `String` with refcount = 1; caller must `deref()` (or transfer).
@@ -95,22 +88,35 @@ pub type ExternalStringImplFreeFunction<Ctx> =
     extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: u32);
 
 impl String {
-    pub const EMPTY: Self = Self { tag: Tag::Empty, value: StringImpl { zig: ZigString::EMPTY } };
-    pub const DEAD: Self = Self { tag: Tag::Dead, value: StringImpl { zig: ZigString::EMPTY } };
+    pub const EMPTY: Self = Self(bun_alloc::String::EMPTY);
+    pub const DEAD: Self = Self(bun_alloc::String::DEAD);
 
     #[inline] pub const fn empty() -> Self { Self::EMPTY }
     #[inline] pub const fn dead() -> Self { Self::DEAD }
-    #[inline] pub fn tag(&self) -> Tag { self.tag }
+    #[inline] pub fn tag(&self) -> Tag { self.0.tag }
+
+    /// Wrap a `bun_string::ZigString` under `tag`. Converts to the
+    /// layout-identical `bun_alloc::ZigString` for storage in the canonical
+    /// union (both `#[repr(C)] { *const u8, usize }`, same tag-bit scheme).
+    #[inline(always)]
+    fn wrap_zig(tag: Tag, z: ZigString) -> Self {
+        // SAFETY: see size/align const-assert at the top of this module.
+        let zig_string: bun_alloc::ZigString = unsafe { core::mem::transmute(z) };
+        Self(bun_alloc::String { tag, value: StringImpl { zig_string } })
+    }
 
     /// Borrow the active `ZigString` variant. Every caller branches on
     /// `self.tag` first; centralising the union read here collapses ~25
     /// per-site `unsafe` union-field reads into one.
     #[inline(always)]
     fn as_zig(&self) -> &ZigString {
-        debug_assert!(matches!(self.tag, Tag::ZigString | Tag::StaticZigString));
-        // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig` is the active
-        // union field. `ZigString` is `Copy`/POD so reading it is always sound.
-        unsafe { &self.value.zig }
+        debug_assert!(matches!(self.0.tag, Tag::ZigString | Tag::StaticZigString));
+        // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string` is the
+        // active union field. `ZigString` is `Copy`/POD so reading it is always
+        // sound. The cast reinterprets `&bun_alloc::ZigString` as
+        // `&crate::ZigString` (both `#[repr(C)] { *const u8, usize }`, asserted
+        // above).
+        unsafe { &*(core::ptr::addr_of!(self.0.value.zig_string) as *const ZigString) }
     }
 
     /// Borrow the live `WTF::StringImpl`. Every caller branches on
@@ -118,10 +124,11 @@ impl String {
     /// pointer deref here removes ~25 per-site `unsafe` blocks.
     #[inline(always)]
     fn as_wtf(&self) -> &WTFStringImplStruct {
-        debug_assert_eq!(self.tag, Tag::WTFStringImpl);
-        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf` is the active union field and
-        // a non-null, live `*mut WTFStringImplStruct` (refcount ≥ 1).
-        unsafe { &*self.value.wtf }
+        debug_assert_eq!(self.0.tag, Tag::WTFStringImpl);
+        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
+        // union field and a non-null, live `*mut WTFStringImplStruct`
+        // (refcount ≥ 1).
+        unsafe { &*self.0.value.wtf_string_impl }
     }
 
     /// Read the raw `*mut WTFStringImplStruct` without dereferencing. Used
@@ -129,11 +136,11 @@ impl String {
     /// hand-off to C++) rather than the struct fields.
     #[inline(always)]
     pub(crate) fn wtf_ptr(&self) -> WTFStringImpl {
-        debug_assert_eq!(self.tag, Tag::WTFStringImpl);
-        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf` is the active union field;
-        // reading the pointer (not dereferencing) is always sound for the
-        // POD `*mut` union arm.
-        unsafe { self.value.wtf }
+        debug_assert_eq!(self.0.tag, Tag::WTFStringImpl);
+        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
+        // union field; reading the pointer (not dereferencing) is always sound
+        // for the POD `*mut` union arm.
+        unsafe { self.0.value.wtf_string_impl }
     }
 
     /// `bun.String.init(anytype)` — polymorphic borrow constructor
@@ -167,7 +174,10 @@ impl String {
     #[inline]
     pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
         // Zig: ZigString.init(input) — no UTF-8 mark on the static path.
-        Self { tag: Tag::StaticZigString, value: StringImpl { zig: ZigString::init(s.as_ref()) } }
+        Self(bun_alloc::String {
+            tag: Tag::StaticZigString,
+            value: StringImpl { zig_string: bun_alloc::ZigString::init(s.as_ref()) },
+        })
     }
     /// Alias of `static_` for callers that spell it `static_str`.
     #[inline]
@@ -207,7 +217,7 @@ impl String {
     pub fn try_create_atom(bytes: &[u8]) -> Option<Self> {
         // SAFETY: bytes describes a valid slice.
         let atom = unsafe { BunString__tryCreateAtom(bytes.as_ptr(), bytes.len()) };
-        if atom.tag == Tag::Dead { None } else { Some(atom) }
+        if atom.0.tag == Tag::Dead { None } else { Some(atom) }
     }
     /// `bun.String.createAtomIfPossible` — atomized strings are interned in a
     /// thread-local table; falls back to a regular WTF copy if atomization
@@ -276,7 +286,7 @@ impl String {
         let s = unsafe {
             BunString__createExternal(bytes.as_ptr(), bytes.len(), is_latin1, ctx_erased, cb_erased)
         };
-        debug_assert!(s.tag != Tag::WTFStringImpl || s.as_wtf().ref_count() == 1);
+        debug_assert!(s.0.tag != Tag::WTFStringImpl || s.as_wtf().ref_count() == 1);
         s
     }
 
@@ -316,7 +326,7 @@ impl String {
     /// `tag == .Dead` before using the buffer).
     pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
         let s = BunString__fromLatin1Unitialized(len);
-        if s.tag != Tag::WTFStringImpl {
+        if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
         debug_assert_eq!(s.as_wtf().ref_count(), 1);
@@ -325,20 +335,20 @@ impl String {
         // impl; the `'static` lifetime mirrors Zig's `[]u8` return (lifetime
         // is actually tied to `s` — caller must not outlive it).
         let buf = unsafe {
-            let ptr = (*s.value.wtf).m_ptr.latin1.cast_mut();
+            let ptr = (*s.0.value.wtf_string_impl).m_ptr.latin1.cast_mut();
             core::slice::from_raw_parts_mut(ptr, len)
         };
         (s, buf)
     }
     pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
         let s = BunString__fromUTF16Unitialized(len);
-        if s.tag != Tag::WTFStringImpl {
+        if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
         debug_assert_eq!(s.as_wtf().ref_count(), 1);
         // SAFETY: see `create_uninitialized_latin1`.
         let buf = unsafe {
-            let ptr = (*s.value.wtf).m_ptr.utf16.cast_mut();
+            let ptr = (*s.0.value.wtf_string_impl).m_ptr.utf16.cast_mut();
             core::slice::from_raw_parts_mut(ptr, len)
         };
         (s, buf)
@@ -394,21 +404,21 @@ impl String {
         if wtf.is_null() {
             return Self::EMPTY;
         }
-        Self { tag: Tag::WTFStringImpl, value: StringImpl { wtf } }
+        Self(bun_alloc::String { tag: Tag::WTFStringImpl, value: StringImpl { wtf_string_impl: wtf } })
     }
     /// Zig: `bun.String{...}.value.WTFStringImpl` — extract the raw `*mut WTFStringImplStruct`
     /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
     /// null for non-WTF tags. Used by SQL data-cell paths that hand the impl pointer to C++.
     #[inline]
     pub fn leak_wtf_impl(self) -> WTFStringImpl {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             self.wtf_ptr()
         } else {
             core::ptr::null_mut()
         }
     }
     pub fn to_thread_safe(&mut self) {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             unsafe { BunString__toThreadSafe(self) }
         }
         debug_assert!(self.is_thread_safe());
@@ -423,7 +433,7 @@ impl String {
     /// `Send`/`Sync` SAFETY comment for the full contract.
     #[inline]
     pub fn is_thread_safe(&self) -> bool {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             // SAFETY: WTF tag guarantees `value.wtf` is a valid live impl.
             self.as_wtf().is_thread_safe()
         } else {
@@ -453,14 +463,14 @@ impl String {
     /// `String.ref()` — increment WTF refcount; no-op for other tags.
     #[inline]
     pub fn ref_(&self) {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             self.as_wtf().r#ref()
         }
     }
     /// `String.deref()` — decrement WTF refcount; no-op for other tags.
     #[inline]
     pub fn deref(&self) {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             self.as_wtf().deref()
         }
     }
@@ -473,7 +483,7 @@ impl String {
 
     #[inline]
     pub fn length(&self) -> usize {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().length() as usize,
             Tag::ZigString | Tag::StaticZigString => self.as_zig().len,
             Tag::Dead | Tag::Empty => 0,
@@ -481,21 +491,21 @@ impl String {
     }
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.tag == Tag::Empty || self.length() == 0
+        self.0.tag == Tag::Empty || self.length() == 0
     }
     pub fn is_utf16(&self) -> bool {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => !self.as_wtf().is_8bit(),
             Tag::ZigString | Tag::StaticZigString => self.as_zig().is_16bit(),
             _ => false,
         }
     }
     pub fn is_utf8(&self) -> bool {
-        matches!(self.tag, Tag::ZigString | Tag::StaticZigString)
+        matches!(self.0.tag, Tag::ZigString | Tag::StaticZigString)
             && self.as_zig().is_utf8()
     }
     pub fn is_8bit(&self) -> bool {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().is_8bit(),
             Tag::ZigString => !self.as_zig().is_16bit(),
             _ => true,
@@ -503,7 +513,7 @@ impl String {
     }
     /// Raw byte view (Latin-1 or UTF-16 bytes — NOT necessarily UTF-8).
     pub fn byte_slice(&self) -> &[u8] {
-        match self.tag {
+        match self.0.tag {
             Tag::ZigString | Tag::StaticZigString => self.as_zig().byte_slice(),
             Tag::WTFStringImpl => self.as_wtf().byte_slice(),
             _ => &[],
@@ -512,7 +522,7 @@ impl String {
     /// Latin-1 byte view; debug-asserts `is_8bit()`.
     pub fn latin1(&self) -> &[u8] {
         debug_assert!(self.is_8bit());
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().latin1_slice(),
             Tag::ZigString | Tag::StaticZigString => self.as_zig().slice(),
             _ => &[],
@@ -520,14 +530,14 @@ impl String {
     }
     pub fn utf16(&self) -> &[u16] {
         debug_assert!(self.is_utf16());
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().utf16_slice(),
             Tag::ZigString | Tag::StaticZigString => self.as_zig().utf16_slice(),
             _ => &[],
         }
     }
     pub fn ensure_hash(&self) {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             self.as_wtf().ensure_hash()
         }
     }
@@ -590,7 +600,7 @@ impl String {
 
     /// `bun.String.substringWithLen` (string.zig:674).
     pub fn substring_with_len(&self, start_index: usize, end_index: usize) -> String {
-        match self.tag {
+        match self.0.tag {
             Tag::ZigString | Tag::StaticZigString => String::init(
                 self.as_zig().substring_with_len(start_index, end_index),
             ),
@@ -611,7 +621,7 @@ impl String {
     /// - `ZigString`: borrows (UTF-8) or transcodes (UTF-16/non-ASCII Latin-1).
     /// - `StaticZigString`: borrows always.
     pub fn to_utf8(&self) -> ZigStringSlice {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().to_utf8(),
             Tag::ZigString => self.as_zig().to_slice(),
             Tag::StaticZigString => {
@@ -621,7 +631,7 @@ impl String {
         }
     }
     pub fn to_utf8_without_ref(&self) -> ZigStringSlice {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().to_utf8_without_ref(),
             Tag::ZigString => self.as_zig().to_slice(),
             Tag::StaticZigString => {
@@ -633,7 +643,7 @@ impl String {
     /// Returns `Some(utf8_bytes)` only if this is already valid UTF-8 with no
     /// transcoding needed (string.zig:571 `asUTF8`).
     pub fn as_utf8(&self) -> Option<&[u8]> {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
                 if w.is_8bit() && strings::is_all_ascii(w.latin1_slice()) {
@@ -683,7 +693,7 @@ impl String {
         strings::has_prefix_comptime(self.to_utf8_without_ref().slice(), prefix)
     }
 
-    #[inline] pub fn is_dead(&self) -> bool { self.tag == Tag::Dead }
+    #[inline] pub fn is_dead(&self) -> bool { self.0.tag == Tag::Dead }
 
     /// `bun.String.static` (alt. spelling for callers that prefer `from_*`).
     #[inline]
@@ -700,7 +710,7 @@ impl String {
     /// WTF-backed inputs just bump the refcount; ZigString inputs are copied
     /// into a fresh WTF::StringImpl (string.zig:244).
     pub fn clone(&self) -> Self {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             return self.dupe_ref();
         }
         if self.is_empty() {
@@ -709,7 +719,7 @@ impl String {
         if self.is_utf16() {
             let len = self.length();
             let (new, chars) = Self::create_uninitialized_utf16(len);
-            if new.tag != Tag::Dead {
+            if new.0.tag != Tag::Dead {
                 // SAFETY: tag ≠ WTFStringImpl is excluded above so
                 // `value.zig` is the active variant.
                 chars.copy_from_slice(self.as_zig().utf16_slice());
@@ -721,7 +731,7 @@ impl String {
 
     /// `bun.String.toZigString` — borrow as a `ZigString` (no ref taken).
     pub fn to_zig_string(&self) -> ZigString {
-        match self.tag {
+        match self.0.tag {
             Tag::ZigString | Tag::StaticZigString => *self.as_zig(),
             Tag::WTFStringImpl => {
                 // Inherent `WTFStringImplStruct::to_zig_string` lives in
@@ -743,7 +753,7 @@ impl String {
     /// `bun.String.utf8ByteLength` — exact number of UTF-8 bytes needed to
     /// encode `self` (string.zig:292).
     pub fn utf8_byte_length(&self) -> usize {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().utf8_byte_length(),
             Tag::ZigString | Tag::StaticZigString => self.as_zig().utf8_byte_length(),
             Tag::Dead | Tag::Empty => 0,
@@ -753,7 +763,7 @@ impl String {
     /// `bun.String.utf16ByteLength` — number of bytes the UTF-16LE encoding of
     /// `self` would occupy (string.zig:301).
     pub fn utf16_byte_length(&self) -> usize {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().utf16_byte_length(),
             Tag::ZigString | Tag::StaticZigString => self.as_zig().utf16_byte_length(),
             Tag::Dead | Tag::Empty => 0,
@@ -763,7 +773,7 @@ impl String {
     /// `bun.String.latin1ByteLength` — number of bytes the Latin-1 encoding of
     /// `self` would occupy (string.zig:309).
     pub fn latin1_byte_length(&self) -> usize {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().latin1_byte_length(),
             Tag::ZigString | Tag::StaticZigString => self.as_zig().latin1_byte_length(),
             Tag::Dead | Tag::Empty => 0,
@@ -818,14 +828,14 @@ impl String {
     /// whose pointer is tagged as globally-allocated (mimalloc heap).
     #[inline]
     pub fn is_global(&self) -> bool {
-        self.tag == Tag::ZigString && self.as_zig().is_globally_allocated()
+        self.0.tag == Tag::ZigString && self.as_zig().is_globally_allocated()
     }
 
     /// `bun.String.createIfDifferent` (string.zig:117) — if `other` already
     /// holds `utf8_slice` verbatim (and is WTF-backed), return a `dupe_ref`;
     /// otherwise allocate a fresh WTF-backed copy of `utf8_slice`.
     pub fn create_if_different(other: &String, utf8_slice: &[u8]) -> String {
-        if other.tag == Tag::WTFStringImpl && other.eql_utf8(utf8_slice) {
+        if other.0.tag == Tag::WTFStringImpl && other.eql_utf8(utf8_slice) {
             return other.dupe_ref();
         }
         Self::clone_utf8(utf8_slice)
@@ -857,7 +867,7 @@ impl String {
     /// `bun.String.canBeUTF8` (string.zig:654) — true iff `self`'s 8-bit bytes
     /// are valid UTF-8 (i.e. either UTF-8-tagged or all-ASCII).
     pub fn can_be_utf8(&self) -> bool {
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
                 w.is_8bit() && strings::is_all_ascii(w.latin1_slice())
@@ -877,7 +887,7 @@ impl String {
     /// the checked variant).
     #[inline]
     pub fn utf8(&self) -> &[u8] {
-        debug_assert!(matches!(self.tag, Tag::ZigString | Tag::StaticZigString));
+        debug_assert!(matches!(self.0.tag, Tag::ZigString | Tag::StaticZigString));
         debug_assert!(self.can_be_utf8());
         self.as_zig().slice()
     }
@@ -898,7 +908,7 @@ impl String {
     /// `bun.String.toOwnedSliceReturningAllASCII` (string.zig:81) — returns
     /// `(utf8_bytes, is_all_ascii)`. `false` means at least one non-ASCII byte.
     pub fn to_owned_slice_returning_all_ascii(&self) -> (Vec<u8>, bool) {
-        match self.tag {
+        match self.0.tag {
             Tag::ZigString | Tag::StaticZigString => {
                 let bytes = self.as_zig().to_owned_slice();
                 let ascii = strings::is_all_ascii(&bytes);
@@ -936,7 +946,7 @@ impl String {
     /// `bun.String.toThreadSafeSlice` (string.zig:742) — like [`to_slice`] but
     /// guarantees the resulting buffer is safe to send to another thread.
     pub fn to_thread_safe_slice(&mut self) -> SliceWithUnderlyingString {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             let wtf = self.as_wtf();
             let slice = wtf.to_utf8_without_ref();
             if !wtf.is_thread_safe() {
@@ -979,7 +989,7 @@ impl String {
     #[inline]
     pub fn char_at(&self, index: usize) -> u16 {
         debug_assert!(index < self.length());
-        match self.tag {
+        match self.0.tag {
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
                 if w.is_8bit() { w.latin1_slice()[index] as u16 } else { w.utf16_slice()[index] }
@@ -1009,7 +1019,7 @@ impl String {
     /// `bun.String.toThreadSafeEnsureRef` (string.zig:1001) — like
     /// [`to_thread_safe`] but leaves the result with one extra ref.
     pub fn to_thread_safe_ensure_ref(&mut self) {
-        if self.tag == Tag::WTFStringImpl {
+        if self.0.tag == Tag::WTFStringImpl {
             unsafe { BunString__toThreadSafe(self) };
             self.as_wtf().r#ref();
         }
@@ -1018,7 +1028,7 @@ impl String {
     /// `bun.String.estimatedSize` (string.zig:1021) — owned allocation size in
     /// bytes (not character count). `0` for static/empty/dead.
     pub fn estimated_size(&self) -> usize {
-        match self.tag {
+        match self.0.tag {
             Tag::Dead | Tag::Empty | Tag::StaticZigString => 0,
             Tag::ZigString => self.as_zig().len,
             Tag::WTFStringImpl => self.as_wtf().byte_length(),
@@ -1036,7 +1046,7 @@ impl String {
 impl From<ZigString> for String {
     #[inline]
     fn from(z: ZigString) -> Self {
-        Self { tag: Tag::ZigString, value: StringImpl { zig: z } }
+        Self::wrap_zig(Tag::ZigString, z)
     }
 }
 impl From<&ZigString> for String {
@@ -1072,7 +1082,7 @@ impl From<WTFStringImpl> for String {
     #[inline]
     fn from(wtf: WTFStringImpl) -> Self {
         debug_assert!(!wtf.is_null());
-        Self { tag: Tag::WTFStringImpl, value: StringImpl { wtf } }
+        Self(bun_alloc::String { tag: Tag::WTFStringImpl, value: StringImpl { wtf_string_impl: wtf } })
     }
 }
 
@@ -1817,7 +1827,7 @@ impl SliceWithUnderlyingString {
     /// thread-safe impl and re-derive `utf8` if it was a ref-counted view
     /// into the old impl (string.zig:1090).
     pub fn to_thread_safe(&mut self) {
-        if self.underlying.tag == Tag::WTFStringImpl {
+        if self.underlying.0.tag == Tag::WTFStringImpl {
             let orig = self.underlying.wtf_ptr();
             self.underlying.to_thread_safe();
             let new = self.underlying.wtf_ptr();

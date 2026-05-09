@@ -170,9 +170,7 @@ impl Default for WindowsBackend {
             pipe: None,
             read_chunk: [0u8; 16 * 1024],
             inflight: Vec::new(),
-            // SAFETY: uv_write_t is #[repr(C)] POD; all-zero is a valid value
-            // (matches Zig `std.mem.zeroes(uv.uv_write_t)`).
-            write_req: unsafe { core::mem::zeroed::<uv::uv_write_t>() },
+            write_req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
             write_buf: uv::uv_buf_t::init(b""),
         }
     }
@@ -203,9 +201,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // the .ipc stdio container, which always inits with ipc=true) and
             // child end disagree on framing and the channel never delivers a
             // frame.
-            // SAFETY: uv::Pipe is #[repr(C)] POD; all-zero is a valid value
-            // (matches Zig `std.mem.zeroes(uv.Pipe)`).
-            let mut pipe = Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() });
+            let mut pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
             if let Some(e) = pipe.init(uv::Loop::get(), true).to_error(bun_sys::Tag::pipe) {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_init failed: {}",
@@ -600,7 +596,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         len: core::ffi::c_int,
     ) -> *mut uws::us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid for the call.
-        let slice = unsafe { core::slice::from_raw_parts(data, len as usize) };
+        let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
         // SAFETY: see `chan` doc.
         unsafe { Self::chan(s) }.ingest(slice);
         s

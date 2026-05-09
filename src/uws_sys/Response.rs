@@ -286,7 +286,7 @@ impl<const SSL: bool> Response<SSL> {
         };
         if size > 0 {
             // SAFETY: uws populated `buf` with `size` bytes valid while the response lives.
-            Some(unsafe { core::slice::from_raw_parts(buf, size) })
+            Some(unsafe { bun_core::ffi::slice(buf, size) })
         } else {
             None
         }
@@ -308,7 +308,7 @@ impl<const SSL: bool> Response<SSL> {
             // borrows uWS-owned memory valid while the response lives.
             Some(SocketAddress {
                 // SAFETY: uws populated ip_ptr/ip_len with bytes valid while the response lives.
-                ip: unsafe { core::slice::from_raw_parts(ip_ptr, ip_len) },
+                ip: unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
                 port,
                 is_ipv6,
             })
@@ -684,20 +684,17 @@ impl AnyResponse {
         fn ssl<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
             u: *mut U, _r: &mut TLSResponse, d: &[u8], l: bool,
         ) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, d, l)
+            thunk::zst::<H>()(u, d, l)
         }
         fn tcp<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
             u: *mut U, _r: &mut TCPResponse, d: &[u8], l: bool,
         ) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, d, l)
+            thunk::zst::<H>()(u, d, l)
         }
         fn h3<U, H: Fn(*mut U, &[u8], bool) + Copy + 'static>(
             u: &mut U, _r: &mut H3Response, d: &[u8], l: bool,
         ) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), d, l)
+            thunk::zst::<H>()(std::ptr::from_mut::<U>(u), d, l)
         }
         match self {
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_data(ssl::<U, H>, optional_data),
@@ -750,14 +747,12 @@ impl AnyResponse {
         match self {
             AnyResponse::SSL(ptr) => {
                 // TODO(port): crate::us_socket_t::close signature / CloseCode::Failure
-                // SAFETY: live FFI socket handle (us_socket_t deref; not an
-                // OpaqueHandle impl yet — out of S019 scope).
-                unsafe { &mut *TLSResponse::as_handle(ptr).downcast_socket() }
+                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                us_socket_t::opaque_mut(TLSResponse::as_handle(ptr).downcast_socket())
                     .close(crate::us_socket::CloseCode::failure);
             }
             AnyResponse::TCP(ptr) => {
-                // SAFETY: see above.
-                unsafe { &mut *TCPResponse::as_handle(ptr).downcast_socket() }
+                us_socket_t::opaque_mut(TCPResponse::as_handle(ptr).downcast_socket())
                     .close(crate::us_socket::CloseCode::failure);
             }
             AnyResponse::H3(ptr) => H3Response::as_handle(ptr).force_close(),
@@ -786,20 +781,17 @@ impl AnyResponse {
         fn ssl<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
             u: *mut U, off: u64, r: &mut TLSResponse,
         ) -> bool {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, off, AnyResponse::SSL(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(u, off, AnyResponse::SSL(std::ptr::from_mut(r)))
         }
         fn tcp<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
             u: *mut U, off: u64, r: &mut TCPResponse,
         ) -> bool {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, off, AnyResponse::TCP(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(u, off, AnyResponse::TCP(std::ptr::from_mut(r)))
         }
         fn h3<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
             u: &mut U, off: u64, r: &mut H3Response,
         ) -> bool {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), off, AnyResponse::H3(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(std::ptr::from_mut::<U>(u), off, AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_writable(ssl::<U, H>, optional_data),
@@ -814,16 +806,13 @@ impl AnyResponse {
     {
         const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         fn ssl<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TLSResponse) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::SSL(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(u, AnyResponse::SSL(std::ptr::from_mut(r)))
         }
         fn tcp<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TCPResponse) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::TCP(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(u, AnyResponse::TCP(std::ptr::from_mut(r)))
         }
         fn h3<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: &mut U, r: &mut H3Response) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_timeout(ssl::<U, H>, optional_data),
@@ -838,16 +827,13 @@ impl AnyResponse {
     {
         const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         fn ssl<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TLSResponse) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::SSL(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(u, AnyResponse::SSL(std::ptr::from_mut(r)))
         }
         fn tcp<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TCPResponse) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::TCP(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(u, AnyResponse::TCP(std::ptr::from_mut(r)))
         }
         fn h3<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: &mut U, r: &mut H3Response) {
-            // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
+            thunk::zst::<H>()(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).on_aborted(ssl::<U, H>, optional_data),

@@ -962,6 +962,7 @@ impl Task {
                                             if src_path_len == 0
                                                 || src_path_len as usize >= cap
                                             {
+                                                use bun_sys::windows::Win32ErrorExt as _;
                                                 let err: sys::SystemErrno = if src_path_len == 0 {
                                                     bun_sys::windows::Win32Error::get()
                                                         .to_system_errno()

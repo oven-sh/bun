@@ -802,8 +802,6 @@ fn add_binding_vars_to_module_info(
 ) {
     match binding.data {
         B::B::BIdentifier(b) => {
-            // SAFETY: arena `*mut B::Identifier` is always non-null.
-            let b = unsafe { &*b };
             let name = r.name_for_symbol(symbols.follow(b.r#ref));
             if !name.is_empty() {
                 let str_id = mi.str(name);
@@ -811,16 +809,12 @@ fn add_binding_vars_to_module_info(
             }
         }
         B::B::BArray(b) => {
-            // SAFETY: arena `*mut B::Array` and its `items` slice are always non-null.
-            let b = unsafe { &*b };
-            for item in unsafe { (*b.items).iter() } {
+            for item in b.items() {
                 add_binding_vars_to_module_info(mi, item.binding, var_kind, r, symbols);
             }
         }
         B::B::BObject(b) => {
-            // SAFETY: arena `*mut B::Object` and its `properties` slice are always non-null.
-            let b = unsafe { &*b };
-            for prop in unsafe { (*b.properties).iter() } {
+            for prop in b.properties() {
                 add_binding_vars_to_module_info(mi, prop.value, var_kind, r, symbols);
             }
         }

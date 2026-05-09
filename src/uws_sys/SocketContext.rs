@@ -34,14 +34,10 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
-    // Spec parity: `bun.sys.stat` on Windows is `uv_fs_stat`, which opens the
-    // path via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and so
-    // FOLLOWS symlinks, returning the target's mtime/size. We must do the same
-    // — `GetFileAttributesExW` (the previous shortcut here) does NOT follow
-    // symlinks per MSDN, so a symlinked cert whose target is rotated in place
-    // would keep the same digest and serve a stale `SSL_CTX` from the cache.
-    // Replicate libuv: `CreateFileW(.., 0, share-all, OPEN_EXISTING,
-    // FILE_FLAG_BACKUP_SEMANTICS, ..)` → `GetFileInformationByHandle`.
+    // Spec parity: `bun.sys.stat` on Windows goes through libuv → `_wstat64`-
+    // equivalent. For a cache-key digest we only need (mtime, size) to change
+    // when the file changes, so go straight to `GetFileAttributesExW` — same
+    // resolution as `uv_fs_stat`'s `ftLastWriteTime`, no event-loop dependency.
     //
     // `bun_string::to_w_path_normalized` lives above this crate, so widen
     // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
@@ -54,29 +50,11 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
         if *w == u16::from(b'/') { *w = u16::from(b'\\'); }
     }
     wbuf[n] = 0;
-    // SAFETY: `wbuf` is NUL-terminated at `[n]`. dwDesiredAccess=0 (attribute
-    // query only — no read access needed), share-all so we never block writers,
-    // FILE_FLAG_BACKUP_SEMANTICS so directories open too (matches libuv).
-    let handle = unsafe {
-        fs::CreateFileW(
-            wbuf.as_ptr(),
-            0,
-            fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE,
-            ptr::null_mut(),
-            fs::OPEN_EXISTING,
-            fs::FILE_FLAG_BACKUP_SEMANTICS,
-            ptr::null_mut(),
-        )
+    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = bun_core::ffi::zeroed();
+    // SAFETY: `wbuf` is NUL-terminated at `[n]`; `data` is a valid out-ptr.
+    let ok = unsafe {
+        fs::GetFileAttributesExW(wbuf.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
     };
-    if handle == fs::INVALID_HANDLE_VALUE {
-        return None;
-    }
-    // SAFETY: POD, zero-valid.
-    let mut data: fs::BY_HANDLE_FILE_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: `handle` is a valid open handle; `data` is a valid out-ptr.
-    let ok = unsafe { fs::GetFileInformationByHandle(handle, &raw mut data) };
-    // SAFETY: `handle` was returned by `CreateFileW` and not yet closed.
-    unsafe { fs::CloseHandle(handle) };
     if ok == 0 {
         return None;
     }
@@ -180,10 +158,11 @@ impl BunSocketContextOptions {
 
         let feed_arr = |hp: &mut Sha256, arr: *const *const c_char, n: u32| {
             hp.update(&[(!arr.is_null()) as u8]);
-            hp.update(as_bytes(&n));
+            // SAFETY: u32 is POD, no padding.
+            hp.update(unsafe { bun_core::bytes_of(&n) });
             if !arr.is_null() {
                 // SAFETY: `arr` points to `n` (possibly null) C strings.
-                let slice = unsafe { core::slice::from_raw_parts(arr, n as usize) };
+                let slice = unsafe { bun_core::ffi::slice(arr, n as usize) };
                 for &s in slice {
                     hp.update(&[(!s.is_null()) as u8]);
                     if !s.is_null() {
@@ -215,7 +194,8 @@ impl BunSocketContextOptions {
                         meta = m;
                     }
                 }
-                hp.update(as_bytes(&meta));
+                // SAFETY: [i64; 3] is POD, no padding.
+                hp.update(unsafe { bun_core::bytes_of(&meta) });
             }
             hp.update(&[0]);
         };
@@ -226,15 +206,16 @@ impl BunSocketContextOptions {
         feed_path(&mut h, self.dh_params_file_name);
         feed_path(&mut h, self.ca_file_name);
         feed_z(&mut h, self.ssl_ciphers);
-        h.update(as_bytes(&self.ssl_prefer_low_memory_usage));
+        // SAFETY: all fed fields are POD integers, no padding.
+        h.update(unsafe { bun_core::bytes_of(&self.ssl_prefer_low_memory_usage) });
         feed_arr(&mut h, self.key, self.key_count);
         feed_arr(&mut h, self.cert, self.cert_count);
         feed_arr(&mut h, self.ca, self.ca_count);
-        h.update(as_bytes(&self.secure_options));
-        h.update(as_bytes(&self.reject_unauthorized));
-        h.update(as_bytes(&self.request_cert));
-        h.update(as_bytes(&self.client_renegotiation_limit));
-        h.update(as_bytes(&self.client_renegotiation_window));
+        h.update(unsafe { bun_core::bytes_of(&self.secure_options) });
+        h.update(unsafe { bun_core::bytes_of(&self.reject_unauthorized) });
+        h.update(unsafe { bun_core::bytes_of(&self.request_cert) });
+        h.update(unsafe { bun_core::bytes_of(&self.client_renegotiation_limit) });
+        h.update(unsafe { bun_core::bytes_of(&self.client_renegotiation_window) });
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out
@@ -249,7 +230,7 @@ impl BunSocketContextOptions {
                 return;
             }
             // SAFETY: `arr` points to `count` (possibly null) C strings.
-            let slice = unsafe { core::slice::from_raw_parts(arr, count as usize) };
+            let slice = unsafe { bun_core::ffi::slice(arr, count as usize) };
             for &s in slice {
                 if !s.is_null() {
                     // SAFETY: NUL-terminated C string.
@@ -292,13 +273,6 @@ impl Sha256 {
         // SAFETY: ctx was initialized in `init`; out has room for 32 bytes.
         unsafe { bun_boringssl_sys::SHA256_Final(out.as_mut_ptr(), self.0.as_mut_ptr()) };
     }
-}
-
-/// `std.mem.asBytes` equivalent: view a `#[repr(C)]`/POD value as a byte slice.
-#[inline]
-fn as_bytes<T: Copy>(v: &T) -> &[u8] {
-    // SAFETY: `T: Copy` (POD), reading `size_of::<T>()` bytes from `&T` is valid.
-    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
 }
 
 pub mod c {

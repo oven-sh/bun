@@ -69,7 +69,7 @@ impl OutdatedCommand {
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
         let silent = cli.silent;
 
-        let (pm_ptr, original_cwd) =
+        let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, cli, Subcommand::Outdated) {
                 Ok(v) => v,
                 Err(err) => {
@@ -85,10 +85,6 @@ impl OutdatedCommand {
                     Global::crash();
                 }
             };
-        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
-        // non-null and exclusively owned by this thread for the command's
-        // duration (mirrors Zig's `*PackageManager`).
-        let manager = unsafe { &mut *pm_ptr };
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)` is
         // implicit via Drop at scope exit.
 
@@ -268,7 +264,7 @@ impl OutdatedCommand {
 
         // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
         // process-singleton is populated; mirrors Zig `FileSystem.instance.top_level_dir`.
-        let top_level_dir = unsafe { (*FileSystem::instance()).top_level_dir };
+        let top_level_dir = FileSystem::get().top_level_dir;
 
         // move all matched workspaces to front of array
         let mut i: usize = 0;
@@ -357,8 +353,7 @@ impl OutdatedCommand {
             if item.is_catalog {
                 let dep = &dependencies[item.dep_id as usize];
                 let name_hash = hash(dep.name.slice(string_buf));
-                // SAFETY: `is_catalog` ⇒ `dep.version.tag == Catalog` ⇒ `value.catalog` active.
-                let catalog = unsafe { dep.version.value.catalog };
+                let catalog = *dep.version.catalog();
                 let catalog_name = catalog.slice(string_buf);
                 let catalog_name_hash = hash(catalog_name);
                 let key = CatalogKey {
@@ -386,8 +381,7 @@ impl OutdatedCommand {
 
             let dep = &dependencies[item.dep_id as usize];
             let name_hash = hash(dep.name.slice(string_buf));
-            // SAFETY: `is_catalog` ⇒ `value.catalog` active.
-            let catalog = unsafe { dep.version.value.catalog };
+            let catalog = *dep.version.catalog();
             let catalog_name = catalog.slice(string_buf);
             let catalog_name_hash = hash(catalog_name);
             let key = CatalogKey {

@@ -43,12 +43,7 @@ impl fmt::Display for RedisError {
 
 impl std::error::Error for RedisError {}
 
-impl From<RedisError> for bun_core::Error {
-    fn from(e: RedisError) -> Self {
-        // TODO(port): wire IntoStaticStr → bun_core::err! interning
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(RedisError);
 
 impl From<bun_core::Error> for RedisError {
     /// Reverse of the `RedisError → bun_core::Error` interning above so the

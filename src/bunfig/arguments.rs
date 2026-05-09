@@ -93,9 +93,6 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_core:
 
     let mut config_buf = PathBuffer::uninit();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        let len = path.len();
-        // SAFETY: NUL written at `len` by `join_abs_string_buf_z`.
-        let path = ZStr::from_buf(&config_buf[..], len);
         load_bunfig(cmd, true, path, ctx)?;
     }
     Ok(())
@@ -164,9 +161,6 @@ pub fn load_config(
             ctx.has_loaded_global_config = true;
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
-                let len = path.len();
-                // SAFETY: NUL written at `len` by `join_abs_string_buf_z`.
-                let path = ZStr::from_buf(&config_buf[..], len);
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
                     report_bunfig_load_failure(ctx.log, err);
                 }

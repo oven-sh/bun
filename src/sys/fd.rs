@@ -139,8 +139,7 @@ impl FdExt for Fd {
             #[cfg(target_os = "macos")]
             {
                 debug_assert!(self.native() >= 0);
-                // SAFETY: close$NOCANCEL is the non-cancellable variant of close(2).
-                match sys::get_errno(unsafe { close_nocancel(self.native()) }) {
+                match sys::get_errno(close_nocancel(self.native())) {
                     sys::E::EBADF => Some(sys::Error {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::close,
@@ -152,7 +151,7 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                use sys::windows::{libuv as uv, Win32Error, NTSTATUS};
+                use sys::windows::{libuv as uv, Win32Error, Win32ErrorExt as _, NTSTATUS};
                 match self.decode_windows() {
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
@@ -161,9 +160,8 @@ impl FdExt for Fd {
                         let rc = unsafe {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
-                        // Zig: `defer req.deinit()`. fs_t has NO Drop impl — must call
-                        // uv_fs_req_cleanup explicitly (benign for close, but keep parity
-                        // so this pattern isn't copy-pasted to open/stat where it leaks).
+                        // Zig: `defer req.deinit();` — fs_t has no Drop impl, so cleanup
+                        // must be explicit (uv_fs_req_cleanup).
                         req.deinit();
                         if let Some(errno) = rc.errno() {
                             Some(sys::Error {
@@ -198,19 +196,7 @@ impl FdExt for Fd {
         #[cfg(debug_assertions)]
         {
             if let Some(ref err) = result {
-                // On Windows the libuv arm stores the *raw* uv magnitude (e.g. 4083 for
-                // UV_EBADF) with from_libuv=true — Zig's `rc.errno()` translated to
-                // E::BADF=9 but the Rust port pushed translation to the caller. Compare
-                // through the translator so the UAF warning fires for uv-kind FDs too.
-                #[cfg(windows)]
-                let is_badf = if err.from_libuv {
-                    sys::windows::translate_uv_error_to_e(-c_int::from(err.errno)) == sys::E::EBADF
-                } else {
-                    err.errno == sys::E::EBADF as _
-                };
-                #[cfg(not(windows))]
-                let is_badf = err.errno == sys::E::EBADF as _;
-                if is_badf {
+                if err.errno == sys::E::EBADF as _ {
                     Output::debug_warn(&format_args!(
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
                         bstr::BStr::new(fd_fmt),
@@ -427,15 +413,15 @@ impl fmt::Display for MovableIfWindowsFd {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     // Darwin libc: close that doesn't get interrupted by pthread cancellation.
+    // By-value `c_int` only; bad fd → `EBADF`, no UB.
     #[link_name = "close$NOCANCEL"]
-    fn close_nocancel(fd: c_int) -> c_int;
+    safe fn close_nocancel(fd: c_int) -> c_int;
 }
 
 #[cfg(windows)]
 pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
-    unsafe extern "C" { fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int; }
-    // SAFETY: FFI call into libuv.
-    let out = unsafe { uv_open_osfhandle(in_) };
+    // SAFETY: FFI call into libuv. Raw extern lives in `bun_core::fd` (T0).
+    let out = unsafe { bun_core::fd::uv_open_osfhandle(in_) };
     debug_assert!(out >= -1);
     if out == -1 { return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded); }
     Ok(out)

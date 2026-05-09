@@ -3,6 +3,7 @@
 use bun_alloc::ArenaVecExt as _;
 use crate as css;
 use crate::{Parser, Printer, PrintErr, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext};
+use crate::small_list::SmallListCssExt as _;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::length::LengthPercentageOrAuto;
@@ -305,7 +306,7 @@ impl BackgroundSize {
         }
 
         let location = input.current_source_location();
-        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"cover") {
             Ok(BackgroundSize::Cover)
@@ -414,7 +415,7 @@ impl BackgroundRepeat {
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
-        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"repeat-x") {
             return Ok(BackgroundRepeat {
@@ -957,7 +958,7 @@ impl BackgroundHandler {
                 // PERF(port): was arena bulk-free / move-then-clear — profile in Phase B
 
                 if self.flushed_properties.is_empty() {
-                    let mut fallbacks = backgrounds.get_fallbacks(arena, context.targets);
+                    let mut fallbacks = crate::small_list::get_fallbacks(&mut backgrounds, arena, context.targets);
                     // PORT NOTE: Vec has no owning iterator; pop in reverse then
                     // re-reverse via a temp Vec to preserve order.
                     let mut tmp: Vec<SmallList<Background, 1>> = Vec::with_capacity(fallbacks.len());
@@ -993,7 +994,7 @@ impl BackgroundHandler {
 
         if let Some(mut images) = maybe_images.take() {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
-                let mut fallbacks = images.get_fallbacks(arena, context.targets);
+                let mut fallbacks = crate::small_list::get_fallbacks(&mut images, arena, context.targets);
                 // PORT NOTE: Vec has no owning iterator; pop in reverse then
                 // re-reverse via a temp Vec to preserve order.
                 let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len());

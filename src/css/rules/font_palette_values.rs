@@ -3,6 +3,7 @@ use crate::css_rules::Location;
 use crate::css_values::color::CssColor;
 use crate::css_values::ident::DashedIdent;
 use crate::{PrintErr, Printer};
+use crate::generics::DeepClone as _;
 
 use super::ArrayList;
 
@@ -155,7 +156,6 @@ impl OverrideColors {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        use crate::generics::DeepClone as _;
         Self { index: self.index, color: self.color.deep_clone(bump) }
     }
 }
@@ -190,11 +190,7 @@ impl BasePalette {
         }
 
         let location = input.current_source_location();
-        // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
-        let ident: &'static [u8] = match input.expect_ident() {
-            Ok(vv) => unsafe { css::css_parser::src_str(vv) },
-            Err(e) => return Err(e),
-        };
+        let ident = input.expect_ident_cloned()?;
         if strings::eql_case_insensitive_ascii_check_length(b"light", ident) {
             Ok(BasePalette::Light)
         } else if strings::eql_case_insensitive_ascii_check_length(b"dark", ident) {

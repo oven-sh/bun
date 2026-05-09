@@ -719,6 +719,16 @@ const _: () = assert!(core::mem::offset_of!(NewSource<ByteStream>, context) == 0
 const _: () = assert!(core::mem::offset_of!(NewSource<FileReader>, context) == 0);
 
 impl<C: SourceContext> NewSource<C> {
+    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this`
+    /// back-pointer.
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        // SAFETY: `global_this` is stored from a live `&JSGlobalObject` at
+        // construction (or reassigned in `start()` from a fresh live one); the
+        // VM-owned global outlives every `NewSource` it owns (JSC_BORROW).
+        unsafe { &*self.global_this }
+    }
+
     /// `bun.TrivialNew(@This())` — heap-allocate and hand back the raw pointer.
     ///
     /// Ownership is **not** retained by Rust: the returned pointer is intended to
@@ -802,8 +812,7 @@ impl<C: SourceContext> NewSource<C> {
         // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
         let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
         if let Some(cb) = this.close_jsvalue.try_swap() {
-            // SAFETY: global_this stored from a live `&JSGlobalObject`; outlives the close.
-            unsafe { &*this.global_this }.queue_microtask(cb, &[]);
+            this.global_this().queue_microtask(cb, &[]);
         }
         this.close_jsvalue.deinit();
     }

@@ -79,20 +79,11 @@ impl BackendError {
     }
 }
 
-impl From<BackendError> for bun_core::Error {
-    fn from(e: BackendError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(BackendError);
 
 // Zig: `dupGlobal` is `error{OutOfMemory}!?[]u8`, flat-unioned into
 // `clipboard()`'s `error{BackendUnavailable, OutOfMemory}` set.
-impl From<bun_alloc::AllocError> for BackendError {
-    #[inline]
-    fn from(_: bun_alloc::AllocError) -> Self {
-        BackendError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(BackendError);
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let f = factory()?;
@@ -150,8 +141,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
 
     // WIC frames come in whatever pixel format the codec emits; normalise to
     // straight-alpha RGBA8 in one hop.
-    // SAFETY: read-only after FACTORY_ONCE has run (factory() returned Ok).
-    let convert_fn = unsafe { wicConvertBitmapSource.read() }.ok_or(BackendUnavailable)?;
+    let convert_fn = wicConvertBitmapSource.get().copied().ok_or(BackendUnavailable)?;
     let mut conv: *mut IWICBitmapSource = ptr::null_mut();
     // SAFETY: convert_fn resolved from windowscodecs.dll; frame is non-null.
     if unsafe { convert_fn(&GUID_WICPixelFormat32bppRGBA, frame, &mut conv) } < 0 || conv.is_null()
@@ -326,8 +316,7 @@ pub fn encode(
             return Err(EncodeFailed);
         }
         scopeguard::defer! { release(src); }
-        // SAFETY: read-only after FACTORY_ONCE has run.
-        let convert_fn = unsafe { wicConvertBitmapSource.read() }.ok_or(BackendUnavailable)?;
+        let convert_fn = wicConvertBitmapSource.get().copied().ok_or(BackendUnavailable)?;
         let mut conv: *mut IWICBitmapSource = ptr::null_mut();
         // SAFETY: convert_fn resolved; src is non-null; pf is the codec's chosen format.
         if unsafe { convert_fn(&pf, src, &mut conv) } < 0 || conv.is_null() {
@@ -377,7 +366,7 @@ pub fn encode(
         let _ = unsafe { GlobalUnlock(hg) };
     }
     // SAFETY: ptr_ points to `pos` valid bytes inside the locked HGLOBAL.
-    let slice = unsafe { core::slice::from_raw_parts(ptr_, usize::try_from(pos).expect("int cast")) };
+    let slice = unsafe { bun_core::ffi::slice(ptr_, usize::try_from(pos).expect("int cast")) };
     Ok(slice.to_vec())
 }
 
@@ -715,10 +704,11 @@ type WICConvertBitmapSourceFn = unsafe extern "system" fn(
     out: *mut *mut IWICBitmapSource,
 ) -> HRESULT;
 // PORTING.md §Global mutable state: written once under `FACTORY_ONCE`,
-// read-only thereafter. RacyCell over the `Copy` fn-ptr option (no
-// `Atomic<Option<fn>>`).
-static wicConvertBitmapSource: bun_core::RacyCell<Option<WICConvertBitmapSourceFn>> =
-    bun_core::RacyCell::new(None);
+// read-only thereafter. Fn pointers are `Send + Sync + Copy`, so a plain
+// `OnceLock` gives a safe write-once slot (`.get().copied()` ⇔ the old
+// `Option<fn>` read).
+static wicConvertBitmapSource: std::sync::OnceLock<WICConvertBitmapSourceFn> =
+    std::sync::OnceLock::new();
 
 const COINIT_MULTITHREADED: u32 = 0;
 const CLSCTX_INPROC_SERVER: u32 = 1;
@@ -767,10 +757,9 @@ fn load_factory() {
     ) else {
         return;
     };
-    // SAFETY: write under FACTORY_ONCE; sym is the export of WICConvertBitmapSource.
-    unsafe {
-        wicConvertBitmapSource.write(Some(core::mem::transmute::<_, WICConvertBitmapSourceFn>(sym)));
-    }
+    // SAFETY: sym is the export of WICConvertBitmapSource — fn-ptr transmute.
+    let _ = wicConvertBitmapSource
+        .set(unsafe { core::mem::transmute::<_, WICConvertBitmapSourceFn>(sym) });
 
     let mut out: *mut c_void = ptr::null_mut();
     // SAFETY: GUIDs are static; out is a valid out-param.
@@ -934,7 +923,7 @@ fn dup_global<const PREFIX: usize>(h: *mut c_void) -> Result<Option<Vec<u8>>, bu
     // PERF(port): was uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; PREFIX + size];
     // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
-    out[PREFIX..].copy_from_slice(unsafe { core::slice::from_raw_parts(ptr_, size) });
+    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
     Ok(Some(out))
 }
 

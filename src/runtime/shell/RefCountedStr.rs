@@ -26,12 +26,10 @@ impl RefCountedStr {
     }
 
     pub fn byte_slice(&self) -> &[u8] {
-        if self.len == 0 {
-            return b"";
-        }
         // SAFETY: `ptr` points to `len` bytes owned by this struct (set in `init`,
-        // freed only in `free_str` when refcount hits 0).
-        unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) }
+        // freed only in `free_str` when refcount hits 0). `ffi::slice` tolerates
+        // the (null, 0) empty state.
+        unsafe { bun_core::ffi::slice(self.ptr, self.len as usize) }
     }
 
     pub fn ref_(&self) {

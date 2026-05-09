@@ -642,8 +642,7 @@ pub fn spawn_process_posix(
             PosixStdio::Ipc | PosixStdio::Ignore => {
                 actions.open_z(
                     fileno,
-                    // SAFETY: literal is NUL-terminated with no interior NUL.
-                    unsafe { CStr::from_bytes_with_nul_unchecked(b"/dev/null\0") },
+                    c"/dev/null",
                     flag | bun_sys::O::CREAT as u32,
                     0o664,
                 )?;
@@ -781,8 +780,7 @@ pub fn spawn_process_posix(
             PosixStdio::Ignore => {
                 actions.open_z(
                     fileno,
-                    // SAFETY: literal is NUL-terminated with no interior NUL.
-                    unsafe { CStr::from_bytes_with_nul_unchecked(b"/dev/null\0") },
+                    c"/dev/null",
                     bun_sys::O::RDWR as u32,
                     0o664,
                 )?;

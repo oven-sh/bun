@@ -464,8 +464,11 @@ pub mod kernel32 {
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
-        pub fn ExitProcess(exit_code: u32) -> !;
-        pub fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
+        /// No preconditions; terminates the process (cf. `std::process::exit`).
+        pub safe fn ExitProcess(exit_code: u32) -> !;
+        /// No preconditions; returns the cached console/std handle (or
+        /// `INVALID_HANDLE_VALUE`/null on failure).
+        pub safe fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
         /// No preconditions; returns the pseudo-handle constant `(HANDLE)-1`.
         pub safe fn GetCurrentProcess() -> HANDLE;
         pub fn DuplicateHandle(
@@ -483,7 +486,9 @@ pub mod kernel32 {
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
         /// `SetConsoleCtrlHandler` — install/uninstall a console ctrl handler.
-        pub fn SetConsoleCtrlHandler(
+        /// No pointer preconditions: the handler is an `Option<fn>` (null-safe)
+        /// and `Add` is a by-value BOOL.
+        pub safe fn SetConsoleCtrlHandler(
             HandlerRoutine: Option<unsafe extern "system" fn(DWORD) -> BOOL>,
             Add: BOOL,
         ) -> BOOL;
@@ -495,6 +500,27 @@ pub mod kernel32 {
             hConsoleOutput: HANDLE,
             lpConsoleScreenBufferInfo: *mut CONSOLE_SCREEN_BUFFER_INFO,
         ) -> BOOL;
+        /// `FillConsoleOutputAttribute` (`wincon.h`).
+        pub fn FillConsoleOutputAttribute(
+            hConsoleOutput: HANDLE,
+            wAttribute: WORD,
+            nLength: DWORD,
+            dwWriteCoord: COORD,
+            lpNumberOfAttrsWritten: *mut DWORD,
+        ) -> BOOL;
+        /// `FillConsoleOutputCharacterW` (`wincon.h`).
+        pub fn FillConsoleOutputCharacterW(
+            hConsoleOutput: HANDLE,
+            cCharacter: WCHAR,
+            nLength: DWORD,
+            dwWriteCoord: COORD,
+            lpNumberOfCharsWritten: *mut DWORD,
+        ) -> BOOL;
+        /// `SetConsoleCursorPosition` (`wincon.h`).
+        pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;
+        /// `ExitThread` (`processthreadsapi.h`). No preconditions; terminates
+        /// the calling thread.
+        pub safe fn ExitThread(dwExitCode: DWORD) -> !;
         /// `CreateNamedPipeW` (`winbase.h`).
         pub fn CreateNamedPipeW(
             lpName: LPCWSTR,
@@ -512,6 +538,10 @@ pub mod kernel32 {
     pub use super::{
         GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SetCurrentDirectoryW,
         SetFilePointerEx, CreateFileW, SYSTEM_INFO,
+    };
+    pub use super::{
+        GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
+        SetConsoleOutputCP,
     };
 }
 pub use kernel32::{GetLastError, GetCurrentProcess, GetExitCodeProcess};
@@ -584,7 +614,8 @@ pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 #[link(name = "ntdll")]
 unsafe extern "system" {
     /// Zig: `pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) Win32Error`
-    pub fn RtlNtStatusToDosError(status: NTSTATUS) -> DWORD;
+    /// Total over `NTSTATUS`; no preconditions.
+    pub safe fn RtlNtStatusToDosError(status: NTSTATUS) -> DWORD;
 }
 
 /// `std.os.windows.ws2_32` — Winsock2 surface (subset).
@@ -804,13 +835,30 @@ pub mod ws2_32 {
     #[link(name = "ws2_32")]
     unsafe extern "system" {
         /// Raw `WSAGetLastError`. The Zig wrapper (`?SystemErrno`) lives in `errno`
-        /// because `SystemErrno` is a higher-tier type.
-        pub fn WSAGetLastError() -> c_int;
-        pub fn WSASetLastError(err: c_int);
+        /// because `SystemErrno` is a higher-tier type. No preconditions; reads
+        /// thread-local Winsock error slot.
+        pub safe fn WSAGetLastError() -> c_int;
+        /// No preconditions; writes the thread-local Winsock error slot.
+        pub safe fn WSASetLastError(err: c_int);
         pub fn closesocket(s: usize) -> c_int;
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
+        /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
+        /// or `SOCKET_ERROR` (-1) on failure (`WSAGetLastError` for the code).
+        pub fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: c_int) -> c_int;
     }
+
+    /// `WSAPOLLFD` (`winsock2.h`). `fd` is a `SOCKET` (= `UINT_PTR`).
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct WSAPOLLFD {
+        pub fd: usize,
+        pub events: i16,
+        pub revents: i16,
+    }
+    pub const SOCKET_ERROR: c_int = -1;
+    /// `POLLWRNORM` (`winsock2.h`) — `std.posix.POLL.WRNORM` on Windows.
+    pub const POLLWRNORM: i16 = 0x0010;
 }
 pub use ws2_32::WSAGetLastError;
 
@@ -896,12 +944,15 @@ impl Win32Error {
     pub const CONNECTION_ABORTED: Win32Error = Win32Error(1236);
     pub const PRIVILEGE_NOT_HELD: Win32Error = Win32Error(1314);
     pub const DISK_CORRUPT: Win32Error = Win32Error(1393);
+    /// `WAIT_TIMEOUT` / `ERROR_TIMEOUT` (1460) — `SleepConditionVariableSRW`,
+    /// `GetQueuedCompletionStatus`, etc.
+    pub const TIMEOUT: Win32Error = Win32Error(1460);
     pub const SYMLINK_NOT_SUPPORTED: Win32Error = Win32Error(1464);
     pub const CANT_ACCESS_FILE: Win32Error = Win32Error(1920);
     pub const CANT_RESOLVE_FILENAME: Win32Error = Win32Error(1921);
     pub const NOT_CONNECTED: Win32Error = Win32Error(2250);
-    pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
     pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
+    pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
 
     // — WSA pseudo-variants (Zig: `pub const WSAE*: Win32Error = @enumFromInt(N)`) —
     pub const WSA_INVALID_HANDLE: Win32Error = Win32Error(6);
@@ -989,7 +1040,13 @@ impl Win32Error {
     /// Zig: `pub fn fromNTStatus(status) Win32Error { RtlNtStatusToDosError(status) }`
     #[inline]
     pub fn from_ntstatus(status: NTSTATUS) -> Win32Error {
-        Win32Error(unsafe { RtlNtStatusToDosError(status) } as u16)
+        Win32Error(RtlNtStatusToDosError(status) as u16)
+    }
+    /// Snake-cased alias for [`from_ntstatus`] (matches `bun_sys::windows`
+    /// callers — `from_nt_status`).
+    #[inline]
+    pub fn from_nt_status(status: NTSTATUS) -> Win32Error {
+        Self::from_ntstatus(status)
     }
 
     // NOTE: `toSystemErrno()` is intentionally NOT defined here — it returns
@@ -1001,25 +1058,17 @@ impl Win32Error {
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
-// CommandLineToArgvW is exported by shell32.dll, NOT kernel32. The Zig spec at
-// externs.zig:12 declares it `extern "kernel32"`, but Zig's link model still pulls
-// shell32 implicitly so it works there. In Rust, #[link(name=..)] is the only thing
-// adding the import library, so it must be correct or the Windows link step fails
-// with `unresolved external symbol __imp_CommandLineToArgvW`.
-#[link(name = "shell32")]
-unsafe extern "system" {
-    pub fn CommandLineToArgvW(
-        lpCmdLine: LPCWSTR,
-        pNumArgs: *mut c_int,
-    ) -> *mut LPWSTR;
-}
-
 #[link(name = "kernel32")]
 unsafe extern "system" {
     pub fn GetFileInformationByHandle(
         hFile: HANDLE,
         lpFileInformation: *mut BY_HANDLE_FILE_INFORMATION,
     ) -> BOOL;
+
+    pub fn CommandLineToArgvW(
+        lpCmdLine: LPCWSTR,
+        pNumArgs: *mut c_int,
+    ) -> *mut LPWSTR;
 
     pub fn GetBinaryTypeW(
         lpApplicationName: LPCWSTR,
@@ -1241,16 +1290,20 @@ unsafe extern "system" {
 unsafe extern "C" {
     pub fn SetStdHandle(nStdHandle: u32, hHandle: *mut c_void) -> u32;
 
-    pub fn GetConsoleOutputCP() -> u32;
+    /// No preconditions.
+    pub safe fn GetConsoleOutputCP() -> u32;
 
-    pub fn GetConsoleCP() -> u32;
+    /// No preconditions.
+    pub safe fn GetConsoleCP() -> u32;
 }
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    pub fn SetConsoleCP(wCodePageID: UINT) -> BOOL;
+    /// No preconditions; returns 0 on failure.
+    pub safe fn SetConsoleCP(wCodePageID: UINT) -> BOOL;
 
-    pub fn SetConsoleOutputCP(wCodePageID: UINT) -> BOOL;
+    /// No preconditions; returns 0 on failure.
+    pub safe fn SetConsoleOutputCP(wCodePageID: UINT) -> BOOL;
 
     pub fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: *mut DWORD) -> BOOL;
 

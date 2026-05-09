@@ -122,12 +122,27 @@ pub fn bundle_generate_chunk_action(
     bun_crash_handler::Action::BundleGenerateChunk(())
 }
 
+// `debug` / `debug_tree_shake` are the canonical wrappers for the `LinkerCtx`
+// / `TreeShake` scoped loggers (LinkerContext.zig:2, :2705). Re-exported via
+// `pub(crate) use` so the `linker_context/*` submodules can `use
+// crate::linker_context_mod::debug;` instead of redeclaring the macro. The
+// body brings the scope static into local scope by path so callers do NOT need
+// `LinkerCtx` imported (`scoped_log!` takes `$scope:ident`, hence the alias).
 macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
+    ($($arg:tt)*) => {{
+        use $crate::linker_context_mod::LinkerCtx as __scope;
+        bun_core::scoped_log!(__scope, $($arg)*)
+    }};
 }
+pub(crate) use debug;
 macro_rules! debug_tree_shake {
-    ($($arg:tt)*) => { bun_core::scoped_log!(TreeShake, $($arg)*) };
+    ($($arg:tt)*) => {{
+        use $crate::linker_context_mod::TreeShake as __scope;
+        bun_core::scoped_log!(__scope, $($arg)*)
+    }};
 }
+#[allow(unused_imports)]
+pub(crate) use debug_tree_shake;
 
 // Re-exports from sibling modules in `linker_context/`.
 // `LinkerGraph` SoA accessors are real now (`` on
@@ -413,8 +428,7 @@ impl<'a> LinkerContext<'a> {
         let transpiler = unsafe { &mut *(*bundle).transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
         // TODO(port): lifetime — log is &'a mut Log; reassigning here mirrors Zig's pointer assignment
-        // SAFETY: `transpiler.log` is a `*mut Log` backref valid for the bundle's lifetime.
-        self.log = unsafe { &mut *transpiler.log };
+        self.log = transpiler.log_mut();
 
         // PORT NOTE: lifetime — `self.resolver` is `*mut Resolver<'static>` but
         // `transpiler.resolver` is `Resolver<'_>`; raw `*mut T` is invariant in
@@ -607,7 +621,7 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                unsafe { self.graph.symbol_mut(original_ref) }.link = actual_ref;
+                unsafe { self.graph.symbol_mut(original_ref) }.link.set(actual_ref);
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph.generate_symbol_import_and_use(
@@ -1108,20 +1122,14 @@ pub enum LinkError {
     ImportResolutionFailed,
 }
 
-impl From<AllocError> for LinkError {
-    fn from(_: AllocError) -> Self { LinkError::OutOfMemory }
-}
+bun_core::oom_from_alloc!(LinkError);
 impl From<BunError> for LinkError {
     fn from(_: BunError) -> Self {
         // TODO(port): narrow error set — Zig's `try this.load()` is `!void` (anyerror)
         LinkError::BuildFailed
     }
 }
-// TODO(b2-blocked): bun_core::Error::from_name — not yet on the public surface.
-
-impl From<LinkError> for BunError {
-    fn from(e: LinkError) -> Self { BunError::from_name(<&'static str>::from(e)) }
-}
+bun_core::named_error_set!(LinkError);
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,
@@ -2012,11 +2020,7 @@ impl<'a> LinkerContext<'a> {
         let mut local_css_names: HashMap<Ref, ()> = HashMap::new();
 
         for (source_index, maybe_css_ast) in all_css_asts.iter().enumerate() {
-            if let Some(css_ast_ptr) = maybe_css_ast {
-                // SAFETY: the SoA `css` column stores arena-owned
-                // `*mut BundlerStyleSheet` (see `BundledAst.rs`); valid for the
-                // duration of the link pass.
-                let css_ast = unsafe { &**css_ast_ptr };
+            if let Some(css_ast) = maybe_css_ast.as_deref() {
                 if css_ast.local_scope.count() == 0 {
                     continue;
                 }
@@ -2033,7 +2037,7 @@ impl<'a> LinkerContext<'a> {
                                 js_ast::RefTag::Symbol,
                             );
                             while symbol.has_link() {
-                                r#ref = symbol.link;
+                                r#ref = symbol.link.get();
                                 symbol = all_symbols[r#ref.source_index() as usize]
                                     .at(r#ref.inner_index() as usize);
                             }
@@ -3552,17 +3556,11 @@ impl<'a> LinkerContext<'a> {
                 break;
             }
 
-            let kind: crate::chunk::QueryKind = match output[start] {
-                b'A' => crate::chunk::QueryKind::Asset,
-                b'C' => crate::chunk::QueryKind::Chunk,
-                b'S' => crate::chunk::QueryKind::Scb,
-                b'H' => crate::chunk::QueryKind::HtmlImport,
-                _ => {
-                    if cfg!(debug_assertions) {
-                        Output::debug_warn(format_args!("Invalid output piece boundary"));
-                    }
-                    break;
+            let Some(kind) = crate::chunk::QueryKind::from_letter(output[start]) else {
+                if cfg!(debug_assertions) {
+                    Output::debug_warn(format_args!("Invalid output piece boundary"));
                 }
+                break;
             };
 
             let mut index: usize = 0;

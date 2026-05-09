@@ -159,13 +159,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
 
     // TODO(dylan-conway): print `bun install <version>` or `bun add <version>` before logs from `init`.
     // and cleanup install/add subcommand usage
-    let (manager_ptr, original_cwd) = PackageManager::init(&mut *ctx, cli, Subcommand::Install)?;
-
-    // SAFETY: `PackageManager::init` returns the freshly populated process-global
-    // singleton (`holder::RAW_PTR`). No worker thread derefs it until
-    // `install_with_manager` schedules tasks below; until then this `&mut` is
-    // exclusive on the single CLI dispatch thread.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
+    let (manager, original_cwd) = PackageManager::init(&mut *ctx, cli, Subcommand::Install)?;
 
     // switch to `bun add <package>`
     if subcommand == Subcommand::Add {

@@ -99,18 +99,8 @@ impl UpgradedDuplex {
 
         this.ssl_error = CertError {
             error_no: ssl_error.error_no,
-            code: if ssl_error.code.is_null() || ssl_error.error_no == 0 {
-                None
-            } else {
-                // SAFETY: ssl_error.code is non-null and NUL-terminated (C string from BoringSSL verify error).
-                Some(unsafe { bun_core::ffi::cstr(ssl_error.code) }.into())
-            },
-            reason: if ssl_error.reason.is_null() || ssl_error.error_no == 0 {
-                None
-            } else {
-                // SAFETY: ssl_error.reason is non-null and NUL-terminated.
-                Some(unsafe { bun_core::ffi::cstr(ssl_error.reason) }.into())
-            },
+            code: ssl_error.code().filter(|_| ssl_error.error_no != 0).map(Into::into),
+            reason: ssl_error.reason().filter(|_| ssl_error.error_no != 0).map(Into::into),
         };
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
     }

@@ -14,10 +14,11 @@ use bun_paths::fs::Path as FsPath;
 use bun_string::{OwnedString, String as BunString};
 
 use crate::JSGlobalObject;
+use bun_ptr::BackRef;
 
 /// Spec PluginRunner.zig:7.
 pub struct PluginRunner {
-    pub global_object: *mut JSGlobalObject,
+    pub global_object: BackRef<JSGlobalObject>,
     // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; dropped per
     // PORTING.md (global mimalloc).
 }
@@ -25,6 +26,16 @@ pub struct PluginRunner {
 // Re-export the JSC-free static helpers so callers in this crate can keep
 // writing `PluginRunner::could_be_plugin(...)` without naming `bun_bundler`.
 impl PluginRunner {
+    /// Borrow the JS global stored by `Bun__onDidAppendPlugin`.
+    ///
+    /// SAFETY (invariant): `global_object` is the live `*mut JSGlobalObject`
+    /// installed by `Bun__onDidAppendPlugin`; the VM (and its global) outlives
+    /// every `Linker::link` call that reaches plugin hooks. Never null.
+    #[inline]
+    fn global(&self) -> &JSGlobalObject {
+        self.global_object.get()
+    }
+
     #[inline]
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
         bun_bundler::transpiler::PluginRunner::extract_namespace(specifier)
@@ -45,10 +56,7 @@ impl PluginResolver for PluginRunner {
         loc: bun_logger::Loc,
         target: BunPluginTarget,
     ) -> Result<Option<FsPath<'static>>, bun_core::Error> {
-        // SAFETY: `global_object` is the live `*mut JSGlobalObject` stored by
-        // `Bun__onDidAppendPlugin`; the VM (and its global) outlives every
-        // `Linker::link` call that reaches this hook.
-        let global = unsafe { &*self.global_object };
+        let global = self.global();
 
         let namespace_slice = Self::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {

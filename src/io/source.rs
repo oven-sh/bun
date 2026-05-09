@@ -85,9 +85,8 @@ impl Default for File {
         // PORT NOTE: std.mem.zeroes(File) — hand-written because `state` is an enum field
         // (PORTING.md forbids blanket zeroed() over enums). FileState::Deinitialized == 0.
         Self {
-            // SAFETY: uv_fs_t / uv_buf_t are #[repr(C)] libuv POD; all-zero is the valid pre-init state.
-            fs: unsafe { bun_core::ffi::zeroed_unchecked() },
-            iov: unsafe { bun_core::ffi::zeroed_unchecked() },
+            fs: bun_core::ffi::zeroed(),
+            iov: bun_core::ffi::zeroed(),
             file: 0,
             state: FileState::Deinitialized,
             close_after_operation: false,
@@ -290,8 +289,7 @@ impl Source {
 
     pub fn open_pipe(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Box<Pipe>> {
         bun_core::scoped_log!(PipeSource,"openPipe (fd = {})", fd);
-        // SAFETY: uv::Pipe is a #[repr(C)] libuv struct; all-zero is a valid pre-init state.
-        let mut pipe: Box<Pipe> = Box::new(unsafe { core::mem::zeroed::<Pipe>() });
+        let mut pipe: Box<Pipe> = Box::new(bun_core::ffi::zeroed::<Pipe>());
         // we should never init using IPC here see ipc.zig
         if let Some(err) = pipe.init(loop_, false).to_error(bun_sys::Tag::pipe) {
             drop(pipe);
@@ -421,7 +419,11 @@ pub mod stdin_tty {
     }
 
     pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<core::ptr::NonNull<Tty>> {
-        let _guard = LOCK.lock();
+        // Zig spec (source.zig:247-248): `lock.lock(); defer lock.unlock();`
+        // bun_threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
+        // unlock-on-drop, otherwise the mutex is held forever and the next call
+        // (e.g. Source__setRawModeStdin → open_tty(stdin)) deadlocks/UB-relocks.
+        let _guard = LOCK.lock_guard();
 
         if !INITIALIZED.swap(true, Ordering::Relaxed) {
             // SAFETY: value() points to static storage sized for uv_tty_t; lock held.

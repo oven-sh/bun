@@ -202,8 +202,7 @@ impl Linux {
     }
 
     fn init_once() {
-        // SAFETY: FFI call; Bun__linux_trace_init has no preconditions
-        let result = unsafe { Bun__linux_trace_init() };
+        let result = Bun__linux_trace_init();
         IS_INITIALIZED.store(result != 0, Ordering::Relaxed);
     }
 
@@ -241,13 +240,7 @@ static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "linux")]
 static INIT_ONCE: Once = Once::new();
 
-// TODO(port): move to perf_sys
 #[cfg(target_os = "linux")]
-unsafe extern "C" {
-    fn Bun__linux_trace_init() -> c_int;
-    #[allow(dead_code)]
-    fn Bun__linux_trace_close();
-    fn Bun__linux_trace_emit(event_name: *const c_char, duration_ns: i64) -> c_int;
-}
+use bun_core::perf::sys::{Bun__linux_trace_emit, Bun__linux_trace_init};
 
 // ported from: src/perf/perf.zig

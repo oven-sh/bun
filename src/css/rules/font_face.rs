@@ -4,6 +4,7 @@ use crate::css_values::angle::Angle;
 use crate::css_values::size::Size2D;
 use crate::css_values::url::Url;
 use crate::{PrintErr, Printer};
+use crate::generics::DeepClone as _;
 
 use super::ArrayList;
 
@@ -197,11 +198,7 @@ impl UnicodeRange {
         // This deviates from the spec in case there are CSS comments
         // between tokens in the middle of one <unicode-range>,
         // but oh well…
-        // SAFETY: `slice_from` borrows the parser's source/arena; `Token::Ident`
-        // payloads are `&'static [u8]` under the crate-wide `'bump`-erasure
-        // placeholder (see `css_parser::src_str` PORT NOTE) — same lifetime in
-        // practice, re-threads when `Token<'a>` lands.
-        let concatenated_tokens = unsafe { css::css_parser::src_str(input.slice_from(after_u)) };
+        let concatenated_tokens = input.slice_from_cloned(after_u);
 
         let range = if let Some(range) = Self::parse_concatenated(concatenated_tokens) {
             range
@@ -441,10 +438,7 @@ pub enum FontFormat {
 impl FontFormat {
     pub fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
         use bun_string::strings;
-        let s = match input.expect_ident_or_string() {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let s = input.expect_ident_or_string_cloned()?;
 
         if strings::eql_case_insensitive_ascii_check_length(b"woff", s) {
             Ok(FontFormat::Woff)
@@ -461,9 +455,7 @@ impl FontFormat {
         } else if strings::eql_case_insensitive_ascii_check_length(b"svg", s) {
             Ok(FontFormat::Svg)
         } else {
-            // SAFETY: `s` is a sub-slice of the parser input arena which
-            // outlives the AST; see `src_str` in css_parser.rs.
-            Ok(FontFormat::String(unsafe { css::css_parser::src_str(s) }))
+            Ok(FontFormat::String(s))
         }
     }
 

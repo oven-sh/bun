@@ -479,6 +479,15 @@ pub struct S3BlobStatTask {
 }
 
 impl S3BlobStatTask {
+    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
+    #[inline]
+    pub fn global(&self) -> &'static JSGlobalObject {
+        // SAFETY: `global` was stored from a live `&JSGlobalObject` when the
+        // task was created; the VM (and thus its global) outlives every async
+        // task it schedules.
+        unsafe { &*self.global }
+    }
+
     pub fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
         bun_core::heap::into_raw(Box::new(init))
     }
@@ -489,9 +498,7 @@ impl S3BlobStatTask {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        // SAFETY: `global` was live when the task was created and the VM is single-threaded;
-        // deref the raw pointer field directly so the borrow is not tied to `this`.
-        let global = unsafe { &*this.global };
+        let global = this.global();
         match result {
             s3::S3StatResult::NotFound(_) => {
                 this.promise.resolve(global, JSValue::FALSE)?;
@@ -523,8 +530,7 @@ impl S3BlobStatTask {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        // SAFETY: see on_s3_exists_resolved — deref raw pointer to avoid borrowing `this`.
-        let global = unsafe { &*this.global };
+        let global = this.global();
 
         match result {
             s3::S3StatResult::Success(stat_result) => {
@@ -550,8 +556,7 @@ impl S3BlobStatTask {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        // SAFETY: see on_s3_exists_resolved — deref raw pointer to avoid borrowing `this`.
-        let global = unsafe { &*this.global };
+        let global = this.global();
         match result {
             s3::S3StatResult::Success(stat_result) => {
                 let s3_stat = match S3Stat::init(

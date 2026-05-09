@@ -1127,11 +1127,8 @@ impl<'a> Repl<'a> {
         // Handle async IIFE results - wait for promise to resolve
         let mut resolved_result = result;
         if let Some(promise) = result.as_promise() {
-            // SAFETY: `promise` is a live JSC heap cell returned by `as_promise`;
-            // dereferenced for the synchronous calls below while `result` is
-            // protected by the conservative stack scan.
             // Mark as handled BEFORE waiting to prevent unhandled rejection output
-            unsafe { (*promise).set_handled() };
+            jsc::JSPromise::opaque_mut(promise).set_handled();
 
             // Temporarily re-enable signal delivery so Ctrl+C can interrupt
             // the blocking waitForPromise call
@@ -1142,8 +1139,7 @@ impl<'a> Repl<'a> {
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
 
             // If execution was forbidden by SIGINT, clear it and report
-            // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
-            if unsafe { (*vm.jsc_vm).execution_forbidden() } {
+            if vm.jsc_vm().execution_forbidden() {
                 vm_set_execution_forbidden(vm.jsc_vm, false);
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
@@ -1152,14 +1148,14 @@ impl<'a> Repl<'a> {
             }
 
             // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
-            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
+            let jsc_vm_ref = vm.jsc_vm();
             // Check promise status after waiting
-            match unsafe { (*promise).status() } {
+            match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {
-                    resolved_result = unsafe { (*promise).result(jsc_vm_ref) };
+                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                 }
                 PromiseStatus::Rejected => {
-                    let rejection = unsafe { (*promise).result(jsc_vm_ref) };
+                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                     self.set_last_error(rejection);
                     // Set _error on the global object
                     let global_this = global_to_js_value(global);
@@ -1294,13 +1290,13 @@ impl<'a> Repl<'a> {
         if let Some(promise) = result.as_promise() {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
-            unsafe { (*promise).set_handled() };
+            jsc::JSPromise::opaque_mut(promise).set_handled();
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
-            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
-            match unsafe { (*promise).status() } {
-                PromiseStatus::Fulfilled => resolved_result = unsafe { (*promise).result(jsc_vm_ref) },
+            let jsc_vm_ref = vm.jsc_vm();
+            match jsc::JSPromise::opaque_mut(promise).status() {
+                PromiseStatus::Fulfilled => resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref),
                 PromiseStatus::Rejected => {
-                    let rejection = unsafe { (*promise).result(jsc_vm_ref) };
+                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                     self.print_js_error_to(rejection, Output::error_writer(), stderr_colors);
                     return true;
                 }
@@ -1422,22 +1418,22 @@ impl<'a> Repl<'a> {
         if let Some(promise) = result.as_promise() {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
-            unsafe { (*promise).set_handled() };
+            jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
             // PORT NOTE: reshaped for borrowck — disable_signals_during_wait called on each path
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
-            if unsafe { (*vm.jsc_vm).execution_forbidden() } {
+            if vm.jsc_vm().execution_forbidden() {
                 vm_set_execution_forbidden(vm.jsc_vm, false);
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
             }
-            let jsc_vm_ref = unsafe { &*vm.jsc_vm };
-            match unsafe { (*promise).status() } {
-                PromiseStatus::Fulfilled => resolved_result = unsafe { (*promise).result(jsc_vm_ref) },
+            let jsc_vm_ref = vm.jsc_vm();
+            match jsc::JSPromise::opaque_mut(promise).status() {
+                PromiseStatus::Fulfilled => resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref),
                 PromiseStatus::Rejected => {
-                    let rejection = unsafe { (*promise).result(jsc_vm_ref) };
+                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                     self.set_last_error(rejection);
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();
@@ -1770,10 +1766,7 @@ impl<'a> Repl<'a> {
         // TODO(port): narrow error set
         self.vm = vm;
         if let Some(v) = vm {
-            // SAFETY: `v.global` is the live `*mut JSGlobalObject` for this VM
-            // (never null once initialized); reborrowed for `'a` to mirror Zig's
-            // freely-aliasing `*JSGlobalObject` field.
-            self.global = Some(unsafe { &*v.global });
+            self.global = Some(v.global());
         }
 
         self.setup_terminal();

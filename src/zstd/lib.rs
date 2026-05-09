@@ -311,13 +311,7 @@ pub fn get_decompressed_size(src: &[u8]) -> usize {
     unsafe { c::ZSTD_findDecompressedSize(src.as_ptr().cast::<c_void>(), src.len()) as usize }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum State {
-    Uninitialized,
-    Inflating,
-    End,
-    Error,
-}
+pub use bun_core::compress::State;
 
 pub struct ZstdReaderArrayList<'a> {
     pub input: &'a [u8],

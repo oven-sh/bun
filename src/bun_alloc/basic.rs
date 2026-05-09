@@ -10,30 +10,39 @@ use crate::{Alignment, AllocatorVTable, StdAllocator};
 // lives in `bun_core`, which depends on this crate, so the hidden-scope debug
 // tracing is dropped here rather than re-declared as a no-op stub.
 
-fn mimalloc_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
-    let _ = buf.len();
-    // mi_free_size internally just asserts the size
-    // so it's faster if we don't pass that value through
-    // but its good to have that assertion
-    // let's only enable it in debug mode
+/// Shared mimalloc free path for every vtable/trait `free` slot in this crate
+/// (C/Z allocators, `HEAP_ALLOCATOR_VTABLE`, `GLOBAL_MIMALLOC_VTABLE`, and
+/// `MimallocArena`'s `Allocator::deallocate`). `mi_free_size` internally just
+/// asserts the size, so it's faster in release if we don't pass it through —
+/// but the assertion (and `mi_is_in_heap_region`) is worth having in debug.
+///
+/// # Safety
+/// `ptr` must have been allocated by mimalloc with the given `size`/`align`
+/// (Allocator vtable invariant). `mi_is_in_heap_region` accepts any pointer.
+#[inline(always)]
+pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize) {
     if cfg!(debug_assertions) {
-        if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
-            // SAFETY: buf.ptr was allocated by mimalloc with this alignment
-            unsafe {
-                mimalloc::mi_free_size_aligned(
-                    buf.as_mut_ptr().cast(),
-                    buf.len(),
-                    alignment.to_byte_units(),
-                )
+        // SAFETY: `mi_is_in_heap_region` accepts any pointer; remaining calls
+        // are sound by the caller contract above.
+        unsafe {
+            debug_assert!(mimalloc::mi_is_in_heap_region(ptr));
+            if mimalloc::must_use_aligned_alloc(align) {
+                mimalloc::mi_free_size_aligned(ptr, size, align);
+            } else {
+                mimalloc::mi_free_size(ptr, size);
             }
-        } else {
-            // SAFETY: buf.ptr was allocated by mimalloc
-            unsafe { mimalloc::mi_free_size(buf.as_mut_ptr().cast(), buf.len()) }
         }
     } else {
-        // SAFETY: buf.ptr was allocated by mimalloc
-        unsafe { mimalloc::mi_free(buf.as_mut_ptr().cast()) }
+        let _ = (size, align);
+        // SAFETY: caller contract — `ptr` was allocated by mimalloc.
+        unsafe { mimalloc::mi_free(ptr) }
     }
+}
+
+pub(crate) fn mimalloc_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
+    // SAFETY: Allocator vtable invariant — `buf` was allocated by mimalloc with
+    // the recorded len/alignment.
+    unsafe { mi_free_checked(buf.as_mut_ptr().cast(), buf.len(), alignment.to_byte_units()) }
 }
 
 pub(crate) struct MimallocAllocator;
@@ -41,11 +50,9 @@ pub(crate) struct MimallocAllocator;
 impl MimallocAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
         let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
-            // SAFETY: mimalloc FFI; len/alignment are valid
-            unsafe { mimalloc::mi_malloc_aligned(len, alignment.to_byte_units()) }
+            mimalloc::mi_malloc_aligned(len, alignment.to_byte_units())
         } else {
-            // SAFETY: mimalloc FFI; len is valid
-            unsafe { mimalloc::mi_malloc(len) }
+            mimalloc::mi_malloc(len)
         };
 
         #[cfg(debug_assertions)]
@@ -62,12 +69,6 @@ impl MimallocAllocator {
         ptr.cast::<u8>()
     }
 
-    #[allow(dead_code)]
-    fn aligned_alloc_size(ptr: *mut u8) -> usize {
-        // SAFETY: ptr was allocated by mimalloc
-        unsafe { mimalloc::mi_malloc_size(ptr.cast()) }
-    }
-
     fn alloc_with_default_allocator(
         _: *mut c_void,
         len: usize,
@@ -77,7 +78,7 @@ impl MimallocAllocator {
         Self::aligned_alloc(len, alignment)
     }
 
-    fn resize_with_default_allocator(
+    pub(crate) fn resize_with_default_allocator(
         _: *mut c_void,
         buf: &mut [u8],
         _: Alignment,
@@ -88,7 +89,7 @@ impl MimallocAllocator {
         unsafe { !mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len).is_null() }
     }
 
-    fn remap_with_default_allocator(
+    pub(crate) fn remap_with_default_allocator(
         _: *mut c_void,
         buf: &mut [u8],
         alignment: Alignment,
@@ -122,11 +123,9 @@ pub(crate) struct ZAllocator;
 impl ZAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
         let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
-            // SAFETY: mimalloc FFI; len/alignment are valid
-            unsafe { mimalloc::mi_zalloc_aligned(len, alignment.to_byte_units()) }
+            mimalloc::mi_zalloc_aligned(len, alignment.to_byte_units())
         } else {
-            // SAFETY: mimalloc FFI; len is valid
-            unsafe { mimalloc::mi_zalloc(len) }
+            mimalloc::mi_zalloc(len)
         };
 
         #[cfg(debug_assertions)]

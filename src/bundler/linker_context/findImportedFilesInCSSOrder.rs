@@ -11,17 +11,10 @@ use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::bun_fs;
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
-use crate::linker_context::LinkerCtx;
+use crate::linker_context_mod::debug;
 use crate::Graph::{Graph, InputFileColumns as _};
 use crate::{Index, LinkerContext};
 use bun_js_parser::Index as AstIndex;
-
-// `debug` in the Zig is `LinkerContext.debug`, a scoped Output log.
-macro_rules! debug {
-    ($($args:tt)*) => {
-        bun_core::scoped_log!(LinkerCtx, $($args)*)
-    };
-}
 
 // PORT NOTE: Zig `entry.*` / `@memcpy` are bitwise copies of arena-backed
 // `CssImportOrder` values (the inner `Vec`s point into bump arenas and are
@@ -107,8 +100,8 @@ pub fn find_imported_files_in_css_order<'a>(
 
     struct Visitor<'a> {
         arena: &'a Arena,
-        // `BundledAst.css` SoA column — `Option<*mut BundlerStyleSheet>`.
-        css_asts: &'a [Option<*mut BundlerStyleSheet>],
+        // `BundledAst.css` SoA column.
+        css_asts: &'a [bun_js_parser::ast::bundled_ast::CssCol],
         all_import_records: &'a [Vec<ImportRecord>],
 
         // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
@@ -163,11 +156,9 @@ pub fn find_imported_files_in_css_order<'a>(
 
             self.visited.push(source_index);
 
-            // SAFETY: pointer comes from arena-allocated `BundlerStyleSheet` in
-            // `BundledAst.css`; valid for the link step.
             let Some(repr): Option<&BundlerStyleSheet> = self.css_asts
                 [source_index.get() as usize]
-                .map(|p| unsafe { &*p })
+                .as_deref()
             else {
                 return; // Sanity check
             };
@@ -322,7 +313,7 @@ pub fn find_imported_files_in_css_order<'a>(
     }
 
     // PORT NOTE: reshaped for borrowck — read MultiArrayList columns before constructing visitor.
-    let css_asts_slice: &[Option<*mut BundlerStyleSheet>] = this.graph.ast.items_css();
+    let css_asts_slice: &[bun_js_parser::ast::bundled_ast::CssCol] = this.graph.ast.items_css();
     let all_import_records_slice: &[Vec<ImportRecord>] = this.graph.ast.items_import_records();
     let arena = this.graph.arena();
 
@@ -356,7 +347,7 @@ pub fn find_imported_files_in_css_order<'a>(
     let mut wip_order =
         handle_oom(Vec::<CssImportOrder>::init_capacity(order.len() as usize));
 
-    let css_asts: &[Option<*mut BundlerStyleSheet>] = unsafe {
+    let css_asts: &[bun_js_parser::ast::bundled_ast::CssCol] = unsafe {
         core::slice::from_raw_parts(css_asts_slice.as_ptr(), css_asts_slice.len())
     };
 
@@ -437,11 +428,11 @@ pub fn find_imported_files_in_css_order<'a>(
                             // shadow) and `::bun_css::LayerName` are distinct nominal
                             // types until the ungate shadow is removed; cast through
                             // raw pointer to satisfy `Layers::borrow`.
-                            let layer_names_ptr = unsafe {
-                                (&raw const (*(css_asts[idx.get() as usize].unwrap()
-                                    as *const BundlerStyleSheet))
-                                    .layer_names).cast::<Vec<LayerName>>()
-                            };
+                            let layer_names_ptr = (&raw const css_asts[idx.get() as usize]
+                                .as_deref()
+                                .unwrap()
+                                .layer_names)
+                                .cast::<Vec<LayerName>>();
                             order.mut_(i as usize).kind =
                                 CssImportOrderKind::Layers(Layers::borrow(layer_names_ptr));
                             continue 'next_backward;
@@ -572,12 +563,16 @@ pub fn find_imported_files_in_css_order<'a>(
             // sometimes non-layer ones can make following layer ones redundant.
             // layers_post_import
             let layers_key: *const [LayerName] = match &entry.kind {
-                CssImportOrderKind::SourceIndex(idx) => unsafe {
+                CssImportOrderKind::SourceIndex(idx) => {
                     // PORT NOTE: see LayerName nominal-type note above.
-                    std::ptr::from_ref::<[_]>((*(css_asts[idx.get() as usize].unwrap() as *const BundlerStyleSheet))
-                        .layer_names
-                        .slice_const()) as *const [LayerName]
-                },
+                    std::ptr::from_ref::<[_]>(
+                        css_asts[idx.get() as usize]
+                            .as_deref()
+                            .unwrap()
+                            .layer_names
+                            .slice_const(),
+                    ) as *const [LayerName]
+                }
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
                 CssImportOrderKind::ExternalPath(_) => &[][..],
             };

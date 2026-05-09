@@ -677,8 +677,8 @@ impl BufferOutputSink {
             tmp_sync_error: None,
         }));
         // defer sink.deref();
-        // SAFETY: `s` is the `heap::into_raw` allocation above; refcount >= 1.
-        let _sink_guard = scopeguard::guard(sink, |s| unsafe { BufferOutputSink::deref(s) });
+        // SAFETY: `sink` is the `heap::into_raw` allocation above; refcount >= 1.
+        let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
         // PORT NOTE: do not hold a long-lived `&mut *sink` here — the same
         // allocation is also written through the raw pointer by the lol-html
         // output-sink callback during `bufferer.run()` and by `deref(sink)`
@@ -878,8 +878,8 @@ impl BufferOutputSink {
         is_async: bool,
     ) {
         // SAFETY: `sink` was ref'd in `init()` before scheduling this callback;
-        // refcount > 0 so the allocation is live.
-        let _g = scopeguard::guard(sink, |s| unsafe { BufferOutputSink::deref(s) });
+        // refcount > 0 so the allocation is live. `adopt` consumes that +1 on Drop.
+        let _g = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
         // PORT NOTE: do not materialise `&mut *sink` here — the lol-html
         // write/end FFI calls below re-enter `<BufferOutputSink as
         // OutputSink>::write/done` through the userdata pointer, which forms

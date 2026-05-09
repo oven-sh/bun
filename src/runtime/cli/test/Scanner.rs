@@ -56,16 +56,8 @@ pub enum ScanError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-impl From<AllocError> for ScanError {
-    fn from(_: AllocError) -> Self {
-        ScanError::OutOfMemory
-    }
-}
-impl From<ScanError> for bun_core::Error {
-    fn from(e: ScanError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::oom_from_alloc!(ScanError);
+bun_core::named_error_set!(ScanError);
 impl PartialEq<bun_core::Error> for ScanError {
     fn eq(&self, other: &bun_core::Error) -> bool {
         <&'static str>::from(self) == other.name()

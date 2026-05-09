@@ -11,7 +11,8 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    GlobalRef, JSGlobalObject, JSValue, JsResult, SysErrorJsc, VirtualMachineRef as VirtualMachine,
+    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsResult, SysErrorJsc,
+    VirtualMachineRef as VirtualMachine,
     ZigStringJsc as _,
 };
 use bun_string::ZigString;
@@ -1021,7 +1022,7 @@ impl FSWatcher {
         };
         // SAFETY: `FileSystem::instance()` returns the process-global singleton
         // initialized at startup; never null once init has run.
-        let cwd = unsafe { (*bun_resolver::fs::FileSystem::instance()).top_level_dir };
+        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
         let file_path: &bun_str::ZStr =
             Path::join_abs_string_buf_z::<platform::Auto>(cwd, &mut joined_buf[..], &[slice]);
 

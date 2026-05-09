@@ -10,7 +10,7 @@ impl ScanCommand {
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Scan)?;
 
-        let (pm_ptr, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan) {
+        let (manager, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan) {
             Ok(v) => v,
             Err(e) => {
                 if e == err!("MissingPackageJSON") {
@@ -25,11 +25,6 @@ impl ScanCommand {
             }
         };
         // `defer ctx.allocator.free(cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
-
-        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
-        // non-null and exclusively owned by this thread for the command's
-        // duration (mirrors Zig's `*PackageManager`).
-        let manager: &mut PackageManager = unsafe { &mut *pm_ptr };
 
         Self::exec_with_manager(ctx, manager, &original_cwd)
     }

@@ -27,11 +27,7 @@ pub enum StartManifestTaskError {
     #[error("InvalidURL")]
     InvalidURL,
 }
-impl From<bun_alloc::AllocError> for StartManifestTaskError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        Self::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(StartManifestTaskError);
 impl From<crate::network_task::ForManifestError> for StartManifestTaskError {
     fn from(e: crate::network_task::ForManifestError) -> Self {
         match e {

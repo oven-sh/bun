@@ -643,7 +643,7 @@ pub mod bake_types {
                 let index = self.files.count();
                 // Value is the post-bundle output index; left as a placeholder until
                 // the bundle is indexed (production.zig:873 leaves it `undefined`).
-                self.files.put_no_clobber(key, OutputFileIndex(0))?;
+                self.files.put_no_clobber(key, OutputFileIndex::init(0))?;
                 Ok(OpaqueFileId::init(index as u32))
             }
         }
@@ -2977,19 +2977,20 @@ impl<'a> BundleV2<'a> {
                 let astr = |s: &[u8]| -> &'static [u8] { unsafe { interned_slice(s) } };
 
                 let client_path = server.new_expr(E::EString {
-                    data: astr(alloc.alloc_slice_copy(format!("{}S{:08}", bun_core::fmt::hex_int_lower::<16>(self.unique_key), source_id).as_bytes())).into(),
+                    data: astr(alloc.alloc_slice_copy(format!("{}", chunk::UniqueKey { prefix: self.unique_key, kind: chunk::QueryKind::Scb, index: *source_id }).as_bytes())).into(),
                     ..Default::default()
                 });
                 let ssr_path = server.new_expr(E::EString {
-                    data: astr(alloc.alloc_slice_copy(format!("{}S{:08}", bun_core::fmt::hex_int_lower::<16>(self.unique_key), ssr_index).as_bytes())).into(),
+                    data: astr(alloc.alloc_slice_copy(format!("{}", chunk::UniqueKey { prefix: self.unique_key, kind: chunk::QueryKind::Scb, index: *ssr_index }).as_bytes())).into(),
                     ..Default::default()
                 });
 
                 debug_assert_eq!(keys.len(), client_manifest_items.len());
                 for (export_name_string, client_item) in keys.iter().zip(client_manifest_items.iter_mut()) {
                     let server_key_string = astr(alloc.alloc_slice_copy(format!(
-                        "{}S{:08}#{}",
-                        bun_core::fmt::hex_int_lower::<16>(self.unique_key), source_id, bstr::BStr::new(export_name_string)
+                        "{}#{}",
+                        chunk::UniqueKey { prefix: self.unique_key, kind: chunk::QueryKind::Scb, index: *source_id },
+                        bstr::BStr::new(export_name_string),
                     ).as_bytes()));
                     let export_name = server.new_expr(E::EString { data: astr(export_name_string).into(), ..Default::default() });
 
@@ -3664,7 +3665,7 @@ impl<'a> BundleV2<'a> {
                     };
 
                     additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
-                        source_index: crate::output_file::IndexOptional::some(crate::output_file::Index(index as u32)),
+                        source_index: crate::output_file::Index::init(index as u32).to_optional(),
                         data: crate::output_file::OptionsData::Buffer {
                             data: contents,
                         },
@@ -5703,9 +5704,12 @@ impl<'a> BundleV2<'a> {
             interned_slice(
                 self.arena()
                     .alloc_str(&format!(
-                        "{}H{:08}",
-                        bun_core::fmt::hex_int_lower::<16>(self.unique_key),
-                        self.graph.html_imports.server_source_indices.len(),
+                        "{}",
+                        chunk::UniqueKey {
+                            prefix: self.unique_key,
+                            kind: chunk::QueryKind::HtmlImport,
+                            index: self.graph.html_imports.server_source_indices.len() as u32,
+                        },
                     ))
                     .as_bytes(),
             )

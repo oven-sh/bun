@@ -338,15 +338,11 @@ pub mod enum_property_util {
 
     pub fn parse<T: EnumProperty>(input: &mut Parser) -> CssResult<T> {
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let ident = input.expect_ident_cloned()?;
         if let Some(x) = T::from_ascii_case_insensitive(ident) {
             return Ok(x);
         }
-        // SAFETY: ident is a sub-slice of `input.tokenizer.src`; see `src_str`.
-        Err(location.new_unexpected_token_error(Token::Ident(unsafe { src_str(ident) })))
+        Err(location.new_unexpected_token_error(Token::Ident(ident)))
     }
 
     pub fn to_css<T: Into<&'static str> + Copy>(this: &T, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -3773,10 +3769,7 @@ impl<'a> Parser<'a> {
             Token::UnquotedUrl(value) => return Ok(*value),
             Token::Function(name) => {
                 if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string().map(|s| {
-                        // SAFETY: see `src_str` — slice borrows the same input.
-                        unsafe { src_str(s) }
-                    }));
+                    return self.parse_nested_block(|parser| parser.expect_string_cloned());
                 }
             }
             _ => {}
@@ -3795,16 +3788,77 @@ impl<'a> Parser<'a> {
             Token::QuotedString(value) => return Ok(*value),
             Token::Function(name) => {
                 if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string().map(|s| {
-                        // SAFETY: see `src_str` — slice borrows the same input.
-                        unsafe { src_str(s) }
-                    }));
+                    return self.parse_nested_block(|parser| parser.expect_string_cloned());
                 }
             }
             _ => {}
         }
         let tok = tok.clone();
         Err(start_location.new_unexpected_token_error(tok))
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // `*_cloned` helpers — C-7 in PORT_NOTES_PLAN.
+    //
+    // These wrap `expect_*` / `slice_from` and return the slice with its
+    // lifetime detached from `&mut self` (to `'static`, matching `Token`'s
+    // current `&'static [u8]` payload). All `unsafe { src_str(..) }` call
+    // sites in the CSS parser route through here instead of laundering the
+    // lifetime locally.
+    //
+    // Once C-9 threads `'i` through `Token<'i>`, these become safe
+    // `-> CssResult<&'i [u8]>` and the body drops the `unsafe` — no caller
+    // changes needed.
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// `expect_ident` with the borrow detached from `&mut self` so the parser
+    /// is reusable while the slice is held (and the slice fits `Token::Ident`).
+    #[inline]
+    pub fn expect_ident_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_ident()?;
+        // SAFETY: `s` is a sub-slice of `self.input.tokenizer.src` (`&'a [u8]`)
+        // or arena-owned; the returned reference is only ever stored in
+        // structures reachable through the same `Parser<'a>`. See `src_str`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `expect_function` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn expect_function_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_function()?;
+        // SAFETY: see `expect_ident_cloned`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `expect_string` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn expect_string_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_string()?;
+        // SAFETY: see `expect_ident_cloned`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `expect_ident_or_string` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn expect_ident_or_string_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_ident_or_string()?;
+        // SAFETY: see `expect_ident_cloned`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `expect_url` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn expect_url_cloned(&mut self) -> CssResult<&'static [u8]> {
+        let s = self.expect_url()?;
+        // SAFETY: see `expect_ident_cloned`.
+        Ok(unsafe { src_str(s) })
+    }
+
+    /// `slice_from` with the borrow detached. See [`expect_ident_cloned`].
+    #[inline]
+    pub fn slice_from_cloned(&self, start_position: usize) -> &'static [u8] {
+        // SAFETY: see `expect_ident_cloned`.
+        unsafe { src_str(self.slice_from(start_position)) }
     }
 
     pub fn position(&self) -> usize {
@@ -5668,24 +5722,20 @@ impl Token {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            Token::Ident(value) => {
-                serializer::serialize_identifier(value, dest).map_err(|_| dest.add_fmt_error())
-            }
+            Token::Ident(value) => dest.serialize_identifier(value),
             Token::AtKeyword(value) => {
                 dest.write_str("@")?;
-                serializer::serialize_identifier(value, dest).map_err(|_| dest.add_fmt_error())
+                dest.serialize_identifier(value)
             }
             Token::UnrestrictedHash(value) => {
                 dest.write_str("#")?;
-                serializer::serialize_name(value, dest).map_err(|_| dest.add_fmt_error())
+                dest.serialize_name(value)
             }
             Token::IdHash(value) => {
                 dest.write_str("#")?;
-                serializer::serialize_identifier(value, dest).map_err(|_| dest.add_fmt_error())
+                dest.serialize_identifier(value)
             }
-            Token::QuotedString(value) => {
-                serializer::serialize_string(value, dest).map_err(|_| dest.add_fmt_error())
-            }
+            Token::QuotedString(value) => dest.serialize_string(value),
             Token::UnquotedUrl(value) => {
                 dest.write_str("url(")?;
                 serializer::serialize_unquoted_url(value, dest)
@@ -5710,11 +5760,9 @@ impl Token {
                 if unit == b"e" || unit == b"E" || unit.starts_with(b"e-") || unit.starts_with(b"E-")
                 {
                     dest.write_str("\\65 ")?;
-                    serializer::serialize_name(&unit[1..], dest)
-                        .map_err(|_| dest.add_fmt_error())
+                    dest.serialize_name(&unit[1..])
                 } else {
-                    serializer::serialize_identifier(unit, dest)
-                        .map_err(|_| dest.add_fmt_error())
+                    dest.serialize_identifier(unit)
                 }
             }
             Token::Whitespace(content) => dest.write_bytes(content),
@@ -5734,7 +5782,7 @@ impl Token {
             Token::Cdo => dest.write_str("<!--"),
             Token::Cdc => dest.write_str("-->"),
             Token::Function(name) => {
-                serializer::serialize_identifier(name, dest).map_err(|_| dest.add_fmt_error())?;
+                dest.serialize_identifier(name)?;
                 dest.write_str("(")
             }
             Token::OpenParen => dest.write_str("("),
@@ -6457,39 +6505,16 @@ pub fn parse_important(input: &mut Parser) -> CssResult<()> {
 }
 
 pub mod signfns {
-    #[inline]
-    pub fn is_sign_positive(x: f32) -> bool {
-        !is_sign_negative(x)
-    }
-    #[inline]
-    pub fn is_sign_negative(x: f32) -> bool {
-        // SAFETY: This is just transmuting to get the sign bit, it's fine.
-        x.to_bits() & 0x8000_0000 != 0
-    }
-    /// Returns a number that represents the sign of `self`.
-    pub fn signum(x: f32) -> f32 {
-        if x.is_nan() {
-            return f32::NAN;
-        }
-        super::copysign(1.0, x)
-    }
-
+    /// Spec-faithful port of `css_parser.zig:7086` — note the ±0.0 sign FLIP is
+    /// intentional (do NOT "fix" it). Distinct from `f32::signum` and from
+    /// `calc::std_math_sign` / `CSSNumberFns::sign`.
     #[inline]
     pub fn sign_f32(x: f32) -> f32 {
         if x == 0.0 {
-            return if is_sign_negative(x) { 0.0 } else { -0.0 };
+            return if x.is_sign_negative() { 0.0 } else { -0.0 };
         }
-        signum(x)
+        x.signum()
     }
-}
-
-/// Copies the sign of `sign` to `self`, returning a new f32 value.
-#[inline]
-pub fn copysign(self_: f32, sign: f32) -> f32 {
-    let self_bits = self_.to_bits();
-    let sign_bits = sign.to_bits();
-    let result_bits = (self_bits & 0x7FFFFFFF) | (sign_bits & 0x80000000);
-    f32::from_bits(result_bits)
 }
 
 pub fn deep_deinit<V>(_list: &mut Vec<V>) {

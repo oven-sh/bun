@@ -42,11 +42,7 @@ pub enum ScanImportsAndExportsError {
     #[error("import resolution failed")]
     ImportResolutionFailed,
 }
-impl From<AllocError> for ScanImportsAndExportsError {
-    fn from(_: AllocError) -> Self {
-        ScanImportsAndExportsError::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ScanImportsAndExportsError);
 impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
     fn from(e: ScanImportsAndExportsError) -> Self {
         use crate::linker_context_mod::LinkError;
@@ -56,11 +52,7 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
         }
     }
 }
-impl From<ScanImportsAndExportsError> for bun_core::Error {
-    fn from(e: ScanImportsAndExportsError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(ScanImportsAndExportsError);
 
 /// Short-lived `&mut [T]` deref of a `split_raw()` column pointer at a single
 /// use site.
@@ -1399,13 +1391,11 @@ mod __css_validation {
         import_records_list: *mut [ImportRecordList],
         input_files: *mut [Source],
     ) {
-        // SAFETY: column ptrs valid — see `col!` note; `css_asts[id]`
-        // checked Some by caller. The pointer in the column was produced from
-        // an arena-allocated `BundlerStyleSheet` (see `BundledAst.css`). We
-        // only *read* the AST here, and `other_css_ast` below may alias the
-        // same allocation when a file composes from itself, so bind as shared.
+        // `css_asts[id]` checked Some by caller. We only *read* the AST here;
+        // `other_css_ast` below may alias the same allocation when a file
+        // composes from itself, so bind as shared.
         let css_ast: &BundlerStyleSheet =
-            unsafe { &*col_ref!(css_asts)[id].unwrap() };
+            col_ref!(css_asts)[id].as_deref().unwrap();
         let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].slice();
 
         // Validate cross-file "composes: ... from" named imports
@@ -1419,13 +1409,10 @@ mod __css_validation {
                 if !record.source_index.is_valid() {
                     continue;
                 }
-                // SAFETY: column ptr valid — see `col!` note; element is an
-                // arena `*mut BundlerStyleSheet` (see `BundledAst.css`). Read-only;
-                // may alias `css_ast` if a file composes from itself (both `&`).
+                // Read-only; may alias `css_ast` if a file composes from
+                // itself (both `&`).
                 let Some(other_css_ast) =
-                    col_ref!(css_asts)[record.source_index.get() as usize].map(|p| unsafe {
-                        &*p
-                    })
+                    col_ref!(css_asts)[record.source_index.get() as usize].as_deref()
                 else {
                     continue;
                 };
@@ -1610,15 +1597,11 @@ mod __css_validation {
                                 if record.source_index.is_invalid() {
                                     continue;
                                 }
-                                // SAFETY: see `col!` note on `all_css_asts`;
-                                // element is an arena `*mut BundlerStyleSheet`.
-                                // Read-only deref — recursion may revisit the same
-                                // allocation as `ast`, so bind shared.
+                                // Read-only deref — recursion may revisit the
+                                // same allocation as `ast`, so bind shared.
                                 let Some(other_ast) = col_ref!(self.all_css_asts)
                                     [record.source_index.get() as usize]
-                                    .map(|p| unsafe {
-                                        &*p
-                                    })
+                                    .as_deref()
                                 else {
                                     continue;
                                 };

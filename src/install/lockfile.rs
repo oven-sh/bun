@@ -1551,12 +1551,15 @@ impl Lockfile {
                     // exits between here and the clamp below).
 
                     let extern_strings_list = &mut lockfile.buffers.extern_strings;
-                    extern_strings_list.reserve(bin_extern_strings_count as usize);
                     // PERF(port): was ensureUnusedCapacity
-                    let new_len = extern_strings_list.len() + bin_extern_strings_count as usize;
-                    // SAFETY: reserved above; bin.clone fills the new tail.
-                    unsafe { extern_strings_list.set_len(new_len) };
-                    let start = new_len - bin_extern_strings_count as usize;
+                    let start = extern_strings_list.len();
+                    // Default-fill the tail so it is valid before `bin.clone`
+                    // overwrites it (replaces `reserve` + raw `set_len`).
+                    bun_core::vec::grow_default(
+                        extern_strings_list,
+                        bin_extern_strings_count as usize,
+                    );
+                    let new_len = extern_strings_list.len();
 
                     // PORT NOTE: Zig passes both `extern_strings_list.items` (full slice)
                     // and a tail subslice to `bin.clone()`; the full slice is only used to
@@ -1713,7 +1716,7 @@ impl<'a> Printer<'a> {
                     // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
                     // not `&mut &mut Writer` — pass the raw vtable pointer.
                     let ew: *mut bun_core::io::Writer = Output::error_writer();
-                    log.print(ew).map_err(|_| err!("WriteFailed"))?;
+                    log.print(ew)?;
                 }
                 Global::crash();
             }
@@ -2144,10 +2147,6 @@ impl Lockfile {
 
                 resolutions = self.packages.items_resolution();
 
-                let mut ids = PackageIDList::with_capacity(8);
-                // SAFETY: capacity reserved; we write both elements immediately.
-                unsafe { ids.set_len(2) };
-
                 let pair = if pkg
                     .resolution
                     .order(&resolutions[existing_id as usize], buf, buf)
@@ -2157,7 +2156,8 @@ impl Lockfile {
                 } else {
                     [existing_id, new_id]
                 };
-                ids[0..2].copy_from_slice(&pair);
+                let mut ids = PackageIDList::with_capacity(8);
+                ids.extend_from_slice(&pair);
 
                 *entry.value_ptr = PackageIndexEntry::Ids(ids);
 
@@ -2209,10 +2209,6 @@ impl Lockfile {
             match index {
                 PackageIndexEntry::Id(existing_id) => {
                     let existing_id = *existing_id;
-                    let mut ids = PackageIDList::with_capacity(8);
-                    // SAFETY: capacity reserved; both elements written below.
-                    unsafe { ids.set_len(2) };
-
                     let resolutions = self.packages.items_resolution();
                     let buf = self.buffers.string_bytes.as_slice();
 
@@ -2224,7 +2220,8 @@ impl Lockfile {
                     } else {
                         [existing_id, id]
                     };
-                    ids[0..2].copy_from_slice(&pair);
+                    let mut ids = PackageIDList::with_capacity(8);
+                    ids.extend_from_slice(&pair);
 
                     *index = PackageIndexEntry::Ids(ids);
                 }

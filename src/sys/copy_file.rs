@@ -42,11 +42,7 @@ pub enum CopyFileRangeError {
     // TODO(port): Zig unioned `posix.PReadError || posix.PWriteError || posix.UnexpectedError`
     // here; in Rust those collapse into `bun_core::Error` via `From`.
 }
-impl From<CopyFileRangeError> for bun_core::Error {
-    fn from(e: CopyFileRangeError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(CopyFileRangeError);
 
 #[cfg(windows)]
 pub type InputType<'a> = &'a bun_string::WStr; // bun.OSPathSliceZ == [:0]const u16

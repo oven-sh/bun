@@ -25,6 +25,30 @@ impl Alignment {
     #[inline] pub const fn from_byte_units(b: usize) -> Self { Self(b.trailing_zeros() as u8) }
 }
 
+// ── `std.c.max_align_t` alignment ─────────────────────────────────────────
+// The `libc` crate does not expose `max_align_t` on every target Bun ships
+// (missing on Windows MSVC and on FreeBSD aarch64), so those targets carry a
+// local mirror of the Zig definition. Remaining non-Windows targets keep
+// `libc::max_align_t` (which carries `long double`, align 16 on x86_64/aarch64;
+// the {f64,i64,*const ()} fallback would silently downgrade to 8).
+#[cfg(windows)]
+#[repr(C)]
+struct MaxAlignT {
+    _f: f64,
+    _i: i64,
+    _p: *const (),
+}
+#[cfg(windows)]
+pub const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
+// Zig: `extern struct { a: c_longlong, b: c_longdouble }` — on AArch64
+// AAPCS64 `long double` is IEEE binary128, 16-byte aligned. The `libc` crate
+// only defines `max_align_t` for FreeBSD on x86_64, so hardcode the ABI value
+// for the aarch64 port.
+#[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
+pub const MAX_ALIGN_T: usize = 16;
+#[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
+pub const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
+
 pub struct AllocatorVTable {
     pub alloc: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8,
     pub resize: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool,
@@ -229,6 +253,10 @@ pub mod mimalloc_arena;
 /// Canonical tier-0 definition; re-exported by `bun_paths::SEP_STR`.
 pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
 
+/// Zig: `std.fs.path.sep` — `b'\\'` on Windows, `b'/'` elsewhere.
+/// Canonical tier-0 definition; re-exported by `bun_paths::SEP` / `bun_core::SEP`.
+pub const SEP: u8 = if cfg!(windows) { b'\\' } else { b'/' };
+
 /// Zig: `std.mem.trimRight(u8, s, chars)`.
 /// Canonical tier-0 definition; re-exported by `bun_core::strings::trim_right`.
 #[inline]
@@ -289,6 +317,19 @@ impl AllocError {
     pub const fn name(self) -> &'static str {
         "OutOfMemory"
     }
+}
+
+/// Stamp out `impl From<AllocError> for $t { → $t::OutOfMemory }` for one or
+/// more local error enums. Expansion is byte-identical to the hand-written
+/// 3-line impls this replaces (PORTING.md: Zig `error{OutOfMemory,…}` sets).
+#[macro_export]
+macro_rules! oom_from_alloc {
+    ($($t:ty),+ $(,)?) => { $(
+        impl ::core::convert::From<$crate::AllocError> for $t {
+            #[inline]
+            fn from(_: $crate::AllocError) -> Self { <$t>::OutOfMemory }
+        }
+    )+ };
 }
 
 /// The mimalloc-backed `#[global_allocator]` payload.
@@ -488,14 +529,14 @@ pub fn page_size() -> usize {
 pub mod wtf {
     unsafe extern "C" {
         // Defined in WebKit's WTF (linked into the final binary).
-        fn WTF__releaseFastMallocFreeMemoryForThisThread();
+        // No preconditions; thread-safe.
+        safe fn WTF__releaseFastMallocFreeMemoryForThisThread();
     }
 
     #[inline]
     pub fn release_fast_malloc_free_memory_for_this_thread() {
         // Zig: jsc.markBinding(@src()) — debug-only binding marker, dropped at T0.
-        // SAFETY: FFI call is thread-safe and takes no arguments.
-        unsafe { WTF__releaseFastMallocFreeMemoryForThisThread() }
+        WTF__releaseFastMallocFreeMemoryForThisThread()
     }
 }
 
@@ -817,6 +858,7 @@ pub mod StringImplAllocator {
 
 /// Port of `bun.String.StringImpl` — `extern union`.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub union StringImpl {
     pub zig_string: ZigString,
     pub wtf_string_impl: WTFStringImpl,
@@ -828,6 +870,7 @@ pub union StringImpl {
 /// 5-variant tagged union over WTF-backed and Zig-slice-backed strings. NOT a
 /// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct String {
     pub tag: Tag,
     pub value: StringImpl,
@@ -1004,29 +1047,59 @@ pub fn default_dupe(src: &[u8]) -> &'static [u8] {
     }
 }
 
+/// Port of `std.crypto.secureZero` — `@memset(@volatileCast(s), 0)`. Zeros
+/// `len` bytes at `p` in a way the optimizer cannot elide. Uses bulk
+/// `write_bytes` (lowers to `memset`) instead of a per-byte volatile loop so
+/// debug builds don't pay O(len) iteration overhead — the SSLConfig leak test
+/// secure-zeros ~300 MiB of cert material across 1200 iterations and the
+/// per-byte loop alone took ~3 s in debug. `black_box` on the pointer after
+/// the memset forces the compiler to assume the zeroed region is observed,
+/// preventing dead-store elimination in release builds.
+///
+/// # Safety
+/// `p` must be valid for writes of `len` bytes.
+#[inline]
+pub unsafe fn secure_zero(p: *mut u8, len: usize) {
+    // SAFETY: caller contract.
+    unsafe { core::ptr::write_bytes(p, 0, len) };
+    // Treat `p` as escaped so the preceding stores cannot be eliminated.
+    core::hint::black_box(p);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+}
+
 /// Memory is typically not decommitted immediately when freed. Sensitive
 /// information kept in memory can be read until the OS decommits it or the
 /// allocator reuses it. Zero it before dropping.
 ///
 /// Zig used `std.crypto.secureZero` then `allocator.free`; Rust drops the
-/// allocator param (global mimalloc) and uses volatile writes so the zeroing
+/// allocator param (global mimalloc) and uses [`secure_zero`] so the zeroing
 /// cannot be elided by the optimizer.
 pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
     // SAFETY: `slice` is exclusively owned; writing `size_of_val` zero bytes
     // over its storage is sound for `T: Copy` (no drop glue, no invariants on
-    // the bit pattern we're discarding). Volatile writes match
-    // `std.crypto.secureZero` and cannot be dead-store-eliminated.
+    // the bit pattern we're discarding).
     unsafe {
         let len = core::mem::size_of_val::<[T]>(&slice);
-        let ptr = slice.as_mut_ptr().cast::<u8>();
-        let mut i = 0usize;
-        while i < len {
-            core::ptr::write_volatile(ptr.add(i), 0u8);
-            i += 1;
-        }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        secure_zero(slice.as_mut_ptr().cast::<u8>(), len);
     }
     drop(slice);
+}
+
+/// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
+/// case used by http SSLConfig. Zeros the allocation before freeing
+/// (defence-in-depth for keys/passphrases). `p` must have been allocated by
+/// `dupe_z` (i.e. mimalloc, NUL-terminated).
+pub fn free_sensitive_cstr(p: *const core::ffi::c_char) {
+    if p.is_null() { return; }
+    // SAFETY: p is a NUL-terminated mimalloc'd buffer per `dupe_z` contract.
+    unsafe {
+        let len = libc::strlen(p);
+        secure_zero(p as *mut u8, len);
+        // `mi_free` is size-agnostic (mimalloc tracks the allocation size in
+        // page metadata), so an interior NUL truncating `strlen` only shortens
+        // the zero pass — the free is still exact.
+        crate::basic::free_without_size(p as *mut core::ffi::c_void);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1143,8 +1216,7 @@ macro_rules! bss_singleton {
 /// for the canonical per-monomorphization singleton.
 #[inline]
 pub(crate) fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
-    // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
-    let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()) }.cast::<T>();
+    let ptr = mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()).cast::<T>();
     let ptr = NonNull::new(ptr).expect("OOM");
     // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
     // process lifetime (singleton; never freed, matching Zig).
@@ -1909,8 +1981,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             // Route through mimalloc directly (PORTING.md forbids `Box::leak`). BSSStringList
             // never frees overflow allocations (matches Zig); the singleton lives for
             // process lifetime.
-            // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥value_len bytes.
-            let ptr = unsafe { mimalloc::mi_malloc(value_len) }.cast::<u8>();
+            let ptr = mimalloc::mi_malloc(value_len).cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
             }
@@ -2273,8 +2344,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
             // through mimalloc directly (PORTING.md forbids `Box::leak`) so the
             // size-agnostic `mi_free` below stays valid even after `trim_right` shortens
             // the stored slice.
-            // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥key.len() bytes.
-            let ptr = unsafe { mimalloc::mi_malloc(key.len().max(1)) }.cast::<u8>();
+            let ptr = mimalloc::mi_malloc(key.len().max(1)).cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
             }

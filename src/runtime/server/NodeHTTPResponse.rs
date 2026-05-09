@@ -129,10 +129,10 @@ impl UpgradeCTX {
 
     pub fn preserve_web_socket_headers_if_needed(&mut self) {
         if !self.request.is_null() {
-            // SAFETY: `request` is a live uws Request handed to us by the C callback;
-            // we null it immediately after reading headers so it cannot be used past
-            // its native lifetime.
-            let request = unsafe { &*self.request };
+            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref. We
+            // null `self.request` immediately after reading headers so it
+            // cannot be used past its native lifetime.
+            let request = bun_opaque::opaque_deref(self.request.cast_const());
             self.request = ptr::null_mut();
 
             let sec_websocket_key = request.header(b"sec-websocket-key").unwrap_or(b"");
@@ -359,8 +359,8 @@ impl NodeHTTPResponse {
         let sec_websocket_protocol_value: &[u8] = 'brk: {
             if sec_websocket_protocol.len == 0 {
                 if !self.upgrade_context.request.is_null() {
-                    // SAFETY: request pointer is live until preserve_web_socket_headers_if_needed nulls it.
-                    let request = unsafe { &*self.upgrade_context.request };
+                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
+                    let request = bun_opaque::opaque_deref(self.upgrade_context.request.cast_const());
                     break 'brk request.header(b"sec-websocket-protocol").unwrap_or(b"");
                 } else {
                     break 'brk &self.upgrade_context.sec_websocket_protocol;
@@ -373,8 +373,8 @@ impl NodeHTTPResponse {
         let sec_websocket_extensions_value: &[u8] = 'brk: {
             if sec_websocket_extensions.len == 0 {
                 if !self.upgrade_context.request.is_null() {
-                    // SAFETY: see above.
-                    let request = unsafe { &*self.upgrade_context.request };
+                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
+                    let request = bun_opaque::opaque_deref(self.upgrade_context.request.cast_const());
                     break 'brk request.header(b"sec-websocket-extensions").unwrap_or(b"");
                 } else {
                     break 'brk &self.upgrade_context.sec_websocket_extensions;
@@ -385,8 +385,8 @@ impl NodeHTTPResponse {
         };
 
         let websocket_key: &[u8] = if !self.upgrade_context.request.is_null() {
-            // SAFETY: see above.
-            let request = unsafe { &*self.upgrade_context.request };
+            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
+            let request = bun_opaque::opaque_deref(self.upgrade_context.request.cast_const());
             request.header(b"sec-websocket-key").unwrap_or(b"")
         } else {
             &self.upgrade_context.sec_websocket_key
@@ -398,8 +398,9 @@ impl NodeHTTPResponse {
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
             self.poll_ref.unref(vm);
-            // SAFETY: upgrade_ctx checked non-null above.
-            let ctx = unsafe { &mut *upgrade_ctx };
+            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
+            // (`upgrade_ctx` checked non-null above).
+            let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
             let _ = raw_response.upgrade::<ServerWebSocket>(
                 ws,
                 websocket_key,
@@ -1774,7 +1775,7 @@ impl NodeHTTPResponse {
 #[unsafe(no_mangle)]
 pub extern "C" fn NodeHTTPResponse__createForJS(
     any_server_tag: u64,
-    global_object: *mut JSGlobalObject,
+    global_object: &JSGlobalObject,
     has_body: *mut bool,
     request: *mut uws_sys::Request,
     is_ssl: i32,
@@ -1783,9 +1784,9 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
     node_response_ptr: *mut *mut NodeHTTPResponse,
 ) -> JSValue {
     // SAFETY: all pointers are provided by C++ NodeHTTPServer and are live for the call.
-    let global_object = unsafe { &*global_object };
     let has_body = unsafe { &mut *has_body };
-    let request_ref = unsafe { &*request };
+    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
+    let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
     let vm = bun_vm_mut(global_object);
     let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);

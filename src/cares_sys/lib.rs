@@ -36,3 +36,24 @@ pub use c_ares_draft as c_ares;
 // Crate-root re-exports for callers that reference `bun_cares_sys::ares_inet_*`
 // directly (e.g. `bun_boringssl`).
 pub use c_ares::{ares_inet_ntop, ares_inet_pton};
+
+/// Thin wrapper over `ares_inet_ntop`: writes the textual address into `dst`
+/// and returns the slice up to (excluding) the trailing NUL on success.
+/// `dst[len] == 0` is guaranteed on `Some`, so callers needing a C string can
+/// rely on it.
+///
+/// # Safety
+/// `src` must point to a valid `in_addr` (af == AF_INET) or `in6_addr`
+/// (af == AF_INET6).
+#[inline]
+pub unsafe fn ntop(
+    af: core::ffi::c_int,
+    src: *const core::ffi::c_void,
+    dst: &mut [u8],
+) -> Option<&[u8]> {
+    if c_ares::ares_inet_ntop(af, src, dst.as_mut_ptr(), dst.len() as c_ares::ares_socklen_t).is_null() {
+        return None;
+    }
+    let n = dst.iter().position(|&b| b == 0).unwrap_or(dst.len());
+    Some(&dst[..n])
+}

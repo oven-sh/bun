@@ -270,8 +270,7 @@ fn normalize_package_json_path<'a>(
     joined[abs_len] = 0;
 
     Paths {
-        // SAFETY: joined[abs_len] == 0 written above
-        abs: unsafe { ZStr::from_raw(joined.as_ptr(), abs_len) },
+        abs: ZStr::from_buf(joined, abs_len),
         rel,
     }
 }

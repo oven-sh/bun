@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_collections::{VecExt, ByteVecExt};
 use crate::webcore::jsc::{
-    self as jsc, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSPromise, JSPromiseStrong,
+    self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSPromise, JSPromiseStrong,
     JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_sys::{self as sys, Error as SysError, Fd};
@@ -397,11 +397,9 @@ pub enum ResultTag {
 
 impl StreamResult {
     pub fn slice16(&self) -> &[u16] {
-        let bytes = self.slice();
-        // SAFETY: caller guarantees bytes are u16-aligned and even length (mirrors Zig @ptrCast/@alignCast)
-        unsafe {
-            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-        }
+        // Caller guarantees bytes are u16-aligned and even length (mirrors Zig
+        // @ptrCast/@alignCast); bytemuck checks both at runtime.
+        bytemuck::cast_slice(self.slice())
     }
 
     pub fn slice(&self) -> &[u8] {
@@ -1108,6 +1106,18 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
 }
 
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
+    /// Borrow the JS global stored at construction.
+    ///
+    /// SAFETY (invariant): `global_this` is set before first use (any
+    /// auto-flusher registration / pending-flush creation) and the VM-owned
+    /// global outlives this sink (JSC_BORROW). Never null once initialized.
+    #[inline]
+    fn global_this(&self) -> &JSGlobalObject {
+        debug_assert!(!self.global_this.is_null());
+        // SAFETY: see doc comment — JSC_BORROW backref valid for `'_`.
+        unsafe { &*self.global_this }
+    }
+
     pub fn connect(&mut self, signal: Signal) {
         self.signal = signal;
     }
@@ -1728,10 +1738,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        // SAFETY: bytes are u16-aligned per Result.slice16 invariant
-        let utf16 = unsafe {
-            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-        };
+        // bytes are u16-aligned per Result.slice16 invariant; bytemuck checks at runtime.
+        let utf16: &[u16] = bytemuck::cast_slice(bytes);
         let written = match self.buffer.write_utf16(utf16) {
             Ok(n) => n,
             Err(_) => {
@@ -1861,8 +1869,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn unregister_auto_flusher(&mut self) {
         if self.auto_flusher.registered {
-            // SAFETY: global_this set before any auto-flusher registration.
-            let vm = unsafe { &*self.global_this }.bun_vm();
+            let vm = self.global_this().bun_vm();
             AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }
@@ -1872,8 +1879,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // if we enqueue data we should reset the timeout
         res.reset_timeout();
         if !self.auto_flusher.registered {
-            // SAFETY: global_this set before first write; see unregister_auto_flusher.
-            let vm = unsafe { &*self.global_this }.bun_vm();
+            let vm = self.global_this().bun_vm();
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }
@@ -1980,8 +1986,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if let Some(prom) = self.pending_flush.take() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
-            // SAFETY: global_this set when pending_flush was created
-            let global_this = unsafe { &*self.global_this };
+            let global_this = self.global_this();
             // SAFETY: prom is GC-rooted
             unsafe { &*prom }.to_js().unprotect();
             let result = unsafe { &mut *prom }.resolve(
@@ -2113,6 +2118,17 @@ impl Default for NetworkSink {
 }
 
 impl NetworkSink {
+    /// Borrow the JS global stored at construction.
+    ///
+    /// SAFETY (invariant): `global_this` is set at construction and the
+    /// VM-owned global outlives this sink (JSC_BORROW). Never null once set.
+    #[inline]
+    fn global_this(&self) -> &JSGlobalObject {
+        debug_assert!(!self.global_this.is_null());
+        // SAFETY: see doc comment — JSC_BORROW backref valid for `'_`.
+        unsafe { &*self.global_this }
+    }
+
     pub fn new(init: NetworkSink) -> Box<NetworkSink> {
         Box::new(init)
     }
@@ -2337,9 +2353,7 @@ impl NetworkSink {
         }
         if let Some(task) = self.task {
             // we need to wait for the task to end
-            // SAFETY: global_this set at construction
-            let global = unsafe { &*self.global_this };
-            self.end_promise = JSPromiseStrong::init(global);
+            self.end_promise = JSPromiseStrong::init(self.global_this());
             let value = self.end_promise.value();
             if !self.ended {
                 self.ended = true;

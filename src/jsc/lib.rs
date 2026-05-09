@@ -383,7 +383,7 @@ pub use self::custom_getter_setter::CustomGetterSetter;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::js_error_code::{JSErrorCode, DOMExceptionCode};
 pub use self::event_type::EventType;
-pub use self::common_abort_reason::CommonAbortReason;
+pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
 pub use self::js_map::JSMap;
 pub use self::url_search_params::URLSearchParams;
 pub use self::regular_expression::RegularExpression;
@@ -504,9 +504,7 @@ pub enum JsError {
 /// blanket-`allow(unused)`s so the underlying lint is never silenced.
 pub type JsResult<T> = core::result::Result<T, JsError>;
 
-impl From<bun_core::AllocError> for JsError {
-    fn from(_: bun_core::AllocError) -> Self { JsError::OutOfMemory }
-}
+bun_core::oom_from_alloc!(JsError);
 
 impl From<bun_event_loop::ErasedJsError> for JsError {
     #[inline]
@@ -2019,9 +2017,8 @@ pub type JSTimeType = u64;
 /// `sec * 1000` widening cannot overflow `isize`, then cast to `u64` (matching
 /// `@intCast` for non-negative inputs) before masking to 52 bits (`@truncate`).
 pub fn to_js_time(sec: isize, nsec: isize) -> JSTimeType {
-    const NS_PER_MS: i128 = 1_000_000;
     const MS_PER_S: i128 = 1_000;
-    let millisec = (nsec as i128) / NS_PER_MS;
+    let millisec = (nsec as i128) / bun_core::time::NS_PER_MS as i128;
     let total = (sec as i128) * MS_PER_S + millisec;
     (total as u64) & ((1u64 << 52) - 1)
 }
@@ -2039,15 +2036,7 @@ unsafe extern "C" {
     );
 }
 
-pub mod math {
-    unsafe extern "C" {
-        fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64;
-    }
-    pub fn pow(x: f64, y: f64) -> f64 {
-        // SAFETY: pure FFI, no pointers.
-        unsafe { Bun__JSC__operationMathPow(x, y) }
-    }
-}
+pub use bun_js_parser::math;
 
 // TODO(port): generated module — re-run bindgen with .rs output. Hand-stubbed
 // in `generated.rs` until `src/codegen/generate-classes.ts` grows a `.rs`

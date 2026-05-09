@@ -65,19 +65,18 @@ const _: () = assert!(
     "VTable layout drifted from us_socket_vtable_t"
 );
 
+// SAFETY: all-zero is a valid SocketGroup — every field is a raw pointer
+// (null), `Option<&'static _>` (None via NPO), or an integer (0).
+unsafe impl bun_core::ffi::Zeroable for SocketGroup {}
+// SAFETY: all-zero is a valid VTable — every field is `Option<fn>` (None via NPO).
+unsafe impl bun_core::ffi::Zeroable for VTable {}
+
 impl Default for SocketGroup {
-    fn default() -> Self {
-        // SAFETY: all-zero is a valid SocketGroup — every field is a raw
-        // pointer (null), `Option<&'static _>` (None via NPO), or an integer (0).
-        unsafe { bun_core::ffi::zeroed_unchecked() }
-    }
+    fn default() -> Self { bun_core::ffi::zeroed() }
 }
 
 impl Default for VTable {
-    fn default() -> Self {
-        // SAFETY: all-zero is a valid VTable — every field is `Option<fn>` (None via NPO).
-        unsafe { bun_core::ffi::zeroed_unchecked() }
-    }
+    fn default() -> Self { bun_core::ffi::zeroed() }
 }
 
 pub enum ConnectResult {

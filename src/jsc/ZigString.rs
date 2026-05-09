@@ -1099,7 +1099,7 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
     // verify no callers pass a non-default allocator here.
     let _ = allocator_;
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
-    let s = unsafe { slice::from_raw_parts(raw, len) };
+    let s = unsafe { bun_core::ffi::slice(raw, len) };
     let ptr = ZigString::init(s).slice().as_ptr();
     #[cfg(debug_assertions)]
     // SAFETY: read-only heap-region probe.
@@ -1112,7 +1112,7 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
 #[unsafe(no_mangle)]
 pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
-    let s = unsafe { slice::from_raw_parts(ptr, len) };
+    let s = unsafe { bun_core::ffi::slice(ptr, len) };
     let untagged = ZigString::init(s).slice().as_ptr().cast_mut().cast::<c_void>();
     #[cfg(debug_assertions)]
     // SAFETY: read-only heap-region probe.

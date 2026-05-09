@@ -32,8 +32,7 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
     output[..input.len()].copy_from_slice(input);
     output[input.len()] = 0;
 
-    // SAFETY: output[input.len()] == 0 written above
-    unsafe { ZStr::from_raw(output.as_ptr(), input.len()) }
+    ZStr::from_buf(output, input.len())
 }
 
 #[inline]
@@ -2093,6 +2092,19 @@ pub fn is_sep_any(char: u8) -> bool {
 #[inline(always)]
 pub fn is_sep_any_t<T: PathChar>(char: T) -> bool {
     is_sep_posix_t::<T>(char) || is_sep_win32_t::<T>(char)
+}
+
+/// Host-OS-native separator predicate: accepts `\` only when *compiled* for
+/// Windows (cfg-gated), unlike [`is_sep_any`] which accepts both on every
+/// target. Use this when matching against real on-disk paths (glob, joins).
+#[inline(always)]
+pub fn is_sep_native(char: u8) -> bool {
+    is_sep_native_t::<u8>(char)
+}
+
+#[inline(always)]
+pub fn is_sep_native_t<T: PathChar>(char: T) -> bool {
+    if cfg!(windows) { is_sep_any_t::<T>(char) } else { is_sep_posix_t::<T>(char) }
 }
 
 pub fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {

@@ -32,11 +32,20 @@ pub struct Exec {
 }
 
 impl Exec {
+    /// Borrow the current `SmolList<Stmt, 1>` being walked.
+    ///
+    /// SAFETY (invariant): `stmts` always points into the AST arena
+    /// (`ShellArgs::__arena`), which the interpreter holds for its entire
+    /// lifetime — it outlives every state node.
+    #[inline]
+    fn stmts(&self) -> &ast::SmolList<ast::Stmt, 1> {
+        // SAFETY: see doc comment — arena-backed, non-null, outlives `self`.
+        unsafe { &*self.stmts }
+    }
+
     #[inline]
     fn stmts_len(&self) -> u32 {
-        // SAFETY: `stmts` points into the AST arena which outlives every state
-        // node.
-        unsafe { (*self.stmts).len() as u32 }
+        self.stmts().len() as u32
     }
 }
 
@@ -147,10 +156,9 @@ impl If {
                         } else {
                             let i = exec.stmt_idx;
                             exec.stmt_idx += 1;
-                            // SAFETY: `i` was bounds-checked against
-                            // `stmts_len()`.
+                            // `i` was bounds-checked against `stmts_len()`.
                             let stmt_node: *const ast::Stmt =
-                                unsafe { &raw const (&*exec.stmts)[i as usize] };
+                                &raw const exec.stmts()[i as usize];
                             Action::SpawnStmt(stmt_node)
                         }
                     }

@@ -33,7 +33,7 @@ pub struct ExtractTarball {
     pub integrity: Integrity,   // = Integrity::default()
     pub url: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
-    pub package_manager: *const PackageManager,
+    pub package_manager: bun_ptr::BackRef<PackageManager>,
 }
 
 impl ExtractTarball {
@@ -486,8 +486,7 @@ impl ExtractTarball {
         basename: &[u8],
         resolved: &[u8],
     ) -> Result<ExtractData, Error> {
-        // SAFETY: BACKREF — PackageManager outlives every ExtractTarball it enqueues.
-        let package_manager = unsafe { &*self.package_manager };
+        let package_manager = self.package_manager.get();
 
         let tmpdir = self.temp_dir;
         TL_BUFS.with_borrow_mut(|bufs| {

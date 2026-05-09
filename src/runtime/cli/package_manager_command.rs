@@ -93,11 +93,8 @@ impl PackageManagerCommand {
     #[cold]
     pub fn print_hash(ctx: Command::Context, file: File) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
-        let (pm_ptr, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
+        let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
         // PORT NOTE: `defer ctx.allocator.free(cwd)` dropped — `_cwd: Box<[u8]>` drops at scope exit.
-        // SAFETY: `init` returns the process-singleton `*mut PackageManager`;
-        // single-threaded CLI dispatch guarantees exclusive access here.
-        let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
 
         let bytes = match file.read_to_end() {
             Ok(bytes) => bytes,
@@ -218,7 +215,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
-        let (pm_ptr, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
+        let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_core::err!(MissingPackageJSON) {
@@ -241,11 +238,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             }
         };
         // PORT NOTE: `defer ctx.allocator.free(cwd)` — `cwd: Box<[u8]>` drops at scope exit.
-
-        // SAFETY: `init` returns the process-singleton `*mut PackageManager`;
-        // single-threaded CLI dispatch guarantees exclusive access for the
-        // command's duration (mirrors Zig's `*PackageManager`).
-        let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
 
         // PORT NOTE: reshaped for borrowck — `pm: &mut PackageManager`;
         // many Zig call sites alias `pm` and `pm.lockfile` simultaneously. Hold a
@@ -319,7 +311,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // SAFETY: `FileSystem::instance()` is initialised during
             // `PackageManager::init` (CLI startup); the singleton lives for
             // process lifetime.
-            let top_level_dir: &[u8] = unsafe { (*Fs::FileSystem::instance()).top_level_dir };
+            let top_level_dir: &[u8] = Fs::FileSystem::get().top_level_dir;
             let output_path = Path::resolve_path::join_abs::<Path::platform::Auto>(
                 top_level_dir,
                 pm.options.bin_path.as_bytes(),

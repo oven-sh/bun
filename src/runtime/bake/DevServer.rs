@@ -115,6 +115,14 @@ impl DevServer {
         unsafe { &*self.vm }
     }
 
+    /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
+    /// `'static` so the borrow is decoupled from `&self` and may be held
+    /// across `&mut self` reborrows.
+    #[inline]
+    pub(crate) fn global(&self) -> &'static JSGlobalObject {
+        self.vm().global()
+    }
+
     /// Recover `&mut VirtualMachine` via the global singleton — `self.vm` is
     /// `*const`. The VM is process-unique on the JS thread, so
     /// `VirtualMachine::get()` returns the same instance with write provenance.
@@ -659,9 +667,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
     }
 
-    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime; `global` is the
-    // per-VM `*mut JSGlobalObject`, always non-null once the VM is initialized.
-    let global = unsafe { &*options.vm.global };
+    let global = options.vm.global();
 
     let generic_action = "while initializing development server";
     // FileSystem is a process-lifetime singleton; `init` interns the path into
@@ -1161,11 +1167,9 @@ impl DevServer {
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server).code,
         );
 
-        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime.
-        // Raw-ptr deref (not `self.vm().global()`) so `global`'s lifetime is
-        // decoupled from `&self` — it's held across the `&mut self` field
-        // assignments below.
-        let global = unsafe { &*(*self.vm).global };
+        // `self.global()` returns `&'static`, decoupled from `&self` — it's
+        // held across the `&mut self` field assignments below.
+        let global = self.global();
         let interface = match c::bake_load_initial_server_code(
             global,
             runtime,
@@ -3911,8 +3915,7 @@ pub fn finalize_bundle(
         })?;
         // freed by Drop
 
-        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-        let global = unsafe { &*(*dev.vm).global };
+        let global = dev.global();
         let server_modules = if let Some(json) = source_map_json {
             // This memory will be owned by the `DevServerSourceProvider` in C++
             let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
@@ -4263,8 +4266,7 @@ pub fn finalize_bundle(
             current_bundle!()
                 .promise
                 .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
-            // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-            let global = unsafe { &*(*dev.vm).global };
+            let global = dev.global();
             // PORT NOTE: `bundling_failures` lives on `*dev` but
             // `send_serialized_failures` needs `&mut self`; reborrow the keys
             // through `dev_ptr` (Zig passed `dev.bundling_failures.keys()` by
@@ -4328,8 +4330,7 @@ pub fn finalize_bundle(
     if dev.bundling_failures.is_empty() {
         if current_bundle!().had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
-                // SAFETY: `transpiler.env` is set during VM init and live for VM lifetime
-                && !unsafe { &*dev.vm().transpiler.env }
+                && !dev.vm().env_loader()
                     .has_set_no_clear_terminal_on_reload(false);
             if clear_terminal {
                 Output::disable_buffering();
@@ -6408,9 +6409,7 @@ fn bundle_new_route_js_function_impl(
         )));
     };
 
-    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-    let vm = unsafe { &*dev.vm };
-    let _exit = vm.enter_event_loop_scope();
+    let _exit = dev.vm().enter_event_loop_scope();
 
     let _ = dev;
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
@@ -6560,8 +6559,7 @@ fn new_route_params_for_bundle_promise(
 
     let pathname = extract_pathname_from_url(url);
 
-    // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-    let global = unsafe { &*(*dev.vm).global };
+    let global = dev.global();
     let mut params: framework_router::MatchedParams = Default::default();
     let Some(route_index) = dev.router.match_slow(pathname, &mut params) else {
         return Err(global.throw(format_args!(

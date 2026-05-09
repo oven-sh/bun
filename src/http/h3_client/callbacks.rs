@@ -174,6 +174,10 @@ unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
+    let mut sess = stream.session;
+    // SAFETY: BackRef invariant — session owns `stream` (in `session.pending`)
+    // and outlives it; HTTP-thread only, sole live `&mut ClientSession`.
+    let session = unsafe { sess.get_mut() };
     let n = s.header_count();
 
     stream.decoded_headers.clear();
@@ -185,10 +189,8 @@ unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             i += 1;
             continue;
         };
-        // SAFETY: lsquic guarantees name/value point to name_len/value_len bytes
-        // valid for the duration of this callback.
-        let name = unsafe { bun_core::ffi::slice(h.name, h.name_len as usize) };
-        let value = unsafe { bun_core::ffi::slice(h.value, h.value_len as usize) };
+        let name = h.name_bytes();
+        let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
                 status = core::str::from_utf8(value)
@@ -210,27 +212,26 @@ unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code != 0 {
             return;
         }
-        // SAFETY: stream.session is the live owning session.
-        unsafe { (*stream.session).fail(stream, err!(HTTP3ProtocolError)) };
+        session.fail(stream, err!(HTTP3ProtocolError));
         return;
     }
     if status >= 100 && status < 200 {
         return;
     }
     stream.status_code = status;
-    // SAFETY: stream.session is the live owning session.
-    unsafe { (*stream.session).deliver(stream, false) };
+    session.deliver(stream, false);
 }
 
 unsafe extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
+    let mut sess = stream.session;
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
-    // SAFETY: stream.session is the live owning session.
-    unsafe { (*stream.session).deliver(stream, fin != 0) };
+    // SAFETY: BackRef invariant — session owns `stream`; HTTP-thread only, sole live `&mut`.
+    unsafe { sess.get_mut() }.deliver(stream, fin != 0);
 }
 
 unsafe extern "C" fn on_stream_writable(s: *mut quic::Stream) {
@@ -244,6 +245,7 @@ unsafe extern "C" fn on_stream_close(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
+    let mut sess = stream.session;
     *s.ext::<Stream>() = None;
     stream.qstream = None;
     bun_core::scoped_log!(
@@ -252,8 +254,8 @@ unsafe extern "C" fn on_stream_close(s: *mut quic::Stream) {
         stream.status_code,
         stream.headers_delivered,
     );
-    // SAFETY: stream.session is the live owning session.
-    unsafe { (*stream.session).deliver(stream, true) };
+    // SAFETY: BackRef invariant — session owns `stream`; HTTP-thread only, sole live `&mut`.
+    unsafe { sess.get_mut() }.deliver(stream, true);
 }
 
 // ported from: src/http/h3_client/callbacks.zig

@@ -666,7 +666,7 @@ impl MediaQuery {
             MediaType::Screen => dest.write_str("screen")?,
             MediaType::Custom(desc) => {
                 // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                dest.write_str(unsafe { &**desc })?;
+                dest.write_str(unsafe { crate::arena_str(*desc) })?;
             }
         }
 
@@ -907,8 +907,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     /// Zig: `MediaFeatureName.parse`.
     pub fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
         use bun_string::strings;
-        // SAFETY: ident borrows parser source/arena; see `css_parser::src_str`.
-        let ident: &'static [u8] = unsafe { css::css_parser::src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         if strings::starts_with(ident, b"--") {
             return Ok((MediaFeatureName::Custom(DashedIdent { v: ident }), None));

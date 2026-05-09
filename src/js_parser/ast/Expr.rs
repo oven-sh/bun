@@ -2587,11 +2587,7 @@ impl Data {
                 if current.is_utf8() {
                     hasher.update(&current.data);
                 } else {
-                    let s16 = current.slice16();
-                    // SAFETY: reinterpret &[u16] as &[u8] — element size doubles, alignment relaxes.
-                    hasher.update(unsafe {
-                        core::slice::from_raw_parts(s16.as_ptr().cast::<u8>(), s16.len() * 2)
-                    });
+                    hasher.update(bytemuck::cast_slice::<u16, u8>(current.slice16()));
                 }
                 hasher.update(b"\x00");
             }

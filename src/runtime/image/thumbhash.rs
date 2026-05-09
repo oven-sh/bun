@@ -185,11 +185,7 @@ pub enum DecodeError {
     OutOfMemory,
 }
 
-impl From<DecodeError> for bun_core::Error {
-    fn from(e: DecodeError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(DecodeError);
 
 impl From<DecodeError> for super::codecs::Error {
     fn from(e: DecodeError) -> Self {

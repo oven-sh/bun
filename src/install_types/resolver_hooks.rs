@@ -412,8 +412,12 @@ impl Clone for DependencyVersion {
 /// tag mismatches in debug builds; release matches Zig's unchecked field read.
 /// Centralizing the `unsafe` here lets the ~50 lockfile-graph call sites in
 /// `bun_install` borrow the active variant without an `unsafe` block apiece.
+///
+/// `_mut` variants additionally let the handful of mutate-in-place call sites
+/// (`runTasks.rs` package-name back-patching, `Package.rs` workspace
+/// resolution) write through the active arm without an `unsafe` block apiece.
 macro_rules! dep_version_accessors {
-    ($( $tag:ident => $field:ident : $ty:ty ),* $(,)?) => {
+    ($( $tag:ident => $field:ident / $field_mut:ident : $ty:ty ),* $(,)?) => {
         $(
             #[inline]
             pub fn $field(&self) -> &$ty {
@@ -423,21 +427,29 @@ macro_rules! dep_version_accessors {
                 // beyond initialization, which the constructing path upholds).
                 unsafe { &self.value.$field }
             }
+            #[inline]
+            pub fn $field_mut(&mut self) -> &mut $ty {
+                debug_assert!(self.tag == DependencyVersionTag::$tag);
+                // SAFETY: same invariant as the shared-ref accessor above;
+                // exclusive borrow of `self` guarantees no aliasing into the
+                // union storage while the returned `&mut` is live.
+                unsafe { &mut self.value.$field }
+            }
         )*
     };
 }
 
 impl DependencyVersion {
     dep_version_accessors! {
-        Npm      => npm:      NpmInfo,
-        DistTag  => dist_tag: TagInfo,
-        Tarball  => tarball:  TarballInfo,
-        Folder   => folder:   SemverString,
-        Symlink  => symlink:  SemverString,
-        Workspace=> workspace:SemverString,
-        Git      => git:      Repository,
-        Github   => github:   Repository,
-        Catalog  => catalog:  SemverString,
+        Npm      => npm       / npm_mut:       NpmInfo,
+        DistTag  => dist_tag  / dist_tag_mut:  TagInfo,
+        Tarball  => tarball   / tarball_mut:   TarballInfo,
+        Folder   => folder    / folder_mut:    SemverString,
+        Symlink  => symlink   / symlink_mut:   SemverString,
+        Workspace=> workspace / workspace_mut: SemverString,
+        Git      => git       / git_mut:       Repository,
+        Github   => github    / github_mut:    Repository,
+        Catalog  => catalog   / catalog_mut:   SemverString,
     }
 
     /// Zig: `if (version.tag == .npm) version.value.npm else null`.

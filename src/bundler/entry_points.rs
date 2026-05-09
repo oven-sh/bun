@@ -146,7 +146,7 @@ impl ClientEntryPoint {
         let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
         // SAFETY: FileSystem singleton is initialized before bundling.
         let mut generated_path =
-            unsafe { (*Fs::FileSystem::instance()).abs_buf(&joined_base_and_dir_parts, outbuffer) };
+            Fs::FileSystem::get().abs_buf(&joined_base_and_dir_parts, outbuffer);
 
         // PORT NOTE: reshaped for borrowck — capture len, drop borrow, re-borrow outbuffer.
         let mut len = generated_path.len();
@@ -166,7 +166,7 @@ impl ClientEntryPoint {
         let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
         // SAFETY: FileSystem singleton is initialized before bundling.
         let generated_path =
-            unsafe { (*Fs::FileSystem::instance()).abs_buf(&joined_base_and_dir_parts, outbuffer) };
+            Fs::FileSystem::get().abs_buf(&joined_base_and_dir_parts, outbuffer);
         let len = generated_path.len();
         let mut original_ext = original_path.ext;
         if let Some(entry_i) = strings::index_of(original_path.ext, b"entry") {

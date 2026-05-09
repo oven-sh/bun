@@ -764,7 +764,7 @@ pub extern "C" fn napi_create_string_latin1(
                 return env.invalid_arg();
             } else {
                 // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { core::slice::from_raw_parts(str_, length) };
+                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
             }
         }
 
@@ -817,7 +817,7 @@ pub extern "C" fn napi_create_string_utf8(
                 return env.invalid_arg();
             } else {
                 // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { core::slice::from_raw_parts(str_, length) };
+                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
             }
         }
 
@@ -859,13 +859,13 @@ pub extern "C" fn napi_create_string_utf16(
                     while *str_.add(len) != 0 {
                         len += 1;
                     }
-                    core::slice::from_raw_parts(str_, len)
+                    bun_core::ffi::slice(str_, len)
                 };
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
                 // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { core::slice::from_raw_parts(str_, length) };
+                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
             }
         }
 
@@ -1130,7 +1130,7 @@ pub extern "C" fn napi_make_callback(
     let args_slice: &[JSValue] = if arg_count > 0 && !args.is_null() {
         // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; caller guarantees
         // [args, args+arg_count) is valid.
-        unsafe { core::slice::from_raw_parts(args.cast::<JSValue>(), arg_count) }
+        unsafe { bun_core::ffi::slice(args.cast::<JSValue>(), arg_count) }
     } else {
         &[]
     };
@@ -1804,7 +1804,7 @@ fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
         return unsafe { bun_core::ffi::cstr(ptr.cast::<c_char>()) }.to_bytes();
     }
 
-    unsafe { core::slice::from_raw_parts(ptr, len) }
+    unsafe { bun_core::ffi::slice(ptr, len) }
 }
 
 #[unsafe(no_mangle)]
@@ -1856,7 +1856,7 @@ pub extern "C" fn napi_create_buffer_copy(
     if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
         if length > 0 {
             // SAFETY: caller guarantees `data` points to at least `length` bytes.
-            let src = unsafe { core::slice::from_raw_parts(data, length) };
+            let src = unsafe { bun_core::ffi::slice(data, length) };
             array_buf.slice_mut()[..length].copy_from_slice(src);
         }
         write_out(

@@ -5,7 +5,7 @@
 use core::fmt;
 use core::fmt::Write as _;
 
-use bun_core::{self, err, Output};
+use bun_core::{self, Output};
 
 pub mod args;
 pub mod comptime;
@@ -413,15 +413,15 @@ where
         if !ht.is_empty() {
             // TODO(port): std.io.countingWriter(stream) — wrapping `stream`
             let mut cs = CountingWriter::wrap(stream);
-            write!(cs.inner(), "\t").map_err(|_| err!("WriteFailed"))?;
+            write!(cs.inner(), "\t")?;
             print_param(&mut cs, param, context, value_text)?;
             let written = cs.bytes_written;
             // stream.splatByteAll(' ', max_spacing - written)
             for _ in 0..(max_spacing - written) {
-                stream.write_char(' ').map_err(|_| err!("WriteFailed"))?;
+                stream.write_char(' ')?;
             }
             let ht2 = help_text(context, param).map_err(Into::into)?;
-            write!(stream, "\t{}\n", bstr::BStr::new(ht2)).map_err(|_| err!("WriteFailed"))?;
+            write!(stream, "\t{}\n", bstr::BStr::new(ht2))?;
         }
     }
     Ok(())
@@ -439,32 +439,46 @@ where
     E: Into<bun_core::Error>,
 {
     if let Some(s) = param.names.short {
-        write!(stream, "-{}", s as char).map_err(|_| err!("WriteFailed"))?;
+        write!(stream, "-{}", s as char)?;
     } else {
-        write!(stream, "  ").map_err(|_| err!("WriteFailed"))?;
+        write!(stream, "  ")?;
     }
     if let Some(l) = param.names.long {
         if param.names.short.is_some() {
-            write!(stream, ", ").map_err(|_| err!("WriteFailed"))?;
+            write!(stream, ", ")?;
         } else {
-            write!(stream, "  ").map_err(|_| err!("WriteFailed"))?;
+            write!(stream, "  ")?;
         }
-        write!(stream, "--{}", bstr::BStr::new(l)).map_err(|_| err!("WriteFailed"))?;
+        write!(stream, "--{}", bstr::BStr::new(l))?;
     }
 
+    write_takes_value_suffix(stream, param, context, value_text)?;
+    Ok(())
+}
+
+/// Shared by `print_param` and `usage_full`: emit the ` <val>` / ` <val>?` /
+/// ` <val>...` suffix for a param's `takes_value`. Mirrors clap.zig:459/672.
+fn write_takes_value_suffix<W, Id, E, C>(
+    w: &mut W,
+    param: &Param<Id>,
+    context: &C,
+    value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
+) -> Result<(), bun_core::Error>
+where
+    W: fmt::Write,
+    Id: Copy,
+    E: Into<bun_core::Error>,
+{
     match param.takes_value {
         Values::None => {}
         Values::One => {
-            write!(stream, " <{}>", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))
-                .map_err(|_| err!("WriteFailed"))?
+            write!(w, " <{}>", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))?;
         }
         Values::OneOptional => {
-            write!(stream, " <{}>?", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))
-                .map_err(|_| err!("WriteFailed"))?
+            write!(w, " <{}>?", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))?;
         }
         Values::Many => {
-            write!(stream, " <{}>...", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))
-                .map_err(|_| err!("WriteFailed"))?
+            write!(w, " <{}>...", bstr::BStr::new(value_text(context, param).map_err(Into::into)?))?;
         }
     }
     Ok(())
@@ -536,14 +550,19 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
     Ok(())
 }
 
+/// Display width of a single param's flag column: `--long` plus the literal
+/// `=<val>` suffix (6 bytes) when it takes a value. Kept in lockstep with
+/// `simple_print_param`'s `"=<val>"` literal — change both together.
+fn param_display_width(param: &Param<Help>) -> usize {
+    let flags_len = param.names.long.map_or(0, |l| l.len());
+    let value_len: usize = if param.takes_value != Values::None { 6 } else { 0 };
+    flags_len + value_len
+}
+
 fn compute_max_help_spacing(params: &[Param<Help>]) -> usize {
     let mut res: usize = 2;
     for param in params {
-        let flags_len = if let Some(l) = param.names.long { l.len() } else { 0 };
-        let value_len: usize = if param.takes_value != Values::None { 6 } else { 0 };
-        if res < flags_len + value_len {
-            res = flags_len + value_len;
-        }
+        res = res.max(param_display_width(param));
     }
     res
 }
@@ -562,9 +581,7 @@ pub fn simple_help(params: &[Param<Help>]) {
         }
 
         // create a string with spaces_len spaces
-        let flags_len = if let Some(l) = param.names.long { l.len() } else { 0 };
-        let value_len: usize = if param.takes_value != Values::None { 6 } else { 0 };
-        let total_len = flags_len + value_len;
+        let total_len = param_display_width(param);
         let num_spaces_after = max_spacing - total_len;
         let spaces_after = vec![b' '; num_spaces_after];
 
@@ -607,9 +624,7 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
             if !desc_text.is_empty() {
                 simple_print_param(param).expect("unreachable");
 
-                let flags_len = if let Some(l) = param.names.long { l.len() } else { 0 };
-                let value_len: usize = if param.takes_value != Values::None { 6 } else { 0 };
-                let total_len = flags_len + value_len;
+                let total_len = param_display_width(param);
                 let num_spaces_after = MAX_SPACING - total_len;
 
                 // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{}) — the concat
@@ -659,12 +674,12 @@ where
         if cos.bytes_written == 0 {
             // PORT NOTE: Zig wrote "[-" to `stream` (not `cs`), bypassing the
             // counter. Preserving that quirk by writing to the inner writer.
-            write!(cos.inner(), "[-").map_err(|_| err!("WriteFailed"))?;
+            write!(cos.inner(), "[-")?;
         }
-        cos.write_char(name as char).map_err(|_| err!("WriteFailed"))?;
+        cos.write_char(name as char)?;
     }
     if cos.bytes_written != 0 {
-        cos.write_char(']').map_err(|_| err!("WriteFailed"))?;
+        cos.write_char(']')?;
     }
 
     let mut positional: Option<Param<Id>> = None;
@@ -688,42 +703,20 @@ where
             continue;
         };
         if cos.bytes_written != 0 {
-            cos.write_char(' ').map_err(|_| err!("WriteFailed"))?;
+            cos.write_char(' ')?;
         }
 
-        write!(cos, "[{}{}", bstr::BStr::new(prefix), bstr::BStr::new(name))
-            .map_err(|_| err!("WriteFailed"))?;
-        match param.takes_value {
-            Values::None => {}
-            Values::One => write!(
-                cos,
-                " <{}>",
-                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
-            )
-            .map_err(|_| err!("WriteFailed"))?,
-            Values::OneOptional => write!(
-                cos,
-                " <{}>?",
-                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
-            )
-            .map_err(|_| err!("WriteFailed"))?,
-            Values::Many => write!(
-                cos,
-                " <{}>...",
-                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
-            )
-            .map_err(|_| err!("WriteFailed"))?,
-        }
+        write!(cos, "[{}{}", bstr::BStr::new(prefix), bstr::BStr::new(name))?;
+        write_takes_value_suffix(&mut cos, param, context, value_text)?;
 
-        cos.write_char(']').map_err(|_| err!("WriteFailed"))?;
+        cos.write_char(']')?;
     }
 
     if let Some(p) = positional {
         if cos.bytes_written != 0 {
-            cos.write_char(' ').map_err(|_| err!("WriteFailed"))?;
+            cos.write_char(' ')?;
         }
-        write!(cos, "<{}>", bstr::BStr::new(value_text(context, &p).map_err(Into::into)?))
-            .map_err(|_| err!("WriteFailed"))?;
+        write!(cos, "<{}>", bstr::BStr::new(value_text(context, &p).map_err(Into::into)?))?;
     }
     Ok(())
 }

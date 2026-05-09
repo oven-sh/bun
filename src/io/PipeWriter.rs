@@ -1137,21 +1137,41 @@ pub trait BaseWindowsPipeWriter {
         };
         match source {
             Source::SyncFile(file) | Source::File(file) => {
-                // Hand the Box off to the libuv-driven File state machine. The
-                // heap-allocated File (which embeds the uv_fs_t) MUST outlive
-                // any in-flight uv_fs_write callback and the queued uv_fs_close;
-                // it is reclaimed via heap::take in File::on_close_complete
-                // (source.rs). Dropping the Box here would UAF/double-free.
+                // Hand the Box off to libuv; the embedded uv_fs_t may still have
+                // an in-flight write (on_fs_write_complete) or will receive an
+                // async uv_fs_close callback (File::on_close_complete). Dropping
+                // the Box here would free that memory before the callback fires.
+                // Zig stores a raw `*File` so `this.source = null` is non-owning;
+                // mirror that by leaking via into_raw. on_close_detached path
+                // reclaims via heap::take in File::on_close_complete.
                 let raw = bun_core::heap::into_raw(file);
-                // SAFETY: raw is heap-allocated by Source::open; freed in
-                // File::on_close_complete after the async chain completes.
+                // SAFETY: raw is heap-allocated by Source::open_file; libuv holds
+                // the only remaining reference via the fs_t it points into.
                 unsafe {
                     if self.owns_fd() {
+                        // Use state machine to handle close after operation completes.
+                        // detach() schedules start_close() (now or after the pending
+                        // op completes); on_close_complete heap::take()s `raw`.
                         (*raw).detach();
                     } else {
-                        // Don't own fd, just stop operations and detach parent
+                        // Don't own fd: stop any in-flight op and detach parent so
+                        // on_fs_write_complete won't touch the (possibly freed)
+                        // writer. We must still reclaim the Box<File> — the Zig
+                        // spec leaks it here (source.zig heap-allocates and never
+                        // destroys on this path); Rust port fixes that leak.
                         (*raw).stop();
                         (*raw).fs.data = core::ptr::null_mut();
+                        if (*raw).state == crate::source::FileState::Deinitialized {
+                            // No callback will ever fire for this fs_t — sole
+                            // owner, free now.
+                            // SAFETY: `raw` is the Box<File> leaked above via
+                            // into_raw; no libuv request references it.
+                            drop(bun_core::heap::take(raw));
+                        }
+                        // else: state is Operating/Canceling — libuv still owns a
+                        // request pointing into *raw. on_fs_write_complete sees
+                        // parent_ptr null, observes state == Deinitialized after
+                        // complete(), and heap::take()s there.
                     }
                 }
             }
@@ -1368,8 +1388,7 @@ impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Pare
             owns_fd: true,
             parent: core::ptr::null_mut(), // Zig: undefined
             is_done: false,
-            // SAFETY: all-zero is a valid uv_write_t (Zig: std.mem.zeroes)
-            write_req: unsafe { bun_core::ffi::zeroed_unchecked() },
+            write_req: bun_core::ffi::zeroed(),
             write_buffer: uv::uv_buf_t::init(b""),
             pending_payload_size: 0,
         }
@@ -1469,6 +1488,15 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
 
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
         if parent_ptr.is_null() {
+            // owns_fd detach() path: complete() already kicked off start_close()
+            // (state == Closing) and on_close_complete will heap::take the Box.
+            // !owns_fd close() path: complete() left state == Deinitialized and
+            // nothing else will reclaim the Box<File>; this callback is the sole
+            // remaining owner, so free it here.
+            // SAFETY: `file` is the Box<File> leaked in close() via into_raw.
+            if unsafe { (*file).state } == crate::source::FileState::Deinitialized {
+                drop(unsafe { bun_core::heap::take(file) });
+            }
             return;
         }
 
@@ -1657,20 +1685,14 @@ impl StreamBuffer {
 
     pub fn write_type_as_bytes<T>(&mut self, data: &T) -> Result<(), OOM> {
         // SAFETY: caller passes POD T (matches Zig std.mem.asBytes contract).
-        let bytes = unsafe {
-            core::slice::from_raw_parts(std::ptr::from_ref::<T>(data).cast::<u8>(), mem::size_of::<T>())
-        };
-        self.write(bytes)
+        self.write(unsafe { bun_core::bytes_of(data) })
     }
 
     pub fn write_type_as_bytes_assume_capacity<T>(&mut self, data: T) {
         // TODO(port): Zig round-trips through bun.Vec<u8> here; Rust just writes bytes.
         // SAFETY: caller passes POD T.
-        let bytes = unsafe {
-            core::slice::from_raw_parts((&raw const data).cast::<u8>(), mem::size_of::<T>())
-        };
         // PERF(port): was assume_capacity
-        self.list.extend_from_slice(bytes);
+        self.list.extend_from_slice(unsafe { bun_core::bytes_of(&data) });
     }
 
     /// Zig: `writeOrFallback(buffer: anytype, comptime writeFn: anytype)` —
@@ -1794,8 +1816,7 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
             owns_fd: true,
             parent: core::ptr::null_mut(), // Zig: undefined
             is_done: false,
-            // SAFETY: all-zero is a valid uv_write_t (Zig: std.mem.zeroes)
-            write_req: unsafe { bun_core::ffi::zeroed_unchecked() },
+            write_req: bun_core::ffi::zeroed(),
             write_buffer: uv::uv_buf_t::init(b""),
             outgoing: StreamBuffer::default(),
             current_payload: StreamBuffer::default(),
@@ -1933,6 +1954,15 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd).
         // The deref to balance processSend's ref was already done in close().
         if parent_ptr.is_null() {
+            // owns_fd detach() path: complete() already kicked off start_close()
+            // (state == Closing) and on_close_complete will heap::take the Box.
+            // !owns_fd close() path: complete() left state == Deinitialized and
+            // nothing else will reclaim the Box<File>; this callback is the sole
+            // remaining owner, so free it here.
+            // SAFETY: `file` is the Box<File> leaked in close() via into_raw.
+            if unsafe { (*file).state } == crate::source::FileState::Deinitialized {
+                drop(unsafe { bun_core::heap::take(file) });
+            }
             return;
         }
 

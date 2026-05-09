@@ -4,7 +4,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
+use crate::{CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,
@@ -253,16 +253,18 @@ impl core::ops::Deref for AbortSignalRef {
 impl Clone for AbortSignalRef {
     #[inline]
     fn clone(&self) -> Self {
-        // SAFETY: `ref_()` returns the same non-null pointer with +1 refcount.
-        unsafe { Self::adopt(self.0.as_ref().ref_()) }
+        // SAFETY: `ref_()` returns the same non-null pointer with +1 refcount;
+        // `Deref` (above) yields the live `&AbortSignal`.
+        unsafe { Self::adopt((**self).ref_()) }
     }
 }
 
 impl Drop for AbortSignalRef {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: held +1 ref keeps the C++ object alive until this unref.
-        unsafe { self.0.as_ref().unref() }
+        // Held +1 ref keeps the C++ object alive until this unref; `Deref`
+        // encapsulates the NonNull access.
+        (**self).unref();
     }
 }
 

@@ -34,75 +34,6 @@ pub use bun_options_types::OfflineMode::OfflineMode;
 // TODO: replace api.TransformOptions with Bunfig
 pub struct Bunfig;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Local Expr helpers — `bun_logger::js_ast::Expr` (the T2 value-shaped tree)
-// only exposes a subset of the accessors the Zig source used. These free fns
-// fill the gaps without editing the lower-tier crate.
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn data_tag(d: &ExprData) -> ExprTag {
-    match d {
-        ExprData::EArray(_) => ExprTag::EArray,
-        ExprData::EObject(_) => ExprTag::EObject,
-        ExprData::EString(_) => ExprTag::EString,
-        ExprData::EBoolean(_) => ExprTag::EBoolean,
-        ExprData::ENumber(_) => ExprTag::ENumber,
-        ExprData::ENull(_) => ExprTag::ENull,
-        ExprData::EUndefined(_) => ExprTag::EUndefined,
-        ExprData::EMissing(_) => ExprTag::EMissing,
-    }
-}
-
-#[inline]
-fn tag_name(t: ExprTag) -> &'static str {
-    <&'static str>::from(t)
-}
-
-#[inline]
-fn expr_get(expr: &Expr, name: &[u8]) -> Option<Expr> {
-    match &expr.data {
-        // `obj` is `&StoreRef<E::Object>`; inherent `StoreRef::get()` shadows
-        // `E::Object::get(key)`, so deref through the StoreRef first.
-        ExprData::EObject(obj) => obj.get().get(name),
-        _ => None,
-    }
-}
-
-#[inline]
-fn expr_get_object(expr: &Expr, name: &[u8]) -> Option<Expr> {
-    expr_get(expr, name).filter(|e| matches!(e.data, ExprData::EObject(_)))
-}
-
-#[inline]
-fn expr_as_bool(expr: &Expr) -> Option<bool> {
-    if let ExprData::EBoolean(b) = expr.data {
-        Some(b.value)
-    } else {
-        None
-    }
-}
-
-#[inline]
-fn expr_as_number(expr: &Expr) -> Option<f64> {
-    if let ExprData::ENumber(n) = expr.data {
-        Some(n.value)
-    } else {
-        None
-    }
-}
-
-/// Zig `Expr.asString(allocator)` — UTF-8 view, allocating into `bump` only if
-/// the literal is UTF-16.
-#[inline]
-fn expr_as_string<'b>(expr: &Expr, bump: &'b Bump) -> Option<&'b [u8]> {
-    if let ExprData::EString(s) = &expr.data {
-        Some(s.string(bump).expect("OOM"))
-    } else {
-        None
-    }
-}
-
 /// Owned clone of an `EString` payload (transcoding UTF-16 → UTF-8 if needed).
 #[inline]
 fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
@@ -131,7 +62,7 @@ fn parse_macros_json(
         let Some(key_expr) = property.key.as_ref() else {
             continue;
         };
-        let Some(key) = expr_as_string(key_expr, bump) else {
+        let Some(key) = key_expr.as_string(bump) else {
             continue;
         };
         if !bun_resolver::is_package_path(key) {
@@ -174,7 +105,7 @@ fn parse_macros_json(
             let Some(remap_key) = remap.key.as_ref() else {
                 continue;
             };
-            let Some(import_name) = expr_as_string(remap_key, bump) else {
+            let Some(import_name) = remap_key.as_string(bump) else {
                 continue;
             };
             let Some(remap_value) = remap.value.as_ref() else {
@@ -267,44 +198,26 @@ impl<'a> Parser<'a> {
     pub fn expect_string(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
-            _ => {
-                self.log
-                    .add_error_fmt_opts(
-                        format_args!(
-                            "expected string but received {}",
-                            tag_name(data_tag(&expr.data))
-                        ),
-                        logger::ErrorOpts {
-                            source: Some(self.source),
-                            loc: expr.loc,
-                            redact_sensitive_information: true,
-                            ..Default::default()
-                        },
-                    )
-                    .expect("unreachable");
-                Err(err!("Invalid Bunfig"))
-            }
+            _ => self.add_error_format(
+                expr.loc,
+                format_args!(
+                    "expected string but received {}",
+                    expr.data.tag_name()
+                ),
+            ),
         }
     }
 
     pub fn expect(&mut self, expr: &Expr, token: ExprTag) -> Result<(), bun_core::Error> {
-        if data_tag(&expr.data) != token {
-            self.log
-                .add_error_fmt_opts(
-                    format_args!(
-                        "expected {} but received {}",
-                        tag_name(token),
-                        tag_name(data_tag(&expr.data))
-                    ),
-                    logger::ErrorOpts {
-                        source: Some(self.source),
-                        loc: expr.loc,
-                        redact_sensitive_information: true,
-                        ..Default::default()
-                    },
-                )
-                .expect("unreachable");
-            return Err(err!("Invalid Bunfig"));
+        if expr.data.tag() != token {
+            return self.add_error_format(
+                expr.loc,
+                format_args!(
+                    "expected {} but received {}",
+                    <&str>::from(token),
+                    expr.data.tag_name()
+                ),
+            );
         }
         Ok(())
     }
@@ -312,7 +225,7 @@ impl<'a> Parser<'a> {
     fn load_log_level(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         self.expect_string(expr)?;
         // PERF(port): Zig used strings.ExactSizeMatcher(8) — profile in Phase B
-        let level = match expr_as_string(expr, self.bump).unwrap_or(b"") {
+        let level = match expr.as_string(self.bump).unwrap_or(b"") {
             b"debug" => api::MessageLevel::Debug,
             b"error" => api::MessageLevel::Err,
             b"warn" => api::MessageLevel::Warn,
@@ -400,6 +313,29 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    fn parse_define_map(&mut self, expr: &Expr) -> Result<api::StringMap, bun_core::Error> {
+        self.expect(expr, ExprTag::EObject)?;
+        let obj = expr.data.e_object().expect("infallible: variant checked");
+        let properties = obj.properties.slice();
+        let valid_count = properties
+            .iter()
+            .filter(|p| matches!(p.value.as_ref().unwrap().data, ExprData::EString(_)))
+            .count();
+        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
+        let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
+        for prop in properties {
+            let ExprData::EString(v) = &prop.value.as_ref().expect("infallible: prop has value").data else {
+                continue;
+            };
+            let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data else {
+                continue;
+            };
+            keys.push(estring_to_owned(&*k, self.bump));
+            values.push(estring_to_owned(&*v, self.bump));
+        }
+        Ok(api::StringMap { keys, values })
+    }
+
     // PORT NOTE: `comptime cmd: Command.Tag` demoted to a runtime arg —
     // `bun_options_types::CommandTag::Tag` does not derive `ConstParamTy` (it
     // already derives `enum_map::Enum`, which conflicts). The Zig original
@@ -414,34 +350,15 @@ impl<'a> Parser<'a> {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
         }
 
-        if let Some(expr) = expr_get(&json, b"logLevel") {
+        if let Some(expr) = json.get(b"logLevel") {
             self.load_log_level(&expr)?;
         }
 
-        if let Some(expr) = expr_get(&json, b"define") {
-            self.expect(&expr, ExprTag::EObject)?;
-            let obj = expr.data.e_object().expect("infallible: variant checked");
-            let properties = obj.properties.slice();
-            let valid_count = properties
-                .iter()
-                .filter(|p| matches!(p.value.as_ref().unwrap().data, ExprData::EString(_)))
-                .count();
-            let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
-            let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
-            for prop in properties {
-                let ExprData::EString(v) = &prop.value.as_ref().expect("infallible: prop has value").data else {
-                    continue;
-                };
-                let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data else {
-                    continue;
-                };
-                keys.push(estring_to_owned(&*k, self.bump));
-                values.push(estring_to_owned(&*v, self.bump));
-            }
-            self.ctx.args.define = Some(api::StringMap { keys, values });
+        if let Some(expr) = json.get(b"define") {
+            self.ctx.args.define = Some(self.parse_define_map(&expr)?);
         }
 
-        if let Some(expr) = expr_get(&json, b"origin") {
+        if let Some(expr) = json.get(b"origin") {
             self.expect_string(&expr)?;
             self.ctx.args.origin = Some(estring_to_owned(
                 expr.data.e_string().expect("infallible: variant checked").get(),
@@ -449,26 +366,26 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        if let Some(env_expr) = expr_get(&json, b"env") {
+        if let Some(env_expr) = json.get(b"env") {
             self.load_env_config(&env_expr)?;
         }
 
         if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
-            if let Some(expr) = expr_get(&json, b"serve") {
-                if let Some(port) = expr_get(&expr, b"port") {
+            if let Some(expr) = json.get(b"serve") {
+                if let Some(port) = expr.get(b"port") {
                     self.expect(&port, ExprTag::ENumber)?;
-                    let p = expr_as_number(&port).expect("infallible: type checked") as u16;
+                    let p = port.as_number().expect("infallible: type checked") as u16;
                     self.ctx.args.port = Some(if p == 0 { 3000 } else { p });
                 }
             }
 
-            if let Some(expr) = expr_get(&json, b"preload") {
+            if let Some(expr) = json.get(b"preload") {
                 self.load_preload(&expr)?;
             }
 
-            if let Some(expr) = expr_get(&json, b"telemetry") {
+            if let Some(expr) = json.get(b"telemetry") {
                 self.expect(&expr, ExprTag::EBoolean)?;
-                bun_analytics::set_enabled(if expr_as_bool(&expr).expect("infallible: type checked") {
+                bun_analytics::set_enabled(if expr.as_bool().expect("infallible: type checked") {
                     bun_analytics::TriState::Yes
                 } else {
                     bun_analytics::TriState::No
@@ -477,41 +394,41 @@ impl<'a> Parser<'a> {
         }
 
         if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
-            if let Some(expr) = expr_get(&json, b"smol") {
+            if let Some(expr) = json.get(b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
-                self.ctx.runtime_options.smol = expr_as_bool(&expr).expect("infallible: type checked");
+                self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
             }
         }
 
         if cmd == CommandTag::TestCommand {
-            if let Some(test_) = expr_get(&json, b"test") {
-                if let Some(root) = expr_get(&test_, b"root") {
+            if let Some(test_) = json.get(b"test") {
+                if let Some(root) = test_.get(b"root") {
                     self.ctx.debug.test_directory =
-                        expr_as_string(&root, self.bump).unwrap_or(b"").into();
+                        root.as_string(self.bump).unwrap_or(b"").into();
                 }
 
-                if let Some(expr) = expr_get(&test_, b"preload") {
+                if let Some(expr) = test_.get(b"preload") {
                     self.load_preload(&expr)?;
                 }
 
-                if let Some(expr) = expr_get(&test_, b"smol") {
+                if let Some(expr) = test_.get(b"smol") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.runtime_options.smol = expr_as_bool(&expr).expect("infallible: type checked");
+                    self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = expr_get(&test_, b"coverage") {
+                if let Some(expr) = test_.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.coverage.enabled = expr_as_bool(&expr).expect("infallible: type checked");
+                    self.ctx.test_options.coverage.enabled = expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = expr_get(&test_, b"onlyFailures") {
+                if let Some(expr) = test_.get(b"onlyFailures") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.reporters.only_failures = expr_as_bool(&expr).expect("infallible: type checked");
+                    self.ctx.test_options.reporters.only_failures = expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = expr_get(&test_, b"reporter") {
+                if let Some(expr) = test_.get(b"reporter") {
                     self.expect(&expr, ExprTag::EObject)?;
-                    if let Some(junit_expr) = expr_get(&expr, b"junit") {
+                    if let Some(junit_expr) = expr.get(b"junit") {
                         self.expect_string(&junit_expr)?;
                         if let ExprData::EString(s) = &junit_expr.data {
                             if s.len() > 0 {
@@ -522,21 +439,21 @@ impl<'a> Parser<'a> {
                         }
                     }
                     if let Some(dots_expr) =
-                        expr_get(&expr, b"dots").or_else(|| expr_get(&expr, b"dot"))
+                        expr.get(b"dots").or_else(|| expr.get(b"dot"))
                     {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
-                        self.ctx.test_options.reporters.dots = expr_as_bool(&dots_expr).expect("infallible: type checked");
+                        self.ctx.test_options.reporters.dots = dots_expr.as_bool().expect("infallible: type checked");
                     }
                 }
 
-                if let Some(expr) = expr_get(&test_, b"coverageReporter") {
+                if let Some(expr) = test_.get(b"coverageReporter") {
                     'brk: {
                         self.ctx.test_options.coverage.reporters = CoverageReporters {
                             text: false,
                             lcov: false,
                         };
                         if let ExprData::EString(_) = &expr.data {
-                            let item_str = expr_as_string(&expr, self.bump).unwrap_or(b"");
+                            let item_str = expr.as_string(self.bump).unwrap_or(b"");
                             if item_str == b"text" {
                                 self.ctx.test_options.coverage.reporters.text = true;
                             } else if item_str == b"lcov" {
@@ -558,7 +475,7 @@ impl<'a> Parser<'a> {
                         let items = arr.items.slice();
                         for item in items {
                             self.expect_string(item)?;
-                            let item_str = expr_as_string(item, self.bump).unwrap_or(b"");
+                            let item_str = item.as_string(self.bump).unwrap_or(b"");
                             if item_str == b"text" {
                                 self.ctx.test_options.coverage.reporters.text = true;
                             } else if item_str == b"lcov" {
@@ -576,13 +493,13 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = expr_get(&test_, b"coverageDir") {
+                if let Some(expr) = test_.get(b"coverageDir") {
                     self.expect_string(&expr)?;
                     self.ctx.test_options.coverage.reports_directory =
                         estring_to_owned(expr.data.e_string().expect("infallible: variant checked").get(), self.bump);
                 }
 
-                if let Some(expr) = expr_get(&test_, b"coverageThreshold") {
+                if let Some(expr) = test_.get(b"coverageThreshold") {
                     'outer: {
                         if let ExprData::ENumber(n) = expr.data {
                             let v = n.value;
@@ -594,49 +511,49 @@ impl<'a> Parser<'a> {
                         }
 
                         self.expect(&expr, ExprTag::EObject)?;
-                        if let Some(functions) = expr_get(&expr, b"functions") {
+                        if let Some(functions) = expr.get(b"functions") {
                             self.expect(&functions, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.functions =
-                                expr_as_number(&functions).expect("infallible: type checked");
+                                functions.as_number().expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
-                        if let Some(lines) = expr_get(&expr, b"lines") {
+                        if let Some(lines) = expr.get(b"lines") {
                             self.expect(&lines, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.lines =
-                                expr_as_number(&lines).expect("infallible: type checked");
+                                lines.as_number().expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
-                        if let Some(stmts) = expr_get(&expr, b"statements") {
+                        if let Some(stmts) = expr.get(b"statements") {
                             self.expect(&stmts, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.stmts =
-                                expr_as_number(&stmts).expect("infallible: type checked");
+                                stmts.as_number().expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
                     }
                 }
 
                 // This mostly exists for debugging.
-                if let Some(expr) = expr_get(&test_, b"coverageIgnoreSourcemaps") {
+                if let Some(expr) = test_.get(b"coverageIgnoreSourcemaps") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.coverage.ignore_sourcemap = expr_as_bool(&expr).expect("infallible: type checked");
+                    self.ctx.test_options.coverage.ignore_sourcemap = expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = expr_get(&test_, b"coverageSkipTestFiles") {
+                if let Some(expr) = test_.get(b"coverageSkipTestFiles") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.coverage.skip_test_files = expr_as_bool(&expr).expect("infallible: type checked");
+                    self.ctx.test_options.coverage.skip_test_files = expr.as_bool().expect("infallible: type checked");
                 }
 
                 let mut randomize_from_config: Option<bool> = None;
 
-                if let Some(expr) = expr_get(&test_, b"randomize") {
+                if let Some(expr) = test_.get(b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    randomize_from_config = expr_as_bool(&expr);
-                    self.ctx.test_options.randomize = expr_as_bool(&expr).expect("infallible: type checked");
+                    randomize_from_config = expr.as_bool();
+                    self.ctx.test_options.randomize = expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = expr_get(&test_, b"seed") {
+                if let Some(expr) = test_.get(b"seed") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    let seed_value = num_to_u32(expr_as_number(&expr).expect("infallible: type checked"));
+                    let seed_value = num_to_u32(expr.as_number().expect("infallible: type checked"));
 
                     // Validate that randomize is true when seed is specified
                     let has_randomize_true =
@@ -651,25 +568,25 @@ impl<'a> Parser<'a> {
                     self.ctx.test_options.seed = Some(seed_value);
                 }
 
-                if let Some(expr) = expr_get(&test_, b"rerunEach") {
+                if let Some(expr) = test_.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.retry != 0 {
                         self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
                         return Ok(());
                     }
-                    self.ctx.test_options.repeat_count = num_to_u32(expr_as_number(&expr).expect("infallible: type checked"));
+                    self.ctx.test_options.repeat_count = num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = expr_get(&test_, b"retry") {
+                if let Some(expr) = test_.get(b"retry") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.repeat_count != 0 {
                         self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
                         return Ok(());
                     }
-                    self.ctx.test_options.retry = num_to_u32(expr_as_number(&expr).expect("infallible: type checked"));
+                    self.ctx.test_options.retry = num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = expr_get(&test_, b"concurrentTestGlob") {
+                if let Some(expr) = test_.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {
                             if s.len() == 0 {
@@ -721,7 +638,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = expr_get(&test_, b"coveragePathIgnorePatterns") {
+                if let Some(expr) = test_.get(b"coveragePathIgnorePatterns") {
                     'brk: {
                         match &expr.data {
                             ExprData::EString(s) => {
@@ -757,7 +674,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = expr_get(&test_, b"pathIgnorePatterns") {
+                if let Some(expr) = test_.get(b"pathIgnorePatterns") {
                     'brk: {
                         // Only skip if --path-ignore-patterns was explicitly passed via CLI
                         if self.ctx.test_options.path_ignore_patterns_from_cli {
@@ -804,16 +721,16 @@ impl<'a> Parser<'a> {
             || cmd == CommandTag::AutoCommand
             || cmd == CommandTag::TestCommand
         {
-            if let Some(install_obj) = expr_get_object(&json, b"install") {
+            if let Some(install_obj) = json.get_object(b"install") {
                 // Ensure ctx.install is allocated so later passes can write into it
                 // once api::BunInstall fields land.
                 if self.ctx.install.is_none() {
                     self.ctx.install = Some(Box::new(api::BunInstall::default()));
                 }
 
-                if let Some(auto_install_expr) = expr_get(&install_obj, b"auto") {
+                if let Some(auto_install_expr) = install_obj.get(b"auto") {
                     if let ExprData::EString(_) = &auto_install_expr.data {
-                        let key = expr_as_string(&auto_install_expr, self.bump).unwrap_or(b"");
+                        let key = auto_install_expr.as_string(self.bump).unwrap_or(b"");
                         self.ctx.debug.global_cache = match GlobalCache::MAP.get(key) {
                             Some(v) => *v,
                             None => {
@@ -839,9 +756,9 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(prefer_expr) = expr_get(&install_obj, b"prefer") {
+                if let Some(prefer_expr) = install_obj.get(b"prefer") {
                     self.expect_string(&prefer_expr)?;
-                    let key = expr_as_string(&prefer_expr, self.bump).unwrap_or(b"");
+                    let key = prefer_expr.as_string(self.bump).unwrap_or(b"");
                     if let Some(setting) = OFFLINE_PREFER.get(key) {
                         self.ctx.debug.offline_mode_setting = Some(*setting);
                     } else {
@@ -852,24 +769,24 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = expr_get(&install_obj, b"logLevel") {
+                if let Some(expr) = install_obj.get(b"logLevel") {
                     self.load_log_level(&expr)?;
                 }
 
                 self.parse_install(&install_obj)?;
             }
 
-            if let Some(run_expr) = expr_get(&json, b"run") {
-                if let Some(silent) = expr_get(&run_expr, b"silent") {
-                    if let Some(value) = expr_as_bool(&silent) {
+            if let Some(run_expr) = json.get(b"run") {
+                if let Some(silent) = run_expr.get(b"silent") {
+                    if let Some(value) = silent.as_bool() {
                         self.ctx.debug.silent = value;
                     } else {
                         self.add_error(silent.loc, b"Expected boolean")?;
                     }
                 }
 
-                if let Some(elide_lines) = expr_get(&run_expr, b"elide-lines") {
-                    if let Some(n) = expr_as_number(&elide_lines) {
+                if let Some(elide_lines) = run_expr.get(b"elide-lines") {
+                    if let Some(n) = elide_lines.as_number() {
                         // Note: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB
                         self.ctx.bundler_options.elide_lines = Some(n as usize);
                     } else {
@@ -877,8 +794,8 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(shell) = expr_get(&run_expr, b"shell") {
-                    if let Some(value) = expr_as_string(&shell, self.bump) {
+                if let Some(shell) = run_expr.get(b"shell") {
+                    if let Some(value) = shell.as_string(self.bump) {
                         if value == b"bun" {
                             self.ctx.debug.use_system_shell = false;
                         } else if value == b"system" {
@@ -894,16 +811,16 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(bun_flag) = expr_get(&run_expr, b"bun") {
-                    if let Some(value) = expr_as_bool(&bun_flag) {
+                if let Some(bun_flag) = run_expr.get(b"bun") {
+                    if let Some(value) = bun_flag.as_bool() {
                         self.ctx.debug.run_in_bun = value;
                     } else {
                         self.add_error(bun_flag.loc, b"Expected boolean")?;
                     }
                 }
 
-                if let Some(no_orphans) = expr_get(&run_expr, b"noOrphans") {
-                    if let Some(value) = expr_as_bool(&no_orphans) {
+                if let Some(no_orphans) = run_expr.get(b"noOrphans") {
+                    if let Some(value) = no_orphans.as_bool() {
                         if value {
                             bun_io::ParentDeathWatchdog::enable();
                         }
@@ -913,9 +830,9 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if let Some(console_expr) = expr_get(&json, b"console") {
-                if let Some(depth) = expr_get(&console_expr, b"depth") {
-                    if let Some(n) = expr_as_number(&depth) {
+            if let Some(console_expr) = json.get(b"console") {
+                if let Some(depth) = console_expr.get(b"depth") {
+                    if let Some(n) = depth.as_number() {
                         let depth_value = n as u16;
                         // Treat depth=0 as maxInt(u16) for infinite depth
                         self.ctx.runtime_options.console_depth = Some(if depth_value == 0 {
@@ -930,18 +847,18 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(serve_obj2) = expr_get_object(&json, b"serve") {
-            if let Some(serve_obj) = expr_get_object(&serve_obj2, b"static") {
+        if let Some(serve_obj2) = json.get_object(b"serve") {
+            if let Some(serve_obj) = serve_obj2.get_object(b"static") {
                 self.parse_serve_static(&serve_obj)?;
             }
         }
 
-        if let Some(_bun) = expr_get(&json, b"bundle") {
+        if let Some(_bun) = json.get(b"bundle") {
             if cmd == CommandTag::BuildCommand
                 || cmd == CommandTag::RunCommand
                 || cmd == CommandTag::AutoCommand
             {
-                if let Some(dir) = expr_get(&_bun, b"outdir") {
+                if let Some(dir) = _bun.get(b"outdir") {
                     self.expect_string(&dir)?;
                     self.ctx.args.output_dir = Some(estring_to_owned(
                         dir.data.e_string().expect("infallible: variant checked").get(),
@@ -951,11 +868,11 @@ impl<'a> Parser<'a> {
             }
 
             if cmd == CommandTag::BuildCommand {
-                if let Some(expr2) = expr_get(&_bun, b"logLevel") {
+                if let Some(expr2) = _bun.get(b"logLevel") {
                     self.load_log_level(&expr2)?;
                 }
 
-                if let Some(entry_points) = expr_get(&_bun, b"entryPoints") {
+                if let Some(entry_points) = _bun.get(b"entryPoints") {
                     self.expect(&entry_points, ExprTag::EArray)?;
                     let arr = entry_points.data.e_array().expect("infallible: variant checked");
                     let items = arr.items.slice();
@@ -970,7 +887,7 @@ impl<'a> Parser<'a> {
                     self.ctx.args.entry_points = names;
                 }
 
-                if let Some(expr) = expr_get(&_bun, b"packages") {
+                if let Some(expr) = _bun.get(b"packages") {
                     self.expect(&expr, ExprTag::EObject)?;
                     let object = expr.data.e_object().expect("infallible: variant checked");
                     let properties = object.properties.slice();
@@ -1020,8 +937,8 @@ impl<'a> Parser<'a> {
         let mut jsx_runtime = api::JsxRuntime::Automatic;
         let mut jsx_dev = true;
 
-        if let Some(expr) = expr_get(&json, b"jsx") {
-            if let Some(value) = expr_as_string(&expr, self.bump) {
+        if let Some(expr) = json.get(b"jsx") {
+            if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
                     jsx_runtime = api::JsxRuntime::Classic;
                 } else if value == b"solid" {
@@ -1040,18 +957,18 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(expr) = expr_get(&json, b"jsxImportSource") {
-            if let Some(value) = expr_as_string(&expr, self.bump) {
+        if let Some(expr) = json.get(b"jsxImportSource") {
+            if let Some(value) = expr.as_string(self.bump) {
                 jsx_import_source = Box::<[u8]>::from(value);
             }
         }
-        if let Some(expr) = expr_get(&json, b"jsxFragment") {
-            if let Some(value) = expr_as_string(&expr, self.bump) {
+        if let Some(expr) = json.get(b"jsxFragment") {
+            if let Some(value) = expr.as_string(self.bump) {
                 jsx_fragment = Box::<[u8]>::from(value);
             }
         }
-        if let Some(expr) = expr_get(&json, b"jsxFactory") {
-            if let Some(value) = expr_as_string(&expr, self.bump) {
+        if let Some(expr) = json.get(b"jsxFactory") {
+            if let Some(value) = expr.as_string(self.bump) {
                 jsx_factory = Box::<[u8]>::from(value);
             }
         }
@@ -1081,15 +998,15 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(expr) = expr_get(&json, b"debug") {
-            if let Some(editor) = expr_get(&expr, b"editor") {
-                if let Some(value) = expr_as_string(&editor, self.bump) {
+        if let Some(expr) = json.get(b"debug") {
+            if let Some(editor) = expr.get(b"editor") {
+                if let Some(value) = editor.as_string(self.bump) {
                     self.ctx.debug.editor = value.into();
                 }
             }
         }
 
-        if let Some(expr) = expr_get(&json, b"macros") {
+        if let Some(expr) = json.get(b"macros") {
             if let ExprData::EBoolean(b) = expr.data {
                 if b.value == false {
                     self.ctx.debug.macros = MacroOptions::Disable;
@@ -1101,7 +1018,7 @@ impl<'a> Parser<'a> {
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }
 
-        if let Some(expr) = expr_get(&json, b"external") {
+        if let Some(expr) = json.get(b"external") {
             match &expr.data {
                 ExprData::EString(s) => {
                     self.ctx.args.external = vec![estring_to_owned(s, self.bump)];
@@ -1122,7 +1039,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(expr) = expr_get(&json, b"loader") {
+        if let Some(expr) = json.get(b"loader") {
             self.expect(&expr, ExprTag::EObject)?;
             let obj = expr.data.e_object().expect("infallible: variant checked");
             let properties = obj.properties.slice();
@@ -1130,7 +1047,7 @@ impl<'a> Parser<'a> {
             let mut loader_values: Vec<api::Loader> = Vec::with_capacity(properties.len());
             for item in properties {
                 let key_expr = item.key.as_ref().expect("infallible: prop has key");
-                let key = expr_as_string(key_expr, self.bump).expect("infallible: type checked");
+                let key = key_expr.as_string(self.bump).expect("infallible: type checked");
                 if key.is_empty() {
                     continue;
                 }
@@ -1143,7 +1060,7 @@ impl<'a> Parser<'a> {
                 let value = item.value.as_ref().expect("infallible: prop has value");
                 self.expect_string(value)?;
                 let Some(loader) = bun_bundler::options::Loader::from_string(
-                    expr_as_string(value, self.bump).expect("infallible: type checked"),
+                    value.as_string(self.bump).expect("infallible: type checked"),
                 ) else {
                     self.add_error(value.loc, b"Invalid loader")?;
                     unreachable!();
@@ -1261,19 +1178,19 @@ impl<'a> Parser<'a> {
 
         if let Some(url) = obj.get(b"url") {
             self.expect_string(&url)?;
-            registry.url = expr_as_string(&url, self.bump).expect("infallible: type checked").into();
+            registry.url = url.as_string(self.bump).expect("infallible: type checked").into();
         }
         if let Some(username) = obj.get(b"username") {
             self.expect_string(&username)?;
-            registry.username = expr_as_string(&username, self.bump).expect("infallible: type checked").into();
+            registry.username = username.as_string(self.bump).expect("infallible: type checked").into();
         }
         if let Some(password) = obj.get(b"password") {
             self.expect_string(&password)?;
-            registry.password = expr_as_string(&password, self.bump).expect("infallible: type checked").into();
+            registry.password = password.as_string(self.bump).expect("infallible: type checked").into();
         }
         if let Some(token) = obj.get(b"token") {
             self.expect_string(&token)?;
-            registry.token = expr_as_string(&token, self.bump).expect("infallible: type checked").into();
+            registry.token = token.as_string(self.bump).expect("infallible: type checked").into();
         }
 
         Ok(registry)
@@ -1311,8 +1228,8 @@ impl<'a> Parser<'a> {
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> Result<(), bun_core::Error> {
-        if let Some(cafile) = expr_get(install_obj, b"cafile") {
-            install.cafile = match expr_as_string(&cafile, self.bump) {
+        if let Some(cafile) = install_obj.get(b"cafile") {
+            install.cafile = match cafile.as_string(self.bump) {
                 Some(s) => Some(s.into()),
                 None => {
                     self.add_error(cafile.loc, b"Invalid cafile. Expected a string.")?;
@@ -1321,13 +1238,13 @@ impl<'a> Parser<'a> {
             };
         }
 
-        if let Some(ca) = expr_get(install_obj, b"ca") {
+        if let Some(ca) = install_obj.get(b"ca") {
             match &ca.data {
                 ExprData::EArray(arr) => {
                     let items = arr.items.slice();
                     let mut list: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
-                        match expr_as_string(item, self.bump) {
+                        match item.as_string(self.bump) {
                             Some(s) => list.push(s.into()),
                             None => {
                                 self.add_error(item.loc, b"Invalid CA. Expected a string.")?;
@@ -1350,23 +1267,23 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(exact) = expr_get(install_obj, b"exact") {
-            if let Some(v) = expr_as_bool(&exact) {
+        if let Some(exact) = install_obj.get(b"exact") {
+            if let Some(v) = exact.as_bool() {
                 install.exact = Some(v);
             }
         }
 
-        if let Some(registry) = expr_get(install_obj, b"registry") {
+        if let Some(registry) = install_obj.get(b"registry") {
             install.default_registry = Some(self.parse_registry(&registry)?);
         }
 
-        if let Some(scopes) = expr_get(install_obj, b"scopes") {
+        if let Some(scopes) = install_obj.get(b"scopes") {
             let mut registry_map = install.scoped.take().unwrap_or_default();
             self.expect(&scopes, ExprTag::EObject)?;
             let obj = scopes.data.e_object().expect("infallible: variant checked");
             registry_map.scopes.reserve(obj.properties.slice().len());
             for prop in obj.properties.slice() {
-                let Some(name_) = prop.key.as_ref().and_then(|k| expr_as_string(k, self.bump))
+                let Some(name_) = prop.key.as_ref().and_then(|k| k.as_string(self.bump))
                 else {
                     continue;
                 };
@@ -1383,30 +1300,30 @@ impl<'a> Parser<'a> {
             install.scoped = Some(registry_map);
         }
 
-        if let Some(v) = expr_get(install_obj, b"dryRun").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"dryRun").and_then(|e| e.as_bool()) {
             install.dry_run = Some(v);
         }
-        if let Some(v) = expr_get(install_obj, b"production").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"production").and_then(|e| e.as_bool()) {
             install.production = Some(v);
         }
-        if let Some(v) = expr_get(install_obj, b"frozenLockfile").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"frozenLockfile").and_then(|e| e.as_bool()) {
             install.frozen_lockfile = Some(v);
         }
-        if let Some(v) = expr_get(install_obj, b"saveTextLockfile").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"saveTextLockfile").and_then(|e| e.as_bool()) {
             install.save_text_lockfile = Some(v);
         }
-        if let Some(jobs) = expr_get(install_obj, b"concurrentScripts") {
-            if let Some(n) = expr_as_number(&jobs) {
+        if let Some(jobs) = install_obj.get(b"concurrentScripts") {
+            if let Some(n) = jobs.as_number() {
                 let n = num_to_u32(n);
                 install.concurrent_scripts = if n == 0 { None } else { Some(n) };
             }
         }
-        if let Some(v) = expr_get(install_obj, b"ignoreScripts").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"ignoreScripts").and_then(|e| e.as_bool()) {
             install.ignore_scripts = Some(v);
         }
-        if let Some(node_linker_expr) = expr_get(install_obj, b"linker") {
+        if let Some(node_linker_expr) = install_obj.get(b"linker") {
             self.expect_string(&node_linker_expr)?;
-            if let Some(s) = expr_as_string(&node_linker_expr, self.bump) {
+            if let Some(s) = node_linker_expr.as_string(self.bump) {
                 install.node_linker = api::NodeLinker::from_str(s);
                 if install.node_linker.is_none() {
                     self.add_error(
@@ -1416,14 +1333,14 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(v) = expr_get(install_obj, b"globalStore").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"globalStore").and_then(|e| e.as_bool()) {
             install.global_store = Some(v);
         }
 
-        if let Some(lockfile_expr) = expr_get(install_obj, b"lockfile") {
-            if let Some(lockfile) = expr_get(&lockfile_expr, b"print") {
+        if let Some(lockfile_expr) = install_obj.get(b"lockfile") {
+            if let Some(lockfile) = lockfile_expr.get(b"print") {
                 self.expect_string(&lockfile)?;
-                if let Some(value) = expr_as_string(&lockfile, self.bump) {
+                if let Some(value) = lockfile.as_string(self.bump) {
                     if value != b"bun" {
                         if value != b"yarn" {
                             self.add_error(
@@ -1435,65 +1352,65 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            if let Some(v) = expr_get(&lockfile_expr, b"save").and_then(|e| expr_as_bool(&e)) {
+            if let Some(v) = lockfile_expr.get(b"save").and_then(|e| e.as_bool()) {
                 install.save_lockfile = Some(v);
             }
             if let Some(v) =
-                expr_get(&lockfile_expr, b"path").and_then(|e| expr_as_string(&e, self.bump))
+                lockfile_expr.get(b"path").and_then(|e| e.as_string(self.bump))
             {
                 install.lockfile_path = Some(v.into());
             }
             if let Some(v) =
-                expr_get(&lockfile_expr, b"savePath").and_then(|e| expr_as_string(&e, self.bump))
+                lockfile_expr.get(b"savePath").and_then(|e| e.as_string(self.bump))
             {
                 install.save_lockfile_path = Some(v.into());
             }
         }
 
-        if let Some(v) = expr_get(install_obj, b"optional").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"optional").and_then(|e| e.as_bool()) {
             install.save_optional = Some(v);
         }
-        if let Some(v) = expr_get(install_obj, b"peer").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"peer").and_then(|e| e.as_bool()) {
             install.save_peer = Some(v);
         }
-        if let Some(v) = expr_get(install_obj, b"dev").and_then(|e| expr_as_bool(&e)) {
+        if let Some(v) = install_obj.get(b"dev").and_then(|e| e.as_bool()) {
             install.save_dev = Some(v);
         }
         if let Some(v) =
-            expr_get(install_obj, b"globalDir").and_then(|e| expr_as_string(&e, self.bump))
+            install_obj.get(b"globalDir").and_then(|e| e.as_string(self.bump))
         {
             install.global_dir = Some(v.into());
         }
         if let Some(v) =
-            expr_get(install_obj, b"globalBinDir").and_then(|e| expr_as_string(&e, self.bump))
+            install_obj.get(b"globalBinDir").and_then(|e| e.as_string(self.bump))
         {
             install.global_bin_dir = Some(v.into());
         }
 
-        if let Some(cache) = expr_get(install_obj, b"cache") {
+        if let Some(cache) = install_obj.get(b"cache") {
             'load: {
-                if let Some(value) = expr_as_bool(&cache) {
+                if let Some(value) = cache.as_bool() {
                     if !value {
                         install.disable_cache = Some(true);
                         install.disable_manifest_cache = Some(true);
                     }
                     break 'load;
                 }
-                if let Some(value) = expr_as_string(&cache, self.bump) {
+                if let Some(value) = cache.as_string(self.bump) {
                     install.cache_directory = Some(value.into());
                     break 'load;
                 }
                 if let ExprData::EObject(_) = cache.data {
-                    if let Some(v) = expr_get(&cache, b"disable").and_then(|e| expr_as_bool(&e)) {
+                    if let Some(v) = cache.get(b"disable").and_then(|e| e.as_bool()) {
                         install.disable_cache = Some(v);
                     }
                     if let Some(v) =
-                        expr_get(&cache, b"disableManifest").and_then(|e| expr_as_bool(&e))
+                        cache.get(b"disableManifest").and_then(|e| e.as_bool())
                     {
                         install.disable_manifest_cache = Some(v);
                     }
                     if let Some(v) =
-                        expr_get(&cache, b"dir").and_then(|e| expr_as_string(&e, self.bump))
+                        cache.get(b"dir").and_then(|e| e.as_string(self.bump))
                     {
                         install.cache_directory = Some(v.into());
                     }
@@ -1502,16 +1419,16 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(v) =
-            expr_get(install_obj, b"linkWorkspacePackages").and_then(|e| expr_as_bool(&e))
+            install_obj.get(b"linkWorkspacePackages").and_then(|e| e.as_bool())
         {
             install.link_workspace_packages = Some(v);
         }
 
-        if let Some(security_obj) = expr_get(install_obj, b"security") {
+        if let Some(security_obj) = install_obj.get(b"security") {
             if let ExprData::EObject(_) = security_obj.data {
-                if let Some(scanner) = expr_get(&security_obj, b"scanner") {
+                if let Some(scanner) = security_obj.get(b"scanner") {
                     self.expect_string(&scanner)?;
-                    install.security_scanner = expr_as_string(&scanner, self.bump).map(Into::into);
+                    install.security_scanner = scanner.as_string(self.bump).map(Into::into);
                 }
             } else {
                 self.add_error(
@@ -1521,7 +1438,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(min_age) = expr_get(install_obj, b"minimumReleaseAge") {
+        if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
                     if seconds.value < 0.0 {
@@ -1543,7 +1460,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(exclusions) = expr_get(install_obj, b"minimumReleaseAgeExcludes") {
+        if let Some(exclusions) = install_obj.get(b"minimumReleaseAgeExcludes") {
             match &exclusions.data {
                 ExprData::EArray(arr) => 'brk: {
                     let raw = arr.items.slice();
@@ -1580,13 +1497,13 @@ impl<'a> Parser<'a> {
                 }
             }
         };
-        if let Some(public_hoist_pattern_expr) = expr_get(install_obj, b"publicHoistPattern") {
+        if let Some(public_hoist_pattern_expr) = install_obj.get(b"publicHoistPattern") {
             install.public_hoist_pattern = Some(
                 api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
             );
         }
-        if let Some(hoist_pattern_expr) = expr_get(install_obj, b"hoistPattern") {
+        if let Some(hoist_pattern_expr) = install_obj.get(b"hoistPattern") {
             install.hoist_pattern = Some(
                 api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
@@ -1597,7 +1514,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
-        if let Some(config_plugins) = expr_get(serve_obj, b"plugins") {
+        if let Some(config_plugins) = serve_obj.get(b"plugins") {
             let plugins: Option<Vec<Box<[u8]>>> = 'plugins: {
                 if let ExprData::EArray(arr) = &config_plugins.data {
                     let raw = arr.items.slice();
@@ -1622,62 +1539,47 @@ impl<'a> Parser<'a> {
             self.ctx.args.serve_plugins = plugins;
         }
 
-        if let Some(hmr) = expr_get(serve_obj, b"hmr") {
-            if let Some(v) = expr_as_bool(&hmr) {
+        if let Some(hmr) = serve_obj.get(b"hmr") {
+            if let Some(v) = hmr.as_bool() {
                 self.ctx.args.serve_hmr = Some(v);
             }
         }
 
-        if let Some(minify) = expr_get(serve_obj, b"minify") {
-            if let Some(v) = expr_as_bool(&minify) {
+        if let Some(minify) = serve_obj.get(b"minify") {
+            if let Some(v) = minify.as_bool() {
                 self.ctx.args.serve_minify_syntax = Some(v);
                 self.ctx.args.serve_minify_whitespace = Some(v);
                 self.ctx.args.serve_minify_identifiers = Some(v);
             } else if minify.is_object() {
-                if let Some(syntax) = expr_get(&minify, b"syntax") {
+                if let Some(syntax) = minify.get(b"syntax") {
                     self.ctx.args.serve_minify_syntax =
-                        Some(expr_as_bool(&syntax).unwrap_or(false));
+                        Some(syntax.as_bool().unwrap_or(false));
                 }
-                if let Some(whitespace) = expr_get(&minify, b"whitespace") {
+                if let Some(whitespace) = minify.get(b"whitespace") {
                     self.ctx.args.serve_minify_whitespace =
-                        Some(expr_as_bool(&whitespace).unwrap_or(false));
+                        Some(whitespace.as_bool().unwrap_or(false));
                 }
-                if let Some(identifiers) = expr_get(&minify, b"identifiers") {
+                if let Some(identifiers) = minify.get(b"identifiers") {
                     self.ctx.args.serve_minify_identifiers =
-                        Some(expr_as_bool(&identifiers).unwrap_or(false));
+                        Some(identifiers.as_bool().unwrap_or(false));
                 }
             } else {
                 self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
             }
         }
 
-        if let Some(expr) = expr_get(serve_obj, b"define") {
-            self.expect(&expr, ExprTag::EObject)?;
-            let obj = expr.data.e_object().expect("infallible: variant checked");
-            let properties = obj.properties.slice();
-            let mut keys: Vec<Box<[u8]>> = Vec::new();
-            let mut values: Vec<Box<[u8]>> = Vec::new();
-            for prop in properties {
-                let ExprData::EString(v) = &prop.value.as_ref().expect("infallible: prop has value").data else {
-                    continue;
-                };
-                let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data else {
-                    continue;
-                };
-                keys.push(estring_to_owned(&*k, self.bump));
-                values.push(estring_to_owned(&*v, self.bump));
-            }
-            self.ctx.args.serve_define = Some(api::StringMap { keys, values });
+        if let Some(expr) = serve_obj.get(b"define") {
+            self.ctx.args.serve_define = Some(self.parse_define_map(&expr)?);
         }
         self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
 
-        if let Some(public_path) = expr_get(serve_obj, b"publicPath") {
-            if let Some(v) = expr_as_string(&public_path, self.bump) {
+        if let Some(public_path) = serve_obj.get(b"publicPath") {
+            if let Some(v) = public_path.as_string(self.bump) {
                 self.ctx.args.serve_public_path = Some(v.into());
             }
         }
 
-        if let Some(env) = expr_get(serve_obj, b"env") {
+        if let Some(env) = serve_obj.get(b"env") {
             match &env.data {
                 ExprData::ENull(_) => {
                     self.ctx.args.serve_env_behavior = api::DotEnvBehavior::disable;

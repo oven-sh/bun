@@ -386,11 +386,7 @@ pub enum ForManifestError {
     #[error("InvalidURL")]
     InvalidURL,
 }
-impl From<bun_alloc::AllocError> for ForManifestError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        Self::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ForManifestError);
 impl From<ForManifestError> for bun_core::Error {
     fn from(e: ForManifestError) -> Self {
         match e {
@@ -678,11 +674,7 @@ pub enum ForTarballError {
     #[error("InvalidURL")]
     InvalidURL,
 }
-impl From<bun_alloc::AllocError> for ForTarballError {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        Self::OutOfMemory
-    }
-}
+bun_core::oom_from_alloc!(ForTarballError);
 impl From<ForTarballError> for bun_core::Error {
     fn from(e: ForTarballError) -> Self {
         match e {

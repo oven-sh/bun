@@ -2240,10 +2240,9 @@ pub fn parse_predefined(input: &mut css::Parser, parser: &mut ComponentParser) -
                 None
             };
 
-        // PORT NOTE: reshaped for borrowck — `expect_ident()` borrows the
-        // parser; launder the slice via `src_str` (it points into the input
-        // buffer, see Phase-A `'static` placeholder) so `i` is reusable below.
-        let colorspace: &'static [u8] = unsafe { css::src_str(i.expect_ident()?) };
+        // PORT NOTE: reshaped for borrowck — detach the slice from the
+        // `&mut self` borrow so `i` is reusable below.
+        let colorspace = i.expect_ident_cloned()?;
 
         if let Some(f) = &from {
             if let CssColor::LightDark { light, dark } = f {

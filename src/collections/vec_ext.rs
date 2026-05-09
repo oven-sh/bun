@@ -43,6 +43,20 @@ pub trait VecExt<T>: Sized {
     /// a double-drop (PTR_AUDIT.md class #1: bitwise-copy of Drop-carrying
     /// type while source is still live).
     unsafe fn from_bump_slice(items: &mut [T]) -> Self;
+    /// Safe sibling of [`from_bump_slice`] for `T: Copy` — the
+    /// "source must never be element-dropped again" precondition holds
+    /// vacuously (`Copy` ⇒ no `Drop`), so the bitwise move degenerates to a
+    /// plain copy and needs no `unsafe` at the call site. Takes `&[T]`
+    /// (read-only) since nothing is logically moved out.
+    ///
+    /// Covers the dominant js_parser pattern
+    /// `arena.alloc_slice_copy(&[a, b]) → unsafe { from_bump_slice(..) }` (B-1
+    /// invariant: bump arena outlives the AST). Callers may pass the bump
+    /// slice directly, or skip the intermediate bump alloc entirely and pass
+    /// the stack array — both compile to one memcpy into the global heap.
+    fn from_arena_slice(items: &[T]) -> Self
+    where
+        T: Copy;
     /// Safe sibling of [`from_bump_slice`]: consumes an `ArenaVec` (sole owner
     /// of its elements + arena buffer), bitwise-moves every element into a
     /// fresh global-allocator `Vec<T>`, and leaks the now-logically-empty
@@ -177,6 +191,17 @@ impl<T> VecExt<T> for Vec<T> {
             v.set_len(items.len());
         }
         v
+    }
+    #[inline]
+    fn from_arena_slice(items: &[T]) -> Self
+    where
+        T: Copy,
+    {
+        // For `T: Copy` the `from_bump_slice` bitwise-move is just a memcpy and
+        // the source carries no destructor, so `to_vec()` (which std
+        // specializes to `copy_nonoverlapping` for `Copy` element types) is
+        // bit-identical and requires no `unsafe`.
+        items.to_vec()
     }
     #[inline]
     fn from_bump_vec(src: bun_alloc::ArenaVec<'_, T>) -> Self {

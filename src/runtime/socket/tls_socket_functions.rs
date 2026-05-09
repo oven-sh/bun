@@ -126,7 +126,6 @@ pub mod ffi {
         pub fn SSL_CIPHER_get_version(cipher: *const SSL_CIPHER) -> *const c_char;
 
         // ── X509 ─────────────────────────────────────────────────────────
-        pub fn X509_free(x: *mut X509);
         pub fn X509_up_ref(x: *mut X509) -> c_int;
 
         // ── EVP / EC ──────────────────────────────────────────────────────
@@ -136,11 +135,8 @@ pub mod ffi {
         pub fn EC_KEY_get0_group(key: *const EC_KEY) -> *const EC_GROUP;
         pub fn EC_GROUP_get_curve_name(group: *const EC_GROUP) -> c_int;
 
-        // ── OBJ / ERR ─────────────────────────────────────────────────────
+        // ── OBJ ──────────────────────────────────────────────────────────
         pub fn OBJ_nid2sn(nid: c_int) -> *const c_char;
-        pub fn ERR_reason_error_string(e: u32) -> *const c_char;
-        pub fn ERR_func_error_string(e: u32) -> *const c_char;
-        pub fn ERR_lib_error_string(e: u32) -> *const c_char;
     }
 }
 use crate::node::StringOrBuffer;
@@ -295,7 +291,7 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
             let cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
             if !cert.is_null() {
                 // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
-                let _guard = scopeguard::guard(cert, |c| unsafe { ffi::X509_free(c) });
+                let _guard = scopeguard::guard(cert, |c| unsafe { boringssl::X509_free(c) });
                 // SAFETY: cert is a non-null *mut X509 (null-checked above).
                 return X509::to_js(unsafe { &mut *cert }, global);
             }
@@ -324,7 +320,7 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
     let _guard = scopeguard::guard(cert, |c| {
         if !c.is_null() {
             // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
-            unsafe { ffi::X509_free(c) };
+            unsafe { boringssl::X509_free(c) };
         }
     });
 
@@ -717,7 +713,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
     }
 
     // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
-    let slice = unsafe { core::slice::from_raw_parts(alpn_proto, alpn_proto_len as usize) };
+    let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
     if strings::eql(slice, b"h2") {
         return BunString::static_("h2").to_js(global);
     }
@@ -807,7 +803,7 @@ pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     }
 
     // SAFETY: SSL_SESSION_get0_ticket guarantees `ticket` points to `length` bytes owned by the session.
-    let slice = unsafe { core::slice::from_raw_parts(ticket, length) };
+    let slice = unsafe { bun_core::ffi::slice(ticket, length) };
     jsc::ArrayBuffer::create_buffer(global, slice)
 }
 
@@ -887,8 +883,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             written += 1;
         }
 
-        // SAFETY: ERR_reason_error_string accepts any packed error code; returns null if unknown.
-        let reason_ptr = unsafe { ffi::ERR_reason_error_string(ssl_error) };
+        let reason_ptr = boringssl::ERR_reason_error_string(ssl_error);
         if !reason_ptr.is_null() {
             // SAFETY: ERR_reason_error_string returns a static NUL-terminated C string.
             let reason = unsafe { bun_core::ffi::cstr(reason_ptr) }.to_bytes();
@@ -899,8 +894,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             written += reason.len();
         }
 
-        // SAFETY: ERR_func_error_string accepts any packed error code; returns null if unknown.
-        let func_ptr = unsafe { ffi::ERR_func_error_string(ssl_error) };
+        let func_ptr = boringssl::ERR_func_error_string(ssl_error);
         if !func_ptr.is_null() {
             // SAFETY: ERR_func_error_string returns a static NUL-terminated C string.
             let reason = unsafe { bun_core::ffi::cstr(func_ptr) }.to_bytes();
@@ -913,8 +907,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             }
         }
 
-        // SAFETY: ERR_lib_error_string accepts any packed error code; returns null if unknown.
-        let lib_ptr = unsafe { ffi::ERR_lib_error_string(ssl_error) };
+        let lib_ptr = boringssl::ERR_lib_error_string(ssl_error);
         if !lib_ptr.is_null() {
             // SAFETY: ERR_lib_error_string returns a static NUL-terminated C string.
             let reason = unsafe { bun_core::ffi::cstr(lib_ptr) }.to_bytes();

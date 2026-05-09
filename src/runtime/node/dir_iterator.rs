@@ -411,7 +411,7 @@ mod platform {
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DIRECTORY_INFORMATION,
-        IO_STATUS_BLOCK, UNICODE_STRING, BOOLEAN, FALSE, TRUE,
+        IO_STATUS_BLOCK, UNICODE_STRING, BOOLEAN, FALSE, TRUE, Win32ErrorExt as _,
     };
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
@@ -533,8 +533,7 @@ mod platform {
                     // NT_ERROR status (e.g. parameter validation), the block
                     // is left untouched, so zero-initialize it rather than
                     // reading uninitialized stack if the call fails.
-                    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-                    let mut io: IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
                     if self.first {
                         // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
                         self.buf.fill(0);

@@ -146,13 +146,8 @@ pub mod lib {
     /// duration of the `Archive` / `Entry`).
     #[inline]
     unsafe fn cstr_to_zstr<'a>(p: *const c_char) -> &'a ZStr {
-        if p.is_null() {
-            return ZStr::EMPTY;
-        }
-        // SAFETY: `p` is non-null and NUL-terminated per caller contract.
-        let len = unsafe { libc::strlen(p) };
-        // SAFETY: `p[len] == 0` and `p[..len]` is readable for `'a`.
-        unsafe { ZStr::from_raw(p.cast::<u8>(), len) }
+        // SAFETY: caller contract — `p` is null or NUL-terminated and valid for `'a`.
+        unsafe { ZStr::from_c_ptr(p) }
     }
 
     #[cfg(windows)]
@@ -666,6 +661,18 @@ pub mod lib {
     }
 
     impl ArchiveIterator {
+        /// Borrow the underlying libarchive handle.
+        ///
+        /// SAFETY (invariant): `self.archive` is set to a fresh non-null
+        /// handle by `Archive::read_new()` in [`init`] and remains valid
+        /// until `read_free()` in [`close`]. All `Archive` methods take
+        /// `&self` (FFI interior mutability), so a shared borrow suffices.
+        #[inline]
+        fn archive(&self) -> &Archive {
+            // SAFETY: see doc comment — non-null for the lifetime of `self`.
+            unsafe { &*self.archive }
+        }
+
         pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
             let archive = Archive::read_new();
             // SAFETY: archive_read_new() returns a non-null handle owned by libarchive.
@@ -692,10 +699,7 @@ pub mod lib {
                 }
                 _ => {}
             }
-            // SAFETY: NUL-terminated 'static literal.
-            match a.read_set_options(unsafe {
-                core::ffi::CStr::from_bytes_with_nul_unchecked(b"read_concatenated_archives\0")
-            }) {
+            match a.read_set_options(c"read_concatenated_archives") {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(
                         archive,
@@ -715,16 +719,14 @@ pub mod lib {
         }
 
         pub fn next(&mut self) -> IteratorResult<Option<NextEntry>> {
-            // SAFETY: self.archive is valid for the lifetime of the iterator.
-            let a = unsafe { &*self.archive };
+            let a = self.archive();
             let mut entry: *mut Entry = core::ptr::null_mut();
             loop {
                 return match a.read_next_header(&mut entry) {
                     Result::Retry => continue,
                     Result::Eof => IteratorResult::init_res(None),
                     Result::Ok => {
-                        // SAFETY: entry was set by archive_read_next_header on Ok.
-                        let kind = bun_sys::kind_from_mode(unsafe { (*entry).filetype() } as bun_sys::Mode);
+                        let kind = bun_sys::kind_from_mode(Entry::opaque_ref(entry).filetype() as bun_sys::Mode);
                         if (self.filter & (1u16 << (kind as u8))) != 0 {
                             continue;
                         }
@@ -738,8 +740,7 @@ pub mod lib {
         /// Port of `Iterator.deinit` — Zig returned `Result(void)`, so this
         /// cannot be `Drop`. Explicit-close per PORTING.md §Idiom map.
         pub fn close(self) -> IteratorResult<()> {
-            // SAFETY: self.archive is valid until read_free.
-            let a = unsafe { &*self.archive };
+            let a = self.archive();
             match a.read_close() {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(self.archive, b"failed to close archive read");
@@ -916,6 +917,18 @@ pub mod lib {
         // ever needs it.
     }
     impl Iterator {
+        /// Borrow the underlying libarchive handle.
+        ///
+        /// SAFETY (invariant): `self.archive` is set to a fresh non-null
+        /// handle by `Archive::read_new()` in [`init`] and remains valid
+        /// until `read_free()` in [`deinit`]. All `Archive` methods take
+        /// `&self` (FFI interior mutability), so a shared borrow suffices.
+        #[inline]
+        fn archive(&self) -> &Archive {
+            // SAFETY: see doc comment — non-null for the lifetime of `self`.
+            unsafe { &*self.archive }
+        }
+
         /// Port of `Iterator.init` (bindings.zig). Opens `tarball_bytes` as a
         /// gzip-compressed (gnu)tar archive.
         pub fn init(tarball_bytes: &[u8]) -> IterResult<Self> {
@@ -959,16 +972,14 @@ pub mod lib {
 
         /// Port of `Iterator.next` (bindings.zig).
         pub fn next(&mut self) -> IterResult<Option<IteratorEntry>> {
-            // SAFETY: `archive` came from `Archive::read_new()`.
-            let a = unsafe { &*self.archive };
+            let a = self.archive();
             let mut entry: *mut Entry = core::ptr::null_mut();
             loop {
                 match a.read_next_header(&mut entry) {
                     Result::Retry => continue,
                     Result::Eof => return Ok(None),
                     Result::Ok => {
-                        // SAFETY: on ARCHIVE_OK, `entry` is valid until the next header read.
-                        let kind = bun_sys::kind_from_mode(unsafe { &*entry }.filetype() as bun_sys::Mode);
+                        let kind = bun_sys::kind_from_mode(Entry::opaque_ref(entry).filetype() as bun_sys::Mode);
                         return Ok(Some(IteratorEntry { entry, kind }));
                     }
                     _ => {
@@ -985,8 +996,7 @@ pub mod lib {
         /// underlying `*mut Archive`. NOT a `Drop` impl because the Zig
         /// returns a `Result` the caller inspects for error reporting.
         pub fn deinit(&mut self) -> IterResult<()> {
-            // SAFETY: `archive` came from `Archive::read_new()`.
-            let a = unsafe { &*self.archive };
+            let a = self.archive();
             match a.read_close() {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return Err(IteratorError { archive: self.archive, message: b"failed to close archive read" });
@@ -1487,7 +1497,7 @@ impl Archiver {
                     // it will require us to pull in libiconv
                     // though we should probably validate the utf8 here nonetheless
                     // SAFETY: entry was just populated by read_next_header
-                    let pathname_full = unsafe { (*entry).pathname() };
+                    let pathname_full = lib::Entry::opaque_ref(entry).pathname();
                     let pathname_bytes = pathname_full.as_bytes();
 
                     // TODO(port): std.mem.tokenizeScalar + .rest() — approximated by
@@ -1521,7 +1531,7 @@ impl Archiver {
 
                     // SAFETY: entry valid
                     let size: usize =
-                        usize::try_from(unsafe { (*entry).size() }.max(0)).unwrap();
+                        usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
                     if size > 0 {
                         // PORT NOTE: Zig used `dir.openFile(pathname, .{ .mode = .write_only })`.
                         let Ok(opened) =
@@ -1621,10 +1631,10 @@ impl Archiver {
                     // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
                     // SAFETY: entry was just populated by read_next_header
                     #[cfg(windows)]
-                    let pathname_z = unsafe { (*entry).pathname_w() };
+                    let pathname_z = lib::Entry::opaque_ref(entry).pathname_w();
                     // SAFETY: entry was just populated by read_next_header
                     #[cfg(not(windows))]
-                    let pathname_z = unsafe { (*entry).pathname() };
+                    let pathname_z = lib::Entry::opaque_ref(entry).pathname();
 
                     if A::HAS_ON_FIRST_DIRECTORY_NAME {
                         if appender.needs_first_dirname() {
@@ -1649,7 +1659,7 @@ impl Archiver {
                     }
 
                     // SAFETY: entry valid
-                    let kind = bun_sys::kind_from_mode(unsafe { (*entry).filetype() });
+                    let kind = bun_sys::kind_from_mode(lib::Entry::opaque_ref(entry).filetype());
 
                     if options.npm {
                         // - ignore entries other than files (`true` can only be returned if type is file)
@@ -1761,7 +1771,7 @@ impl Archiver {
                     match kind {
                         bun_sys::FileKind::Directory => {
                             // SAFETY: entry valid
-                            let mut mode = i32::try_from(unsafe { (*entry).perm() }).expect("int cast");
+                            let mut mode = i32::try_from(lib::Entry::opaque_ref(entry).perm()).expect("int cast");
 
                             // if dirs are readable, then they should be listable
                             // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -1815,7 +1825,7 @@ impl Archiver {
                         }
                         bun_sys::FileKind::SymLink => {
                             // SAFETY: entry valid
-                            let link_target = unsafe { (*entry).symlink() };
+                            let link_target = lib::Entry::opaque_ref(entry).symlink();
                             #[cfg(unix)]
                             {
                                 // Validate that the symlink target doesn't escape the extraction directory.
@@ -1877,7 +1887,7 @@ impl Archiver {
                             #[cfg(not(windows))]
                             let mode: bun_sys::Mode = bun_sys::Mode::try_from(
                                 // SAFETY: entry valid
-                                unsafe { (*entry).perm() } | 0o666,
+                                lib::Entry::opaque_ref(entry).perm() | 0o666,
                             )
                             .unwrap();
 
@@ -1971,7 +1981,7 @@ impl Archiver {
 
                             // SAFETY: entry valid
                             let size: usize =
-                                usize::try_from(unsafe { (*entry).size() }.max(0)).unwrap();
+                                usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
 
                             if size > 0 {
                                 if let Some(ctx_) = ctx.as_deref_mut() {
@@ -2125,10 +2135,8 @@ impl Archiver {
 // Helper: std.mem.sliceAsBytes equivalent for OSPathChar slices.
 #[inline]
 fn slice_as_bytes(s: &[OSPathChar]) -> &[u8] {
-    // SAFETY: OSPathChar is u8 on posix / u16 on windows; both are POD with no padding.
-    unsafe {
-        core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), core::mem::size_of_val(s))
-    }
+    // OSPathChar is u8 on posix / u16 on windows; both are bytemuck::Pod.
+    bytemuck::cast_slice(s)
 }
 
 // ported from: src/libarchive/libarchive.zig

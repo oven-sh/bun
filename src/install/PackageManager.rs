@@ -770,7 +770,7 @@ impl PackageManager {
         ctx: Command::Context,
         cli: CommandLineArguments,
         subcommand: Subcommand,
-    ) -> Result<(*mut PackageManager, Box<[u8]>), Error> {
+    ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
         init(ctx, cli, subcommand)
     }
 }
@@ -1156,9 +1156,7 @@ fn configure_env_for_scripts_run(
         // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
         let thread_count = bun_core::get_thread_count();
         if thread_count > 2 {
-            // SAFETY: `this_transpiler.env` was set by `Transpiler::init` and is
-            // never null on the script-config path (mirrors Zig `*DotEnv.Loader`).
-            let t_env = unsafe { &mut *this_transpiler.env };
+            let t_env = this_transpiler.env_mut();
             if !t_env.has(b"JOBS") {
                 let mut int_buf = [0u8; 10];
                 let mut cursor = &mut int_buf[..];
@@ -1235,7 +1233,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let _node_gyp_tempdir_guard = scopeguard::guard(node_gyp_tempdir, |d| d.close());
+    let _node_gyp_tempdir_guard = bun_sys::CloseOnDrop::dir(node_gyp_tempdir);
     // PORT NOTE: reshaped for borrowck — `defer node_gyp_tempdir.close()`
 
     #[cfg(windows)]
@@ -1252,7 +1250,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     // `bun_sys::Dir` has no `create_file`; route through `File::openat` with the
     // same flags `std.fs.Dir.createFile` uses (`O_WRONLY|O_CREAT|O_TRUNC`).
     let node_gyp_file = match bun_sys::File::openat(
-        _node_gyp_tempdir_guard.fd,
+        node_gyp_tempdir.fd,
         FILE_NAME.as_bytes(),
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
         MODE,
@@ -1266,7 +1264,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let mut node_gyp_file = scopeguard::guard(node_gyp_file, |f| { let _ = f.close(); });
+    let _close_node_gyp_file = bun_sys::CloseOnDrop::file(&node_gyp_file);
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
@@ -1429,17 +1427,23 @@ pub fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Returns `*mut PackageManager` (not `&'static mut`) to match Zig's non-exclusive
-/// `*PackageManager` (PackageManager.zig:568). Thread-pool workers (`UninstallTask::run`,
-/// npm `SaveTask`, `Repository` git ops) deref `get()` concurrently with the main thread
-/// once `http::HTTPThread::init` has spawned below; a `&'static mut` here would alias
-/// those projections under Stacked Borrows. Callers form their own scoped `&mut` only
-/// across regions where no worker thread is yet derefing `get()`.
+/// Returns `&'static mut PackageManager` — the process-singleton (held in
+/// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
+/// exactly once on the single CLI dispatch thread (PackageManager.zig:568). Every
+/// CLI command immediately reborrows the result as `&mut` for the command's
+/// duration; centralising the deref here removes a dozen identical
+/// `unsafe { &mut *ptr }` blocks at call sites.
+///
+/// Thread-pool workers (`UninstallTask::run`, npm `SaveTask`, `Repository` git ops)
+/// project `&(*get()).field` concurrently once tasks are scheduled — same
+/// aliasing story as before this change (the prior callers already held `&mut`
+/// across those points). The raw [`get`] accessor remains `*mut` for those
+/// worker-side projections.
 pub fn init(
     ctx: Command::Context,
     cli: CommandLineArguments,
     subcommand: Subcommand,
-) -> Result<(*mut PackageManager, Box<[u8]>), Error> {
+) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
     // TODO(port): narrow error set
     if cli.global {
         // Zig: `if (ctx.install) |opts|` — non-consuming peek. `ctx.install` is
@@ -2254,7 +2258,13 @@ pub fn init(
         (*manager_ptr).timestamp_for_manifest_cache_control = timestamp_for_manifest_cache_control;
     }
 
-    Ok((manager_ptr, original_cwd_clone))
+    // SAFETY: `manager_ptr` is `holder::RAW_PTR`, written once by
+    // `allocate_package_manager()` above and fully initialized via `ptr::write`
+    // earlier in this function. `init()` is called exactly once per process on
+    // the CLI dispatch thread; the returned `&'static mut` is the sole
+    // first-class reference handed out (worker threads project fields via the
+    // raw [`get`] accessor, never via this reference).
+    Ok((unsafe { &mut *manager_ptr }, original_cwd_clone))
 }
 
 pub fn init_with_runtime(

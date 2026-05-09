@@ -164,30 +164,15 @@ impl CallFrame {
     }
 
     pub fn is_from_bun_main(&self, vm: &VM) -> bool {
-        // SAFETY: FFI call into JSC C++; both pointers are valid for the call duration.
-        unsafe { Bun__CallFrame__isFromBunMain(self, vm) }
+        Bun__CallFrame__isFromBunMain(self, vm)
     }
 
     pub fn get_caller_src_loc(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
-        let mut str = core::mem::MaybeUninit::<bun_string::String>::uninit();
+        let mut str = bun_string::String::default();
         let mut line: c_uint = 0;
         let mut column: c_uint = 0;
-        // SAFETY: FFI call writes into the three out-params; all pointers valid.
-        unsafe {
-            Bun__CallFrame__getCallerSrcLoc(
-                self,
-                global_this,
-                str.as_mut_ptr(),
-                &raw mut line,
-                &raw mut column,
-            );
-        }
-        CallerSrcLoc {
-            // SAFETY: Bun__CallFrame__getCallerSrcLoc fully initializes `str`.
-            str: unsafe { str.assume_init() },
-            line,
-            column,
-        }
+        Bun__CallFrame__getCallerSrcLoc(self, global_this, &mut str, &mut line, &mut column);
+        CallerSrcLoc { str, line, column }
     }
 
     pub fn describe_frame(&self) -> &ZStr {
@@ -424,14 +409,19 @@ impl<'a> Drop for ArgumentsSlice<'a> {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `CallFrame`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles;
+// `&T` is ABI-identical to non-null `*const T`. Out-params are exclusive `&mut`
+// to plain `#[repr(C)]` PODs. `describeFrame` returns a raw C string that the
+// caller must NUL-scan, so it stays `unsafe fn`.
 unsafe extern "C" {
-    fn Bun__CallFrame__isFromBunMain(cf: *const CallFrame, vm: *const VM) -> bool;
-    fn Bun__CallFrame__getCallerSrcLoc(
-        cf: *const CallFrame,
-        global: *const JSGlobalObject,
-        out_str: *mut bun_string::String,
-        out_line: *mut c_uint,
-        out_column: *mut c_uint,
+    safe fn Bun__CallFrame__isFromBunMain(cf: &CallFrame, vm: &VM) -> bool;
+    safe fn Bun__CallFrame__getCallerSrcLoc(
+        cf: &CallFrame,
+        global: &JSGlobalObject,
+        out_str: &mut bun_string::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
     );
     fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const c_char;
 }

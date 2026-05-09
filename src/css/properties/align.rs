@@ -10,9 +10,6 @@ use crate::prefixes::Feature;
 use crate::compat;
 
 use crate::css_properties::flex::{FlexLinePack, BoxPack, FlexPack, BoxAlign, FlexAlign, FlexItemAlign, BoxOrdinalGroup};
-// SAFETY: see `css_parser::src_str` — Token payloads borrow the parser's source/arena,
-// laundered to `'static` until Phase B threads `<'a>` through `Token`.
-use crate::css_parser::src_str;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // AlignContent
@@ -79,10 +76,7 @@ pub enum BaselinePosition {
 impl BaselinePosition {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        // SAFETY: `expect_ident` returns a sub-slice of `input.tokenizer.src`;
-        // detach the borrow so `input` is reusable for the follow-up
-        // `expect_ident_matching` calls below (see `css_parser::src_str`).
-        let ident = unsafe { src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         // TODO(port): bun.ComptimeEnumMap(..).getASCIIICaseInsensitive — using
         // css::match_ignore_ascii_case! (lightningcss-style) in Phase B.
@@ -168,8 +162,7 @@ impl JustifyContent {
         }
 
         let location = input.current_source_location();
-        // SAFETY: see `src_str` — borrow detached so the slice can be stored in `Token`.
-        let ident = unsafe { src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
         if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
@@ -332,8 +325,7 @@ impl JustifySelf {
         }
 
         let location = input.current_source_location();
-        // SAFETY: see `src_str` — borrow detached so the slice can be stored in `Token`.
-        let ident = unsafe { src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
         if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
             Ok(JustifySelf::Left { overflow })
@@ -495,8 +487,7 @@ impl JustifyItems {
         }
 
         let location = input.current_source_location();
-        // SAFETY: see `src_str` — borrow detached so the slice can be stored in `Token`.
-        let ident = unsafe { src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
         if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
@@ -557,15 +548,12 @@ pub enum LegacyJustify {
 impl LegacyJustify {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        // SAFETY: see `src_str` — borrow detached so `input` is reusable for the
-        // nested `expect_ident*` calls below.
-        let ident = unsafe { src_str(input.expect_ident()?) };
+        let ident = input.expect_ident_cloned()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
         if bun_string::strings::eql_case_insensitive_ascii(ident, b"legacy", true) {
             let inner_location = input.current_source_location();
-            // SAFETY: see `src_str`.
-            let inner_ident = unsafe { src_str(input.expect_ident()?) };
+            let inner_ident = input.expect_ident_cloned()?;
             if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"left", true) {
                 return Ok(LegacyJustify::Left);
             } else if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"right", true) {

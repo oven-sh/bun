@@ -146,8 +146,7 @@ pub fn install_with_manager(
 
                 if unsafe { (*ctx.log).errors } > 0 {
                     manager.log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()))
-                        .map_err(|_| bun_core::err!("WriteFailed"))?;
+                        .print(std::ptr::from_mut(Output::error_writer()))?;
                     manager.log_mut().reset();
                 }
                 Output::flush();
@@ -245,8 +244,7 @@ pub fn install_with_manager(
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
                             manager.log_mut()
-                                .print(std::ptr::from_mut(Output::error_writer()))
-                                .map_err(|_| bun_core::err!("WriteFailed"))?;
+                                .print(std::ptr::from_mut(Output::error_writer()))?;
                         }
                         Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
@@ -254,8 +252,7 @@ pub fn install_with_manager(
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
                             manager.log_mut()
-                                .print(std::ptr::from_mut(Output::error_writer()))
-                                .map_err(|_| bun_core::err!("WriteFailed"))?;
+                                .print(std::ptr::from_mut(Output::error_writer()))?;
                         }
                         Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
@@ -638,8 +635,7 @@ pub fn install_with_manager(
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
                     manager.log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()))
-                        .map_err(|_| bun_core::err!("WriteFailed"))?;
+                        .print(std::ptr::from_mut(Output::error_writer()))?;
                 }
                 Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
@@ -647,8 +643,7 @@ pub fn install_with_manager(
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
                     manager.log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()))
-                        .map_err(|_| bun_core::err!("WriteFailed"))?;
+                        .print(std::ptr::from_mut(Output::error_writer()))?;
                 }
                 Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
@@ -749,8 +744,7 @@ pub fn install_with_manager(
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager.log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()))
-        .map_err(|_| bun_core::err!("WriteFailed"))?;
+        .print(std::ptr::from_mut(Output::error_writer()))?;
     manager.log_mut().reset();
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
@@ -1050,8 +1044,7 @@ pub fn install_with_manager(
 
     if log_level != Options::LogLevel::Silent {
         manager.log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))
-            .map_err(|_| bun_core::err!("WriteFailed"))?;
+            .print(std::ptr::from_mut(Output::error_writer()))?;
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();

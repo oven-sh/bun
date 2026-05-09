@@ -33,7 +33,7 @@ pub mod dependencies;
 pub mod css_modules;
 #[path = "small_list.rs"]
 pub mod small_list;
-pub use small_list::SmallList;
+pub use small_list::{SmallList, SmallListCssExt};
 
 // ─── B-2 round 3: rule-tree hubs un-gated ─────────────────────────────────
 // `properties/`, `rules/`, `selectors/`, `media_query` now compile for real
@@ -92,6 +92,23 @@ pub use css_parser::{
 // it's `*const [u8]` (matches `error.rs` / `values::ident` field shape) and
 // becomes `&'bump [u8]` once the arena lifetime is plumbed.
 pub type Str = *const [u8];
+
+/// Dereference an arena-owned [`Str`] into a slice borrow.
+///
+/// This is the **single** named entry point for the Phase-A `&*(p: *const [u8])`
+/// pattern; every call site shares the same invariant (parser source/arena is
+/// immutable for the session and outlives every value constructed from it), so
+/// the SAFETY justification lives here once instead of being repeated ~70×.
+/// The `'static` return lifetime is the Phase-A placeholder — Phase B threads
+/// `'bump`, `Str` becomes `&'bump [u8]`, and this fn is deleted.
+///
+/// # Safety
+/// `p` must be a non-null fat pointer into the parser's source text or bump
+/// arena, and that backing storage must outlive the returned reference.
+#[inline(always)]
+pub unsafe fn arena_str(p: Str) -> &'static [u8] {
+    &*p
+}
 pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 pub use properties::custom::{TokenList, TokenListFns};
@@ -243,15 +260,6 @@ pub use logical::{LogicalGroup, PropertyCategory};
 pub use rules::import::ImportConditions;
 pub use properties::PropertyIdTag;
 pub use css_parser::BundlerStyleSheet;
-/// `composes: ... from ...` source kind. The real enum lives in the gated
-/// `css_modules.rs` body; until that un-gates, expose a data-only mirror so
-/// `scanImportsAndExports::__css_validation` type-checks.
-// TODO(port): replace with `pub use css_modules::ComposeFrom` once that body
-// un-gates.
-pub enum ComposeFrom {
-    Global,
-    File(Str),
-}
 
 // ───────────────────────────── VendorPrefix ─────────────────────────────
 // Hoisted from css_parser.rs so leaf modules (targets, prefixes) can compile

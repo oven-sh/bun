@@ -324,11 +324,7 @@ pub mod ssl_wrapper {
         OutOfMemory,
         InvalidOptions,
     }
-    impl From<InitError> for bun_core::Error {
-        fn from(e: InitError) -> Self {
-            bun_core::Error::from_name(<&'static str>::from(e))
-        }
-    }
+    bun_core::named_error_set!(InitError);
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum WriteDataError {
@@ -336,11 +332,7 @@ pub mod ssl_wrapper {
         WantRead,
         WantWrite,
     }
-    impl From<WriteDataError> for bun_core::Error {
-        fn from(e: WriteDataError) -> Self {
-            bun_core::Error::from_name(<&'static str>::from(e))
-        }
-    }
+    bun_core::named_error_set!(WriteDataError);
 
     impl<T: Copy> SSLWrapper<T> {
         /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to
@@ -1642,8 +1634,7 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         let host_z: &core::ffi::CStr = if host.len() < stack.len() {
             stack[..host.len()].copy_from_slice(host);
             stack[host.len()] = 0;
-            // SAFETY: stack[host.len()] == 0 written above; bytes before are `host`.
-            unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&stack[..=host.len()]) }
+            bun_core::ZStr::from_buf(&stack, host.len()).as_cstr()
         } else {
             heap = {
                 let mut v = Vec::with_capacity(host.len() + 1);
@@ -1651,8 +1642,7 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
                 v.push(0);
                 v
             };
-            // SAFETY: heap[host.len()] == 0 pushed above.
-            unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&heap[..]) }
+            bun_core::ZStr::from_slice_with_nul(&heap).as_cstr()
         };
 
         // Zig `?*Owner` is null-niche optimized (8 bytes); the dispatch

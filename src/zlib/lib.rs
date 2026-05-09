@@ -154,19 +154,15 @@ pub struct ZlibReader<'a, W, const BUFFER_SIZE: usize> {
     pub state: ZlibReaderState,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ZlibReaderState {
-    Uninitialized,
-    Inflating,
-    End,
-    Error,
-}
+pub use bun_core::compress::State;
+pub type ZlibReaderState = State;
+pub type ZlibReaderArrayListState = State;
+pub type ZlibCompressorArrayListState = State;
 
 impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
-        // SAFETY: mi_malloc is a plain C allocator; null on OOM.
         // TODO(port): simplify — mi_malloc returns *mut c_void already; `orelse unreachable` → expect non-null
-        let p = unsafe { mimalloc::mi_malloc((items * len) as usize) };
+        let p = mimalloc::mi_malloc((items * len) as usize);
         if p.is_null() {
             unreachable!();
         }
@@ -191,8 +187,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             context: writer,
             input,
             buf: [0u8; BUFFER_SIZE],
-            // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (matches Zig `undefined` then full assign).
-            zlib: unsafe { bun_core::ffi::zeroed_unchecked() },
+            zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderState::Uninitialized,
         });
 
@@ -379,8 +374,7 @@ impl ZlibAllocator {
             };
         }
 
-        // SAFETY: mi_calloc is a plain C allocator; null on OOM.
-        let p = unsafe { mimalloc::mi_calloc(items as usize, len as usize) };
+        let p = mimalloc::mi_calloc(items as usize, len as usize);
         if p.is_null() {
             bun::out_of_memory();
         }
@@ -412,14 +406,6 @@ pub struct ZlibReaderArrayList<'a> {
     pub zlib: zStream_struct,
     // PORT NOTE: allocator field dropped (global mimalloc)
     pub state: ZlibReaderArrayListState,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ZlibReaderArrayListState {
-    Uninitialized,
-    Inflating,
-    End,
-    Error,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -465,8 +451,7 @@ impl<'a> ZlibReaderArrayList<'a> {
         let mut zlib_reader = Box::new(Self {
             input,
             list_ptr: list,
-            // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (overwritten below).
-            zlib: unsafe { bun_core::ffi::zeroed_unchecked() },
+            zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderArrayListState::Uninitialized,
         });
 
@@ -917,18 +902,9 @@ pub struct ZlibCompressorArrayList<'a> {
     pub state: ZlibCompressorArrayListState,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ZlibCompressorArrayListState {
-    Uninitialized,
-    Inflating,
-    End,
-    Error,
-}
-
 impl<'a> ZlibCompressorArrayList<'a> {
     pub unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
-        // SAFETY: mi_malloc is a plain C allocator; null on OOM.
-        let p = unsafe { mimalloc::mi_malloc((items * len) as usize) };
+        let p = mimalloc::mi_malloc((items * len) as usize);
         if p.is_null() {
             unreachable!();
         }
@@ -961,8 +937,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         let mut zlib_reader = Box::new(Self {
             input,
             list_ptr: list,
-            // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (overwritten below).
-            zlib: unsafe { bun_core::ffi::zeroed_unchecked() },
+            zlib: bun_core::ffi::zeroed(),
             state: ZlibCompressorArrayListState::Uninitialized,
         });
 

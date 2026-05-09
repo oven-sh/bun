@@ -187,30 +187,27 @@ impl Worker {
             // own [u32 len][u8 kind] frames ride inside it unchanged.
             use bun_sys::windows::libuv as uv;
 
-            // SAFETY: all-zero is a valid uv::Pipe (matches Zig std.mem.zeroes).
-            // Zig `errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();`:
-            // the guard owns the heap allocation until `adopt_pipe` succeeds and
-            // transfers it into `this.ipc.backend.pipe`. On any error return
-            // before that point (spawn_process / start_with_pipe / adopt_pipe
-            // false) the guard `close_and_destroy`s — which handles both the
-            // never-init'd case (frees the Box directly) and the post-spawn
-            // case (uv_close + free). Defused via `into_inner` on success.
-            let ipc_pipe = scopeguard::guard(
-                bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() })),
-                // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
-                |p| unsafe { uv::Pipe::close_and_destroy(p) },
-            );
+            let ipc_pipe = bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
+            // Zig spec: `errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();`
+            // The guard owns the raw Box ptr; `close_and_destroy` handles both
+            // never-initialized (loop_ null → free directly) and initialized
+            // (uv_close + free in callback). Disarmed only after `adopt_pipe`
+            // succeeds and the Channel takes ownership. The guard captures only
+            // the raw ptr, so it nests cleanly under the outer `this` guard.
+            let ipc_pipe_guard = scopeguard::guard(ipc_pipe, |p| {
+                // SAFETY: `p` is the live Box-allocated uv_pipe_t; sole owner
+                // on every error path (extra_pipes is drained back to raw below).
+                unsafe { uv::Pipe::close_and_destroy(p) };
+            });
 
             // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
             // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
-            this.extra_fd_stdio = [Stdio::Ipc(*ipc_pipe)];
+            this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                // SAFETY: all-zero is a valid uv::Pipe.
-                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
-                // SAFETY: all-zero is a valid uv::Pipe.
-                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
-                extra_fds: vec![Stdio::Ipc(*ipc_pipe)].into_boxed_slice(),
+                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))),
+                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))),
+                extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
                     loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
@@ -227,36 +224,48 @@ impl Worker {
                         Output::err(e, "spawnProcess failed for test worker", ());
                         bun_core::err!("SpawnFailed")
                     })?;
-            // Zig `defer spawned.extra_pipes.deinit()`: `WindowsStdioResult::Buffer`
-            // holds a raw non-owning `*mut uv::Pipe`, so dropping the Vec at end
-            // of scope only frees list capacity (no element destructors) —
-            // matches Zig. The same `ipc_pipe` allocation appears in
-            // `extra_pipes[0]` and in the `ipc_pipe` guard above; sole ownership
-            // stays with the guard until `adopt_pipe`, so there is no
-            // double-free when `spawned` drops.
+            // Zig `defer spawned.extra_pipes.deinit()` only freed the ArrayList
+            // backing (items were raw `*uv.Pipe` with no destructor). The Rust
+            // port made `WindowsStdioResult::Buffer` hold `Box<uv::Pipe>`, and
+            // `spawn_process_windows` does `heap::take(ipc_pipe)` into it — so
+            // the Vec now holds a second `Box` to the SAME heap address that
+            // `ipc_pipe_guard` / `adopt_pipe` claim. Drain the Vec and release
+            // each Box back to a raw ptr so the Vec drop is inert and
+            // `ipc_pipe_guard` remains the sole owner across the
+            // `start_with_pipe` error window below.
+            for item in core::mem::take(&mut spawned.extra_pipes) {
+                if let spawn::WindowsStdioResult::Buffer(p) = item {
+                    let raw = bun_core::heap::into_raw(p);
+                    debug_assert_eq!(raw, ipc_pipe, "extra_pipes Box must wrap ipc_pipe");
+                    let _ = raw;
+                }
+            }
             this.process = Some(spawned.to_process(coord.vm.event_loop(), false));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                // SAFETY: `pipe` is the Box-allocated `*mut uv::Pipe` produced by
-                // spawn_process; ownership transfers into the reader's `Source`
-                // (heap::take inside `start_with_pipe`).
-                unsafe { this.out.reader.start_with_pipe(pipe) }
+                // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
+                // ownership transfers into the reader's `Source` (heap::take inside).
+                unsafe { this.out.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
                     .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
                 // SAFETY: see stdout above.
-                unsafe { this.err.reader.start_with_pipe(pipe) }
+                unsafe { this.err.reader.start_with_pipe(bun_core::heap::into_raw(pipe)) }
                     .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
-            // `ipc_pipe` was Box-allocated above and initialised by
-            // spawn_process; ownership of the *mut Pipe transfers to the Channel
-            // on success (it does the Box::from_raw internally). On failure the
-            // caller retains ownership and the `ipc_pipe` guard fires on return.
-            if !this.ipc.adopt_pipe(coord.vm, *ipc_pipe) {
+            // `ipc_pipe` was Box-allocated via heap::into_raw above and
+            // initialised by spawn_process; ownership of the *mut Pipe transfers
+            // to the Channel on success (it does the Box::from_raw internally).
+            // On failure the caller still owns it (Channel.rs:294) and the
+            // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
+            if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
                 return Err(bun_core::err!("ChannelAdoptFailed"));
             }
-            // Ownership now in `this.ipc.backend.pipe`; disarm the errdefer.
-            let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe);
+            // Channel now owns the Box; disarm the errdefer so end-of-block
+            // doesn't double-close. Any later error (watch_or_reap) is handled
+            // by the outer `this` guard, whose `Channel::default()` assignment
+            // drops the old Channel and `close_and_destroy`s the pipe via Drop.
+            let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe_guard);
         }
 
         let process_ptr = this.process.expect("set above");
@@ -312,13 +321,22 @@ impl Worker {
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
+    /// Borrow the parent `Coordinator`.
+    ///
+    /// SAFETY (invariant): `coord` is a backref to the owning `Coordinator`,
+    /// set at construction and valid for the worker's entire lifetime (the
+    /// coordinator owns all workers). Never null.
+    #[inline]
+    fn coord(&self) -> &Coordinator<'static> {
+        // SAFETY: see doc comment — non-null backref valid for `'_`.
+        unsafe { &*self.coord }
+    }
+
     pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
-        // SAFETY: coord backref valid for worker lifetime.
-        unsafe { (*self.coord).vm.event_loop() }
+        self.coord().vm.event_loop()
     }
     pub fn loop_(&self) -> *mut r#async::Loop {
-        // SAFETY: coord backref valid for worker lifetime.
-        unsafe { (*self.coord).vm.uv_loop() }
+        self.coord().vm.uv_loop()
     }
 
     pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {

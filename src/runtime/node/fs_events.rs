@@ -137,13 +137,11 @@ pub const K_FS_EVENTS_SYSTEM: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_USER_DROPPED
     | K_FS_EVENT_STREAM_EVENT_FLAG_UNMOUNT
     | K_FS_EVENT_STREAM_EVENT_FLAG_ROOT_CHANGED;
 
-// TODO(port): mutable globals — Phase B may want OnceLock / parking_lot statics
-static FSEVENTS_MUTEX: Mutex = Mutex::new();
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 // PORTING.md §Global mutable state: written under FSEVENTS_DEFAULT_LOOP_MUTEX,
-// read with double-checked-locking. RacyCell — the mutex is the synchronizer.
-static FSEVENTS_DEFAULT_LOOP: bun_core::RacyCell<Option<NonNull<FSEventsLoop>>> =
-    bun_core::RacyCell::new(None);
+// read with double-checked-locking. AtomicPtr gives safe load/store; the mutex
+// serialises the init/teardown writes (Acquire/Release publishes the pointee).
+static FSEVENTS_DEFAULT_LOOP: AtomicPtr<FSEventsLoop> = AtomicPtr::new(ptr::null_mut());
 
 #[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
@@ -190,25 +188,16 @@ pub struct CoreFoundation {
     pub run_loop_default_mode: *const CFStringRef,
 }
 
+// SAFETY: `handle` is a leaked dlopen handle (never dlclosed; see deinit note
+// below) and `run_loop_default_mode` points at a process-static CFStringRef
+// inside the loaded framework. Everything else is a resolved fn pointer.
+// Sharing/sending bitwise copies across threads is sound.
+unsafe impl Send for CoreFoundation {}
+unsafe impl Sync for CoreFoundation {}
+
 impl CoreFoundation {
     pub fn get() -> CoreFoundation {
-        // SAFETY: FSEVENTS_CF is only mutated under FSEVENTS_MUTEX inside init_library()
-        unsafe {
-            if let Some(cf) = FSEVENTS_CF.read() {
-                return cf;
-            }
-        }
-        let _guard = FSEVENTS_MUTEX.lock_guard();
-        unsafe {
-            if let Some(cf) = FSEVENTS_CF.read() {
-                return cf;
-            }
-        }
-
-        init_library();
-
-        // SAFETY: init_library() populated FSEVENTS_CF or panicked
-        unsafe { FSEVENTS_CF.read().unwrap() }
+        *FSEVENTS_CF.get_or_init(init_core_foundation)
     }
 
     // We Actually never deinit it
@@ -244,25 +233,15 @@ pub struct CoreServices {
     pub k_fs_event_stream_event_id_since_now: FSEventStreamEventId,
 }
 
+// SAFETY: `handle` is a leaked dlopen handle (never dlclosed); the rest are
+// resolved fn pointers and a u64 sentinel. Sharing/sending across threads is
+// sound.
+unsafe impl Send for CoreServices {}
+unsafe impl Sync for CoreServices {}
+
 impl CoreServices {
     pub fn get() -> CoreServices {
-        // SAFETY: FSEVENTS_CS is only mutated under FSEVENTS_MUTEX inside init_library()
-        unsafe {
-            if let Some(cs) = FSEVENTS_CS.read() {
-                return cs;
-            }
-        }
-        let _guard = FSEVENTS_MUTEX.lock_guard();
-        unsafe {
-            if let Some(cs) = FSEVENTS_CS.read() {
-                return cs;
-            }
-        }
-
-        init_library();
-
-        // SAFETY: init_library() populated FSEVENTS_CS or panicked
-        unsafe { FSEVENTS_CS.read().unwrap() }
+        *FSEVENTS_CS.get_or_init(init_core_services)
     }
 
     // We Actually never deinit it
@@ -274,13 +253,12 @@ impl CoreServices {
     // }
 }
 
-// PORTING.md §Global mutable state: written once under `FSEVENTS_MUTEX` in
-// `init_library()`, read with double-checked-locking. RacyCell over `Copy`
-// fn-ptr tables.
-static FSEVENTS_CF: bun_core::RacyCell<Option<CoreFoundation>> = bun_core::RacyCell::new(None);
-static FSEVENTS_CS: bun_core::RacyCell<Option<CoreServices>> = bun_core::RacyCell::new(None);
+// Write-once fn-ptr tables; `OnceLock` provides the one-init + acquire/release
+// publish that the prior RacyCell + hand-rolled double-checked-lock encoded.
+static FSEVENTS_CF: std::sync::OnceLock<CoreFoundation> = std::sync::OnceLock::new();
+static FSEVENTS_CS: std::sync::OnceLock<CoreServices> = std::sync::OnceLock::new();
 
-fn init_library() {
+fn init_core_foundation() -> CoreFoundation {
     // Zig used std.c.dlopen with .{ .LAZY = true, .LOCAL = true }
     let fsevents_cf_handle = bun_sys::dlopen(
         zstr!("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"),
@@ -290,40 +268,39 @@ fn init_library() {
         panic!("Cannot Load CoreFoundation");
     };
 
-    // SAFETY: only called under FSEVENTS_MUTEX
-    unsafe {
-        FSEVENTS_CF.write(Some(CoreFoundation {
-            handle: fsevents_cf_handle,
-            array_create: dlsym(fsevents_cf_handle, c"CFArrayCreate")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            release: dlsym(fsevents_cf_handle, c"CFRelease")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_add_source: dlsym(fsevents_cf_handle, c"CFRunLoopAddSource")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_get_current: dlsym(fsevents_cf_handle, c"CFRunLoopGetCurrent")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_remove_source: dlsym(fsevents_cf_handle, c"CFRunLoopRemoveSource")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_run: dlsym(fsevents_cf_handle, c"CFRunLoopRun")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_source_create: dlsym(fsevents_cf_handle, c"CFRunLoopSourceCreate")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_source_signal: dlsym(fsevents_cf_handle, c"CFRunLoopSourceSignal")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_stop: dlsym(fsevents_cf_handle, c"CFRunLoopStop")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_wake_up: dlsym(fsevents_cf_handle, c"CFRunLoopWakeUp")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            string_create_with_file_system_representation: dlsym(
-                fsevents_cf_handle,
-                c"CFStringCreateWithFileSystemRepresentation",
-            )
+    CoreFoundation {
+        handle: fsevents_cf_handle,
+        array_create: dlsym(fsevents_cf_handle, c"CFArrayCreate")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-            run_loop_default_mode: dlsym(fsevents_cf_handle, c"kCFRunLoopDefaultMode")
-                .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        }));
+        release: dlsym(fsevents_cf_handle, c"CFRelease")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_add_source: dlsym(fsevents_cf_handle, c"CFRunLoopAddSource")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_get_current: dlsym(fsevents_cf_handle, c"CFRunLoopGetCurrent")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_remove_source: dlsym(fsevents_cf_handle, c"CFRunLoopRemoveSource")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_run: dlsym(fsevents_cf_handle, c"CFRunLoopRun")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_source_create: dlsym(fsevents_cf_handle, c"CFRunLoopSourceCreate")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_source_signal: dlsym(fsevents_cf_handle, c"CFRunLoopSourceSignal")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_stop: dlsym(fsevents_cf_handle, c"CFRunLoopStop")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_wake_up: dlsym(fsevents_cf_handle, c"CFRunLoopWakeUp")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        string_create_with_file_system_representation: dlsym(
+            fsevents_cf_handle,
+            c"CFStringCreateWithFileSystemRepresentation",
+        )
+        .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_default_mode: dlsym(fsevents_cf_handle, c"kCFRunLoopDefaultMode")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
     }
+}
 
+fn init_core_services() -> CoreServices {
     let fsevents_cs_handle = bun_sys::dlopen(
         zstr!("/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices"),
         bun_sys::RTLD::LAZY | bun_sys::RTLD::LOCAL,
@@ -332,27 +309,24 @@ fn init_library() {
         panic!("Cannot Load CoreServices");
     };
 
-    // SAFETY: only called under FSEVENTS_MUTEX
-    unsafe {
-        FSEVENTS_CS.write(Some(CoreServices {
-            handle: fsevents_cs_handle,
-            fs_event_stream_create: dlsym(fsevents_cs_handle, c"FSEventStreamCreate")
-                .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-            fs_event_stream_invalidate: dlsym(fsevents_cs_handle, c"FSEventStreamInvalidate")
-                .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-            fs_event_stream_release: dlsym(fsevents_cs_handle, c"FSEventStreamRelease")
-                .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-            fs_event_stream_schedule_with_run_loop: dlsym(
-                fsevents_cs_handle,
-                c"FSEventStreamScheduleWithRunLoop",
-            )
+    CoreServices {
+        handle: fsevents_cs_handle,
+        fs_event_stream_create: dlsym(fsevents_cs_handle, c"FSEventStreamCreate")
             .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-            fs_event_stream_start: dlsym(fsevents_cs_handle, c"FSEventStreamStart")
-                .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-            fs_event_stream_stop: dlsym(fsevents_cs_handle, c"FSEventStreamStop")
-                .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-            k_fs_event_stream_event_id_since_now: 18446744073709551615,
-        }));
+        fs_event_stream_invalidate: dlsym(fsevents_cs_handle, c"FSEventStreamInvalidate")
+            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
+        fs_event_stream_release: dlsym(fsevents_cs_handle, c"FSEventStreamRelease")
+            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
+        fs_event_stream_schedule_with_run_loop: dlsym(
+            fsevents_cs_handle,
+            c"FSEventStreamScheduleWithRunLoop",
+        )
+        .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
+        fs_event_stream_start: dlsym(fsevents_cs_handle, c"FSEventStreamStart")
+            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
+        fs_event_stream_stop: dlsym(fsevents_cs_handle, c"FSEventStreamStop")
+            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
+        k_fs_event_stream_event_id_since_now: 18446744073709551615,
     }
 }
 
@@ -565,12 +539,12 @@ impl FSEventsLoop {
     ) {
         // SAFETY: event_paths is a `char **` of length num_events per FSEvents API
         let paths_ptr = event_paths as *const *const c_char;
-        let paths = unsafe { core::slice::from_raw_parts(paths_ptr, num_events) };
+        let paths = unsafe { bun_core::ffi::slice(paths_ptr, num_events) };
         // SAFETY: info was set to self in _schedule()
         let loop_ = unsafe { &mut *info.cast::<FSEventsLoop>() };
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags =
-            unsafe { core::slice::from_raw_parts(event_flags.cast_const(), num_events) };
+            unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
         // Hold the mutex for the whole iteration. `unregisterWatcher` on the
         // main thread nulls the entry under this same mutex and then the
@@ -968,36 +942,26 @@ pub fn watch(
     ctx: *mut c_void,
 ) -> Result<Box<FSEventsWatcher>, bun_core::Error> {
     // TODO(port): narrow error set
-    // SAFETY: FSEVENTS_DEFAULT_LOOP is only mutated under FSEVENTS_DEFAULT_LOOP_MUTEX
-    unsafe {
-        if let Some(loop_) = FSEVENTS_DEFAULT_LOOP.read() {
-            return Ok(FSEventsWatcher::init(
-                loop_.as_ptr(),
-                path,
-                recursive,
-                callback,
-                update_end,
-                ctx,
-            ));
-        }
-        let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
-        if FSEVENTS_DEFAULT_LOOP.read().is_none() {
-            FSEVENTS_DEFAULT_LOOP.write(NonNull::new(FSEventsLoop::init()?));
-            // First loop ever created → arrange `close_and_wait` to run from
-            // `Bun__onExit`. Spec `Global.zig:220` runs it BEFORE
-            // `runExitCallbacks()`, so push to the pre-exit list rather than
-            // the generic atexit list (storage lives in bun_core; forward dep).
-            bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
-        }
-        Ok(FSEventsWatcher::init(
-            FSEVENTS_DEFAULT_LOOP.read().unwrap().as_ptr(),
-            path,
-            recursive,
-            callback,
-            update_end,
-            ctx,
-        ))
+    let loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
+    if !loop_.is_null() {
+        return Ok(FSEventsWatcher::init(
+            loop_, path, recursive, callback, update_end, ctx,
+        ));
     }
+    let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
+    let mut loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
+    if loop_.is_null() {
+        loop_ = FSEventsLoop::init()?;
+        FSEVENTS_DEFAULT_LOOP.store(loop_, Ordering::Release);
+        // First loop ever created → arrange `close_and_wait` to run from
+        // `Bun__onExit`. Spec `Global.zig:220` runs it BEFORE
+        // `runExitCallbacks()`, so push to the pre-exit list rather than
+        // the generic atexit list (storage lives in bun_core; forward dep).
+        bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
+    }
+    Ok(FSEventsWatcher::init(
+        loop_, path, recursive, callback, update_end, ctx,
+    ))
 }
 
 /// `extern "C"` thunk so this fits `bun_core::Global::ExitFn`.
@@ -1010,13 +974,13 @@ pub fn close_and_wait() {
     }
 
     #[cfg(target_os = "macos")]
-    // SAFETY: FSEVENTS_DEFAULT_LOOP is only mutated under FSEVENTS_DEFAULT_LOOP_MUTEX
-    unsafe {
-        if let Some(loop_) = FSEVENTS_DEFAULT_LOOP.read() {
+    {
+        let loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
+        if !loop_.is_null() {
             let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
             // SAFETY: loop_ was heap-allocated in FSEventsLoop::init(); reconstitute to run Drop
-            drop(bun_core::heap::take(loop_.as_ptr()));
-            FSEVENTS_DEFAULT_LOOP.write(None);
+            unsafe { drop(bun_core::heap::take(loop_)) };
+            FSEVENTS_DEFAULT_LOOP.store(ptr::null_mut(), Ordering::Release);
         }
     }
 }

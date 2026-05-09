@@ -301,11 +301,7 @@ mod macho {
 }
 
 mod pe {
-    // TODO(port): move to standalone_graph_sys
-    unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphPELength() -> u64;
-        pub(super) fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
-    }
+    use bun_exe_format::pe::{Bun__getStandaloneModuleGraphPEData, Bun__getStandaloneModuleGraphPELength};
 
     /// Returns `(base, len)` for the embedded `.bun` PE section data. Kept as a
     /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
@@ -1072,6 +1068,7 @@ pub fn inject(
             out_buf[zname.len()] = 0;
 
             use bun_sys::windows as w;
+            use bun_sys::windows::Win32ErrorExt as _;
             // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
             // retain the pointers past return.
             if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
@@ -1905,7 +1902,7 @@ pub fn to_executable(
         fd.close();
         fd = Fd::invalid();
 
-        use bun_sys::windows;
+        use bun_sys::windows::{self, Win32ErrorExt as _};
         // Move the file using MoveFileExW
         // SAFETY: NUL-terminated wide strings constructed above. Pass the
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's

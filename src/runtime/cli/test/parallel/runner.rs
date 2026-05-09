@@ -207,7 +207,7 @@ pub fn run_as_coordinator(
         reporter,
         files: sorted,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
-        cwd: unsafe { (*FileSystem::instance()).top_level_dir },
+        cwd: FileSystem::get().top_level_dir,
         argv,
         envps,
         workers: &mut workers, // TODO(port): lifetime — Coordinator borrows workers slice
@@ -640,8 +640,7 @@ pub fn run_as_worker(
     vm_ref.arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
-    // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &*vm_ref.transpiler.env };
+    let env = vm_ref.env_loader();
     let worker_tmp = env.get(b"BUN_TEST_WORKER_TMP");
     if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() && reporter.reporters.junit.is_none() {
         reporter.reporters.junit = Some(test_command::JunitReporter::init());

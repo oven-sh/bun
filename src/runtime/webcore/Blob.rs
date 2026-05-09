@@ -155,13 +155,13 @@ pub trait BlobExt {
         &mut self,
         _global_this: &JSGlobalObject,
         ctx: *mut c_void,
-        write_bytes: unsafe extern "C" fn(*mut c_void, *const u8, u32),
+        write_bytes: crate::generated_classes::WriteBytesFn,
     );
     fn on_structured_clone_transfer(
         &mut self,
         _global_this: &JSGlobalObject,
         _ctx: *mut c_void,
-        _write: unsafe extern "C" fn(*mut c_void, *const u8, usize),
+        _write: crate::generated_classes::WriteBytesFn,
     );
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
@@ -667,7 +667,7 @@ impl BlobExt for Blob {
         &mut self,
         _global_this: &JSGlobalObject,
         ctx: *mut c_void,
-        write_bytes: unsafe extern "C" fn(*mut c_void, *const u8, u32),
+        write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
         let mut writer = StructuredCloneWriter { ctx, impl_: write_bytes };
         // TODO(port): wrap StructuredCloneWriter in a bun_io::Write adapter.
@@ -678,7 +678,7 @@ impl BlobExt for Blob {
         &mut self,
         _global_this: &JSGlobalObject,
         _ctx: *mut c_void,
-        _write: unsafe extern "C" fn(*mut c_void, *const u8, usize),
+        _write: crate::generated_classes::WriteBytesFn,
     ) {
         // no-op
     }
@@ -3571,8 +3571,9 @@ impl FormDataContext<'_> {
 
 struct StructuredCloneWriter {
     ctx: *mut c_void,
-    // TODO(port): callconv(jsc.conv) — use // TODO(b2-blocked): #[bun_jsc::host_call] ABI on the fn ptr type.
-    impl_: unsafe extern "C" fn(*mut c_void, *const u8, u32),
+    // callconv(jsc.conv) — codegen `WriteBytesFn` cfg-splits to `"sysv64"`
+    // on Windows-x64, `"C"` elsewhere.
+    impl_: crate::generated_classes::WriteBytesFn,
 }
 
 impl StructuredCloneWriter {

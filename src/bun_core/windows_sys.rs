@@ -42,6 +42,13 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 /// `UNICODE_STRING` (`ntdef.h`).
 pub use bun_windows_sys::UNICODE_STRING as UnicodeString;
 
+/// `CURDIR` (`winternl.h` / phnt) — `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory`.
+#[repr(C)]
+pub struct Curdir {
+    pub DosPath: UnicodeString,
+    pub Handle: HANDLE,
+}
+
 // SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
 // for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in
 // `bun_windows_sys`) because the `Zeroable` trait is owned by `bun_core`.
@@ -57,16 +64,23 @@ pub struct ProcessParameters {
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
-    // CURDIR CurrentDirectory — UNICODE_STRING (16) + HANDLE (8).
-    _current_directory: [u8; 24],
+    /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. The handle
+    /// is what Zig's `std.fs.cwd().fd` returns on Windows; `Fd::cwd()` reads
+    /// it so `openat(Fd::cwd(), …)` resolves relative paths against the live
+    /// process cwd via `NtCreateFile`'s `RootDirectory`.
+    pub CurrentDirectory: Curdir,
     pub DllPath: UnicodeString,
     pub ImagePathName: UnicodeString,
     pub CommandLine: UnicodeString,
     // (fields beyond CommandLine are not read here)
 }
-// `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at 0x20 and
-// `ImagePathName` at 0x60 on x64.
+// `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at 0x20,
+// `CurrentDirectory.Handle` at 0x48, and `ImagePathName` at 0x60 on x64.
 const _: () = assert!(core::mem::offset_of!(ProcessParameters, hStdInput) == 0x20);
+const _: () = assert!(
+    core::mem::offset_of!(ProcessParameters, CurrentDirectory)
+        + core::mem::offset_of!(Curdir, Handle) == 0x48
+);
 const _: () = assert!(core::mem::offset_of!(ProcessParameters, ImagePathName) == 0x60);
 #[repr(C)]
 pub struct PebView {

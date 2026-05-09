@@ -8,8 +8,9 @@ use core::ffi::c_void;
 
 struct StructuredCloneWriter {
     ctx: *mut c_void,
-    // callconv(jsc.conv) → codegen `WriteBytesFn` typedef.
-    impl_: unsafe extern "C" fn(*mut c_void, *const u8, u32),
+    // callconv(jsc.conv) → codegen `WriteBytesFn` typedef (cfg-splits to
+    // `"sysv64"` on Windows-x64).
+    impl_: crate::generated_classes::WriteBytesFn,
 }
 
 impl StructuredCloneWriter {
@@ -383,7 +384,7 @@ impl BlockList {
         _global: &JSGlobalObject,
         ctx: *mut c_void,
         // codegen `WriteBytesFn` typedef (jsc.conv).
-        write_bytes: unsafe extern "C" fn(*mut c_void, *const u8, u32),
+        write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
         let _guard = this.mutex.lock_guard();
         this.ref_();

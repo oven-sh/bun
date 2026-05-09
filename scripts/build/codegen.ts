@@ -608,6 +608,11 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureImpl.h"),
     resolve(cfg.codegenDir, "ZigGeneratedClasses.zig"),
     resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.txt"),
+    // Rust sibling: include!()'d by src/runtime/generated_classes.rs. Must be
+    // a declared output so the cargo edge (which lists this in rustInputs)
+    // re-invokes when generate-classes.ts changes — cargo doesn't track
+    // include!() deps and the includer shim's mtime never moves.
+    resolve(cfg.codegenDir, "generated_classes.rs"),
   ];
 
   n.build({
@@ -763,6 +768,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     js2nativeZig,
+    // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
+    // a declared output so the cargo edge re-invokes when bundle-modules.ts /
+    // generate-js2native.ts changes — the includer shim's mtime never moves.
+    resolve(cfg.codegenDir, "generated_js2native.rs"),
   ];
 
   n.build({

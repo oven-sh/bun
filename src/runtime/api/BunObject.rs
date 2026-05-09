@@ -235,15 +235,21 @@ pub mod bun_object {
     macro_rules! export_callbacks {
         ($( $(#[$attr:meta])* $sym:ident => $target:expr ),* $(,)?) => {
             $(
-                $(#[$attr])*
-                #[unsafe(no_mangle)]
-                pub extern "C" fn $sym(
-                    g: *mut JSGlobalObject,
-                    f: *mut CallFrame,
-                ) -> JSValue {
-                    // SAFETY: JSC always passes valid pointers here.
-                    let (g, f) = unsafe { (&*g, &*f) };
-                    bun_jsc::to_js_host_call(g, || $target(g, f))
+                // Zig spec (BunObject.zig) — `callconv(jsc.conv)`. C++ declares
+                // these via `BUN_DECLARE_HOST_FUNCTION` → `JSC_HOST_CALL_ATTRIBUTES`
+                // = SysV on Windows-x64. Mismatching `extern "C"` here puts
+                // `globalObject` in RCX vs C++'s RDI → garbage deref.
+                bun_jsc::jsc_host_abi! {
+                    $(#[$attr])*
+                    #[unsafe(no_mangle)]
+                    pub unsafe fn $sym(
+                        g: *mut JSGlobalObject,
+                        f: *mut CallFrame,
+                    ) -> JSValue {
+                        // SAFETY: JSC always passes valid pointers here.
+                        let (g, f) = unsafe { (&*g, &*f) };
+                        bun_jsc::to_js_host_call(g, || $target(g, f))
+                    }
                 }
             )*
         };
@@ -267,16 +273,22 @@ pub mod bun_object {
     macro_rules! export_lazy_prop_callbacks {
         ($( $sym:ident => $target:path ),* $(,)?) => {
             $(
-                #[unsafe(no_mangle)]
-                pub extern "C" fn $sym(
-                    this: *mut JSGlobalObject,
-                    object: *mut JSObject,
-                ) -> JSValue {
-                    // SAFETY: JSC always passes valid pointers here.
-                    let (g, o) = unsafe { (&*this, &*object) };
-                    bun_jsc::to_js_host_call(g, || {
-                        IntoLazyPropResult::into_lazy_prop_result($target(g, o))
-                    })
+                // Zig spec (BunObject.zig:108-112) — `LazyPropertyCallback` is
+                // `callconv(jsc.conv)`. C++ declares the extern as `SYSV_ABI`
+                // (`BunObject+exports.h:91`); on Windows-x64 that's RDI/RSI,
+                // not RCX/RDX, so `extern "C"` reads garbage for both args.
+                bun_jsc::jsc_host_abi! {
+                    #[unsafe(no_mangle)]
+                    pub unsafe fn $sym(
+                        this: *mut JSGlobalObject,
+                        object: *mut JSObject,
+                    ) -> JSValue {
+                        // SAFETY: JSC always passes valid pointers here.
+                        let (g, o) = unsafe { (&*this, &*object) };
+                        bun_jsc::to_js_host_call(g, || {
+                            IntoLazyPropResult::into_lazy_prop_result($target(g, o))
+                        })
+                    }
                 }
             )*
         };

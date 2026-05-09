@@ -481,6 +481,24 @@ pub mod kernel32 {
             dwOptions: DWORD,
         ) -> BOOL;
         pub fn GetFileSizeEx(hFile: HANDLE, lpFileSize: *mut LARGE_INTEGER) -> BOOL;
+        /// `ReadFile` (`fileapi.h`) — synchronous read on a HANDLE.
+        /// `lpOverlapped` may be null for non-OVERLAPPED I/O.
+        pub fn ReadFile(
+            hFile: HANDLE,
+            lpBuffer: *mut u8,
+            nNumberOfBytesToRead: DWORD,
+            lpNumberOfBytesRead: *mut DWORD,
+            lpOverlapped: *mut c_void,
+        ) -> BOOL;
+        /// `WriteFile` (`fileapi.h`) — synchronous write on a HANDLE.
+        /// `lpOverlapped` may be null for non-OVERLAPPED I/O.
+        pub fn WriteFile(
+            hFile: HANDLE,
+            lpBuffer: *const u8,
+            nNumberOfBytesToWrite: DWORD,
+            lpNumberOfBytesWritten: *mut DWORD,
+            lpOverlapped: *mut c_void,
+        ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.

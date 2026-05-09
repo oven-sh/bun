@@ -192,18 +192,16 @@ impl JSObject {
         }
     }
 
-    #[track_caller]
     pub fn get_index(this: JSValue, global_this: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         // we don't use fromJSHostCall, because it will assert that if there is an exception
         // then the JSValue is zero. the function this ends up calling can return undefined
         // with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
-        //
-        // Spec JSObject.zig:143 — explicit `TopExceptionScope` +
-        // `returnIfException()`.
-        let value = crate::host_fn::from_js_host_call_generic(global_this, || {
-            JSC__JSObject__getIndex(this, global_this, i)
-        })?;
+        // TODO(b2-blocked): TopExceptionScope::init is in-place (Pin); skipped in stub path.
+        let value = JSC__JSObject__getIndex(this, global_this, i);
+        if global_this.has_exception() {
+            return Err(JsError::Thrown);
+        }
         debug_assert!(!value.is_empty());
         Ok(value)
     }
@@ -219,7 +217,7 @@ impl JSObject {
         // SAFETY: pointers are valid for the duration of the call; C++ does not
         // retain them. `global.as_ptr()` is the centralized opaque-handle FFI
         // conversion (interior mutability — C++ may throw through it).
-        crate::host_fn::from_js_host_call_generic(global, || unsafe {
+        unsafe {
             JSC__JSObject__putRecord(
                 self,
                 global.as_ptr(),
@@ -227,7 +225,11 @@ impl JSObject {
                 values.as_mut_ptr(),
                 values.len(),
             );
-        })
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+        Ok(())
     }
 
     /// This will not call getters or be observable from JavaScript.

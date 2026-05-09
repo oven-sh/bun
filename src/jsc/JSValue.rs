@@ -126,16 +126,11 @@ impl JSValue {
                 reject: host_fn::JSHostFn,
             );
         }
-        // Spec JSValue.zig:1495 wraps in a `TopExceptionScope` +
-        // `assertNoExceptionExceptTermination()`; every call site discards the
-        // termination, so keep the `()` return but install the scope so
-        // `BUN_JSC_validateExceptionChecks=1` sees the inner ThrowScope's
-        // simulated throw as checked.
         // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
         // is live, and `resolve`/`reject` are valid C-ABI host fns.
         // `as_ptr()` derives `*mut` through `UnsafeCell` (interior-mut
         // provenance) rather than laundering `&T as *const T as *mut T`.
-        let _ = host_fn::from_js_host_call_generic(global, || unsafe {
+        unsafe {
             JSC__JSValue___then(
                 self,
                 global.as_ptr(),
@@ -143,7 +138,7 @@ impl JSValue {
                 resolve,
                 reject,
             );
-        });
+        }
     }
 
     /// Like [`then`] but the context is a `JSValue` (not a raw pointer encoded
@@ -166,13 +161,9 @@ impl JSValue {
                 reject: host_fn::JSHostFn,
             );
         }
-        // Spec JSValue.zig:1487 — `TopExceptionScope` +
-        // `assertNoExceptionExceptTermination()`; see `then()` above.
         // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
         // is live, and `resolve`/`reject` are valid C-ABI host fns.
-        let _ = host_fn::from_js_host_call_generic(global, || unsafe {
-            JSC__JSValue___then(self, global.as_ptr(), ctx, resolve, reject)
-        });
+        unsafe { JSC__JSValue___then(self, global.as_ptr(), ctx, resolve, reject) }
     }
 
     /// Like [`then`], but the context is a `JSValue` instead of a raw pointer.
@@ -690,17 +681,9 @@ impl JSValue {
     pub fn coerce<T: CoerceTo>(self, global: &JSGlobalObject) -> JsResult<T> {
         T::coerce_from(self, global)
     }
-    #[track_caller]
     pub fn to_js_string(self, global: &JSGlobalObject) -> JsResult<*mut JSString> {
-        // Spec: `bun.cpp.JSC__JSValue__toStringOrNull` (codegen) wraps in an
-        // `ExceptionValidationScope` and asserts `null ⟺ exception`. Without a
-        // scope here the C++ ThrowScope's `simulateThrow()` leaves
-        // `m_needExceptionCheck` set and the *next* scope ctor asserts under
-        // `BUN_JSC_validateExceptionChecks=1`.
-        let p = host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__toStringOrNull(self, global)
-        })?;
-        if p.is_null() { Err(JsError::Thrown) } else { Ok(p) }
+        let p = JSC__JSValue__toStringOrNull(self, global);
+        if p.is_null() || global.has_exception() { Err(JsError::Thrown) } else { Ok(p) }
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         bun_string_jsc::from_js(self, global)
@@ -887,7 +870,6 @@ impl JSValue {
         Ok(function.is_cell() && function.is_callable())
     }
 
-    #[track_caller]
     pub fn get(self, global: &JSGlobalObject, property: impl AsRef<[u8]>) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
         // Spec (JSValue.zig:1536-1540) only routes to `fastGet` when the key is
@@ -897,17 +879,11 @@ impl JSValue {
         // a dynamic `b"asyncIterator"` would fetch the *symbol* property instead
         // of the *string* property. Always go through the by-name FFI; callers
         // that statically know they want a builtin should call `fast_get` directly.
-        //
-        // Spec: `bun.cpp.JSC__JSValue__getIfPropertyExistsImpl` (codegen) wraps
-        // in an `ExceptionValidationScope` and asserts `.zero ⟺ exception`.
-        // Route through `from_js_host_call` so a `TopExceptionScope` is on the
-        // stack while the C++ ThrowScope runs — required for
-        // `BUN_JSC_validateExceptionChecks=1` to not assert on the *next*
-        // scope ctor.
         // SAFETY: `global` is live; bytes valid for the call.
-        let v = host_fn::from_js_host_call(global, || unsafe {
+        let v = unsafe {
             JSC__JSValue__getIfPropertyExistsImpl(self, global, property.as_ptr(), property.len())
-        })?;
+        };
+        if global.has_exception() { return Err(JsError::Thrown); }
         // JSValue.zig:1545 — `.property_does_not_exist_on_object` (encoded 0x4 = ValueDeleted)
         // and `.js_undefined` map to None. `.zero` ⇒ exception (handled above).
         if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() { Ok(None) } else { Ok(Some(v)) }
@@ -1161,12 +1137,9 @@ impl JSValue {
             JSC__JSValue__putToPropertyKey(target, global, key, value)
         })
     }
-    #[track_caller]
     pub fn put_index(self, global: &JSGlobalObject, i: u32, out: JSValue) -> JsResult<()> {
-        // Spec JSValue.zig:399 — `fromJSHostCallGeneric`.
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__putIndex(self, global, i, out)
-        })
+        JSC__JSValue__putIndex(self, global, i, out);
+        if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
     }
     /// `JSValue.putBunStringOneOrArray` (JSValue.zig) — put `key`/`value` into
     /// `self`. If `key` is already present on the object, create an array for
@@ -1184,12 +1157,9 @@ impl JSValue {
 
 
     /// `JSValue.push` (JSValue.zig:404) — append to an array-typed JS value.
-    #[track_caller]
     pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
-        // Spec JSValue.zig:404 — `fromJSHostCallGeneric`.
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__push(self, global, out)
-        })
+        JSC__JSValue__push(self, global, out);
+        if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
     }
 
     /// `JSValue.getOptionalInt` (JSValue.zig:1896) — typed integer property
@@ -1895,20 +1865,13 @@ impl JSValue {
         JSC__JSValue__put(self, global, key, value)
     }
     /// `JSValue.getOwn` — own-property lookup (no prototype walk).
-    #[track_caller]
     pub fn get_own(
         self,
         global: &JSGlobalObject,
         property_name: &bun_string::String,
     ) -> JsResult<Option<JSValue>> {
-        // Spec JSValue.zig:1580 — explicit `TopExceptionScope` +
-        // `returnIfException()`. Without a scope here the C++ ThrowScope's
-        // destructor `simulateThrow()` leaves `m_needExceptionCheck` set and
-        // `BUN_JSC_validateExceptionChecks=1` asserts on the next scope ctor
-        // (this was the first hit on the `bun -e` startup path).
-        let v = host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__getOwn(self, global, property_name)
-        })?;
+        let v = JSC__JSValue__getOwn(self, global, property_name);
+        if global.has_exception() { return Err(JsError::Thrown); }
         if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
     }
     /// `JSValue.getOwnTruthy` — own-property lookup, filtered to non-undefined.
@@ -2336,16 +2299,14 @@ impl JSValue {
     // ── Path lookup (JSValue.zig:1457). ───────────────────────────────────
     /// `JSValue.getIfPropertyExistsFromPath` — Jest `toHaveProperty` path
     /// resolution (accepts `"a.b[0].c"` string or array path).
-    #[track_caller]
     pub fn get_if_property_exists_from_path(
         self,
         global: &JSGlobalObject,
         path: JSValue,
     ) -> JsResult<JSValue> {
-        // Spec JSValue.zig:1458 — `TopExceptionScope` + `returnIfException()`.
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__getIfPropertyExistsFromPath(self, global, path)
-        })
+        let result = JSC__JSValue__getIfPropertyExistsFromPath(self, global, path);
+        if global.has_exception() { return Err(JsError::Thrown); }
+        Ok(result)
     }
 
     // ── String / RegExp matching (JSValue.zig:1202, 2225). ────────────────

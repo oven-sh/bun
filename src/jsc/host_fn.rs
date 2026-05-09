@@ -570,7 +570,7 @@ pub fn host_setter_result<R: IntoHostSetterReturn>(
     f: impl FnOnce() -> R,
 ) -> bool {
     let mut scope_storage = core::mem::MaybeUninit::uninit();
-    let scope = jsc::ExceptionValidationScope::init(&mut scope_storage, global);
+    let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global);
     let r = match catch_panic(f) {
         Ok(v) => to_js_host_setter_value(global, v.into_host_setter_return()),
         Err(payload) => {
@@ -579,8 +579,6 @@ pub fn host_setter_result<R: IntoHostSetterReturn>(
         }
     };
     scope.assert_exception_presence_matches(!r);
-    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { jsc::ExceptionValidationScope::destroy(scope) };
     r
 }
 
@@ -592,7 +590,7 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
     f: impl FnOnce() -> R,
 ) -> *mut c_void {
     let mut scope_storage = core::mem::MaybeUninit::uninit();
-    let scope = jsc::ExceptionValidationScope::init(&mut scope_storage, global);
+    let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global);
     let ptr = match catch_panic(f) {
         Ok(v) => match v.into_host_construct_return() {
             Ok(p) => p,
@@ -608,8 +606,6 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
         }
     };
     scope.assert_exception_presence_matches(ptr.is_null());
-    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { jsc::ExceptionValidationScope::destroy(scope) };
     ptr
 }
 
@@ -627,7 +623,7 @@ pub fn to_js_host_call(
     f: impl FnOnce() -> JsResult<JSValue>,
 ) -> JSValue {
     let mut scope_storage = core::mem::MaybeUninit::uninit();
-    let scope = jsc::ExceptionValidationScope::init(&mut scope_storage, global_this);
+    let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global_this);
 
     let returned: JsResult<JSValue> = match catch_panic(f) {
         Ok(r) => r,
@@ -643,8 +639,6 @@ pub fn to_js_host_call(
         Err(JsError::Terminated) => JSValue::ZERO,
     };
     scope.assert_exception_presence_matches(normal.is_empty());
-    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { jsc::ExceptionValidationScope::destroy(scope) };
     normal
 }
 
@@ -657,20 +651,14 @@ pub fn to_js_host_call(
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `ExceptionValidationScope::init`, replacing Zig's explicit `@src()` argument.
 #[track_caller]
+#[inline]
 pub fn from_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JSValue,
 ) -> Result<JSValue, JsError> {
-    let mut scope_storage = core::mem::MaybeUninit::uninit();
-    let scope = jsc::ExceptionValidationScope::init(&mut scope_storage, global_this);
-
-    let value = f();
     // Zig: `if (@TypeOf(value) != JSValue) @compileError(...)` — enforced by the
-    // closure return type here.
-    scope.assert_exception_presence_matches(value.is_empty());
-    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { jsc::ExceptionValidationScope::destroy(scope) };
-    if value.is_empty() { Err(JsError::Thrown) } else { Ok(value) }
+    // closure return type here. Body is the `[[ZIG_EXPORT(zero_is_throw)]]` shape.
+    crate::call_zero_is_throw(global_this, f)
 }
 
 /// Generic variant for wrapped FFI calls whose return value tells you nothing about
@@ -679,33 +667,20 @@ pub fn from_js_host_call(
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `TopExceptionScope::init`, replacing Zig's explicit `@src()` argument.
 #[track_caller]
+#[inline]
 pub fn from_js_host_call_generic<R>(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> R,
 ) -> Result<R, JsError> {
-    let mut scope_storage = core::mem::MaybeUninit::uninit();
-    let scope = jsc::TopExceptionScope::init(&mut scope_storage, global_this);
-    // Ensure the C++ scope object is destructed on every return path
-    // (Zig: `defer scope.deinit()`).
-    let mut scope = scopeguard::guard(scope, |s| {
-        // SAFETY: `s` was initialized via `init` above and is destroyed exactly once.
-        unsafe { jsc::TopExceptionScope::destroy(s) };
-    });
-
-    let result = f();
     // supporting JSValue would make it too easy to mix up this function with from_js_host_call
     // from_js_host_call has the benefit of checking that the function is correctly returning an
     // empty value if and only if it has thrown.
     // from_js_host_call_generic is only for functions where the return value tells you nothing
     // about whether an exception was thrown.
     //
-    // alternatively, we could consider something like `comptime exception_sentinel: ?T`
-    // to generically support using a value of any type to signal exceptions (INT_MAX, infinity,
-    // nullptr...?) but it's unclear how often that would be useful
     // TODO(port): static-assert `R != JSValue` (Zig used @compileError; Rust needs a
     // negative trait bound or specialization — neither stable). Phase B: sealed trait trick.
-    scope.return_if_exception()?;
-    Ok(result)
+    crate::call_check_slow(global_this, f)
 }
 
 // ───────────────────────── error-set parsing (comptime) ─────────────────────────

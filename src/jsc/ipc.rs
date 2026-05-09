@@ -2304,29 +2304,26 @@ pub mod IPCHandlers {
     }
 }
 
+#[track_caller]
 pub fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,
 ) -> JsResult<JSValue> {
-    // SAFETY: FFI call into C++ binding; `global_object` is a valid &JSGlobalObject borrowed
-    // for the call duration, and JSValue args are Copy stack values kept alive by conservative
-    // scan. `from_js_host_call` checks `global.has_exception()` for the `.zero` return path.
-    crate::from_js_host_call(global_object, || unsafe {
-        IPCSerialize(global_object, message, handle)
-    })
+    // `[[ZIG_EXPORT(zero_is_throw)]]` — SAFETY: JSValue args are Copy stack values kept
+    // alive by conservative scan.
+    unsafe { crate::cpp::IPCSerialize(global_object, message, handle) }
 }
 
+#[track_caller]
 pub fn ipc_parse(
     global_object: &JSGlobalObject,
     target: JSValue,
     serialized: JSValue,
     fd: JSValue,
 ) -> JsResult<JSValue> {
-    // SAFETY: see `ipc_serialize`.
-    crate::from_js_host_call(global_object, || unsafe {
-        IPCParse(global_object, target, serialized, fd)
-    })
+    // `[[ZIG_EXPORT(zero_is_throw)]]` — SAFETY: see `ipc_serialize`.
+    unsafe { crate::cpp::IPCParse(global_object, target, serialized, fd) }
 }
 
 // ported from: src/jsc/ipc.zig

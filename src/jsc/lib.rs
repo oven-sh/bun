@@ -357,7 +357,18 @@ pub use self::weak::{Weak, WeakRefType};
 
 pub use self::js_type::JSType;
 pub use self::exception::Exception;
-pub use self::top_exception_scope::{TopExceptionScope, ExceptionValidationScope};
+pub use self::top_exception_scope::{
+    TopExceptionScope, TopExceptionScopeGuard, ExceptionValidationScope,
+    ExceptionValidationScopeGuard, SourceLocation,
+    call_zero_is_throw, call_false_is_throw, call_null_is_throw, call_check_slow,
+    call_zero_is_throw_at, call_false_is_throw_at, call_null_is_throw_at, call_check_slow_at,
+};
+/// Generated FFI wrappers for C++ `[[ZIG_EXPORT(mode)]]` functions — Rust analogue of
+/// Zig's `bun.cpp.*`. Emitted by `src/codegen/cppbind.ts` into
+/// `${BUN_CODEGEN_DIR}/cpp.rs` and `include!`d here so every throwing C++ FFI
+/// is reachable as `bun_jsc::cpp::Name(...)` with a properly-scoped exception
+/// check (no `global.has_exception()` after-the-fact).
+pub mod cpp;
 pub use self::js_big_int::JSBigInt;
 pub use self::dom_url::DOMURL;
 pub use self::common_strings::CommonStrings;

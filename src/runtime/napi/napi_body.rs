@@ -60,10 +60,11 @@ impl JSValueNapiExt for JSValue {
         if self.is_cell() { self.js_type() } else { jsc::JSType::Cell }
     }
     fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool> {
-        // SAFETY: FFI; may run JS (getters on Proxy etc.).
-        let r = unsafe { JSC__JSValue__isStrictEqual(self, other, global.as_ptr()) };
-        if global.has_exception() { return Err(jsc::JsError::Thrown); }
-        Ok(r)
+        // SAFETY: FFI; may run JS (getters on Proxy etc.). Zig: `fromJSHostCallGeneric` →
+        // check_slow (open scope before call, then `returnIfException`).
+        bun_jsc::call_check_slow!(global, || unsafe {
+            JSC__JSValue__isStrictEqual(self, other, global.as_ptr())
+        })
     }
     #[inline]
     fn is_async_context_frame(self) -> bool {
@@ -76,10 +77,10 @@ impl JSValueNapiExt for JSValue {
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
     fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue> {
-        // SAFETY: FFI; may throw OOM.
-        let v = unsafe { JSBuffer__bufferFromLength(global.as_ptr(), len as i64) };
-        if global.has_exception() { return Err(jsc::JsError::Thrown); }
-        Ok(v)
+        // SAFETY: FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
+        bun_jsc::call_zero_is_throw!(global, || unsafe {
+            JSBuffer__bufferFromLength(global.as_ptr(), len as i64)
+        })
     }
 }
 

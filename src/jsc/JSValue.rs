@@ -126,6 +126,9 @@ impl JSValue {
                 reject: host_fn::JSHostFn,
             );
         }
+        // Zig (JSValue.zig:1495): `TopExceptionScope` + `assertNoExceptionExceptTermination`.
+        // Every current call site does `catch {}`, so swallow termination.
+        crate::top_scope!(scope, global);
         // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
         // is live, and `resolve`/`reject` are valid C-ABI host fns.
         // `as_ptr()` derives `*mut` through `UnsafeCell` (interior-mut
@@ -139,6 +142,7 @@ impl JSValue {
                 reject,
             );
         }
+        let _ = scope.assert_no_exception_except_termination();
     }
 
     /// Like [`then`] but the context is a `JSValue` (not a raw pointer encoded
@@ -161,9 +165,12 @@ impl JSValue {
                 reject: host_fn::JSHostFn,
             );
         }
+        // Zig (JSValue.zig:1487): `TopExceptionScope` + `assertNoExceptionExceptTermination`.
+        crate::top_scope!(scope, global);
         // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
         // is live, and `resolve`/`reject` are valid C-ABI host fns.
-        unsafe { JSC__JSValue___then(self, global.as_ptr(), ctx, resolve, reject) }
+        unsafe { JSC__JSValue___then(self, global.as_ptr(), ctx, resolve, reject) };
+        let _ = scope.assert_no_exception_except_termination();
     }
 
     /// Like [`then`], but the context is a `JSValue` instead of a raw pointer.
@@ -429,9 +436,10 @@ impl JSValue {
             JSC__JSValue__createObject2(global, key1, key2, value1, value2)
         })
     }
+    #[track_caller]
     pub fn create_empty_array(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
-        let v = JSC__JSValue__createEmptyArray(global, len);
-        if v.is_empty() { Err(JsError::Thrown) } else { Ok(v) }
+        // Zig: `fromJSHostCall` (== `call_zero_is_throw`).
+        crate::call_zero_is_throw(global, || JSC__JSValue__createEmptyArray(global, len))
     }
     /// `JSValue.createBufferFromLength` (JSValue.zig:557) — allocates a Node.js
     /// `Buffer` (the `JSBufferSubclassStructure` Uint8Array subclass) of `len`
@@ -681,9 +689,11 @@ impl JSValue {
     pub fn coerce<T: CoerceTo>(self, global: &JSGlobalObject) -> JsResult<T> {
         T::coerce_from(self, global)
     }
+    #[track_caller]
     pub fn to_js_string(self, global: &JSGlobalObject) -> JsResult<*mut JSString> {
-        let p = JSC__JSValue__toStringOrNull(self, global);
-        if p.is_null() || global.has_exception() { Err(JsError::Thrown) } else { Ok(p) }
+        // `[[ZIG_EXPORT(null_is_throw)]]` — null ⟺ threw.
+        crate::call_null_is_throw(global, || JSC__JSValue__toStringOrNull(self, global))
+            .map(|p| p.as_ptr())
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         bun_string_jsc::from_js(self, global)
@@ -879,11 +889,10 @@ impl JSValue {
         // a dynamic `b"asyncIterator"` would fetch the *symbol* property instead
         // of the *string* property. Always go through the by-name FFI; callers
         // that statically know they want a builtin should call `fast_get` directly.
-        // SAFETY: `global` is live; bytes valid for the call.
+        // `[[ZIG_EXPORT(zero_is_throw)]]` — zero ⟺ threw. SAFETY: bytes valid for the call.
         let v = unsafe {
-            JSC__JSValue__getIfPropertyExistsImpl(self, global, property.as_ptr(), property.len())
-        };
-        if global.has_exception() { return Err(JsError::Thrown); }
+            crate::cpp::JSC__JSValue__getIfPropertyExistsImpl(self, global, property.as_ptr(), property.len())
+        }?;
         // JSValue.zig:1545 — `.property_does_not_exist_on_object` (encoded 0x4 = ValueDeleted)
         // and `.js_undefined` map to None. `.zero` ⇒ exception (handled above).
         if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() { Ok(None) } else { Ok(Some(v)) }
@@ -1137,9 +1146,10 @@ impl JSValue {
             JSC__JSValue__putToPropertyKey(target, global, key, value)
         })
     }
+    #[track_caller]
     pub fn put_index(self, global: &JSGlobalObject, i: u32, out: JSValue) -> JsResult<()> {
-        JSC__JSValue__putIndex(self, global, i, out);
-        if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
+        // Zig: `fromJSHostCallGeneric` (== `call_check_slow`).
+        crate::call_check_slow(global, || JSC__JSValue__putIndex(self, global, i, out))
     }
     /// `JSValue.putBunStringOneOrArray` (JSValue.zig) — put `key`/`value` into
     /// `self`. If `key` is already present on the object, create an array for
@@ -1157,9 +1167,10 @@ impl JSValue {
 
 
     /// `JSValue.push` (JSValue.zig:404) — append to an array-typed JS value.
+    #[track_caller]
     pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
-        JSC__JSValue__push(self, global, out);
-        if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
+        // Zig: `fromJSHostCallGeneric` (== `call_check_slow`).
+        crate::call_check_slow(global, || JSC__JSValue__push(self, global, out))
     }
 
     /// `JSValue.getOptionalInt` (JSValue.zig:1896) — typed integer property
@@ -1870,8 +1881,10 @@ impl JSValue {
         global: &JSGlobalObject,
         property_name: &bun_string::String,
     ) -> JsResult<Option<JSValue>> {
+        // Zig (JSValue.zig:1578): manual `TopExceptionScope` + `returnIfException`.
+        crate::top_scope!(scope, global);
         let v = JSC__JSValue__getOwn(self, global, property_name);
-        if global.has_exception() { return Err(JsError::Thrown); }
+        scope.return_if_exception()?;
         if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
     }
     /// `JSValue.getOwnTruthy` — own-property lookup, filtered to non-undefined.
@@ -1984,14 +1997,10 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
-        let mut scope_storage = core::mem::MaybeUninit::uninit();
-        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
+        crate::top_scope!(scope, global);
         // SAFETY: `global` is live; `callback` has C ABI.
         unsafe { JSC__JSValue__forEachProperty(self, global, ctx, callback) };
-        let result = scope.return_if_exception();
-        // SAFETY: `scope` was init'd above and is destroyed exactly once.
-        unsafe { crate::TopExceptionScope::destroy(scope) };
-        result
+        scope.return_if_exception()
     }
     /// `JSValue.forEachPropertyNonIndexed` (JSValue.zig:87) — like
     /// [`for_each_property`](Self::for_each_property) but skips array-index
@@ -2010,14 +2019,10 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
-        let mut scope_storage = core::mem::MaybeUninit::uninit();
-        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
+        crate::top_scope!(scope, global);
         // SAFETY: `global` is live; `callback` has C ABI.
         unsafe { JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback) };
-        let result = scope.return_if_exception();
-        // SAFETY: `scope` was init'd above and is destroyed exactly once.
-        unsafe { crate::TopExceptionScope::destroy(scope) };
-        result
+        scope.return_if_exception()
     }
     /// `JSValue.forEachPropertyOrdered` (JSValue.zig:105) — like
     /// [`for_each_property`](Self::for_each_property) but visits keys in
@@ -2304,8 +2309,10 @@ impl JSValue {
         global: &JSGlobalObject,
         path: JSValue,
     ) -> JsResult<JSValue> {
+        // Zig (JSValue.zig:1458): manual `TopExceptionScope` + `returnIfException`.
+        crate::top_scope!(scope, global);
         let result = JSC__JSValue__getIfPropertyExistsFromPath(self, global, path);
-        if global.has_exception() { return Err(JsError::Thrown); }
+        scope.return_if_exception()?;
         Ok(result)
     }
 

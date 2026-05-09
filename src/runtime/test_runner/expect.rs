@@ -107,8 +107,15 @@ unsafe extern "C" {
 
 impl AsymmetricMatcherConstructorType {
     pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        // C++ side opens `DECLARE_THROW_SCOPE` and returns -1 ⟺ threw; under
+        // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so
+        // open a validation scope here and assert the sentinel/exception biconditional
+        // (Zig: `bun.cpp.AsymmetricMatcherConstructorType__fromJS` is `zero_is_throw`-shaped
+        // with -1 as the sentinel).
+        bun_jsc::validation_scope!(scope, global_object);
         // SAFETY: FFI call with valid &JSGlobalObject; JSValue is Copy/repr(transparent)
         let result = unsafe { AsymmetricMatcherConstructorType__fromJS(global_object, value) };
+        scope.assert_exception_presence_matches(result == -1);
         Ok(match result {
             -1 => return Err(JsError::Thrown),
             1 => Self::Symbol,
@@ -2820,20 +2827,24 @@ pub mod mock {
     /// over the C++ shim so matchers don't carry their own `extern` blocks.
     /// `zero_is_throw`: a `.zero` return means the throw scope is set.
     #[allow(non_snake_case)]
+    #[track_caller]
     #[inline]
     pub fn JSMockFunction__getCalls(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
         // SAFETY: `global` is live; JSValue is repr(transparent) i64.
-        let ret = unsafe { JSMockFunction__getCalls_raw(global.as_ptr(), value) };
-        if ret == JSValue::ZERO { Err(bun_jsc::JsError::Thrown) } else { Ok(ret) }
+        bun_jsc::call_zero_is_throw(global, || unsafe {
+            JSMockFunction__getCalls_raw(global.as_ptr(), value)
+        })
     }
 
     /// `bun.cpp.JSMockFunction__getReturns` — see `JSMockFunction__getCalls`.
     #[allow(non_snake_case)]
+    #[track_caller]
     #[inline]
     pub fn JSMockFunction__getReturns(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
         // SAFETY: `global` is live; JSValue is repr(transparent) i64.
-        let ret = unsafe { JSMockFunction__getReturns_raw(global.as_ptr(), value) };
-        if ret == JSValue::ZERO { Err(bun_jsc::JsError::Thrown) } else { Ok(ret) }
+        bun_jsc::call_zero_is_throw(global, || unsafe {
+            JSMockFunction__getReturns_raw(global.as_ptr(), value)
+        })
     }
 
     pub fn jest_mock_iterator(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSArrayIterator<'_>> {

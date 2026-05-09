@@ -82,20 +82,16 @@ impl URL {
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
     /// If it fails, the tag is marked Dead
+    #[track_caller]
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
-        let result = URL__getHrefFromJS(value, global);
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Ok(result)
+        // Zig (URL.zig): `fromJSHostCallGeneric` (== `call_check_slow`).
+        crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
     }
 
+    #[track_caller]
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<URL>>> {
-        let result = URL__fromJS(value, global);
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Ok(NonNull::new(result))
+        // Zig (URL.zig): `fromJSHostCallGeneric` (== `call_check_slow`).
+        crate::call_check_slow(global, || URL__fromJS(value, global)).map(NonNull::new)
     }
 
     pub fn from_utf8(input: &[u8]) -> Option<NonNull<URL>> {

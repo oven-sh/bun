@@ -166,27 +166,7 @@ impl AnyPromise {
         }
 
         // Zig: `var scope: jsc.TopExceptionScope = undefined; scope.init(global, @src()); defer scope.deinit();`
-        // The C++ object is placement-constructed into `bytes` and must not move
-        // after init, so stack-allocate via `MaybeUninit` and route every access
-        // through a single raw pointer (Stacked Borrows: keep one provenance root).
-        let mut scope = core::mem::MaybeUninit::<TopExceptionScope>::uninit();
-        let scope_ptr: *mut TopExceptionScope = scope.as_mut_ptr();
-        // SAFETY: `init_in_place` writes into uninit `bytes` via FFI without reading
-        // prior contents (matches the Zig `= undefined; .init()` pattern).
-        unsafe {
-            (*scope_ptr).init_in_place(
-                global_object,
-                SourceLocation {
-                    fn_name: c"AnyPromise::wrap".as_ptr(),
-                    file: c"src/jsc/AnyPromise.rs".as_ptr(),
-                    line: line!(),
-                },
-            );
-        }
-        let _scope_guard = scopeguard::guard(scope_ptr, |s| {
-            // SAFETY: `s` was initialized by `init_in_place` above and has not been destroyed.
-            unsafe { TopExceptionScope::destroy(s) }
-        });
+        crate::top_scope!(scope, global_object);
 
         let mut ctx = Wrapper { f: Some(f) };
         // SAFETY: `ctx` lives on the stack for the duration of the synchronous FFI call;
@@ -203,9 +183,7 @@ impl AnyPromise {
         }
         // C++ converts any thrown exception into a rejection, so a pending non-termination
         // exception here indicates a bug; surface termination as JsTerminated.
-        // SAFETY: `scope_ptr` was initialized above; the short-lived `&mut` reborrow ends
-        // before `_scope_guard` runs `destroy`.
-        unsafe { (*scope_ptr).assert_no_exception_except_termination() }
+        scope.assert_no_exception_except_termination()
             .map_err(|_| JsTerminated::JSTerminated)
     }
 }

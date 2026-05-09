@@ -6244,14 +6244,26 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     // SAFETY: extern "C" FFI; `global_object` is the live VM global.
     // `vm_ptr()` returns the FFI `*mut VM` directly so the C++ side
     // (`JSC::VM&`) receives a pointer with mutable provenance.
-    let reason_str = unsafe {
-        Bun__noSideEffectsToString(
-            global_object.vm_ptr(),
-            global_object.as_ptr(),
-            reason,
-        )
+    //
+    // Zig (VirtualMachine.zig:581-585) opens an explicit `TopExceptionScope`
+    // around the call and clears any exception via the scope; the C++ side has a
+    // `DECLARE_THROW_SCOPE`, so under `BUN_JSC_validateExceptionChecks=1` the
+    // post-call `clear_exception()` (whose own scope ctor asserts) is wrong
+    // without a Rust-side scope live across the call.
+    let reason_str = {
+        crate::top_scope!(scope, global_object);
+        let r = unsafe {
+            Bun__noSideEffectsToString(
+                global_object.vm_ptr(),
+                global_object.as_ptr(),
+                reason,
+            )
+        };
+        if scope.exception().is_some() {
+            scope.clear_exception();
+        }
+        r
     };
-    global_object.clear_exception();
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";

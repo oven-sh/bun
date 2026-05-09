@@ -399,6 +399,267 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
 
 type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "null_is_throw" | "nothrow";
 
+// ─────────────────────────── Rust output (cpp.rs) ───────────────────────────
+//
+// Mirror of `generateZigFn` for the Rust port: each `[[ZIG_EXPORT(mode)]]` C++
+// function gets a typed `pub fn` in `bun_jsc::cpp` that wraps the raw extern in
+// the appropriate exception scope and converts to `JsResult`. The wrapper opens
+// the scope *before* calling into C++ so the callee's `DECLARE_THROW_SCOPE` dtor
+// (which sets `vm.m_needExceptionCheck` under `validateExceptionChecks=1`) is
+// satisfied by the Rust scope's `exception()` query — without this, the next
+// `JSGlobalObject__hasException` ctor asserts.
+//
+// Parameter and return types are emitted as raw C-ABI Rust types (pointers stay
+// `*mut`/`*const`, no `&T` upgrade) so the wrappers compose with whatever
+// newtypes the per-type ergonomic shims (`JSValue::get`, `JSPromise::resolve`,
+// …) hold; those shims forward into `crate::cpp::*`.
+
+// C++ named-type → Rust path. Unlisted types fall back to `core::ffi::c_void`
+// (only ever appears behind a pointer in `extern "C"` signatures, so layout is
+// irrelevant; the per-type shim casts back).
+const rustSharedTypes: Record<string, string> = {
+  // Primitives
+  "bool": "bool",
+  // `char` signedness is platform-dependent (signed on x86_64-linux/windows,
+  // unsigned on aarch64); match Zig's `c_char` so a future by-value return
+  // doesn't silently sign-flip.
+  "char": "core::ffi::c_char",
+  "unsigned char": "u8",
+  "signed char": "i8",
+  "char16_t": "u16",
+  "short": "core::ffi::c_short",
+  "unsigned short": "core::ffi::c_ushort",
+  "int": "core::ffi::c_int",
+  "unsigned": "core::ffi::c_uint",
+  "unsigned int": "core::ffi::c_uint",
+  "long": "core::ffi::c_long",
+  "unsigned long": "core::ffi::c_ulong",
+  "long long": "core::ffi::c_longlong",
+  "unsigned long long": "core::ffi::c_ulonglong",
+  "float": "f32",
+  "double": "f64",
+  "size_t": "usize",
+  "ssize_t": "isize",
+  "int8_t": "i8",
+  "uint8_t": "u8",
+  "int16_t": "i16",
+  "uint16_t": "u16",
+  "int32_t": "i32",
+  "uint32_t": "u32",
+  "int64_t": "i64",
+  "uint64_t": "u64",
+
+  // JSC / Bun
+  "BunString": "bun_string::String",
+  "JSC::EncodedJSValue": "crate::JSValue",
+  "EncodedJSValue": "crate::JSValue",
+  "JSC::JSGlobalObject": "crate::JSGlobalObject",
+  "Zig::GlobalObject": "crate::JSGlobalObject",
+  "ZigException": "crate::zig_exception::ZigException",
+  "ZigString": "bun_string::ZigString",
+  "JSC::VM": "crate::VM",
+  "JSC::JSPromise": "crate::JSPromise",
+  "JSC::JSMap": "crate::JSMap",
+  "JSC::CustomGetterSetter": "crate::CustomGetterSetter",
+  "JSC::SourceProvider": "crate::SourceProvider",
+  "JSC::CallFrame": "crate::CallFrame",
+  "JSC::JSObject": "crate::JSObject",
+  "JSC::JSString": "crate::JSString",
+  "JSC::Exception": "crate::Exception",
+  "JSC::JSInternalPromise": "crate::JSInternalPromise",
+  "WTF::StringImpl": "core::ffi::c_void",
+  "WebCore::DOMURL": "crate::DOMURL",
+  "WebCore::EventLoopTask": "crate::cpp_task::CppTask",
+  // HTTPServerAgent / inspector types only show up in `nothrow` exports;
+  // emit as opaque so the raw extern still type-checks.
+  "Inspector::InspectorHTTPServerAgent": "core::ffi::c_void",
+  "HotReloadId": "u32",
+  "ServerId": "u32",
+  "Route": "core::ffi::c_void",
+};
+
+// Reserved words that can't be used as Rust identifiers verbatim.
+const rustReserved = new Set([
+  "as",
+  "break",
+  "const",
+  "continue",
+  "crate",
+  "else",
+  "enum",
+  "extern",
+  "false",
+  "fn",
+  "for",
+  "if",
+  "impl",
+  "in",
+  "let",
+  "loop",
+  "match",
+  "mod",
+  "move",
+  "mut",
+  "pub",
+  "ref",
+  "return",
+  "self",
+  "Self",
+  "static",
+  "struct",
+  "super",
+  "trait",
+  "true",
+  "type",
+  "unsafe",
+  "use",
+  "where",
+  "while",
+  "async",
+  "await",
+  "dyn",
+  "abstract",
+  "become",
+  "box",
+  "do",
+  "final",
+  "macro",
+  "override",
+  "priv",
+  "typeof",
+  "unsized",
+  "virtual",
+  "yield",
+  "try",
+]);
+function rustIdent(name: string): string {
+  if (!name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) return "_" + name.replace(/[^a-zA-Z0-9_]/g, "_");
+  if (rustReserved.has(name)) return name + "_";
+  return name;
+}
+
+function generateRustType(type: CppType, parent: CppType | null): string {
+  if (type.type === "pointer") {
+    const constKw = type.isConst ? "*const " : "*mut ";
+    return constKw + generateRustType(type.child, type);
+  }
+  if (type.type === "fn") {
+    // Function pointers are nullable in C; model as Option<extern "C" fn(...)>.
+    const params = type.parameters.map(p => generateRustType(p.type, null)).join(", ");
+    return `Option<unsafe extern "C" fn(${params}) -> ${generateRustType(type.returnType, null)}>`;
+  }
+  if (type.type === "named" && type.name === "void") {
+    if (parent?.type === "pointer") return "core::ffi::c_void";
+    if (!parent) return "()";
+    throwError(type.position, "void must have a pointer parent or no parent");
+  }
+  if (type.type === "named") {
+    const t = rustSharedTypes[type.name];
+    if (t) return t;
+    // Unknown opaque — only valid behind a pointer (the per-type shim casts the
+    // pointee). Behind a pointer we degrade to c_void; in by-value position that
+    // would emit `-> core::ffi::c_void` (a ZST in Rust → silent ABI corruption),
+    // so match the Zig generator and fail loudly at the C++ source location.
+    if (parent?.type === "pointer") return "core::ffi::c_void";
+    throwError(
+      type.position,
+      `unmapped C++ type '${type.name}' in by-value position; add to rustSharedTypes or pass by pointer`,
+    );
+  }
+  assertNever(type);
+}
+
+function isGlobalObjectPtr(t: CppType): boolean {
+  return (
+    t.type === "pointer" &&
+    t.child.type === "named" &&
+    (t.child.name === "JSC::JSGlobalObject" || t.child.name === "Zig::GlobalObject")
+  );
+}
+
+function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void {
+  const ret = generateRustType(fn.returnType, null);
+  const rawParams = fn.parameters.map(p => `${rustIdent(p.name)}: ${generateRustType(p.type, null)}`).join(", ");
+  rustRaw.push(`    pub fn ${fn.name}(${rawParams})${ret === "()" ? "" : ` -> ${ret}`};`);
+
+  if (fn.tag === "nothrow") {
+    // No scope needed; expose the raw symbol directly.
+    rustWrap.push(`pub use self::raw::${fn.name};`);
+    return;
+  }
+
+  const globalArg = fn.parameters.find(p => isGlobalObjectPtr(p.type));
+  if (!globalArg) {
+    // Same constraint as the Zig generator; emit a stub so the module still
+    // compiles and the symbol name is greppable.
+    rustWrap.push(`// skipped ${fn.name}: ${fn.tag} requires a JSGlobalObject* parameter`);
+    return;
+  }
+  const gname = rustIdent(globalArg.name);
+
+  // Wrapper signature: globalThis as `&JSGlobalObject`, everything else as-is.
+  const wrapParams = fn.parameters
+    .map(p =>
+      p === globalArg ? `${gname}: &crate::JSGlobalObject` : `${rustIdent(p.name)}: ${generateRustType(p.type, null)}`,
+    )
+    .join(", ");
+  const callArgs = fn.parameters
+    .map(p =>
+      p === globalArg ? `${gname} as *const crate::JSGlobalObject as *mut crate::JSGlobalObject` : rustIdent(p.name),
+    )
+    .join(", ");
+
+  if (fn.tag === "check_slow") {
+    // Inline the `top_scope!` body (rather than the `call_check_slow` *function* form,
+    // which routes `SourceLocation::from_caller()` → thread-local intern probe per call
+    // in debug builds). This is the highest-volume mode — keep it as cheap as the
+    // zero/false/null arms below. `src!()` resolves to the wrapper file/line, matching
+    // Zig's `cpp.zig` (`@src()` inside the wrapper); `#[track_caller]` would be a no-op
+    // against a syntactic `file!()`, so don't emit it.
+    rustWrap.push(
+      `#[inline]`,
+      `pub unsafe fn ${fn.name}(${wrapParams}) -> crate::JsResult<${ret}> {`,
+      `    crate::top_scope!(__scope, ${gname});`,
+      `    let __r = unsafe { raw::${fn.name}(${callArgs}) };`,
+      `    __scope.return_if_exception()?;`,
+      `    Ok(__r)`,
+      `}`,
+    );
+    return;
+  }
+
+  let okExpr: string;
+  let errCond: string;
+  let okType: string;
+  if (fn.tag === "zero_is_throw") {
+    errCond = `__v == crate::JSValue::ZERO`;
+    okExpr = `__v`;
+    okType = `crate::JSValue`;
+  } else if (fn.tag === "false_is_throw") {
+    errCond = `!__v`;
+    okExpr = `()`;
+    okType = `()`;
+  } else if (fn.tag === "null_is_throw") {
+    errCond = `__v.is_null()`;
+    // SAFETY: `errCond` already checked for null.
+    okExpr = `unsafe { core::ptr::NonNull::new_unchecked(__v) }`;
+    okType = `core::ptr::NonNull<${generateRustType((fn.returnType as CppType & { type: "pointer" }).child, fn.returnType)}>`;
+  } else assertNever(fn.tag);
+
+  // `validation_scope!` expands `src!()` syntactically (resolves to this generated
+  // file/line — parity with Zig's `@src()` inside cpp.zig wrappers). `#[track_caller]`
+  // can't influence a compile-time `file!()`, so don't emit it.
+  rustWrap.push(
+    `#[inline]`,
+    `pub unsafe fn ${fn.name}(${wrapParams}) -> crate::JsResult<${okType}> {`,
+    `    crate::validation_scope!(__scope, ${gname});`,
+    `    let __v = unsafe { raw::${fn.name}(${callArgs}) };`,
+    `    __scope.assert_exception_presence_matches(${errCond});`,
+    `    if ${errCond} { Err(crate::JsError::Thrown) } else { Ok(${okExpr}) }`,
+    `}`,
+  );
+}
+
 const sharedTypesText = await Bun.file("src/codegen/shared-types.ts").text();
 const sharedTypesLines = sharedTypesText.split("\n");
 let sharedTypesLine = 0;
@@ -781,9 +1042,16 @@ async function main() {
   const resultRaw: string[] = [];
   const resultBindings: string[] = [];
   const resultSourceLinks: string[] = [];
+  const rustRaw: string[] = [];
+  const rustWrap: string[] = [];
   for (const fn of allFunctions) {
     try {
       generateZigFn(fn, resultRaw, resultBindings, resultSourceLinks, { dstDir });
+    } catch (e) {
+      appendErrorFromCatch(e, fn.position);
+    }
+    try {
+      generateRustFn(fn, rustRaw, rustWrap);
     } catch (e) {
       appendErrorFromCatch(e, fn.position);
     }
@@ -807,6 +1075,22 @@ async function main() {
     "\n};\n";
   if ((await readFileOrEmpty(resultFilePath)) !== resultContents) {
     await Bun.write(resultFilePath, resultContents);
+  }
+
+  const rustFilePath = join(dstDir, "cpp.rs");
+  const rustContents =
+    "// generated by cppbind.ts from functions marked with [[ZIG_EXPORT(mode)]]\n" +
+    "// `include!`d by `bun_jsc::cpp` — see src/jsc/cpp.rs for the wrapper module docs.\n\n" +
+    'unsafe extern "C" {}\n' + // ensure the file parses even with zero exports
+    "pub mod raw {\n" +
+    "    #[allow(unused_imports)] use super::*;\n" +
+    '    unsafe extern "C" {\n' +
+    rustRaw.join("\n") +
+    "\n    }\n}\n\n" +
+    rustWrap.join("\n") +
+    "\n";
+  if ((await readFileOrEmpty(rustFilePath)) !== rustContents) {
+    await Bun.write(rustFilePath, rustContents);
   }
 
   const resultSourceLinksFilePath = join(dstDir, "cpp.source-links");

@@ -560,7 +560,7 @@ mod platform {
                     // bytes, `io`/`filter_us` live on this stack frame for the call duration.
                     let rc = unsafe {
                         ntdll::NtQueryDirectoryFile(
-                            self.dir.cast(),
+                            self.dir.native(),
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
@@ -586,7 +586,7 @@ mod platform {
                             self.dir
                         );
                         return Err(sys::Error::from_code(
-                            SystemErrno::ENOTDIR,
+                            SystemErrno::ENOTDIR.to_e(),
                             Tag::NtQueryDirectoryFile,
                         ));
                     }
@@ -603,7 +603,7 @@ mod platform {
                         let errno = w::Win32Error::from_nt_status(rc)
                             .to_system_errno()
                             .unwrap_or(SystemErrno::EUNKNOWN);
-                        return Err(sys::Error::from_code(errno, Tag::NtQueryDirectoryFile));
+                        return Err(sys::Error::from_code(errno.to_e(), Tag::NtQueryDirectoryFile));
                     }
 
                     if io.Information == 0 {

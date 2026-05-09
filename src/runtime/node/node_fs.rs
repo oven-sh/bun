@@ -2062,7 +2062,6 @@ impl AsyncReaddirRecursiveTask {
 
     pub fn perform_work(&mut self, basename: &ZStr, buf: &mut PathBuffer, is_root: bool) {
         // PERF(port): was comptime monomorphization on tag — runtime match here
-        // PERF(port): was stack-fallback alloc (8192) for entries
         // SAFETY: `readdir_with_entries_recursive_async` takes `args` and
         // `async_task` separately even though `args == &async_task.args`. The
         // callee never mutates `args` (only `async_task.{root_fd, enqueue}`),
@@ -2071,7 +2070,18 @@ impl AsyncReaddirRecursiveTask {
         let args_ptr: *const args::Readdir = &raw const *self.args;
         macro_rules! impl_tag {
             ($T:ty, $variant:ident) => {{
-                let mut entries: Vec<$T> = Vec::new();
+                // Zig: `var stack = std.heap.stackFallback(8192, …)` — the
+                // first ~8 KiB of entries lived on the stack so small
+                // directories (the common case) never touched the heap until
+                // `writeResults` cloned with exact capacity. `Vec::new()` here
+                // instead grew through every power-of-two size class on the
+                // heap; under mimalloc-debug each fresh-page realloc runs
+                // `mi_mem_is_zero` over the whole arena page, which dominated
+                // the recursive-readdir perf profile (~15% self-time).
+                // Pre-reserve the same 8 KiB budget so we take a single
+                // size-class allocation per subtask.
+                let mut entries: Vec<$T> =
+                    Vec::with_capacity(8192usize / core::mem::size_of::<$T>());
                 let res = NodeFS::readdir_with_entries_recursive_async::<$T>(
                     buf, unsafe { &*args_ptr }, self, basename, &mut entries, is_root,
                 );
@@ -2116,9 +2126,14 @@ impl AsyncReaddirRecursiveTask {
 
     pub fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
         if !result.is_empty() {
-            let mut clone: Vec<T> = Vec::with_capacity(result.len());
-            // PERF(port): was appendSliceAssumeCapacity
-            clone.append(result);
+            // Zig cloned because `result` was backed by a stack-fallback
+            // allocator and could not outlive `perform_work`'s frame. In Rust
+            // `result` is already a heap `Vec`, so cloning is a redundant
+            // alloc+memcpy; just take ownership and trim the over-reservation
+            // from `perform_work` so the queued entry holds exact capacity
+            // (matches Zig's `initCapacity(len)` semantics).
+            let mut clone: Vec<T> = core::mem::take(result);
+            clone.shrink_to_fit();
             self.result_list_count.fetch_add(clone.len(), Ordering::Relaxed);
             // Zig `@unionInit(Value, @tagName(Field), clone)` →
             // `IntoResultListEntry::into_variant` (trait dispatch on `T`).

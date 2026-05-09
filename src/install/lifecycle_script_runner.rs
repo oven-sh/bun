@@ -1157,7 +1157,9 @@ bun_spawn::link_impl_ProcessExit! {
 // `on_reader_done`/`on_reader_error` via the type-erased vtable.
 // ──────────────────────────────────────────────────────────────────────────
 
+bun_io::buffered_reader_parent_link!(LifecycleScript for LifecycleScriptSubprocess<'static>);
 impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::LifecycleScript;
     /// Zig: no `onReadChunk` decl — output is consumed only in `final_buffer`.
     const HAS_ON_READ_CHUNK: bool = false;
 

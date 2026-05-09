@@ -254,7 +254,9 @@ impl Lazy {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+bun_io::buffered_reader_parent_link!(FileReader for FileReader);
 impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FileReader;
     const HAS_ON_READ_CHUNK: bool = true;
     // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
     // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader

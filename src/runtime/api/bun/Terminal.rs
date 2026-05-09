@@ -1860,7 +1860,9 @@ impl bun_ptr::RefCounted for Terminal {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Terminal declares
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` (Terminal.zig).
+bun_io::buffered_reader_parent_link!(Terminal for Terminal);
 impl BufferedReaderParent for Terminal {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::Terminal;
     const HAS_ON_READ_CHUNK: bool = true;
 
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {

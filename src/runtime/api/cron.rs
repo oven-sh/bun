@@ -186,7 +186,9 @@ enum RegisterState {
     Failed,
 }
 
+bun_io::buffered_reader_parent_link!(CronRegister for CronRegisterJob);
 impl BufferedReaderParent for CronRegisterJob {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::CronRegister;
     const HAS_ON_READ_CHUNK: bool = false;
     unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: `this` is the `set_parent` ctx; single JS thread. Forward as
@@ -912,7 +914,9 @@ enum RemoveState {
     Failed,
 }
 
+bun_io::buffered_reader_parent_link!(CronRemove for CronRemoveJob);
 impl BufferedReaderParent for CronRemoveJob {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::CronRemove;
     const HAS_ON_READ_CHUNK: bool = false;
     unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: `this` is the `set_parent` ctx; single JS thread. Forward as

@@ -234,7 +234,9 @@ impl<'a> ProcessHandle<'a> {
 // reader holds no `&mut ProcessHandle` across the callback (it only holds a
 // `&mut` to the embedded `BufferedReader` field, which is disjoint from the
 // fields touched here per the `BufferedReaderParent` aliasing contract).
+bun_io::buffered_reader_parent_link!(FilterRunHandle for ProcessHandle<'static>);
 impl<'a> bun_io::pipe_reader::BufferedReaderParent for ProcessHandle<'a> {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FilterRunHandle;
     const HAS_ON_READ_CHUNK: bool = true;
 
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {

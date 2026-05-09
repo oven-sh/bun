@@ -418,7 +418,9 @@ impl PipeReader {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
 // `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
+bun_io::buffered_reader_parent_link!(SubprocessPipeReader for PipeReader);
 impl BufferedReaderParent for PipeReader {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::SubprocessPipeReader;
     const HAS_ON_READ_CHUNK: bool = false;
 
     unsafe fn on_read_chunk(_this: *mut Self, _chunk: &[u8], _has_more: ReadState) -> bool {

@@ -2245,7 +2245,9 @@ impl Drop for PipeReader {
     }
 }
 
+bun_io::buffered_reader_parent_link!(ShellPipeReader for PipeReader);
 impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::ShellPipeReader;
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
         PipeReader::on_read_chunk(this.cast::<c_void>(), chunk, has_more)
     }

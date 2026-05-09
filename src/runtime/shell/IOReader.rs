@@ -335,7 +335,9 @@ impl IOReader {
 // BufferedReaderParent — wires the bun_io BufferedReader vtable
 // ──────────────────────────────────────────────────────────────────────────
 
+bun_io::buffered_reader_parent_link!(ShellIoReader for IOReader);
 impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::ShellIoReader;
     const HAS_ON_READ_CHUNK: bool = true;
     // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
     // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader

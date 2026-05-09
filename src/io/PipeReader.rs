@@ -49,7 +49,7 @@ use bun_sys::ReturnCodeExt as _;
 // https://github.com/ziglang/zig/issues/18664
 pub struct BufferedReaderVTable {
     pub parent: *mut c_void,
-    pub fns: &'static BufferedReaderVTableFn,
+    pub kind: crate::BufferedReaderParentLinkKind,
 }
 
 /// Trait that parent types implement to receive buffered-reader callbacks.
@@ -74,6 +74,9 @@ pub struct BufferedReaderVTable {
 ///   `addr_of_mut!` or reborrow `&mut *this` only when the reader is known to
 ///   be done with `self` (e.g. tail-position `on_reader_done`).
 pub trait BufferedReaderParent {
+    /// `link_interface!` variant for this type. Each impl pairs this with a
+    /// `bun_io::buffered_reader_parent_link!(KIND for Self)` at module scope.
+    const KIND: crate::BufferedReaderParentLinkKind;
     /// Mirrors `@hasDecl(Type, "onReadChunk")`.
     const HAS_ON_READ_CHUNK: bool = true;
 
@@ -90,22 +93,26 @@ pub trait BufferedReaderParent {
 
 impl BufferedReaderVTable {
     pub fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
-        BufferedReaderVTable {
-            parent: core::ptr::null_mut(),
-            fns: BufferedReaderVTableFn::init::<T>(),
-        }
+        BufferedReaderVTable { parent: core::ptr::null_mut(), kind: T::KIND }
+    }
+
+    #[inline]
+    fn link(&self) -> crate::BufferedReaderParentLink {
+        // SAFETY: `parent` is a `*mut T` matching `kind` per `set_parent`'s
+        // contract; raw-ptr passthrough, no `&mut T` materialized.
+        unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
-        (self.fns.event_loop)(self.parent)
+        self.link().event_loop()
     }
 
     pub fn loop_(&self) -> *mut Loop {
-        (self.fns.loop_)(self.parent)
+        self.link().loop_ptr()
     }
 
     pub fn is_streaming_enabled(&self) -> bool {
-        self.fns.on_read_chunk.is_some()
+        self.link().has_on_read_chunk()
     }
 
     /// When the reader has read a chunk of data
@@ -113,86 +120,15 @@ impl BufferedReaderVTable {
     ///
     /// Returning false prevents the reader from reading more data.
     pub fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
-        (self.fns.on_read_chunk.unwrap())(self.parent, chunk, has_more)
+        self.link().on_read_chunk(chunk, has_more)
     }
 
     pub fn on_reader_done(&self) {
-        (self.fns.on_reader_done)(self.parent)
+        self.link().on_reader_done()
     }
 
     pub fn on_reader_error(&self, err: sys::Error) {
-        (self.fns.on_reader_error)(self.parent, err)
-    }
-}
-
-pub struct BufferedReaderVTableFn {
-    pub on_read_chunk: Option<fn(*mut c_void, &[u8], ReadState) -> bool>,
-    pub on_reader_done: fn(*mut c_void),
-    pub on_reader_error: fn(*mut c_void, sys::Error),
-    pub loop_: fn(*mut c_void) -> *mut Loop,
-    pub event_loop: fn(*mut c_void) -> EventLoopHandle,
-}
-
-// SAFETY-thunk wrappers for the vtable. Module-level so they can be named in
-// `const` context (closures/fn items inside a const initializer can't be
-// coerced to fn pointers there).
-//
-// These are raw-pointer passthroughs: they cast `*mut c_void` → `*mut T` and
-// hand it to the trait without ever materializing a `&mut T`. The caller
-// (a `BufferedReader` method) holds a live `&mut BufferedReader` which is a
-// field of `T`, so creating `&mut T` here would alias it. See the
-// `BufferedReaderParent` aliasing contract above.
-fn vt_on_read_chunk<T: BufferedReaderParent>(
-    this: *mut c_void,
-    chunk: &[u8],
-    has_more: ReadState,
-) -> bool {
-    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
-    // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::on_read_chunk(this.cast::<T>(), chunk, has_more) }
-}
-fn vt_on_reader_done<T: BufferedReaderParent>(this: *mut c_void) {
-    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
-    // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::on_reader_done(this.cast::<T>()) }
-}
-fn vt_on_reader_error<T: BufferedReaderParent>(this: *mut c_void, err: sys::Error) {
-    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
-    // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::on_reader_error(this.cast::<T>(), err) }
-}
-fn vt_event_loop<T: BufferedReaderParent>(this: *mut c_void) -> EventLoopHandle {
-    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
-    // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::event_loop(this.cast::<T>()) }
-}
-fn vt_loop<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
-    // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
-    // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::loop_(this.cast::<T>()) }
-}
-
-/// Per-`T` vtable instance in rodata, mirroring Zig's `comptime &Fn{...}`.
-/// Associated-const-on-generic-impl gives one `'static` per monomorphization
-/// without `Box::leak` (PORTING.md §Forbidden).
-struct VTableFor<T>(core::marker::PhantomData<T>);
-impl<T: BufferedReaderParent> VTableFor<T> {
-    const FNS: BufferedReaderVTableFn = BufferedReaderVTableFn {
-        on_read_chunk: if T::HAS_ON_READ_CHUNK {
-            Some(vt_on_read_chunk::<T>)
-        } else {
-            None
-        },
-        on_reader_done: vt_on_reader_done::<T>,
-        on_reader_error: vt_on_reader_error::<T>,
-        event_loop: vt_event_loop::<T>,
-        loop_: vt_loop::<T>,
-    };
-}
-
-impl BufferedReaderVTableFn {
-    pub fn init<T: BufferedReaderParent>() -> &'static BufferedReaderVTableFn {
-        &VTableFor::<T>::FNS
+        self.link().on_reader_error(err)
     }
 }
 
@@ -267,13 +203,13 @@ impl PosixBufferedReader {
     }
 
     pub fn from(&mut self, other: &mut PosixBufferedReader, parent: *mut c_void) {
-        let fns = self.vtable.fns;
+        let kind = self.vtable.kind;
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
             flags: other.flags,
-            vtable: BufferedReaderVTable { fns, parent },
+            vtable: BufferedReaderVTable { kind, parent },
             count: 0,
             maxbuf: None,
         };
@@ -1067,14 +1003,6 @@ unsafe fn spare_capacity_as_slice(v: &mut Vec<u8>) -> &mut [u8] {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub struct WindowsBufferedReaderVTable {
-    pub on_reader_done: fn(*mut c_void),
-    pub on_reader_error: fn(*mut c_void, sys::Error),
-    pub on_read_chunk: Option<fn(*mut c_void, &[u8], ReadState) -> bool>,
-    pub loop_: fn(*mut c_void) -> *mut Loop,
-}
-
-#[cfg(windows)]
 pub struct WindowsBufferedReader {
     /// The pointer to this pipe must be stable.
     /// It cannot change because we don't know what libuv will do with it.
@@ -1086,7 +1014,7 @@ pub struct WindowsBufferedReader {
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
     pub parent: *mut c_void,
-    pub vtable: WindowsBufferedReaderVTable,
+    pub vtable: BufferedReaderVTable,
 }
 
 bitflags::bitflags! {
@@ -1121,30 +1049,6 @@ impl WindowsBufferedReader {
     }
 
     pub fn init<T: BufferedReaderParent>() -> WindowsBufferedReader {
-        // Raw-pointer passthroughs — see `BufferedReaderParent` aliasing
-        // contract. No `&mut T` is materialized here because the reader (a
-        // field of T) holds a live `&mut` on the caller's stack.
-        fn on_read_chunk<T: BufferedReaderParent>(
-            this: *mut c_void,
-            chunk: &[u8],
-            has_more: ReadState,
-        ) -> bool {
-            // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
-            unsafe { T::on_read_chunk(this.cast::<T>(), chunk, has_more) }
-        }
-        fn on_reader_done<T: BufferedReaderParent>(this: *mut c_void) {
-            // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
-            unsafe { T::on_reader_done(this.cast::<T>()) }
-        }
-        fn on_reader_error<T: BufferedReaderParent>(this: *mut c_void, err: sys::Error) {
-            // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
-            unsafe { T::on_reader_error(this.cast::<T>(), err) }
-        }
-        fn loop_<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
-            // SAFETY: parent set via set_parent with *mut T; raw-ptr passthrough.
-            unsafe { T::loop_(this.cast::<T>()) }
-        }
-
         WindowsBufferedReader {
             source: None,
             _offset: 0,
@@ -1152,16 +1056,7 @@ impl WindowsBufferedReader {
             flags: WindowsFlags::new(),
             maxbuf: None,
             parent: core::ptr::null_mut(),
-            vtable: WindowsBufferedReaderVTable {
-                on_read_chunk: if T::HAS_ON_READ_CHUNK {
-                    Some(on_read_chunk::<T>)
-                } else {
-                    None
-                },
-                on_reader_done: on_reader_done::<T>,
-                on_reader_error: on_reader_error::<T>,
-                loop_: loop_::<T>,
-            },
+            vtable: BufferedReaderVTable::init::<T>(),
         }
     }
 
@@ -1202,6 +1097,7 @@ impl WindowsBufferedReader {
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
         self.parent = parent;
+        self.vtable.parent = parent;
         if !self.flags.contains(WindowsFlags::IS_DONE) {
             // `Source::set_data` only writes the libuv `.data` field (raw ptr
             // store); take a raw self-pointer first to dodge the
@@ -1273,11 +1169,11 @@ impl WindowsBufferedReader {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
 
-        let Some(on_read_chunk_fn) = self.vtable.on_read_chunk else {
+        if !self.vtable.is_streaming_enabled() {
             self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
             return true;
-        };
-        let result = on_read_chunk_fn(self.parent, buf, has_more);
+        }
+        let result = self.vtable.on_read_chunk(buf, has_more);
         // Clear has_inflight_read after the callback completes to prevent
         // libuv from starting a new read while we're still processing data
         self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
@@ -1297,12 +1193,12 @@ impl WindowsBufferedReader {
 
         self.finish();
 
-        (self.vtable.on_reader_done)(self.parent);
+        self.vtable.on_reader_done();
     }
 
     pub fn on_error(&mut self, err: sys::Error) {
         self.finish();
-        (self.vtable.on_reader_error)(self.parent, err);
+        self.vtable.on_reader_error(err);
     }
 
     pub fn get_read_buffer_with_stable_memory_address(&mut self, suggested_size: usize) -> &mut [u8] {
@@ -1334,7 +1230,7 @@ impl WindowsBufferedReader {
         debug_assert!(self.source.is_none());
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
-        let loop_ = (self.vtable.loop_)(self.parent);
+        let loop_ = self.vtable.loop_();
         let mut source = match Source::open(loop_.cast(), fd) {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(source) => source,
@@ -1647,7 +1543,7 @@ impl WindowsBufferedReader {
                 // it on the event loop.
                 if let Some(err) = unsafe {
                     uv::uv_fs_read(
-                        (self.vtable.loop_)(self.parent).cast(),
+                        self.vtable.loop_().cast(),
                         &mut file.fs,
                         file.file,
                         &file.iov,

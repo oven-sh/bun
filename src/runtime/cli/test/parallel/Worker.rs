@@ -423,7 +423,9 @@ impl Default for WorkerPipe {
 
 // `bun.io.BufferedReader.init(WorkerPipe)` — vtable parent. Maps the Zig
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+bun_io::buffered_reader_parent_link!(TestParallelWorkerPipe for WorkerPipe);
 impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::TestParallelWorkerPipe;
     const HAS_ON_READ_CHUNK: bool = true;
     // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
     // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader

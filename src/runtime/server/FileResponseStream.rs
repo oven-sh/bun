@@ -587,7 +587,9 @@ impl Drop for DerefOnDrop {
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+bun_io::buffered_reader_parent_link!(FileResponseStream for FileResponseStream);
 impl bun_io::BufferedReaderParent for FileResponseStream {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::FileResponseStream;
     const HAS_ON_READ_CHUNK: bool = true;
     // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
     // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader

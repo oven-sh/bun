@@ -1018,7 +1018,9 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
 // Wire the buffered-reader vtable to this type so `BufferedReader::init::<Self>()`
 // resolves. The reader stores `*mut Self` (set via `set_parent`) and calls back
 // through these raw-pointer hooks.
+bun_io::buffered_reader_parent_link!(SecurityScan for SecurityScanSubprocess<'static>);
 impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::SecurityScan;
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
         // SAFETY: `this` was registered via `set_parent(self)`; live for the
         // duration of the read loop and not aliased by another `&mut`.

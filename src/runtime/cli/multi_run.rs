@@ -72,7 +72,9 @@ impl<'a> PipeReader<'a> {
 // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader may
 // be live on the caller's stack. Callbacks here touch only `line_buffer` /
 // `handle` / the State backref, never `reader`.
+bun_io::buffered_reader_parent_link!(MultiRunPipeReader for PipeReader<'static>);
 impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
+    const KIND: bun_io::BufferedReaderParentLinkKind = bun_io::BufferedReaderParentLinkKind::MultiRunPipeReader;
     const HAS_ON_READ_CHUNK: bool = true;
 
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], _has_more: ReadState) -> bool {

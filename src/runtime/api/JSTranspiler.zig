@@ -504,6 +504,10 @@ pub const TransformTask = struct {
         this.transpiler.setLog(&this.log);
         this.log.msgs.allocator = bun.default_allocator;
 
+        defer for (this.log.msgs.items) |*msg| {
+            msg.* = bun.handleOom(msg.clone(bun.default_allocator));
+        };
+
         const jsx = if (this.tsconfig != null)
             this.tsconfig.?.mergeJSX(this.transpiler.options.jsx)
         else

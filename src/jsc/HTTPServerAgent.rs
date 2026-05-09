@@ -167,27 +167,9 @@ unsafe extern "C" {
         timestamp: f64,
     );
 
-    // From bun.cpp namespace (generated C++ bindings)
-    fn Bun__HTTPServerAgent__notifyServerStarted(
-        agent: *mut InspectorHTTPServerAgent,
-        server_id: ServerId,
-        hot_reload_id: HotReloadId,
-        address: *const BunString,
-        start_time: f64,
-        server_instance: *mut c_void,
-    );
-    fn Bun__HTTPServerAgent__notifyServerStopped(
-        agent: *mut InspectorHTTPServerAgent,
-        server_id: ServerId,
-        timestamp: f64,
-    );
-    fn Bun__HTTPServerAgent__notifyServerRoutesUpdated(
-        agent: *mut InspectorHTTPServerAgent,
-        server_id: ServerId,
-        hot_reload_id: HotReloadId,
-        routes_ptr: *mut Route,
-        routes_len: usize,
-    );
+    // `Bun__HTTPServerAgent__notifyServer{Started,Stopped,RoutesUpdated}` are
+    // `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
+    // called below with explicit casts to the codegen's opaque param types.
 }
 
 impl InspectorHTTPServerAgent {
@@ -201,10 +183,10 @@ impl InspectorHTTPServerAgent {
     ) {
         // SAFETY: caller guarantees `agent` is a valid C++ InspectorHTTPServerAgent
         unsafe {
-            Bun__HTTPServerAgent__notifyServerStarted(
-                agent,
-                server_id,
-                hot_reload_id,
+            crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
+                agent.cast(),
+                server_id.0 as _,
+                hot_reload_id as _,
                 address,
                 start_time,
                 server_instance,
@@ -219,7 +201,11 @@ impl InspectorHTTPServerAgent {
     ) {
         // SAFETY: caller guarantees `agent` is a valid C++ InspectorHTTPServerAgent
         unsafe {
-            Bun__HTTPServerAgent__notifyServerStopped(agent, server_id, timestamp);
+            crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStopped(
+                agent.cast(),
+                server_id.0 as _,
+                timestamp,
+            );
         }
     }
 
@@ -231,11 +217,11 @@ impl InspectorHTTPServerAgent {
     ) {
         // SAFETY: caller guarantees `agent` is a valid C++ InspectorHTTPServerAgent
         unsafe {
-            Bun__HTTPServerAgent__notifyServerRoutesUpdated(
-                agent,
-                server_id,
-                hot_reload_id,
-                routes.as_mut_ptr(),
+            crate::cpp::raw::Bun__HTTPServerAgent__notifyServerRoutesUpdated(
+                agent.cast(),
+                server_id.0 as _,
+                hot_reload_id as _,
+                routes.as_mut_ptr().cast(),
                 routes.len(),
             );
         }

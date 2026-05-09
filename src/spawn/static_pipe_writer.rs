@@ -1,4 +1,3 @@
-use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_io::Loop as AsyncLoop;

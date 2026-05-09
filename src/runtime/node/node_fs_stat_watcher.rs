@@ -427,8 +427,11 @@ mod js {
 
     // `safe fn` to match the `safe fn …CachedValue` declarations
     // `generate-classes.ts` emits in `generated_classes.rs` (avoids
-    // `clashing_extern_declarations`).
-    unsafe extern "C" {
+    // `clashing_extern_declarations`). C++ side declares these with
+    // `JSC_CALLCONV` (= SysV ABI on win-x64), so import via `jsc_abi_extern!`
+    // — a plain `extern "C"` block here is the wrong ABI on Windows and
+    // garbages the args (Win64 puts them in rcx/rdx/r8, callee reads rdi/rsi/rdx).
+    bun_jsc::jsc_abi_extern! {
         safe fn StatWatcherPrototype__listenerSetCachedValue(
             this_value: JSValue,
             global: *mut JSGlobalObject,

@@ -388,11 +388,20 @@ impl Queue {
 
     pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
         bun_core::scoped_log!(AsyncModule, "onWake");
-        // PORT NOTE: reshaped for borrowck — build the task first (it stores
-        // only the raw `*mut Queue`), then enqueue via the per-thread VM
-        // singleton (S017: no `container_of` widening from `&mut Queue`).
-        let task = ConcurrentTaskItem::create_from(ctx.cast::<Queue>());
-        VirtualMachine::get().as_mut().enqueue_task_concurrent(task);
+        let queue = ctx.cast::<Queue>();
+        let task = ConcurrentTaskItem::create_from(queue);
+        // Runs on thread-pool / HTTP-callback threads (PackageManager::wake_raw)
+        // where the per-thread `VirtualMachine::get()` singleton is NOT
+        // installed — using it here would panic. `ctx` was registered as
+        // `addr_of_mut!((*vm).modules)` from a raw `*mut VirtualMachine`
+        // (runtime/jsc_hooks.rs), so its provenance covers the whole VM and
+        // `from_field_ptr!` is sound. S017 does not apply: that rule forbids
+        // widening from a `&mut self`-derived pointer, but `ctx` is a raw
+        // `*mut` carried from the original allocation.
+        let vm = unsafe {
+            &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue)
+        };
+        vm.enqueue_task_concurrent(task);
     }
 
     pub fn on_poll(&mut self) {

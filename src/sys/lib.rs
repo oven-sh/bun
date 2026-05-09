@@ -2847,24 +2847,106 @@ mod windows_impl {
         mkdir_recursive_at_mode(dir, sub, 0o777)
     }
     pub fn mkdir_recursive_at_mode(dir: Fd, sub: &[u8], mode: Mode) -> Maybe<()> {
-        // Port of `bun.makePath` — split on sep and create each component.
+        // Port of `bun.makePath` (bun.zig:2288) — uses
+        // `std.fs.path.componentIterator(sub_path)`, starts at `it.last()`,
+        // walks `previous()` on FileNotFound and `next()` on success/EEXIST.
+        // The previous forward-iterating split-on-sep impl was wrong for
+        // absolute Windows paths: the first cumulative component is `"C:"`,
+        // and `mkdirat(cwd, "C:")` resolves to the volume device (`\??\C:`,
+        // no trailing `\`), which `NtCreateFile(FILE_CREATE|FILE_DIRECTORY_FILE)`
+        // rejects with a status that maps to ENOTDIR/EINVAL — not EEXIST — so
+        // the loop bailed before ever reaching the leaf (`.bin`). That broke
+        // every `bin::Linker::create_windows_shim` call (it passes the
+        // *absolute* `node_modules_path/.bin` here) → "Failed to link …:
+        // ENOENT" → `Global::crash()`.
+        //
+        // `componentIterator` on Windows treats the drive prefix as root and
+        // never yields a bare `"C:"` — `component.path` is always a full
+        // prefix slice (e.g. `"C:\Users"`, `"C:\Users\foo"`). We mirror that
+        // by recording separator boundaries *after* the disk designator and
+        // walking back-then-forward over them.
+        if sub.is_empty() { return Ok(()); }
         let mut buf = bun_core::PathBuffer::default();
-        let mut n = 0usize;
-        for comp in sub.split(|&b| b == b'/' || b == b'\\') {
-            if comp.is_empty() { continue; }
-            if n > 0 { buf.0[n] = b'\\'; n += 1; }
-            buf.0[n..n + comp.len()].copy_from_slice(comp);
-            n += comp.len();
-            buf.0[n] = 0;
-            // SAFETY: NUL-terminated above; `n` bytes valid in `buf`.
-            let z = ZStr::from_buf(&buf.0[..], n);
-            match mkdirat(dir, z, mode) {
-                Ok(()) => {}
-                Err(e) if e.get_errno() == E::EEXIST => {}
-                Err(e) => return Err(e),
+        if sub.len() >= buf.0.len() {
+            return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
+        }
+        buf.0[..sub.len()].copy_from_slice(sub);
+        buf.0[sub.len()] = 0;
+
+        let is_sep = |b: u8| b == b'/' || b == b'\\';
+
+        // `std.fs.path.componentIterator(.windows, …).root_end_index` — skip
+        // the disk designator (`C:` / `C:\` / `\\server\share\`) so we never
+        // try to create it.
+        let root_end: usize = {
+            let s = sub;
+            if s.len() >= 2 && s[1] == b':' && s[0].is_ascii_alphabetic() {
+                // drive letter, optionally followed by one separator
+                if s.len() >= 3 && is_sep(s[2]) { 3 } else { 2 }
+            } else if s.len() >= 2 && is_sep(s[0]) && is_sep(s[1]) {
+                // UNC `\\server\share\` — root ends after the share name
+                let mut i = 2usize;
+                while i < s.len() && !is_sep(s[i]) { i += 1; } // server
+                while i < s.len() && is_sep(s[i]) { i += 1; }
+                while i < s.len() && !is_sep(s[i]) { i += 1; } // share
+                while i < s.len() && is_sep(s[i]) { i += 1; }
+                i
+            } else if !s.is_empty() && is_sep(s[0]) {
+                1
+            } else {
+                0
+            }
+        };
+
+        // Record the end offset of each component (`component.path` =
+        // `sub[..ends[k]]`). Zig's `last()/previous()/next()` is index walk.
+        let mut ends: [usize; 256] = [0; 256];
+        let mut n_ends = 0usize;
+        {
+            let mut i = root_end;
+            loop {
+                while i < sub.len() && is_sep(sub[i]) { i += 1; }
+                if i >= sub.len() { break; }
+                while i < sub.len() && !is_sep(sub[i]) { i += 1; }
+                if n_ends == ends.len() {
+                    return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
+                }
+                ends[n_ends] = i;
+                n_ends += 1;
             }
         }
-        Ok(())
+        if n_ends == 0 { return Ok(()); }
+
+        // `it.last()` → walk back on ENOENT, forward on Ok/EEXIST.
+        let mut idx = n_ends - 1;
+        loop {
+            let end = ends[idx];
+            buf.0[end] = 0;
+            // SAFETY: NUL written at buf.0[end]; [0..end] copied from `sub`.
+            let z = ZStr::from_buf(&buf.0[..], end);
+            let res = mkdirat(dir, z, mode);
+            if end < sub.len() { buf.0[end] = sub[end]; }
+            match res {
+                Ok(()) => {
+                    // `component = it.next() orelse return;`
+                    idx += 1;
+                    if idx >= n_ends { return Ok(()); }
+                }
+                Err(e) => match e.get_errno() {
+                    E::EEXIST => {
+                        // Zig: `error.PathAlreadyExists => {}` then next()
+                        idx += 1;
+                        if idx >= n_ends { return Ok(()); }
+                    }
+                    E::ENOENT => {
+                        // `component = it.previous() orelse return e;`
+                        if idx == 0 { return Err(e); }
+                        idx -= 1;
+                    }
+                    _ => return Err(e),
+                },
+            }
+        }
     }
     pub fn linkat(src_dir: Fd, src: &ZStr, dest_dir: Fd, dest: &ZStr) -> Maybe<()> {
         // No native `linkat` on Windows — resolve to absolute and CreateHardLinkW.

@@ -774,7 +774,7 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
                 let y = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
                 let js = y.to_js(global);
                 y.deref();
-                return Ok(js);
+                return js;
             }
         }
 
@@ -1150,8 +1150,8 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
             // SAFETY: union read tagged by family
             let family = unsafe { iface.address.address4.sin_family } as c_int;
             let maybe_suffix: Option<u8> = match family {
-                bun_sys::posix::AF::INET => netmask_to_cidr_suffix(u32::from_ne_bytes(unsafe { iface.netmask.netmask4.sin_addr })),
-                bun_sys::posix::AF::INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe { iface.netmask.netmask6.sin6_addr })),
+                bun_sys::posix::AF::INET => netmask_to_cidr_suffix(unsafe { iface.netmask.netmask4.sin_addr.s_addr }),
+                bun_sys::posix::AF::INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe { iface.netmask.netmask6.sin6_addr.s6_addr })),
                 _ => None,
             };
 

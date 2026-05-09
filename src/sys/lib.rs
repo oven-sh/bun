@@ -5955,7 +5955,16 @@ pub fn environ() -> &'static [*const c_char] {
             core::slice::from_raw_parts(base, n)
         }
     }
-    #[cfg(windows)] { &[] }
+    #[cfg(windows)] {
+        // Populated by `windows::env::convert_env_to_wtf8()` at startup
+        // (main.zig:47 → bun_bin/lib.rs). The slice is NUL-terminated WTF-8
+        // C strings; the underlying allocation is `Box::leak`'d for the
+        // process lifetime so `'static` here is sound.
+        // SAFETY: written exactly once at startup before any reader runs.
+        let s = unsafe { bun_core::os::environ() };
+        // SAFETY: `[*mut c_char]` → `[*const c_char]` is a layout-identical reinterpret.
+        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<*const c_char>(), s.len()) }
+    }
 }
 
 /// `std.os.environ.ptr` — raw NULL-terminated `**c_char` for FFI envp args
@@ -5964,7 +5973,11 @@ pub fn environ() -> &'static [*const c_char] {
 /// borrowed slice, so it is suitable to pass directly as `envp`.
 pub fn environ_ptr() -> *const *const c_char {
     #[cfg(unix)] { bun_core::c_environ() }
-    #[cfg(windows)] { core::ptr::null() }
+    #[cfg(windows)] {
+        // SAFETY: same as `environ()` above; NUL-terminated by construction
+        // (`convert_env_to_wtf8` pushes a trailing null pointer).
+        unsafe { bun_core::os::environ() }.as_ptr().cast::<*const c_char>()
+    }
 }
 
 // ── moveFileZWithHandle (sys.zig:4266) ──

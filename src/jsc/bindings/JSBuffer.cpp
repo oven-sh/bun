@@ -2391,6 +2391,18 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, WebCore::BufferEncodingType::utf8));
     }
     if (lengthValue.isUndefined() && offsetValue.isString()) {
+        // buf.write(string, encoding) form. encodingValue is already a primitive
+        // string (isString() was checked above), so parseEncoding won't fire user
+        // JS — but stringValue.toString() would, if we let it. Validate
+        // stringValue up front like the sibling branches so an object argument
+        // is rejected with ERR_INVALID_ARG_TYPE before its toString runs (and
+        // potentially detaches or resizes castedThis). Matches Node's
+        // internal/buffer.js validateString check and avoids the surprising
+        // "returns 0 after calling your toString once" behavior the safety
+        // floor in writeToBuffer would otherwise produce.
+        Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+
         encodingValue = offsetValue;
         offset = 0;
         length = castedThis->byteLength();

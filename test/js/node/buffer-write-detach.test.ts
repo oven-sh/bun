@@ -142,3 +142,48 @@ describe.concurrent("Buffer.write with detach / resize via encoding toString", (
     expect(exitCode).toBe(0);
   });
 });
+
+// Sibling branch: `buf.write(value, encoding)` — the 2-arg "string + primitive
+// encoding" form. Here the second argument is already a primitive string, so
+// parseEncoding can't fire user JS; but the *first* argument skipped
+// validateString, so a detaching toString on an object value would crash the
+// process. Node's internal/buffer.js rejects non-string `value` up front via
+// validateString; Bun now matches. See issue #30417.
+describe.concurrent("Buffer.write(value, encoding) validates string argument", () => {
+  test("write(obj-with-detaching-toString, 'utf8') throws ERR_INVALID_ARG_TYPE (crash repro)", async () => {
+    const { stdout, stderr, exitCode } = await runPoc(`
+      const buf = Buffer.alloc(1024, 0xab);
+      let called = false;
+      try {
+        buf.write(
+          { toString() { called = true; buf.buffer.transfer(0); return "hello"; } },
+          "utf8",
+        );
+        console.log(JSON.stringify({ threw: false, called }));
+      } catch (e) {
+        console.log(JSON.stringify({ threw: true, code: e.code, called }));
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ threw: true, code: "ERR_INVALID_ARG_TYPE", called: false });
+    expect(exitCode).toBe(0);
+  });
+
+  test("write(obj-with-detaching-toString) with no encoding also throws ERR_INVALID_ARG_TYPE", async () => {
+    // Sibling branch (offsetValue undefined) already had validateString;
+    // this just pins the two paths as behaviorally identical.
+    const { stdout, stderr, exitCode } = await runPoc(`
+      const buf = Buffer.alloc(1024, 0xab);
+      let called = false;
+      try {
+        buf.write({ toString() { called = true; buf.buffer.transfer(0); return "hello"; } });
+        console.log(JSON.stringify({ threw: false, called }));
+      } catch (e) {
+        console.log(JSON.stringify({ threw: true, code: e.code, called }));
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ threw: true, code: "ERR_INVALID_ARG_TYPE", called: false });
+    expect(exitCode).toBe(0);
+  });
+});

@@ -3928,7 +3928,11 @@ pub fn finalize_bundle(
                     // `print_error_like_object_to_console` needs `&mut`.
                     dev.vm_mut()
                         .print_error_like_object_to_console(global.take_exception(err));
-                    panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
+                    // PORT NOTE: Zig `@panic` aborts; Rust `panic!()` would unwind
+                    // through the `extern "C"` boundary above (`nounwind` UB).
+                    bun_core::Output::panic(format_args!(
+                        "Error thrown while evaluating server code. This is always a bug in the bundler."
+                    ));
                 }
             }
         } else {
@@ -3939,7 +3943,11 @@ pub fn finalize_bundle(
                     // `print_error_like_object_to_console` needs `&mut`.
                     dev.vm_mut()
                         .print_error_like_object_to_console(global.take_exception(err));
-                    panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
+                    // PORT NOTE: Zig `@panic` aborts; Rust `panic!()` would unwind
+                    // through the `extern "C"` boundary above (`nounwind` UB).
+                    bun_core::Output::panic(format_args!(
+                        "Error thrown while evaluating server code. This is always a bug in the bundler."
+                    ));
                 }
             }
         };

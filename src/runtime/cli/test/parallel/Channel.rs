@@ -662,6 +662,42 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
     }
 }
 
+/// Adapter from `UvStream::read_start_ctx` to `WindowsHandlers` — Zig's
+/// `pipe.readStart(self, onAlloc, onError, onRead)` captures the three
+/// callbacks at comptime; Rust expresses that as this trait impl so the
+/// `extern "C"` trampoline stays zero-alloc.
+#[cfg(windows)]
+impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
+    #[inline]
+    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
+        WindowsHandlers::<Owner>::on_alloc(this, suggested_size)
+    }
+    #[inline]
+    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+        let e = bun_sys::windows::translate_uv_error_to_e(err);
+        WindowsHandlers::<Owner>::on_error(this, e);
+    }
+    #[inline]
+    unsafe fn on_read(this: *mut Self, data: &[u8]) {
+        // `data` points into `(*this).backend.read_chunk` (returned from
+        // `on_read_alloc`). Forming `&mut *this` retags every byte Unique and
+        // pops `data`'s SharedRW tag, so capture the length, drop `data`, then
+        // re-derive the bytes from the freshly-retagged `this` via a disjoint
+        // field split (read_chunk → r#in).
+        let n = data.len();
+        let _ = data;
+        // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
+        // `read_start_ctx`; `data` is no longer live so the retag is sound.
+        let this = unsafe { &mut *this };
+        if this.done {
+            return;
+        }
+        this.r#in.extend_from_slice(&this.backend.read_chunk[..n]);
+        // Run the shared decode loop; the empty append is a no-op.
+        this.ingest(&[]);
+    }
+}
+
 // Silence unused-import on the non-selecting cfg arm.
 #[allow(unused_imports)]
 use offset_of as _;

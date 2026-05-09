@@ -334,6 +334,17 @@ pub enum StringOrBytesToDecode {
     BytesToFree(Box<[u8]>),
 }
 
+// Zig: `StringOrBytesToDecode{ .bytes_to_free = try default_allocator.dupe(u8, path) }`.
+// `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
+// it into the owned `bytes_to_free` arm so the Windows task can carry it across
+// the thread hop (matches `FSWatchTaskWindows.run`'s `default_allocator.free`).
+impl From<&[u8]> for StringOrBytesToDecode {
+    #[inline]
+    fn from(bytes: &[u8]) -> Self {
+        StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(bytes))
+    }
+}
+
 impl core::fmt::Display for StringOrBytesToDecode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

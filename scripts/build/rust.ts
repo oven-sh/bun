@@ -342,14 +342,26 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     "--profile",
     profile.name,
   ];
-  if (tier3) {
-    // No prebuilt `rust-std`; build it from source. The workspace is
-    // `panic = "unwind"` (host_fn / bundler thread `catch_unwind` boundaries
-    // — see Cargo.toml), so build `panic_unwind` not `panic_abort`. `proc_macro`
-    // is needed because `cargo build --target` still resolves proc-macro crates
-    // for the host through the same `-Zbuild-std` flag set. Requires the
-    // `rust-src` component, which `rust-toolchain.toml` requests and CI images
-    // preinstall (Dockerfile / bootstrap.sh `rustup component add rust-src`).
+  if (tier3 || cfg.release || cfg.asan) {
+    // Build std/core/alloc from source instead of linking the rustup prebuilt.
+    //
+    // tier3:   no prebuilt `rust-std` exists.
+    // release: prebuilt std is native code built for generic x86-64 with no
+    //          `.llvm_addrsig`. Rebuilding with our RUSTFLAGS gets it
+    //          `-Ctarget-cpu=` (AVX2/BMI in core::str / hashbrown), and under
+    //          `cfg.lto` it becomes bitcode that joins the cross-language LTO
+    //          unit + safe ICF instead of being an opaque blob in the link.
+    // asan:    prebuilt std is uninstrumented; rebuilding applies
+    //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
+    //          visible instead of stopping at the std boundary.
+    //
+    // The workspace is `panic = "unwind"` (host_fn / bundler thread
+    // `catch_unwind` boundaries — see Cargo.toml), so build `panic_unwind`
+    // not `panic_abort`. `proc_macro` is needed because `cargo build --target`
+    // still resolves proc-macro crates for the host through the same
+    // `-Zbuild-std` flag set. Requires the `rust-src` component, which
+    // `rust-toolchain.toml` requests and CI images preinstall (Dockerfile /
+    // bootstrap.sh `rustup component add rust-src`).
     args.push("-Zbuild-std=core,alloc,std,proc_macro,panic_unwind");
   }
 
@@ -526,6 +538,14 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // the per-module summary index lld needs for the EnableSplitLTOUnit
     // consistency check (see -Zsplit-lto-unit above). Override to `off` so
     // each crate's bitcode reaches lld with its summary intact.
+    env.CARGO_PROFILE_RELEASE_LTO = "off";
+  } else if (cfg.asan) {
+    // release-asan has `cfg.lto` forced off (config.ts), but without this
+    // override Cargo.toml's `[profile.release] lto = "fat"` still applies —
+    // rustc merges every crate into one module and codegens it serially, on
+    // IR that ASAN instrumentation has already ~doubled. That's the 15-min
+    // cargo step vs 4m36s for the linker-plugin-lto build (which defers
+    // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");

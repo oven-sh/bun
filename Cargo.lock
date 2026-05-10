@@ -1935,6 +1935,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_runtime_types"
+version = "0.0.0"
+dependencies = [
+ "bun_spawn_types",
+]
+
+[[package]]
 name = "bun_s3_signing"
 version = "0.0.0"
 dependencies = [
@@ -2165,6 +2172,7 @@ dependencies = [
  "bun_output",
  "bun_ptr",
  "bun_spawn_sys",
+ "bun_spawn_types",
  "bun_string",
  "bun_sys",
  "bun_threading",
@@ -2185,6 +2193,16 @@ dependencies = [
  "bun_sys",
  "libc",
  "scopeguard",
+]
+
+[[package]]
+name = "bun_spawn_types"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_spawn_sys",
+ "bun_sys",
+ "libc",
 ]
 
 [[package]]

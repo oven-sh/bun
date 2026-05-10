@@ -1,0 +1,13 @@
+[package]
+name = "bun_spawn_types"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_core.workspace = true
+bun_spawn_sys.workspace = true
+bun_sys.workspace = true
+libc.workspace = true

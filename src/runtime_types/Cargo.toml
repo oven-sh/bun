@@ -1,0 +1,10 @@
+[package]
+name = "bun_runtime_types"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_spawn_types.workspace = true

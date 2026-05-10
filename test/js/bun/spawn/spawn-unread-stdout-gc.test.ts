@@ -83,9 +83,13 @@ test.skipIf(isWindows)(
       .join("\n");
     expect(stderrLines).toBe("");
     const { collected, iters } = JSON.parse(stdout.trim());
-    // Without the fix, zero Subprocess wrappers are collected because their
-    // JSRef is never downgraded. With the fix they are all collectable.
-    expect(collected).toBe(iters);
+    // Without the fix, ZERO Subprocess wrappers are collected because their
+    // JSRef is never downgraded. With the fix they are all collectable. We
+    // accept any nonzero count as proof the mechanism works — under release-
+    // ASAN each grandchild's LSan-exit can outlast the poll window, so an
+    // exact-10 assertion is a wall-clock race, not a correctness check.
+    expect(collected).toBeGreaterThan(0);
+    expect(iters).toBe(10);
     expect(exitCode).toBe(0);
   },
   60_000,

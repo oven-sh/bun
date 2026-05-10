@@ -1229,7 +1229,9 @@ class ChildProcess extends EventEmitter {
               // adopts the fd into a uSockets poll and closes it on socket
               // close. A synchronous throw here (bad fd, OOM, etc.) means
               // nothing owns the fd, so close it before re-throwing.
-              try { require("node:fs").closeSync(fd); } catch {}
+              try {
+                require("node:fs").closeSync(fd);
+              } catch {}
               throw err;
             }
         }

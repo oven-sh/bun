@@ -504,7 +504,7 @@ pub fn load(
                 defer overrides_name_hashes.deinit(allocator);
 
                 try lockfile.overrides.global.ensureTotalCapacity(allocator, overrides_name_hashes.items.len);
-                const override_versions_external = try Lockfile.Buffers.readArray(
+                var override_versions_external = try Lockfile.Buffers.readArray(
                     stream,
                     allocator,
                     std.ArrayListUnmanaged(Dependency.External),
@@ -545,7 +545,7 @@ pub fn load(
                 );
                 defer child_hashes.deinit(allocator);
 
-                const scoped_versions_external = try Lockfile.Buffers.readArray(
+                var scoped_versions_external = try Lockfile.Buffers.readArray(
                     stream,
                     allocator,
                     std.ArrayListUnmanaged(Dependency.External),

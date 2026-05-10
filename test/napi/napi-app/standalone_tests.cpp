@@ -2446,7 +2446,8 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
       printf("napi_create_error loop iteration %d: unexpected type %d (status %d)\n", i, loop_type, status);
       return nullptr;
     }
-    napi_destroy(env, loop_error_val);
+    // N-API values are GC-managed; no explicit destroy call is needed
+    // for a raw napi_value.  napi_destroy does not exist in the N-API.
   }
   puts("napi_create_error loop test passed (5 iterations with VM exception pending)");
 

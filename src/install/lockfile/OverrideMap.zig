@@ -5,6 +5,7 @@ const debug = Output.scoped(.OverrideMap, .visible);
 pub const ScopedOverrideKey = extern struct {
     parent_name_hash: PackageNameHash,
     child_name_hash: PackageNameHash,
+    parent_name: String = .{},
 };
 
 pub const ScopedOverrideContext = struct {
@@ -104,6 +105,11 @@ pub fn count(this: *OverrideMap, lockfile: *Lockfile, builder: *Lockfile.StringB
     for (this.scoped.values()) |dep| {
         dep.count(lockfile.buffers.string_bytes.items, @TypeOf(builder), builder);
     }
+    for (this.scoped.keys()) |key| {
+        if (!key.parent_name.isEmpty()) {
+            builder.count(key.parent_name.slice(lockfile.buffers.string_bytes.items));
+        }
+    }
 }
 
 pub fn clone(this: *OverrideMap, pm: *PackageManager, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
@@ -119,8 +125,13 @@ pub fn clone(this: *OverrideMap, pm: *PackageManager, old_lockfile: *Lockfile, n
 
     try new.scoped.ensureTotalCapacity(new_lockfile.allocator, this.scoped.entries.len);
     for (this.scoped.keys(), this.scoped.values()) |k, v| {
+        const new_parent_name = if (k.parent_name.isEmpty()) String.empty else new_builder.append(String, k.parent_name.slice(old_lockfile.buffers.string_bytes.items));
         new.scoped.putAssumeCapacity(
-            k,
+            .{
+                .parent_name_hash = k.parent_name_hash,
+                .child_name_hash = k.child_name_hash,
+                .parent_name = new_parent_name,
+            },
             try v.clone(pm, old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
         );
     }
@@ -188,6 +199,7 @@ pub fn parseAppend(
 ) !void {
     if (Environment.allow_assert) {
         assert(this.global.entries.len == 0); // only call parse once
+        assert(this.scoped.entries.len == 0);
     }
     if (expr.asProperty("overrides")) |overrides| {
         try this.parseFromOverrides(pm, lockfile, root_package, json_source, log, overrides.expr, builder);
@@ -213,8 +225,19 @@ pub fn parseFromOverrides(
         return error.Invalid;
     }
 
+    // Count total child entries to size the scoped map safely
+    var total_child_entries: usize = 0;
+    for (expr.data.e_object.properties.slice()) |prop| {
+        const val = prop.value.?;
+        if (val.data == .e_object) {
+            total_child_entries += val.data.e_object.properties.len;
+        } else {
+            total_child_entries += 1; // each entry gets at least one slot
+        }
+    }
+
     try this.global.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
-    try this.scoped.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len * 2);
+    try this.scoped.ensureUnusedCapacity(lockfile.allocator, total_child_entries);
 
     for (expr.data.e_object.properties.slice()) |prop| {
         const key = prop.key.?;
@@ -288,7 +311,11 @@ pub fn parseFromOverrides(
                     builder,
                 )) |child_dep| {
                     const child_name_hash = String.Builder.stringHash(child_key_str);
-                    this.scoped.putAssumeCapacity(.{ .parent_name_hash = name_hash, .child_name_hash = child_name_hash }, child_dep);
+                    this.scoped.putAssumeCapacity(.{
+                        .parent_name_hash = name_hash,
+                        .child_name_hash = child_name_hash,
+                        .parent_name = builder.append(String, k),
+                    }, child_dep);
                 }
             }
         }
@@ -349,7 +376,7 @@ pub fn parseFromResolutions(
                     }
                 }
             } else {
-                last_slash = strings.indexOfChar(k, '/');
+                last_slash = if (strings.indexOfChar(k, '/')) |idx| @as(usize, idx) else null;
             }
 
             break :parseParentChild if (last_slash) |sep| struct {
@@ -377,9 +404,14 @@ pub fn parseFromResolutions(
                 // Scoped resolution: parent/child
                 if (strings.containsChar(pc.parent, '/') or strings.containsChar(pc.child, '/')) {
                     try log.addWarningFmt(source, key.loc, lockfile.allocator, "Deeply nested resolution \"{s}\" is not supported", .{k});
+                    continue;
                 }
                 const parent_name_hash = String.Builder.stringHash(pc.parent);
-                this.scoped.putAssumeCapacity(.{ .parent_name_hash = parent_name_hash, .child_name_hash = dep.name_hash }, dep);
+                this.scoped.putAssumeCapacity(.{
+                    .parent_name_hash = parent_name_hash,
+                    .child_name_hash = dep.name_hash,
+                    .parent_name = builder.append(String, pc.parent),
+                }, dep);
             } else {
                 // Global resolution
                 const name_hash = String.Builder.stringHash(k);

@@ -318,14 +318,15 @@ pub const Stringifier = struct {
                 }
                 for (lockfile.overrides.scoped.keys(), lockfile.overrides.scoped.values()) |key, override_dep| {
                     try writeIndent(writer, indent);
-                    const parent_name = parent_name: {
+                    const parent_name = if (key.parent_name.isEmpty()) parent_name: {
+                        // Fallback: only if parent_name was not stored (old binary format)
                         for (lockfile.packages.items(.name_hash), lockfile.packages.items(.name)) |nh, n| {
                             if (nh == key.parent_name_hash) {
                                 break :parent_name lockfile.str(&n);
                             }
                         }
                         break :parent_name "";
-                    };
+                    } else lockfile.str(&key.parent_name);
                     const composite_key = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent_name, lockfile.str(&override_dep.name) });
                     defer allocator.free(composite_key);
                     try writer.print(
@@ -1331,7 +1332,12 @@ pub fn parseIntoBinaryLockfile(
                     .name_hash = child_hash,
                     .version = dep.version,
                 };
-                try lockfile.overrides.scoped.put(allocator, .{ .parent_name_hash = parent_hash, .child_name_hash = child_hash }, child_dep);
+                const parent_name = try string_buf.append(parent_str);
+                try lockfile.overrides.scoped.put(allocator, .{
+                    .parent_name_hash = parent_hash,
+                    .child_name_hash = child_hash,
+                    .parent_name = parent_name,
+                }, child_dep);
             } else {
                 try lockfile.overrides.global.put(allocator, name_hash, dep);
             }

@@ -3871,8 +3871,62 @@ fn @"windows process.dlopen"(str: *bun.String) callconv(.c) ?*anyopaque {
         },
     };
     buf[data.len] = 0;
+    return loadLibraryWithBunNodeFallback(buf[0..data.len :0]);
+}
+
+fn loadLibraryWithBunNodeFallback(path: [:0]u16) ?*anyopaque {
+    const LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR = 0x00000100;
+    const LOAD_LIBRARY_SEARCH_DEFAULT_DIRS = 0x00001000;
+    const load_library_flags = LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS;
     const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
-    return bun.windows.kernel32.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+
+    const addon_dir = bun.Dirname.dirname(u16, path[0..path.len]) orelse {
+        if (bun.windows.kernel32.LoadLibraryExW(path.ptr, null, load_library_flags)) |handle| {
+            return handle;
+        }
+        return bun.windows.kernel32.LoadLibraryExW(path.ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+    };
+
+    const node_exe_name = comptime bun.strings.w("node.exe");
+    const node_alias_path_len = addon_dir.len + 1 + node_exe_name.len;
+    if (node_alias_path_len >= bun.MAX_PATH_BYTES) {
+        return bun.windows.kernel32.LoadLibraryExW(path.ptr, null, load_library_flags);
+    }
+
+    var node_alias_path: bun.WPathBuffer = undefined;
+    @memcpy(node_alias_path[0..addon_dir.len], addon_dir);
+    node_alias_path[addon_dir.len] = '\\';
+    @memcpy(node_alias_path[addon_dir.len + 1 ..][0..node_exe_name.len], node_exe_name);
+    node_alias_path[node_alias_path_len] = 0;
+    const node_alias_path_z: [*:0]u16 = @ptrCast(node_alias_path[0..node_alias_path_len :0].ptr);
+
+    // Ensure addons that hard-import "node.exe" bind to this Bun executable
+    // before the Windows loader can resolve that import to an external Node.js
+    // process.
+    var created_node_alias = false;
+    var node_alias_already_existed = false;
+    if (bun.windows.CreateHardLinkW(node_alias_path_z, bun.windows.exePathW().ptr, null) != 0) {
+        created_node_alias = true;
+    } else {
+        const err = bun.windows.Win32Error.get();
+        node_alias_already_existed = err == .ALREADY_EXISTS or err == .FILE_EXISTS;
+    }
+    defer {
+        if (created_node_alias) _ = bun.windows.DeleteFileW(node_alias_path_z);
+    }
+
+    if (bun.windows.kernel32.LoadLibraryExW(path.ptr, null, load_library_flags)) |handle| {
+        return handle;
+    }
+
+    // Compatibility fallback for addons that rely on PATH or CWD to find
+    // non-node.exe dependent DLLs. Avoid it when we could not make node.exe
+    // resolvable from the addon's directory.
+    if (created_node_alias or node_alias_already_existed) {
+        return bun.windows.kernel32.LoadLibraryExW(path.ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+    }
+
+    return null;
 }
 
 pub const windows_enable_stdio_inheritance = @import("../../windows_sys/externs.zig").windows_enable_stdio_inheritance;

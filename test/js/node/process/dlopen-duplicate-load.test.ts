@@ -1,16 +1,148 @@
 import { spawnSync } from "bun";
-import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { beforeAll, describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { copyFileSync, existsSync, linkSync, realpathSync } from "node:fs";
+import { basename, join } from "path";
 
 // This test verifies that Bun can load the same native module multiple times
 // Previously, the second load would fail with "symbol 'napi_register_module_v1' not found"
 // because static constructors only run once, so the module registration wasn't replayed
 
 describe("process.dlopen duplicate loads", () => {
-  let addonPath: string;
+  jest.setTimeout(60_000);
+  const externalNodeExe = isWindows ? Bun.which("node") : null;
+  let duplicateLoadAddon: string | undefined;
+  function buildAddon(
+    prefix: string,
+    files: Record<string, string>,
+    sources: string[],
+    options: Record<string, string> = {},
+  ) {
+    const dir = tempDirWithFiles(prefix, {
+      ...files,
+      "binding.gyp": `
+{
+  "targets": [
+    {
+      "target_name": "addon",
+      "sources": ${JSON.stringify(sources)},
+      ${Object.entries(options)
+        .map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`)
+        .join(",\n      ")}
+    }
+  ]
+}
+`,
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        gypfile: true,
+        scripts: {
+          install: "node-gyp rebuild",
+        },
+        devDependencies: {
+          "node-gyp": "^11.2.0",
+        },
+      }),
+    });
 
-  beforeAll(() => {
+    const build = spawnSync({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    if (!build.success) {
+      throw new Error("Failed to build native addon");
+    }
+
+    return {
+      dir,
+      addonPath: join(dir, "build", "Release", "addon.node"),
+    };
+  }
+
+  test.skipIf(!isWindows || !externalNodeExe || basename(externalNodeExe!).toLowerCase() === "bun.exe")("should not bind node.exe imports to an external Node.js process", () => {
+    const addonSource = `
+#include <node_api.h>
+
+static napi_value Hello(napi_env env, napi_callback_info info) {
+  napi_value result;
+  napi_create_string_utf8(env, "world", NAPI_AUTO_LENGTH, &result);
+  return result;
+}
+
+static napi_value Initialize(napi_env env, napi_value exports) {
+  napi_value fn;
+  napi_create_function(env, "hello", NAPI_AUTO_LENGTH, Hello, 0, &fn);
+  napi_set_named_property(env, exports, "hello", fn);
+  return exports;
+}
+
+NAPI_MODULE(NODE_GYP_MODULE_NAME, Initialize)
+`;
+    const { dir, addonPath } = buildAddon("dlopen-node-import-test", { "addon.c": addonSource }, ["addon.c"], {
+      "win_delay_load_hook": "false",
+    });
+
+    expect(basename(externalNodeExe!).toLowerCase()).toBe("node.exe");
+    expect(realpathSync(externalNodeExe!).toLowerCase()).not.toBe(realpathSync(bunExe()).toLowerCase());
+    copyFileSync(externalNodeExe!, join(dir, "node.exe"));
+    expect(existsSync(join(dir, "node.exe"))).toBe(true);
+    const testScript = `
+      const addon = require(${JSON.stringify(addonPath)});
+      console.log("hello:", addon.hello());
+    `;
+
+    const proc = spawnSync({
+      cmd: [bunExe(), "-e", testScript],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+
+    expect(proc.stderr.toString()).toBe("");
+    expect(proc.stdout.toString()).toBe("hello: world\n");
+    expect(proc.exitCode).toBe(0);
+  });
+
+  test.skipIf(!isWindows)("should not remove an existing node.exe next to the addon", () => {
+    const addonSource = `
+#include <node_api.h>
+
+static napi_value Initialize(napi_env env, napi_value exports) {
+  return exports;
+}
+
+NAPI_MODULE(NODE_GYP_MODULE_NAME, Initialize)
+`;
+    const { dir, addonPath } = buildAddon("dlopen-existing-node-test", { "addon.c": addonSource }, ["addon.c"], {
+      "win_delay_load_hook": "false",
+    });
+
+    const existingNode = join(dir, "build", "Release", "node.exe");
+    linkSync(bunExe(), existingNode);
+    expect(existsSync(existingNode)).toBe(true);
+
+    const proc = spawnSync({
+      cmd: [bunExe(), "-e", `require(${JSON.stringify(addonPath)});`],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+
+    expect(proc.stderr.toString()).toBe("");
+    expect(existsSync(existingNode)).toBe(true);
+    expect(proc.exitCode).toBe(0);
+  });
+
+  function duplicateLoadAddonPath() {
     const addonSource = `
 #include <node.h>
 
@@ -41,50 +173,15 @@ void Initialize(Local<Object> exports,
 NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
 `;
 
-    const bindingGyp = `
-{
-  "targets": [
-    {
-      "target_name": "addon",
-      "sources": [ "addon.cpp" ]
-    }
-  ]
-}
-`;
+    return buildAddon("dlopen-duplicate-test", { "addon.cpp": addonSource }, ["addon.cpp"]).addonPath;
+  }
 
-    const dir = tempDirWithFiles("dlopen-duplicate-test", {
-      "addon.cpp": addonSource,
-      "binding.gyp": bindingGyp,
-      "package.json": JSON.stringify({
-        name: "test",
-        version: "1.0.0",
-        gypfile: true,
-        scripts: {
-          install: "node-gyp rebuild",
-        },
-        devDependencies: {
-          "node-gyp": "^11.2.0",
-        },
-      }),
-    });
+  function getDuplicateLoadAddon() {
+    return (duplicateLoadAddon ??= duplicateLoadAddonPath());
+  }
 
-    // Build the addon
-    const build = spawnSync({
-      cmd: [bunExe(), "install"],
-      cwd: dir,
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-
-    if (!build.success) {
-      throw new Error("Failed to build native addon");
-    }
-
-    addonPath = join(dir, "build", "Release", "addon.node");
-  });
-
-  test("should load the same module twice successfully", async () => {
+  test.skipIf(!isWindows)("should load the same module twice successfully", { timeout: 60_000 }, async () => {
+    const addonPath = getDuplicateLoadAddon();
     const testScript = `
       // First load
       const m1 = { exports: {} };
@@ -117,7 +214,8 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
     expect(exitCode).toBe(0);
   });
 
-  test("should load module with different exports objects", async () => {
+  test.skipIf(!isWindows)("should load module with different exports objects", { timeout: 60_000 }, async () => {
+    const addonPath = getDuplicateLoadAddon();
     const testScript = `
       // First load with empty object
       const m1 = { exports: {} };

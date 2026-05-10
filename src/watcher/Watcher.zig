@@ -737,16 +737,6 @@ pub fn addFile(
             // On Linux, the file descriptor might be out of date.
             if (fd.isValid()) {
                 var fds = this.watchlist.items(.fd);
-                // The caller may have dropped its cached fd because the path
-                // changed inode (see `ModuleLoader.cachedFdIsStale`, #30449).
-                // The old fd still points at an unlinked inode nobody needs;
-                // closing it here avoids walking toward EMFILE every time an
-                // atomic-rename save forces a fresh open. Skip the close when
-                // the caller handed us the same fd (identity).
-                const old = fds[index];
-                if (old.isValid() and old.native() != fd.native()) {
-                    old.close();
-                }
                 fds[index] = fd;
             }
         }

@@ -326,8 +326,8 @@ pub const Stringifier = struct {
                         }
                         break :parent_name "";
                     };
-                    const composite_key = try std.fmt.allocPrint(buf.allocator, "{s}/{s}", .{ parent_name, lockfile.str(&override_dep.name) });
-                    defer buf.allocator.free(composite_key);
+                    const composite_key = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent_name, lockfile.str(&override_dep.name) });
+                    defer allocator.free(composite_key);
                     try writer.print(
                         \\{f}: {f},
                         \\

@@ -116,17 +116,7 @@ pub struct JSONLikeParser<
     pub bump: &'bump Bump,
     pub list_bump: &'bump Bump,
     pub stack_check: StackCheck,
-    /// Hard recursion cap. Zig relies on `stack_check` alone, but the Rust
-    /// port's per-frame stack use is ~80 B (vs Zig's ~250 B with the
-    /// `stackFallback(@sizeOf(Rope)*6)` buffer in the lexer), so on Windows'
-    /// 18 MB main stack (`/STACK:0x1200000`) the test's 25 000-deep input
-    /// (~2 MB) never trips `is_safe_to_recurse()`. Same `MAX_NESTING_DEPTH`
-    /// as `toml.rs` — the test goal is "throws instead of crashing", and a
-    /// hard cap is what the JSON spec ecosystem (V8, Node, serde_json) uses.
-    depth: u32,
 }
-
-const MAX_NESTING_DEPTH: u32 = 1000;
 
 impl<
         'a,
@@ -197,7 +187,6 @@ where
             bump,
             list_bump,
             stack_check: StackCheck::init(),
-            depth: 0,
         })
     }
 
@@ -209,22 +198,10 @@ where
     pub fn parse_expr<const MAYBE_AUTO_QUOTE: bool, const FORCE_UTF8: bool>(
         &mut self,
     ) -> Result<Expr, bun_core::Error> {
-        // PORT NOTE: Zig only checks `stack_check`; the hard cap is added so
-        // platforms with deep stacks + smaller Rust frames still throw a
-        // `RangeError` instead of slowly succeeding (see field doc).
-        if self.depth > MAX_NESTING_DEPTH || !self.stack_check.is_safe_to_recurse() {
+        if !self.stack_check.is_safe_to_recurse() {
             // Zig: `bun.throwStackOverflow()`.
             return Err(bun_core::err!("StackOverflow"));
         }
-        self.depth += 1;
-        // Borrowck: capturing `&mut self` in a defer would lock out the whole
-        // body. Guard the field via a raw pointer — `self` is `&mut`-pinned for
-        // the call, no aliasing, decrement runs once on every exit path.
-        let _depth_guard = scopeguard::guard(core::ptr::addr_of_mut!(self.depth), |p| {
-            // SAFETY: `p` points into `*self`, valid for the guard's lifetime
-            // (bounded by this stack frame); no other `&mut self.depth` is live.
-            unsafe { *p -= 1 };
-        });
 
         let loc = self.lexer.loc();
 

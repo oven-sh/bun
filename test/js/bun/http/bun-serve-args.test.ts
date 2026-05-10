@@ -670,3 +670,39 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("app.bundlerOptions validation", () => {
+  test.each([5, "hello", true, 1n])("non-object bundlerOptions throws (%p)", value => {
+    expect(() => {
+      // @ts-expect-error - Testing runtime validation
+      serve({ app: { bundlerOptions: value } });
+    }).toThrow("'app.bundlerOptions' must be an object");
+  });
+
+  test.each(["server", "client", "ssr"])("non-object bundlerOptions.%s throws", key => {
+    for (const value of [5, "hello", true, 1n]) {
+      expect(() => {
+        // @ts-expect-error - Testing runtime validation
+        serve({ app: { bundlerOptions: { [key]: value } } });
+      }).toThrow(`'bundlerOptions.${key}' must be an object`);
+    }
+  });
+
+  test("non-object bundlerOptions.server.minify throws", () => {
+    for (const value of [5, "hello", 1n]) {
+      expect(() => {
+        // @ts-expect-error - Testing runtime validation
+        serve({ app: { bundlerOptions: { server: { minify: value } } } });
+      }).toThrow("'bundlerOptions.server.minify' must be a boolean or an object");
+    }
+  });
+
+  test("boolean bundlerOptions.server.minify does not crash", () => {
+    for (const value of [true, false]) {
+      expect(() => {
+        // @ts-expect-error - Testing runtime validation
+        serve({ app: { bundlerOptions: { server: { minify: value } } } });
+      }).toThrow("'app' is missing 'framework'");
+    }
+  });
+});

@@ -288,10 +288,31 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
             Some(d) => Ok(d),
             None => bmp::decode(bytes, max_pixels),
         },
-        Format::Gif => match decode_via_system(bytes, max_pixels)? {
-            Some(d) => Ok(d),
-            None => gif::decode(bytes, max_pixels),
-        },
+        Format::Gif => {
+            let mut d = match decode_via_system(bytes, max_pixels)? {
+                Some(d) => d,
+                None => gif::decode(bytes, max_pixels)?,
+            };
+            // GIF transparency is a binary palette-index flag — the RGB at
+            // α=0 is whatever the colour-table slot happened to hold and has
+            // no defined meaning. The static decoder emits `[0,0,0,0]`
+            // (codec_gif.zig: `pal[t] = .{0,0,0,0}`) and ImageIO does the
+            // same, but WIC's indexed→32bppRGBA converter expands the palette
+            // entry verbatim, leaving the original RGB with α=0. Zig never
+            // hit this because `bun.windows.GetProcAddressA` widens the
+            // symbol to UTF-16 for the narrow-only Win32 `GetProcAddress`,
+            // so `WICConvertBitmapSource` was never resolved and WIC decode
+            // always fell through to the static path. Normalise here so
+            // every backend yields identical bytes for the same GIF.
+            for px in d.rgba.chunks_exact_mut(4) {
+                if px[3] == 0 {
+                    px[0] = 0;
+                    px[1] = 0;
+                    px[2] = 0;
+                }
+            }
+            Ok(d)
+        }
     }
 }
 

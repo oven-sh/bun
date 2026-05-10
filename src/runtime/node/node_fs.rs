@@ -1612,8 +1612,18 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                     src,
                     dest,
                     if IS_SHELL {
-                        // Shell always forces copy
-                        constants::Copyfile::from_raw(constants::Copyfile::FORCE)
+                        // Shell always forces copy (overwrite allowed). Spec
+                        // (node_fs.zig:758) passes `Copyfile.force` here, but
+                        // that value is `COPYFILE_FICLONE_FORCE` and was a
+                        // no-op in Zig's Windows `_copySingleFileSync` (which
+                        // never checks `isForceClone`). The Rust port added an
+                        // ENOSYS guard for `is_force_clone()` on Windows (see
+                        // the comment at the top of that branch), so passing
+                        // `FORCE` would make every shell `cp file dest` fail
+                        // with ENOSYS. Mode `0` yields the same effective
+                        // behaviour the Zig path had: `shouldnt_overwrite()`
+                        // is false and `CopyFileW` overwrites.
+                        constants::Copyfile::from_raw(0)
                     } else {
                         constants::Copyfile::from_raw(
                             if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0i32 },

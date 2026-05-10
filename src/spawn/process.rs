@@ -1782,7 +1782,19 @@ pub fn spawn_process_windows(
     // SAFETY: cwd_buf[options.cwd.len()] == 0 written above
     let cwd = bun_str::ZStr::from_buf(&cwd_buf[..], options.cwd.len());
 
-    uv_process_options.cwd = cwd.as_ptr().cast::<c_char>();
+    // PORT NOTE: Zig spec passes `cwd.ptr` unconditionally, but every Zig
+    // `bun.spawnSync` Windows caller sets `.cwd` explicitly so the latent
+    // empty-cwd path is never hit there. The Rust port routes
+    // `git_diff_internal` (originally `std.process.Child`, which inherits cwd)
+    // through here with `Options::default()` → `cwd = ""`. libuv treats a
+    // non-NULL `cwd` as explicit and hands `L""` to `CreateProcessW`, which
+    // fails with `ERROR_DIRECTORY` → `UV_ENOENT`. Map empty to NULL so libuv
+    // inherits the parent cwd, matching `std.process.Child` semantics.
+    uv_process_options.cwd = if options.cwd.is_empty() {
+        core::ptr::null()
+    } else {
+        cwd.as_ptr().cast::<c_char>()
+    };
 
     let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
     let mut failed = false;

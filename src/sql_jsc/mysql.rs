@@ -32,12 +32,13 @@ bun_jsc::jsc_host_abi! {
 }
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
+    // NB: the win-x64 segfault originally observed here was an ABI mismatch in
+    // the `get_constructor!` extern declaration — fixed at source by switching
+    // to `jsc_abi_extern!` in `crate::jsc::codegen`. Statement order below is
+    // not load-bearing.
+    let connection_ctor = crate::jsc::codegen::JSMySQLConnection::get_constructor(global_object);
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);
-    binding.put(
-        global_object,
-        b"MySQLConnection",
-        crate::jsc::codegen::JSMySQLConnection::get_constructor(global_object),
-    );
+    binding.put(global_object, b"MySQLConnection", connection_ctor);
     binding.put(
         global_object,
         b"init",

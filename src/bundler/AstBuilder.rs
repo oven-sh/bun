@@ -530,7 +530,50 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(hmr_stmts.as_slice());
             parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(stmts_in_bump);
         } else {
-            let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(self.stmts.as_slice());
+            // Non-HMR path: mirror `ImportScanner.scan(AstBuilder, p, stmts,
+            // false, false, {})` for the stmt shapes AstBuilder callers emit
+            // (`S.Import`, `S.Local{is_export}`, `S.ExportDefault`). The Zig
+            // duck-typed scanner is what populates `named_exports` /
+            // `named_imports` / `import_records_for_current_part`; without it
+            // the linker can't bind imports against this generated module
+            // (e.g. `import { ssrManifest } from "bun:bake/server"` →
+            // "No matching export"). See PORT NOTE above re: monomorphization.
+            let in_stmts = core::mem::take(&mut self.stmts);
+            for stmt in in_stmts.iter() {
+                match stmt.data {
+                    js_ast::StmtData::SImport(st) => {
+                        self.import_records_for_current_part.push(st.import_record_index);
+                        for item in st.items.slice() {
+                            let ref_ = item.name.ref_.expect("infallible: ref bound");
+                            self.named_imports.put(
+                                ref_,
+                                js_ast::NamedImport {
+                                    alias: Some(item.alias),
+                                    alias_loc: Some(item.name.loc),
+                                    namespace_ref: Some(st.namespace_ref),
+                                    import_record_index: st.import_record_index,
+                                    alias_is_star: false,
+                                    is_exported: false,
+                                    local_parts_with_uses: Default::default(),
+                                },
+                            )?;
+                        }
+                    }
+                    js_ast::StmtData::SLocal(st) if st.is_export => {
+                        for i in 0..st.decls.len_u32() as usize {
+                            let binding = st.decls.slice()[i].binding;
+                            self.record_exported_binding(binding);
+                        }
+                    }
+                    js_ast::StmtData::SExportDefault(st) => {
+                        let default_ref =
+                            st.default_name.ref_.expect("infallible: ref bound");
+                        self.record_export(st.default_name.loc, b"default", default_ref)?;
+                    }
+                    _ => {}
+                }
+            }
+            let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(in_stmts.as_slice());
             parts.mut_(1).stmts = js_ast::StoreSlice::new_mut(stmts_in_bump);
         }
 

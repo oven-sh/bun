@@ -1751,16 +1751,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
-        if !self.stack_check.is_safe_to_recurse() {
+        // PORT NOTE: Zig only checks `stack_check`; the hard cap is added so
+        // Windows' 18 MB worker stack (where the small Rust `parse_stmt`→`t_*`
+        // frames never exhaust it) still throws before the uncapped visitor/
+        // printer pass hard-overflows. See `P::parse_stmt_depth` field doc.
+        if self.parse_stmt_depth >= MAX_STMT_DEPTH || !self.stack_check.is_safe_to_recurse() {
             // TODO(port): bun_core::throw_stack_overflow() not yet exported; map to a SyntaxError
             // until the StackOverflow error variant lands.
             return Err(err!("StackOverflow"));
         }
+        self.parse_stmt_depth += 1;
 
         // Zig used `inline ... => |function| @field(@This(), @tagName(function))(...)` to dispatch
         // by token name via comptime reflection. Rust has no `@field`/`@tagName`; expand the arms.
         let loc = self.lexer.loc();
-        match self.lexer.token {
+        let result = match self.lexer.token {
             T::TSemicolon => Self::t_semicolon(self),
             T::TAt => Self::t_at(self, opts),
 
@@ -1786,6 +1791,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             T::TOpenBrace => Self::t_open_brace(self, opts, loc),
 
             _ => Self::parse_stmt_fallthrough(self, opts, loc),
-        }
+        };
+        self.parse_stmt_depth -= 1;
+        result
     }
 }
+
+/// See `P::parse_stmt_depth` — sized so the visitor/printer (larger per-level
+/// frames, no stack check) fit on the smallest 4 MB POSIX worker stack.
+const MAX_STMT_DEPTH: u32 = 1000;

@@ -638,7 +638,10 @@ pub mod webcore {
     // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
     // opaque `UnsafeCell`-backed handle, so `&JSGlobalObject` is ABI-identical
     // to a non-null `JSGlobalObject*` with write provenance.
-    unsafe extern "C" {
+    // C++ declares these `extern JSC_CALLCONV` (= SysV ABI on win-x64), so
+    // import via `jsc_abi_extern!` — plain `extern "C"` is the Win64 ABI on
+    // Windows and would pass args in the wrong registers.
+    bun_jsc::jsc_abi_extern! {
         safe fn Blob__fromJS(value: JSValue) -> *mut c_void;
         safe fn Blob__fromJSDirect(value: JSValue) -> *mut c_void;
         safe fn Blob__getConstructor(global: &JSGlobalObject) -> JSValue;
@@ -661,7 +664,12 @@ pub mod codegen {
 
     macro_rules! cached_slot {
         ($get:ident, $set:ident, $get_ext:ident, $set_ext:ident) => {
-            unsafe extern "C" {
+            // C++ side (`generate-classes.ts`) defines these as
+            // `extern JSC_CALLCONV` (= SysV ABI on win-x64); a plain
+            // `extern "C"` block here is the Win64 ABI on Windows and would
+            // mis-pass args → null deref. See commit 2a62b6aa97c1 for the
+            // analogous UDPSocket__create fix.
+            ::bun_jsc::jsc_abi_extern! {
                 fn $get_ext(this_value: JSValue) -> JSValue;
                 fn $set_ext(this_value: JSValue, global: *mut JSGlobalObject, value: JSValue);
             }
@@ -679,7 +687,8 @@ pub mod codegen {
 
     macro_rules! get_constructor {
         ($extern_name:ident) => {
-            unsafe extern "C" {
+            // `extern JSC_CALLCONV` on the C++ side — see `cached_slot!` note.
+            ::bun_jsc::jsc_abi_extern! {
                 fn $extern_name(global: *mut JSGlobalObject) -> JSValue;
             }
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
@@ -692,7 +701,8 @@ pub mod codegen {
 
     macro_rules! js_class_fns {
         ($payload:ty, $create:ident, $from_js:ident, $from_js_direct:ident) => {
-            unsafe extern "C" {
+            // `extern JSC_CALLCONV` on the C++ side — see `cached_slot!` note.
+            ::bun_jsc::jsc_abi_extern! {
                 fn $create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
                 fn $from_js(value: JSValue) -> *mut c_void;
                 fn $from_js_direct(value: JSValue) -> *mut c_void;

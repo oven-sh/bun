@@ -1191,10 +1191,19 @@ pub mod strings {
         s.iter().position(|b| chars.contains(b))
     }
 
-    /// Zig: `bun.strings.isIPV6Address` — heuristic (contains ':', not parseable as v4).
+    /// Zig: `bun.strings.isIPV6Address` — `ares_inet_pton(AF_INET6, …) > 0`.
+    /// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
+    /// unix-socket path like `C:/Windows/Temp/…` contains a colon and the old
+    /// heuristic mis-bracketed it as `unix://[C:/…]`, which fails URL parsing.
     #[inline]
     pub fn is_ipv6_address(s: &[u8]) -> bool {
-        index_of_char(s, b':').is_some()
+        if s.len() >= 512 {
+            return false;
+        }
+        match core::str::from_utf8(s) {
+            Ok(s) => s.parse::<core::net::Ipv6Addr>().is_ok(),
+            Err(_) => false,
+        }
     }
 
     pub fn starts_with_uuid(s: &[u8]) -> bool {

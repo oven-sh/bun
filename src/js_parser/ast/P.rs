@@ -330,6 +330,16 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     pub has_commonjs_export_names: bool,
 
     pub stack_check: bun_core::StackCheck,
+    /// Hard recursion cap for `parse_stmt`. Zig relies on `stack_check` alone,
+    /// but its `parseStmt` uses an `inline` switch that pulls every `t_*`
+    /// handler into one multi-KB frame, so 15k nested statements exhaust the
+    /// 18 MB Windows stack and trip `is_safe_to_recurse()`. Rust dispatches to
+    /// out-of-line `t_*` fns; the `parse_stmt`→`t_for` cycle is only a few
+    /// hundred bytes, so the 15k-level `lots-of-for-loop.js` fixture (~4 MB)
+    /// never trips the 256 KB threshold on Windows' 18 MB worker stack — parse
+    /// completes, then the (uncapped) visitor/printer recurse 15k times and
+    /// hard-overflow. Same `MAX_STMT_DEPTH` rationale as `interchange/json.rs`.
+    pub parse_stmt_depth: u32,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -7757,6 +7767,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             named_exports: Default::default(),
             log,
             stack_check: bun_core::StackCheck::init(),
+            parse_stmt_depth: 0,
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

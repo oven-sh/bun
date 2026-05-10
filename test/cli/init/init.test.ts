@@ -97,7 +97,6 @@ import path from "path";
     expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
-      "CLAUDE.md",
       "README.md",
       "bun.lock",
       "index.ts",
@@ -137,7 +136,6 @@ import path from "path";
     expect(readdirSync(path.join(temp, "u t f ∞™/subpath")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
-      "CLAUDE.md",
       "README.md",
       "bun.lock",
       "index.ts",
@@ -161,7 +159,6 @@ import path from "path";
     expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
-      "CLAUDE.md",
       "README.md",
       "bun.lock",
       "index.ts",
@@ -197,7 +194,6 @@ import path from "path";
     expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
-      "CLAUDE.md",
       "README.md",
       "bun.lock",
       "index.ts",

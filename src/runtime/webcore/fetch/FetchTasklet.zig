@@ -235,7 +235,7 @@ pub const FetchTasklet = struct {
             response.unref();
         }
 
-        this.clearStreamCancelHandler();
+        this.clearStreamHandlers();
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
@@ -368,7 +368,7 @@ pub const FetchTasklet = struct {
                         bun.default_allocator,
                     );
                 } else {
-                    this.clearStreamCancelHandler();
+                    this.clearStreamHandlers();
                     var prev = this.readable_stream_ref;
                     this.readable_stream_ref = .{};
                     defer prev.deinit();
@@ -923,10 +923,15 @@ pub const FetchTasklet = struct {
         };
     }
 
-    /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
-    /// Must be called before releasing readable_stream_ref, while the Strong ref
-    /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
-    fn clearStreamCancelHandler(this: *FetchTasklet) void {
+    /// Clear every ByteStream.Source callback whose ctx pointer is this
+    /// FetchTasklet (cancel_handler/cancel_ctx and drain_handler/drain_ctx)
+    /// to prevent use-after-free. Must be called before releasing
+    /// readable_stream_ref, while the Strong ref still keeps the
+    /// ReadableStream (and thus the ByteStream.Source) alive — the stream
+    /// can outlive the tasklet in JS, and a late `didDrain` or
+    /// `onStreamCancelled` firing against a freed FetchTasklet is the
+    /// UAF this guards.
+    fn clearStreamHandlers(this: *FetchTasklet) void {
         if (this.readable_stream_ref.get(this.global_this)) |readable| {
             if (readable.ptr == .Bytes) {
                 const source = readable.ptr.Bytes.parent();
@@ -1040,7 +1045,7 @@ pub const FetchTasklet = struct {
         const vm = this.javascript_vm;
         this.poll_ref.unref(vm);
         // clean any remaining references
-        this.clearStreamCancelHandler();
+        this.clearStreamHandlers();
         this.readable_stream_ref.deinit();
         this.response.deinit();
 

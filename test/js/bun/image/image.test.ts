@@ -640,13 +640,19 @@ describe("Bun.Image", () => {
 
     test("PNG 16 → png({palette}) downconverts to 8-bpc (quantise is u8-only)", async () => {
       const out = await new Bun.Image(cornersPng16).png({ palette: true, colors: 16 }).bytes();
-      expect(pngBitDepth(out)).toBe(8);
+      // Indexed PNG: IHDR.color_type = 3 (palette). bit_depth here is the
+      // palette index width (1/2/4/8), NOT channel precision — our encoder
+      // currently emits 8 even when 4 indices would fit, but lock in only
+      // that the result is a valid indexed PNG at ≤8-bit index width so a
+      // future packing optimisation doesn't spuriously break the test.
+      expect(out[25]).toBe(3); // IHDR byte 25 = color_type
+      expect(pngBitDepth(out)).toBeLessThanOrEqual(8);
     });
 
     test("PNG 16 round-trip preserves iCCP (profile survives across 16-bpc decode+encode)", async () => {
       // Regression for #30197 interacting with the 16-bpc path: the profile
       // must carry through the new RGBA16 decode arm exactly as it does
-      // through the RGBA8 arm.
+      // through the RGBA8 arm, byte-for-byte — not just the chunk frame.
       const profile = new Uint8Array(256);
       for (let i = 0; i < profile.length; i++) profile[i] = (i * 7 + 11) & 0xff;
       // Splice an iCCP chunk right after IHDR (same layout as the ICC tests
@@ -659,18 +665,28 @@ describe("Bun.Image", () => {
       const iccpPng = Buffer.concat([cornersPng16.subarray(0, 33), iccp, cornersPng16.subarray(33)]);
       const out = await new Bun.Image(iccpPng).png().bytes();
       expect(pngBitDepth(out)).toBe(16);
-      // The iCCP chunk should be present in the output. Scan chunks.
+      // Locate the output's iCCP chunk and inflate its payload — asserting
+      // chunk presence only would miss a regression that drops/truncates
+      // the profile bytes while still emitting the chunk header.
       const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
       let off = 8;
-      let hasIccp = false;
+      let decoded: Uint8Array | null = null;
       while (off + 12 <= out.length) {
         const len = dv.getUint32(off);
         const type = String.fromCharCode(out[off + 4], out[off + 5], out[off + 6], out[off + 7]);
-        if (type === "iCCP") hasIccp = true;
+        if (type === "iCCP") {
+          // iCCP body = Latin-1 keyword + NUL + compression_method byte + zlib.
+          const chunkBody = out.subarray(off + 8, off + 8 + len);
+          const nul = chunkBody.indexOf(0);
+          // Skip keyword + NUL + 1-byte compression method → rest is zlib.
+          decoded = new Uint8Array(zlib.inflateSync(Buffer.from(chunkBody.subarray(nul + 2))));
+          break;
+        }
         if (type === "IEND") break;
         off += 12 + len;
       }
-      expect(hasIccp).toBe(true);
+      expect(decoded).not.toBeNull();
+      expect(decoded).toEqual(profile);
     });
 
     // Decompression-bomb guard — 16-bpc doubles bytes-per-pixel, so the

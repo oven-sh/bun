@@ -126,17 +126,30 @@ pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
 /// Guard against the placeholder/empty artifact slipping through: a 0-byte
 /// embed would silently make `bun install` write 0-byte `.exe` shims into
 /// `node_modules/.bin/` and break every package binary. This is a runtime
-/// assert (not `const _: () = assert!(..)`) so `cargo check` on Windows can
+/// guard (not `const _: () = assert!(..)`) so `cargo check` on Windows can
 /// type-check the install crate before the separate `bun_shim_impl` build step
 /// has produced the PE — but any actual *use* of the data still fails loudly.
 /// Call this from every site that writes `EMBEDDED_EXECUTABLE_DATA` to disk.
+///
+/// PORT NOTE: this MUST be a process exit, not `panic!()`. The only caller
+/// (`bin::Linker::create_windows_shim`) runs on the parallel-install thread
+/// pool; the workspace is `panic = "unwind"`, so a `panic!()` here unwinds
+/// and kills the worker thread — the main install loop's pending-task counter
+/// never decrements and `bun install` hangs until the CI 180s timeout, then
+/// retries forever. Zig has no equivalent guard (build.zig provides the embed
+/// via `addAnonymousImport` so it can never be empty); until the Rust port
+/// wires the standalone-shim build step, fail the *process* fast instead.
 #[inline]
 #[track_caller]
 pub fn embedded_executable_data() -> &'static [u8] {
-    assert!(
-        !EMBEDDED_EXECUTABLE_DATA.is_empty(),
-        "bun_shim_impl.exe is empty — the Windows shim PE must be built before this crate is compiled",
-    );
+    if EMBEDDED_EXECUTABLE_DATA.is_empty() {
+        bun_core::Output::pretty_errorln(format_args!(
+            "<r><red>error<r>: bun_shim_impl.exe is empty — the Windows shim \
+             PE must be built before this crate is compiled (the build is \
+             missing the windows-shim step)",
+        ));
+        bun_core::Global::crash();
+    }
     EMBEDDED_EXECUTABLE_DATA
 }
 

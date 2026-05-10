@@ -326,10 +326,12 @@ pub const Stringifier = struct {
                         }
                         break :parent_name "";
                     };
+                    const composite_key = try std.fmt.allocPrint(buf.allocator, "{s}/{s}", .{ parent_name, lockfile.str(&override_dep.name) });
+                    defer buf.allocator.free(composite_key);
                     try writer.print(
-                        \\{s}/{f}: {f},
+                        \\{f}: {f},
                         \\
-                    , .{ parent_name, override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+                    , .{ bun.fmt.formatJSONStringUTF8(composite_key, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
                 }
 
                 try decIndent(writer, indent);
@@ -1309,9 +1311,18 @@ pub fn parseIntoBinaryLockfile(
             };
 
             if (is_scoped) {
-                const last_slash = strings.lastIndexOfChar(name_str, '/').?;
-                const parent_str = name_str[0..last_slash];
-                const child_str = name_str[last_slash + 1 ..];
+                // Split at the first '/' (or first '/' after scope for scoped packages)
+                const split_at = split_at: {
+                    if (name_str[0] == '@') {
+                        const first_slash = strings.indexOfChar(name_str, '/') orelse unreachable;
+                        if (strings.indexOfChar(name_str[first_slash + 1 ..], '/')) |rel| {
+                            break :split_at first_slash + 1 + rel;
+                        }
+                    }
+                    break :split_at strings.indexOfChar(name_str, '/') orelse unreachable;
+                };
+                const parent_str = name_str[0..split_at];
+                const child_str = name_str[split_at + 1 ..];
                 const parent_hash = String.Builder.stringHash(parent_str);
                 const child_hash = String.Builder.stringHash(child_str);
                 const child_name = try string_buf.appendWithHash(child_str, child_hash);

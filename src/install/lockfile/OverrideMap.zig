@@ -10,7 +10,7 @@ pub const ScopedOverrideKey = extern struct {
 pub const ScopedOverrideContext = struct {
     pub fn hash(self: @This(), key: ScopedOverrideKey) u32 {
         _ = self;
-        return @truncate(@as(u64, key.parent_name_hash) * 33 +% @as(u64, key.child_name_hash));
+        return @truncate(@as(u64, key.parent_name_hash) *% 33 +% @as(u64, key.child_name_hash));
     }
 
     pub fn eql(self: @This(), a: ScopedOverrideKey, b: ScopedOverrideKey, b_index: usize) bool {
@@ -213,7 +213,8 @@ pub fn parseFromOverrides(
         return error.Invalid;
     }
 
-    try this.global.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len * 2);
+    try this.global.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+    try this.scoped.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len * 2);
 
     for (expr.data.e_object.properties.slice()) |prop| {
         const key = prop.key.?;
@@ -310,7 +311,8 @@ pub fn parseFromResolutions(
         try log.addWarningFmt(source, expr.loc, lockfile.allocator, "\"resolutions\" must be an object with string values", .{});
         return;
     }
-    try this.global.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len * 2);
+    try this.global.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+    try this.scoped.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
     for (expr.data.e_object.properties.slice()) |prop| {
         const key = prop.key.?;
         var k = key.asString(lockfile.allocator).?;
@@ -337,17 +339,17 @@ pub fn parseFromResolutions(
             // For scoped packages like @scope/parent/child, the first '/' belongs to the scope
             var last_slash: ?usize = null;
             if (k.len > 0 and k[0] == '@') {
-                // @scope/parent/child — skip the scope's '/' and look for the next one
+                // @scope/parent/child — first '/' belongs to the scope, take the LAST '/' after it
                 const first_slash = strings.indexOfChar(k, '/') orelse {
                     break :parseParentChild null;
                 };
                 if (first_slash < k.len - 1) {
-                    if (strings.indexOfChar(k[first_slash + 1 ..], '/')) |second_rel| {
-                        last_slash = first_slash + 1 + second_rel;
+                    if (strings.lastIndexOfChar(k[first_slash + 1 ..], '/')) |rel| {
+                        last_slash = first_slash + 1 + rel;
                     }
                 }
             } else {
-                last_slash = strings.lastIndexOfChar(k, '/');
+                last_slash = strings.indexOfChar(k, '/');
             }
 
             break :parseParentChild if (last_slash) |sep| struct {
@@ -373,6 +375,9 @@ pub fn parseFromResolutions(
         )) |dep| {
             if (parent_child) |pc| {
                 // Scoped resolution: parent/child
+                if (strings.containsChar(pc.parent, '/') or strings.containsChar(pc.child, '/')) {
+                    try log.addWarningFmt(source, key.loc, lockfile.allocator, "Deeply nested resolution \"{s}\" is not supported", .{k});
+                }
                 const parent_name_hash = String.Builder.stringHash(pc.parent);
                 this.scoped.putAssumeCapacity(.{ .parent_name_hash = parent_name_hash, .child_name_hash = dep.name_hash }, dep);
             } else {

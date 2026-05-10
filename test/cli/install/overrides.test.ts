@@ -1,7 +1,7 @@
 import { write } from "bun";
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 beforeAll(() => {
@@ -249,9 +249,9 @@ test("overrides do not apply to workspaces", async () => {
 });
 
 test("nested override applies only under matching parent", async () => {
-  const tmp = tmpdirSync();
+  using tmp = tempDir("overrides-nested-parent-match", {});
   writeFileSync(
-    join(tmp, "package.json"),
+    join(String(tmp), "package.json"),
     JSON.stringify({
       dependencies: {
         express: "4.18.2",
@@ -263,15 +263,15 @@ test("nested override applies only under matching parent", async () => {
       },
     }),
   );
-  install(tmp, ["install"]);
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
-  ensureLockfileDoesntChangeOnBunI(tmp);
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
 
 test("nested override does not apply under different parent", async () => {
-  const tmp = tmpdirSync();
+  using tmp = tempDir("overrides-nested-parent-mismatch", {});
   writeFileSync(
-    join(tmp, "package.json"),
+    join(String(tmp), "package.json"),
     JSON.stringify({
       dependencies: {
         lodash: "4.17.21",
@@ -284,15 +284,15 @@ test("nested override does not apply under different parent", async () => {
       },
     }),
   );
-  install(tmp, ["install"]);
-  const bytesVersion = versionOf(tmp, "node_modules/bytes/package.json");
+  install(String(tmp), ["install"]);
+  const bytesVersion = versionOf(String(tmp), "node_modules/bytes/package.json");
   expect(bytesVersion).not.toBe("1.0.0");
 });
 
 test("nested override with dot and child handles both rules", async () => {
-  const tmp = tmpdirSync();
+  using tmp = tempDir("overrides-nested-dot-and-child", {});
   writeFileSync(
-    join(tmp, "package.json"),
+    join(String(tmp), "package.json"),
     JSON.stringify({
       dependencies: {
         express: "4.18.2",
@@ -305,16 +305,16 @@ test("nested override with dot and child handles both rules", async () => {
       },
     }),
   );
-  install(tmp, ["install"]);
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
-  expect(versionOf(tmp, "node_modules/express/package.json")).toBe("4.18.2");
-  ensureLockfileDoesntChangeOnBunI(tmp);
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  expect(versionOf(String(tmp), "node_modules/express/package.json")).toBe("4.18.2");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
 
 test("Yarn-style nested resolution applies only under matching parent", async () => {
-  const tmp = tmpdirSync();
+  using tmp = tempDir("resolutions-nested-parent-match", {});
   writeFileSync(
-    join(tmp, "package.json"),
+    join(String(tmp), "package.json"),
     JSON.stringify({
       dependencies: {
         express: "4.18.2",
@@ -324,15 +324,15 @@ test("Yarn-style nested resolution applies only under matching parent", async ()
       },
     }),
   );
-  install(tmp, ["install"]);
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
-  ensureLockfileDoesntChangeOnBunI(tmp);
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
 
 test("Yarn-style nested resolution with scoped parent package", async () => {
-  const tmp = tmpdirSync();
+  using tmp = tempDir("resolutions-nested-scoped-parent", {});
   writeFileSync(
-    join(tmp, "package.json"),
+    join(String(tmp), "package.json"),
     JSON.stringify({
       dependencies: {
         "@babel/core": "7.23.0",
@@ -342,7 +342,7 @@ test("Yarn-style nested resolution with scoped parent package", async () => {
       },
     }),
   );
-  install(tmp, ["install"]);
-  expect(versionOf(tmp, "node_modules/semver/package.json")).toBe("7.5.4");
-  ensureLockfileDoesntChangeOnBunI(tmp);
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/semver/package.json")).toBe("7.5.4");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
 });

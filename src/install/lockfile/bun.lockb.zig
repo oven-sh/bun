@@ -130,6 +130,7 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
     }
 
     if (this.overrides.global.count() > 0) {
+        const global_n = this.overrides.global.count();
         try writer.writeAll(std.mem.asBytes(&has_overrides_tag));
 
         try Lockfile.Buffers.writeArray(
@@ -140,9 +141,9 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
             []PackageNameHash,
             this.overrides.global.keys(),
         );
-        var external_overrides = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, this.overrides.global.count());
+        var external_overrides = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, global_n);
         defer external_overrides.deinit(z_allocator);
-        external_overrides.items.len = this.overrides.global.count();
+        external_overrides.items.len = global_n;
         for (external_overrides.items, this.overrides.global.values()) |*dest, src| {
             dest.* = src.toExternal();
         }
@@ -158,14 +159,15 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
     }
 
     if (this.overrides.scoped.count() > 0) {
+        const scoped_n = this.overrides.scoped.count();
         try writer.writeAll(std.mem.asBytes(&has_scoped_overrides_tag));
 
-        var parent_hashes = try std.ArrayListUnmanaged(PackageNameHash).initCapacity(z_allocator, this.overrides.scoped.count());
+        var parent_hashes = try std.ArrayListUnmanaged(PackageNameHash).initCapacity(z_allocator, scoped_n);
         defer parent_hashes.deinit(z_allocator);
-        parent_hashes.items.len = this.overrides.scoped.count();
-        var child_hashes = try std.ArrayListUnmanaged(PackageNameHash).initCapacity(z_allocator, this.overrides.scoped.count());
+        parent_hashes.items.len = scoped_n;
+        var child_hashes = try std.ArrayListUnmanaged(PackageNameHash).initCapacity(z_allocator, scoped_n);
         defer child_hashes.deinit(z_allocator);
-        child_hashes.items.len = this.overrides.scoped.count();
+        child_hashes.items.len = scoped_n;
 
         for (this.overrides.scoped.keys(), 0..) |key, i| {
             parent_hashes.items[i] = key.parent_name_hash;
@@ -189,9 +191,9 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
             child_hashes.items,
         );
 
-        var external_scoped = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, this.overrides.scoped.count());
+        var external_scoped = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, scoped_n);
         defer external_scoped.deinit(z_allocator);
-        external_scoped.items.len = this.overrides.scoped.count();
+        external_scoped.items.len = scoped_n;
         for (external_scoped.items, this.overrides.scoped.values()) |*dest, src| {
             dest.* = src.toExternal();
         }
@@ -507,6 +509,7 @@ pub fn load(
                     allocator,
                     std.ArrayListUnmanaged(Dependency.External),
                 );
+                defer override_versions_external.deinit(allocator);
                 const context: Dependency.Context = .{
                     .allocator = allocator,
                     .log = log,
@@ -547,6 +550,7 @@ pub fn load(
                     allocator,
                     std.ArrayListUnmanaged(Dependency.External),
                 );
+                defer scoped_versions_external.deinit(allocator);
 
                 try lockfile.overrides.scoped.ensureTotalCapacity(allocator, parent_hashes.items.len);
                 const context: Dependency.Context = .{

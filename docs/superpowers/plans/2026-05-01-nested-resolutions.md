@@ -663,7 +663,7 @@ Replace the key processing section in `parseFromResolutions` (the block that cur
                     break :parentChild null;
                 };
                 // Look for a second slash after the scope prefix
-                if (strings.indexOfChar(k[first_slash + 1 ..], )) |second_rel| {
+                if (strings.indexOfChar(k[first_slash + 1 ..], '/')) |second_rel| {
                     last_slash = first_slash + 1 + second_rel;
                 }
             } else {

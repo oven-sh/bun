@@ -235,33 +235,34 @@ pub fn installWithManager(
                     resolution_lists[0] = .{ .off = off, .len = len };
                     try builder.allocate();
 
+                    var all_name_hashes_orig_len: usize = 0;
                     const all_name_hashes: []PackageNameHash = brk: {
                         if (!manager.summary.overrides_changed) break :brk &.{};
-                        const global_count = manager.lockfile.overrides.global.entries.len;
-                        const scoped_count = lockfile.overrides.scoped.entries.len;
-                        const total_override_child_count = global_count + scoped_count;
-                        if (total_override_child_count == 0) break :brk &.{};
-                        var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, total_override_child_count);
+                        const old_global_count = manager.lockfile.overrides.global.entries.len;
+                        const new_global_count = lockfile.overrides.global.entries.len;
+                        const old_scoped_count = manager.lockfile.overrides.scoped.entries.len;
+                        const new_scoped_count = lockfile.overrides.scoped.entries.len;
+                        const total = old_global_count + new_global_count + old_scoped_count + new_scoped_count;
+                        if (total == 0) break :brk &.{};
+                        all_name_hashes_orig_len = total;
+                        var result = try bun.default_allocator.alloc(PackageNameHash, total);
                         var idx: usize = 0;
-                        for (manager.lockfile.overrides.global.keys()) |k| {
-                            all_name_hashes[idx] = k;
-                            idx += 1;
-                        }
-                        for (lockfile.overrides.scoped.keys()) |k| {
-                            all_name_hashes[idx] = k.child_name_hash;
-                            idx += 1;
-                        }
+                        for (manager.lockfile.overrides.global.keys()) |k| { result[idx] = k; idx += 1; }
+                        for (lockfile.overrides.global.keys()) |k| { result[idx] = k; idx += 1; }
+                        for (manager.lockfile.overrides.scoped.keys()) |k| { result[idx] = k.child_name_hash; idx += 1; }
+                        for (lockfile.overrides.scoped.keys()) |k| { result[idx] = k.child_name_hash; idx += 1; }
                         var i: usize = 0;
-                        while (i < all_name_hashes.len) {
-                            if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes[0..i], all_name_hashes[i]) != null) {
-                                all_name_hashes[i] = all_name_hashes[all_name_hashes.len - 1];
-                                all_name_hashes.len -= 1;
+                        while (i < result.len) {
+                            if (std.mem.indexOfScalar(PackageNameHash, result[0..i], result[i]) != null) {
+                                result[i] = result[result.len - 1];
+                                result.len -= 1;
                             } else {
                                 i += 1;
                             }
                         }
-                        break :brk all_name_hashes;
+                        break :brk result;
                     };
+                    defer if (all_name_hashes_orig_len > 0) bun.default_allocator.free(all_name_hashes.ptr[0..all_name_hashes_orig_len]);
 
                     manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
                     manager.lockfile.catalogs = try lockfile.catalogs.clone(manager, &lockfile, manager.lockfile, builder);

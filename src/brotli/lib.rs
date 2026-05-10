@@ -27,8 +27,9 @@ impl BrotliAllocator {
 
         #[cfg(not(feature = "heap_breakdown"))]
         {
-            // SAFETY: mi_malloc is sound for any len; null-checked below.
-            let p = unsafe { bun_alloc::mimalloc::mi_malloc(len) };
+            // `mi_malloc` is declared `safe fn` in the extern block (sound for
+            // any len; returns null on OOM) — null-checked below.
+            let p = bun_alloc::mimalloc::mi_malloc(len);
             if p.is_null() {
                 bun_core::out_of_memory();
             }

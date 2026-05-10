@@ -10,15 +10,17 @@ use bun_event_loop::EventLoopTimer::{
     Timespec as ElTimespec,
 };
 
-/// Opaque FFI handle to WebCore::AbortSignal (C++ side owns layout & refcount).
-///
-/// The `UnsafeCell` field makes this `!Freeze`: every method takes `&self` but
-/// the C++ side mutates internal state (refcount, listener list, abort flag),
-/// so `&AbortSignal` must not carry a `noalias readonly` assumption when
-/// lowered to `*mut AbortSignal` for FFI. A real `UnsafeCell` (not just
-/// `PhantomData<UnsafeCell<_>>`, which is still `Freeze`) is required so that
-/// `as_mut_ptr` can soundly derive a write-capable pointer from `&self`.
-bun_opaque::opaque_ffi! { pub struct AbortSignal; }
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle to WebCore::AbortSignal (C++ side owns layout & refcount).
+    ///
+    /// The `UnsafeCell` field makes this `!Freeze`: every method takes `&self` but
+    /// the C++ side mutates internal state (refcount, listener list, abort flag),
+    /// so `&AbortSignal` must not carry a `noalias readonly` assumption when
+    /// lowered to `*mut AbortSignal` for FFI. A real `UnsafeCell` (not just
+    /// `PhantomData<UnsafeCell<_>>`, which is still `Freeze`) is required so that
+    /// `as_mut_ptr` can soundly derive a write-capable pointer from `&self`.
+    pub struct AbortSignal;
+}
 
 // TODO(port): move to jsc_sys
 //

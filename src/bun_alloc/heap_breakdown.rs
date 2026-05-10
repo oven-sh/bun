@@ -1,7 +1,5 @@
-use core::cell::UnsafeCell;
 #[allow(unused_imports)] // c_int / c_uint only used in the macOS-gated extern block
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use std::sync::OnceLock;
 
 // Only referenced from the Darwin `extern "C"` block below; rustc's
@@ -116,17 +114,19 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     zone
 }
 
-/// Zig: `pub const Zone = opaque { ... };`
-///
-/// Opaque FFI handle for a macOS `malloc_zone_t`.
-///
-/// The `UnsafeCell` field makes `Zone: !Freeze`, so a `&Zone` does not assert
-/// immutability of the pointee. This is required because every malloc-zone FFI
-/// call (`malloc_zone_memalign`, `malloc_zone_free`, …) mutates the zone's
-/// internal state, and Zig models the handle as a freely-aliasing `*Zone`.
-/// Without `UnsafeCell`, casting `&Zone as *const _ as *mut _` and writing
-/// through it (via FFI) is UB under Stacked Borrows.
-bun_opaque::opaque_ffi! { pub struct Zone; }
+bun_opaque::opaque_ffi! {
+    /// Zig: `pub const Zone = opaque { ... };`
+    ///
+    /// Opaque FFI handle for a macOS `malloc_zone_t`.
+    ///
+    /// The `UnsafeCell` field makes `Zone: !Freeze`, so a `&Zone` does not assert
+    /// immutability of the pointee. This is required because every malloc-zone FFI
+    /// call (`malloc_zone_memalign`, `malloc_zone_free`, …) mutates the zone's
+    /// internal state, and Zig models the handle as a freely-aliasing `*Zone`.
+    /// Without `UnsafeCell`, casting `&Zone as *const _ as *mut _` and writing
+    /// through it (via FFI) is UB under Stacked Borrows.
+    pub struct Zone;
+}
 
 // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing
 // `&Zone` across threads is the documented usage (matches Zig `*Zone` via `std.once`).
@@ -221,40 +221,19 @@ impl Zone {
         }
     }
 
-    fn aligned_alloc_size(ptr: *mut u8) -> usize {
-        // SAFETY: ptr was returned by a malloc-zone allocation in this process.
-        unsafe { malloc_size(ptr.cast()) }
-    }
-
     fn raw_alloc(zone: *mut c_void, len: usize, alignment: usize, _ret_addr: usize) -> Option<*mut u8> {
         // SAFETY: zone was produced from `&Zone` via the vtable; cast back is the original pointer.
         Zone::aligned_alloc(unsafe { &*(zone.cast::<Zone>()) }, len, alignment)
     }
 
-    fn resize(_zone: *mut c_void, buf: &mut [u8], _alignment: usize, new_len: usize, _ret_addr: usize) -> bool {
-        if new_len <= buf.len() {
-            return true;
-        }
-
-        let full_len = Zone::aligned_alloc_size(buf.as_mut_ptr());
-        if new_len <= full_len {
-            return true;
-        }
-
-        false
-    }
-
-    fn raw_free(zone: *mut c_void, buf: &mut [u8], _alignment: usize, _ret_addr: usize) {
-        // SAFETY: zone is a valid *mut Zone (see raw_alloc); buf.ptr was allocated by this zone.
-        unsafe { malloc_zone_free(zone.cast::<Zone>(), buf.as_mut_ptr().cast()) };
-    }
-
     // Zig exposed a `pub const vtable: std.mem.Allocator.VTable` with
     // { alloc, resize, remap = noRemap, free }. In Rust the equivalent is an
     // `impl crate::Allocator for Zone` (see below); the raw vtable struct is a
-    // Zig-ism and is not materialized here.
+    // Zig-ism and is not materialized here, so the `resize`/`free` vtable thunks
+    // (and the `malloc_size` helper they used) are not ported.
     // TODO(port): if Phase B's `bun_alloc::Allocator` is a literal vtable struct
-    // (to match `std.mem.Allocator` ABI), reintroduce a `pub static VTABLE`.
+    // (to match `std.mem.Allocator` ABI), reintroduce a `pub static VTABLE`
+    // along with the `resize`/`raw_free` thunks.
 
     /// Zig: `pub fn allocator(zone: *Zone) std.mem.Allocator`
     pub fn allocator(&'static self) -> &'static dyn crate::Allocator {
@@ -341,9 +320,6 @@ unsafe extern "C" {
     pub fn malloc_set_zone_name(zone: *mut Zone, name: *const c_char);
     pub fn malloc_get_zone_name(zone: *mut Zone) -> *const c_char;
     pub fn malloc_zone_pressure_relief(zone: *mut Zone, goal: usize) -> usize;
-
-    // std.c.malloc_size
-    fn malloc_size(ptr: *const c_void) -> usize;
 }
 
 // Non-macOS stubs so cross-platform call sites guarded by `if ENABLED { … }`
@@ -356,11 +332,10 @@ mod stubs {
     pub unsafe fn malloc_zone_calloc(_: *mut Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
     pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) { unreachable!() }
     pub unsafe fn malloc_zone_memalign(_: *mut Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
-    pub unsafe fn malloc_size(_: *const c_void) -> usize { unreachable!() }
 }
 #[cfg(not(target_os = "macos"))]
 pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
 #[cfg(not(target_os = "macos"))]
-use stubs::{malloc_size, malloc_zone_memalign};
+use stubs::malloc_zone_memalign;
 
 // ported from: src/bun_alloc/heap_breakdown.zig

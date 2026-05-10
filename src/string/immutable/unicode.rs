@@ -561,7 +561,7 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     Ok(None)
 }
 
-pub use bun_core::strings::EncodeIntoResult;
+use bun_core::strings::EncodeIntoResult;
 
 /// Thin wrapper over the canonical T0 `bun_core::strings::allocate_latin1_into_utf8_with_list`.
 /// Kept `Result`-typed for source-compat with existing callers (TextEncoder /
@@ -727,7 +727,7 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
 // `copy_latin1_into_utf8` is the spec-faithful fast path. Re-export here so
 // `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in
 // `immutable.rs` keeps resolving.
-pub use bun_core::strings::{copy_latin1_into_utf8, copy_latin1_into_utf8_stop_on_non_ascii};
+pub use bun_core::strings::copy_latin1_into_utf8_stop_on_non_ascii;
 
 pub fn replace_latin1_with_utf8(buf_: &mut [u8]) {
     let mut latin1: &mut [u8] = buf_;

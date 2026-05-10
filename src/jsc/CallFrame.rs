@@ -10,10 +10,12 @@ use bun_string::ZStr;
 #[allow(deprecated)]
 use crate::c_api::JSValueRef;
 
-/// Call Frame for JavaScript -> Native function calls. In Bun, it is
-/// preferred to use the bindings generator instead of directly decoding
-/// arguments. See `docs/project/bindgen.md`
-bun_opaque::opaque_ffi! { pub struct CallFrame; }
+bun_opaque::opaque_ffi! {
+    /// Call Frame for JavaScript -> Native function calls. In Bun, it is
+    /// preferred to use the bindings generator instead of directly decoding
+    /// arguments. See `docs/project/bindgen.md`
+    pub struct CallFrame;
+}
 
 impl CallFrame {
     /// A slice of all passed arguments to this function call.

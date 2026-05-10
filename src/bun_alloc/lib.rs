@@ -383,24 +383,24 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     #[inline]
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         // PERF(port): mirrors basic.zig `must_use_aligned_alloc` branch.
-        unsafe {
-            if layout.align() <= MI_MAX_ALIGN_SIZE {
-                mimalloc::mi_malloc(layout.size())
-            } else {
-                mimalloc::mi_malloc_aligned(layout.size(), layout.align())
-            }
+        // `mi_malloc[_aligned]` are declared `safe fn` in the extern block (no
+        // input preconditions; null on OOM), so no inner `unsafe { }` needed.
+        if layout.align() <= MI_MAX_ALIGN_SIZE {
+            mimalloc::mi_malloc(layout.size())
+        } else {
+            mimalloc::mi_malloc_aligned(layout.size(), layout.align())
         }
         .cast()
     }
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
-        unsafe {
-            if layout.align() <= MI_MAX_ALIGN_SIZE {
-                mimalloc::mi_zalloc(layout.size())
-            } else {
-                mimalloc::mi_zalloc_aligned(layout.size(), layout.align())
-            }
+        // `mi_zalloc[_aligned]` are declared `safe fn` (zero-fill alloc; no
+        // input preconditions), so no inner `unsafe { }` needed.
+        if layout.align() <= MI_MAX_ALIGN_SIZE {
+            mimalloc::mi_zalloc(layout.size())
+        } else {
+            mimalloc::mi_zalloc_aligned(layout.size(), layout.align())
         }
         .cast()
     }

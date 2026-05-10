@@ -998,7 +998,7 @@ export const linkerFlags: Flag[] = [
     desc: "Use lld instead of system ld",
   },
   {
-    flag: ["-fno-pic", "-no-pie"],
+    flag: ["-fno-pic", "-Wl,-no-pie"],
     when: c => c.freebsd,
     desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
   },

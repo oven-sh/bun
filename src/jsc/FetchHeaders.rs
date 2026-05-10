@@ -6,9 +6,11 @@ use crate::virtual_machine::VirtualMachine;
 use bun_string::{ZigString, StringPointer};
 use bun_uws::ResponseKind;
 
-/// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).
 // TODO(port): consider an RAII wrapper that calls `deref` on Drop instead of returning `NonNull<FetchHeaders>` from constructors.
-bun_opaque::opaque_ffi! { pub struct FetchHeaders; }
+bun_opaque::opaque_ffi! {
+    /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).
+    pub struct FetchHeaders;
+}
 
 // TODO(port): move to jsc_sys
 //

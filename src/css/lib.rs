@@ -124,7 +124,10 @@ pub type Str = *const [u8];
 /// arena, and that backing storage must outlive the returned reference.
 #[inline(always)]
 pub unsafe fn arena_str(p: Str) -> &'static [u8] {
-    &*p
+    // SAFETY: caller contract (documented above) guarantees `p` is a non-null,
+    // well-aligned fat pointer into the parser's immutable source/bump arena,
+    // whose backing storage outlives the returned reference.
+    unsafe { &*p }
 }
 pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};

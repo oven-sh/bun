@@ -1591,23 +1591,23 @@ mod posix_impl {
             use core::ffi::{c_char, c_int, c_uint};
 
             // Kernel UAPI `<linux/stat.h>` — same on every arch/libc.
-            pub const AT_STATX_SYNC_AS_STAT: c_int = 0x0000;
-            pub const STATX_TYPE: c_uint = 0x0001;
-            pub const STATX_MODE: c_uint = 0x0002;
-            pub const STATX_NLINK: c_uint = 0x0004;
-            pub const STATX_UID: c_uint = 0x0008;
-            pub const STATX_GID: c_uint = 0x0010;
-            pub const STATX_ATIME: c_uint = 0x0020;
-            pub const STATX_MTIME: c_uint = 0x0040;
-            pub const STATX_CTIME: c_uint = 0x0080;
-            pub const STATX_INO: c_uint = 0x0100;
-            pub const STATX_SIZE: c_uint = 0x0200;
-            pub const STATX_BLOCKS: c_uint = 0x0400;
-            pub const STATX_BTIME: c_uint = 0x0800;
+            pub(crate) const AT_STATX_SYNC_AS_STAT: c_int = 0x0000;
+            pub(crate) const STATX_TYPE: c_uint = 0x0001;
+            pub(crate) const STATX_MODE: c_uint = 0x0002;
+            pub(crate) const STATX_NLINK: c_uint = 0x0004;
+            pub(crate) const STATX_UID: c_uint = 0x0008;
+            pub(crate) const STATX_GID: c_uint = 0x0010;
+            pub(crate) const STATX_ATIME: c_uint = 0x0020;
+            pub(crate) const STATX_MTIME: c_uint = 0x0040;
+            pub(crate) const STATX_CTIME: c_uint = 0x0080;
+            pub(crate) const STATX_INO: c_uint = 0x0100;
+            pub(crate) const STATX_SIZE: c_uint = 0x0200;
+            pub(crate) const STATX_BLOCKS: c_uint = 0x0400;
+            pub(crate) const STATX_BTIME: c_uint = 0x0800;
 
             #[repr(C)]
             #[derive(Copy, Clone)]
-            pub struct statx_timestamp {
+            pub(crate) struct statx_timestamp {
                 pub tv_sec: i64,
                 pub tv_nsec: u32,
                 __pad: i32,
@@ -1618,7 +1618,7 @@ mod posix_impl {
             // rest is reserved padding.
             #[repr(C)]
             #[derive(Copy, Clone)]
-            pub struct statx {
+            pub(crate) struct statx {
                 pub stx_mask: u32,
                 pub stx_blksize: u32,
                 pub stx_attributes: u64,
@@ -1650,7 +1650,7 @@ mod posix_impl {
             /// # Safety
             /// `path` must be NUL-terminated and live for the call; `buf` must
             /// be a valid out-pointer to a `statx`.
-            pub unsafe fn statx(
+            pub(crate) unsafe fn statx(
                 dirfd: c_int,
                 path: *const c_char,
                 flags: c_int,
@@ -1663,7 +1663,7 @@ mod posix_impl {
             }
         }
         #[cfg(target_env = "musl")]
-        pub use musl::*;
+        pub(super) use musl::*;
     }
     #[cfg(target_os = "linux")]
     use linux_statx as lx;
@@ -4371,14 +4371,30 @@ pub mod linux {
     pub use libc::pollfd;
     pub use libc::epoll_event;
 
+    // `libc::time_t` is `#[deprecated]` on musl: musl 1.2.0 widened `time_t`
+    // to 64-bit on 32-bit arches and the `libc` crate plans to follow (see
+    // rust-lang/libc#1848). Bun only ships 64-bit Linux, where the kernel
+    // `SYS_futex` timespec is `{ __kernel_long_t; __kernel_long_t; }` and
+    // `time_t == c_long == i64` on every libc, so spell it `i64` on musl to
+    // sidestep the deprecation without changing layout. The `const _` below
+    // guards the layout-identical-to-`libc::timespec` invariant.
+    #[cfg(target_env = "musl")]
+    type time_t = i64;
+    #[cfg(not(target_env = "musl"))]
+    type time_t = libc::time_t;
+
     /// `std.os.linux.timespec` — Zig-shape (`sec`/`nsec`, no `tv_` prefix).
     /// Layout-identical to `libc::timespec` so a `*const timespec` can be
     /// passed straight to `syscall(SYS_futex, ..)`.
     #[repr(C)] #[derive(Clone, Copy)]
     pub struct timespec {
-        pub sec: libc::time_t,
+        pub sec: time_t,
         pub nsec: libc::c_long,
     }
+    const _: () = assert!(
+        core::mem::size_of::<timespec>() == core::mem::size_of::<libc::timespec>()
+            && core::mem::align_of::<timespec>() == core::mem::align_of::<libc::timespec>()
+    );
 
     /// `std.os.linux.E` — errno; aliased to `bun_errno::E`.
     pub type Errno = super::E;

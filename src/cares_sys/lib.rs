@@ -51,7 +51,11 @@ pub unsafe fn ntop(
     src: *const core::ffi::c_void,
     dst: &mut [u8],
 ) -> Option<&[u8]> {
-    if c_ares::ares_inet_ntop(af, src, dst.as_mut_ptr(), dst.len() as c_ares::ares_socklen_t).is_null() {
+    // SAFETY: caller contract guarantees `src` points to a valid `in_addr` /
+    // `in6_addr` matching `af`; `dst` is a Rust slice so `dst.as_mut_ptr()` is
+    // valid for `dst.len()` writes, and `ares_inet_ntop` writes at most `size`
+    // bytes (including the trailing NUL) per c-ares docs.
+    if unsafe { c_ares::ares_inet_ntop(af, src, dst.as_mut_ptr(), dst.len() as c_ares::ares_socklen_t) }.is_null() {
         return None;
     }
     Some(bun_core::ffi::slice_to_nul(dst))

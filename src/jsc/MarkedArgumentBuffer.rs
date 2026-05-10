@@ -3,9 +3,11 @@ use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-/// Opaque FFI handle for JSC's `MarkedArgumentBuffer` (a GC-rooted argument list).
-/// Nomicon extern-type pattern: zero-sized, `!Send + !Sync + !Unpin`.
-bun_opaque::opaque_ffi! { pub struct MarkedArgumentBuffer; }
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for JSC's `MarkedArgumentBuffer` (a GC-rooted argument list).
+    /// Nomicon extern-type pattern: zero-sized, `!Send + !Sync + !Unpin`.
+    pub struct MarkedArgumentBuffer;
+}
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {

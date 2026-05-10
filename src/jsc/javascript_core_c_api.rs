@@ -11,9 +11,11 @@ use core::marker::{PhantomData, PhantomPinned};
 
 use bun_jsc::{JSGlobalObject, JSValue};
 
-/// Opaque FFI handle backing every `*Ref` typedef in the JavaScriptCore C API.
-/// In Zig this is a single `opaque {}` aliased under many names; we mirror that.
-bun_opaque::opaque_ffi! { pub struct Generic; }
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle backing every `*Ref` typedef in the JavaScriptCore C API.
+    /// In Zig this is a single `opaque {}` aliased under many names; we mirror that.
+    pub struct Generic;
+}
 
 impl Generic {
     pub fn value(&self) -> JSValue {

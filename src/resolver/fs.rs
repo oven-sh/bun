@@ -2602,7 +2602,7 @@ impl<'a> NodeJSPathName<'a> {
 // short-circuiting, `non_unique_name_string`, `json_stringify`, etc.) were
 // never reachable and are dropped — `crate::fs::PathResolverExt` carries the
 // live resolver-tier methods.
-pub use crate::fs::{Path, PathName, PathResolverExt};
+pub(crate) use crate::fs::{Path, PathName, PathResolverExt};
 
 thread_local! {
     static NORMALIZE_BUF: RefCell<[u8; 1024]> = const { RefCell::new([0u8; 1024]) };

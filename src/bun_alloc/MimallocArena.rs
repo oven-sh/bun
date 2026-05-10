@@ -617,13 +617,13 @@ unsafe fn global_vtable_alloc(
     a: crate::Alignment,
     _ra: usize,
 ) -> *mut u8 {
-    // SAFETY: FFI — len/alignment passed by value; mimalloc returns null on OOM.
-    unsafe {
-        if mimalloc::must_use_aligned_alloc(a.to_byte_units()) {
-            mimalloc::mi_malloc_aligned(len, a.to_byte_units()).cast()
-        } else {
-            mimalloc::mi_malloc(len).cast()
-        }
+    // `mi_malloc[_aligned]` are declared `safe fn` in the extern block (no input
+    // preconditions — any len/alignment is valid; returns null on OOM), so no
+    // `unsafe { }` is required here.
+    if mimalloc::must_use_aligned_alloc(a.to_byte_units()) {
+        mimalloc::mi_malloc_aligned(len, a.to_byte_units()).cast()
+    } else {
+        mimalloc::mi_malloc(len).cast()
     }
 }
 

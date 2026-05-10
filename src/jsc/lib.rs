@@ -1266,7 +1266,7 @@ unsafe extern "C" {
     safe fn ZigString__toDOMExceptionInstance(this: &bun_string::ZigString, global: &JSGlobalObject, code: u8) -> JSValue;
     safe fn ZigString__toValueGC(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
     safe fn ZigString__toAtomicValue(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
-    safe fn ZigString__toExternalValue(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
+    // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
     safe fn ZigString__toJSONObject(this: &bun_string::ZigString, global: &JSGlobalObject) -> JSValue;
     fn ZigString__external(
         this: *const bun_string::ZigString,
@@ -1785,7 +1785,9 @@ impl ZigStringJsc for bun_string::ZigString {
                 .throw();
             return JSValue::ZERO;
         }
-        ZigString__toExternalValue(self, global)
+        // SAFETY: `self` is a valid `&ZigString`; `JSGlobalObject` is an opaque
+        // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
+        unsafe { cpp::ZigString__toExternalValue(self, global.as_ptr()) }
     }
     #[inline]
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {

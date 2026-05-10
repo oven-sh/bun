@@ -911,10 +911,20 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onClose() {
     this[kHandle] = null;
 
+    // `_httpMessage?.req` is the canonical path, but it can be null when the
+    // ServerResponse was detached (or never attached on the upgrade branch).
+    // The socket also stores the IncomingMessage directly at `this[kRequest]`
+    // (set in the on-request handler) — fall back to that so a peer-initiated
+    // close still reaches `req.destroy()` → `emit("close")`. Node.js's
+    // `abortIncoming()` destroys regardless of `req.complete`; the previous
+    // `!req.complete` guard meant a body-less GET whose `complete` flipped
+    // before the close event arrived would never see `"close"` and left
+    // `test-http-should-emit-close-when-connection-is-aborted` hanging on
+    // Windows-aarch64 (slow enough for the flag to flip first).
     const message = this._httpMessage;
-    const req = message?.req;
+    const req = message?.req ?? this[kRequest];
 
-    if (req && !req.complete && !req[kHandle]?.upgraded) {
+    if (req && !req.destroyed && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
       if (req.listenerCount("error") > 0) {

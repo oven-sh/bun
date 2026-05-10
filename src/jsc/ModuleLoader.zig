@@ -100,10 +100,16 @@ pub fn cachedFdIsStale(path: *const Fs.Path, cached_fd: FD) bool {
     defer bun.path_buffer_pool.put(path_buf);
     const path_z = bun.path.z(path.text, path_buf);
 
+    // If stat(path) fails (file removed, permissions changed, network FS
+    // transient) the fd is equally untrustworthy: still open on the old
+    // inode, but we can no longer confirm it matches what a fresh open
+    // would see. Drop it and let the caller's path-based open surface the
+    // real error instead of silently returning pre-removal bytes.
     const on_disk = switch (bun.sys.stat(path_z)) {
         .result => |st| st,
-        .err => return false,
+        .err => return true,
     };
+    // fstat on an already-closed fd fails — treat that as stale too.
     const via_fd = switch (bun.sys.fstat(cached_fd)) {
         .result => |st| st,
         .err => return true,

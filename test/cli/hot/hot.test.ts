@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isLinux, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -513,10 +513,6 @@ it(
 it.skipIf(!isLinux)(
   "should re-import fresh source after atomic rename of entry (#30449)",
   async () => {
-    const outerCwd = tmpdirSync();
-    const entryDir = tmpdirSync();
-    const root = join(entryDir, "entry.ts");
-    const stage = root + ".stage";
     const sourceForValue = (value: string) => `
 import { watch } from "node:fs";
 import { createRequire } from "node:module";
@@ -547,57 +543,48 @@ if (!(globalThis as any).__started) {
   });
 }
 `;
+    using outerCwd = tempDir("hot-30449-cwd-", {});
+    using entryDir = tempDir("hot-30449-entry-", { "entry.ts": sourceForValue("V1") });
+    const root = join(String(entryDir), "entry.ts");
+    const stage = root + ".stage";
 
-    writeFileSync(root, sourceForValue("V1"));
-    try {
-      var runner = spawn({
-        cmd: [bunExe(), "--hot", "run", root],
-        env: bunEnv,
-        cwd: outerCwd,
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd: String(outerCwd),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
 
-      let stdout = "";
-      let sawInitial = false;
-      let sawImported = false;
-      for await (const chunk of runner.stdout) {
-        stdout += new TextDecoder().decode(chunk);
+    let stdout = "";
+    let sawInitial = false;
+    let sawImported = false;
+    for await (const chunk of runner.stdout) {
+      stdout += new TextDecoder().decode(chunk);
 
-        // Once we see the initial eval, trigger an atomic rename (what
-        // sed -i / vim default save / prettier do by default). Writing
-        // to a sibling and renaming over the entry replaces the inode,
-        // which is exactly what leaves the watchlist's cached fd
-        // pointing at the unlinked old inode.
-        if (!sawInitial && stdout.includes("INITIAL V1")) {
-          sawInitial = true;
-          writeFileSync(stage, sourceForValue("V2"));
-          renameSync(stage, root);
-        }
-
-        if (stdout.includes("IMPORTED ")) {
-          sawImported = true;
-          break;
-        }
+      // Once we see the initial eval, trigger an atomic rename (what
+      // sed -i / vim default save / prettier do by default). Writing
+      // to a sibling and renaming over the entry replaces the inode,
+      // which is exactly what leaves the watchlist's cached fd
+      // pointing at the unlinked old inode.
+      if (!sawInitial && stdout.includes("INITIAL V1")) {
+        sawInitial = true;
+        writeFileSync(stage, sourceForValue("V2"));
+        renameSync(stage, root);
       }
 
-      runner.unref();
-      runner.kill();
-
-      // The critical assertion: the userland re-import returned the
-      // post-edit value, not the pre-edit one from the stale fd.
-      expect(sawImported).toBe(true);
-      expect(stdout).toContain("IMPORTED V2");
-      expect(stdout).not.toContain("IMPORTED V1");
-    } finally {
-      // @ts-ignore
-      runner?.unref?.();
-      // @ts-ignore
-      runner?.kill?.(9);
-      rmSync(root, { force: true });
-      rmSync(stage, { force: true });
+      if (stdout.includes("IMPORTED ")) {
+        sawImported = true;
+        break;
+      }
     }
+
+    // The critical assertion: the userland re-import returned the
+    // post-edit value, not the pre-edit one from the stale fd.
+    expect(sawImported).toBe(true);
+    expect(stdout).toContain("IMPORTED V2");
+    expect(stdout).not.toContain("IMPORTED V1");
   },
   timeout,
 );

@@ -386,7 +386,13 @@ impl Cmd {
                     // argv words (glob/IFS); preserved here verbatim.
                     let me = interp.as_cmd_mut(this);
                     if out.bounds.is_empty() {
-                        me.args.push(out.buf);
+                        // Spec (Expansion.zig pushCurrentOut 652): an empty
+                        // expansion that did *not* see a `""` literal pushes
+                        // no arg at all — `$unset` vanishes, only `""` yields
+                        // an empty argv word.
+                        if !out.buf.is_empty() || out.has_quoted_empty {
+                            me.args.push(out.buf);
+                        }
                     } else {
                         let mut prev = 0usize;
                         for &b in &out.bounds {

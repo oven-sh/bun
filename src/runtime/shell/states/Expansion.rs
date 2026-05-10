@@ -35,6 +35,12 @@ pub struct Expansion {
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub cmd_subst_quoted: bool,
+    /// Spec: Expansion.zig `has_quoted_empty`. Set when a `""`/`''` literal
+    /// was seen so an *empty* expansion is still pushed as an argv word.
+    /// Without this, `$unset` and `""` are indistinguishable in
+    /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
+    /// empty arg for unset vars — diverging from POSIX field-splitting.
+    pub has_quoted_empty: bool,
     /// Exit code of a sole-command-substitution arg. Spec: Expansion.zig
     /// `out_exit_code` — propagated to `Cmd` so `$(false)` as argv0 fails.
     pub out_exit_code: ExitCode,
@@ -64,6 +70,10 @@ pub struct ExpansionOut {
     /// command's exit code when that substitution was argv0 and argv is
     /// otherwise empty.
     pub out_exit_code: ExitCode,
+    /// Spec: Expansion.zig `has_quoted_empty`. When `buf`/`bounds` are both
+    /// empty, this distinguishes `""` (push one empty arg) from `$unset`
+    /// (push no arg). See [`Expansion::has_quoted_empty`].
+    pub has_quoted_empty: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -96,6 +106,7 @@ impl Expansion {
             current_out: Vec::new(),
             child_script: None,
             cmd_subst_quoted: false,
+            has_quoted_empty: false,
             out_exit_code: 0,
         }))
     }
@@ -159,6 +170,7 @@ impl Expansion {
                     shell,
                     simple,
                     &mut me.current_out,
+                    &mut me.has_quoted_empty,
                     true,
                     event_loop,
                     command_ctx,
@@ -202,10 +214,16 @@ impl Expansion {
             if leading_tilde {
                 let home = me.base.shell().get_homedir();
                 match me.current_out.first() {
-                    None | Some(b'/') | Some(b'\\') => {
+                    Some(b'/') | Some(b'\\') => {
                         me.current_out.splice(0..0, home.slice().iter().copied());
                     }
-                    _ => me.current_out.insert(0, b'~'),
+                    Some(_) => me.current_out.insert(0, b'~'),
+                    // Spec (Expansion.zig 199-202): `~""` expands to $HOME,
+                    // but `~$unset` expands to nothing (word is dropped).
+                    None if me.has_quoted_empty => {
+                        me.current_out.extend_from_slice(home.slice());
+                    }
+                    None => {}
                 }
                 home.deref();
             }
@@ -318,6 +336,7 @@ impl Expansion {
         shell: &ShellExecEnv,
         atom: &ast::SimpleAtom,
         out: &mut Vec<u8>,
+        has_quoted_empty: &mut bool,
         expand_tilde: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::Context::ContextData,
@@ -327,11 +346,12 @@ impl Expansion {
         match atom {
             ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
             ast::SimpleAtom::QuotedEmpty => {
-                // Spec: sets `has_quoted_empty = true` so an empty word is
-                // still pushed as an arg. The NodeId port's parent already
-                // pushes `out.buf` unconditionally (see Cmd::child_done /
-                // CondExpr::child_done), so the empty buffer is preserved
-                // without a separate flag.
+                // Spec: Expansion.zig `expandSimpleNoIO` sets
+                // `has_quoted_empty = true` so an empty word is still pushed
+                // as an arg. The flag is *required* — without it Cmd cannot
+                // tell `""` (one empty arg) from `$unset` (no arg), since
+                // both leave `out.buf` empty.
+                *has_quoted_empty = true;
             }
             ast::SimpleAtom::Var(label) => {
                 // Spec `expandVar`: shell_env first, then export_env, else "".
@@ -574,6 +594,7 @@ impl Expansion {
         let me = interp.as_expansion_mut(this);
         let mut out = core::mem::take(&mut me.out);
         out.out_exit_code = me.out_exit_code;
+        out.has_quoted_empty = me.has_quoted_empty;
         out
     }
 }

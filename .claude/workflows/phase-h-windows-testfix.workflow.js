@@ -149,10 +149,11 @@ ${fix.patch.slice(0, 8000)}
 \`\`\`
 
 For each hunk: read the full file at that path in ${REPO} + .zig spec at same path. Check:
-1. **ABI**: extern "C"↔"sysv64" — does C++ decl (grep symbol in src/jsc/bindings/) actually use SYSV_ABI? Wrong-direction is worse than no fix.
-2. **UB**: aliased &mut re-entrancy? mem::zeroed on niche? SB violation?
-3. **Semantics**: diverges from .zig spec? Windows behavior wrong?
-4. **Regression**: breaks non-Windows arm? cfg-gating correct?
+1. **Spec-match**: does the .zig do this? If YES → accept (correct by construction). If NO → the patch must explain WHY Rust needs it (consolidation/reshape that forced it) and you must agree it's the right layer. "Zig doesn't need this because <comptime/stdlib/different-call-path>" without that explanation = REJECT.
+2. **ABI**: extern "C"↔"sysv64" — does C++ decl (grep symbol in src/jsc/bindings/) actually use SYSV_ABI? Wrong-direction is worse than no fix.
+3. **UB**: aliased &mut re-entrancy? mem::zeroed on niche? SB violation?
+4. **Semantics**: diverges from .zig spec? Windows behavior wrong?
+5. **Regression**: breaks non-Windows arm? cfg-gating correct?
 
 **HARD RULES:** Read-only. NO git/cargo/bun.
 

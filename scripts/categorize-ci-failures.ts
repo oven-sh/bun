@@ -2,10 +2,9 @@
 // Categorize CI failures from build #52975 into a markdown doc with isolated
 // context per failure, suitable for dispatching a fleet of fixers.
 
-import { readdirSync, statSync } from "node:fs";
-import { join, basename } from "node:path";
+import { createReadStream, readdirSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
-import { createReadStream } from "node:fs";
 
 const BUILD = process.argv[2] ?? "52975";
 const DIR = join(process.cwd(), `tmp/ci-${BUILD}`);
@@ -81,8 +80,7 @@ function normalizeReason(raw: string): string {
  * unchecked-exception sigs already carry source location — keep those.
  */
 function refineSignature(baseSig: string, ctx: string[]): string {
-  const generic =
-    /^(SIG[A-Z]+|exit code|crash|timeout|error: addresssanitizer)/i.test(baseSig);
+  const generic = /^(SIG[A-Z]+|exit code|crash|timeout|error: addresssanitizer)/i.test(baseSig);
   if (!generic) return baseSig;
 
   const text = ctx.map(stripAnsi);
@@ -98,9 +96,7 @@ function refineSignature(baseSig: string, ctx: string[]): string {
     return null;
   };
   const shortPath = (p: string) =>
-    p
-      .replace(/^.*\/(src|crates|packages|library)\//, "$1/")
-      .replace(/^\/rustc\/[a-f0-9]+\//, "rustc/");
+    p.replace(/^.*\/(src|crates|packages|library)\//, "$1/").replace(/^\/rustc\/[a-f0-9]+\//, "rustc/");
 
   // Rust panic — modern format puts message on the next line:
   //   thread '<name>' (pid) panicked at path/to/file.rs:L:C:
@@ -114,8 +110,7 @@ function refineSignature(baseSig: string, ctx: string[]): string {
     let msg = "";
     for (let j = i + 1; j < Math.min(i + 6, text.length); j++) {
       const cand = stripPrefix(text[j]).trim();
-      if (!cand || /^(?:✗|\(fail\)|::error|note: run with|stack backtrace)/.test(cand))
-        continue;
+      if (!cand || /^(?:✗|\(fail\)|::error|note: run with|stack backtrace)/.test(cand)) continue;
       msg = cand;
       break;
     }
@@ -199,11 +194,7 @@ function trimContext(lines: string[], maxLines = 120): string {
 const startRe = /^--- \[(\d+)\/(\d+)\] (\S+?)(?: \[attempt #\d+\])?$/;
 const resultRe = /^--- \[(\d+)\/(\d+)\] (\S+?) - (.+)$/;
 
-async function processTestLog(
-  path: string,
-  platform: Platform,
-  failures: Map<string, TestFailure>,
-) {
+async function processTestLog(path: string, platform: Platform, failures: Map<string, TestFailure>) {
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
   let curFile: string | null = null;
   let curBuf: string[] = [];
@@ -272,19 +263,13 @@ async function processBuildLog(path: string): Promise<string> {
   if (startIdx < 0) startIdx = Math.max(0, lines.length - 80);
   else startIdx = Math.max(0, startIdx - 3);
   // End at the buildkite "🚨 Error" / "user command error" trailer if present.
-  let endIdx = lines.findIndex(
-    (l, i) => i > startIdx && /^(?:🚨 Error|user command error|~~~ Running)/.test(l),
-  );
+  let endIdx = lines.findIndex((l, i) => i > startIdx && /^(?:🚨 Error|user command error|~~~ Running)/.test(l));
   if (endIdx < 0) endIdx = lines.length;
   let slice = lines.slice(startIdx, endIdx);
   // Hard cap, but keep head (where rustc errors live) rather than tail-anchoring.
   const MAX = 150;
   if (slice.length > MAX) {
-    slice = [
-      ...slice.slice(0, MAX - 10),
-      `... (${slice.length - MAX} lines omitted) ...`,
-      ...slice.slice(-9),
-    ];
+    slice = [...slice.slice(0, MAX - 10), `... (${slice.length - MAX} lines omitted) ...`, ...slice.slice(-9)];
   }
   return slice.join("\n");
 }
@@ -296,9 +281,7 @@ const files = readdirSync(DIR)
   .map(f => join(DIR, f));
 
 const testLogs = files.filter(f => /---test-bun(-\d+)?\.log$/.test(f));
-const buildLogs = files.filter(
-  f => /---(build-(bun|rust)|verify-baseline)(-\d+)?\.log$/.test(f),
-);
+const buildLogs = files.filter(f => /---(build-(bun|rust)|verify-baseline)(-\d+)?\.log$/.test(f));
 
 console.error(`Processing ${testLogs.length} test logs, ${buildLogs.length} build logs...`);
 
@@ -313,7 +296,9 @@ for (const log of testLogs) {
 
 const buildFails: BuildFailure[] = [];
 for (const log of buildLogs) {
-  const job = basename(log).replace(/\.log$/, "").replace(/---/g, " — ");
+  const job = basename(log)
+    .replace(/\.log$/, "")
+    .replace(/---/g, " — ");
   buildFails.push({ job, context: await processBuildLog(log) });
 }
 
@@ -340,9 +325,13 @@ w();
 w(`Branch: \`claude/phase-a-port\` · https://buildkite.com/bun/bun/builds/${BUILD}`);
 w(`Generated: ${new Date().toISOString()}`);
 w();
-w(`**Summary:** ${buildFails.length} build/link/verify failures · ${failures.size} unique (test-file × signature) test failures across ${sigEntries.length} root-cause signatures.`);
+w(
+  `**Summary:** ${buildFails.length} build/link/verify failures · ${failures.size} unique (test-file × signature) test failures across ${sigEntries.length} root-cause signatures.`,
+);
 w();
-w(`Each entry below is self-contained: a fixer agent can read just that section and have enough context to reproduce + fix.`);
+w(
+  `Each entry below is self-contained: a fixer agent can read just that section and have enough context to reproduce + fix.`,
+);
 w();
 
 // --- TOC
@@ -453,8 +442,7 @@ for (const b of buildFails) {
 // Signatures that point at a specific source location share a root cause →
 // one task. Generic signatures (exit code N, bare SIG*, timeout, "crash") are
 // per-test bugs → split per file so each fixer gets one isolated unit.
-const isGenericSig = (s: string) =>
-  /^(exit code|SIG[A-Z]+$|timeout$|crash)/i.test(s);
+const isGenericSig = (s: string) => /^(exit code|SIG[A-Z]+$|timeout$|crash)/i.test(s);
 
 n = 0;
 const emitTask = async (sig: string, list: TestFailure[], hint: string) => {

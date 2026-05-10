@@ -707,6 +707,31 @@ describe("Bun.Image", () => {
       const meta = await new Bun.Image(bomb, { maxPixels: 4096 * 4096 * 2 + 1 }).metadata();
       expect(meta).toEqual({ width: 4096, height: 4096, format: "png" });
     });
+
+    // Overflow guard on the 16-bpc probe — `w` and `h` are unvalidated u32
+    // at the point of the guard check, so a hostile IHDR with both set to
+    // 0xFFFFFFFF and bit_depth=16 would, under the naive `w*h*2` form,
+    // overflow u64 and panic the JS thread in Debug / ReleaseSafe builds
+    // before the later i32 range reject runs. `w*h > max_pixels/2` is the
+    // same inequality in overflow-safe form — two u32 factors always fit
+    // in u64.
+    test("probe() rejects a hostile max-dimensions 16-bpc IHDR without overflowing", async () => {
+      // Minimal synthetic 25-byte "PNG": 8-byte signature + 17 arbitrary
+      // bytes such that bytes[16..20] = bytes[20..24] = 0xFFFFFFFF and
+      // bytes[24] = 16. The IHDR chunk type/length/CRC aren't validated
+      // here, so the bytes in between don't need to be well-formed — the
+      // probe only cares about sig + the width/height/bit_depth offsets.
+      const buf = new Uint8Array(25);
+      buf.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+      // bytes[16..20] = width = 0xFFFFFFFF
+      for (let i = 16; i < 24; i++) buf[i] = 0xff;
+      buf[24] = 16; // bit_depth
+      // Must throw, not panic. The rejection can be TooManyPixels (the
+      // new guard) or DecodeFailed (the i32 range check) — both are
+      // acceptable outcomes; the failure mode this test guards against
+      // is an integer-overflow panic.
+      await expect(new Bun.Image(buf).metadata()).rejects.toThrow();
+    });
   });
 
   // ICC colour profile preservation — #30197. The RGBA pixel buffer the

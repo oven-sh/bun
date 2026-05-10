@@ -301,8 +301,15 @@ pub fn probe(bytes: []const u8, max_pixels: u64) Error!struct { format: Format, 
             // has to halve to stay consistent. Keep probe() in lockstep
             // with codec_png.decode()'s guard so `.metadata()` and
             // `.bytes()` agree on what's too big. Issue #30462.
+            //
+            // Divide the budget rather than multiplying the pixel count —
+            // `w` and `h` are unvalidated u32 here (the i32 range reject
+            // runs *after* the switch), so `w * h * 2` can overflow u64
+            // on a hostile 25-byte IHDR and panic in Debug / ReleaseSafe
+            // before the reject gets its turn. Two u32 factors always
+            // fit in u64, and `max_pixels / 2` can't overflow either.
             if (bytes[24] == 16) {
-                if (@as(u64, w) * @as(u64, h) * 2 > max_pixels) return error.TooManyPixels;
+                if (@as(u64, w) * @as(u64, h) > max_pixels / 2) return error.TooManyPixels;
             }
         },
         .jpeg => {

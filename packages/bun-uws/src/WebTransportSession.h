@@ -89,10 +89,11 @@ struct WebTransportSession {
     void *getUserData() { return getSessionData()->userData; }
 
     /* WebTransport messaging is QUIC DATAGRAMs — unreliable, unordered, MTU-
-     * bounded. opCode/compress/fin are accepted for API parity but ignored:
-     * there is no per-frame opcode on the wire (RFC 9297 §2.1). DROPPED is
-     * returned when the message is too large for one frame or the per-session
-     * queue exceeds maxBackpressure. */
+     * bounded. compress/fin are accepted for API parity but ignored (no
+     * per-frame opcode/extension on the wire, RFC 9297 §2.1); opCode is
+     * used only to reject control frames. DROPPED is returned for control
+     * opcodes, when the message is too large for one frame, or when the
+     * per-session queue would exceed maxBackpressure. */
     /* Conservative QUIC DATAGRAM payload cap: RFC 9000's default
      * max_udp_payload_size minus short-header + AEAD + DATAGRAM-type
      * overhead. us_quic_stream_send_datagram rejects above this; pre-check
@@ -100,9 +101,15 @@ struct WebTransportSession {
      * backpressure (and thus never trips closeOnBackpressureLimit). */
     static constexpr unsigned MAX_DATAGRAM_PAYLOAD = 1192;
 
-    SendStatus send(std::string_view message, OpCode = BINARY, bool = false, bool = true) {
+    SendStatus send(std::string_view message, OpCode opCode = BINARY, bool = false, bool = true) {
         WebTransportSessionData *d = getSessionData();
         if (!d || d->isShuttingDown) return DROPPED;
+        /* ws.ping()/ws.pong() route through here with a control opcode.
+         * WebTransport has no control frames — QUIC owns keepalive — so
+         * shipping the payload as an application datagram would surface it
+         * in the peer's message() handler. Drop instead; the receive side
+         * already nulls .ping/.pong in applyH3 for the same reason. */
+        if (opCode != TEXT && opCode != BINARY) return DROPPED;
         if (message.length() > MAX_DATAGRAM_PAYLOAD) return DROPPED;
         WebTransportContextData *cd = getContextData();
         int r = us_quic_stream_send_datagram((us_quic_stream_t *) this,

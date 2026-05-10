@@ -451,6 +451,32 @@ describe("WebTransport over HTTP/3", () => {
     }
   });
 
+  itWT("ws.ping()/ws.pong() are no-ops (DROPPED), not application datagrams", async () => {
+    // WebTransport has no control frames; QUIC owns keepalive. A shared
+    // websocket:{} block that calls ws.ping() for RFC 6455 liveness must
+    // not leak a payload into the WT peer's message() handler.
+    await using server = await spawnServer(`
+      open(ws) {
+        const p1 = ws.ping("probe");
+        const p2 = ws.pong();
+        console.log("ping " + p1 + " pong " + p2);
+        ws.send("real");
+      },
+      message() {}, close() {},
+    `);
+    const c = spawnClient(server.port);
+    try {
+      await c.expectEvent("open");
+      expect(await server.readLine()).toBe("ping 0 pong 0");
+      // Only the explicit send() reaches the peer; if ping/pong had been
+      // forwarded as datagrams they'd arrive first.
+      const d = await c.expectEvent("dgram");
+      expect(fromB64u(d[1]).toString()).toBe("real");
+    } finally {
+      c.kill();
+    }
+  });
+
   // wtclient always sends :protocol=webtransport, so the negative branch in
   // H3App::wt() (yield to the next route on a non-WT CONNECT) isn't reachable
   // from this fixture. Covered once wtclient grows a configurable :protocol.

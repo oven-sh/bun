@@ -89,6 +89,121 @@ function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): [number, numb
   return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
 }
 
+// 16-bit-per-channel truecolour-alpha PNG, built the same way as `makePng`
+// but with 2 big-endian bytes per sample. The only bit-depth that matters
+// for the 16-bpc pass-through (issue #30462) is 16; libspng promotes
+// 1/2/4-bpc inputs to 8 on its own and there's no need to test those
+// separately here.
+function makePng16(
+  width: number,
+  height: number,
+  pixelOf: (x: number, y: number) => [number, number, number, number],
+): Uint8Array {
+  const ihdr = new Uint8Array(13);
+  const iv = new DataView(ihdr.buffer);
+  iv.setUint32(0, width);
+  iv.setUint32(4, height);
+  ihdr[8] = 16; // bit depth
+  ihdr[9] = 6; // color type = RGBA
+  // Each row: filter byte + width*8 bytes (4 channels × 2 bytes, big-endian).
+  const raw = new Uint8Array(height * (1 + width * 8));
+  for (let y = 0; y < height; y++) {
+    const row = y * (1 + width * 8);
+    raw[row] = 0;
+    for (let x = 0; x < width; x++) {
+      const [r, g, b, a] = pixelOf(x, y);
+      const p = row + 1 + x * 8;
+      raw[p] = r >> 8;
+      raw[p + 1] = r & 0xff;
+      raw[p + 2] = g >> 8;
+      raw[p + 3] = g & 0xff;
+      raw[p + 4] = b >> 8;
+      raw[p + 5] = b & 0xff;
+      raw[p + 6] = a >> 8;
+      raw[p + 7] = a & 0xff;
+    }
+  }
+  const idat = zlib.deflateSync(raw);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", idat),
+    pngChunk("IEND", new Uint8Array(0)),
+  ]);
+}
+
+// Extract the IHDR bit_depth byte from a PNG. The 8 bytes of signature are
+// followed immediately by IHDR; bit_depth is the 9th byte of the IHDR data
+// section, i.e. offset 8 (sig) + 8 (chunk header) + 8 (width+height) = 24.
+function pngBitDepth(png: Uint8Array): number {
+  return png[24];
+}
+
+// Minimal 16-bpc RGBA PNG decoder. Same defilter as `decodePngRaw` but the
+// unit is 2 bytes per sample (stride = w*8), and samples stay big-endian as
+// the file stores them — the test compares individual u16 channels, not
+// raw bytes, so endianness is handled at the read site.
+function decodePngRaw16(png: Uint8Array): { w: number; h: number; data: Uint8Array } {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let off = 8;
+  let w = 0;
+  let h = 0;
+  const idats: Uint8Array[] = [];
+  while (off < png.length) {
+    const len = dv.getUint32(off);
+    const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
+    const data = png.subarray(off + 8, off + 8 + len);
+    if (type === "IHDR") {
+      w = dv.getUint32(off + 8);
+      h = dv.getUint32(off + 12);
+    } else if (type === "IDAT") {
+      idats.push(data);
+    } else if (type === "IEND") break;
+    off += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idats));
+  // PNG filter unit for 16-bpc RGBA is 8 bytes (the "bpp" in filter-speak).
+  const bpp = 8;
+  const stride = w * bpp;
+  const out = new Uint8Array(w * h * bpp);
+  let p = 0;
+  for (let y = 0; y < h; y++) {
+    const f = raw[p++];
+    const rowOut = y * stride;
+    const prevOut = (y - 1) * stride;
+    for (let i = 0; i < stride; i++) {
+      const x = raw[p++];
+      const a = i >= bpp ? out[rowOut + i - bpp] : 0;
+      const b = y > 0 ? out[prevOut + i] : 0;
+      const c = y > 0 && i >= bpp ? out[prevOut + i - bpp] : 0;
+      let v = x;
+      if (f === 1) v = (x + a) & 255;
+      else if (f === 2) v = (x + b) & 255;
+      else if (f === 3) v = (x + ((a + b) >> 1)) & 255;
+      else if (f === 4) {
+        const pp = a + b - c;
+        const pa = Math.abs(pp - a);
+        const pb = Math.abs(pp - b);
+        const pc = Math.abs(pp - c);
+        v = (x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255;
+      }
+      out[rowOut + i] = v;
+    }
+  }
+  return { w, h, data: out };
+}
+
+// Read one 16-bpc RGBA pixel as four u16 big-endian channels.
+function rgba16At(buf: Uint8Array, w: number, x: number, y: number): [number, number, number, number] {
+  const i = (y * w + x) * 8;
+  return [
+    (buf[i] << 8) | buf[i + 1],
+    (buf[i + 2] << 8) | buf[i + 3],
+    (buf[i + 4] << 8) | buf[i + 5],
+    (buf[i + 6] << 8) | buf[i + 7],
+  ];
+}
+
 // Minimal PNG decoder for 8-bit RGBA non-interlaced (the only kind we emit).
 function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array } {
   const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
@@ -418,6 +533,144 @@ describe("Bun.Image", () => {
       const q90 = await new Bun.Image(big).jpeg({ quality: 90 }).bytes();
       const q20 = await new Bun.Image(big).jpeg({ quality: 20 }).bytes();
       expect(q20.length).toBeLessThan(q90.length);
+    });
+  });
+
+  // 16-bit-per-channel PNG preservation — issue #30462. Before the fix, every
+  // PNG decode went through SPNG_FMT_RGBA8 and every encode hard-coded
+  // bit_depth = 8 in the IHDR, so a 16-bpc source was silently truncated to
+  // 8 bpc even on a no-op PNG → PNG pass-through. The pipeline now keeps the
+  // 16-bpc buffer through decode → encode when no ops are requested and
+  // downconverts to 8 only when a u8-only op (resize/rotate/flip/modulate)
+  // or a u8-only encoder (JPEG/WebP/indexed PNG) is in the chain.
+  describe("16-bit-per-channel PNG (issue #30462)", () => {
+    // Four corner pixels at full 16-bit precision. High/low bytes differ so a
+    // truncation to 8 bpc (which keeps only the high byte) is detectable.
+    // (0,0)=red  (3,0)=green  (0,2)=blue  (3,2)=white-ish
+    const corners16: Array<[number, number, number, number]> = [
+      [0xffff, 0x0123, 0x0234, 0xffff], // deep red with non-zero low bytes in G/B
+      [0x0123, 0xffff, 0x0456, 0xffff],
+      [0x0789, 0x1234, 0xffff, 0xa5a5], // partial alpha, non-trivial low byte
+      [0xfedc, 0xdcba, 0xcdef, 0xffff],
+    ];
+    const cornersPng16 = makePng16(4, 3, (x, y) => {
+      if (y === 0 && x === 0) return corners16[0];
+      if (y === 0 && x === 3) return corners16[1];
+      if (y === 2 && x === 0) return corners16[2];
+      if (y === 2 && x === 3) return corners16[3];
+      return [0x8080, 0x8080, 0x8080, 0xffff];
+    });
+
+    test("source IHDR advertises bit_depth = 16 (fixture sanity)", () => {
+      expect(pngBitDepth(cornersPng16)).toBe(16);
+    });
+
+    test("PNG 16 → PNG no-op keeps bit_depth = 16 in the output IHDR", async () => {
+      const out = await new Bun.Image(cornersPng16).png().bytes();
+      expect(pngBitDepth(out)).toBe(16);
+    });
+
+    test("PNG 16 → PNG no-op preserves every low byte (no 8-bpc truncation)", async () => {
+      const out = await new Bun.Image(cornersPng16).png().bytes();
+      expect(pngBitDepth(out)).toBe(16);
+      const { w, h, data } = decodePngRaw16(out);
+      expect({ w, h }).toEqual({ w: 4, h: 3 });
+      expect(rgba16At(data, w, 0, 0)).toEqual(corners16[0]);
+      expect(rgba16At(data, w, 3, 0)).toEqual(corners16[1]);
+      expect(rgba16At(data, w, 0, 2)).toEqual(corners16[2]);
+      expect(rgba16At(data, w, 3, 2)).toEqual(corners16[3]);
+    });
+
+    test("PNG 16 → .bytes() with no format setter re-encodes as 16-bpc PNG", async () => {
+      // `.bytes()` with no `.png()`/`.jpeg()`/`.webp()` call re-encodes in
+      // the source format; for a PNG source that's PNG, and the 16-bpc
+      // IHDR must carry through.
+      const out = await new Bun.Image(cornersPng16).bytes();
+      expect(pngBitDepth(out)).toBe(16);
+    });
+
+    test("PNG 16 → write(file) lands a 16-bpc PNG on disk", async () => {
+      using dir = tempDir("image-16bpc-write", {});
+      const p = join(String(dir), "out.png");
+      await new Bun.Image(cornersPng16).write(p);
+      const bytes = new Uint8Array(await Bun.file(p).bytes());
+      expect(pngBitDepth(bytes)).toBe(16);
+    });
+
+    test("PNG 16 → resize(...) downconverts to 8-bpc (geometry kernels are u8-only)", async () => {
+      // Any op touches the u8 kernels, so the output has to be 8-bpc. This
+      // is the acceptable lossy path — the test locks in that we DO emit
+      // valid 8-bpc output rather than a corrupted 16-bpc buffer.
+      const out = await new Bun.Image(cornersPng16).resize(2, 2).png().bytes();
+      expect(pngBitDepth(out)).toBe(8);
+      const { w, h } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 2, h: 2 });
+    });
+
+    test("PNG 16 → rotate(90) downconverts to 8-bpc and rotates correctly", async () => {
+      const out = await new Bun.Image(cornersPng16).rotate(90).png().bytes();
+      expect(pngBitDepth(out)).toBe(8);
+      const { w, h, data } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 3, h: 4 });
+      // Red (0xffff,0x0123,0x0234,0xffff) narrows to the high byte per
+      // channel: [0xff, 0x01, 0x02, 0xff]. After 90° CW the source (0,0)
+      // lands at dst (h-1, 0) = (2, 0).
+      expect(rgbaAt(data, w, 2, 0)).toEqual([0xff, 0x01, 0x02, 0xff]);
+    });
+
+    test("PNG 16 → .jpeg() downconverts to 8-bpc (JPEG is 8-bpc-only)", async () => {
+      // JPEG decode produces 8-bpc regardless, so we're checking the encode
+      // path — the decoded 16-bpc buffer must narrow before libjpeg-turbo
+      // sees it, otherwise the encoder misreads 2× the bytes and produces
+      // a malformed stream (or writes random memory).
+      const out = await new Bun.Image(cornersPng16).jpeg({ quality: 90 }).bytes();
+      expect(out[0]).toBe(0xff);
+      expect(out[1]).toBe(0xd8);
+      // Round-trip through PNG to check dimensions survived.
+      const back = await new Bun.Image(out).png().bytes();
+      const { w, h } = decodePngRaw(back);
+      expect({ w, h }).toEqual({ w: 4, h: 3 });
+    });
+
+    test("PNG 16 → .webp({lossless}) downconverts to 8-bpc (VP8L is 8-bpc-only)", async () => {
+      const out = await new Bun.Image(cornersPng16).webp({ lossless: true }).bytes();
+      expect(String.fromCharCode(out[0], out[1], out[2], out[3])).toBe("RIFF");
+      expect(String.fromCharCode(out[8], out[9], out[10], out[11])).toBe("WEBP");
+    });
+
+    test("PNG 16 → png({palette}) downconverts to 8-bpc (quantise is u8-only)", async () => {
+      const out = await new Bun.Image(cornersPng16).png({ palette: true, colors: 16 }).bytes();
+      expect(pngBitDepth(out)).toBe(8);
+    });
+
+    test("PNG 16 round-trip preserves iCCP (profile survives across 16-bpc decode+encode)", async () => {
+      // Regression for #30197 interacting with the 16-bpc path: the profile
+      // must carry through the new RGBA16 decode arm exactly as it does
+      // through the RGBA8 arm.
+      const profile = new Uint8Array(256);
+      for (let i = 0; i < profile.length; i++) profile[i] = (i * 7 + 11) & 0xff;
+      // Splice an iCCP chunk right after IHDR (same layout as the ICC tests
+      // below). The chunk body is: keyword + 0x00 separator + compression
+      // method byte + deflate(profile).
+      const compressed = zlib.deflateSync(profile);
+      const body = Buffer.concat([Buffer.from("ICC Profile", "latin1"), Buffer.from([0, 0]), compressed]);
+      const iccp = pngChunk("iCCP", body);
+      // IHDR ends at byte 8 + 8 + 13 + 4 = 33. Splice iCCP there.
+      const iccpPng = Buffer.concat([cornersPng16.subarray(0, 33), iccp, cornersPng16.subarray(33)]);
+      const out = await new Bun.Image(iccpPng).png().bytes();
+      expect(pngBitDepth(out)).toBe(16);
+      // The iCCP chunk should be present in the output. Scan chunks.
+      const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+      let off = 8;
+      let hasIccp = false;
+      while (off + 12 <= out.length) {
+        const len = dv.getUint32(off);
+        const type = String.fromCharCode(out[off + 4], out[off + 5], out[off + 6], out[off + 7]);
+        if (type === "iCCP") hasIccp = true;
+        if (type === "IEND") break;
+        off += 12 + len;
+      }
+      expect(hasIccp).toBe(true);
     });
   });
 

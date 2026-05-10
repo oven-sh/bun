@@ -47,6 +47,11 @@ const Ihdr = extern struct {
 
 const SPNG_CTX_ENCODER = 2;
 const SPNG_FMT_RGBA8 = 1;
+/// 16-bit-per-channel RGBA, host-endian. libspng converts the PNG's
+/// big-endian samples on decode (and back on encode when the IHDR says 16);
+/// the pipeline stores host-endian u16 internally so a 16-bpc decode →
+/// 16-bpc encode round-trips without a byte swap in Zig.
+const SPNG_FMT_RGBA16 = 2;
 const SPNG_FMT_PNG = 256;
 const SPNG_DECODE_TRNS = 1; // apply tRNS chunk so paletted/grey get real alpha
 const SPNG_ENCODE_FINALIZE = 2;
@@ -76,11 +81,19 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     var ihdr: Ihdr = undefined;
     if (spng_get_ihdr(ctx, &ihdr) != 0) return error.DecodeFailed;
     try codecs.guard(ihdr.width, ihdr.height, max_pixels);
+    // 16-bpc IHDR → keep full precision (issue #30462); everything else is
+    // 8-bpc in the internal buffer. libspng promotes 1/2/4-bpc indexed and
+    // greyscale to 8 on its own, so the only source bit-depth that needs a
+    // separate internal format is 16. Colour types other than truecolour-
+    // alpha still come out as RGBA8/RGBA16 because we pass the RGBA
+    // format enum — libspng does the colour-type expansion.
+    const fmt: c_int = if (ihdr.bit_depth == 16) SPNG_FMT_RGBA16 else SPNG_FMT_RGBA8;
+    const bit_depth: u8 = if (ihdr.bit_depth == 16) 16 else 8;
     var size: usize = 0;
-    if (spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &size) != 0) return error.DecodeFailed;
+    if (spng_decoded_image_size(ctx, fmt, &size) != 0) return error.DecodeFailed;
     const out = try bun.default_allocator.alloc(u8, size);
     errdefer bun.default_allocator.free(out);
-    if (spng_decode_image(ctx, out.ptr, out.len, SPNG_FMT_RGBA8, SPNG_DECODE_TRNS) != 0)
+    if (spng_decode_image(ctx, out.ptr, out.len, fmt, SPNG_DECODE_TRNS) != 0)
         return error.DecodeFailed;
 
     // iCCP after decode so the chunk has definitely been parsed. A non-zero
@@ -96,7 +109,7 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
         try bun.default_allocator.dupe(u8, iccp.profile.?[0..iccp.profile_len])
     else
         null;
-    return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height, .icc_profile = icc };
+    return .{ .rgba = out, .width = ihdr.width, .height = ihdr.height, .bit_depth = bit_depth, .icc_profile = icc };
 }
 
 /// Attach `icc_profile` to the encoder as an iCCP chunk. libspng requires
@@ -126,7 +139,16 @@ fn embedIccp(ctx: *spng_ctx, icc_profile: ?[]const u8) void {
     _ = spng_set_iccp(ctx, &iccp);
 }
 
-pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
+/// `bit_depth` is 8 or 16. 16-bpc input must be host-endian u16 RGBA —
+/// `SPNG_FMT_PNG` tells libspng to convert to PNG's big-endian wire format
+/// itself (`to_bigendian` flag set when `ihdr.bit_depth == 16`). Everything
+/// else — JPEG/WebP/indexed-PNG encode, and the geometry kernels — is
+/// u8-only; the caller in Image.zig downconverts first. Issue #30462.
+pub fn encode(rgba: []const u8, w: u32, h: u32, bit_depth: u8, level: i8, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
+    // Programming error if the caller passed an unexpected depth — the
+    // internal pipeline only produces 8 or 16. A runtime reject here keeps
+    // a future caller from silently writing a malformed IHDR.
+    if (bit_depth != 8 and bit_depth != 16) return error.EncodeFailed;
     const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
     defer spng_ctx_free(ctx);
     _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
@@ -134,7 +156,7 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const
     var ihdr: Ihdr = .{
         .width = w,
         .height = h,
-        .bit_depth = 8,
+        .bit_depth = bit_depth,
         .color_type = SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
     };
     if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;

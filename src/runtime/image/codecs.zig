@@ -1,7 +1,11 @@
 //! Thin Zig wrappers over the statically-linked image codecs and the
-//! highway resize/rotate kernels. Everything works on RGBA8 — decoders are
-//! told to emit RGBA, encoders are fed RGBA, so Image.zig never branches on
-//! channel layout.
+//! highway resize/rotate kernels. The pipeline is RGBA8 everywhere except
+//! the PNG 16-bpc read/write path — decoders emit 8-bit RGBA by default,
+//! libspng can also emit 16-bit RGBA when the source PNG is 16 bpc so
+//! `PNG 16→PNG 16` with no ops survives at full precision (issue #30462).
+//! The geometry kernels (resize/rotate/flip/modulate) and every non-PNG
+//! encoder are u8-only, so any op or non-PNG output path downconverts via
+//! `downconvertTo8` before touching that code.
 //!
 //! Memory ownership: decode returns `bun.default_allocator`-owned RGBA. Encode
 //! returns `Encoded{bytes, free}` carrying the codec's own deallocator so the
@@ -144,6 +148,14 @@ pub const Decoded = struct {
     rgba: []u8, // bun.default_allocator
     width: u32,
     height: u32,
+    /// Bits per channel in `rgba`: 8 (one byte per channel, `width*height*4`
+    /// bytes) or 16 (two host-endian bytes per channel, `width*height*8`
+    /// bytes). Only libspng's 16-bpc PNG decode path sets this to 16;
+    /// every other decoder produces 8. The geometry kernels and non-PNG
+    /// encoders are u8-only, so the pipeline calls `downconvertTo8`
+    /// before any op or non-PNG encode — PNG→PNG with no ops is the
+    /// only path that stays at 16. Issue #30462.
+    bit_depth: u8 = 8,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
     /// PNG iCCP, WebP ICCP), `bun.default_allocator`-owned. `null` when the
     /// source didn't carry one or the decode path doesn't extract it —
@@ -160,6 +172,36 @@ pub const Decoded = struct {
     pub fn deinit(self: *Decoded) void {
         bun.default_allocator.free(self.rgba);
         if (self.icc_profile) |p| bun.default_allocator.free(p);
+    }
+
+    /// Convert `rgba` from 16-bpc host-endian to 8-bpc in place, narrowing
+    /// each u16 channel to the high byte (equivalent to `>> 8`). A no-op
+    /// when `bit_depth` is already 8. Called before any transform (the
+    /// geometry kernels are u8-only) and before non-PNG encode (JPEG/WebP
+    /// are 8-bpc formats). The buffer is shrunk via `realloc` so the tail
+    /// memory is released — mimalloc's shrink is in-place when the new
+    /// size stays in the same size class, so this is free in practice.
+    pub fn downconvertTo8(self: *Decoded) Error!void {
+        if (self.bit_depth != 16) return;
+        // Treat `rgba` as a u16 slice of host-endian channel samples. The
+        // allocator returned 2-byte alignment at minimum (alloc of u8
+        // rounds up to the allocator's min align, which is ≥ 2), but PNG
+        // decode sizes are always even anyway (`pixels * 8`), so the
+        // in-place narrowing walk is safe.
+        const pixels: usize = @as(usize, self.width) * self.height;
+        const samples: usize = pixels * 4;
+        const src16: [*]align(1) const u16 = @ptrCast(self.rgba.ptr);
+        var i: usize = 0;
+        while (i < samples) : (i += 1) {
+            // Narrow by keeping the high byte — same convention as every
+            // 16→8 PNG down-converter (libpng `png_set_strip_16`, libvips).
+            // A round-then-shift would be slightly less biased but the
+            // difference is sub-LSB and not worth the cost on the fast
+            // path.
+            self.rgba[i] = @intCast(src16[i] >> 8);
+        }
+        self.bit_depth = 8;
+        self.rgba = bun.handleOom(bun.default_allocator.realloc(self.rgba, samples));
     }
 };
 
@@ -352,17 +394,24 @@ pub const Encoded = struct {
     }
 };
 
-pub fn encode(rgba: []const u8, width: u32, height: u32, opts: EncodeOptions) Error!Encoded {
+/// `bit_depth` is 8 or 16. Only PNG truecolour encode honours 16; everything
+/// else expects 8-bit RGBA. The pipeline in Image.zig downconverts before
+/// calling in, so a 16 here on a non-PNG path is a programming error — but
+/// the codec arms still assume `rgba.len == w*h*4` and would miscompute, so
+/// keep the precondition in the caller, not a runtime check here.
+pub fn encode(rgba: []const u8, width: u32, height: u32, bit_depth: u8, opts: EncodeOptions) Error!Encoded {
     return switch (opts.format) {
         .jpeg => jpeg.encode(rgba, width, height, opts.quality, opts.progressive, opts.icc_profile),
         // PNG carries iCCP on both truecolour and indexed images — quantise
         // operates on raw RGB numbers without converting colour spaces, so
         // the palette entries are still in the source space and need the
         // profile to be interpreted correctly (see PNG spec §11.3.3.3).
+        // Indexed PNGs are always 8 bpc (palette entries are u8), so the
+        // caller must have downconverted before choosing the indexed path.
         .png => if (opts.palette)
             png.encodeIndexed(rgba, width, height, opts.compression_level, opts.colors, opts.dither, opts.icc_profile)
         else
-            png.encode(rgba, width, height, opts.compression_level, opts.icc_profile),
+            png.encode(rgba, width, height, bit_depth, opts.compression_level, opts.icc_profile),
         .webp => webp.encode(rgba, width, height, opts.quality, opts.lossless, opts.icc_profile),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match

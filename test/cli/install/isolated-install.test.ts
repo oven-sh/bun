@@ -1952,3 +1952,81 @@ describe("global virtual store", () => {
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
   });
 });
+
+describe("global install", () => {
+  // Regression: `bun add -g --linker isolated <pkg-with-bin>` used to leave
+  // the bin in `<BUN_INSTALL>/install/global/node_modules/.bin/` instead of
+  // linking it into `<BUN_INSTALL>/bin/`, so the command wasn't on $PATH.
+  // https://github.com/oven-sh/bun/issues/30450
+  //
+  // File-path deps here so the test doesn't depend on the registry — the bug
+  // is in the isolated installer's `linkDependencyBins` pass and fires the
+  // same way regardless of source.
+  test("links requested-package bins into BUN_INSTALL/bin", async () => {
+    using dir = tempDir("isolated-global-bin-", {
+      "pkg-with-bin/package.json": JSON.stringify({
+        name: "pkg-with-bin",
+        version: "1.0.0",
+        bin: { "bin-from-pkg": "./cli.js" },
+      }),
+      "pkg-with-bin/cli.js": "#!/usr/bin/env node\nconsole.log('ok');\n",
+    });
+    const bunInstall = join(String(dir), "bun-install");
+    const globalBinDir = join(bunInstall, "bin");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "-g", "--linker=isolated", join(String(dir), "pkg-with-bin")],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_INSTALL: bunInstall },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("pkg-with-bin");
+    expect(exitCode).toBe(0);
+
+    // POSIX: `bin-from-pkg` symlink. Windows: `bin-from-pkg.exe` shim.
+    const hasBin =
+      existsSync(join(globalBinDir, "bin-from-pkg")) || existsSync(join(globalBinDir, "bin-from-pkg.exe"));
+    expect(hasBin).toBe(true);
+  });
+
+  // Transitive bins (bins of deps of the requested package) must NOT land in
+  // `<BUN_INSTALL>/bin/` — they belong in the store entry's local `.bin/`.
+  // `host-pkg` depends on `dep-pkg`, which has a bin. Only the requested
+  // top-level package's bins should be global-linked.
+  test("does not link transitive-dep bins into BUN_INSTALL/bin", async () => {
+    using dir = tempDir("isolated-global-bin-transitive-", {
+      "host-pkg/package.json": JSON.stringify({
+        name: "host-pkg",
+        version: "1.0.0",
+        dependencies: { "dep-pkg": "file:../dep-pkg" },
+      }),
+      "host-pkg/index.js": "module.exports = 1;\n",
+      "dep-pkg/package.json": JSON.stringify({
+        name: "dep-pkg",
+        version: "1.0.0",
+        bin: { "dep-bin": "./dep.js" },
+      }),
+      "dep-pkg/dep.js": "#!/usr/bin/env node\nconsole.log('dep');\n",
+    });
+    const bunInstall = join(String(dir), "bun-install");
+    const globalBinDir = join(bunInstall, "bin");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "-g", "--linker=isolated", join(String(dir), "host-pkg")],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_INSTALL: bunInstall },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("host-pkg");
+    expect(exitCode).toBe(0);
+
+    expect(existsSync(join(globalBinDir, "dep-bin"))).toBe(false);
+    expect(existsSync(join(globalBinDir, "dep-bin.exe"))).toBe(false);
+  });
+});

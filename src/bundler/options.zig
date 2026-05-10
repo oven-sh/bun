@@ -1572,9 +1572,9 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.
         bun.StringArrayHashMap(Loader),
         allocator,
         input_loaders.extensions.len +
-            if (target.isBun()) default_loader_ext_bun.len else 0 +
-                if (target == .browser) default_loader_ext_browser.len else 0 +
-                    default_loader_ext.len,
+            (if (target.isBun()) default_loader_ext_bun.len else 0) +
+            (if (target == .browser) default_loader_ext_browser.len else 0) +
+            default_loader_ext.len,
         input_loaders.extensions,
         loader_values,
     );

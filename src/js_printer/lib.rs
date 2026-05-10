@@ -4159,7 +4159,7 @@ where
             value: item_in.value,
             initializer: item_in.initializer,
             // PERF(port): Vec not Copy — re-slice instead of move.
-            ts_decorators: js_ast::ExprNodeList::default(),
+            ts_decorators: bun_alloc::AstAlloc::vec(),
             // TODO(port): ts_decorators not used by the printer; Vec is !Copy so omit the copy.
             ts_metadata: Default::default(),
             // TODO(port): ts_metadata not used by the printer; not Copy.

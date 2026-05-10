@@ -1979,7 +1979,7 @@ impl Default for PropertyOpts {
             class_has_extends: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
-            ts_decorators: ExprNodeList::default(),
+            ts_decorators: bun_alloc::AstAlloc::vec(),
             has_argument_decorators: false,
             has_class_decorators: false,
         }

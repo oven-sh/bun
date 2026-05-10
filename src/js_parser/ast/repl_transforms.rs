@@ -424,7 +424,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         );
 
         let iife = self.new_expr(
-            E::Call { target: arrow, args: ExprNodeList::default(), ..Default::default() },
+            E::Call { target: arrow, args: bun_alloc::AstAlloc::vec(), ..Default::default() },
             logger::Loc::EMPTY,
         );
 

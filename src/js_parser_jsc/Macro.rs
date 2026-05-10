@@ -753,7 +753,7 @@ impl<'a> Run<'a> {
                 // (errdefer free deleted — drops on `?`)
                 let expr = Expr::init(
                     E::Array {
-                        items: ExprNodeList::default(),
+                        items: bun_alloc::AstAlloc::vec(),
                         was_originally_macro: true,
                         ..Default::default()
                     },
@@ -790,7 +790,7 @@ impl<'a> Run<'a> {
                 // Reserve a placeholder to break cycles.
                 let expr = Expr::init(
                     E::Object {
-                        properties: G::PropertyList::default(),
+                        properties: bun_alloc::AstAlloc::vec(),
                         was_originally_macro: true,
                         ..Default::default()
                     },

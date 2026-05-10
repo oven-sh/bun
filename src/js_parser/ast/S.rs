@@ -229,7 +229,6 @@ pub struct Throw {
     pub value: ExprNodeIndex,
 }
 
-#[derive(Default)]
 pub struct Local {
     pub kind: Kind, // = Kind::KVar
     pub decls: G::DeclList, // = .{}
@@ -239,6 +238,18 @@ pub struct Local {
     pub was_ts_import_equals: bool, // = false
 
     pub was_commonjs_export: bool, // = false
+}
+
+impl Default for Local {
+    fn default() -> Self {
+        Self {
+            kind: Kind::default(),
+            decls: bun_alloc::AstAlloc::vec(),
+            is_export: false,
+            was_ts_import_equals: false,
+            was_commonjs_export: false,
+        }
+    }
 }
 
 impl Local {

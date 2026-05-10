@@ -486,11 +486,11 @@ pub mod BunInfo {
         };
 
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
-        let platform_props: Vec<G::Property> = vec![
+        let platform_props = bun_alloc::AstAlloc::vec_from_iter([
             prop(b"os", str_expr(os_tag_name(info.platform.os))),
             prop(b"arch", str_expr(arch_tag_name(info.platform.arch))),
             prop(b"version", str_expr(info.platform.version)),
-        ];
+        ]);
         let platform_expr = Expr::init(
             E::Object {
                 properties: platform_props,
@@ -500,10 +500,10 @@ pub mod BunInfo {
             Loc::EMPTY,
         );
 
-        let root_props: Vec<G::Property> = vec![
+        let root_props = bun_alloc::AstAlloc::vec_from_iter([
             prop(b"bun_version", str_expr(info.bun_version)),
             prop(b"platform", platform_expr),
-        ];
+        ]);
         Ok(Expr::init(
             E::Object {
                 properties: root_props,

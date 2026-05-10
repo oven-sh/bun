@@ -23,11 +23,17 @@ pub struct ASTMemoryAllocator {
     arena: Arena,
     previous: *mut ASTMemoryAllocator,
     previous_logger: *const Arena,
+    previous_heap: *mut bun_alloc::mimalloc::Heap,
 }
 
 impl Default for ASTMemoryAllocator {
     fn default() -> Self {
-        Self { arena: Arena::new(), previous: ptr::null_mut(), previous_logger: ptr::null() }
+        Self {
+            arena: Arena::new(),
+            previous: ptr::null_mut(),
+            previous_logger: ptr::null(),
+            previous_heap: ptr::null_mut(),
+        }
     }
 }
 
@@ -68,6 +74,7 @@ impl ASTMemoryAllocator {
             current: Some(self),
             previous: Some(stmt::data::Store::memory_allocator()),
             previous_logger: ptr::null(),
+            previous_heap: ptr::null_mut(),
         };
         ast_scope.enter();
         ast_scope
@@ -81,10 +88,12 @@ impl ASTMemoryAllocator {
 
     pub fn push(&mut self) {
         self.previous_logger = bun_logger::js_ast::data_store_override();
+        self.previous_heap = bun_alloc::ast_alloc::thread_heap();
         let arena: *const Arena = &self.arena;
         stmt::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         expr::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         bun_logger::js_ast::set_data_store_override(arena);
+        bun_alloc::ast_alloc::set_thread_heap(self.arena.heap_ptr());
     }
 
     pub fn pop(&mut self) {
@@ -93,8 +102,10 @@ impl ASTMemoryAllocator {
         stmt::data::Store::set_memory_allocator(prev);
         expr::data::Store::set_memory_allocator(prev);
         bun_logger::js_ast::set_data_store_override(self.previous_logger);
+        bun_alloc::ast_alloc::set_thread_heap(self.previous_heap);
         self.previous = ptr::null_mut();
         self.previous_logger = ptr::null();
+        self.previous_heap = ptr::null_mut();
     }
 
     #[inline]
@@ -132,11 +143,12 @@ pub struct Scope<'a> {
     current: Option<&'a mut ASTMemoryAllocator>,
     previous: Option<*mut ASTMemoryAllocator>,
     previous_logger: *const Arena,
+    previous_heap: *mut bun_alloc::mimalloc::Heap,
 }
 
 impl<'a> Default for Scope<'a> {
     fn default() -> Self {
-        Self { current: None, previous: None, previous_logger: ptr::null() }
+        Self { current: None, previous: None, previous_logger: ptr::null(), previous_heap: ptr::null_mut() }
     }
 }
 
@@ -146,18 +158,21 @@ impl<'a> Scope<'a> {
 
         self.previous = Some(expr::data::Store::memory_allocator());
         self.previous_logger = bun_logger::js_ast::data_store_override();
+        self.previous_heap = bun_alloc::ast_alloc::thread_heap();
 
-        let (current, arena): (*mut ASTMemoryAllocator, *const Arena) = match &mut self.current {
-            Some(r) => {
-                let arena: *const Arena = &r.arena;
-                (std::ptr::from_mut::<ASTMemoryAllocator>(*r), arena)
-            }
-            None => (ptr::null_mut(), ptr::null()),
-        };
+        let (current, arena, heap): (*mut ASTMemoryAllocator, *const Arena, *mut bun_alloc::mimalloc::Heap) =
+            match &mut self.current {
+                Some(r) => {
+                    let arena: *const Arena = &r.arena;
+                    (std::ptr::from_mut::<ASTMemoryAllocator>(*r), arena, r.arena.heap_ptr())
+                }
+                None => (ptr::null_mut(), ptr::null(), ptr::null_mut()),
+            };
 
         expr::data::Store::set_memory_allocator(current);
         stmt::data::Store::set_memory_allocator(current);
         bun_logger::js_ast::set_data_store_override(arena);
+        bun_alloc::ast_alloc::set_thread_heap(heap);
 
         if current.is_null() {
             stmt::data::Store::begin();
@@ -170,6 +185,7 @@ impl<'a> Scope<'a> {
         expr::data::Store::set_memory_allocator(prev);
         stmt::data::Store::set_memory_allocator(prev);
         bun_logger::js_ast::set_data_store_override(self.previous_logger);
+        bun_alloc::ast_alloc::set_thread_heap(self.previous_heap);
     }
 }
 

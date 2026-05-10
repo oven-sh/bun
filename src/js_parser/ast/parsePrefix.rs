@@ -666,7 +666,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let call_args = p.parse_call_args()?;
             (call_args.list, call_args.loc)
         } else {
-            (ExprNodeList::default(), logger::Loc::EMPTY)
+            (bun_alloc::AstAlloc::vec(), logger::Loc::EMPTY)
         };
 
         Ok(p.new_expr(

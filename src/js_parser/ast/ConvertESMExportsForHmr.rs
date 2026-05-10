@@ -226,7 +226,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                         // SAFETY: as above — POD-shaped read out of arena.
                         let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
-                        let mut decls = G::DeclList::default();
+                        let mut decls = bun_alloc::AstAlloc::vec();
                         VecExt::append(&mut decls, G::Decl {
                             binding: Binding::alloc(
                                 p.arena,
@@ -733,7 +733,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 },
                                 logger::Loc::EMPTY,
                             ),
-                            args: js_ast::ExprNodeList::default(),
+                            args: bun_alloc::AstAlloc::vec(),
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,

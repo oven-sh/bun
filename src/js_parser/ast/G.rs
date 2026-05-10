@@ -25,7 +25,7 @@ pub struct Decl {
 
 // Zig: `pub const List = Vec(Decl);` (nested decl) — inherent assoc types
 // are nightly; free alias.
-pub type DeclList = Vec<Decl>;
+pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
 
 impl Default for Decl {
     fn default() -> Self {
@@ -78,7 +78,7 @@ impl Default for Class {
     fn default() -> Self {
         Self {
             class_keyword: logger::Range::NONE,
-            ts_decorators: ExprNodeList::default(),
+            ts_decorators: bun_alloc::AstAlloc::vec(),
             class_name: None,
             extends: None,
             body_loc: logger::Loc::EMPTY,
@@ -137,13 +137,13 @@ pub struct Comment {
 }
 
 pub struct ClassStaticBlock {
-    pub stmts: Vec<Stmt>,
+    pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
     pub loc: logger::Loc,
 }
 
 impl Default for ClassStaticBlock {
     fn default() -> Self {
-        Self { stmts: Vec::default(), loc: logger::Loc::default() }
+        Self { stmts: bun_alloc::AstAlloc::vec(), loc: logger::Loc::default() }
     }
 }
 
@@ -174,7 +174,7 @@ pub struct Property {
 }
 
 // Zig: nested `pub const List = Vec(Property);` — free alias.
-pub type PropertyList = Vec<Property>;
+pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
 
 impl Default for Property {
     fn default() -> Self {
@@ -183,7 +183,7 @@ impl Default for Property {
             kind: PropertyKind::Normal,
             flags: flags::PROPERTY_NONE,
             class_static_block: None,
-            ts_decorators: ExprNodeList::default(),
+            ts_decorators: bun_alloc::AstAlloc::vec(),
             key: None,
             value: None,
             ts_metadata: TypeScript::Metadata::MNone,
@@ -219,7 +219,7 @@ impl Property {
         if let Some(csb_ref) = self.class_static_block_ref() {
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
                 loc: csb_ref.loc,
-                stmts: csb_ref.stmts.clone(),
+                stmts: bun_alloc::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
             });
             class_static_block = Some(core::ptr::NonNull::from(new_block));
         }
@@ -351,7 +351,7 @@ pub struct Arg {
 impl Default for Arg {
     fn default() -> Self {
         Self {
-            ts_decorators: ExprNodeList::default(),
+            ts_decorators: bun_alloc::AstAlloc::vec(),
             binding: BindingNodeIndex::default(),
             default: None,
             is_typescript_ctor_field: false,

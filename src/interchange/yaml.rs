@@ -54,7 +54,7 @@ impl YAML {
             1 => Ok(stream.docs[0].root),
             _ => {
                 // multi-document yaml streams are converted into arrays
-                let mut items: Vec<Expr> = Vec::init_capacity(stream.docs.len())?;
+                let mut items: ast::ExprNodeList = ast::ExprNodeList::init_capacity(stream.docs.len())?;
                 for doc in &stream.docs {
                     items.push(doc.root);
                     // PERF(port): was appendAssumeCapacity
@@ -2503,7 +2503,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let _sequence_indent = self.token.indent;
         let _sequence_line = self.line;
 
-        let mut seq: Vec<Expr> = Vec::new();
+        let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
         self.context.set(Context::FlowIn)?;
 
@@ -2537,7 +2537,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.scan(ScanOptions::default())?;
 
         Ok(Expr::init(
-            E::Array { items: Vec::move_from_list(core::mem::take(&mut seq)), ..Default::default() },
+            E::Array { items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()), ..Default::default() },
             sequence_start.loc(),
         ))
     }
@@ -2635,7 +2635,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
         // body's result and pop on EVERY exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
-            let mut seq: Vec<Expr> = Vec::new();
+            let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
             let mut prev_line = Line::from(0);
 
@@ -2744,7 +2744,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
 
             Ok(Expr::init(
-                E::Array { items: Vec::move_from_list(core::mem::take(&mut seq)), ..Default::default() },
+                E::Array { items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()), ..Default::default() },
                 sequence_start.loc(),
             ))
         })();
@@ -2968,12 +2968,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct MappingProps {
-    list: Vec<G::Property>,
+    list: G::PropertyList,
 }
 
 impl MappingProps {
     pub fn init() -> Self {
-        Self { list: Vec::new() }
+        Self { list: bun_alloc::AstAlloc::vec() }
     }
 
     pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
@@ -3039,7 +3039,7 @@ impl MappingProps {
     }
 
     pub fn move_list(&mut self) -> G::PropertyList {
-        G::PropertyList::move_from_list(core::mem::take(&mut self.list))
+        core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
     }
 }
 

@@ -640,7 +640,7 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 // But we must have pointers somewhere in here because can't have types that contain themselves
 
 /// Slice that stores capacity and length in the same space as a regular slice.
-pub type ExprNodeList = Vec<Expr>;
+pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
 
 // Arena-owned `[Stmt]` / `[Binding]` views — see `StoreSlice<T>` doc above.
 // A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
@@ -2243,7 +2243,7 @@ pub mod defines_full_draft {
             J::EArray(a) => {
                 let src = a.get();
                 let mut items =
-                    Vec::<expr::Expr>::init_capacity(src.items.len_u32() as usize)?;
+                    crate::ExprNodeList::init_capacity(src.items.len_u32() as usize)?;
                 for it in src.items.slice() {
                     VecExt::append(&mut items, expr::Expr {
                         loc: it.loc,
@@ -2262,7 +2262,7 @@ pub mod defines_full_draft {
             }
             J::EObject(o) => {
                 let src = o.get();
-                let mut properties = Vec::<G::Property>::init_capacity(
+                let mut properties = G::PropertyList::init_capacity(
                     src.properties.len_u32() as usize,
                 )?;
                 for prop in src.properties.slice() {

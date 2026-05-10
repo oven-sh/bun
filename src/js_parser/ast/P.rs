@@ -4635,7 +4635,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let Some(ref_) = local.ref_ else { continue };
                 let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
-                    let mut decls = G::DeclList::default();
+                    let mut decls = bun_alloc::AstAlloc::vec();
                     VecExt::append(&mut decls, Decl {
                             binding: self.b(js_ast::b::Identifier { r#ref: ref_ }, local.loc),
                             value: None,
@@ -6254,7 +6254,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 let items = ExprNodeList::from_arena_slice(param_array);
                                 self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY)
                             } else {
-                                self.new_expr(E::Array { items: ExprNodeList::default(), ..Default::default() }, logger::Loc::EMPTY)
+                                self.new_expr(E::Array { items: bun_alloc::AstAlloc::vec(), ..Default::default() }, logger::Loc::EMPTY)
                             };
                             let label = self.new_expr(E::EString::from_static(b"design:paramtypes"), logger::Loc::EMPTY);
                             let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
@@ -6348,7 +6348,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             push_metadata!(b"design:type", v);
                         }
                         {
-                            let arr = self.new_expr(E::Array { items: ExprNodeList::default(), ..Default::default() }, logger::Loc::EMPTY);
+                            let arr = self.new_expr(E::Array { items: bun_alloc::AstAlloc::vec(), ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
                         }
                     }
@@ -8213,7 +8213,7 @@ impl LowerUsingDeclarationsContext {
             let err_value = p.new_expr(E::Identifier { ref_: caught_ref, ..Default::default() }, loc);
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
             let has_err_value = p.new_expr(E::Number { value: 1.0 }, loc);
-            let mut decls = G::DeclList::default();
+            let mut decls = bun_alloc::AstAlloc::vec();
             VecExt::append(&mut decls, Decl { binding: err_binding, value: Some(err_value) }).expect("oom");
             VecExt::append(&mut decls, Decl { binding: has_err_binding, value: Some(has_err_value) }).expect("oom");
             let stmt0 = p.s(S::Local { decls, ..Default::default() }, loc);

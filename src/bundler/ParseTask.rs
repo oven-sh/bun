@@ -948,7 +948,7 @@ fn get_ast(
                 E::Call {
                     target: require_property,
                     // SAFETY: bump-owned slice; never grown via this Vec.
-                    args: unsafe { Vec::<Expr>::from_bump_slice(require_args) },
+                    args: unsafe { bun_js_parser::ExprNodeList::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -1012,7 +1012,7 @@ fn get_ast(
                         loc: Loc { start: 0 },
                     },
                     // SAFETY: bump-owned slice; never grown via this Vec.
-                    args: unsafe { Vec::<Expr>::from_bump_slice(require_args) },
+                    args: unsafe { bun_js_parser::ExprNodeList::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },

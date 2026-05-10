@@ -903,9 +903,9 @@ impl PmPkgCommand {
         // old list, ptr::read kept entries into the new list, then forget the
         // old buffer (CLI is one-shot — leak is intentional, see
         // load_package_json).
-        let old = core::mem::take(&mut e_obj.properties);
-        let mut new_props: Vec<G::Property> =
-            Vec::init_capacity(old_len - 1)?;
+        let old = bun_alloc::AstAlloc::take(&mut e_obj.properties);
+        let mut new_props: G::PropertyList =
+            G::PropertyList::init_capacity(old_len - 1)?;
         for prop in old.slice() {
             if let Some(k) = &prop.key {
                 if let ExprData::EString(s) = &k.data {

@@ -56,7 +56,7 @@ pub struct Array {
 impl Default for Array {
     fn default() -> Self {
         Self {
-            items: ExprNodeList::default(),
+            items: bun_alloc::AstAlloc::vec(),
             comma_after_spread: None,
             is_single_line: false,
             is_parenthesized: false,
@@ -91,8 +91,8 @@ impl Array {
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
         // PERF(port): Zig allocated in arena; Phase-A Vec uses global arena.
-        let mut out: Vec<Expr> =
-            Vec::init_capacity(estimated_count + self.items.len_u32() as usize)?;
+        let mut out: ExprNodeList =
+            ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize)?;
         out.expand_to_capacity();
         // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` (remain) does not overlap a shared borrow of `self`.
@@ -218,7 +218,7 @@ impl Default for New {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            args: ExprNodeList::default(),
+            args: bun_alloc::AstAlloc::vec(),
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             close_parens_loc: logger::Loc::EMPTY,
         }
@@ -270,7 +270,7 @@ impl Default for Call {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            args: ExprNodeList::default(),
+            args: bun_alloc::AstAlloc::vec(),
             optional_chain: None,
             is_direct_eval: false,
             close_paren_loc: logger::Loc::EMPTY,
@@ -621,8 +621,8 @@ impl Default for JSXElement {
     fn default() -> Self {
         Self {
             tag: None,
-            properties: G::PropertyList::default(),
-            children: ExprNodeList::default(),
+            properties: bun_alloc::AstAlloc::vec(),
+            children: bun_alloc::AstAlloc::vec(),
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: logger::Loc::EMPTY,
@@ -841,7 +841,7 @@ pub struct Object {
 impl Default for Object {
     fn default() -> Self {
         Self {
-            properties: G::PropertyList::default(),
+            properties: bun_alloc::AstAlloc::vec(),
             comma_after_spread: None,
             is_single_line: false,
             is_parenthesized: false,

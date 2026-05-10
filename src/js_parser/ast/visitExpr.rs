@@ -427,7 +427,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // PERF(port): was arena alloc + bun.copy — profile in Phase B
                         VecExt::append(&mut args, p.new_expr(
                             E::Object {
-                                properties: core::mem::take(&mut e_.properties),
+                                properties: bun_alloc::AstAlloc::take(&mut e_.properties),
                                 ..Default::default()
                             },
                             expr.loc,
@@ -589,7 +589,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             key: Some(children_key),
                             value: Some(p.new_expr(
                                 E::Array {
-                                    items: core::mem::take(&mut e_.children),
+                                    items: bun_alloc::AstAlloc::take(&mut e_.children),
                                     is_single_line: children_single_line,
                                     ..Default::default()
                                 },
@@ -618,7 +618,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     VecExt::append(&mut args, p.new_expr(
                         E::Object {
-                            properties: core::mem::take(props),
+                            properties: bun_alloc::AstAlloc::take(props),
                             ..Default::default()
                         },
                         expr.loc,

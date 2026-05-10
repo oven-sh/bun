@@ -461,17 +461,17 @@ impl SideEffects {
     /// recursive `simplify_unused_expr` call.
     fn join_all_simplified<'a, const TS: bool, J: JsxT, const SCAN: bool>(
         p: &mut P<'a, TS, J, SCAN>,
-        items: &Vec<Expr>,
+        items: &[Expr],
     ) -> Option<Expr> {
-        let len = items.len_u32() as usize;
+        let len = items.len();
         if len == 0 {
             return None;
         }
-        let mut result = Expr { data: ExprData::EMissing(E::Missing {}), loc: items.at(0).loc };
+        let mut result = Expr { data: ExprData::EMissing(E::Missing {}), loc: items[0].loc };
         for i in 0..len {
             // Copy the Expr out of the arena slice before recursing so the borrow
             // of `items` is released across the `&mut P` call.
-            let item: Expr = *items.at(i);
+            let item: Expr = items[i];
             let simplified = Self::simplify_unused_expr(p, item)
                 .unwrap_or(Expr { data: ExprData::EMissing(E::Missing {}), loc: item.loc });
             result = Expr::join_with_comma(result, simplified);

@@ -421,7 +421,7 @@ pub mod E {
     impl Default for Array {
         fn default() -> Self {
             Self {
-                items: ExprNodeList::default(),
+                items: bun_alloc::AstAlloc::vec(),
                 comma_after_spread: None,
                 is_single_line: false,
                 is_parenthesized: false,
@@ -432,7 +432,7 @@ pub mod E {
     }
     impl Array {
         pub const EMPTY: Array = Array {
-            items: Vec::new(),
+            items: bun_alloc::AstAlloc::vec(),
             comma_after_spread: None,
             is_single_line: false,
             is_parenthesized: false,
@@ -460,7 +460,7 @@ pub mod E {
     impl Default for Object {
         fn default() -> Self {
             Self {
-                properties: super::G::PropertyList::default(),
+                properties: bun_alloc::AstAlloc::vec(),
                 comma_after_spread: None,
                 is_single_line: false,
                 is_parenthesized: false,
@@ -471,7 +471,7 @@ pub mod E {
     }
     impl Object {
         pub const EMPTY: Object = Object {
-            properties: Vec::new(),
+            properties: bun_alloc::AstAlloc::vec(),
             comma_after_spread: None,
             is_single_line: false,
             is_parenthesized: false,
@@ -708,7 +708,7 @@ pub mod G {
     }
 
     /// Zig: `pub const List = Vec(Property);`.
-    pub type PropertyList = Vec<Property>;
+    pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
 
     /// Lowercase path for `G::property::Kind` (json.rs:351).
     pub mod property {
@@ -721,7 +721,7 @@ pub mod G {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// `js_ast.ExprNodeList` (Zig: `Vec(Expr)`).
-pub type ExprNodeList = Vec<Expr>;
+pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
 
 #[derive(Clone, Copy)]
 pub struct Expr {
@@ -1067,14 +1067,14 @@ pub mod expr {
             use super::IntoExprData;
             Ok(match *self {
                 Data::EArray(a) => {
-                    let mut items = ExprNodeList::default();
+                    let mut items = bun_alloc::AstAlloc::vec();
                     for item in a.slice() {
                         items.push(item.deep_clone()?);
                     }
                     E::Array { items, ..*a }.into_data_store()
                 }
                 Data::EObject(o) => {
-                    let mut properties = super::G::PropertyList::default();
+                    let mut properties = bun_alloc::AstAlloc::vec();
                     for prop in o.properties.slice() {
                         properties.push(super::G::Property {
                             initializer: match &prop.initializer {

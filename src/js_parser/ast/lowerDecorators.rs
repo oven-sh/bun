@@ -85,7 +85,7 @@ fn prop_copy(p: &Property) -> Property {
         kind: p.kind,
         flags: p.flags,
         class_static_block: p.class_static_block,
-        ts_decorators: ExprNodeList::default(),
+        ts_decorators: bun_alloc::AstAlloc::vec(),
         key: p.key,
         value: p.value,
         // SAFETY: `Metadata` is a plain data enum (no Drop); shallow read is the
@@ -194,7 +194,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let ref_ = self.find_symbol(l, b"WeakMap").expect("unreachable").r#ref;
         let target = self.new_expr(E::Identifier { ref_, ..Default::default() }, l);
         self.new_expr(
-            E::New { target, args: ExprNodeList::default(), close_parens_loc: l, ..Default::default() },
+            E::New { target, args: bun_alloc::AstAlloc::vec(), close_parens_loc: l, ..Default::default() },
             l,
         )
     }
@@ -204,7 +204,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let ref_ = self.find_symbol(l, b"WeakSet").expect("unreachable").r#ref;
         let target = self.new_expr(E::Identifier { ref_, ..Default::default() }, l);
         self.new_expr(
-            E::New { target, args: ExprNodeList::default(), close_parens_loc: l, ..Default::default() },
+            E::New { target, args: bun_alloc::AstAlloc::vec(), close_parens_loc: l, ..Default::default() },
             l,
         )
     }
@@ -214,7 +214,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let bump = self.arena;
         let stmt = self.s(S::SExpr { value: expr, ..Default::default() }, l);
         let stmts = bump.alloc_slice_copy(&[stmt]);
-        let stmts_list = Vec::<Stmt>::from_arena_slice(stmts);
+        let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts);
         let sb = bump.alloc(G::ClassStaticBlock { loc: l, stmts: stmts_list });
         Property {
             kind: PropertyKind::ClassStaticBlock,
@@ -974,7 +974,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // `ptr::read` left a second owner in the local that dropped at function
         // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
         // still pointed at → use-after-poison in `expr_can_be_removed_if_unused`.
-        let mut class_decorators: ExprNodeList = core::mem::take(&mut class.ts_decorators);
+        let mut class_decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
@@ -1005,7 +1005,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Move ownership into the AST node — `class_decorators` is not read
             // again on this branch (Phase-5's else-arm only runs when
             // `class_dec_ref` is `None`, i.e. `class_decorators_len == 0`).
-            let items = core::mem::take(&mut class_decorators);
+            let items = bun_alloc::AstAlloc::take(&mut class_decorators);
             let arr = p.new_expr(E::Array { items, ..Default::default() }, loc);
             if is_expr {
                 let binding = p.b(B::Identifier { r#ref: cdr }, loc);
@@ -1713,7 +1713,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // `class_dec_ref` is `None` ⇒ `class_decorators_len == 0`, so
                 // this is an empty list. Still `take` (not `ptr::read`) so the
                 // local can never own a second copy of a live buffer.
-                let items = core::mem::take(&mut class_decorators);
+                let items = bun_alloc::AstAlloc::take(&mut class_decorators);
                 p.new_expr(E::Array { items, ..Default::default() }, loc)
             });
             cls_dec_args.push(if is_expr {
@@ -1779,7 +1779,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             suffix_exprs.push(p.new_expr(
                                 E::Call {
                                     target: iife_body,
-                                    args: ExprNodeList::default(),
+                                    args: bun_alloc::AstAlloc::vec(),
                                     ..Default::default()
                                 },
                                 loc,

@@ -1707,7 +1707,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // of the declared bindings. That "export var" statement will later
                             // cause identifiers to be transformed into property accesses.
                             if opts.is_namespace_scope && opts.is_export {
-                                let mut decls: G::DeclList = Default::default();
+                                let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
                                 match &stmt.data {
                                     js_ast::StmtData::SLocal(local) => {
                                         let mut _decls =

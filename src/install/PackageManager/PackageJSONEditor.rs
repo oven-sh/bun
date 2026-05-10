@@ -761,7 +761,7 @@ pub fn edit(
         let trusted_dependencies_to_add = manager.trusted_deps_to_add_to_package_json.len();
         let new_trusted_deps: js_ast::ExprNodeList = 'brk: {
             if !options.add_trusted_dependencies || trusted_dependencies_to_add == 0 {
-                break 'brk js_ast::ExprNodeList::default();
+                break 'brk bun_alloc::AstAlloc::vec();
             }
 
             let mut deps =
@@ -873,7 +873,7 @@ pub fn edit(
             Expr::allocate(
                 arena,
                 E::Object {
-                    properties: G::PropertyList::default(),
+                    properties: bun_alloc::AstAlloc::vec(),
                     ..Default::default()
                 },
                 logger::Loc::EMPTY,

@@ -1869,7 +1869,7 @@ fn update_package_json_after_migration(
                 needs_update = true;
             }
         } else if !use_array_format {
-            let mut ws_props = G::PropertyList::default();
+            let mut ws_props = bun_alloc::AstAlloc::vec();
 
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {

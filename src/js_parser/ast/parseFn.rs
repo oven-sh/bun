@@ -239,7 +239,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 continue;
             }
 
-            let mut ts_decorators = ExprNodeList::default();
+            let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
                 ts_decorators = p.parse_type_script_decorators()?;
                 if ts_decorators.len_u32() > 0 {

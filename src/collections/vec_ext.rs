@@ -13,6 +13,7 @@
 //! methods whose return types differ. Call sites that relied on the old
 //! variants are patched at the call site to `.first_mut()` / `.to_vec()` etc.
 
+use core::alloc::Allocator;
 use core::fmt;
 use core::mem::ManuallyDrop;
 
@@ -151,41 +152,54 @@ pub trait VecExt<T>: Sized {
         E: From<AllocError>;
 }
 
-impl<T> VecExt<T> for Vec<T> {
+// Generic over `A` so the impl serves both `Vec<T>` (Global) and
+// `Vec<T, AstAlloc>` (AST-arena lists — `ExprNodeList`/`DeclList`/
+// `PropertyList`). `A: Default` lets every constructor produce the right
+// allocator without a value in hand; both `Global` and `AstAlloc` are ZSTs
+// with `Default`, so `A::default()` is free.
+impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
     #[inline]
     fn init_capacity(n: usize) -> Result<Self, AllocError> {
-        Ok(Vec::with_capacity(n))
+        Ok(Vec::with_capacity_in(n, A::default()))
     }
     #[inline]
     fn init_one(value: T) -> Result<Self, AllocError> {
-        Ok(vec![value])
+        let mut v = Vec::with_capacity_in(1, A::default());
+        v.push(value);
+        Ok(v)
     }
     #[inline]
     fn from_slice(items: &[T]) -> Result<Self, AllocError>
     where
         T: Clone,
     {
-        Ok(items.to_vec())
+        let mut v = Vec::with_capacity_in(items.len(), A::default());
+        v.extend_from_slice(items);
+        Ok(v)
     }
     #[inline]
     fn move_from_list(list: Vec<T>) -> Self {
-        list
+        // Element-wise move into `A`'s heap. For `A = Global` this is a
+        // redundant copy; for `A = AstAlloc` it is the required heap migration.
+        let mut v = Vec::with_capacity_in(list.len(), A::default());
+        v.extend(list);
+        v
     }
     #[inline]
     fn from_owned_slice(items: Box<[T]>) -> Self {
-        items.into_vec()
+        Self::move_from_list(items.into_vec())
     }
     #[inline]
     fn init_with_buffer_vec(buffer: Vec<T>) -> Self {
-        buffer
+        Self::move_from_list(buffer)
     }
     #[inline]
     unsafe fn from_bump_slice(items: &mut [T]) -> Self {
         // SAFETY: caller contract — `items` is a leaked bump-arena slice
-        // (`into_bump_slice_mut`); bitwise-move elements into a fresh global
+        // (`into_bump_slice_mut`); bitwise-move elements into a fresh `A`
         // allocation, leaving the arena bytes abandoned (they were already
         // leaked into the bump and will never be element-dropped).
-        let mut v = Vec::with_capacity(items.len());
+        let mut v = Vec::with_capacity_in(items.len(), A::default());
         unsafe {
             core::ptr::copy_nonoverlapping(items.as_ptr(), v.as_mut_ptr(), items.len());
             v.set_len(items.len());
@@ -198,10 +212,10 @@ impl<T> VecExt<T> for Vec<T> {
         T: Copy,
     {
         // For `T: Copy` the `from_bump_slice` bitwise-move is just a memcpy and
-        // the source carries no destructor, so `to_vec()` (which std
-        // specializes to `copy_nonoverlapping` for `Copy` element types) is
-        // bit-identical and requires no `unsafe`.
-        items.to_vec()
+        // the source carries no destructor.
+        let mut v = Vec::with_capacity_in(items.len(), A::default());
+        v.extend_from_slice(items);
+        v
     }
     #[inline]
     fn from_bump_vec(src: bun_alloc::ArenaVec<'_, T>) -> Self {
@@ -210,13 +224,13 @@ impl<T> VecExt<T> for Vec<T> {
         // about to be bitwise-moved out), and the buffer deallocation is
         // deferred to the arena's bulk reset.
         let mut src = ManuallyDrop::new(src);
-        let mut out = Vec::with_capacity(len);
+        let mut out = Vec::with_capacity_in(len, A::default());
         // SAFETY:
         // - `src` is the unique owner of `len` initialized `T` at
         //   `src.as_mut_ptr()`; `ManuallyDrop` guarantees neither the elements
         //   nor the buffer will be touched again through `src`.
         // - `out` has `cap >= len` uninit slots at `out.as_mut_ptr()`.
-        // - Source/dest are distinct allocations (arena heap vs global heap),
+        // - Source/dest are distinct allocations (arena heap vs `A` heap),
         //   so they cannot overlap.
         // After the copy, `out` is the sole logical owner of every `T`; its
         // `Drop` will run their destructors exactly once. The arena buffer
@@ -229,14 +243,14 @@ impl<T> VecExt<T> for Vec<T> {
     }
     #[inline]
     fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self {
-        Vec::with_capacity(cap)
+        Vec::with_capacity_in(cap, A::default())
     }
     #[inline]
     unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
         // SAFETY: caller must never drop or grow the returned `Vec` — its
         // buffer is borrowed.  Same contract as the original.
         ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts(items.as_ptr().cast_mut(), items.len(), items.len())
+            Vec::from_raw_parts_in(items.as_ptr().cast_mut(), items.len(), items.len(), A::default())
         })
     }
 
@@ -326,7 +340,7 @@ impl<T> VecExt<T> for Vec<T> {
     }
     #[inline]
     fn clear_and_free(&mut self) {
-        *self = Vec::new();
+        *self = Vec::new_in(A::default());
     }
     #[inline]
     fn ordered_remove(&mut self, index: usize) -> T {
@@ -369,21 +383,24 @@ impl<T> VecExt<T> for Vec<T> {
 
     #[inline]
     fn move_to_list(&mut self) -> Vec<T> {
-        core::mem::take(self)
+        let taken = core::mem::replace(self, Vec::new_in(A::default()));
+        let mut out = Vec::with_capacity(taken.len());
+        out.extend(taken);
+        out
     }
     #[inline]
     fn move_to_list_managed(&mut self) -> Vec<T> {
-        core::mem::take(self)
+        self.move_to_list()
     }
     #[inline]
     fn to_owned_slice(&mut self) -> Result<Box<[T]>, AllocError> {
-        Ok(core::mem::take(self).into_boxed_slice())
+        Ok(self.move_to_list().into_boxed_slice())
     }
     #[inline]
     fn shallow_copy(&self) -> ManuallyDrop<Self> {
         // SAFETY: caller must not drop/grow the alias; original stays the owner.
         ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts(self.as_ptr().cast_mut(), self.len(), self.capacity())
+            Vec::from_raw_parts_in(self.as_ptr().cast_mut(), self.len(), self.capacity(), A::default())
         })
     }
     #[inline]
@@ -426,18 +443,26 @@ impl<T> VecExt<T> for Vec<T> {
             }
         });
     }
-    fn deep_clone_with<F>(&self, clone_one: F) -> Self
+    fn deep_clone_with<F>(&self, mut clone_one: F) -> Self
     where
         F: FnMut(&T) -> T,
     {
-        self.iter().map(clone_one).collect()
+        let mut v = Vec::with_capacity_in(self.len(), A::default());
+        for item in self.iter() {
+            v.push(clone_one(item));
+        }
+        v
     }
-    fn try_deep_clone_with<F, E>(&self, clone_one: F) -> Result<Self, E>
+    fn try_deep_clone_with<F, E>(&self, mut clone_one: F) -> Result<Self, E>
     where
         F: FnMut(&T) -> Result<T, E>,
         E: From<AllocError>,
     {
-        self.iter().map(clone_one).collect()
+        let mut v = Vec::with_capacity_in(self.len(), A::default());
+        for item in self.iter() {
+            v.push(clone_one(item)?);
+        }
+        Ok(v)
     }
 }
 

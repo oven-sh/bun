@@ -325,7 +325,7 @@ fn generate_client_reference_proxy(
                 ref_: error_ref,
                 ..Default::default()
             }),
-            args: Vec::<Expr>::from_slice(&[b.new_expr(E::String::init(err_msg_string))])?,
+            args: js_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))])?,
             close_parens_loc: Loc::EMPTY,
             ..Default::default()
         });

@@ -63,7 +63,7 @@ impl KnownGlobal {
     fn call_from_new(e: &mut E::New, loc: logger::Loc) -> js_ast::Expr {
         let call = E::Call {
             target: e.target,
-            args: core::mem::take(&mut e.args),
+            args: bun_alloc::AstAlloc::take(&mut e.args),
             close_paren_loc: e.close_parens_loc,
             can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,
             ..Default::default()
@@ -161,7 +161,7 @@ impl KnownGlobal {
                                 // These are definitely not numbers, safe to convert
                                 return Some(js_ast::Expr::init(
                                     E::Array {
-                                        items: core::mem::take(&mut e.args),
+                                        items: bun_alloc::AstAlloc::take(&mut e.args),
                                         ..Default::default()
                                     },
                                     loc,
@@ -183,7 +183,7 @@ impl KnownGlobal {
                                 // These are definitely not numbers, safe to convert
                                 Some(js_ast::Expr::init(
                                     E::Array {
-                                        items: core::mem::take(&mut e.args),
+                                        items: bun_alloc::AstAlloc::take(&mut e.args),
                                         ..Default::default()
                                     },
                                     loc,
@@ -243,7 +243,7 @@ impl KnownGlobal {
                         // But NOT new Array(3) which creates an array with 3 empty slots
                         Some(js_ast::Expr::init(
                             E::Array {
-                                items: core::mem::take(&mut e.args),
+                                items: bun_alloc::AstAlloc::take(&mut e.args),
                                 ..Default::default()
                             },
                             loc,

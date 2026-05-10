@@ -244,6 +244,9 @@ pub use maybe_owned::MaybeOwned;
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;
 
+pub mod ast_alloc;
+pub use ast_alloc::{AstAlloc, AstVec};
+
 // ── tier-0 local primitives ───────────────────────────────────────────────
 // Real, self-contained helpers used by the BSS containers below. These are the
 // canonical tier-0 definitions, re-exported by higher tiers (`bun_paths::SEP_STR`,

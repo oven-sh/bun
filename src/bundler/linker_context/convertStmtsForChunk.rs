@@ -209,7 +209,7 @@ pub fn convert_stmts_for_chunk(
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: Vec::<Expr>::from_owned_slice(
+                                                args: js_ast::ExprNodeList::from_owned_slice(
                                                     args.into_boxed_slice(),
                                                 ),
                                                 ..Default::default()

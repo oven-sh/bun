@@ -32,7 +32,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         let mut previous_string_with_backslash_loc = logger::Loc::default();
-        let mut properties = G::PropertyList::default();
+        let mut properties = bun_alloc::AstAlloc::vec();
         let mut key_prop_i: i32 = -1;
         let mut flags = flags::JSXElementBitset::empty();
         let mut start_tag: Option<ExprNodeIndex> = None;

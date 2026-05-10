@@ -14,7 +14,8 @@
 use core::fmt;
 use std::borrow::Cow;
 
-use bun_alloc::AllocError;
+// `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
+// infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 #[allow(unused_imports)]
 use bun_core::Output;
 
@@ -27,7 +28,7 @@ pub struct StringBuilder;
 impl StringBuilder {
     pub fn count(&mut self, s: &[u8]) { let _ = s; }
     pub fn append(&mut self, s: &'static [u8]) -> &'static [u8] { s }
-    pub fn allocate(&mut self) -> Result<(), AllocError> { Ok(()) }
+    pub fn allocate(&mut self) {}
 }
 
 /// `fs::Path` / `fs::PathName` — re-exports of the canonical
@@ -1150,13 +1151,12 @@ impl Location {
         }
     }
 
-    pub fn clone(&self) -> Result<Location, AllocError> {
+    pub fn clone(&self) -> Location {
         // Zig (logger.zig:113): `allocator.dupe(u8, this.file)` /
         // `allocator.dupe(u8, this.line_text.?)` — the duped bytes outlive the
         // original `Source.contents`. The trait `Clone` impl above does the
-        // deep-dupe; this inherent shim keeps the fallible signature so
-        // existing `?`-threaded callers don't change.
-        Ok(<Self as Clone>::clone(self))
+        // deep-dupe; this inherent shim forwards to it.
+        <Self as Clone>::clone(self)
     }
 
     pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
@@ -1291,7 +1291,7 @@ impl Data {
     // `allocator.free(d.text)`), `Borrowed` is a `&'static` literal — nothing to
     // free. No explicit `Drop` body needed.
 
-    pub fn clone_line_text(&self, should: bool) -> Result<Data, AllocError> {
+    pub fn clone_line_text(&self, should: bool) -> Data {
         if !should || self.location.is_none() || self.location.as_ref().unwrap().line_text.is_none()
         {
             return self.clone();
@@ -1302,14 +1302,14 @@ impl Data {
             self.location.as_ref().unwrap().line_text.as_deref().unwrap().to_vec();
         let mut new_location = self.location.clone().unwrap();
         new_location.line_text = Some(Cow::Owned(new_line_text));
-        Ok(Data {
+        Data {
             text: self.text.clone(),
             location: Some(new_location),
-        })
+        }
     }
 
-    pub fn clone(&self) -> Result<Data, AllocError> {
-        Ok(Data {
+    pub fn clone(&self) -> Data {
+        Data {
             text: if !self.text.is_empty() {
                 // Zig (logger.zig:231): `try allocator.dupe(u8, this.text)`.
                 // `Cow::clone` only deep-copies the `Owned` arm; force the dupe
@@ -1319,11 +1319,8 @@ impl Data {
             } else {
                 Cow::Borrowed(b"")
             },
-            location: match &self.location {
-                Some(l) => Some(l.clone()?),
-                None => None,
-            },
-        })
+            location: self.location.as_ref().map(Location::clone),
+        }
     }
 
     pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
@@ -1601,18 +1598,18 @@ impl Msg {
         }
     }
 
-    pub fn clone(&self) -> Result<Msg, AllocError> {
+    pub fn clone(&self) -> Msg {
         let mut notes = Vec::with_capacity(self.notes.len());
         for n in self.notes.iter() {
-            notes.push(n.clone()?);
+            notes.push(n.clone());
         }
-        Ok(Msg {
+        Msg {
             kind: self.kind,
-            data: self.data.clone()?,
+            data: self.data.clone(),
             metadata: self.metadata,
             notes: notes.into_boxed_slice(),
             redact_sensitive_information: self.redact_sensitive_information,
-        })
+        }
     }
 
     pub fn clone_with_builder(&self, notes: &mut [Data], builder: &mut StringBuilder) -> Msg {
@@ -1636,12 +1633,12 @@ impl Msg {
         }
     }
 
-    pub fn to_api(&self) -> Result<api::Message, AllocError> {
+    pub fn to_api(&self) -> api::Message {
         let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
         for (i, note) in self.notes.iter().enumerate() {
             notes[i] = note.to_api();
         }
-        Ok(api::Message {
+        api::Message {
             level: self.kind.to_api(),
             data: self.data.to_api(),
             notes,
@@ -1657,17 +1654,17 @@ impl Msg {
                 },
                 build: Some(matches!(self.metadata, Metadata::Build)),
             },
-        })
+        }
     }
 
-    pub fn to_api_from_list(list: &[Msg]) -> Result<Box<[api::Message]>, AllocError> {
+    pub fn to_api_from_list(list: &[Msg]) -> Box<[api::Message]> {
         // PORT NOTE: Zig took `comptime ListType: type, list: ListType` and read
         // `list.items`; collapsed to `&[Msg]`.
         let mut out_list = Vec::with_capacity(list.len());
         for item in list {
-            out_list.push(item.to_api()?);
+            out_list.push(item.to_api());
         }
-        Ok(out_list.into_boxed_slice())
+        out_list.into_boxed_slice()
     }
 
     // Zig `deinit` frees `data`, each `note`, and `notes` slice — all handled by Drop
@@ -1970,7 +1967,7 @@ impl Log {
         (self.warnings + self.errors) > 0
     }
 
-    pub fn to_api(&self) -> Result<api::Log, AllocError> {
+    pub fn to_api(&self) -> api::Log {
         let mut warnings: u32 = 0;
         let mut errors: u32 = 0;
         for msg in &self.msgs {
@@ -1978,11 +1975,11 @@ impl Log {
             warnings += (msg.kind == Kind::Warn) as u32;
         }
 
-        Ok(api::Log {
+        api::Log {
             warnings,
             errors,
-            msgs: Msg::to_api_from_list(&self.msgs)?,
-        })
+            msgs: Msg::to_api_from_list(&self.msgs),
+        }
     }
 
     pub fn init() -> Log {
@@ -2015,11 +2012,11 @@ impl Log {
         source: Option<&Source>,
         l: Loc,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Debug.should_print(self.level) {
-            return Ok(());
+            return;
         }
-        let text = alloc_print(args)?;
+        let text = alloc_print(args);
         self.add_formatted_msg(
             Kind::Debug,
             source,
@@ -2037,21 +2034,20 @@ impl Log {
         source: Option<&Source>,
         loc: Loc,
         text: Str,
-    ) -> Result<(), AllocError> {
+    ) {
         if Kind::Verbose.should_print(self.level) {
             self.add_msg(Msg {
                 kind: Kind::Verbose,
                 data: range_data(source, Range { loc, ..Default::default() }, text),
                 ..Default::default()
-            })?;
+            });
         }
-        Ok(())
     }
 
     // Zig: `pub const toJS/toJSAggregateError/toJSArray = @import("../logger_jsc/...")`
     // → deleted; live in `bun_logger_jsc`.
 
-    pub fn clone_to(&mut self, other: &mut Log) -> Result<(), AllocError> {
+    pub fn clone_to(&mut self, other: &mut Log) {
         let mut notes_count: usize = 0;
 
         for msg in &self.msgs {
@@ -2069,32 +2065,30 @@ impl Log {
             }
         }
 
-        other.msgs.extend(self.msgs.iter().map(Msg::clone).collect::<Result<Vec<_>, _>>()?);
+        other.msgs.extend(self.msgs.iter().map(Msg::clone));
         // PORT NOTE: reshaped for borrowck — Zig appendSlice moves the (now
         // re-sliced) Msgs; here we clone since `self` retains them.
         other.warnings += self.warnings;
         other.errors += self.errors;
-        Ok(())
     }
 
-    pub fn append_to(&mut self, other: &mut Log) -> Result<(), AllocError> {
-        self.clone_to(other)?;
+    pub fn append_to(&mut self, other: &mut Log) {
+        self.clone_to(other);
         self.msgs.clear();
         self.msgs.shrink_to_fit();
         // Transferred messages may reference `Location.{file,line_text}` slices
         // backed by `self.owned_strings` (see `Log::dupe`); move the backing
         // boxes so they outlive the messages now in `other`.
         other.owned_strings.append(&mut self.owned_strings);
-        Ok(())
     }
 
     pub fn clone_to_with_recycled(
         &mut self,
         other: &mut Log,
         recycled: bool,
-    ) -> Result<(), AllocError> {
+    ) {
         let dest_start = other.msgs.len();
-        other.msgs.extend(self.msgs.iter().map(Msg::clone).collect::<Result<Vec<_>, _>>()?);
+        other.msgs.extend(self.msgs.iter().map(Msg::clone));
         other.warnings += self.warnings;
         other.errors += self.errors;
 
@@ -2106,7 +2100,7 @@ impl Log {
                 notes_count += msg.notes.len();
             }
 
-            string_builder.allocate()?;
+            string_builder.allocate();
             let mut notes_buf = vec![Data::default(); notes_count];
             let mut note_i: usize = 0;
 
@@ -2119,27 +2113,25 @@ impl Log {
                 note_i += msg.notes.len();
             }
         }
-        Ok(())
     }
 
     pub fn append_to_with_recycled(
         &mut self,
         other: &mut Log,
         recycled: bool,
-    ) -> Result<(), AllocError> {
-        self.clone_to_with_recycled(other, recycled)?;
+    ) {
+        self.clone_to_with_recycled(other, recycled);
         self.msgs.clear();
         self.msgs.shrink_to_fit();
         // See `append_to` — keep `owned_strings` backing alive for the moved msgs.
         other.owned_strings.append(&mut self.owned_strings);
-        Ok(())
     }
 
     pub fn append_to_maybe_recycled(
         &mut self,
         other: &mut Log,
         source: &Source,
-    ) -> Result<(), AllocError> {
+    ) {
         self.append_to_with_recycled(other, source.contents_is_recycled)
     }
 
@@ -2164,9 +2156,9 @@ impl Log {
         loc: Loc,
         text: Str,
         notes: Box<[Data]>,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Verbose.should_print(self.level) {
-            return Ok(());
+            return;
         }
 
         self.add_msg(Msg {
@@ -2193,7 +2185,7 @@ impl Log {
         notes: Box<[Data]>,
         clone: bool,
         redact: bool,
-    ) -> Result<(), AllocError> {
+    ) {
         match kind {
             Kind::Err => self.errors += 1,
             Kind::Warn => self.warnings += 1,
@@ -2201,7 +2193,7 @@ impl Log {
         }
         let mut data = range_data(source, r, text);
         if clone {
-            data = data.clone_line_text(self.clone_line_text)?;
+            data = data.clone_line_text(self.clone_line_text);
         }
         self.add_msg(Msg {
             kind,
@@ -2221,8 +2213,8 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
         err: bun_core::Error,
-    ) -> Result<(), AllocError> {
-        let text = alloc_print(args)?;
+    ) {
+        let text = alloc_print(args);
         // TODO: fix this. this is stupid, it should be returned in allocPrint.
         // PORT NOTE: Zig reads `args.@"0"` (first tuple element) for the
         // specifier; with `fmt::Arguments` that's opaque, so callers must pass
@@ -2273,7 +2265,7 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
         err: bun_core::Error,
-    ) -> Result<(), AllocError> {
+    ) {
         // Always dupe the line_text from the source to ensure the Location data
         // outlives the source's backing memory (which may be arena-allocated).
         self.add_resolve_error_with_level::<true, true>(
@@ -2289,7 +2281,7 @@ impl Log {
         args: fmt::Arguments<'_>,
         specifier_arg: &[u8],
         import_kind: ImportKind,
-    ) -> Result<(), AllocError> {
+    ) {
         self.add_resolve_error_with_level::<true, true>(
             source,
             r,
@@ -2306,7 +2298,7 @@ impl Log {
         source: Option<&Source>,
         r: Range,
         text: Str,
-    ) -> Result<(), AllocError> {
+    ) {
         self.errors += 1;
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -2321,8 +2313,8 @@ impl Log {
         source: Option<&Source>,
         r: Range,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
-        let text = alloc_print(args)?;
+    ) {
+        let text = alloc_print(args);
         self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), true, false)
     }
 
@@ -2333,8 +2325,8 @@ impl Log {
         r: Range,
         notes: Box<[Data]>,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
-        let text = alloc_print(args)?;
+    ) {
+        let text = alloc_print(args);
         self.add_formatted_msg(Kind::Err, source, r, text, notes, true, false)
     }
 
@@ -2344,8 +2336,8 @@ impl Log {
         source: impl Into<Option<&'a Source>>,
         l: Loc,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
-        let text = alloc_print(args)?;
+    ) {
+        let text = alloc_print(args);
         self.add_formatted_msg(
             Kind::Err,
             source.into(),
@@ -2363,8 +2355,8 @@ impl Log {
         &mut self,
         args: fmt::Arguments<'_>,
         opts: AddErrorOptions<'_>,
-    ) -> Result<(), AllocError> {
-        let text = alloc_print(args)?;
+    ) {
+        let text = alloc_print(args);
         self.add_formatted_msg(
             Kind::Err,
             opts.source,
@@ -2381,7 +2373,7 @@ impl Log {
         &mut self,
         e: &bun_sys::Error,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
+    ) {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
             return self.add_error_fmt(None, Loc::EMPTY, args);
         };
@@ -2405,11 +2397,11 @@ impl Log {
         &mut self,
         err: bun_core::Error,
         note_args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
+    ) {
         self.errors += 1;
 
         let notes: Box<[Data]> =
-            Box::new([range_data(None, Range::NONE, alloc_print(note_args)?)]);
+            Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -2425,14 +2417,14 @@ impl Log {
         source: Option<&Source>,
         r: Range,
         text: Str,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Warn.should_print(self.level) {
-            return Ok(());
+            return;
         }
         self.warnings += 1;
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(source, r, text).clone_line_text(self.clone_line_text)?,
+            data: range_data(source, r, text).clone_line_text(self.clone_line_text),
             ..Default::default()
         })
     }
@@ -2443,11 +2435,11 @@ impl Log {
         source: Option<&Source>,
         l: Loc,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Warn.should_print(self.level) {
-            return Ok(());
+            return;
         }
-        let text = alloc_print(args)?;
+        let text = alloc_print(args);
         self.add_formatted_msg(
             Kind::Warn,
             source,
@@ -2466,7 +2458,7 @@ impl Log {
         line: u32,
         col: u32,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
+    ) {
         self.add_warning_fmt_line_col_with_notes(filepath, line, col, args, Box::default())
     }
 
@@ -2478,16 +2470,16 @@ impl Log {
         col: u32,
         args: fmt::Arguments<'_>,
         notes: Box<[Data]>,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Warn.should_print(self.level) {
-            return Ok(());
+            return;
         }
         self.warnings += 1;
 
         // TODO: do this properly
 
         let data = Data {
-            text: alloc_print(args)?,
+            text: alloc_print(args),
             location: Some(Location {
                 // TODO(port): lifetime — Phase A keeps `Location.file` borrowing
                 // `Str`; Phase B threads real ownership (see module doc).
@@ -2497,7 +2489,7 @@ impl Log {
                 ..Default::default()
             }),
         }
-        .clone_line_text(self.clone_line_text)?;
+        .clone_line_text(self.clone_line_text);
 
         self.add_msg(Msg {
             kind: Kind::Warn,
@@ -2515,11 +2507,11 @@ impl Log {
         source: Option<&Source>,
         r: Range,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Warn.should_print(self.level) {
-            return Ok(());
+            return;
         }
-        let text = alloc_print(args)?;
+        let text = alloc_print(args);
         self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), true, false)
     }
 
@@ -2531,18 +2523,18 @@ impl Log {
         args: fmt::Arguments<'_>,
         note_args: fmt::Arguments<'_>,
         note_range: Range,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Warn.should_print(self.level) {
-            return Ok(());
+            return;
         }
         self.warnings += 1;
 
         let notes: Box<[Data]> =
-            Box::new([range_data(source, note_range, alloc_print(note_args)?)]);
+            Box::new([range_data(source, note_range, alloc_print(note_args))]);
 
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(source, r, alloc_print(args)?),
+            data: range_data(source, r, alloc_print(args)),
             notes,
             ..Default::default()
         })
@@ -2555,8 +2547,8 @@ impl Log {
         r: Range,
         notes: Box<[Data]>,
         args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
-        let text = alloc_print(args)?;
+    ) {
+        let text = alloc_print(args);
         self.add_formatted_msg(Kind::Warn, source, r, text, notes, true, false)
     }
 
@@ -2568,18 +2560,18 @@ impl Log {
         args: fmt::Arguments<'_>,
         note_args: fmt::Arguments<'_>,
         note_range: Range,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Err.should_print(self.level) {
-            return Ok(());
+            return;
         }
         self.errors += 1;
 
         let notes: Box<[Data]> =
-            Box::new([range_data(source, note_range, alloc_print(note_args)?)]);
+            Box::new([range_data(source, note_range, alloc_print(note_args))]);
 
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(source, r, alloc_print(args)?),
+            data: range_data(source, r, alloc_print(args)),
             notes,
             ..Default::default()
         })
@@ -2591,9 +2583,9 @@ impl Log {
         source: Option<&Source>,
         l: Loc,
         text: Str,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Warn.should_print(self.level) {
-            return Ok(());
+            return;
         }
         self.warnings += 1;
         self.add_msg(Msg {
@@ -2610,16 +2602,16 @@ impl Log {
         l: Loc,
         warn: Str,
         note_args: fmt::Arguments<'_>,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Warn.should_print(self.level) {
-            return Ok(());
+            return;
         }
         self.warnings += 1;
 
         let notes: Box<[Data]> = Box::new([range_data(
             source,
             Range { loc: l, ..Default::default() },
-            alloc_print(note_args)?,
+            alloc_print(note_args),
         )]);
 
         self.add_msg(Msg {
@@ -2636,9 +2628,9 @@ impl Log {
         source: Option<&Source>,
         r: Range,
         text: Str,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Debug.should_print(self.level) {
-            return Ok(());
+            return;
         }
         self.add_msg(Msg {
             kind: Kind::Debug,
@@ -2654,9 +2646,9 @@ impl Log {
         r: Range,
         text: Str,
         notes: Box<[Data]>,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Debug.should_print(self.level) {
-            return Ok(());
+            return;
         }
         // log.de += 1;
         self.add_msg(Msg {
@@ -2674,7 +2666,7 @@ impl Log {
         r: Range,
         text: impl IntoText,
         notes: Box<[Data]>,
-    ) -> Result<(), AllocError> {
+    ) {
         self.errors += 1;
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -2691,9 +2683,9 @@ impl Log {
         r: Range,
         text: Str,
         notes: Box<[Data]>,
-    ) -> Result<(), AllocError> {
+    ) {
         if !Kind::Warn.should_print(self.level) {
-            return Ok(());
+            return;
         }
         self.warnings += 1;
         self.add_msg(Msg {
@@ -2706,10 +2698,8 @@ impl Log {
         })
     }
 
-    pub fn add_msg(&mut self, msg: Msg) -> Result<(), AllocError> {
+    pub fn add_msg(&mut self, msg: Msg) {
         self.msgs.push(msg);
-        // PERF(port): Vec::push aborts on OOM in Rust; Result kept for API compat.
-        Ok(())
     }
 
     #[cold]
@@ -2718,7 +2708,7 @@ impl Log {
         _source: Option<&Source>,
         loc: Loc,
         text: impl IntoText,
-    ) -> Result<(), AllocError> {
+    ) {
         self.errors += 1;
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -2733,7 +2723,7 @@ impl Log {
         &mut self,
         text: Str,
         opts: AddErrorOptions<'_>,
-    ) -> Result<(), AllocError> {
+    ) {
         self.errors += 1;
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -2749,11 +2739,11 @@ impl Log {
         name: &[u8],
         new_loc: Loc,
         old_loc: Loc,
-    ) -> Result<(), AllocError> {
+    ) {
         let note_text = alloc_print(format_args!(
             "\"{}\" was originally declared here",
             bstr::BStr::new(name)
-        ))?;
+        ));
         let notes: Box<[Data]> = Box::new([range_data(
             Some(source),
             source.range_of_identifier(old_loc),
@@ -2924,7 +2914,7 @@ macro_rules! add_warning_pretty {
 }
 
 #[inline]
-pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Cow<'static, [u8]>, AllocError> {
+pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     // Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)` at
     // comptime over the *format-string literal only*, then interpolates args
     // afterward — interpolated values are never inspected for `<..>` markup.
@@ -2940,7 +2930,7 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Cow<'static, [u8]>, Alloc
     // Zig returns an allocator-owned slice that the Log takes ownership of via
     // `Data.text` and frees in `Data.deinit`. `Cow::Owned` gives the same
     // ownership: `Data` (via `Drop`) frees it.
-    Ok(Cow::Owned(v))
+    Cow::Owned(v)
 }
 
 #[inline]

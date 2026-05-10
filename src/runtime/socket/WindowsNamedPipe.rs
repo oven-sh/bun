@@ -218,7 +218,7 @@ impl WindowsNamedPipe {
     fn on_read_alloc(&mut self, suggested_size: usize) -> &mut [u8] {
         // PORT NOTE: reshaped for borrowck — check len, grow, then take the final borrow once.
         if self.incoming.unused_capacity_slice().len() < suggested_size {
-            bun_core::handle_oom(self.incoming.ensure_unused_capacity(suggested_size));
+            self.incoming.ensure_unused_capacity(suggested_size);
         }
         let available = self.incoming.unused_capacity_slice();
         // SAFETY: `available` is the unused-capacity tail of `incoming`; slicing to

@@ -905,7 +905,7 @@ impl PmPkgCommand {
         // load_package_json).
         let old = bun_alloc::AstAlloc::take(&mut e_obj.properties);
         let mut new_props: G::PropertyList =
-            G::PropertyList::init_capacity(old_len - 1)?;
+            G::PropertyList::init_capacity(old_len - 1);
         for prop in old.slice() {
             if let Some(k) = &prop.key {
                 if let ExprData::EString(s) = &k.data {

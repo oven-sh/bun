@@ -861,8 +861,7 @@ impl PackageJSON {
                         "\"{}\" is not a package path. \"macros\" remaps package paths to macros. Skipping.",
                         bstr::BStr::new(key)
                     ),
-                )
-                .expect("unreachable");
+                );
                 continue;
             }
 
@@ -875,8 +874,7 @@ impl PackageJSON {
                         "Invalid macro remapping in \"{}\": expected object where the keys are import names and the value is a string path to replace",
                         bstr::BStr::new(key)
                     ),
-                )
-                .expect("unreachable");
+                );
                 continue;
             };
 
@@ -900,8 +898,7 @@ impl PackageJSON {
                             "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
                             bstr::BStr::new(import_name)
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     continue;
                 }
 
@@ -970,8 +967,7 @@ impl PackageJSON {
                                 bstr::BStr::new(input_path),
                                 bstr::BStr::new(err.name())
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                 }
 
                 return None;
@@ -1103,14 +1099,12 @@ impl PackageJSON {
                                     "\"{}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
                                     bstr::BStr::new(type_str)
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                     }
                 }
             } else {
                 r_log
-                    .add_warning(Some(json_source), type_json.loc, b"The value for \"type\" must be a string")
-                    .expect("unreachable");
+                    .add_warning(Some(json_source), type_json.loc, b"The value for \"type\" must be a string");
             }
         }
 
@@ -1191,8 +1185,7 @@ impl PackageJSON {
                                                 Some(json_source),
                                                 value.loc,
                                                 b"Each \"browser\" mapping must be a string or boolean",
-                                            )
-                                            .expect("unreachable");
+                                            );
                                     }
                                 }
                             }
@@ -1681,8 +1674,7 @@ impl<'a> Visitor<'a> {
                                     bstr::BStr::new(&key)
                                 ),
                                 prev.key_range,
-                            )
-                            .expect("unreachable");
+                            );
                         // map_data.deinit / allocator.free(expansion_keys) — drop handles cleanup
                         return Entry {
                             data: EntryData::Invalid,
@@ -1737,8 +1729,7 @@ impl<'a> Visitor<'a> {
                 Some(self.source),
                 first_token,
                 b"This value must be a string, an object, an array, or null",
-            )
-            .expect("unreachable");
+            );
         Entry {
             data: EntryData::Invalid,
             first_token,

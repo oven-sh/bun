@@ -689,8 +689,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                                     "Private name \"{}\" must be declared in an enclosing class",
                                     bstr::BStr::new(name)
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                     }
 
                     p.visit_expr(&mut e_.right);

@@ -4298,7 +4298,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     }
 
     pub fn promote(&mut self, n: usize, new: T) -> Vec<T> {
-        let mut list = bun_core::handle_oom(Vec::<T>::init_capacity(n));
+        let mut list = Vec::<T>::init_capacity(n);
         // SAFETY: moving INLINED_MAX initialized elements out
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
@@ -4411,7 +4411,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
             }
             return this;
         }
-        let mut heap = bun_core::handle_oom(Vec::<T>::init_capacity(vals.len()));
+        let mut heap = Vec::<T>::init_capacity(vals.len());
         for v in vals {
             heap.append_assume_capacity(v.clone());
         }

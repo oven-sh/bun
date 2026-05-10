@@ -1726,7 +1726,7 @@ impl Package<u64> {
                                 bstr::BStr::new(external_alias.slice(buf)),
                                 bstr::BStr::new(dependency_version.literal.slice(buf)),
                             ),
-                        )?;
+                        );
                         return Err(bun_core::err!("InstallFailed"));
                     }
 
@@ -1902,7 +1902,7 @@ impl Package<u64> {
                             "Duplicate dependency: \"{}\" specified in package.json",
                             bstr::BStr::new(external_alias.slice(buf))
                         ),
-                    )?;
+                    );
                 }
             }
 

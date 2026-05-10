@@ -204,8 +204,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(self.source),
                     self.source.range_of_string(strict_loc.unwrap()),
                     b"Cannot use a \"use strict\" directive in a function with a non-simple parameter list".as_slice().into(),
-                )
-                .expect("unreachable");
+                );
         }
 
         // Section 15.1.1 Static Semantics: Early Errors: "Multiple occurrences of
@@ -635,8 +634,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     "\"{}\" cannot be bound multiple times in the same parameter list",
                                     bstr::BStr::new(name)
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                     }
                 }
             }

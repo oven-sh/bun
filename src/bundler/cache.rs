@@ -570,8 +570,7 @@ impl JavaScript {
                 // TODO(port): thread the failing token range through the
                 // `Err` payload once `_parse` returns a `(Error, Range)` pair.
                 if temp_log.errors == 0 {
-                    log.add_range_error(Some(source), logger::Range::None, err.name().as_bytes())
-                        .expect("unreachable");
+                    log.add_range_error(Some(source), logger::Range::None, err.name().as_bytes());
                 }
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Ok(None);

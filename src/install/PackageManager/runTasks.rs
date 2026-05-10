@@ -404,8 +404,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bstr::BStr::new(name),
                                 task.retried,
                                 manager.options.max_retry_count,
-                            )
-                            .expect("unreachable");
+                            );
                         }
 
                         continue;
@@ -433,8 +432,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 "{} downloading package manifest <b>{}<r>",
                                 fmt_args.0,
                                 bstr::BStr::new(fmt_args.1),
-                            )
-                            .expect("unreachable");
+                            );
                         } else {
                             logger::add_warning_pretty!(
                                 manager.log_mut(),
@@ -443,8 +441,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 "{} downloading package manifest <b>{}<r>",
                                 fmt_args.0,
                                 bstr::BStr::new(fmt_args.1),
-                            )
-                            .expect("unreachable");
+                            );
                         }
 
                         if manager.subcommand != Subcommand::Remove {
@@ -493,8 +490,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
-                        )
-                        .expect("unreachable");
+                        );
                     } else {
                         logger::add_warning_pretty!(
                             manager.log_mut(),
@@ -503,8 +499,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
-                        )
-                        .expect("unreachable");
+                        );
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
@@ -681,8 +676,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 ),
                                 task.retried,
                                 manager.options.max_retry_count,
-                            )
-                            .expect("unreachable");
+                            );
                         }
 
                         continue;
@@ -755,8 +749,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 &manager.lockfile.buffers.string_bytes,
                                 PathSep::Auto,
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                     } else {
                         logger::add_warning_pretty!(
                             manager.log_mut(),
@@ -769,8 +762,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 &manager.lockfile.buffers.string_bytes,
                                 PathSep::Auto,
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
@@ -847,8 +839,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
-                        )
-                        .expect("unreachable");
+                        );
                     } else {
                         logger::add_warning_pretty!(
                             manager.log_mut(),
@@ -857,8 +848,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
-                        )
-                        .expect("unreachable");
+                        );
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
@@ -994,8 +984,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "{} parsing package manifest for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(name),
-                        )
-                        .expect("unreachable");
+                        );
                     }
 
                     continue;
@@ -1115,8 +1104,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         "{} extracting tarball from <b>{}<r>",
                         err.name(),
                         bstr::BStr::new(alias),
-                    )
-                    .expect("unreachable");
+                    );
 
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
@@ -1340,8 +1328,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(name),
-                        )
-                        .expect("unreachable");
+                        );
                     }
                     continue;
                 }
@@ -1460,8 +1447,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             "{} checking out repository for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(alias.slice()),
-                        )
-                        .expect("unreachable");
+                        );
                     }
 
                     continue;

@@ -909,7 +909,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             bstr::BStr::new(display)
                         ),
                         r,
-                    )?;
+                    );
                 } else {
                     self.log().add_range_error_fmt_with_note(
                         Some(self.source),
@@ -922,7 +922,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             "To allow opaque dynamic specifiers, use Bun.build({{ allowUnresolved: [\"\"] }}) or pass --allow-unresolved with an empty-string pattern"
                         ),
                         r,
-                    )?;
+                    );
                 }
         }
         Ok(())
@@ -1047,8 +1047,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     Some(self.source),
                     r,
                     b"This \"import\" expression cannot be bundled because the argument is not a string literal",
-                )
-                .expect("unreachable");
+                );
         }
 
         let _ = self.check_dynamic_specifier(arg, state.loc, "import()");
@@ -1077,8 +1076,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     Some(self.source),
                     r,
                     b"This \"require.resolve\" expression cannot be bundled because the argument is not a string literal",
-                )
-                .expect("unreachable");
+                );
         }
 
         let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
@@ -1089,7 +1087,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.new_expr(
             E::Call {
                 target: require_resolve_ref,
-                args: ExprNodeList::init_one(arg).expect("oom"),
+                args: ExprNodeList::init_one(arg),
                 ..Default::default()
             },
             arg.loc,
@@ -1132,7 +1130,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             return self.new_expr(
                 E::Call {
                     target: self.value_for_require(arg.loc),
-                    args: ExprNodeList::init_one(arg).expect("oom"),
+                    args: ExprNodeList::init_one(arg),
                     ..Default::default()
                 },
                 arg.loc,
@@ -1228,7 +1226,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 self.new_expr(
                     E::Call {
                         target: self.value_for_require(arg.loc),
-                        args: ExprNodeList::init_one(arg).expect("oom"),
+                        args: ExprNodeList::init_one(arg),
                         ..Default::default()
                     },
                     arg.loc,
@@ -1588,7 +1586,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     "Multiple exports with the same name \"{}\"",
                     bstr::BStr::new(bun_string::strings::trim(alias, b"\"'"))
                 ),
-            )?;
+            );
         } else if !self.is_deoptimized_common_js() {
             self.named_exports
                 .put(alias, js_ast::NamedExport { alias_loc: loc, ref_: r#ref })?;
@@ -1632,15 +1630,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
             self.log()
-                .add_range_error(Some(self.source), r, b"Cannot use an \"await\" expression here")
-                .expect("unreachable");
+                .add_range_error(Some(self.source), r, b"Cannot use an \"await\" expression here");
         }
 
         if errors.invalid_expr_yield.len > 0 {
             let r = errors.invalid_expr_yield;
             self.log()
-                .add_range_error(Some(self.source), r, b"Cannot use a \"yield\" expression here")
-                .expect("unreachable");
+                .add_range_error(Some(self.source), r, b"Cannot use a \"yield\" expression here");
         }
     }
 
@@ -1682,8 +1678,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     Some(self.source),
                     r,
                     format_args!("Cannot assign to import \"{}\"", bstr::BStr::new(original)),
-                )
-                .expect("unreachable");
+                );
         }
 
         // Substitute an EImportIdentifier now if this has a namespace alias
@@ -1833,7 +1828,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: self.bun_app_namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let bun_app_ns_ref = self.bun_app_namespace_ref;
-        VecExt::append(&mut self.module_scope_mut().generated, bun_app_ns_ref)?;
+        VecExt::append(&mut self.module_scope_mut().generated, bun_app_ns_ref);
 
         let response_ref = self.response_ref;
         let clause_items = arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
@@ -1952,7 +1947,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier)?;
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref)?;
+        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
         for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
             let ref_ = symbols.get(alias).expect("unreachable");
             let alias_name: &'static [u8] = symbols.alias_name(alias);
@@ -2071,7 +2066,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime")?;
         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref)?;
+        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
 
         for entry in clauses {
             if entry.enabled {
@@ -2096,7 +2091,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
                 declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: entry.r#ref, is_top_level: true });
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                VecExt::append(&mut self.module_scope_mut().generated, entry.r#ref)?;
+                VecExt::append(&mut self.module_scope_mut().generated, entry.r#ref);
                 self.is_import_item.insert(entry.r#ref, ());
                 self.named_imports.put(
                     entry.r#ref,
@@ -2125,7 +2120,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.s(
                 S::Local {
                     kind: js_ast::s::Kind::KConst,
-                    decls: G::DeclList::from_slice(&[Decl { binding, value: Some(value) }])?,
+                    decls: G::DeclList::from_slice(&[Decl { binding, value: Some(value) }]),
                     ..Default::default()
                 },
                 logger::Loc::EMPTY,
@@ -2739,7 +2734,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     Some(self.source),
                     runtime.range,
                     format_args!("Unsupported JSX runtime: \"{}\"", bstr::BStr::new(text)),
-                )?;
+                );
             }
         }
 
@@ -2769,7 +2764,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         let module_scope = self.module_scope_mut();
-        module_scope.generated.ensure_unused_capacity(generated_symbols_count as usize * 3)?;
+        module_scope.generated.ensure_unused_capacity(generated_symbols_count as usize * 3);
         module_scope.members.ensure_unused_capacity(
             generated_symbols_count as usize * 3 + module_scope.members.count(),
         )?;
@@ -2940,8 +2935,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     name,
                                     value.loc,
                                     existing_member.loc,
-                                )
-                                .expect("unreachable");
+                                );
                             continue;
                         }
                     }
@@ -2985,7 +2979,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         let hoisted_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, original_name).expect("unreachable");
                         // SAFETY: see top of fn — `scope` is arena-owned; no live & borrow of
                         // `scope.generated` exists here (the members snapshot was taken by value).
-                        VecExt::append(&mut unsafe { &mut *scope }.generated, hoisted_ref).expect("oom");
+                        VecExt::append(&mut unsafe { &mut *scope }.generated, hoisted_ref);
                         self.hoisted_ref_for_sloppy_mode_block_fn.insert(value.ref_, hoisted_ref);
                         value.ref_ = hoisted_ref;
                         symbol_idx = hoisted_ref.inner_index() as usize;
@@ -3063,8 +3057,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                                 js_lexer::range_of_identifier(self.source, member_in_scope.loc),
                                                 notes,
                                                 format_args!("{} has already been declared", bstr::BStr::new(name)),
-                                            )
-                                            .expect("unreachable");
+                                            );
                                     } else if _scope_ptr == scope_parent {
                                         // Never mind about this, turns out it's not needed after all
                                         let _ = self.hoisted_ref_for_sloppy_mode_block_fn.remove(&original_member_ref);
@@ -3177,7 +3170,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: arena-owned Scope; `parent != scope` (fresh alloc) so the two
         // `&mut` do not alias.
         let parent_mut = unsafe { &mut *parent };
-        VecExt::append(&mut parent_mut.children, scope_nn)?;
+        VecExt::append(&mut parent_mut.children, scope_nn);
         scope.strict_mode = parent_mut.strict_mode;
 
         self.current_scope = scope_ptr;
@@ -3375,8 +3368,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
             if is_spread {
                 self.log()
-                    .add_range_error(Some(self.source), equals_range, b"A rest argument cannot have a default initializer")
-                    .expect("unreachable");
+                    .add_range_error(Some(self.source), equals_range, b"A rest argument cannot have a default initializer");
             } else {
                 // p.markSyntaxFeature();
             }
@@ -3385,7 +3377,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     pub fn forbid_lexical_decl(&mut self, loc: logger::Loc) -> Result<(), bun_core::Error> {
-        Ok(self.log().add_error(Some(self.source), loc, b"Cannot use a declaration in a single-statement context")?)
+        Ok(self.log().add_error(Some(self.source), loc, b"Cannot use a declaration in a single-statement context"))
     }
 
     /// If we attempt to parse TypeScript syntax outside of a TypeScript file
@@ -3401,7 +3393,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
         if let Some(r) = errors.invalid_expr_default_value {
-            self.log().add_range_error(Some(self.source), r, b"Unexpected \"=\"").expect("unreachable");
+            self.log().add_range_error(Some(self.source), r, b"Unexpected \"=\"");
         }
 
         if let Some(r) = errors.invalid_expr_after_question {
@@ -3410,8 +3402,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     Some(self.source),
                     r,
                     format_args!("Unexpected {}", bstr::BStr::new(&self.source.contents[r.loc.i()..r.end_i()])),
-                )
-                .expect("unreachable");
+                );
         }
 
         // if (errors.array_spread_feature) |err| {
@@ -3507,7 +3498,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if alias == b"feature" {
                     // Check for duplicate imports of feature
                     if self.bundler_feature_flag_ref.is_valid() {
-                        self.log().add_error(Some(self.source), item.alias_loc, b"`feature` from \"bun:bundle\" may only be imported once")?;
+                        self.log().add_error(Some(self.source), item.alias_loc, b"`feature` from \"bun:bundle\" may only be imported once");
                         continue;
                     }
                     // Declare the symbol and store the ref
@@ -3519,7 +3510,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         self.source,
                         item.alias_loc,
                         format_args!("\"bun:bundle\" has no export named \"{}\"", bstr::BStr::new(alias)),
-                    )?;
+                    );
                 }
             }
             // Return empty statement - the import is completely removed
@@ -3563,7 +3554,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             .into_bump_str()
             .as_bytes();
             stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
-            VecExt::append(&mut self.current_scope_mut().generated, stmt.namespace_ref)?;
+            VecExt::append(&mut self.current_scope_mut().generated, stmt.namespace_ref);
         }
 
         let mut item_refs = ImportItemForNamespaceMap::new();
@@ -3743,7 +3734,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             Some(self.source),
                             item.name.loc,
                             b"sqlite imports only support the \"default\" or \"db\" imports",
-                        )?;
+                        );
                         break;
                     }
                 }
@@ -3756,7 +3747,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             Some(self.source),
                             item.name.loc,
                             b"This loader type only supports the \"default\" import",
-                        )?;
+                        );
                         break;
                     }
                 }
@@ -3779,7 +3770,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let name = js_ast::LocRef { loc, ref_: Some(self.new_symbol(js_ast::symbol::Kind::Other, identifier)?) };
 
-        VecExt::append(&mut self.current_scope_mut().generated, name.ref_.expect("infallible: ref bound"))?;
+        VecExt::append(&mut self.current_scope_mut().generated, name.ref_.expect("infallible: ref bound"));
 
         Ok(name)
     }
@@ -3915,7 +3906,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         Some(self.source),
                         value.loc,
                         format_args!("for-{} loop variables cannot have an initializer", loop_type),
-                    )?;
+                    );
                 }
             }
             _ => {
@@ -3923,7 +3914,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     Some(self.source),
                     decls[0].binding.loc,
                     format_args!("for-{} loops must have a single declaration", loop_type),
-                )?;
+                );
             }
         }
         Ok(())
@@ -3957,7 +3948,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 what,
                                 bstr::BStr::new(name)
                             ),
-                        )?;
+                        );
                         // return;/
                     }
                     _ => {
@@ -3965,7 +3956,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             Some(self.source),
                             decl.binding.loc,
                             format_args!("This {} must be initialized", what),
-                        )?;
+                        );
                     }
                 }
             }
@@ -4103,7 +4094,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 r,
                 notes,
                 format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
-            )?;
+            );
         } else if !can_be_transformed && self.is_strict_mode_output_format() {
             self.log().add_range_error_fmt(
                 Some(self.source),
@@ -4112,7 +4103,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     "{} cannot be used with the ESM output format due to strict mode",
                     bstr::BStr::new(text)
                 ),
-            )?;
+            );
         }
         Ok(())
     }
@@ -4179,7 +4170,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // this module will be unable to reference this symbol. However, we must
         // still add the symbol to the scope so it gets minified (automatically-
         // generated code may still reference the symbol).
-        VecExt::append(&mut self.module_scope_mut().generated, ref_)?;
+        VecExt::append(&mut self.module_scope_mut().generated, ref_);
         Ok(ref_)
     }
 
@@ -4264,7 +4255,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             orig,
                             loc,
                             existing.loc,
-                        )?;
+                        );
                         return Ok(existing.ref_);
                     }
                     MR::KeepExisting => {
@@ -4298,7 +4289,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             .members
             .put(name, js_ast::scope::Member { ref_, loc })?;
         if IS_GENERATED {
-            VecExt::append(&mut self.module_scope_mut().generated, ref_)?;
+            VecExt::append(&mut self.module_scope_mut().generated, ref_);
         }
         Ok(ref_)
     }
@@ -4315,8 +4306,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         Some(self.source),
                         js_lexer::range_of_identifier(self.source, name.loc),
                         b"An async function cannot be named \"await\"",
-                    )
-                    .expect("unreachable");
+                    );
             } else if kind == FunctionKind::Expr
                 && func.flags.contains(Flags::Function::IsGenerator)
                 && original_name == b"yield"
@@ -4326,8 +4316,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         Some(self.source),
                         js_lexer::range_of_identifier(self.source, name.loc),
                         b"An generator function expression cannot be named \"yield\"",
-                    )
-                    .expect("unreachable");
+                    );
             }
         }
     }
@@ -4639,8 +4628,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     VecExt::append(&mut decls, Decl {
                             binding: self.b(js_ast::b::Identifier { r#ref: ref_ }, local.loc),
                             value: None,
-                        })
-                        .expect("oom");
+                        });
                     part_stmts.push(self.s(S::Local { decls, ..Default::default() }, local.loc));
                     self.declared_symbols
                         .append(DeclaredSymbol { ref_, is_top_level: true })?;
@@ -5370,8 +5358,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     .declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
                     .expect("unreachable");
                 let loc_ref = LocRef { loc, ref_: Some(new_ref) };
-                VecExt::append(&mut self.module_scope_mut().generated, new_ref)
-                    .expect("oom");
+                VecExt::append(&mut self.module_scope_mut().generated, new_ref);
                 self.is_import_item.insert(new_ref, ());
                 self.jsx_imports.set(kind, loc_ref);
                 new_ref
@@ -5471,8 +5458,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                     binding: self.b(B::Identifier { r#ref: name_ref }, loc),
                     value: Some(*value),
-                }])
-                .expect("oom");
+                }]);
                 let mut local = self.s(
                     S::Local { is_export: true, decls, ..Default::default() },
                     loc,
@@ -5491,8 +5477,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                     binding: self.b(B::Identifier { r#ref: inject_ref }, loc),
                     value: Some(*value),
-                }])
-                .expect("oom");
+                }]);
                 let mut local = self.s(
                     S::Local { is_export: true, decls, ..Default::default() },
                     loc,
@@ -5635,8 +5620,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                 binding: self.b(B::Identifier { r#ref: name_ref }, name_loc),
                 value: None,
-            }])
-            .expect("oom");
+            }]);
             let _ = arena;
 
             if self.enclosing_namespace_arg_ref.is_none() {
@@ -5711,7 +5695,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }]),
         );
 
-        let args_list = ExprNodeList::init_one(arg_expr).expect("oom");
+        let args_list = ExprNodeList::init_one(arg_expr);
 
         let target = 'target: {
             // "(() => { foo() })()" => "(() => foo())()"
@@ -5786,8 +5770,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     .new_symbol(js_ast::symbol::Kind::Other, name)
                     .expect("unreachable");
                 self.runtime_imports.put(name, ref_);
-                VecExt::append(&mut self.module_scope_mut().generated, ref_)
-                    .expect("oom");
+                VecExt::append(&mut self.module_scope_mut().generated, ref_);
                 ref_
             }
         } else {
@@ -6158,11 +6141,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if s_class.class.extends.is_some() {
                             let target = self.new_expr(E::Super {}, stmt.loc);
                             let arguments_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str).expect("unreachable");
-                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref).expect("oom");
+                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref);
 
                             let spread_inner = self.new_expr(E::Identifier::init(arguments_ref), stmt.loc);
                             let super_ = self.new_expr(E::Spread { value: spread_inner }, stmt.loc);
-                            let args = ExprNodeList::init_one(super_).expect("oom");
+                            let args = ExprNodeList::init_one(super_);
 
                             let call_value = self.new_expr(E::Call { target, args, ..Default::default() }, stmt.loc);
                             constructor_stmts.push(self.s(
@@ -6599,8 +6582,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let r = js_lexer::range_of_identifier(self.source, loc);
         self.log()
-            .add_range_error_fmt(Some(self.source), r, format_args!("There is no containing label named \"{}\"", bstr::BStr::new(name)))
-            .expect("unreachable");
+            .add_range_error_fmt(Some(self.source), r, format_args!("There is no containing label named \"{}\"", bstr::BStr::new(name)));
 
         // Allocate an "unbound" symbol
         let r#ref = self.new_symbol(js_ast::symbol::Kind::Unbound, self.arena.alloc_slice_copy(name)).expect("unreachable");
@@ -6694,7 +6676,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         for item in unsafe { &*to_flatten }.children.slice() {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             unsafe { &mut *item.as_ptr() }.parent = Some(parent_ptr);
-            VecExt::append(&mut parent.children, *item).expect("oom");
+            VecExt::append(&mut parent.children, *item);
         }
     }
 
@@ -6718,7 +6700,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.temp_refs_to_declare.push(TempRef { r#ref, ..Default::default() });
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut unsafe { &mut *scope }.generated, r#ref).expect("oom");
+        VecExt::append(&mut unsafe { &mut *scope }.generated, r#ref);
 
         r#ref
     }
@@ -6849,12 +6831,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 ReactRefreshExportKind::Named => original_name,
                 ReactRefreshExportKind::Default => b"default",
             },
-        ])?);
+        ]));
         let label_expr = self.new_expr(E::String::init(label), loc);
         let call = self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.react_refresh.register_ref, loc),
-                args: ExprNodeList::from_slice(&[Expr::init_identifier(r#ref, loc), label_expr])?,
+                args: ExprNodeList::from_slice(&[Expr::init_identifier(r#ref, loc), label_expr]),
                 ..Default::default()
             },
             loc,
@@ -6892,7 +6874,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.server_components_wrap_ref, logger::Loc::EMPTY),
-                args: ExprNodeList::from_slice(&[val, module_path, name_expr]).expect("oom"),
+                args: ExprNodeList::from_slice(&[val, module_path, name_expr]),
                 ..Default::default()
             },
             logger::Loc::EMPTY,
@@ -7039,7 +7021,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         ));
         self.s(
             S::Local {
-                decls: G::DeclList::init_one(G::Decl { binding, value }).expect("oom"),
+                decls: G::DeclList::init_one(G::Decl { binding, value }),
                 ..Default::default()
             },
             loc,
@@ -7078,7 +7060,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // () => [useCustom1, useCustom2]
             let array = self.new_expr(
                 E::Array {
-                    items: ExprNodeList::from_slice(ctx.user_hooks.values()).expect("oom"),
+                    items: ExprNodeList::from_slice(ctx.user_hooks.values()),
                     ..Default::default()
                 },
                 loc,
@@ -7098,7 +7080,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.new_expr(
             E::Call {
                 target: Expr::init_identifier(ctx.signature_cb, loc),
-                args: ExprNodeList::from_slice(args.as_slice()).expect("oom"),
+                args: ExprNodeList::from_slice(args.as_slice()),
                 ..Default::default()
             },
             loc,
@@ -7283,8 +7265,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             ));
                         } else {
                             part.import_record_indices
-                                .append_slice(self.import_records_for_current_part.as_slice())
-                                .expect("oom");
+                                .append_slice(self.import_records_for_current_part.as_slice());
                         }
 
                         // SAFETY: bitwise overwrite matching Zig
@@ -8127,8 +8108,7 @@ impl LowerUsingDeclarationsContext {
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         unsafe { &mut *scope }
             .generated
-            .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref])
-            .expect("oom");
+            .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref]);
         p.declared_symbols
             .ensure_unused_capacity(
                 // 5 to include the _promise decl later on:
@@ -8156,7 +8136,7 @@ impl LowerUsingDeclarationsContext {
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
             let promise_ref = p.generate_temp_ref(Some(b"_promise"));
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            VecExt::append(&mut unsafe { &mut *scope }.generated, promise_ref).expect("oom");
+            VecExt::append(&mut unsafe { &mut *scope }.generated, promise_ref);
             p.declared_symbols.append_assume_capacity(DeclaredSymbol { is_top_level, ref_: promise_ref });
 
             let promise_ref_expr = p.new_expr(E::Identifier { ref_: promise_ref, ..Default::default() }, loc);
@@ -8168,8 +8148,7 @@ impl LowerUsingDeclarationsContext {
             let promise_binding = p.b(B::Identifier { r#ref: promise_ref }, loc);
             let stmt0 = p.s(
                 S::Local {
-                    decls: G::DeclList::init_one(Decl { binding: promise_binding, value: Some(call_dispose) })
-                        .expect("oom"),
+                    decls: G::DeclList::init_one(Decl { binding: promise_binding, value: Some(call_dispose) }),
                     ..Default::default()
                 },
                 loc,
@@ -8200,7 +8179,7 @@ impl LowerUsingDeclarationsContext {
         let stack_init = p.new_expr(E::Array::default(), loc);
         result.push(p.s(
             S::Local {
-                decls: G::DeclList::init_one(Decl { binding: stack_binding, value: Some(stack_init) }).expect("oom"),
+                decls: G::DeclList::init_one(Decl { binding: stack_binding, value: Some(stack_init) }),
                 kind: js_ast::s::Kind::KLet,
                 ..Default::default()
             },
@@ -8214,8 +8193,8 @@ impl LowerUsingDeclarationsContext {
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
             let has_err_value = p.new_expr(E::Number { value: 1.0 }, loc);
             let mut decls = bun_alloc::AstAlloc::vec();
-            VecExt::append(&mut decls, Decl { binding: err_binding, value: Some(err_value) }).expect("oom");
-            VecExt::append(&mut decls, Decl { binding: has_err_binding, value: Some(has_err_value) }).expect("oom");
+            VecExt::append(&mut decls, Decl { binding: err_binding, value: Some(err_value) });
+            VecExt::append(&mut decls, Decl { binding: has_err_binding, value: Some(has_err_value) });
             let stmt0 = p.s(S::Local { decls, ..Default::default() }, loc);
             crate::StoreSlice::new_mut(p.arena.alloc_slice_copy(&[stmt0]))
         };

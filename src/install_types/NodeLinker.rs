@@ -208,7 +208,7 @@ impl PnpmMatcher {
                                 source: Some(source),
                                 ..Default::default()
                             },
-                        )?;
+                        );
                         return Err(FromExprError::InvalidRegExp);
                     }
                 };
@@ -236,7 +236,7 @@ impl PnpmMatcher {
                                         source: Some(source),
                                         ..Default::default()
                                     },
-                                )?;
+                                );
                                 return Err(FromExprError::InvalidRegExp);
                             }
                         };
@@ -252,7 +252,7 @@ impl PnpmMatcher {
                                 source: Some(source),
                                 ..Default::default()
                             },
-                        )?;
+                        );
                         return Err(FromExprError::UnexpectedExpr);
                     }
                 }
@@ -266,7 +266,7 @@ impl PnpmMatcher {
                         source: Some(source),
                         ..Default::default()
                     },
-                )?;
+                );
                 return Err(FromExprError::UnexpectedExpr);
             }
         }

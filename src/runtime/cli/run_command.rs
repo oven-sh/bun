@@ -663,7 +663,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if let Some(config) = package_json.config.as_deref() {
                 env_loader.map.ensure_unused_capacity(config.count())?;
                 for (k, v) in config.keys().iter().zip(config.values().iter()) {
-                    let key = strings::concat(&[b"npm_package_config_", &k[..]])?;
+                    let key = strings::concat(&[b"npm_package_config_", &k[..]]);
                     // PERF(port): was assume_capacity
                     env_loader.map.put_assume_capacity(&key, *v);
                 }

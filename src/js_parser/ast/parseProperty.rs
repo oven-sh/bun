@@ -56,18 +56,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 js_ast::ExprData::EString(str_) => {
                     if !opts.is_static && str_.eql_comptime(b"constructor") {
                         if kind == PropertyKind::Get {
-                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a getter").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a getter");
                         } else if kind == PropertyKind::Set {
-                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a setter").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a setter");
                         } else if opts.is_async {
-                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be an async function").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be an async function");
                         } else if opts.is_generator {
-                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a generator function").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Class constructor cannot be a generator function");
                         } else {
                             is_constructor = true;
                         }
                     } else if opts.is_static && str_.eql_comptime(b"prototype") {
-                        p.log().add_range_error(Some(p.source), key_range, b"Invalid static method name \"prototype\"").expect("unreachable");
+                        p.log().add_range_error(Some(p.source), key_range, b"Invalid static method name \"prototype\"");
                     }
                 }
                 _ => {}
@@ -124,8 +124,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             r,
                             format_args!("Getter {} must have zero arguments", bstr::BStr::new(key_name)),
-                        )
-                        .expect("unreachable");
+                        );
                 }
             }
             PropertyKind::Set => {
@@ -147,8 +146,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 bstr::BStr::new(key_name),
                                 args.len()
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                 }
             }
             _ => {}
@@ -183,7 +181,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let name = p.load_name_from_ref(private.ref_);
                 if name == b"#constructor" {
-                    p.log().add_range_error(Some(p.source), key_range, b"Invalid method name \"#constructor\"").expect("unreachable");
+                    p.log().add_range_error(Some(p.source), key_range, b"Invalid method name \"#constructor\"");
                 }
                 private.ref_ = p.declare_symbol(declare, key.loc, name).expect("unreachable");
             }
@@ -200,7 +198,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         Ok(Some(G::Property {
-            ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators)?,
+            ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
             kind,
             flags: prop_flags,
             key: Some(*key),
@@ -467,7 +465,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // PERF(port): was arena arena.create — bump.alloc returns &'a mut T;
                             // Vec::from_slice copies the bump-backed StmtList into a heap-backed list
                             // (Phase B: route ClassStaticBlock.stmts through arena slice directly).
-                            let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice())?;
+                            let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice());
                             let block = p.arena.alloc(G::ClassStaticBlock {
                                 stmts: stmt_list,
                                 loc,
@@ -489,8 +487,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 Some(p.source),
                                 name_range,
                                 format_args!("Unexpected {}", bun_core::fmt::quote(name)),
-                            )
-                            .expect("unreachable");
+                            );
                         return Err(err!("SyntaxError"));
                     }
 
@@ -513,9 +510,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 && name == b"yield")
                         {
                             if name == b"await" {
-                                p.log().add_range_error(Some(p.source), name_range, b"Cannot use \"await\" here").expect("unreachable");
+                                p.log().add_range_error(Some(p.source), name_range, b"Cannot use \"await\" here");
                             } else {
-                                p.log().add_range_error(Some(p.source), name_range, b"Cannot use \"yield\" here").expect("unreachable");
+                                p.log().add_range_error(Some(p.source), name_range, b"Cannot use \"yield\" here");
                             }
                         }
 
@@ -592,7 +589,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 || (opts.is_static && str_.eql_comptime(b"prototype"))
                             {
                                 // TODO: fmt error message to include string value.
-                                p.log().add_range_error(Some(p.source), key_range, b"Invalid field name").expect("unreachable");
+                                p.log().add_range_error(Some(p.source), key_range, b"Invalid field name");
                             }
                         }
                         _ => {}
@@ -621,7 +618,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 Some(p.source),
                                 p.lexer.range(),
                                 b"Class fields that use \"declare\" cannot be initialized",
-                            )?;
+                            );
                         }
                     }
 
@@ -644,7 +641,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EPrivateIdentifier(private) => {
                         let name = p.load_name_from_ref(private.ref_);
                         if name == b"#constructor" {
-                            p.log().add_range_error(Some(p.source), key_range, b"Invalid field name \"#constructor\"").expect("unreachable");
+                            p.log().add_range_error(Some(p.source), key_range, b"Invalid field name \"#constructor\"");
                         }
 
                         let declare: symbol::Kind = if opts.is_static {
@@ -669,7 +666,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 return Ok(Some(G::Property {
-                    ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators)?,
+                    ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
                     kind,
                     flags: prop_flags,
                     key: Some(key),
@@ -682,8 +679,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Auto-accessor fields cannot be methods
             if kind == PropertyKind::AutoAccessor && p.lexer.token == T::TOpenParen {
                 p.log()
-                    .add_range_error(Some(p.source), key_range, b"auto-accessor properties cannot have a method body")
-                    .expect("unreachable");
+                    .add_range_error(Some(p.source), key_range, b"auto-accessor properties cannot have a method body");
                 return Err(err!("SyntaxError"));
             }
 

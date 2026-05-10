@@ -12,7 +12,6 @@
 
 use core::hash::Hash;
 
-use bun_alloc::AllocError;
 // TODO(b0): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
 // bun_collections (move-in pass) — orphan rule lets the higher-tier crate impl
 // MapLike/ArrayLike for its own types.
@@ -27,7 +26,7 @@ pub trait MapLike {
     type Key;
     type Value;
 
-    fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError>;
+    fn ensure_unused_capacity(&mut self, additional: usize);
     fn put_assume_capacity(&mut self, key: Self::Key, value: Self::Value);
     fn put_assume_capacity_no_clobber(&mut self, key: Self::Key, value: Self::Value);
 }
@@ -47,7 +46,7 @@ pub type Value<M> = <M as MapLike>::Value;
 // In Rust the first two arms collapse to `IntoIterator<Item = (K, V)>` with an
 // `ExactSizeIterator` bound for the reserve; the "struct fields as entries"
 // arms have no equivalent (would need a derive) and are TODO'd.
-pub fn from_entries<M, I>(entries: I) -> Result<M, AllocError>
+pub fn from_entries<M, I>(entries: I) -> M
 where
     M: MapLike + Default,
     I: IntoIterator<Item = (M::Key, M::Value)>,
@@ -61,7 +60,7 @@ where
 
     // Zig: `try map.ensureUnusedCapacity([allocator,] entries.len)` — the
     // `needsAllocator` check vanishes because the allocator param is gone.
-    map.ensure_unused_capacity(iter.len())?;
+    map.ensure_unused_capacity(iter.len());
 
     for (k, v) in iter {
         // PERF(port): was putAssumeCapacity — profile in Phase B
@@ -73,12 +72,12 @@ where
     // fields* as entries (anonymous-struct-literal init). No Rust equivalent
     // without a proc-macro; callers should pass an array/iterator of tuples.
 
-    Ok(map)
+    map
 }
 
 // ─── fromMapLike ──────────────────────────────────────────────────────────────
 // Zig: takes `[]const struct { K, V }` and `putAssumeCapacityNoClobber`s each.
-pub fn from_map_like<M>(entries: &[(M::Key, M::Value)]) -> Result<M, AllocError>
+pub fn from_map_like<M>(entries: &[(M::Key, M::Value)]) -> M
 where
     M: MapLike + Default,
     M::Key: Clone,
@@ -87,13 +86,13 @@ where
     // Zig: `if (@hasField(Map, "allocator")) Map.init(allocator) else Map{}`
     let mut map = M::default();
 
-    map.ensure_unused_capacity(entries.len())?;
+    map.ensure_unused_capacity(entries.len());
 
     for entry in entries {
         map.put_assume_capacity_no_clobber(entry.0.clone(), entry.1.clone());
     }
 
-    Ok(map)
+    map
 }
 
 // ─── FieldType ────────────────────────────────────────────────────────────────
@@ -112,7 +111,7 @@ pub enum FieldType {} // unconstructible; reflection placeholder
 pub trait ArrayLike {
     type Elem;
 
-    fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError>;
+    fn ensure_unused_capacity(&mut self, additional: usize);
     fn append_assume_capacity(&mut self, elem: Self::Elem);
     /// Set `len` to `n` (caller has already reserved) and return the now-live
     /// slice for bulk memcpy. Mirrors the Zig `map.items.len = n; slice = map.items`.
@@ -132,7 +131,7 @@ pub type Of<A> = <A as ArrayLike>::Elem;
 // always statically knows which one it wants). Kept as a thin slice-only
 // forwarder so existing `bun.from(Array, alloc, &[...])` call sites compile.
 #[inline]
-pub fn from<A>(default: &[A::Elem]) -> Result<A, AllocError>
+pub fn from<A>(default: &[A::Elem]) -> A
 where
     A: ArrayLike + Default,
     A::Elem: Copy,
@@ -147,7 +146,7 @@ where
 //   - Vec-ish (`@hasField "len"`): reserve, set len, memcpy
 //   - raw slice: allocator.alloc + memcpy, return slice
 //   - has `.ptr`: alloc + build `{ptr,len,cap}`
-pub fn from_slice<A>(default: &[A::Elem]) -> Result<A, AllocError>
+pub fn from_slice<A>(default: &[A::Elem]) -> A
 where
     A: ArrayLike + Default,
     A::Elem: Copy,
@@ -162,14 +161,14 @@ where
     // `append_assume_capacity`. For now we take the memcpy path and rely on the
     // impl to do the right thing.
 
-    map.ensure_unused_capacity(default.len())?;
+    map.ensure_unused_capacity(default.len());
 
     let slice = map.set_len_and_slice(default.len());
 
     // Zig: `@memcpy(out[0..in.len], in)` over `sliceAsBytes`
     slice.copy_from_slice(default);
 
-    Ok(map)
+    map
 }
 
 /// The "target is a plain `[]T`" arm of Zig `fromSlice`: `allocator.alloc` +
@@ -294,9 +293,8 @@ const fn needs_allocator() -> bool {
 impl<T> ArrayLike for Vec<T> {
     type Elem = T;
 
-    fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
+    fn ensure_unused_capacity(&mut self, additional: usize) {
         self.reserve(additional);
-        Ok(())
     }
     fn append_assume_capacity(&mut self, elem: T) {
         // PERF(port): was appendAssumeCapacity

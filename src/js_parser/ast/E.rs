@@ -74,7 +74,8 @@ impl Array {
     /// Phase A `Vec::append` uses the global arena; `_bump` is kept
     /// for call-site shape parity and the eventual bump-arena Vec.
     pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
-        VecExt::append(&mut self.items, item)
+        VecExt::append(&mut self.items, item);
+        Ok(())
     }
 
     #[inline]
@@ -92,7 +93,7 @@ impl Array {
         // This over-allocates a little but it's fine
         // PERF(port): Zig allocated in arena; Phase-A Vec uses global arena.
         let mut out: ExprNodeList =
-            ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize)?;
+            ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize);
         out.expand_to_capacity();
         // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` (remain) does not overlap a shared borrow of `self`.
@@ -946,7 +947,7 @@ impl Object {
                 key: Some(Expr::init(EString::init(key), expr.loc)),
                 value: Some(expr),
                 ..G::Property::default()
-            })?;
+            });
         }
         Ok(())
     }
@@ -1002,7 +1003,7 @@ impl Object {
                 key: Some(rope.head),
                 value: Some(obj),
                 ..G::Property::default()
-            })?;
+            });
             return Ok(out);
         }
 
@@ -1011,7 +1012,7 @@ impl Object {
             key: Some(rope.head),
             value: Some(out),
             ..G::Property::default()
-        })?;
+        });
         Ok(out)
     }
 }
@@ -1038,7 +1039,7 @@ impl Object {
             key: Some(key),
             value: Some(value),
             ..G::Property::default()
-        })?;
+        });
         Ok(())
     }
 
@@ -1103,7 +1104,7 @@ impl Object {
             key: Some(rope.head),
             value: Some(value_),
             ..G::Property::default()
-        })?;
+        });
         Ok(())
     }
 
@@ -1159,7 +1160,7 @@ impl Object {
                 key: Some(rope.head),
                 value: Some(obj),
                 ..G::Property::default()
-            })?;
+            });
             return Ok(out);
         }
 
@@ -1168,7 +1169,7 @@ impl Object {
             key: Some(rope.head),
             value: Some(out),
             ..G::Property::default()
-        })?;
+        });
         Ok(out)
     }
 

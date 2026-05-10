@@ -431,7 +431,7 @@ impl<'a> Parser<'a> {
             Err(e) => {
                 if e == err!("StackOverflow") {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log().add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded")?;
+                    p.log().add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded");
                     return Ok(());
                 }
                 return Err(e);
@@ -812,7 +812,7 @@ impl<'a> Parser<'a> {
                 parse_tracer.end();
                 if e == err!("StackOverflow") {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log().add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded")?;
+                    p.log().add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded");
 
                     // Return a SyntaxError so that we reuse existing code for handling errors.
                     return Err(err!("SyntaxError"));
@@ -983,7 +983,7 @@ impl<'a> Parser<'a> {
                                     decls: G::DeclList::init_one(G::Decl {
                                         binding: decl.binding,
                                         value: decl.value,
-                                    })?,
+                                    }),
                                 };
                                 let new_stmt = p.s(_local, stmt.loc);
                                 let sliced = arena.alloc_slice_copy(&[new_stmt]);
@@ -1134,7 +1134,7 @@ impl<'a> Parser<'a> {
                         S::Local {
                             kind: js_ast::LocalKind::KVar,
                             decls: {
-                                let mut dl = G::DeclList::init_capacity(decls.len()).expect("oom");
+                                let mut dl = G::DeclList::init_capacity(decls.len());
                                 for d in decls.iter_mut() {
                                     dl.append_assume_capacity(core::mem::take(d));
                                 }
@@ -1185,8 +1185,7 @@ impl<'a> Parser<'a> {
                     let (import_part_stmts, rest) = remaining_stmts.split_at_mut(1);
                     remaining_stmts = rest;
 
-                    VecExt::append(&mut p.module_scope_mut().generated, ns_ref)
-                        .expect("oom");
+                    VecExt::append(&mut p.module_scope_mut().generated, ns_ref);
 
                     import_part_stmts[0] = Stmt::alloc(
                         S::Import {
@@ -1659,7 +1658,7 @@ impl<'a> Parser<'a> {
                         record.range,
                         b"Cannot use import statement with CommonJS-only features".as_slice(),
                         notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
-                    )?;
+                    );
                 }
             }
         } else {
@@ -1788,7 +1787,7 @@ impl<'a> Parser<'a> {
                     S::Local {
                         kind: js_ast::LocalKind::KVar,
                         decls: {
-                            let mut dl = G::DeclList::init_capacity(decls.len()).expect("oom");
+                            let mut dl = G::DeclList::init_capacity(decls.len());
                             for d in decls.iter_mut() {
                                 dl.append_assume_capacity(core::mem::take(d));
                             }
@@ -1896,7 +1895,7 @@ impl<'a> Parser<'a> {
                     E::RequireString { import_record_index: import_record_id, ..Default::default() },
                     logger::Loc::EMPTY,
                 );
-                let mut decls = G::DeclList::init_capacity(1).expect("oom");
+                let mut decls = G::DeclList::init_capacity(1);
                 decls.append_assume_capacity(G::Decl { binding, value: Some(value) });
 
                 let local_stmt = p.s(

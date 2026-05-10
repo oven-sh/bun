@@ -2137,14 +2137,14 @@ impl<'a> BundleV2<'a> {
                                             bstr::BStr::new(import_record.kind.error_label()), bstr::BStr::new(path_to_use)),
                                         path_to_use,
                                         import_record.kind.into(),
-                                    ).expect("unreachable");
+                                    );
                                 } else {
                                     add_error(
                                         log, source, import_record.range,
                                         format_args!("Could not resolve: \"{}\". Maybe you need to \"bun install\"?", bstr::BStr::new(path_to_use)),
                                         path_to_use,
                                         import_record.kind.into(),
-                                    ).expect("unreachable");
+                                    );
                                 }
                             } else {
                                 add_error(
@@ -2152,7 +2152,7 @@ impl<'a> BundleV2<'a> {
                                     format_args!("Could not resolve: \"{}\"", bstr::BStr::new(path_to_use)),
                                     path_to_use,
                                     import_record.kind.into(),
-                                ).expect("unreachable");
+                                );
                             }
                         }
                     }
@@ -4085,7 +4085,7 @@ impl<'a> BundleV2<'a> {
             jsc_api::JSBundler::ResolveValue::Err(err) => {
                 let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
                 let kind = err.kind;
-                log.msgs.push(err.clone().expect("oom"));
+                log.msgs.push(err.clone());
                 log.errors += (kind == Logger::Kind::Err) as u32;
                 log.warnings += (kind == Logger::Kind::Warn) as u32;
             }
@@ -5175,7 +5175,7 @@ impl<'a> BundleV2<'a> {
                             Some(source),
                             import_record.range.loc,
                             format_args!("The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle"),
-                        ).expect("unexpected log error");
+                        );
                         continue;
                     }
 
@@ -5186,7 +5186,7 @@ impl<'a> BundleV2<'a> {
                             Some(source),
                             import_record.range.loc,
                             format_args!("Framework does not have a separate SSR graph to put this import into"),
-                        ).expect("unexpected log error");
+                        );
                         continue;
                     }
 
@@ -5316,7 +5316,7 @@ impl<'a> BundleV2<'a> {
                                             ),
                                             &import_record.path.text,
                                             import_record.kind.into(),
-                                        ).expect("oom");
+                                        );
                                     } else if !ctx.target.is_bun() && import_record.path.text == b"bun" {
                                         add_error(
                                             log, Some(source), import_record.range,
@@ -5329,7 +5329,7 @@ impl<'a> BundleV2<'a> {
                                             ),
                                             &import_record.path.text,
                                             import_record.kind.into(),
-                                        ).expect("oom");
+                                        );
                                     } else if !ctx.target.is_bun() && import_record.path.text.starts_with(b"bun:") {
                                         add_error(
                                             log, Some(source), import_record.range,
@@ -5342,7 +5342,7 @@ impl<'a> BundleV2<'a> {
                                             ),
                                             &import_record.path.text,
                                             import_record.kind.into(),
-                                        ).expect("oom");
+                                        );
                                     } else {
                                         add_error(
                                             log, Some(source), import_record.range,
@@ -5350,7 +5350,7 @@ impl<'a> BundleV2<'a> {
                                                 bstr::BStr::new(&import_record.path.text)),
                                             &import_record.path.text,
                                             import_record.kind.into(),
-                                        ).expect("oom");
+                                        );
                                     }
                                 } else {
                                     let mut buf = bun_paths::path_buffer_pool::get();
@@ -5374,7 +5374,7 @@ impl<'a> BundleV2<'a> {
                                         format_args!("Could not resolve: \"{}\"", bstr::BStr::new(specifier_to_use)),
                                         specifier_to_use,
                                         import_record.kind.into(),
-                                    ).expect("oom");
+                                    );
                                 }
                             }
                         } else {
@@ -5432,7 +5432,7 @@ impl<'a> BundleV2<'a> {
                             Some(source),
                             import_record.range,
                             format_args!("Browser builds cannot import HTML files."),
-                        ).expect("oom");
+                        );
                         continue 'outer;
                     }
 
@@ -5894,7 +5894,7 @@ impl<'a> BundleV2<'a> {
             }
             parse_task::ResultValue::Success(result) => {
                 // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                result.log.clone_to_with_recycled(this.transpiler.log_mut(), true).expect("unreachable");
+                result.log.clone_to_with_recycled(this.transpiler.log_mut(), true);
 
                 this.has_any_top_level_await_modules = this.has_any_top_level_await_modules || !result.ast.top_level_await_keyword.is_empty();
 
@@ -6138,7 +6138,7 @@ impl<'a> BundleV2<'a> {
                         ).expect("oom");
                     } else if !err.log.msgs.is_empty() {
                         // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                        err.log.clone_to_with_recycled(this.transpiler.log_mut(), true).expect("unreachable");
+                        err.log.clone_to_with_recycled(this.transpiler.log_mut(), true);
                     } else {
                         // PORT NOTE: Zig used `@tagName(err.step)`.
                         let step_name = match err.step {
@@ -6152,7 +6152,7 @@ impl<'a> BundleV2<'a> {
                             None,
                             Logger::Loc::EMPTY,
                             format_args!("{} while {}", bstr::BStr::new(err.err.name()), step_name),
-                        ).expect("unreachable");
+                        );
                     }
                 }
 

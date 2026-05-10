@@ -2162,7 +2162,7 @@ where
             // buffer must be freed before we leave the block.
             let owned_url_buf: Vec<u8> = if url.hostname.is_empty() {
                 strings::append(&self.base_url_string_for_joining, url.pathname)
-                    .map_err(|_| ctx.throw_out_of_memory())?
+                    
                     .into_vec()
             } else {
                 temp_url_str.to_vec()

@@ -1835,7 +1835,7 @@ impl PackageManifest {
             Err(_) => {
                 // don't use the arena memory!
                 let mut cloned_log = logger::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true)?;
+                log.clone_to_with_recycled(&mut cloned_log, true);
                 *log = cloned_log;
                 return Ok(None);
             }
@@ -1843,8 +1843,7 @@ impl PackageManifest {
 
         if let Some(error_q) = json.as_property(b"error") {
             if let Some(err) = error_q.expr.as_string(&bump) {
-                log.add_error_fmt(Some(&source), logger::Loc::EMPTY, format_args!("npm error: {}", bstr::BStr::new(err)))
-                    .expect("unreachable");
+                log.add_error_fmt(Some(&source), logger::Loc::EMPTY, format_args!("npm error: {}", bstr::BStr::new(err)));
                 return Ok(None);
             }
         }
@@ -1925,8 +1924,7 @@ impl PackageManifest {
                         Some(&source),
                         prop.value.as_ref().expect("infallible: prop has value").loc,
                         format_args!("Failed to parse dependency {}", bstr::BStr::new(version_name)),
-                    )
-                    .expect("unreachable");
+                    );
                     continue;
                 }
 

@@ -922,7 +922,7 @@ where
                 build: {
                     // `log.to_api()` returns `bun_logger::api::Log`; the schema
                     // crate has its own `api::Log` (msgs omitted). Map fields.
-                    let api_log = log.to_api().expect("unreachable");
+                    let api_log = log.to_api();
                     Api::Log { warnings: api_log.warnings, errors: api_log.errors }
                 },
             }),

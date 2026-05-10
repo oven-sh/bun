@@ -454,7 +454,7 @@ impl NetworkTask {
                             quote(scope.url.href()),
                             quote(name),
                         ),
-                    )?;
+                    );
                 } else {
                     log.add_warning_fmt(
                         None,
@@ -464,7 +464,7 @@ impl NetworkTask {
                             quote(scope.url.href()),
                             quote(name),
                         ),
-                    )?;
+                    );
                 }
                 return Err(ForManifestError::InvalidURL);
             }
@@ -478,7 +478,7 @@ impl NetworkTask {
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
                             *tmp
                         ),
-                    )?;
+                    );
                 } else {
                     log.add_warning_fmt(
                         None,
@@ -487,7 +487,7 @@ impl NetworkTask {
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
                             *tmp
                         ),
-                    )?;
+                    );
                 }
                 return Err(ForManifestError::InvalidURL);
             }
@@ -738,7 +738,7 @@ impl NetworkTask {
                     quote(&self.url_buf),
                     quote(tarball.name.slice()),
                 ),
-            )?;
+            );
             return Err(ForTarballError::InvalidURL);
         }
 

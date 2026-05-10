@@ -127,7 +127,7 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                 return Ok(Escaped::Original);
             }
 
-            return Ok(Escaped::Allocated(strings::append(first, second)?));
+            return Ok(Escaped::Allocated(strings::append(first, second)));
         }
 
         // The simd implementation is slower for inputs less than 32 bytes.

@@ -57,8 +57,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(self.source),
                             r,
                             format_args!("Cannot access \"{}\" here", bstr::BStr::new(name)),
-                        )
-                        .expect("unreachable");
+                        );
                     did_forbid_arguments = true;
                 }
 

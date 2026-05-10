@@ -138,7 +138,7 @@ impl JSONLineBuffer {
     }
 
     pub fn ensure_unused_capacity(&mut self, additional: usize) {
-        bun_core::handle_oom(self.data.ensure_unused_capacity(additional));
+        self.data.ensure_unused_capacity(additional);
     }
 
     /// Notify the buffer that `nread` bytes were written directly into the

@@ -469,15 +469,18 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn ensure_total_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
-        self.unmanaged.ensure_total_capacity(new_capacity)
+        self.unmanaged.ensure_total_capacity(new_capacity);
+        Ok(())
     }
 
     pub fn ensure_total_capacity_precise(&mut self, new_capacity: usize) -> Result<(), AllocError> {
-        self.unmanaged.ensure_total_capacity_precise(new_capacity)
+        self.unmanaged.ensure_total_capacity_precise(new_capacity);
+        Ok(())
     }
 
     pub fn ensure_unused_capacity(&mut self, additional_count: usize) -> Result<(), AllocError> {
-        self.unmanaged.ensure_unused_capacity(additional_count)
+        self.unmanaged.ensure_unused_capacity(additional_count);
+        Ok(())
     }
 
     /// Note that this creates copies of `init_value`.

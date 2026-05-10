@@ -134,8 +134,7 @@ impl<'a> Lexer<'a> {
                     redact_sensitive_information: self.should_redact_logs,
                     ..Default::default()
                 },
-            )
-            .expect("unreachable");
+            );
         self.prev_error_loc = __loc;
     }
 
@@ -171,7 +170,7 @@ impl<'a> Lexer<'a> {
                 redact_sensitive_information: self.should_redact_logs,
                 ..Default::default()
             },
-        )?;
+        );
         self.prev_error_loc = r.loc;
         Ok(())
     }

@@ -1388,7 +1388,7 @@ pub fn parse_into_binary_lockfile(
     lockfile.init_empty();
 
     let Some(lockfile_version_expr) = root.get(b"lockfileVersion") else {
-        log.add_error(Some(source), root.loc, b"Missing lockfile version")?;
+        log.add_error(Some(source), root.loc, b"Missing lockfile version");
         return Err(ParseError::InvalidLockfileVersion);
     };
 
@@ -1410,12 +1410,12 @@ pub fn parse_into_binary_lockfile(
             }
         }
 
-        log.add_error(Some(source), lockfile_version_expr.loc, b"Invalid lockfile version")?;
+        log.add_error(Some(source), lockfile_version_expr.loc, b"Invalid lockfile version");
         return Err(ParseError::InvalidLockfileVersion);
     };
 
     let Some(lockfile_version) = Version::from_int(lockfile_version_num) else {
-        log.add_error(Some(source), lockfile_version_expr.loc, b"Unknown lockfile version")?;
+        log.add_error(Some(source), lockfile_version_expr.loc, b"Unknown lockfile version");
         return Err(ParseError::UnknownLockfileVersion);
     };
 
@@ -1426,7 +1426,7 @@ pub fn parse_into_binary_lockfile(
         lockfile.saved_config_version = match ConfigVersion::from_expr(&config_version_expr) {
             Some(v) => Some(v),
             None => {
-                log.add_error(Some(source), config_version_expr.loc, b"Invalid \"configVersion\". Expected a number")?;
+                log.add_error(Some(source), config_version_expr.loc, b"Invalid \"configVersion\". Expected a number");
                 return Err(ParseError::InvalidConfigVersion);
             }
         };
@@ -1435,13 +1435,13 @@ pub fn parse_into_binary_lockfile(
     if let Some(trusted_dependencies_expr) = root.get(b"trustedDependencies") {
         let mut trusted_dependencies = TrustedDependenciesSet::default();
         if !trusted_dependencies_expr.is_array() {
-            log.add_error(Some(source), trusted_dependencies_expr.loc, b"Expected an array")?;
+            log.add_error(Some(source), trusted_dependencies_expr.loc, b"Expected an array");
             return Err(ParseError::InvalidTrustedDependenciesSet);
         }
 
         for dep in trusted_dependencies_expr.data.e_array().expect("infallible: variant checked").items.slice() {
             if !dep.is_string() {
-                log.add_error(Some(source), dep.loc, b"Expected a string")?;
+                log.add_error(Some(source), dep.loc, b"Expected a string");
                 return Err(ParseError::InvalidTrustedDependenciesSet);
             }
             let name_hash: TruncatedPackageNameHash =
@@ -1454,7 +1454,7 @@ pub fn parse_into_binary_lockfile(
 
     if let Some(patched_dependencies_expr) = root.get(b"patchedDependencies") {
         if !patched_dependencies_expr.is_object() {
-            log.add_error(Some(source), patched_dependencies_expr.loc, b"Expected an object")?;
+            log.add_error(Some(source), patched_dependencies_expr.loc, b"Expected an object");
             return Err(ParseError::InvalidPatchedDependencies);
         }
 
@@ -1462,12 +1462,12 @@ pub fn parse_into_binary_lockfile(
             let key = prop.key.expect("infallible: prop has key");
             let value = prop.value.expect("infallible: prop has value");
             if !key.is_string() {
-                log.add_error(Some(source), key.loc, b"Expected a string")?;
+                log.add_error(Some(source), key.loc, b"Expected a string");
                 return Err(ParseError::InvalidPatchedDependencies);
             }
 
             if !value.is_string() {
-                log.add_error(Some(source), value.loc, b"Expected a string")?;
+                log.add_error(Some(source), value.loc, b"Expected a string");
                 return Err(ParseError::InvalidPatchedDependencies);
             }
 
@@ -1481,7 +1481,7 @@ pub fn parse_into_binary_lockfile(
 
     if let Some(overrides_expr) = root.get(b"overrides") {
         if !overrides_expr.is_object() {
-            log.add_error(Some(source), overrides_expr.loc, b"Expected an object")?;
+            log.add_error(Some(source), overrides_expr.loc, b"Expected an object");
             return Err(ParseError::InvalidOverridesObject);
         }
 
@@ -1490,7 +1490,7 @@ pub fn parse_into_binary_lockfile(
             let value = prop.value.expect("infallible: prop has value");
 
             if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
-                log.add_error(Some(source), key.loc, b"Expected a non-empty string")?;
+                log.add_error(Some(source), key.loc, b"Expected a non-empty string");
                 return Err(ParseError::InvalidOverridesObject);
             }
 
@@ -1500,7 +1500,7 @@ pub fn parse_into_binary_lockfile(
 
             // TODO(dylan-conway) also accept object when supported
             if !value.is_string() {
-                log.add_error(Some(source), value.loc, b"Expected a string")?;
+                log.add_error(Some(source), value.loc, b"Expected a string");
                 return Err(ParseError::InvalidOverridesObject);
             }
 
@@ -1522,7 +1522,7 @@ pub fn parse_into_binary_lockfile(
                 ) {
                     Some(v) => v,
                     None => {
-                        log.add_error(Some(source), value.loc, b"Invalid override version")?;
+                        log.add_error(Some(source), value.loc, b"Invalid override version");
                         return Err(ParseError::InvalidOverridesObject);
                     }
                 },
@@ -1535,7 +1535,7 @@ pub fn parse_into_binary_lockfile(
 
     if let Some(catalog_expr) = root.get(b"catalog") {
         if !catalog_expr.is_object() {
-            log.add_error(Some(source), catalog_expr.loc, b"Expected an object")?;
+            log.add_error(Some(source), catalog_expr.loc, b"Expected an object");
             return Err(ParseError::InvalidCatalogObject);
         }
 
@@ -1544,7 +1544,7 @@ pub fn parse_into_binary_lockfile(
             let value = prop.value.expect("infallible: prop has value");
 
             if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
-                log.add_error(Some(source), key.loc, b"Expected a non-empty string")?;
+                log.add_error(Some(source), key.loc, b"Expected a non-empty string");
                 return Err(ParseError::InvalidCatalogObject);
             }
 
@@ -1553,7 +1553,7 @@ pub fn parse_into_binary_lockfile(
             let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
             if !value.is_string() {
-                log.add_error(Some(source), value.loc, b"Expected a string")?;
+                log.add_error(Some(source), value.loc, b"Expected a string");
                 return Err(ParseError::InvalidCatalogObject);
             }
 
@@ -1575,7 +1575,7 @@ pub fn parse_into_binary_lockfile(
                 ) {
                     Some(v) => v,
                     None => {
-                        log.add_error(Some(source), value.loc, b"Invalid catalog version")?;
+                        log.add_error(Some(source), value.loc, b"Invalid catalog version");
                         return Err(ParseError::InvalidCatalogObject);
                     }
                 },
@@ -1588,7 +1588,7 @@ pub fn parse_into_binary_lockfile(
             )?;
 
             if entry.found_existing {
-                log.add_error(Some(source), key.loc, b"Duplicate catalog entry")?;
+                log.add_error(Some(source), key.loc, b"Duplicate catalog entry");
                 return Err(ParseError::InvalidCatalogObject);
             }
 
@@ -1599,7 +1599,7 @@ pub fn parse_into_binary_lockfile(
 
     if let Some(catalogs_expr) = root.get(b"catalogs") {
         if !catalogs_expr.is_object() {
-            log.add_error(Some(source), catalogs_expr.loc, b"Expected an object")?;
+            log.add_error(Some(source), catalogs_expr.loc, b"Expected an object");
             return Err(ParseError::InvalidCatalogsObject);
         }
 
@@ -1608,12 +1608,12 @@ pub fn parse_into_binary_lockfile(
             let catalog_value = catalog_prop.value.expect("infallible: prop has value");
 
             if !catalog_key.is_string() || catalog_key.data.e_string().expect("infallible: variant checked").len() == 0 {
-                log.add_error(Some(source), catalog_key.loc, b"Expected a non-empty string")?;
+                log.add_error(Some(source), catalog_key.loc, b"Expected a non-empty string");
                 return Err(ParseError::InvalidCatalogsObject);
             }
 
             if !catalog_value.is_object() {
-                log.add_error(Some(source), catalog_value.loc, b"Expected an object")?;
+                log.add_error(Some(source), catalog_value.loc, b"Expected an object");
                 return Err(ParseError::InvalidCatalogsObject);
             }
 
@@ -1627,7 +1627,7 @@ pub fn parse_into_binary_lockfile(
                 let value = prop.value.expect("infallible: prop has value");
 
                 if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
-                    log.add_error(Some(source), key.loc, b"Expected a non-empty string")?;
+                    log.add_error(Some(source), key.loc, b"Expected a non-empty string");
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
@@ -1636,7 +1636,7 @@ pub fn parse_into_binary_lockfile(
                 let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
                 if !value.is_string() {
-                    log.add_error(Some(source), value.loc, b"Expected a string")?;
+                    log.add_error(Some(source), value.loc, b"Expected a string");
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
@@ -1658,7 +1658,7 @@ pub fn parse_into_binary_lockfile(
                     ) {
                         Some(v) => v,
                         None => {
-                            log.add_error(Some(source), value.loc, b"Invalid catalog version")?;
+                            log.add_error(Some(source), value.loc, b"Invalid catalog version");
                             return Err(ParseError::InvalidCatalogsObject);
                         }
                     },
@@ -1671,7 +1671,7 @@ pub fn parse_into_binary_lockfile(
                 )?;
 
                 if entry.found_existing {
-                    log.add_error(Some(source), key.loc, b"Duplicate catalog entry")?;
+                    log.add_error(Some(source), key.loc, b"Duplicate catalog entry");
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
@@ -1682,7 +1682,7 @@ pub fn parse_into_binary_lockfile(
     }
 
     let Some(workspaces_obj) = root.get_object(b"workspaces") else {
-        log.add_error(Some(source), root.loc, b"Missing a workspaces object property")?;
+        log.add_error(Some(source), root.loc, b"Missing a workspaces object property");
         return Err(ParseError::InvalidWorkspaceObject);
     };
 
@@ -1692,11 +1692,11 @@ pub fn parse_into_binary_lockfile(
         let key = prop.key.expect("infallible: prop has key");
         let value: Expr = prop.value.expect("infallible: prop has value");
         if !key.is_string() {
-            log.add_error(Some(source), key.loc, b"Expected a string")?;
+            log.add_error(Some(source), key.loc, b"Expected a string");
             return Err(ParseError::InvalidWorkspaceObject);
         }
         if !value.is_object() {
-            log.add_error(Some(source), value.loc, b"Expected an object")?;
+            log.add_error(Some(source), value.loc, b"Expected an object");
             return Err(ParseError::InvalidWorkspaceObject);
         }
 
@@ -1704,7 +1704,7 @@ pub fn parse_into_binary_lockfile(
 
         if path.is_empty() {
             if maybe_root_pkg.is_some() {
-                log.add_error(Some(source), key.loc, b"Duplicate root package")?;
+                log.add_error(Some(source), key.loc, b"Duplicate root package");
                 return Err(ParseError::InvalidWorkspaceObject);
             }
 
@@ -1713,12 +1713,12 @@ pub fn parse_into_binary_lockfile(
         }
 
         let Some(name_expr) = value.get(b"name") else {
-            log.add_error(Some(source), value.loc, b"Expected a string name property")?;
+            log.add_error(Some(source), value.loc, b"Expected a string name property");
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
         let Some(name_hash) = name_expr.as_string_hash(StringBuilder::string_hash)? else {
-            log.add_error(Some(source), name_expr.loc, b"Expected a string name property")?;
+            log.add_error(Some(source), name_expr.loc, b"Expected a string name property");
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
@@ -1727,7 +1727,7 @@ pub fn parse_into_binary_lockfile(
         // versions are optional
         if let Some(version_expr) = value.get(b"version") {
             if !version_expr.is_string() {
-                log.add_error(Some(source), version_expr.loc, b"Expected a string version property")?;
+                log.add_error(Some(source), version_expr.loc, b"Expected a string version property");
                 return Err(ParseError::InvalidWorkspaceObject);
             }
 
@@ -1735,7 +1735,7 @@ pub fn parse_into_binary_lockfile(
 
             let parsed = Semver::Version::parse(version_str.sliced(lockfile.buffers.string_bytes.as_slice()));
             if !parsed.valid {
-                log.add_error(Some(source), version_expr.loc, b"Invalid semver version")?;
+                log.add_error(Some(source), version_expr.loc, b"Invalid semver version");
                 return Err(ParseError::InvalidSemver);
             }
 
@@ -1748,7 +1748,7 @@ pub fn parse_into_binary_lockfile(
     let mut bundled_pkgs = PkgPathSet::init();
 
     let Some(root_pkg_exr) = maybe_root_pkg else {
-        log.add_error(Some(source), workspaces_obj.loc, b"Expected root package")?;
+        log.add_error(Some(source), workspaces_obj.loc, b"Expected root package");
         return Err(ParseError::InvalidWorkspaceObject);
     };
 
@@ -1761,7 +1761,7 @@ pub fn parse_into_binary_lockfile(
             match name.as_utf8_string_literal() {
                 Some(s) => Some(s),
                 None => {
-                    log.add_error(Some(source), name.loc, b"Expected a string")?;
+                    log.add_error(Some(source), name.loc, b"Expected a string");
                     return Err(ParseError::InvalidWorkspaceObject);
                 }
             }
@@ -1857,7 +1857,7 @@ pub fn parse_into_binary_lockfile(
 
                 let entry = pkg_map.get_or_put(name)?;
                 if entry.found_existing {
-                    log.add_error_fmt(source, key.loc, format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)))?;
+                    log.add_error_fmt(source, key.loc, format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)));
                     return Err(ParseError::InvalidWorkspaceObject);
                 }
 
@@ -1879,7 +1879,7 @@ pub fn parse_into_binary_lockfile(
 
     {
         if !pkgs_expr.is_object() {
-            log.add_error(Some(source), pkgs_expr.loc, b"Expected an object")?;
+            log.add_error(Some(source), pkgs_expr.loc, b"Expected an object");
             return Err(ParseError::InvalidPackagesObject);
         }
 
@@ -1900,12 +1900,12 @@ pub fn parse_into_binary_lockfile(
             let value = prop.value.expect("infallible: prop has value");
 
             let Some(pkg_path) = key.as_utf8_string_literal() else {
-                log.add_error(Some(source), key.loc, b"Expected a string")?;
+                log.add_error(Some(source), key.loc, b"Expected a string");
                 return Err(ParseError::InvalidPackageKey);
             };
 
             if !value.is_array() {
-                log.add_error(Some(source), value.loc, b"Expected an array")?;
+                log.add_error(Some(source), value.loc, b"Expected an array");
                 return Err(ParseError::InvalidPackageInfo);
             }
 
@@ -1927,12 +1927,12 @@ pub fn parse_into_binary_lockfile(
             let value = prop.value.expect("infallible: prop has value");
 
             let Some(pkg_path) = key.as_utf8_string_literal() else {
-                log.add_error(Some(source), key.loc, b"Expected a string")?;
+                log.add_error(Some(source), key.loc, b"Expected a string");
                 return Err(ParseError::InvalidPackageKey);
             };
 
             if !value.is_array() {
-                log.add_error(Some(source), value.loc, b"Expected an array")?;
+                log.add_error(Some(source), value.loc, b"Expected an array");
                 return Err(ParseError::InvalidPackageInfo);
             }
 
@@ -1940,7 +1940,7 @@ pub fn parse_into_binary_lockfile(
             let pkg_info = &value.data.e_array().expect("infallible: variant checked").items;
 
             if (pkg_info.len_u32() as usize) == 0 {
-                log.add_error(Some(source), value.loc, b"Missing package info")?;
+                log.add_error(Some(source), value.loc, b"Missing package info");
                 return Err(ParseError::InvalidPackageInfo);
             }
 
@@ -1948,7 +1948,7 @@ pub fn parse_into_binary_lockfile(
             i += 1;
 
             let Some(res_info_str) = res_info.as_utf8_string_literal() else {
-                log.add_error(Some(source), res_info.loc, b"Expected a string")?;
+                log.add_error(Some(source), res_info.loc, b"Expected a string");
                 return Err(ParseError::InvalidPackageResolution);
             };
 
@@ -1960,7 +1960,7 @@ pub fn parse_into_binary_lockfile(
                 match dependency::split_name_and_version(res_info_str) {
                     Ok(pair) => break 'name_and_res pair,
                     Err(_) => {
-                        log.add_error(Some(source), res_info.loc, b"Invalid package resolution")?;
+                        log.add_error(Some(source), res_info.loc, b"Invalid package resolution");
                         return Err(ParseError::InvalidPackageResolution);
                     }
                 }
@@ -1975,25 +1975,25 @@ pub fn parse_into_binary_lockfile(
                     return Err(ParseError::OutOfMemory);
                 }
                 Err(crate::resolution::FromTextLockfileError::UnexpectedResolution) => {
-                    log.add_error_fmt(source, res_info.loc, format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)))?;
+                    log.add_error_fmt(source, res_info.loc, format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)));
                     return Err(ParseError::UnexpectedResolution);
                 }
                 Err(crate::resolution::FromTextLockfileError::InvalidSemver) => {
-                    log.add_error_fmt(source, res_info.loc, format_args!("Invalid package version: {}", bstr::BStr::new(res_str)))?;
+                    log.add_error_fmt(source, res_info.loc, format_args!("Invalid package version: {}", bstr::BStr::new(res_str)));
                     return Err(ParseError::InvalidSemver);
                 }
             };
 
             if res.tag == ResolutionTag::Npm {
                 if i >= (pkg_info.len_u32() as usize) {
-                    log.add_error(Some(source), value.loc, b"Missing npm registry")?;
+                    log.add_error(Some(source), value.loc, b"Missing npm registry");
                     return Err(ParseError::InvalidPackageInfo);
                 }
                 let registry_expr = pkg_info.at(i);
                 i += 1;
 
                 let Some(registry_str) = registry_expr.as_utf8_string_literal() else {
-                    log.add_error(Some(source), registry_expr.loc, b"Expected a string")?;
+                    log.add_error(Some(source), registry_expr.loc, b"Expected a string");
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
@@ -2069,7 +2069,7 @@ pub fn parse_into_binary_lockfile(
                         source,
                         res_info.loc,
                         format_args!("Unknown workspace: '{}'", bstr::BStr::new(res.workspace().slice(lockfile.buffers.string_bytes.as_slice()))),
-                    )?;
+                    );
                     return Err(ParseError::InvalidPackageInfo);
                 }
             }
@@ -2092,14 +2092,14 @@ pub fn parse_into_binary_lockfile(
                         }
 
                         if i >= (pkg_info.len_u32() as usize) {
-                            log.add_error(Some(source), value.loc, b"Missing dependencies object")?;
+                            log.add_error(Some(source), value.loc, b"Missing dependencies object");
                             return Err(ParseError::InvalidPackageInfo);
                         }
 
                         let deps_os_cpu_libc_bin_bundle_obj = pkg_info.at(i);
                         i += 1;
                         if !deps_os_cpu_libc_bin_bundle_obj.is_object() {
-                            log.add_error(Some(source), deps_os_cpu_libc_bin_bundle_obj.loc, b"Expected an object")?;
+                            log.add_error(Some(source), deps_os_cpu_libc_bin_bundle_obj.loc, b"Expected an object");
                             return Err(ParseError::InvalidPackageInfo);
                         }
 
@@ -2138,13 +2138,13 @@ pub fn parse_into_binary_lockfile(
                     }
                     ResolutionTag::Root => {
                         if i >= (pkg_info.len_u32() as usize) {
-                            log.add_error(Some(source), value.loc, b"Missing package binaries object")?;
+                            log.add_error(Some(source), value.loc, b"Missing package binaries object");
                             return Err(ParseError::InvalidPackageInfo);
                         }
                         let bin_obj = pkg_info.at(i);
                         i += 1;
                         if !bin_obj.is_object() {
-                            log.add_error(Some(source), bin_obj.loc, b"Expected an object")?;
+                            log.add_error(Some(source), bin_obj.loc, b"Expected an object");
                             return Err(ParseError::InvalidPackageInfo);
                         }
 
@@ -2162,13 +2162,13 @@ pub fn parse_into_binary_lockfile(
             match res.tag {
                 ResolutionTag::Npm => {
                     if i >= (pkg_info.len_u32() as usize) {
-                        log.add_error(Some(source), value.loc, b"Missing integrity")?;
+                        log.add_error(Some(source), value.loc, b"Missing integrity");
                         return Err(ParseError::InvalidPackageInfo);
                     }
                     let integrity_expr = pkg_info.at(i);
                     i += 1;
                     let Some(integrity_str) = integrity_expr.as_utf8_string_literal() else {
-                        log.add_error(Some(source), integrity_expr.loc, b"Expected a string")?;
+                        log.add_error(Some(source), integrity_expr.loc, b"Expected a string");
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
@@ -2187,7 +2187,7 @@ pub fn parse_into_binary_lockfile(
                 tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                     // .bun-tag
                     if i >= (pkg_info.len_u32() as usize) {
-                        log.add_error(Some(source), value.loc, b"Missing git dependency tag")?;
+                        log.add_error(Some(source), value.loc, b"Missing git dependency tag");
                         return Err(ParseError::InvalidPackageInfo);
                     }
 
@@ -2195,7 +2195,7 @@ pub fn parse_into_binary_lockfile(
                     i += 1;
 
                     let Some(bun_tag_str) = bun_tag.as_utf8_string_literal() else {
-                        log.add_error(Some(source), bun_tag.loc, b"Expected a string")?;
+                        log.add_error(Some(source), bun_tag.loc, b"Expected a string");
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
@@ -2226,7 +2226,7 @@ pub fn parse_into_binary_lockfile(
 
             let entry = pkg_map.get_or_put(pkg_path)?;
             if entry.found_existing {
-                log.add_error(Some(source), key.loc, b"Duplicate package path")?;
+                log.add_error(Some(source), key.loc, b"Duplicate package path");
                 return Err(ParseError::InvalidPackageKey);
             }
 
@@ -2320,7 +2320,7 @@ pub fn parse_into_binary_lockfile(
                                     bstr::BStr::new(workspace_name),
                                     bstr::BStr::new(dep_name),
                                 ),
-                            )?;
+                            );
                             return Err(ParseError::InvalidPackageInfo);
                         }
                         buf_slice[..workspace_name.len()].copy_from_slice(workspace_name);
@@ -2373,7 +2373,7 @@ pub fn parse_into_binary_lockfile(
                 let res_id = match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..]) {
                     Ok(&id) => id,
                     Err(ResolveError::InvalidPackageKey) => {
-                        log.add_error(Some(source), key.loc, b"Invalid package path")?;
+                        log.add_error(Some(source), key.loc, b"Invalid package path");
                         return Err(ParseError::InvalidPackageKey);
                     }
                     Err(ResolveError::Unresolvable) => {
@@ -2456,7 +2456,7 @@ fn dependency_resolution_failure(
                 bstr::BStr::new(dep.name.slice(buf)),
                 bstr::BStr::new(path),
             ),
-        )?;
+        );
     } else {
         log.add_error_fmt(
             source,
@@ -2466,7 +2466,7 @@ fn dependency_resolution_failure(
                 behavior_str,
                 bstr::BStr::new(dep.name.slice(buf)),
             ),
-        )?;
+        );
     }
     Ok(())
 }
@@ -2494,13 +2494,13 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     if let Some(optional_peers) = obj.get(b"optionalPeers") {
         if !optional_peers.is_array() {
-            log.add_error(Some(source), optional_peers.loc, b"Expected an array")?;
+            log.add_error(Some(source), optional_peers.loc, b"Expected an array");
             return Err(ParseError::InvalidPackageInfo);
         }
 
         for item in optional_peers.data.e_array().expect("infallible: variant checked").items.slice() {
             let Some(name_hash) = item.as_string_hash(StringBuilder::string_hash)? else {
-                log.add_error(Some(source), item.loc, b"Expected a string")?;
+                log.add_error(Some(source), item.loc, b"Expected a string");
                 return Err(ParseError::InvalidPackageInfo);
             };
 
@@ -2519,7 +2519,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         // PERF(port): was `inline for` — profile in Phase B
         if let Some(deps) = obj.get(group_name.as_bytes()) {
             if !deps.is_object() {
-                log.add_error(Some(source), deps.loc, b"Expected an object")?;
+                log.add_error(Some(source), deps.loc, b"Expected an object");
                 return Err(ParseError::InvalidPackagesTree);
             }
 
@@ -2528,7 +2528,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let value = prop.value.expect("infallible: prop has value");
 
                 let Some(name_str) = key.as_utf8_string_literal() else {
-                    log.add_error(Some(source), key.loc, b"Expected a string")?;
+                    log.add_error(Some(source), key.loc, b"Expected a string");
                     return Err(ParseError::InvalidDependencyName);
                 };
 
@@ -2536,7 +2536,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
 
                 let Some(version_str) = value.as_utf8_string_literal() else {
-                    log.add_error(Some(source), value.loc, b"Expected a string")?;
+                    log.add_error(Some(source), value.loc, b"Expected a string");
                     return Err(ParseError::InvalidDependencyVersion);
                 };
 
@@ -2561,7 +2561,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     ) {
                         Some(v) => v,
                         None => {
-                            log.add_error(Some(source), value.loc, b"Invalid dependency version")?;
+                            log.add_error(Some(source), value.loc, b"Invalid dependency version");
                             return Err(ParseError::InvalidDependencyVersion);
                         }
                     },

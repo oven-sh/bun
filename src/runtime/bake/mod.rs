@@ -463,7 +463,7 @@ impl Framework {
 
     /// `bake.Framework.addReactInstallCommandNote` (bake.zig:375).
     pub fn add_react_install_command_note(log: &mut bun_logger::Log) {
-        bun_core::handle_oom(log.add_msg(bun_logger::Msg {
+        log.add_msg(bun_logger::Msg {
             kind: bun_logger::Kind::Note,
             data: bun_logger::range_data(
                 None,
@@ -475,7 +475,7 @@ impl Framework {
                 ),
             ),
             ..Default::default()
-        }));
+        });
     }
 }
 

@@ -597,7 +597,7 @@ impl Linker {
                     import_record.path.text,
                     import_record.kind.into(),
                     bun_core::err!("ModuleNotFound"),
-                )?;
+                );
             } else {
                 log.add_resolve_error(
                     Some(source),
@@ -609,7 +609,7 @@ impl Linker {
                     import_record.path.text,
                     import_record.kind.into(),
                     bun_core::err!("ModuleNotFound"),
-                )?;
+                );
             }
         } else {
             log.add_resolve_error(
@@ -622,7 +622,7 @@ impl Linker {
                 import_record.path.text,
                 import_record.kind.into(),
                 bun_core::err!("ModuleNotFound"),
-            )?;
+            );
         }
         Ok(true)
     }
@@ -677,7 +677,7 @@ impl Linker {
                     if relative_name.len() > 1
                         && !(relative_name[0] == SEP || relative_name[0] == b'.')
                     {
-                        pretty = intern_box(strings::concat(&[b"./", relative_name])?);
+                        pretty = intern_box(strings::concat(&[b"./", relative_name]));
                     } else {
                         pretty = dupe(relative_name);
                     }

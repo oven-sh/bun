@@ -126,7 +126,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     err_loc,
                     b"Optional chaining is not allowed in decorator expressions",
-                )?;
+                );
                 return Err(err!("SyntaxError"));
             }
 
@@ -403,7 +403,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
                 // SAFETY: see above.
-                VecExt::append(&mut p.current_scope_mut().generated, arg_ref)?;
+                VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             } else {
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, name_text)
@@ -463,7 +463,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.expect(T::TStringLiteral)?;
             p.lexer.expect(T::TCloseParen)?;
             if !opts.is_typescript_declare {
-                let args = ExprNodeList::init_one(path)?;
+                let args = ExprNodeList::init_one(path);
                 let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Call {
@@ -510,7 +510,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             .expect("unreachable");
         // PERF(port): was `arena.alloc(Decl, 1)` into arena slice — profile in Phase B
         let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
-        let decls = G::DeclList::init_one(G::Decl { binding, value: Some(value) })?;
+        let decls = G::DeclList::init_one(G::Decl { binding, value: Some(value) });
         Ok(p.s(
             S::Local {
                 kind,
@@ -670,7 +670,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
                 // SAFETY: see above.
-                VecExt::append(&mut p.current_scope_mut().generated, arg_ref)?;
+                VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             } else {
                 arg_ref = p
                     .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)

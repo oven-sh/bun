@@ -62,7 +62,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
     match count {
         0 => Ok(JSValue::UNDEFINED),
         1 => {
-            let msg = msgs[0].clone()?;
+            let msg = msgs[0].clone();
             Ok(match msg.metadata {
                 Metadata::Build => BuildMessage::create(global, msg)?,
                 Metadata::Resolve(_) => {
@@ -73,7 +73,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
         _ => {
             for (i, msg) in msgs[..usize::from(count)].iter().enumerate() {
                 errors_stack[i] = match msg.metadata {
-                    Metadata::Build => BuildMessage::create(global, msg.clone()?)?,
+                    Metadata::Build => BuildMessage::create(global, msg.clone())?,
                     Metadata::Resolve(_) => {
                         // `msg` is `&Msg`; `create` clones internally.
                         ResolveMessage::create(global, msg, b"")?
@@ -97,7 +97,7 @@ pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue>
 
     let arr = JSValue::create_empty_array(global, msgs.len())?;
     for (i, msg) in msgs.iter().enumerate() {
-        arr.put_index(global, u32::try_from(i).expect("int cast"), msg_to_js(msg.clone()?, global)?)?;
+        arr.put_index(global, u32::try_from(i).expect("int cast"), msg_to_js(msg.clone(), global)?)?;
     }
     Ok(arr)
 }

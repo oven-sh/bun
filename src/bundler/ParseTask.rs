@@ -657,7 +657,7 @@ fn css_symbols_to_parser_symbols(
     src: Vec<bun_logger::Symbol>,
 ) -> bun_js_parser::ast::symbol::List {
     use bun_js_parser::ast::symbol::{Kind as PKind, Symbol as PSym};
-    let mut out = bun_core::handle_oom(Vec::<PSym>::init_capacity(src.len() as usize));
+    let mut out = Vec::<PSym>::init_capacity(src.len() as usize);
     for s in src.slice() {
         // Both `Kind`/`ImportItemStatus` are `#[repr(u8)]` ports of the same
         // Zig enums (Symbol.zig:192, ImportItemStatus); discriminants are
@@ -1070,7 +1070,7 @@ fn get_ast(
                     // Generate a single part that depends on all the import records.
                     // This is to ensure that we generate a JavaScript bundle containing all the user's code.
                     let mut import_record_indices =
-                        Vec::<u32>::init_capacity(import_records_len as usize)?;
+                        Vec::<u32>::init_capacity(import_records_len as usize);
                     bun_core::vec::extend_from_fn(
                         &mut import_record_indices,
                         import_records_len as usize,

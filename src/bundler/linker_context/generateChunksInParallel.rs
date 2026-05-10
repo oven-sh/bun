@@ -405,7 +405,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
 
-            c.log.add_error(None, Logger::Loc::EMPTY, msg)?;
+            c.log.add_error(None, Logger::Loc::EMPTY, msg);
 
             // PORT NOTE: Zig `inline for` over a homogeneous tuple → const array + plain for.
             for (name, template) in [
@@ -429,7 +429,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         ..Default::default()
                     },
                     ..Default::default()
-                })?;
+                });
             }
 
             return Err(bun_core::err!("DuplicateOutputPath"));
@@ -542,7 +542,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             None,
             Logger::Loc::EMPTY,
             b"cannot write multiple output files without an output directory",
-        )?;
+        );
         return Err(bun_core::err!("MultipleOutputFilesWithoutOutputDir"));
     }
 
@@ -757,7 +757,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         input_loader: Loader::File,
                         output_path: source_map_final_rel_path.into_boxed_slice(),
                         output_kind: options::OutputKind::Sourcemap,
-                        input_path: bun_core::handle_oom(strings::concat(&[&input_path[..], b".map"])),
+                        input_path: strings::concat(&[&input_path[..], b".map"]),
                         side: None,
                         entry_point_index: None,
                         is_executable: false,

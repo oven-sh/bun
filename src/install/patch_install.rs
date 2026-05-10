@@ -454,7 +454,7 @@ impl PatchTask {
         let patchfile_txt = match sys::File::read_from(Fd::cwd(), absolute_patchfile_path.as_bytes()) {
             sys::Result::Ok(txt) => txt,
             sys::Result::Err(e) => {
-                log.add_sys_error(&e, format_args!("failed to read patchfile"))?;
+                log.add_sys_error(&e, format_args!("failed to read patchfile"));
                 return Ok(());
             }
         };
@@ -469,7 +469,7 @@ impl PatchTask {
                         <&'static str>::from(e)
                     ),
                     Default::default(),
-                )?;
+                );
                 return Ok(());
             }
         };
@@ -552,7 +552,7 @@ impl PatchTask {
         match pkg_install.install(true, system_tmpdir, InstallMethod::Copyfile, resolution_tag) {
             InstallResult::Success => {}
             InstallResult::Failure(reason) => {
-                return log.add_error_fmt_opts(
+                log.add_error_fmt_opts(
                     format_args!(
                         "{} while executing step: {}",
                         reason.err.name(),
@@ -560,6 +560,7 @@ impl PatchTask {
                     ),
                     Default::default(),
                 );
+                return Ok(());
             }
         }
 
@@ -572,23 +573,25 @@ impl PatchTask {
             ) {
                 sys::Result::Ok(fd) => fd,
                 sys::Result::Err(e) => {
-                    return log.add_sys_error(
+                    log.add_sys_error(
                         &e,
                         format_args!(
                             "failed trying to open temporary dir to apply patch to package: {}",
                             BStr::new(&resolution_label)
                         ),
                     );
+                    return Ok(());
                 }
             };
             let _close_guard = scopeguard::guard(patch_pkg_dir, |fd| fd.close());
 
             // 4. apply patch
             if let Some(e) = patchfile.apply(patch_pkg_dir) {
-                return log.add_error_fmt_opts(
+                log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
                     Default::default(),
                 );
+                return Ok(());
             }
 
             // 5. Add bun tag
@@ -612,13 +615,14 @@ impl PatchTask {
             ) {
                 sys::Result::Ok(fd) => fd,
                 sys::Result::Err(e) => {
-                    return log.add_error_fmt_opts(
+                    log.add_error_fmt_opts(
                         format_args!(
                             "failed adding bun tag: {}",
                             e.with_path(buntag_zstr.as_bytes())
                         ),
                         Default::default(),
                     );
+                    return Ok(());
                 }
             };
             buntagfd.close();
@@ -646,13 +650,14 @@ impl PatchTask {
             },
         )
         {
-            return log.add_error_fmt_opts(
+            log.add_error_fmt_opts(
                 format_args!(
                     "renaming changes to cache dir: {}",
                     e.with_path(cache_dir_subpath_z.as_bytes())
                 ),
                 Default::default(),
             );
+            return Ok(());
         }
         Ok(())
     }
@@ -696,8 +701,7 @@ impl PatchTask {
                                     .slice(&manager.lockfile.buffers.string_bytes)
                             ),
                         ),
-                    )
-                    .expect("OOM");
+                    );
                     return None;
                 }
                 log.add_warning_fmt(
@@ -707,8 +711,7 @@ impl PatchTask {
                         "patchfile <b>{}<r> is empty, please restore or delete it.",
                         BStr::new(absolute_patchfile_path.as_bytes())
                     ),
-                )
-                .expect("OOM");
+                );
                 return None;
             }
             sys::Result::Ok(s) => s,
@@ -722,8 +725,7 @@ impl PatchTask {
                     "patchfile <b>{}<r> is empty, please restore or delete it.",
                     BStr::new(absolute_patchfile_path.as_bytes())
                 ),
-            )
-            .expect("OOM");
+            );
             return None;
         }
 
@@ -733,8 +735,7 @@ impl PatchTask {
                     None,
                     Loc::EMPTY,
                     format_args!("failed to open patch file: {}", e),
-                )
-                .expect("OOM");
+                );
                 return None;
             }
             sys::Result::Ok(fd) => fd,
@@ -761,8 +762,7 @@ impl PatchTask {
                             e,
                             BStr::new(absolute_patchfile_path.as_bytes())
                         ),
-                    )
-                    .expect("OOM");
+                    );
                     return None;
                 }
             };

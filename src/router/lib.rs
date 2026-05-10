@@ -640,8 +640,7 @@ impl<'a> RouteLoader<'a> {
                             // SAFETY: *existing aliases a Box<Route> in self.all_routes
                             bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                 return;
             }
 
@@ -668,8 +667,7 @@ impl<'a> RouteLoader<'a> {
                                 // SAFETY: *existing aliases a Box<Route> in self.all_routes
                                 bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
                             ),
-                        )
-                        .expect("unreachable");
+                        );
 
                     return;
                 }
@@ -698,8 +696,7 @@ impl<'a> RouteLoader<'a> {
                                 bstr::BStr::new(route.name),
                                 bstr::BStr::new(*e.get()),
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                     return;
                 }
                 Entry::Vacant(v) => {
@@ -1205,8 +1202,7 @@ impl Route {
                                     bstr::BStr::new(err.name()),
                                     bstr::BStr::new(&route_file_buf[..abs_len])
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                             return None;
                         }
                     }
@@ -1225,8 +1221,7 @@ impl Route {
                                 bstr::BStr::new(err.name()),
                                 bstr::BStr::new(abs_path_str)
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                         return None;
                     }
                 };
@@ -1669,8 +1664,7 @@ pub mod pattern {
                     Some(&source),
                     logger::Loc::EMPTY,
                     format_args!("Route name must be plaintext"),
-                )
-                .expect("unreachable");
+                );
                 return None;
             }
 
@@ -1692,8 +1686,7 @@ pub mod pattern {
                                     format_args!(
                                         "Catch-all route must be at the end of the path"
                                     ),
-                                )
-                                .expect("unreachable");
+                                );
                             }
                             PatternParseError::InvalidCatchAllRoute => {
                                 log.add_error_fmt(
@@ -1702,8 +1695,7 @@ pub mod pattern {
                                     format_args!(
                                         "Invalid catch-all route, e.g. should be [...param]"
                                     ),
-                                )
-                                .expect("unreachable");
+                                );
                             }
                             PatternParseError::InvalidOptionalCatchAllRoute => {
                                 log.add_error_fmt(
@@ -1712,16 +1704,14 @@ pub mod pattern {
                                     format_args!(
                                         "Invalid optional catch-all route, e.g. should be [[...param]]"
                                     ),
-                                )
-                                .expect("unreachable");
+                                );
                             }
                             PatternParseError::InvalidRoutePattern => {
                                 log.add_error_fmt(
                                     Some(&source),
                                     logger::Loc::EMPTY,
                                     format_args!("Invalid dynamic route"),
-                                )
-                                .expect("unreachable");
+                                );
                             }
                             PatternParseError::MissingParamName => {
                                 log.add_error_fmt(
@@ -1730,16 +1720,14 @@ pub mod pattern {
                                     format_args!(
                                         "Route is missing a parameter name, e.g. [param]"
                                     ),
-                                )
-                                .expect("unreachable");
+                                );
                             }
                             PatternParseError::PatternMissingClosingBracket => {
                                 log.add_error_fmt(
                                     Some(&source),
                                     logger::Loc::EMPTY,
                                     format_args!("Route is missing a closing bracket]"),
-                                )
-                                .expect("unreachable");
+                                );
                             }
                         }
                         return None;

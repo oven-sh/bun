@@ -898,7 +898,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         if this.anon_layer_count > 0 {
             return;
         }
-        bun_core::handle_oom(this.layer_names.ensure_unused_capacity(layers.len() as usize));
+        this.layer_names.ensure_unused_capacity(layers.len() as usize);
         for layer in layers.slice() {
             if this.enclosing_layer.v.len() > 0 {
                 let mut cloned = LayerName { v: SmallList::default() };
@@ -3192,8 +3192,7 @@ impl<'a> ParserOptions<'a> {
                 warning.location.line,
                 warning.location.column,
                 format_args!("{}", warning.kind),
-            )
-            .expect("unreachable");
+            );
         }
     }
 
@@ -3202,8 +3201,7 @@ impl<'a> ParserOptions<'a> {
             // SAFETY: see `warn` — `logger` carries `*mut Log` provenance from a
             // unique `&'a mut Log`; no other borrow exists during this call.
             let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
-            lg.add_warning_fmt_line_col(self.filename, line, column, args)
-                .expect("unreachable");
+            lg.add_warning_fmt_line_col(self.filename, line, column, args);
         }
     }
 
@@ -3217,8 +3215,7 @@ impl<'a> ParserOptions<'a> {
         if let Some(lg) = self.logger {
             // SAFETY: see `warn`.
             let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
-            lg.add_warning_fmt_line_col_with_notes(self.filename, line, column, args, notes)
-                .expect("unreachable");
+            lg.add_warning_fmt_line_col_with_notes(self.filename, line, column, args, notes);
         }
     }
 
@@ -3242,8 +3239,7 @@ impl<'a> ParserOptions<'a> {
                 args,
                 note_args,
                 note_range,
-            )
-            .expect("unreachable");
+            );
         }
     }
 

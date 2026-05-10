@@ -323,7 +323,7 @@ pub fn generate_symbol_import_and_use(
         ref_,
     );
     let dependencies = &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
-    let new_dependencies = dependencies.writable_slice(part_ids.len())?;
+    let new_dependencies = dependencies.writable_slice(part_ids.len());
     debug_assert_eq!(part_ids.len(), new_dependencies.len());
     for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
         *dependency = Dependency {

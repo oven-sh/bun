@@ -67,7 +67,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     Some(p.source),
                                     key_range.loc,
                                     b"\"key\" prop ignored. Must be a string, number or symbol.",
-                                )?;
+                                );
                                 i += 1; // defer i += 1
                                 continue;
                             }
@@ -171,7 +171,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         Some(p.source),
                                         expr.loc,
                                         b"Invalid JSX prop shorthand, must be identifier, dot or string",
-                                    )?;
+                                    );
                                     return Err(err!("SyntaxError"));
                                 };
 
@@ -227,7 +227,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     spread_loc,
                     b"\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.",
-                )?;
+                );
                 p.has_classic_runtime_warned = true;
             }
         }
@@ -255,7 +255,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 Some(p.source),
                 r,
                 b"Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead",
-            )?;
+            );
             return Err(err!("SyntaxError"));
         }
 
@@ -354,7 +354,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             ),
                             format_args!("Opening tag here:"),
                             tag.range,
-                        )?;
+                        );
                         return Err(err!("SyntaxError"));
                     }
 

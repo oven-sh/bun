@@ -493,7 +493,7 @@ impl<'a> Transpiler<'a> {
                     // ignore this error, we will print the original error
                 }
 
-                bun_core::handle_oom(self.log_mut().add_error_fmt(
+                self.log_mut().add_error_fmt(
                     None,
                     logger::Loc::EMPTY,
                     format_args!(
@@ -501,7 +501,7 @@ impl<'a> Transpiler<'a> {
                         err,
                         bstr::BStr::new(entry_point)
                     ),
-                ));
+                );
                 Err(err)
             }
         }
@@ -2821,11 +2821,11 @@ impl<'a> Transpiler<'a> {
                     if let Err(e) =
                         sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra)
                     {
-                        bun_core::handle_oom(self.log_mut().add_error_fmt(
+                        self.log_mut().add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!("{} while minifying", e.kind),
-                        ));
+                        );
                         return Ok(None);
                     }
                     let symbols = bun_logger::symbol::Map::init_list(Default::default());
@@ -2844,11 +2844,11 @@ impl<'a> Transpiler<'a> {
                     ) {
                         Ok(v) => v,
                         Err(e) => {
-                            bun_core::handle_oom(self.log_mut().add_error_fmt(
+                            self.log_mut().add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!("{} while printing", e),
-                            ));
+                            );
                             return Ok(None);
                         }
                     };

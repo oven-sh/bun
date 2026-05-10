@@ -1472,8 +1472,7 @@ pub fn parse_with_tag(
                             "invalid or unsupported dependency \"{}\"",
                             bstr::BStr::new(dependency)
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                 }
                 return None;
             }
@@ -1595,8 +1594,7 @@ pub fn parse_with_tag(
                         None,
                         logger::Loc::EMPTY,
                         format_args!("Unsupported protocol {}", bstr::BStr::new(dependency)),
-                    )
-                    .expect("unreachable");
+                    );
                 }
                 return None;
             }

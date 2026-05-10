@@ -54,7 +54,7 @@ impl YAML {
             1 => Ok(stream.docs[0].root),
             _ => {
                 // multi-document yaml streams are converted into arrays
-                let mut items: ast::ExprNodeList = ast::ExprNodeList::init_capacity(stream.docs.len())?;
+                let mut items: ast::ExprNodeList = ast::ExprNodeList::init_capacity(stream.docs.len());
                 for doc in &stream.docs {
                     items.push(doc.root);
                     // PERF(port): was appendAssumeCapacity
@@ -2090,43 +2090,43 @@ impl ParseResultError {
             ParseResultError::Oom => return Err(YamlParseError::OutOfMemory),
             ParseResultError::StackOverflow => return Err(YamlParseError::StackOverflow),
             ParseResultError::UnexpectedEof { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Unexpected EOF")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected EOF");
             }
             ParseResultError::UnexpectedToken { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Unexpected token")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected token");
             }
             ParseResultError::UnexpectedCharacter { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Unexpected character")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected character");
             }
             ParseResultError::InvalidDirective { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Invalid directive")?;
+                log.add_error(Some(source), pos.loc(), b"Invalid directive");
             }
             ParseResultError::UnresolvedTagHandle { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Unresolved tag handle")?;
+                log.add_error(Some(source), pos.loc(), b"Unresolved tag handle");
             }
             ParseResultError::UnresolvedAlias { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Unresolved alias")?;
+                log.add_error(Some(source), pos.loc(), b"Unresolved alias");
             }
             ParseResultError::MultilineImplicitKey { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Multiline implicit key")?;
+                log.add_error(Some(source), pos.loc(), b"Multiline implicit key");
             }
             ParseResultError::MultipleAnchors { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Multiple anchors")?;
+                log.add_error(Some(source), pos.loc(), b"Multiple anchors");
             }
             ParseResultError::MultipleTags { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Multiple tags")?;
+                log.add_error(Some(source), pos.loc(), b"Multiple tags");
             }
             ParseResultError::UnexpectedDocumentStart { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Unexpected document start")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected document start");
             }
             ParseResultError::UnexpectedDocumentEnd { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Unexpected document end")?;
+                log.add_error(Some(source), pos.loc(), b"Unexpected document end");
             }
             ParseResultError::MultipleYamlDirectives { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Multiple YAML directives")?;
+                log.add_error(Some(source), pos.loc(), b"Multiple YAML directives");
             }
             ParseResultError::InvalidIndentation { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Invalid indentation")?;
+                log.add_error(Some(source), pos.loc(), b"Invalid indentation");
             }
         }
         Ok(())

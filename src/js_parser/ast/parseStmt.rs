@@ -350,7 +350,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             p.lexer.range(),
                             b"Multiple default clauses are not allowed",
-                        )?;
+                        );
                         return Err(err!("SyntaxError"));
                     }
 
@@ -503,7 +503,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     await_range,
                     b"Cannot use \"await\" outside an async function",
-                )?;
+                );
                 is_for_await = false;
             } else {
                 // TODO: improve error handling here
@@ -600,7 +600,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     r,
                     b"\"let\" must be wrapped in parentheses to be used as an expression here",
-                )?;
+                );
                 return Err(err!("SyntaxError"));
             }
 
@@ -720,7 +720,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 Some(p.source),
                 p.lexer.range(),
                 b"A return statement cannot be used here",
-            )?;
+            );
         }
         p.lexer.next()?;
         let mut value: Option<Expr> = None;
@@ -748,7 +748,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 Some(p.source),
                 logger::Loc { start: loc.start + 5 },
                 b"Unexpected newline after \"throw\"",
-            )?;
+            );
             return Err(err!("SyntaxError"));
         }
         let expr = p.parse_expr(Level::Lowest)?;
@@ -876,7 +876,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             async_range,
                             b"Unexpected newline after \"async\"",
-                        )?;
+                        );
                     }
 
                     p.lexer.expect(T::TFunction)?;
@@ -897,7 +897,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         Some(p.source),
                                         type_range.end(),
                                         format_args!("Unexpected newline after \"type\""),
-                                    )?;
+                                    );
                                     return Err(err!("SyntaxError"));
                                 }
                                 let mut skipper = ParseStatementOptions {
@@ -1177,13 +1177,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if path.is_macro {
                     p.log()
-                        .add_error(Some(p.source), path.loc, b"cannot use macro in export statement")?;
+                        .add_error(Some(p.source), path.loc, b"cannot use macro in export statement");
                 } else if path.import_tag != ImportRecordTag::None {
                     p.log().add_error(
                         Some(p.source),
                         loc,
                         b"cannot use export statement with \"type\" attribute",
-                    )?;
+                    );
                 }
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1233,13 +1233,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             loc,
                             b"export from cannot be used with \"type\": \"macro\"",
-                        )?;
+                        );
                     } else if parsed_path.import_tag != ImportRecordTag::None {
                         p.log().add_error(
                             Some(p.source),
                             loc,
                             b"export from cannot be used with \"type\" attribute",
-                        )?;
+                        );
                     }
 
                     let import_record_index =

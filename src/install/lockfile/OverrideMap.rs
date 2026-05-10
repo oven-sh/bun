@@ -154,7 +154,7 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         let ExprData::EObject(obj) = &expr.data else {
-            log.add_warning_fmt(Some(source), expr.loc, format_args!("\"overrides\" must be an object"))?;
+            log.add_warning_fmt(Some(source), expr.loc, format_args!("\"overrides\" must be an object"));
             return Err(bun_core::err!("Invalid"));
         };
 
@@ -164,7 +164,7 @@ impl OverrideMap {
             let key = prop.key.as_ref().expect("infallible: prop has key");
             let k = key.as_utf8_string_literal().expect("infallible: is_string checked");
             if k.is_empty() {
-                log.add_warning_fmt(Some(source), key.loc, format_args!("Missing overridden package name"))?;
+                log.add_warning_fmt(Some(source), key.loc, format_args!("Missing overridden package name"));
                 continue;
             }
 
@@ -179,26 +179,26 @@ impl OverrideMap {
                     if let Some(dot) = value_expr.as_property(b".") {
                         if dot.expr.data.is_e_string() {
                             if value_obj.properties.len_u32() > 1 {
-                                log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Bun currently does not support nested \"overrides\""))?;
+                                log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Bun currently does not support nested \"overrides\""));
                             }
                             break 'value dot.expr;
                         } else {
-                            log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)))?;
+                            log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)));
                             continue 'props;
                         }
                     } else {
-                        log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Bun currently does not support nested \"overrides\""))?;
+                        log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Bun currently does not support nested \"overrides\""));
                         continue 'props;
                     }
                 }
-                log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)))?;
+                log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)));
                 continue 'props;
             };
 
             let version_str = value.as_utf8_string_literal().expect("infallible: is_string checked");
             if version_str.starts_with(b"patch:") {
                 // TODO(dylan-conway): apply .patch files to packages
-                log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support patched package \"overrides\""))?;
+                log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support patched package \"overrides\""));
                 continue;
             }
 
@@ -233,7 +233,7 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         let ExprData::EObject(obj) = &expr.data else {
-            log.add_warning_fmt(Some(source), expr.loc, format_args!("\"resolutions\" must be an object with string values"))?;
+            log.add_warning_fmt(Some(source), expr.loc, format_args!("\"resolutions\" must be an object with string values"));
             return Ok(());
         };
         self.map.ensure_unused_capacity(obj.properties.len_u32() as usize)?;
@@ -244,12 +244,12 @@ impl OverrideMap {
                 k = &k[3..];
             }
             if k.is_empty() {
-                log.add_warning_fmt(Some(source), key.loc, format_args!("Missing resolution package name"))?;
+                log.add_warning_fmt(Some(source), key.loc, format_args!("Missing resolution package name"));
                 continue;
             }
             let value = prop.value.as_ref().expect("infallible: prop has value");
             let ExprData::EString(value_str) = &value.data else {
-                log.add_warning_fmt(Some(source), key.loc, format_args!("Expected string value for resolution \"{}\"", bstr::BStr::new(k)))?;
+                log.add_warning_fmt(Some(source), key.loc, format_args!("Expected string value for resolution \"{}\"", bstr::BStr::new(k)));
                 continue;
             };
             // currently we only support one level deep, so we should error if there are more than one
@@ -257,22 +257,22 @@ impl OverrideMap {
             // - "@namespace/hello/world"
             if k[0] == b'@' {
                 let Some(first_slash) = strings::index_of_char(k, b'/') else {
-                    log.add_warning_fmt(Some(source), key.loc, format_args!("Invalid package name \"{}\"", bstr::BStr::new(k)))?;
+                    log.add_warning_fmt(Some(source), key.loc, format_args!("Invalid package name \"{}\"", bstr::BStr::new(k)));
                     continue;
                 };
                 if strings::index_of_char(&k[first_slash as usize + 1..], b'/').is_some() {
-                    log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support nested \"resolutions\""))?;
+                    log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support nested \"resolutions\""));
                     continue;
                 }
             } else if strings::index_of_char(k, b'/').is_some() {
-                log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support nested \"resolutions\""))?;
+                log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support nested \"resolutions\""));
                 continue;
             }
 
             let version_str = value_str.data;
             if version_str.starts_with(b"patch:") {
                 // TODO(dylan-conway): apply .patch files to packages
-                log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support patched package \"resolutions\""))?;
+                log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support patched package \"resolutions\""));
                 continue;
             }
 
@@ -315,7 +315,7 @@ pub fn parse_override_value(
     builder: &mut StringBuilder,
 ) -> Result<Option<Dependency>, Error> {
     if value.is_empty() {
-        log.add_warning_fmt(Some(source), loc, format_args!("Missing {} value", field))?;
+        log.add_warning_fmt(Some(source), loc, format_args!("Missing {} value", field));
         return Ok(None);
     }
 
@@ -344,7 +344,7 @@ pub fn parse_override_value(
                 bstr::BStr::new(value),
                 bstr::BStr::new(ref_name),
             ),
-        )?;
+        );
         return Ok(None);
     }
 
@@ -368,7 +368,7 @@ pub fn parse_override_value(
     ) {
         Some(v) => v,
         None => {
-            log.add_warning_fmt(Some(source), loc, format_args!("Invalid {} value \"{}\"", field, bstr::BStr::new(value)))?;
+            log.add_warning_fmt(Some(source), loc, format_args!("Invalid {} value \"{}\"", field, bstr::BStr::new(value)));
             return Ok(None);
         }
     };

@@ -644,8 +644,7 @@ impl RepositoryExt for Repository {
                         None,
                         bun_logger::Loc::EMPTY,
                         format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(err);
                 }
                 Ok(dir)
@@ -678,8 +677,7 @@ impl RepositoryExt for Repository {
                             None,
                             bun_logger::Loc::EMPTY,
                             format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
-                        )
-                        .expect("unreachable");
+                        );
                     }
                     return Err(err);
                 }
@@ -742,8 +740,7 @@ impl RepositoryExt for Repository {
                         BStr::new(committish),
                         BStr::new(name)
                     ),
-                )
-                .expect("unreachable");
+                );
                 return Err(err);
             }
         };
@@ -810,8 +807,7 @@ impl RepositoryExt for Repository {
                         None,
                         bun_logger::Loc::EMPTY,
                         format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(err);
                 }
 
@@ -828,8 +824,7 @@ impl RepositoryExt for Repository {
                         None,
                         bun_logger::Loc::EMPTY,
                         format_args!("\"git checkout\" for \"{}\" failed", BStr::new(name)),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(err);
                 }
                 let dir = bun_sys::open_dir(cache_dir, folder_name)?;
@@ -878,8 +873,7 @@ impl RepositoryExt for Repository {
                             BStr::new(name),
                             err.name()
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     package_dir.close();
                     return Err(err!("InstallFailed"));
                 }
@@ -897,8 +891,7 @@ impl RepositoryExt for Repository {
                         BStr::new(name),
                         err.name()
                     ),
-                )
-                .expect("unreachable");
+                );
                 let _ = json_file.close(); // close error is non-actionable (Zig parity: discarded)
                 package_dir.close();
                 return Err(err!("InstallFailed"));

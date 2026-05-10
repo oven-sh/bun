@@ -1016,8 +1016,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                                     Logger::Loc::EMPTY,
                                                 )),
                                             }],
-                                        )
-                                        .expect("unreachable"),
+                                        ),
                                         ..Default::default()
                                     },
                                     Logger::Loc::EMPTY,
@@ -1084,7 +1083,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
                         if flags.needs_synthetic_default_export && !had_default_export {
                             let mut properties =
-                                G::PropertyList::init_capacity(items.len()).expect("OOM");
+                                G::PropertyList::init_capacity(items.len());
                             // PERF(port): was initCapacity catch unreachable
                             let getter_fn_body: &mut [Stmt] =
                                 arena.alloc_slice_fill_default(items.len());
@@ -1131,7 +1130,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                     kind: G::PropertyKind::Get,
                                     flags: js_ast::Flags::Property::IsMethod.into(),
                                     ..Default::default()
-                                }).expect("OOM");
+                                });
                             }
                             stmts.push(Stmt::alloc(
                                 S::ExportDefault {

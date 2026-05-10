@@ -297,8 +297,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // also reading from a sibling field.
                 let suffix = core::mem::take(&mut stmts.inside_wrapper_suffix);
                 stmts
-                    .append_slice(StmtListWhich::OutsideWrapperPrefix, suffix.as_slice())
-                    .expect("unreachable");
+                    .append_slice(StmtListWhich::OutsideWrapperPrefix, suffix.as_slice());
                 stmts.inside_wrapper_suffix = suffix;
             }
             _ => {
@@ -392,7 +391,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // is `None`), so the duplicated bits do not alias any allocation.
                 let src_len = e_object.properties.len();
                 let mut new_properties =
-                    Vec::<G::Property>::init_capacity(src_len).expect("unreachable");
+                    Vec::<G::Property>::init_capacity(src_len);
                 // SAFETY: `new_properties` has capacity `src_len`; source slice is live
                 // arena memory of length `src_len`; see note above re: no owned heap data.
                 unsafe {
@@ -564,7 +563,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 // TODO: variants of the runtime functions
                 let body_stmts = js_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
-                let cjs_args = bun_core::handle_oom(Vec::<Expr>::from_slice(&[Expr::init(
+                let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
                     E::Arrow {
                         args: js_ast::StoreSlice::new(args.into_bump_slice()),
                         body: G::FnBody {
@@ -574,7 +573,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
-                )]));
+                )]);
 
                 let commonjs_wrapper_definition = Expr::init(
                     E::Call {
@@ -593,14 +592,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 // "var require_foo = __commonJS(...);"
                 {
-                    let decls = bun_core::handle_oom(G::DeclList::from_slice(&[G::Decl {
+                    let decls = G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_arena,
                             B::Identifier { r#ref: ast.wrapper_ref },
                             logger::Loc::EMPTY,
                         ),
                         value: Some(commonjs_wrapper_definition),
-                    }]));
+                    }]);
 
                     stmts
                         .append(
@@ -612,8 +611,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 },
                                 logger::Loc::EMPTY,
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                 }
             }
             WrapKind::Esm => {
@@ -717,9 +715,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 break 'stmt Stmt::allocate_expr(temp_arena, value);
                             }
                             StmtData::SFunction(_) => {
-                                bun_core::handle_oom(
-                                    stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt),
-                                );
+                                
+                                    stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                 continue 'hoist;
                             }
                             StmtData::SClass(mut class) => 'stmt: {
@@ -728,9 +725,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 // memory, so wrapping it in a StoreRef for `EClass` is sound and matches
                                 // Zig's `&class.class`.
                                 if class.class.can_be_moved() {
-                                    bun_core::handle_oom(
-                                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt),
-                                    );
+                                    
+                                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                     continue 'hoist;
                                 }
 
@@ -774,8 +770,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 },
                                 logger::Loc::EMPTY,
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                     hoist.decls.clear();
                 }
 
@@ -786,7 +781,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = bun_core::handle_oom(Vec::<Expr>::from_slice(&[Expr::init(
+                    let esm_args = Vec::<Expr>::from_slice(&[Expr::init(
                         E::Arrow {
                             is_async,
                             body: G::FnBody {
@@ -796,7 +791,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
-                    )]));
+                    )]);
 
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(
@@ -808,16 +803,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         logger::Loc::EMPTY,
                     );
 
-                    let decls = bun_core::handle_oom(G::DeclList::from_slice(&[G::Decl {
+                    let decls = G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_arena,
                             B::Identifier { r#ref: ast.wrapper_ref },
                             logger::Loc::EMPTY,
                         ),
                         value: Some(value),
-                    }]));
+                    }]);
 
-                    bun_core::handle_oom(stmts.append(
+                    stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
                         Stmt::alloc(
                             S::Local {
@@ -826,7 +821,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             },
                             logger::Loc::EMPTY,
                         ),
-                    ));
+                    );
                 } else {
                     // // If this fails, then there will be places we reference
                     // // `init_foo` without it actually existing.
@@ -858,11 +853,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             logger::Loc::EMPTY,
                         );
 
-                        bun_core::handle_oom(stmts.append(
+                        stmts.append(
                             StmtListWhich::OutsideWrapperPrefix,
                             Stmt::alloc(
                                 S::Local {
-                                    decls: bun_core::handle_oom(G::DeclList::from_slice(&[
+                                    decls: G::DeclList::from_slice(&[
                                         G::Decl {
                                             binding: Binding::alloc(
                                                 temp_arena,
@@ -871,12 +866,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                             ),
                                             value: Some(value),
                                         },
-                                    ])),
+                                    ]),
                                     ..Default::default()
                                 },
                                 logger::Loc::EMPTY,
                             ),
-                        ));
+                        );
                     }
                 }
             }
@@ -1053,16 +1048,14 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         // Appending to this decls list is safe because did_merge_with_previous_local is true
                         before
                             .decls
-                            .append_slice(after.decls.slice())
-                            .expect("unreachable");
+                            .append_slice(after.decls.slice());
                     } else {
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
                         let mut clone = Vec::<G::Decl>::init_capacity(
                             before.decls.len() + after.decls.len(),
-                        )
-                        .expect("unreachable");
+                        );
                         // PERF(port): was appendSliceAssumeCapacity
                         clone.append_slice_assume_capacity(before.decls.slice());
                         clone.append_slice_assume_capacity(after.decls.slice());

@@ -36,8 +36,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     r,
                     b"Cannot use an \"import\" expression here without parentheses",
-                )
-                .expect("unreachable");
+                );
         }
 
         // allow "in" inside call arguments;
@@ -195,7 +194,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     "Cannot use {} as an identifier here",
                                     bstr::BStr::new(original_name)
                                 ),
-                            )?;
+                            );
                         }
 
                         items.push(ClauseItem {
@@ -249,7 +248,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             "Cannot use \"{}\" as an identifier here",
                             bstr::BStr::new(original_name)
                         ),
-                    )?;
+                    );
                 }
 
                 items.push(ClauseItem {

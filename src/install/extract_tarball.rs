@@ -48,8 +48,7 @@ impl ExtractTarball {
                         "Integrity check failed<r> for tarball: {}",
                         BStr::new(self.name.slice()),
                     ),
-                )
-                .expect("unreachable");
+                );
                 return Err(bun_core::err!("IntegrityCheckFailed"));
             }
         }
@@ -258,8 +257,7 @@ impl ExtractTarball {
                             BStr::new(tmpname.as_bytes()),
                             BStr::new(name),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
@@ -355,8 +353,7 @@ impl ExtractTarball {
                             BStr::new(name),
                             bun_core::fmt::fmt_path_u8(tmpname.as_bytes(), Default::default()),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(bun_core::err!("InstallFailed"));
                 }
             }
@@ -564,8 +561,7 @@ impl ExtractTarball {
                                     BStr::new(tmpname.as_bytes()),
                                     BStr::new(folder_name),
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                             return Err(bun_core::err!("InstallFailed"));
                         }
                     };
@@ -633,8 +629,7 @@ impl ExtractTarball {
                                     BStr::new(tmpname.as_bytes()),
                                     BStr::new(folder_name),
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                             return Err(bun_core::err!("InstallFailed"));
                         }
                         bun_sys::Result::Ok(_) => {
@@ -679,8 +674,7 @@ impl ExtractTarball {
                             BStr::new(tmpname.as_bytes()),
                             BStr::new(folder_name),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(bun_core::err!("InstallFailed"));
                 }
             }
@@ -698,8 +692,7 @@ impl ExtractTarball {
                             BStr::new(name),
                             err.name(),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
@@ -718,8 +711,7 @@ impl ExtractTarball {
                             BStr::new(name),
                             BStr::new(err.name()),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
@@ -778,8 +770,7 @@ impl ExtractTarball {
                                 BStr::new(name),
                                 err.name(),
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                         return Err(bun_core::err!("InstallFailed"));
                     }
                 };
@@ -797,8 +788,7 @@ impl ExtractTarball {
                                 BStr::new(name),
                                 err.name(),
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                         return Err(bun_core::err!("InstallFailed"));
                     }
                 };

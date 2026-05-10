@@ -3925,7 +3925,7 @@ impl DebugMeta {
             data: logger::range_data(source, r, msg_text),
             notes: core::mem::take(&mut self.notes).into_boxed_slice(),
             ..Default::default()
-        })?;
+        });
         Ok(())
     }
 }
@@ -4739,7 +4739,7 @@ impl<'a> Resolver<'a> {
                         ),
                         notes,
                         ..Default::default()
-                    })?;
+                    });
                 }
             } else if (log.level as u32) <= (logger::Level::Verbose as u32) {
                 if logger::Kind::Verbose.should_print(log.level) {
@@ -4754,7 +4754,7 @@ impl<'a> Resolver<'a> {
                         ),
                         notes,
                         ..Default::default()
-                    })?;
+                    });
                 }
             }
         }

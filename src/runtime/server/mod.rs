@@ -637,7 +637,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `request_pool` points at a process-static (or
         // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
-        let ctx_slot = bun_core::handle_oom(unsafe { (*server.request_pool).try_get() });
+        let ctx_slot = unsafe { (*server.request_pool).try_get() };
         // SAFETY: `try_get` hands out an uninitialized slot; `create()` fully
         // initializes it via `MaybeUninit::write`.
         let ctx_uninit = unsafe {

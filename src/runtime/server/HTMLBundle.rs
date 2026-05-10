@@ -530,7 +530,7 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
-                bun_core::handle_oom(completion_task.log.clone_to_with_recycled(&mut log, true));
+                completion_task.log.clone_to_with_recycled(&mut log, true);
                 // PORT NOTE: reshaped for borrowck — Zig wrote
                 // `this.state = .{ .err = ... }` then mutated `this.state.err`.
                 if let Some(server) = self.server.get() {

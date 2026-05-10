@@ -1405,11 +1405,11 @@ pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
 }
 
 #[inline]
-pub fn append(self_: &[u8], other: &[u8]) -> Result<Box<[u8]>, AllocError> {
+pub fn append(self_: &[u8], other: &[u8]) -> Box<[u8]> {
     let mut buf = Vec::with_capacity(self_.len() + other.len());
     buf.extend_from_slice(self_);
     buf.extend_from_slice(other);
-    Ok(buf.into_boxed_slice())
+    buf.into_boxed_slice()
 }
 
 #[inline]
@@ -2519,7 +2519,7 @@ pub fn has_prefix_with_word_boundary(input: &[u8], prefix: &'static [u8]) -> boo
     false
 }
 
-pub fn concat_with_length(args: &[&[u8]], length: usize) -> Result<Box<[u8]>, AllocError> {
+pub fn concat_with_length(args: &[&[u8]], length: usize) -> Box<[u8]> {
     let mut out = vec![0u8; length].into_boxed_slice();
     let mut off: usize = 0;
     for arg in args {
@@ -2527,10 +2527,10 @@ pub fn concat_with_length(args: &[&[u8]], length: usize) -> Result<Box<[u8]>, Al
         off += arg.len();
     }
     debug_assert!(off == length); // all bytes should be used
-    Ok(out)
+    out
 }
 
-pub fn concat(args: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
+pub fn concat(args: &[&[u8]]) -> Box<[u8]> {
     let mut length: usize = 0;
     for arg in args {
         length += arg.len();
@@ -2599,7 +2599,7 @@ pub fn concat_if_needed(
         return Ok(());
     }
 
-    *dest = concat_with_length(args, total_length)?;
+    *dest = concat_with_length(args, total_length);
     Ok(())
 }
 

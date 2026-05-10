@@ -337,8 +337,7 @@ impl<'a> Task<'a> {
                                     err.name(),
                                     bstr::BStr::new(manifest.name.slice()),
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                         this.err = Some(err);
                         this.status = Status::Fail;
                         this.data = Data {
@@ -417,8 +416,7 @@ impl<'a> Task<'a> {
                                             (*this.request.package_manifest).name.slice()
                                         }),
                                     ),
-                                )
-                                .expect("unreachable");
+                                );
                             this.status = Status::Fail;
                             this.data = Data {
                                 package_manifest: ManuallyDrop::new(

@@ -719,7 +719,7 @@ pub fn scan_imports_and_exports(
                                 + re_exports.len()
                                 + part.dependencies.len() as usize;
                             // PORT NOTE: bun.handleOom dropped — Vec growth aborts on OOM.
-                            part.dependencies.ensure_total_capacity(total_len)?;
+                            part.dependencies.ensure_total_capacity(total_len);
 
                             // Depend on the file containing the imported symbol
                             for resolved_part_index in parts_declaring_symbol {
@@ -1528,11 +1528,9 @@ mod __css_validation {
                             "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
-                        ))
-                        .expect("oom"),
+                        )),
                     )
-                    .clone_line_text(self.log.clone_line_text)
-                    .expect("oom"),
+                    .clone_line_text(self.log.clone_line_text),
                     notes: Box::<[Logger::Data]>::from(
                         &[
                             Logger::range_data(
@@ -1544,8 +1542,7 @@ mod __css_validation {
                                 Logger::alloc_print(format_args!(
                                     "The first definition of {} is in this style rule:",
                                     bstr::BStr::new(property_name)
-                                ))
-                                .expect("oom"),
+                                )),
                             ),
                             Logger::Data {
                                 text: {

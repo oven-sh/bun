@@ -143,8 +143,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         .expect("unreachable");
                                     let new_item = LocRef { loc: name_loc, ref_: Some(new_ref) };
                                     // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
-                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref)
-                                        .expect("unreachable");
+                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref);
 
                                     p.import_items_for_namespace
                                         .get_mut(&id.ref_)
@@ -371,8 +370,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         .new_symbol(js_ast::symbol::Kind::Other, sym_name)
                                         .expect("unreachable");
                                     // SAFETY: module_scope is arena-owned and valid for 'a.
-                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref)
-                                        .expect("unreachable");
+                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                                     p.commonjs_named_exports
                                         .put(
                                             name,
@@ -593,8 +591,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                             .new_symbol(js_ast::symbol::Kind::Other, sym_name)
                                             .expect("unreachable");
                                         // SAFETY: module_scope is arena-owned and valid for 'a.
-                                        VecExt::append(&mut p.module_scope_mut().generated, new_ref)
-                                            .expect("unreachable");
+                                        VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                                         p.commonjs_named_exports
                                             .put(
                                                 name,
@@ -700,8 +697,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         "import.meta.hot.{} does not exist",
                                         bstr::BStr::new(name)
                                     ),
-                                )
-                                .expect("unreachable");
+                                );
                             return Some(Expr {
                                 data: js_ast::ExprData::EUndefined(E::Undefined),
                                 loc,
@@ -822,8 +818,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 Some(p.source),
                 logger::Range { loc: comma_after_spread, len: 1 },
                 b"Unexpected \",\" after rest pattern",
-            )
-            .expect("unreachable");
+            );
     }
 }
 

@@ -354,7 +354,6 @@ where
                                         bstr::BStr::new(key_text)
                                     ),
                                 )
-                                .expect("unreachable");
                         }
                     }
 
@@ -426,8 +425,7 @@ where
                         Some(source),
                         comma_range,
                         b"JSON does not support trailing commas",
-                    )
-                    .expect("unreachable");
+                    );
             }
             return Ok(false);
         }
@@ -671,8 +669,7 @@ where
                         Some(self.source),
                         comma_range,
                         b"JSON does not support trailing commas",
-                    )
-                    .expect("unreachable");
+                    );
             }
             return Ok(false);
         }
@@ -754,7 +751,7 @@ impl<T: ToAst> ToAst for [T] {
         }
         Ok(Expr::init(
             E::Array {
-                items: ExprNodeList::from_slice(exprs.into_bump_slice())?,
+                items: ExprNodeList::from_slice(exprs.into_bump_slice()),
                 ..Default::default()
             },
             logger::Loc::EMPTY,

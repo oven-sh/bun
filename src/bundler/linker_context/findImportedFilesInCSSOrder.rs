@@ -294,7 +294,7 @@ pub fn find_imported_files_in_css_order<'a>(
     let mut visitor = Visitor {
         arena,
         parse_graph: this.parse_graph,
-        visited: handle_oom(Vec::<Index>::init_capacity(16)),
+        visited: Vec::<Index>::init_capacity(16),
         // SAFETY: re-borrow the same column slices; lifetime erased to decouple
         // from the shared `this.graph` borrow (Zig holds these as raw slice views).
         css_asts: unsafe {
@@ -319,7 +319,7 @@ pub fn find_imported_files_in_css_order<'a>(
     let has_external_import = visitor.has_external_import;
     let mut order = visitor.order;
     let mut wip_order =
-        handle_oom(Vec::<CssImportOrder>::init_capacity(order.len() as usize));
+        Vec::<CssImportOrder>::init_capacity(order.len() as usize);
 
     let css_asts: &[bun_js_parser::ast::bundled_ast::CssCol] = unsafe {
         core::slice::from_raw_parts(css_asts_slice.as_ptr(), css_asts_slice.len())
@@ -674,11 +674,10 @@ pub fn find_imported_files_in_css_order<'a>(
                         &mut wip_order.mut_(prev_index as usize).kind
                     {
                         if let CssImportOrderKind::Layers(entry_layers) = &entry.kind {
-                            handle_oom(
+                            
                                 prev_layers
                                     .to_owned()
-                                    .append_slice(entry_layers.inner().slice_const()),
-                            );
+                                    .append_slice(entry_layers.inner().slice_const());
                         }
                     }
                 }
@@ -714,7 +713,7 @@ fn deep_clone_conditions(
 /// memcpy of `ImportRecord` values into a fresh allocation.
 #[inline]
 fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
-    let mut out = handle_oom(Vec::<ImportRecord>::init_capacity(list.len() as usize));
+    let mut out = Vec::<ImportRecord>::init_capacity(list.len() as usize);
     for r in list.slice_const() {
         // PORT NOTE: `ImportRecord` is plain-old-data in Zig (no destructor);
         // `Path<'static>` slices borrow resolver storage. Bitwise copy matches

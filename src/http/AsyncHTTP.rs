@@ -275,8 +275,7 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
                             "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{}\" is not a valid integer between 1 and 65535",
                             bstr::BStr::new(max_http_requests),
                         ),
-                    )
-                    .expect("OOM");
+                    );
                 return;
             }
         };
@@ -288,8 +287,7 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
                     format_args!(
                         "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535"
                     ),
-                )
-                .expect("OOM");
+                );
             return;
         }
         MAX_SIMULTANEOUS_REQUESTS.store(usize::from(max), Ordering::Relaxed);

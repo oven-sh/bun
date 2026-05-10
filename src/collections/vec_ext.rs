@@ -4,9 +4,9 @@
 //! `docs/BABYLIST_REPLACEMENT.md`): every former `BabyList<T>` site is now a
 //! plain `Vec<T>`, and these traits supply the Zig method names (`.slice()`,
 //! `.append()`, `.init_capacity()`, …) so call sites needed only a type-level
-//! rewrite. Method signatures preserve the `Result<_, AllocError>` shape so
-//! `?`/`handle_oom` callers compile unchanged; internally `Vec` aborts on OOM,
-//! so the `Err` arm is effectively dead.
+//! rewrite. `Vec` aborts on OOM, so these methods are infallible and return
+//! `T` / `()` directly (the original `Result<_, AllocError>` shim has been
+//! removed — `?`/`handle_oom` at call sites is no longer needed).
 //!
 //! NOTE: `.first()`/`.last()`/`.insert()`/`.contains()`/`.clone()` are
 //! intentionally *not* provided — they collide with `Vec`/slice inherent
@@ -22,9 +22,9 @@ use bun_core::strings;
 
 pub trait VecExt<T>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
-    fn init_capacity(n: usize) -> Result<Self, AllocError>;
-    fn init_one(value: T) -> Result<Self, AllocError>;
-    fn from_slice(items: &[T]) -> Result<Self, AllocError>
+    fn init_capacity(n: usize) -> Self;
+    fn init_one(value: T) -> Self;
+    fn from_slice(items: &[T]) -> Self
     where
         T: Clone;
     fn move_from_list(list: Vec<T>) -> Self;
@@ -91,40 +91,35 @@ pub trait VecExt<T>: Sized {
     fn cap_u32(&self) -> u32;
 
     // ── mutation ──────────────────────────────────────────────────────────
-    fn append(&mut self, value: T) -> Result<(), AllocError>;
+    fn append(&mut self, value: T);
     fn append_assume_capacity(&mut self, value: T);
-    fn append_slice(&mut self, vals: &[T]) -> Result<(), AllocError>
+    fn append_slice(&mut self, vals: &[T])
     where
         T: Clone;
     fn append_slice_assume_capacity(&mut self, vals: &[T])
     where
         T: Copy;
-    fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError>;
-    fn ensure_total_capacity_precise(&mut self, n: usize) -> Result<(), AllocError>;
-    fn ensure_unused_capacity(&mut self, n: usize) -> Result<(), AllocError>;
+    fn ensure_total_capacity(&mut self, n: usize);
+    fn ensure_total_capacity_precise(&mut self, n: usize);
+    fn ensure_unused_capacity(&mut self, n: usize);
     fn shrink_retaining_capacity(&mut self, new_len: usize);
     fn shrink_and_free(&mut self, new_len: usize);
     fn clear_retaining_capacity(&mut self);
     fn clear_and_free(&mut self);
     fn ordered_remove(&mut self, index: usize) -> T;
-    fn insert_slice(&mut self, index: usize, vals: &[T]) -> Result<(), AllocError>
+    fn insert_slice(&mut self, index: usize, vals: &[T])
     where
         T: Clone;
-    fn replace_range(
-        &mut self,
-        start: usize,
-        len: usize,
-        new_items: &[T],
-    ) -> Result<(), AllocError>
+    fn replace_range(&mut self, start: usize, len: usize, new_items: &[T])
     where
         T: Clone;
     fn expand_to_capacity(&mut self);
-    fn writable_slice(&mut self, additional: usize) -> Result<&mut [T], AllocError>;
+    fn writable_slice(&mut self, additional: usize) -> &mut [T];
 
     // ── ownership transfer ────────────────────────────────────────────────
     fn move_to_list(&mut self) -> Vec<T>;
     fn move_to_list_managed(&mut self) -> Vec<T>;
-    fn to_owned_slice(&mut self) -> Result<Box<[T]>, AllocError>;
+    fn to_owned_slice(&mut self) -> Box<[T]>;
     /// No-op for `Vec` — already globally owned.  Kept so cat-4 call sites
     /// (`LinkerGraph::load`) compile during incremental migration; delete once
     /// all callers are gone.
@@ -159,23 +154,23 @@ pub trait VecExt<T>: Sized {
 // with `Default`, so `A::default()` is free.
 impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
     #[inline]
-    fn init_capacity(n: usize) -> Result<Self, AllocError> {
-        Ok(Vec::with_capacity_in(n, A::default()))
+    fn init_capacity(n: usize) -> Self {
+        Vec::with_capacity_in(n, A::default())
     }
     #[inline]
-    fn init_one(value: T) -> Result<Self, AllocError> {
+    fn init_one(value: T) -> Self {
         let mut v = Vec::with_capacity_in(1, A::default());
         v.push(value);
-        Ok(v)
+        v
     }
     #[inline]
-    fn from_slice(items: &[T]) -> Result<Self, AllocError>
+    fn from_slice(items: &[T]) -> Self
     where
         T: Clone,
     {
         let mut v = Vec::with_capacity_in(items.len(), A::default());
         v.extend_from_slice(items);
-        Ok(v)
+        v
     }
     #[inline]
     fn move_from_list(list: Vec<T>) -> Self {
@@ -284,9 +279,8 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
     }
 
     #[inline]
-    fn append(&mut self, value: T) -> Result<(), AllocError> {
+    fn append(&mut self, value: T) {
         self.push(value);
-        Ok(())
     }
     #[inline]
     fn append_assume_capacity(&mut self, value: T) {
@@ -294,12 +288,11 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         self.push(value);
     }
     #[inline]
-    fn append_slice(&mut self, vals: &[T]) -> Result<(), AllocError>
+    fn append_slice(&mut self, vals: &[T])
     where
         T: Clone,
     {
         self.extend_from_slice(vals);
-        Ok(())
     }
     #[inline]
     fn append_slice_assume_capacity(&mut self, vals: &[T])
@@ -309,21 +302,18 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         self.extend_from_slice(vals);
     }
     #[inline]
-    fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
+    fn ensure_total_capacity(&mut self, n: usize) {
         let need = n.saturating_sub(self.len());
         self.reserve(need);
-        Ok(())
     }
     #[inline]
-    fn ensure_total_capacity_precise(&mut self, n: usize) -> Result<(), AllocError> {
+    fn ensure_total_capacity_precise(&mut self, n: usize) {
         let need = n.saturating_sub(self.len());
         self.reserve_exact(need);
-        Ok(())
     }
     #[inline]
-    fn ensure_unused_capacity(&mut self, n: usize) -> Result<(), AllocError> {
+    fn ensure_unused_capacity(&mut self, n: usize) {
         self.reserve(n);
-        Ok(())
     }
     #[inline]
     fn shrink_retaining_capacity(&mut self, new_len: usize) {
@@ -347,25 +337,18 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         self.remove(index)
     }
     #[inline]
-    fn insert_slice(&mut self, index: usize, vals: &[T]) -> Result<(), AllocError>
+    fn insert_slice(&mut self, index: usize, vals: &[T])
     where
         T: Clone,
     {
         self.splice(index..index, vals.iter().cloned());
-        Ok(())
     }
     #[inline]
-    fn replace_range(
-        &mut self,
-        start: usize,
-        len: usize,
-        new_items: &[T],
-    ) -> Result<(), AllocError>
+    fn replace_range(&mut self, start: usize, len: usize, new_items: &[T])
     where
         T: Clone,
     {
         self.splice(start..start + len, new_items.iter().cloned());
-        Ok(())
     }
     #[inline]
     fn expand_to_capacity(&mut self) {
@@ -373,12 +356,12 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         // Callers immediately overwrite every element.
         unsafe { self.set_len(self.capacity()) };
     }
-    fn writable_slice(&mut self, additional: usize) -> Result<&mut [T], AllocError> {
+    fn writable_slice(&mut self, additional: usize) -> &mut [T] {
         self.reserve(additional);
         let prev = self.len();
         // SAFETY: capacity reserved; tail is treated as write-only by callers.
         unsafe { self.set_len(prev + additional) };
-        Ok(&mut self[prev..])
+        &mut self[prev..]
     }
 
     #[inline]
@@ -393,8 +376,8 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         self.move_to_list()
     }
     #[inline]
-    fn to_owned_slice(&mut self) -> Result<Box<[T]>, AllocError> {
-        Ok(self.move_to_list().into_boxed_slice())
+    fn to_owned_slice(&mut self) -> Box<[T]> {
+        self.move_to_list().into_boxed_slice()
     }
     #[inline]
     fn shallow_copy(&self) -> ManuallyDrop<Self> {

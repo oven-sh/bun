@@ -108,7 +108,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                         E::Object::default(),
                                         stmt.loc,
                                     )),
-                                }])?,
+                                }]),
                                 ..Default::default()
                             },
                             stmt.loc,
@@ -151,7 +151,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                         ..Default::default()
                                     },
                                     record.range.loc,
-                                )])?,
+                                )]),
                                 ..Default::default()
                             },
                             stmt.loc,
@@ -168,7 +168,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                         st.star_name_loc.unwrap_or(stmt.loc),
                                     ),
                                     value: Some(call),
-                                }])?,
+                                }]),
                                 ..Default::default()
                             },
                             stmt.loc,
@@ -224,10 +224,10 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         ));
                     }
 
-                    stmts.append(StmtListWhich::OutsideWrapperPrefix, *stmt)?;
+                    stmts.append(StmtListWhich::OutsideWrapperPrefix, *stmt);
                 }
             }
-            _ => stmts.append(StmtListWhich::InsideWrapperSuffix, *stmt)?,
+            _ => stmts.append(StmtListWhich::InsideWrapperSuffix, *stmt),
         }
     }
 
@@ -255,7 +255,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         },
                         Loc::EMPTY,
                     )),
-                }])?,
+                }]),
                 ..Default::default()
             },
             Loc::EMPTY,

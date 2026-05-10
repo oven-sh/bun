@@ -263,7 +263,7 @@ impl HostedGitInfo {
             //
             // TODO(markovejnovic): Perhaps we can avoid this allocation...
             // This one seems quite easy to get rid of.
-            let concatenated = bun_core::handle_oom(strings::concat(&[b"github:", git_url]));
+            let concatenated = strings::concat(&[b"github:", git_url]);
             git_url_owned = Some(concatenated);
             git_url_mut = git_url_owned.as_deref().unwrap();
         }
@@ -722,7 +722,7 @@ impl<'a> UrlProtocolPair<'a> {
     fn concat_parts_to_url(parts: &[&[u8]]) -> Option<OwnedJscUrl> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
         // get rid of -- in theory, URL.zig could allocate once.
-        let new_str = bun_core::handle_oom(strings::concat(parts));
+        let new_str = strings::concat(parts);
         // Drop handles `defer allocator.free(new_str)`.
         JscUrl::from_utf8(&new_str).map(OwnedJscUrl)
     }

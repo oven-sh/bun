@@ -466,7 +466,7 @@ impl LinkerContext<'_> {
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
         let mut ns_export_dependencies =
-            Vec::<Dependency>::init_capacity(re_exports_count).expect("OOM");
+            Vec::<Dependency>::init_capacity(re_exports_count);
         for &alias in export_aliases {
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;
@@ -481,8 +481,7 @@ impl LinkerContext<'_> {
                 exp_data.import_ref = import_data.data.import_ref;
                 exp_data.source_index = import_data.data.source_index;
                 ns_export_dependencies
-                    .append_slice(import_data.re_exports.slice())
-                    .expect("OOM");
+                    .append_slice(import_data.re_exports.slice());
             }
 
             // Exports of imports need EImportIdentifier in case they need to be re-
@@ -548,8 +547,7 @@ impl LinkerContext<'_> {
             // Make sure the part that declares the export is included
             let parts = self.top_level_symbols_to_parts(exp_data.source_index.get(), exp_data.import_ref);
             ns_export_dependencies
-                .ensure_unused_capacity(parts.len())
-                .expect("OOM");
+                .ensure_unused_capacity(parts.len());
             for &part_id in parts {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
@@ -590,8 +588,7 @@ impl LinkerContext<'_> {
                             loc,
                         ),
                         value: Some(Expr::allocate(arena, E::Object::default(), loc)),
-                    }])
-                    .expect("OOM"),
+                    }]),
                     ..Default::default()
                 },
                 loc,
@@ -627,8 +624,7 @@ impl LinkerContext<'_> {
                                     },
                                     loc,
                                 ),
-                            ])
-                            .expect("OOM"),
+                            ]),
                             ..Default::default()
                         },
                         loc,
@@ -640,8 +636,7 @@ impl LinkerContext<'_> {
             // Make sure this file depends on the "__export" symbol
             let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
             ns_export_dependencies
-                .ensure_unused_capacity(parts.len())
-                .expect("OOM");
+                .ensure_unused_capacity(parts.len());
             for &part_index in parts {
                 ns_export_dependencies.append_assume_capacity(Dependency {
                     source_index: js_ast::Index::RUNTIME,
@@ -678,8 +673,7 @@ impl LinkerContext<'_> {
                         args: js_ast::ExprNodeList::from_slice(&[Expr::init_identifier(
                             exports_ref,
                             Loc::EMPTY,
-                        )])
-                        .expect("OOM"),
+                        )]),
                         ..Default::default()
                     },
                     Loc::EMPTY,

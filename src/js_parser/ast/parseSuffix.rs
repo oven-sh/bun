@@ -280,8 +280,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     p.lexer.range(),
                     b"Template literals cannot have an optional chain as a tag",
-                )
-                .expect("unreachable");
+                );
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         let head = E::Str::new(p.lexer.raw_template_contents());
@@ -313,8 +312,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     p.lexer.range(),
                     b"Template literals cannot have an optional chain as a tag",
-                )
-                .expect("unreachable");
+                );
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         let head = E::Str::new(p.lexer.raw_template_contents());

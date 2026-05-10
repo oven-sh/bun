@@ -130,7 +130,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // temporary `&mut`.
         unsafe { &mut *self.current_scope }
             .children
-            .ensure_unused_capacity(1)?;
+            .ensure_unused_capacity(1);
         let scope: *mut Scope = self.bump.alloc(Scope {
             kind,
             label_ref: None,
@@ -208,7 +208,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let non_unique = MutableString::ensure_valid_identifier(
             path_name.non_unique_name_string_base(),
         )?;
-        let name = strings::append(b"import_", &non_unique)?;
+        let name = strings::append(b"import_", &non_unique);
         // PORT NOTE: copy into the arena so the raw `*const [u8]` stored on the
         // Symbol outlives this stack frame (Zig used the parser arena arena).
         let name: &[u8] = self.bump.alloc_slice_copy(&name);
@@ -292,7 +292,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;
 
-        let mut parts = PartList::init_capacity(2)?;
+        let mut parts = PartList::init_capacity(2);
         // PORT NOTE: Zig grew len then wrote `parts.mut(i).* = ...`, which is a
         // bitwise store on the SoA slot. In Rust `*parts.mut_(i) = ...` first
         // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop
@@ -338,7 +338,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // in Rust, so allocate a fresh one per key.
         for &ref_ in module_scope_ref.generated.slice() {
             top_level_symbols_to_parts
-                .put_assume_capacity(ref_, Vec::<u32>::from_slice(&[1])?);
+                .put_assume_capacity(ref_, Vec::<u32>::from_slice(&[1]));
         }
         top_level_symbols_to_parts.re_index()?;
 
@@ -453,7 +453,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         VecExt::append(
                             &mut unsafe { &mut *self.current_scope }.generated,
                             temp_id,
-                        )?;
+                        );
                         export_props.push(G::Property {
                             key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
                             value: Some(Expr::init_identifier(temp_id, stmt.loc)),
@@ -469,7 +469,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                         stmt.loc,
                                     ),
                                     value: Some(value),
-                                }])?,
+                                }]),
                                 ..Default::default()
                             },
                             stmt.loc,

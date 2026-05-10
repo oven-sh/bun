@@ -73,8 +73,7 @@ fn parse_macros_json(
                     "\"{}\" is not a package path. \"macros\" remaps package paths to macros. Skipping.",
                     bstr::BStr::new(key)
                 ),
-            )
-            .expect("unreachable");
+            );
             continue;
         }
 
@@ -89,8 +88,7 @@ fn parse_macros_json(
                     "Invalid macro remapping in \"{}\": expected object where the keys are import names and the value is a string path to replace",
                     bstr::BStr::new(key)
                 ),
-            )
-            .expect("unreachable");
+            );
             continue;
         };
 
@@ -121,8 +119,7 @@ fn parse_macros_json(
                             "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
                             bstr::BStr::new(import_name)
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     continue;
                 }
             };
@@ -171,8 +168,7 @@ impl<'a> Parser<'a> {
                     redact_sensitive_information: true,
                     ..Default::default()
                 },
-            )
-            .expect("unreachable");
+            );
         Err(err!("Invalid Bunfig"))
     }
 
@@ -190,8 +186,7 @@ impl<'a> Parser<'a> {
                     redact_sensitive_information: true,
                     ..Default::default()
                 },
-            )
-            .expect("unreachable");
+            );
         Err(err!("Invalid Bunfig"))
     }
 
@@ -1103,7 +1098,7 @@ impl Bunfig {
                                 redact_sensitive_information: true,
                                 ..Default::default()
                             },
-                        )?;
+                        );
                     }
                     return Err(e);
                 }
@@ -1120,7 +1115,7 @@ impl Bunfig {
                                 redact_sensitive_information: true,
                                 ..Default::default()
                             },
-                        )?;
+                        );
                     }
                     return Err(e);
                 }

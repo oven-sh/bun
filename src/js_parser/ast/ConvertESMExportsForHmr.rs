@@ -32,8 +32,7 @@ fn generate_temp_ref<'p, const TS: bool, J: JsxT, const SCAN: bool>(
     p.temp_refs_to_declare
         .push(TempRef { r#ref, ..Default::default() });
 
-    VecExt::append(&mut p.current_scope_mut().generated, r#ref)
-        .expect("oom");
+    VecExt::append(&mut p.current_scope_mut().generated, r#ref);
 
     r#ref
 }
@@ -216,7 +215,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             .symbol_uses
                             .put_no_clobber(temp_id, js_ast::symbol::Use { count_estimate: 1 })?;
                         // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-                        VecExt::append(&mut p.current_scope_mut().generated, temp_id)?;
+                        VecExt::append(&mut p.current_scope_mut().generated, temp_id);
 
                         self.export_props.push(G::Property {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
@@ -234,7 +233,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 stmt.loc,
                             ),
                             value: Some(value),
-                        })?;
+                        });
                         break 'stmt Stmt::alloc(
                             S::Local {
                                 kind: js_ast::LocalKind::KConst,
@@ -599,7 +598,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .symbol_uses
                 .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 })?;
             // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-            VecExt::append(&mut p.current_scope_mut().generated, arg1)?;
+            VecExt::append(&mut p.current_scope_mut().generated, arg1);
 
             // 'get abc() { return abc }'
             let body_stmts = p
@@ -752,7 +751,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .append_list(core::mem::take(&mut part.declared_symbols))?;
             self.last_part
                 .import_record_indices
-                .append_slice(part.import_record_indices.slice())?;
+                .append_slice(part.import_record_indices.slice());
             // PORT NOTE: reshaped for borrowck — Zig zipped keys()/values(); index loop avoids
             // holding two shared borrows of `part.symbol_uses` while &mut-borrowing `last_part`.
             for i in 0..part.symbol_uses.count() {
@@ -775,7 +774,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
         self.last_part
             .import_record_indices
-            .append_slice(p.import_records_for_current_part.as_slice())?;
+            .append_slice(p.import_records_for_current_part.as_slice());
         self.last_part
             .declared_symbols
             .append_list(core::mem::take(&mut p.declared_symbols))?;

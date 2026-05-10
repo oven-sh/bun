@@ -53,13 +53,9 @@ impl ArrayBufferSink {
         } = stream_start
         {
             if chunk_size > 0 {
-                if self
+                self
                     .bytes
-                    .ensure_total_capacity_precise(chunk_size as usize)
-                    .is_err()
-                {
-                    return Err(syscall::Error::oom());
-                }
+                    .ensure_total_capacity_precise(chunk_size as usize);
             }
 
             self.as_uint8array = as_uint8array;
@@ -217,7 +213,7 @@ impl ArrayBufferSink {
         // `MarkedArrayBuffer_deallocator` which `mi_free`s the buffer when the
         // JS object is collected. Bun's global allocator is mimalloc, so the
         // `mi_is_in_heap_region` check in `to_js` succeeds.
-        let owned = bun_core::handle_oom(bytes.to_owned_slice());
+        let owned = bytes.to_owned_slice();
         ArrayBuffer::from_owned_bytes(
             owned,
             if as_uint8array {
@@ -242,7 +238,7 @@ impl ArrayBufferSink {
         // Ownership transfers to JSC; the caller wraps the returned
         // `ArrayBuffer` in `.to_js()` which installs `MarkedArrayBuffer_deallocator`
         // (frees via `mi_free` on GC). See `to_js` above.
-        let owned = bun_core::handle_oom(bytes.to_owned_slice());
+        let owned = bytes.to_owned_slice();
         Ok(ArrayBuffer::from_owned_bytes(
             owned,
             if self.as_uint8array {

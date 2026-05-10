@@ -104,7 +104,7 @@ pub fn convert_stmts_for_chunk(
 
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
-                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                         continue 'stmt_loop;
                     }
                 }
@@ -137,7 +137,7 @@ pub fn convert_stmts_for_chunk(
 
                         // Make sure these don't end up in the wrapper closure
                         if should_extract_esm_stmts_for_wrap {
-                            stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                            stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                             continue 'stmt_loop;
                         }
 
@@ -224,7 +224,7 @@ pub fn convert_stmts_for_chunk(
 
                             // Make sure these don't end up in the wrapper closure
                             if should_extract_esm_stmts_for_wrap {
-                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                 continue 'stmt_loop;
                             }
                         }
@@ -370,7 +370,7 @@ pub fn convert_stmts_for_chunk(
 
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
-                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                         continue 'stmt_loop;
                     }
                 }
@@ -385,7 +385,7 @@ pub fn convert_stmts_for_chunk(
 
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
-                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt)?;
+                        stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                         continue 'stmt_loop;
                     }
                 }
@@ -484,7 +484,7 @@ pub fn convert_stmts_for_chunk(
                                                         ),
                                                         value: Some(s2.value),
                                                     }],
-                                                )?,
+                                                ),
                                                 ..Default::default()
                                             },
                                             stmt.loc,
@@ -548,7 +548,7 @@ pub fn convert_stmts_for_chunk(
                                                 ),
                                                 value: Some(*e),
                                             }],
-                                        )?,
+                                        ),
                                         ..Default::default()
                                     },
                                     stmt.loc,
@@ -562,7 +562,7 @@ pub fn convert_stmts_for_chunk(
             }
         }
 
-        stmts.append(StmtListWhich::InsideWrapperSuffix, stmt)?;
+        stmts.append(StmtListWhich::InsideWrapperSuffix, stmt);
     }
 
     Ok(())

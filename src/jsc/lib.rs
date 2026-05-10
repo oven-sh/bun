@@ -1872,7 +1872,7 @@ pub trait LogJsc {
 /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
 fn msg_to_js(msg: &bun_logger::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
     match msg.metadata {
-        bun_logger::Metadata::Build => BuildMessage::create(global, msg.clone()?),
+        bun_logger::Metadata::Build => BuildMessage::create(global, msg.clone()),
         bun_logger::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
     }
 }

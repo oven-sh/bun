@@ -49,8 +49,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         p.log()
-            .add_range_error(Some(p.source), super_range, b"Unexpected \"super\"")
-            .expect("unreachable");
+            .add_range_error(Some(p.source), super_range, b"Unexpected \"super\"");
         Ok(p.new_expr(E::Super {}, loc))
     }
 
@@ -97,8 +96,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let loc = p.lexer.loc();
         if p.fn_or_arrow_data_parse.is_this_disallowed {
             p.log()
-                .add_range_error(Some(p.source), p.lexer.range(), b"Cannot use \"this\" here")
-                .expect("unreachable");
+                .add_range_error(Some(p.source), p.lexer.range(), b"Cannot use \"this\" here");
         }
         p.lexer.next()?;
         Ok(Expr { data: prefill::data::THIS, loc })
@@ -149,8 +147,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 Some(p.source),
                                 name_range,
                                 b"The keyword \"await\" cannot be used here",
-                            )
-                            .expect("unreachable");
+                            );
                     }
                     AwaitOrYield::AllowExpr => {
                         if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait {
@@ -159,8 +156,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     Some(p.source),
                                     name_range,
                                     b"The keyword \"await\" cannot be escaped",
-                                )
-                                .expect("unreachable");
+                                );
                         } else {
                             if p.fn_or_arrow_data_parse.is_top_level {
                                 p.top_level_await_keyword = name_range;
@@ -198,8 +194,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 Some(p.source),
                                 name_range,
                                 b"The keyword \"yield\" cannot be used here",
-                            )
-                            .expect("unreachable");
+                            );
                     }
                     AwaitOrYield::AllowExpr => {
                         if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsYield {
@@ -208,8 +203,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     Some(p.source),
                                     name_range,
                                     b"The keyword \"yield\" cannot be escaped",
-                                )
-                                .expect("unreachable");
+                                );
                         } else {
                             if level.gt(Level::Assign) {
                                 p.log()
@@ -217,8 +211,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         Some(p.source),
                                         name_range,
                                         b"Cannot use a \"yield\" here without parentheses",
-                                    )
-                                    .expect("unreachable");
+                                    );
                             }
 
                             if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
@@ -249,8 +242,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                             Some(p.source),
                                             name_range,
                                             b"Cannot use \"yield\" outside a generator function",
-                                        )
-                                        .expect("unreachable");
+                                        );
                                 }
                                 _ => {}
                             }
@@ -394,8 +386,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             "Deleting the private name \"{}\" is forbidden",
                             bstr::BStr::new(name),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
             }
         }
 
@@ -515,8 +506,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             p.lexer.range(),
                             b"Cannot use \"await\" as an identifier here",
-                        )
-                        .expect("unreachable");
+                        );
                 }
 
                 name = Some(js_ast::LocRef {
@@ -583,8 +573,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             p.lexer.range(),
                             b"Cannot use \"await\" as an identifier here",
-                        )
-                        .expect("unreachable");
+                        );
                 }
 
                 name = Some(js_ast::LocRef {

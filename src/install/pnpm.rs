@@ -263,7 +263,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 "pnpm-lock.yaml root must be an object, got {}",
                 root.data.tag_name()
             ),
-        )?;
+        );
         return Err(MigratePnpmLockfileError::PnpmLockfileNotObject);
     }
 
@@ -272,7 +272,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             None,
             logger::Loc::EMPTY,
             b"pnpm-lock.yaml missing 'lockfileVersion' field",
-        )?;
+        );
         return Err(MigratePnpmLockfileError::PnpmLockfileMissingVersion);
     };
 
@@ -309,7 +309,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 "pnpm-lock.yaml 'lockfileVersion' must be a number or string, got {}",
                 lockfile_version_expr.data.tag_name()
             ),
-        )?;
+        );
         return Err(MigratePnpmLockfileError::PnpmLockfileVersionInvalid);
     };
 
@@ -417,7 +417,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 None,
                 logger::Loc::EMPTY,
                 b"pnpm-lock.yaml missing 'importers' field",
-            )?;
+            );
             return Err(MigratePnpmLockfileError::PnpmLockfileMissingImporters);
         };
 
@@ -484,7 +484,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 None,
                 logger::Loc::EMPTY,
                 b"pnpm-lock.yaml missing root package entry (importers['.'])",
-            )?;
+            );
             return Err(MigratePnpmLockfileError::PnpmLockfileMissingRootPackage);
         };
 
@@ -744,7 +744,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                                         dep.version.literal.slice(string_bytes!(lockfile))
                                     ),
                                 ),
-                            )?;
+                            );
                             return Err(MigratePnpmLockfileError::RelativeLinkDependency);
                         }
                     }
@@ -769,7 +769,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     None,
                     logger::Loc::EMPTY,
                     b"pnpm-lock.yaml has 'packages' but missing 'snapshots' field",
-                )?;
+                );
                 return Err(MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot);
             };
 
@@ -859,7 +859,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                             "pnpm-lock.yaml package '{}' missing corresponding snapshot entry",
                             bstr::BStr::new(key_str)
                         ),
-                    )?;
+                    );
                     return Err(MigratePnpmLockfileError::PnpmLockfileInvalidSnapshot);
                 };
                 let snapshot_obj = snapshot.obj;
@@ -990,7 +990,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                         "pnpm-lock.yaml cannot resolve root dependency '{}' - missing version in importer",
                         bstr::BStr::new(dep_name)
                     ),
-                )?;
+                );
                 return Err(MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency);
             };
             if strings::has_prefix(version_maybe_alias, b"npm:") {
@@ -1054,7 +1054,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                         bstr::BStr::new(dep_name),
                         bstr::BStr::new(workspace_path)
                     ),
-                )?;
+                );
                 return Err(MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency);
             };
             if strings::has_prefix(version_maybe_alias, b"npm:") {
@@ -1449,7 +1449,7 @@ fn parse_append_importer_dependencies(
                             "pnpm-lock.yaml dependency '{}' missing 'specifier' field",
                             bstr::BStr::new(name_str)
                         ),
-                    )?;
+                    );
                     return Err(ParseAppendDependenciesError::PnpmLockfileInvalidDependency);
                 };
 
@@ -1461,7 +1461,7 @@ fn parse_append_importer_dependencies(
                             "pnpm-lock.yaml dependency '{}' missing 'version' field",
                             bstr::BStr::new(name_str)
                         ),
-                    )?;
+                    );
                     return Err(
                         ParseAppendDependenciesError::PnpmLockfileMissingDependencyVersion,
                     );
@@ -1500,7 +1500,7 @@ fn parse_append_importer_dependencies(
                                 bstr::BStr::new(catalog_group_name_str),
                                 bstr::BStr::new(name_str)
                             ),
-                        )?;
+                        );
                         return Err(ParseAppendDependenciesError::PnpmLockfileMissingCatalogEntry);
                     };
 
@@ -1712,23 +1712,23 @@ fn update_package_json_after_migration(
                         }
                     }
 
-                    let mut new_root_props = G::PropertyList::init_capacity(new_root_count)?;
+                    let mut new_root_props = G::PropertyList::init_capacity(new_root_count);
                     for prop in e_object(&json).properties.slice() {
                         let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
-                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop))?;
+                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop));
                             continue;
                         };
                         if key != b"pnpm" {
-                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop))?;
+                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop));
                         }
                     }
 
                     e_object_mut(&mut json).properties = new_root_props;
                 } else {
-                    let mut new_pnpm_props = G::PropertyList::init_capacity(remaining_count)?;
+                    let mut new_pnpm_props = G::PropertyList::init_capacity(remaining_count);
                     for prop in pnpm_obj.properties.slice() {
                         let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
-                            VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop))?;
+                            VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop));
                             continue;
                         };
                         if moved_overrides && key == b"overrides" {
@@ -1737,7 +1737,7 @@ fn update_package_json_after_migration(
                         if moved_patched_deps && key == b"patchedDependencies" {
                             continue;
                         }
-                        VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop))?;
+                        VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop));
                     }
 
                     pnpm_obj.properties = new_pnpm_props;
@@ -1828,12 +1828,12 @@ fn update_package_json_after_migration(
 
         if use_array_format {
             let paths = workspace_paths.as_ref().unwrap();
-            let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
+            let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
             for path in paths {
                 VecExt::append(&mut items, Expr::init(
                     E::EString::init(path),
                     logger::Loc::EMPTY,
-                ))?;
+                ));
             }
             let array = Expr::init(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
             e_object_mut(&mut json).put(&bump, b"workspaces", array)?;
@@ -1844,12 +1844,12 @@ fn update_package_json_after_migration(
 
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {
-                    let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
+                    let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
                     for path in paths {
                         VecExt::append(&mut items, Expr::init(
                             E::EString::init(path),
                             logger::Loc::EMPTY,
-                        ))?;
+                        ));
                     }
                     let array =
                         Expr::init(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
@@ -1873,12 +1873,12 @@ fn update_package_json_after_migration(
 
             if let Some(paths) = &workspace_paths {
                 if !paths.is_empty() {
-                    let mut items = js_ast::ExprNodeList::init_capacity(paths.len())?;
+                    let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
                     for path in paths {
                         VecExt::append(&mut items, Expr::init(
                             E::EString::init(path),
                             logger::Loc::EMPTY,
-                        ))?;
+                        ));
                     }
                     let value =
                         Expr::init(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
@@ -1889,7 +1889,7 @@ fn update_package_json_after_migration(
                         key: Some(key),
                         value: Some(value),
                         ..Default::default()
-                    })?;
+                    });
                 }
             }
 
@@ -1899,7 +1899,7 @@ fn update_package_json_after_migration(
                     key: Some(key),
                     value: Some(catalog),
                     ..Default::default()
-                })?;
+                });
             }
 
             if let Some(catalogs) = catalogs_obj {
@@ -1908,7 +1908,7 @@ fn update_package_json_after_migration(
                     key: Some(key),
                     value: Some(catalogs),
                     ..Default::default()
-                })?;
+                });
             }
 
             if ws_props.len_u32() > 0 {

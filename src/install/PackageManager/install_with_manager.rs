@@ -1553,17 +1553,17 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
 
     let log = manager.log_mut();
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
-        bun_core::handle_oom(log.add_warning_with_note(
+        log.add_warning_with_note(
             None,
             Default::default(),
             err.name().as_bytes(),
             format_args!("error occurred while resolving {}", path_fmt),
-        ));
+        );
     } else {
-        bun_core::handle_oom(log.add_zig_error_with_note(
+        log.add_zig_error_with_note(
             err,
             format_args!("error occurred while resolving {}", path_fmt),
-        ));
+        );
     }
 }
 

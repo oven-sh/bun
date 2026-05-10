@@ -382,7 +382,7 @@ impl DefineDataExt for DefineData {
                             "define key \"{}\" must be a valid identifier",
                             bstr::BStr::new(key)
                         ),
-                    )?;
+                    );
                 } else {
                     log.add_error_fmt(
                         None,
@@ -392,7 +392,7 @@ impl DefineDataExt for DefineData {
                             bstr::BStr::new(part),
                             bstr::BStr::new(value_str)
                         ),
-                    )?;
+                    );
                 }
                 break;
             }

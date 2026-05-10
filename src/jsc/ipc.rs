@@ -2167,7 +2167,7 @@ pub mod IPCHandlers {
                 }
                 IncomingBuffer::Advanced(adv_buf) => {
                     if adv_buf.unused_capacity_slice().len() < suggested_size {
-                        handle_oom(adv_buf.ensure_unused_capacity(suggested_size));
+                        adv_buf.ensure_unused_capacity(suggested_size);
                     }
                     let available = adv_buf.unused_capacity_slice();
                     log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);

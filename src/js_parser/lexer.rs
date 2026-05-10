@@ -447,8 +447,7 @@ lexer_impl_header! {
         }
 
         self.log()
-            .add_error_fmt(Some(self.source), __loc, args)
-            .expect("unreachable");
+            .add_error_fmt(Some(self.source), __loc, args);
         self.prev_error_loc = __loc;
     }
 
@@ -467,7 +466,7 @@ lexer_impl_header! {
         }
 
         // TODO(port): arena routing — Zig uses `std.fmt.allocPrint(self.arena, ..)`.
-        self.log().add_range_error_fmt(Some(self.source), r, args)?;
+        self.log().add_range_error_fmt(Some(self.source), r, args);
         self.prev_error_loc = r.loc;
 
         // if (panic) {
@@ -493,7 +492,7 @@ lexer_impl_header! {
         // TODO(port): Zig dupes `notes` with `self.log.msgs.arena`.
         let notes_owned: Box<[logger::Data]> = notes.to_vec().into_boxed_slice();
         self.log()
-            .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args)?;
+            .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args);
         self.prev_error_loc = r.loc;
 
         // if (panic) {
@@ -1977,8 +1976,7 @@ lexer_impl_header! {
                                         Some(self.source),
                                         self.range(),
                                         b"Treating \"-->\" as the start of a legacy HTML single-line comment",
-                                    )
-                                    .expect("unreachable");
+                                    );
 
                                 'single_line_html_close_comment: loop {
                                     match self.code_point {

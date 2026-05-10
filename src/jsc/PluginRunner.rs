@@ -84,8 +84,7 @@ impl PluginResolver for PluginRunner {
             return Ok(None);
         }
         if !path_value.is_string() {
-            log.add_error(None, loc, b"Expected \"path\" to be a string")
-                .expect("unreachable");
+            log.add_error(None, loc, b"Expected \"path\" to be a string");
             return Ok(None);
         }
 
@@ -99,8 +98,7 @@ impl PluginResolver for PluginRunner {
                 None,
                 loc,
                 b"Expected \"path\" to be a non-empty string in onResolve plugin",
-            )
-            .expect("unreachable");
+            );
             return Ok(None);
         } else if
         // TODO: validate this better
@@ -109,16 +107,14 @@ impl PluginResolver for PluginRunner {
             || file_path.eql_comptime(b"...")
             || file_path.eql_comptime(b" ")
         {
-            log.add_error(None, loc, b"Invalid file path from onResolve plugin")
-                .expect("unreachable");
+            log.add_error(None, loc, b"Invalid file path from onResolve plugin");
             return Ok(None);
         }
         let mut static_namespace = true;
         let user_namespace: BunString = 'brk: {
             if let Some(namespace_value) = on_resolve_plugin.get(global, "namespace")? {
                 if !namespace_value.is_string() {
-                    log.add_error(None, loc, b"Expected \"namespace\" to be a string")
-                        .expect("unreachable");
+                    log.add_error(None, loc, b"Expected \"namespace\" to be a string");
                     return Ok(None);
                 }
 

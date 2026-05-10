@@ -153,14 +153,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     /// newSymbol + scope.generated.append in one call.
     fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
         let ref_ = self.new_symbol(kind, name).expect("unreachable");
-        VecExt::append(&mut self.current_scope_mut().generated, ref_).expect("unreachable");
+        VecExt::append(&mut self.current_scope_mut().generated, ref_);
         ref_
     }
 
     /// Single var declaration statement.
     fn var_decl(&mut self, ref_: Ref, value: Option<Expr>, l: logger::Loc) -> Stmt {
         let binding = self.b(B::Identifier { r#ref: ref_ }, l);
-        let decls = DeclList::from_slice(&[G::Decl { binding, value }]).expect("unreachable");
+        let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
         self.s(S::Local { decls, ..Default::default() }, l)
     }
 
@@ -178,8 +178,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let decls = DeclList::from_slice(&[
             G::Decl { binding: b1, value: v1 },
             G::Decl { binding: b2, value: v2 },
-        ])
-        .expect("unreachable");
+        ]);
         self.s(S::Local { decls, ..Default::default() }, l)
     }
 
@@ -2129,7 +2128,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 E::Identifier { ref_: class_name_ref, ..Default::default() },
                 class_name_loc,
             ));
-            let decls = DeclList::from_slice(&[G::Decl { binding, value }]).expect("unreachable");
+            let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
             out.push(p.s(
                 S::Local { kind: S::Kind::KLet, decls, ..Default::default() },
                 loc,

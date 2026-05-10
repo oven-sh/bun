@@ -55,8 +55,7 @@ pub fn write_output_files_to_disk(
                             quote(root_path),
                             quote(root_path),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
             } else {
                 c.log
                     .add_error_fmt(
@@ -67,8 +66,7 @@ pub fn write_output_files_to_disk(
                             e.name(),
                             quote(root_path),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
             }
             return Err(e);
         }
@@ -147,8 +145,7 @@ pub fn write_output_files_to_disk(
                             quote(rel_parent),
                             quote(&chunk.final_rel_path),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                 return Err(e);
             }
         }
@@ -231,8 +228,7 @@ pub fn write_output_files_to_disk(
                 let source_map_final_rel_path = strings::concat(&[
                     &chunk.final_rel_path,
                     b".map",
-                ])
-                .unwrap_or_else(|_| panic!("Failed to allocate memory for external source map path"));
+                ]);
 
                 if tag == SourceMapOption::Linked {
                     let [a, b] = if !public_path.is_empty() {
@@ -277,7 +273,7 @@ pub fn write_output_files_to_disk(
                                 "writing sourcemap for chunk {}",
                                 quote(&chunk.final_rel_path)
                             ),
-                        )?;
+                        );
                         return Err(err!("WriteFailed"));
                     }
                     Ok(_) => {}
@@ -285,7 +281,7 @@ pub fn write_output_files_to_disk(
 
                 source_map_output_file = Some(OutputFile::init(OutputFileInit {
                     output_path: source_map_final_rel_path,
-                    input_path: strings::concat(&[&input_path, b".map"])?,
+                    input_path: strings::concat(&[&input_path, b".map"]),
                     loader: Loader::Json,
                     input_loader: Loader::File,
                     output_kind: options::OutputKind::Sourcemap,
@@ -399,8 +395,7 @@ pub fn write_output_files_to_disk(
                                             e,
                                             quote(&chunk.final_rel_path),
                                         ),
-                                    )
-                                    .expect("unreachable");
+                                    );
                                 return Err(err!("WriteFailed"));
                             }
                         }
@@ -459,7 +454,7 @@ pub fn write_output_files_to_disk(
                 c.log.add_sys_error(
                     &e,
                     format_args!("writing chunk {}", quote(&chunk.final_rel_path)),
-                )?;
+                );
                 return Err(err!("WriteFailed"));
             }
             Ok(_) => {}
@@ -594,8 +589,7 @@ pub fn write_output_files_to_disk(
                                 quote(rel_parent),
                                 quote(&*src.dest_path),
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                     return Err(e);
                 }
             }
@@ -615,8 +609,7 @@ pub fn write_output_files_to_disk(
                         .add_sys_error(
                             &e,
                             format_args!("writing file {}", quote(src.src_path.text)),
-                        )
-                        .expect("unreachable");
+                        );
                     return Err(err!("WriteFailed"));
                 }
                 Ok(_) => {}

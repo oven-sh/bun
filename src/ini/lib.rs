@@ -171,7 +171,7 @@ impl ConfigItem {
                         loc: self.loc,
                         ..Default::default()
                     },
-                )?;
+                );
                 return Ok(None);
             }
             return Ok(Some(Box::<[u8]>::from(&slice[..result.count])));
@@ -1676,7 +1676,7 @@ pub fn load_npmrc(
                                 conf_item,
                                 <&'static str>::from(conf_item.optname),
                             ),
-                        )?;
+                        );
                         continue;
                     }
                     _ => {}
@@ -1853,7 +1853,7 @@ fn pnpm_matcher_from_expr(
                             source: Some(source),
                             ..Default::default()
                         },
-                    )?;
+                    );
                     return Err(FromExprError::InvalidRegExp);
                 }
             };
@@ -1878,7 +1878,7 @@ fn pnpm_matcher_from_expr(
                                     source: Some(source),
                                     ..Default::default()
                                 },
-                            )?;
+                            );
                             return Err(FromExprError::InvalidRegExp);
                         }
                     };
@@ -1894,7 +1894,7 @@ fn pnpm_matcher_from_expr(
                             source: Some(source),
                             ..Default::default()
                         },
-                    )?;
+                    );
                     return Err(FromExprError::UnexpectedExpr);
                 }
             }
@@ -1908,7 +1908,7 @@ fn pnpm_matcher_from_expr(
                     source: Some(source),
                     ..Default::default()
                 },
-            )?;
+            );
             return Err(FromExprError::UnexpectedExpr);
         }
     }
@@ -1942,7 +1942,7 @@ fn handle_auth(
                 redact_sensitive_information: true,
                 ..Default::default()
             },
-        )?;
+        );
         return Ok(());
     }
     let decode_len = bun_base64::decode_len(&conf_item.value);
@@ -1957,7 +1957,7 @@ fn handle_auth(
                 redact_sensitive_information: true,
                 ..Default::default()
             },
-        )?;
+        );
         return Ok(());
     }
     let username_password = &decoded[..result.count];
@@ -1970,7 +1970,7 @@ fn handle_auth(
                 redact_sensitive_information: true,
                 ..Default::default()
             },
-        )?;
+        );
         return Ok(());
     };
     let username = &username_password[..colon_idx];
@@ -1983,7 +1983,7 @@ fn handle_auth(
                 redact_sensitive_information: true,
                 ..Default::default()
             },
-        )?;
+        );
         return Ok(());
     }
     let password = &username_password[colon_idx + 1..];

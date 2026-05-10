@@ -1,7 +1,6 @@
 use core::mem::{size_of, MaybeUninit};
 
 use crate::bit_set::IntegerBitSet;
-use bun_alloc::AllocError;
 use bun_core::asan;
 
 /// An array that efficiently tracks which elements are in use.
@@ -133,16 +132,14 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>()
     }
 
-    pub fn try_get(&mut self) -> Result<*mut T, AllocError> {
+    pub fn try_get(&mut self) -> *mut T {
         if CAPACITY > 0 {
             if let Some(value) = self.hive.get() {
-                return Ok(value);
+                return value;
             }
         }
 
-        // TODO(port): Box::try_new_uninit is nightly-only; Phase B may need a
-        // fallible alloc helper in bun_alloc to mirror `try allocator.create(T)`.
-        Ok(bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>())
+        bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>()
     }
 
     pub fn r#in(&self, value: *const T) -> bool {
@@ -202,17 +199,14 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     /// `pool` must be valid for the entire lifetime of the returned
     /// `HiveRef` (i.e. until its `ref_count` drops to zero and it is `put`
     /// back). Callers hold the pool in a long-lived owner (e.g. `VirtualMachine`).
-    pub unsafe fn init(
-        value: T,
-        pool: *mut Fallback<Self, CAPACITY>,
-    ) -> Result<*mut Self, AllocError> {
+    pub unsafe fn init(value: T, pool: *mut Fallback<Self, CAPACITY>) -> *mut Self {
         // SAFETY: caller contract — `pool` is dereferenceable.
-        let this = unsafe { (*pool).try_get()? };
+        let this = unsafe { (*pool).try_get() };
         // SAFETY: `try_get` returns an uninitialized slot; we fully initialize it.
         unsafe {
             core::ptr::write(this, HiveRef { ref_count: 1, pool, value });
         }
-        Ok(this)
+        this
     }
 
     pub fn ref_(&mut self) -> &mut Self {

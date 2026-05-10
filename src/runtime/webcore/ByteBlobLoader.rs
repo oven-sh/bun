@@ -241,7 +241,7 @@ impl ByteBlobLoader {
 
         // Zig: `Vec<u8>.fromBorrowedSliceDangerous(temporary).clone(allocator)` — collapse to a
         // single owning copy (avoids the `ManuallyDrop` borrow dance).
-        let cloned = bun_core::handle_oom(Vec::<u8>::from_slice(temporary));
+        let cloned = Vec::<u8>::from_slice(temporary);
         self.offset = self.offset.saturating_add(cloned.len() as blob::SizeType);
         self.remain = self.remain.saturating_sub(cloned.len() as blob::SizeType);
 

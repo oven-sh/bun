@@ -534,7 +534,7 @@ impl Expr {
             )),
             value: Some(value),
             ..Default::default()
-        })?;
+        });
         Ok(())
     }
 
@@ -573,7 +573,7 @@ impl Expr {
                 Loc::EMPTY,
             )),
             ..Default::default()
-        })?;
+        });
         Ok(())
     }
 
@@ -1201,9 +1201,9 @@ impl From<logger::js_ast::expr::Data> for Data {
             // Recursive containers — deep rebuild.
             V::EArray(arr) => {
                 let mut items: crate::ExprNodeList =
-                    Vec::init_capacity(arr.items.len_u32() as usize).expect("OOM");
+                    Vec::init_capacity(arr.items.len_u32() as usize);
                 for it in arr.items.slice() {
-                    VecExt::append(&mut items, Expr::from(*it)).expect("OOM");
+                    VecExt::append(&mut items, Expr::from(*it));
                 }
                 Data::EArray(leak(E::Array {
                     items,
@@ -1217,7 +1217,7 @@ impl From<logger::js_ast::expr::Data> for Data {
             V::EObject(obj) => {
                 use logger::js_ast::G::{PropertyFlags as T2Flags, PropertyKind as T2Kind};
                 let mut properties: G::PropertyList =
-                    Vec::init_capacity(obj.properties.len_u32() as usize).expect("OOM");
+                    Vec::init_capacity(obj.properties.len_u32() as usize);
                 for p in obj.properties.slice() {
                     // T2 and T4 `PropertyKind` are both `#[repr(u8)]` with
                     // identical variant order — map 1:1.
@@ -1255,8 +1255,7 @@ impl From<logger::js_ast::expr::Data> for Data {
                             kind,
                             flags,
                             ..G::Property::default()
-                        })
-                        .expect("OOM");
+                        });
                 }
                 Data::EObject(leak(E::Object {
                     properties,

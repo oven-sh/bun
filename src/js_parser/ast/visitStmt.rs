@@ -229,7 +229,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             r,
                             format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
-                        )?;
+                        );
                     }
                     continue;
                 }
@@ -256,7 +256,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             r,
                             format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
-                        )?;
+                        );
                         continue;
                     }
                     continue;
@@ -293,7 +293,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let name = p.load_name_from_ref(data.namespace_ref);
 
         data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
-        VecExt::append(&mut p.cur_scope().generated, data.namespace_ref).expect("oom");
+        VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
         let items = data.items.slice_mut();
@@ -313,7 +313,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let _name = p.load_name_from_ref(old_ref);
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
-                VecExt::append(&mut p.cur_scope().generated, ref_).expect("oom");
+                VecExt::append(&mut p.cur_scope().generated, ref_);
                 p.record_declared_symbol(ref_);
                 // Compaction: items[..j] is the kept prefix; items[i] is dead
                 // after this iteration and the slice is truncated to `j` below.
@@ -336,7 +336,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             for item in items.iter_mut() {
                 let _name = p.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
-                VecExt::append(&mut p.cur_scope().generated, ref_).expect("oom");
+                VecExt::append(&mut p.cur_scope().generated, ref_);
                 p.record_declared_symbol(ref_);
                 item.name.ref_ = Some(ref_);
             }
@@ -355,7 +355,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // "export * from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
         data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
-        VecExt::append(&mut p.cur_scope().generated, data.namespace_ref).expect("oom");
+        VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
         // "export * as ns from 'path'"
@@ -475,7 +475,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if should_emit_temp_var {
                     // declare a temporary ref for this
                     let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                    VecExt::append(&mut p.cur_scope().generated, temp_id).expect("oom");
+                    VecExt::append(&mut p.cur_scope().generated, temp_id);
 
                     let value_expr = *expr;
                     stmts.push(Stmt::alloc(
@@ -484,8 +484,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             decls: G::DeclList::from_slice(&[G::Decl {
                                 binding: Binding::alloc(p.arena, B::Identifier { r#ref: temp_id }, stmt.loc),
                                 value: Some(value_expr),
-                            }])
-                            .expect("oom"),
+                            }]),
                             ..Default::default()
                         },
                         stmt.loc,
@@ -506,15 +505,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 {
                     stmts.reserve(2);
 
-                    let mut decls = G::DeclList::init_capacity(1).expect("oom");
+                    let mut decls = G::DeclList::init_capacity(1);
                     VecExt::append(&mut decls, G::Decl {
                             binding: p.b(
                                 B::Identifier { r#ref: data.default_name.ref_.expect("infallible: ref bound") },
                                 data.default_name.loc,
                             ),
                             value: Some(*expr),
-                        })
-                        .expect("oom");
+                        });
                     // PERF(port): was assume_capacity
                     stmts.push(p.s(
                         S::Local { decls, ..Default::default() },
@@ -654,7 +652,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         }
 
                                         let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                                        VecExt::append(&mut p.cur_scope().generated, temp_id).expect("oom");
+                                        VecExt::append(&mut p.cur_scope().generated, temp_id);
                                         break 'brk temp_id;
                                     };
 
@@ -668,8 +666,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                                     stmt.loc,
                                                 ),
                                                 value: Some(e),
-                                            }])
-                                            .expect("oom"),
+                                            }]),
                                             ..Default::default()
                                         },
                                         stmt.loc,
@@ -894,8 +891,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         decls: G::DeclList::from_slice(&[G::Decl {
                             binding,
                             value: Some(wrapped),
-                        }])
-                        .expect("oom"),
+                        }]),
                         ..Default::default()
                     },
                     stmt.loc,
@@ -1175,8 +1171,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
             p.log()
-                .add_range_error(Some(p.source), r, b"Cannot use \"break\" here")
-                .expect("unreachable");
+                .add_range_error(Some(p.source), r, b"Cannot use \"break\" here");
         }
 
         stmts.push(*stmt);
@@ -1198,14 +1193,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         Some(p.source),
                         r,
                         format_args!("Cannot \"continue\" to label {}", bstr::BStr::new(name)),
-                    )
-                    .expect("unreachable");
+                    );
             }
         } else if !p.fn_or_arrow_data_visit.is_inside_loop {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
             p.log()
-                .add_range_error(Some(p.source), r, b"Cannot use \"continue\" here")
-                .expect("unreachable");
+                .add_range_error(Some(p.source), r, b"Cannot use \"continue\" here");
         }
 
         stmts.push(*stmt);
@@ -1300,7 +1293,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 last.needs_decl = false;
                                 let last_loc = last.loc_ref.loc;
 
-                                let mut decls = G::DeclList::init_capacity(1).expect("oom");
+                                let mut decls = G::DeclList::init_capacity(1);
                                 let ref_ = match bin.left.data {
                                     js_ast::ExprData::ECommonjsExportIdentifier(id) => id.ref_,
                                     _ => unreachable!(),
@@ -1308,8 +1301,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 VecExt::append(&mut decls, G::Decl {
                                         binding: p.b(B::Identifier { r#ref: ref_ }, bin.left.loc),
                                         value: Some(bin.right),
-                                    })
-                                    .expect("oom");
+                                    });
                                 // we have to ensure these are known to be top-level
                                 p.declared_symbols
                                     .append(js_ast::DeclaredSymbol { ref_, is_top_level: true })
@@ -1393,8 +1385,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         Some(p.source),
                         where_,
                         b"Top-level return cannot be used inside an ECMAScript module",
-                    )
-                    .expect("unreachable");
+                    );
             }
         }
 
@@ -1739,12 +1730,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.symbols[id.r#ref.inner_index() as usize].original_name.slice();
                     let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
-                    let mut first_decls = G::DeclList::init_capacity(1).expect("oom");
+                    let mut first_decls = G::DeclList::init_capacity(1);
                     VecExt::append(&mut first_decls, G::Decl {
                             binding: p.b(B::Identifier { r#ref: id.r#ref }, loc),
                             value: Some(Expr::init_identifier(temp_ref, loc)),
-                        })
-                        .expect("oom");
+                        });
                     let first = p.s(
                         S::Local { kind: init2.kind, decls: first_decls, ..Default::default() },
                         loc,

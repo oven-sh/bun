@@ -325,7 +325,7 @@ fn generate_client_reference_proxy(
                 ref_: error_ref,
                 ..Default::default()
             }),
-            args: js_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))])?,
+            args: js_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
             close_parens_loc: Loc::EMPTY,
             ..Default::default()
         });
@@ -349,7 +349,7 @@ fn generate_client_reference_proxy(
                 }),
                 module_path,
                 b.new_expr(E::String::init(b.bump.alloc_slice_copy(key))),
-            ])?,
+            ]),
             ..Default::default()
         });
 
@@ -371,7 +371,7 @@ fn generate_client_reference_proxy(
                         Loc::EMPTY,
                     ),
                     value: Some(value),
-                }])?,
+                }]),
                 is_export: true,
                 kind: S::Kind::KConst,
                 ..Default::default()

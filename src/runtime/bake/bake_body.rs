@@ -647,9 +647,9 @@ impl Framework {
                 )
                 .as_bytes(),
             )
-            .clone_line_text(clone_line_text)?,
+            .clone_line_text(clone_line_text),
             ..Default::default()
-        })?;
+        });
         Ok(())
     }
 

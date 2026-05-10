@@ -185,7 +185,7 @@ impl CatalogMap {
                                 Some(source),
                                 value.loc,
                                 b"Invalid dependency version",
-                            )?;
+                            );
                             continue;
                         };
 
@@ -193,7 +193,7 @@ impl CatalogMap {
                         let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
 
                         if entry.found_existing {
-                            log.add_error(Some(source), key.loc, b"Duplicate catalog")?;
+                            log.add_error(Some(source), key.loc, b"Duplicate catalog");
                             continue;
                         }
 
@@ -246,7 +246,7 @@ impl CatalogMap {
                                         Some(source),
                                         value.loc,
                                         b"Invalid dependency version",
-                                    )?;
+                                    );
                                     continue;
                                 };
 
@@ -258,7 +258,7 @@ impl CatalogMap {
                                         Some(source),
                                         key.loc,
                                         b"Duplicate catalog",
-                                    )?;
+                                    );
                                     continue;
                                 }
 

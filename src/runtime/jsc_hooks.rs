@@ -1111,7 +1111,7 @@ unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -
         unsafe { &raw mut *(*state).body_value_pool };
     // Spec returns `!*HiveRef` with the only `try` site being the pool
     // allocation; `bun.handleOom`-style crash matches Zig.
-    bun_core::handle_oom(unsafe { HiveRef::init(value, pool) }).cast::<c_void>()
+    unsafe { HiveRef::init(value, pool) }.cast::<c_void>()
 }
 
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
@@ -4616,12 +4616,12 @@ unsafe fn resolve_hook(
         } else {
             ImportKind::Require
         };
-        let printed = bun_core::handle_oom(ResolveMessage::fmt(
+        let printed = ResolveMessage::fmt(
             specifier_utf8.slice(),
             source_utf8.slice(),
             bun_core::err!("NameTooLong"),
             import_kind.into(),
-        ));
+        );
         let msg = logger::Msg {
             data: logger::range_data(None, logger::Range::NONE, printed),
             ..Default::default()
@@ -4741,7 +4741,7 @@ unsafe fn resolve_hook(
                     err = r.err;
                     // PORT NOTE: Zig moved the msg out (`break :brk m`); the
                     // Rust `Msg` is `Clone` (Result<Msg, AllocError>).
-                    break 'brk bun_core::handle_oom(m.clone());
+                    break 'brk m.clone();
                 }
             }
 
@@ -4753,12 +4753,12 @@ unsafe fn resolve_hook(
                 ImportKind::Require
             };
 
-            let printed = bun_core::handle_oom(ResolveMessage::fmt(
+            let printed = ResolveMessage::fmt(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 err,
                 import_kind.into(),
-            ));
+            );
             logger::Msg {
                 data: logger::range_data(None, logger::Range::NONE, printed.clone()),
                 metadata: logger::Metadata::Resolve(logger::MetadataResolve {

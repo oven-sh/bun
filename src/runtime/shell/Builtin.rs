@@ -268,13 +268,13 @@ impl BuiltinIO {
                 // SAFETY: caller contract — shell env outlives the Cmd node
                 // (single-threaded); `captured` points into a live
                 // `ShellExecEnv` Bufio.
-                bun_core::handle_oom(unsafe {
+                unsafe {
                     let captured = match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
                         IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
                     };
                     (*captured).append_slice(buf)
-                });
+                };
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
@@ -788,7 +788,7 @@ impl Builtin {
             // (or its parent's) stderr buffer is live.
             let stderr =
                 unsafe { interp.as_cmd_mut(cmd).base.shell_mut().buffered_stderr_mut() };
-            bun_core::handle_oom(stderr.append_slice(&buf));
+            stderr.append_slice(&buf);
         }
         let parent = interp.as_cmd(cmd).base.parent;
         interp.child_done(parent, cmd, 1)

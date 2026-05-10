@@ -89,7 +89,7 @@ impl<T: fmt::Display> Err<T> {
                 text: text.into(),
             },
             ..Default::default()
-        })?;
+        });
 
         log.errors += 1;
         Ok(())

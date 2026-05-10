@@ -57,8 +57,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(*e) {
             self.log()
-                .add_error(Some(self.source), e.loc, b"Invalid assignment target")
-                .expect("unreachable");
+                .add_error(Some(self.source), e.loc, b"Invalid assignment target");
         }
 
         // Zig dispatches via `inline else => |tag| if (comptime @hasDecl(visitors, @tagName(tag)))`.
@@ -236,8 +235,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 "Cannot assign to \"{}\" because it is a constant",
                                 BStr::new(name)
                             ),
-                        )
-                        .expect("unreachable"),
+                        ),
 
                     false => p
                         .log()
@@ -249,8 +247,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 "This assignment will throw because \"{}\" is a constant",
                                 BStr::new(name)
                             ),
-                        )
-                        .expect("unreachable"),
+                        ),
                 }
             } else if p.exports_ref.eql(e_.ref_) {
                 // Assigning to `exports` in a CommonJS module must be tracked to undo the
@@ -415,9 +412,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
                     // Arguments to createElement()
                     let mut args =
-                        ExprNodeList::init_capacity(2 + children_count as usize).expect("oom");
+                        ExprNodeList::init_capacity(2 + children_count as usize);
                     // PERF(port): was assume_capacity
-                    VecExt::append(&mut args, tag).expect("oom");
+                    VecExt::append(&mut args, tag);
 
                     let num_props = e_.properties.len_u32();
                     if num_props > 0 {
@@ -431,10 +428,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 ..Default::default()
                             },
                             expr.loc,
-                        ))
-                        .expect("oom");
+                        ));
                     } else {
-                        VecExt::append(&mut args, p.new_expr(E::Null {}, expr.loc)).expect("oom");
+                        VecExt::append(&mut args, p.new_expr(E::Null {}, expr.loc));
                     }
 
                     let children_elements = &e_.children.slice()[0..children_count as usize];
@@ -443,7 +439,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.visit_expr(&mut arg);
                         if !matches!(arg.data, Data::EMissing(..)) {
                             // PERF(port): was assume_capacity
-                            VecExt::append(&mut args, arg).expect("oom");
+                            VecExt::append(&mut args, arg);
                         }
                     }
 
@@ -613,8 +609,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     } else {
                         2usize + usize::from(maybe_key_value.is_some())
                     };
-                    let mut args = ExprNodeList::init_capacity(args_len).expect("oom");
-                    VecExt::append(&mut args, tag).expect("oom");
+                    let mut args = ExprNodeList::init_capacity(args_len);
+                    VecExt::append(&mut args, tag);
 
                     VecExt::append(&mut args, p.new_expr(
                         E::Object {
@@ -622,18 +618,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             ..Default::default()
                         },
                         expr.loc,
-                    ))
-                    .expect("oom");
+                    ));
 
                     if let Some(key) = maybe_key_value {
-                        VecExt::append(&mut args, key).expect("oom");
+                        VecExt::append(&mut args, key);
                     } else if p.options.jsx.development {
                         // if (maybeKey !== undefined)
                         VecExt::append(&mut args, Expr {
                             loc: expr.loc,
                             data: Data::EUndefined(E::Undefined {}),
-                        })
-                        .expect("oom");
+                        });
                     }
 
                     if p.options.jsx.development {
@@ -643,12 +637,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         VecExt::append(&mut args, Expr {
                             loc: expr.loc,
                             data: Data::EBoolean(E::Boolean { value: is_static_jsx }),
-                        })
-                        .expect("oom");
+                        });
 
-                        VecExt::append(&mut args, p.new_expr(E::Undefined {}, expr.loc)).expect("oom");
-                        VecExt::append(&mut args, Expr { data: prefill::data::THIS, loc: expr.loc })
-                            .expect("oom");
+                        VecExt::append(&mut args, p.new_expr(E::Undefined {}, expr.loc));
+                        VecExt::append(&mut args, Expr { data: prefill::data::THIS, loc: expr.loc });
                     }
 
                     let jsx_target = p.jsx_import_automatic(expr.loc, is_static_jsx);
@@ -706,8 +698,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // this ordering incase someone wants to use a macro in a node_module conditionally
                         if p.options.features.no_macros {
                             p.log()
-                                .add_error(Some(p.source), tag.loc, b"Macros are disabled")
-                                .expect("unreachable");
+                                .add_error(Some(p.source), tag.loc, b"Macros are disabled");
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
                             return;
                         }
@@ -718,8 +709,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     Some(p.source),
                                     expr.loc,
                                     b"For security reasons, macros cannot be run from node_modules.",
-                                )
-                                .expect("unreachable");
+                                );
                             *e = p.new_expr(E::Undefined {}, expr.loc);
                             return;
                         }
@@ -933,8 +923,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 "Private name \"{}\" must be declared in an enclosing class",
                                 BStr::new(name)
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                 } else {
                     if in_.assign_target != js_ast::AssignTarget::None
                         && (kind == js_ast::symbol::Kind::PrivateMethod
@@ -952,8 +941,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     "Writing to read-only method \"{}\" will throw",
                                     BStr::new(name)
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                     } else if in_.assign_target != js_ast::AssignTarget::None
                         && (kind == js_ast::symbol::Kind::PrivateGet
                             || kind == js_ast::symbol::Kind::PrivateStaticGet)
@@ -970,8 +958,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     "Writing to getter-only property \"{}\" will throw",
                                     BStr::new(name)
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                     } else if in_.assign_target != js_ast::AssignTarget::Replace
                         && (kind == js_ast::symbol::Kind::PrivateSet
                             || kind == js_ast::symbol::Kind::PrivateStaticSet)
@@ -988,8 +975,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     "Reading from setter-only property \"{}\" will throw",
                                     BStr::new(name)
                                 ),
-                            )
-                            .expect("unreachable");
+                            );
                     }
                 }
 
@@ -1131,8 +1117,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 .original_name
                         })
                     ),
-                )
-                .expect("unreachable");
+                );
         }
 
         // PORT NOTE: `e_` is `StoreRef<E::Index>` — mutations above wrote through
@@ -1596,8 +1581,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 Some(p.source),
                                 r,
                                 b"Cannot specify the \"__proto__\" property more than once per object",
-                            )
-                            .expect("unreachable");
+                            );
                     }
                     has_proto = true;
                 }
@@ -1948,8 +1932,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         Some(p.source),
                         r,
                         b"This call to \"require\" will not be bundled because it has multiple arguments",
-                    )
-                    .expect("unreachable");
+                    );
             }
 
             if e_.args.len_u32() >= 1 {
@@ -2031,8 +2014,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if p.options.features.no_macros {
                     p.log()
-                        .add_error(Some(p.source), expr.loc, b"Macros are disabled")
-                        .expect("unreachable");
+                        .add_error(Some(p.source), expr.loc, b"Macros are disabled");
                     *e = p.new_expr(E::Undefined {}, expr.loc);
                     return;
                 }
@@ -2043,8 +2025,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             Some(p.source),
                             expr.loc,
                             b"For security reasons, macros cannot be run from node_modules.",
-                        )
-                        .expect("unreachable");
+                        );
                     *e = p.new_expr(E::Undefined {}, expr.loc);
                     return;
                 }
@@ -2085,8 +2066,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if err == bun_core::err!("MacroFailed") {
                             if p.log().msgs.len() == start_error_count {
                                 p.log()
-                                    .add_error(Some(p.source), expr.loc, b"macro threw exception")
-                                    .expect("unreachable");
+                                    .add_error(Some(p.source), expr.loc, b"macro threw exception");
                             }
                         } else {
                             p.log()
@@ -2094,8 +2074,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     Some(p.source),
                                     expr.loc,
                                     format_args!("\"{}\" error in macro", err.name()),
-                                )
-                                .expect("unreachable");
+                                );
                         }
                         return;
                     }
@@ -2167,8 +2146,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 Some(p.source),
                                 expr.loc,
                                 b"\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
-                            )
-                            .expect("unreachable");
+                            );
                     }
                 }
             }
@@ -2253,8 +2231,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     loc,
                     b"feature() requires exactly one string argument",
-                )
-                .expect("unreachable");
+                );
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
@@ -2267,8 +2244,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     arg.loc,
                     b"feature() argument must be a string literal",
-                )
-                .expect("unreachable");
+                );
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
@@ -2282,8 +2258,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     arg.loc,
                     b"feature() flag name must be an ASCII string",
-                )
-                .expect("unreachable");
+                );
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
@@ -2294,8 +2269,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     loc,
                     b"feature() from \"bun:bundle\" can only be used directly in an if statement or ternary condition",
-                )
-                .expect("unreachable");
+                );
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 

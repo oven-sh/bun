@@ -441,7 +441,7 @@ impl<'a> Snapshots<'a> {
                             "Failed to update inline snapshot: Failed to open file: {}",
                             bstr::BStr::new(e.name()),
                         ),
-                    )?;
+                    );
                     continue;
                 }
             };
@@ -488,7 +488,7 @@ impl<'a> Snapshots<'a> {
                                     not: false,
                                 },
                             ),
-                        )?;
+                        );
                     }
                     continue;
                 }
@@ -516,7 +516,7 @@ impl<'a> Snapshots<'a> {
                             "Failed to update inline snapshot: Ln {}, Col {} not found",
                             ils.line, ils.col
                         ),
-                    )?;
+                    );
                     continue;
                 };
 
@@ -550,7 +550,7 @@ impl<'a> Snapshots<'a> {
                                 "Failed to update inline snapshot: Could not find '{}' here",
                                 bstr::BStr::new(fn_name)
                             ),
-                        )?;
+                        );
                         continue 'ils;
                     }
                     next_start += fn_name.len();
@@ -601,7 +601,7 @@ impl<'a> Snapshots<'a> {
                                 &source,
                                 parser.lexer.loc(),
                                 format_args!("Failed to update inline snapshot: Snapshot has matchers and yet has no arguments"),
-                            )?;
+                            );
                             continue 'ils;
                         }
                         let close_paren_loc = parser.lexer.loc().start;
@@ -615,7 +615,7 @@ impl<'a> Snapshots<'a> {
                             format_args!(
                                 "Failed to update inline snapshot: Spread is not allowed"
                             ),
-                        )?;
+                        );
                         continue 'ils;
                     }
 
@@ -644,7 +644,7 @@ impl<'a> Snapshots<'a> {
                                     &source,
                                     expr_1.loc,
                                     format_args!("Failed to update inline snapshot: Argument must be a string literal"),
-                                )?;
+                                );
                                 continue 'ils;
                             }
                             break 'blk (before_expr_loc, after_expr_loc, false);
@@ -658,7 +658,7 @@ impl<'a> Snapshots<'a> {
                             format_args!(
                                 "Failed to update inline snapshot: Spread is not allowed"
                             ),
-                        )?;
+                        );
                         continue 'ils;
                     }
 
@@ -671,7 +671,7 @@ impl<'a> Snapshots<'a> {
                             &source,
                             parser.lexer.loc(),
                             format_args!("Failed to update inline snapshot: Snapshot does not have matchers and yet has two arguments"),
-                        )?;
+                        );
                         continue 'ils;
                     }
                     if !matches!(expr_2.data, js_ast::ExprData::EString(_)) {
@@ -679,7 +679,7 @@ impl<'a> Snapshots<'a> {
                             &source,
                             expr_2.loc,
                             format_args!("Failed to update inline snapshot: Argument must be a string literal"),
-                        )?;
+                        );
                         continue 'ils;
                     }
 
@@ -691,7 +691,7 @@ impl<'a> Snapshots<'a> {
                             &source,
                             parser.lexer.loc(),
                             format_args!("Failed to update inline snapshot: Snapshot expects at most two arguments"),
-                        )?;
+                        );
                         continue 'ils;
                     }
                     parser.lexer.expect(js_lexer::T::TCloseParen)?;
@@ -713,7 +713,7 @@ impl<'a> Snapshots<'a> {
                         &source,
                         logger::Loc { start: final_start },
                         format_args!("Failed to update inline snapshot: Did not advance."),
-                    )?;
+                    );
                     continue;
                 }
 
@@ -820,7 +820,7 @@ impl<'a> Snapshots<'a> {
                         "Failed to update inline snapshot: Seek file error: {}",
                         bstr::BStr::new(e.name()),
                     ),
-                )?;
+                );
                 let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
@@ -833,7 +833,7 @@ impl<'a> Snapshots<'a> {
                         "Failed to update inline snapshot: Write file error: {}",
                         bstr::BStr::new(e.name()),
                     ),
-                )?;
+                );
                 let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }

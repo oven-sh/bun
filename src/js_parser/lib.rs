@@ -2133,7 +2133,7 @@ pub mod defines_full_draft {
                             None,
                             logger::Loc::default(),
                             format_args!("define key \"{}\" must be a valid identifier", BStr::new(key)),
-                        )?;
+                        );
                     } else {
                         log.add_error_fmt(
                             None,
@@ -2143,7 +2143,7 @@ pub mod defines_full_draft {
                                 BStr::new(part),
                                 BStr::new(value_str)
                             ),
-                        )?;
+                        );
                     }
                     break;
                 }
@@ -2243,12 +2243,12 @@ pub mod defines_full_draft {
             J::EArray(a) => {
                 let src = a.get();
                 let mut items =
-                    crate::ExprNodeList::init_capacity(src.items.len_u32() as usize)?;
+                    crate::ExprNodeList::init_capacity(src.items.len_u32() as usize);
                 for it in src.items.slice() {
                     VecExt::append(&mut items, expr::Expr {
                         loc: it.loc,
                         data: json_data_to_expr_data(it.data, bump)?,
-                    })?;
+                    });
                 }
                 let item = bump.alloc(E::Array {
                     items,
@@ -2264,7 +2264,7 @@ pub mod defines_full_draft {
                 let src = o.get();
                 let mut properties = G::PropertyList::init_capacity(
                     src.properties.len_u32() as usize,
-                )?;
+                );
                 for prop in src.properties.slice() {
                     let key = match &prop.key {
                         Some(k) => Some(expr::Expr {

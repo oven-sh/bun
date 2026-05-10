@@ -670,8 +670,7 @@ impl<'a> PackageInstaller<'a> {
                                     err.name(),
                                 ),
                                 Default::default(),
-                            )
-                            .unwrap_or_oom();
+                            );
                     }
 
                     if manager.options.enable.fail_early() {

@@ -1226,7 +1226,7 @@ impl<'a> JSXTag<'a> {
                         start: member_range.loc.start + i32::try_from(index).expect("int cast"),
                     },
                     b"Unexpected \"-\"",
-                )?;
+                );
                 return Err(bun_core::err!("SyntaxError"));
             }
 
@@ -1666,7 +1666,7 @@ impl InvalidLoc {
             InvalidLocTag::Method => b"Unexpected method in binding pattern",
             InvalidLocTag::Unknown => b"Invalid binding pattern",
         };
-        log.add_error(Some(source), self.loc, text).expect("unreachable");
+        log.add_error(Some(source), self.loc, text);
     }
 }
 
@@ -2397,8 +2397,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
             drop(parser);
             if temp_log.errors == 0 {
                 log_to_copy_into
-                    .add_range_error(Some(source), range, err.name().as_bytes())
-                    .expect("unreachable");
+                    .add_range_error(Some(source), range, err.name().as_bytes());
             }
             let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
             return Ok(None);

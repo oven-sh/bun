@@ -394,9 +394,9 @@ pub fn compute_chunks(
     let mut sorted_chunks: Vec<Chunk> = 'sort_chunks: {
         let mut sorted_chunks = Vec::<Chunk>::init_capacity(
             js_chunks.count() + css_chunks.count() + html_chunks.count(),
-        )?;
+        );
 
-        let mut sorted_keys = Vec::<&[u8]>::init_capacity(js_chunks.count())?;
+        let mut sorted_keys = Vec::<&[u8]>::init_capacity(js_chunks.count());
 
         // PERF(port): was assume_capacity
         sorted_keys.append_slice_assume_capacity(js_chunks.keys());
@@ -430,7 +430,7 @@ pub fn compute_chunks(
         let ctx = ChunkSortContext { chunks: &js_chunks };
         sorted_keys.sort_by(|a, b| if ctx.less_than(a, b) { core::cmp::Ordering::Less } else if ctx.less_than(b, a) { core::cmp::Ordering::Greater } else { core::cmp::Ordering::Equal });
         let mut js_chunk_indices_with_css =
-            Vec::<u32>::init_capacity(js_chunks_with_css)?;
+            Vec::<u32>::init_capacity(js_chunks_with_css);
         for &key in sorted_keys.slice() {
             let chunk = js_chunks.get(&key).expect("unreachable");
 
@@ -533,7 +533,7 @@ pub fn compute_chunks(
 
     let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
     let mut unique_key_builder =
-        bun_string::StringBuilder::init_capacity(unique_key_item_len * chunks.len())?;
+        bun_string::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
     // PORT NOTE: in Zig `unique_key_buf` aliases the builder's backing buffer and
     // every `chunk.unique_key` is a slice into it. Mirror that: capture the stable
     // base pointer now (the builder never reallocates after `init_capacity`), hand
@@ -677,7 +677,7 @@ pub fn compute_chunks(
                                 bstr::BStr::new(err.name()),
                                 bstr::BStr::new(dir_path)
                             ),
-                        )?;
+                        );
                         return Err(bun_core::err!("BuildFailed"));
                     }
                 }
@@ -694,7 +694,7 @@ pub fn compute_chunks(
     // is only assigned here on success, so no rollback guard is needed.)
     this.unique_key_buf = unique_key_builder.move_to_slice();
 
-    Ok(sorted_chunks.to_owned_slice()?)
+    Ok(sorted_chunks.to_owned_slice())
     // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
     // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
 }

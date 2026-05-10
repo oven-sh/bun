@@ -181,7 +181,7 @@ impl BufferedIoClosed {
             // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
             // which the owning Cmd's `base.shell` keeps live for the duration
             // of the command. Single-threaded.
-            bun_core::handle_oom(unsafe { (*shell_buf).append_slice(the_slice) });
+            unsafe { (*shell_buf).append_slice(the_slice) };
         }
         // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
         // single-threaded and this is the same pattern `subproc::on_close_io`
@@ -970,7 +970,7 @@ impl Cmd {
             if let Some(captured) = unsafe { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stdout) {
                     if let Readable::Pipe(pipe) = &child.stdout {
-                        bun_core::handle_oom(captured.append_slice(pipe.slice()));
+                        captured.append_slice(pipe.slice());
                     }
                 }
             }
@@ -1003,7 +1003,7 @@ impl Cmd {
             if let Some(captured) = unsafe { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stderr) {
                     if let Readable::Pipe(pipe) = &child.stderr {
-                        bun_core::handle_oom(captured.append_slice(pipe.slice()));
+                        captured.append_slice(pipe.slice());
                     }
                 }
             }

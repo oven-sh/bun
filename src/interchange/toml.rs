@@ -83,7 +83,7 @@ impl ObjectRopeExt for E::Object {
             key: Some(rope.head),
             value: Some(value_),
             ..Default::default()
-        })?;
+        });
         Ok(())
     }
 
@@ -130,7 +130,7 @@ impl ObjectRopeExt for E::Object {
                 key: Some(rope.head),
                 value: Some(obj),
                 ..Default::default()
-            })?;
+            });
             return Ok(out);
         }
 
@@ -139,7 +139,7 @@ impl ObjectRopeExt for E::Object {
             key: Some(rope.head),
             value: Some(out),
             ..Default::default()
-        })?;
+        });
         Ok(out)
     }
 }

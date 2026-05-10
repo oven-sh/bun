@@ -30,7 +30,7 @@ impl BuildMessage {
         let notes = &self.msg.notes;
         let array = JSValue::create_empty_array(global, notes.len())?;
         for (i, note) in notes.iter().enumerate() {
-            let cloned = note.clone()?;
+            let cloned = note.clone();
             array.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
@@ -82,7 +82,7 @@ impl BuildMessage {
         // resolve_result: *const Resolver.Result,
     ) -> JsResult<JSValue> {
         let build_error = BuildMessage {
-            msg: msg.clone()?,
+            msg: msg.clone(),
             // resolve_result: resolve_result.*,
             logged: false,
         };

@@ -541,7 +541,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 Some(p.source),
                 p.lexer.range(),
                 b"Unexpected newline before \"=>\"",
-            )?;
+            );
             return Err(bun_core::err!("SyntaxError"));
         }
 

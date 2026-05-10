@@ -1492,13 +1492,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         self.buffer.clear_retaining_capacity();
-        if self
+        self
             .buffer
-            .ensure_total_capacity_precise(self.high_water_mark as usize)
-            .is_err()
-        {
-            return bun_sys::Result::Err(SysError::oom());
-        }
+            .ensure_total_capacity_precise(self.high_water_mark as usize);
 
         self.done = false;
         self.signal.start();

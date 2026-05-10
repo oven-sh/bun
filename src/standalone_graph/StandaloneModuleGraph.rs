@@ -1150,7 +1150,7 @@ pub fn inject(
                                     SEP_STR.as_bytes(),
                                     zname.as_bytes(),
                                     &[0],
-                                ]).expect("OOM");
+                                ]);
                                 // PORT NOTE: Zig leaked the concat buffer here. PORTING.md
                                 // §Forbidden bans `mem::forget`; the buffer is parked in
                                 // `zname_owned` (declared at fn entry) so it outlives the

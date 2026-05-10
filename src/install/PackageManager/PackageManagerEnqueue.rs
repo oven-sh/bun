@@ -161,15 +161,13 @@ pub fn enqueue_dependency_list(
                         logger::Loc::default(),
                         err.name().as_bytes(),
                         format_args!("error occurred while resolving {}", path_fmt),
-                    )
-                    .expect("unreachable");
+                    );
             } else {
                 log
                     .add_zig_error_with_note(
                         err,
                         format_args!("error occurred while resolving {}", path_fmt),
-                    )
-                    .expect("unreachable");
+                    );
             }
 
             i += 1;
@@ -798,8 +796,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         this.lockfile.str(&version.dist_tag().tag)
                                                     ),
                                                 ),
-                                            )
-                                            .expect("unreachable");
+                                            );
                                     }
                                 }
                                 return Ok(());
@@ -815,8 +812,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
                                             bstr::BStr::new(this.lockfile.str(&version.literal)),
                                             bstr::BStr::new(this.lockfile.str(&name)),
-                                        )
-                                        .expect("unreachable");
+                                        );
                                     }
                                 }
                                 return Ok(());
@@ -836,8 +832,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(this.lockfile.str(&version.dist_tag().tag)),
                                                 age_gate_ms / MS_PER_S,
-                                            )
-                                            .expect("unreachable");
+                                            );
                                         } else {
                                             logger::add_error_pretty!(
                                                 this.log_mut(),
@@ -847,8 +842,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(this.lockfile.str(&version.literal)),
                                                 age_gate_ms / MS_PER_S,
-                                            )
-                                            .expect("unreachable");
+                                            );
                                         }
                                     }
                                 }
@@ -867,8 +861,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     bstr::BStr::new(this.lockfile.str(version.folder())),
                                                     bstr::BStr::new(this.lockfile.str(&name)),
                                                 ),
-                                            )
-                                            .expect("unreachable");
+                                            );
                                     } else {
                                         this.log_mut()
                     .add_error_fmt(
@@ -878,8 +871,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     "Could not find package.json for dependency \"{}\"",
                                                     bstr::BStr::new(this.lockfile.str(&name)),
                                                 ),
-                                            )
-                                            .expect("unreachable");
+                                            );
                                     }
                                 }
                                 return Ok(());
@@ -1468,8 +1460,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 bstr::BStr::new(this.lockfile.str(&name)),
                                 PackageWorkspaceSearchPathFormatter { manager: this, version, quoted: true },
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                 } else {
                     this.log_mut()
                     .add_error_fmt(
@@ -1480,8 +1471,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
                                 bstr::BStr::new(this.lockfile.str(&name)),
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                 }
             } else if this.options.log_level.is_verbose() {
                 if dependency_tag == dependency::version::Tag::Workspace {
@@ -1494,8 +1484,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 bstr::BStr::new(this.lockfile.str(&name)),
                                 PackageWorkspaceSearchPathFormatter { manager: this, version, quoted: true },
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                 } else {
                     this.log_mut()
                     .add_warning_fmt(
@@ -1505,8 +1494,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
                                 bstr::BStr::new(this.lockfile.str(&name)),
                             ),
-                        )
-                        .expect("unreachable");
+                        );
                 }
             }
             let _ = (WORKSPACE_NOT_FOUND_FMT, LINK_NOT_FOUND_FMT);
@@ -2216,8 +2204,7 @@ fn get_or_put_resolved_package(
                                             bun_fmt::PathSep::Auto
                                         ),
                                     ),
-                                )
-                                .expect("unreachable");
+                                );
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -2267,8 +2254,7 @@ fn get_or_put_resolved_package(
                                             bun_fmt::PathSep::Auto
                                         ),
                                     ),
-                                )
-                                .expect("unreachable");
+                                );
                             success_fn(this, dependency_id, list[0]);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`

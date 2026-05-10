@@ -283,7 +283,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && self.lexer.token == T::TColon
                     {
                         self.log()
-                            .add_range_error(Some(self.source), r, b"Unexpected \"const\"")?;
+                            .add_range_error(Some(self.source), r, b"Unexpected \"const\"");
                     }
                 }
 
@@ -1143,7 +1143,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         "The modifier \"{}\" is not valid here",
                         bstr::BStr::new(self.source.text_for_range(invalid_modifier_range)),
                     ),
-                )?;
+                );
             }
 
             // expectIdentifier => Mandatory identifier (e.g. after "type Foo <in ___")

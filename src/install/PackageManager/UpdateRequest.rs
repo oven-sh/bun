@@ -213,14 +213,14 @@ impl UpdateRequest {
                         format_args!("{}", bstr::BStr::new(positional)),
                     );
                 } else {
-                    bun_core::handle_oom(log.add_error_fmt(
+                    log.add_error_fmt(
                         None,
                         Loc::EMPTY,
                         format_args!(
                             "unrecognised dependency format: {}",
                             bstr::BStr::new(positional)
                         ),
-                    ));
+                    );
                 }
 
                 return Err(bun_core::err!("UnrecognizedDependencyFormat"));
@@ -255,14 +255,14 @@ impl UpdateRequest {
                         format_args!("{}", bstr::BStr::new(positional)),
                     );
                 } else {
-                    bun_core::handle_oom(log.add_error_fmt(
+                    log.add_error_fmt(
                         None,
                         Loc::EMPTY,
                         format_args!(
                             "unrecognised dependency format: {}",
                             bstr::BStr::new(positional)
                         ),
-                    ));
+                    );
                 }
 
                 return Err(bun_core::err!("UnrecognizedDependencyFormat"));

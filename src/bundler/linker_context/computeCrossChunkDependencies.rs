@@ -448,7 +448,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             let chunk = &mut chunks[chunk_index];
             let new_imports = chunk
                 .cross_chunk_imports
-                .writable_slice(dynamic_chunk_indices.len())?;
+                .writable_slice(dynamic_chunk_indices.len());
             debug_assert_eq!(dynamic_chunk_indices.len(), new_imports.len());
             for (&dynamic_chunk_index, item) in
                 dynamic_chunk_indices.iter().zip(new_imports.iter_mut())
@@ -486,7 +486,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 OutputFormat::Esm => {
                     c.sorted_cross_chunk_export_items(&chunk_meta.exports, &mut stable_ref_list);
                     let mut clause_items =
-                        Vec::<js_ast::ClauseItem>::init_capacity(stable_ref_list.len())?;
+                        Vec::<js_ast::ClauseItem>::init_capacity(stable_ref_list.len());
                     repr.exports_to_other_chunks
                         .reserve(stable_ref_list.len());
                     // PERF(port): was ensureUnusedCapacity — profile in Phase B
@@ -523,7 +523,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     }
 
                     if clause_items.len() > 0 {
-                        let mut stmts = Vec::<js_ast::Stmt>::init_capacity(1)?;
+                        let mut stmts = Vec::<js_ast::Stmt>::init_capacity(1);
                         // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
                         // Vec buffer (arena-lifetime) into a raw fat ptr.
                         let items_ptr =

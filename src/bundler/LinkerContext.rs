@@ -1784,7 +1784,7 @@ impl<'a> LinkerContext<'a> {
                             write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).expect("infallible: in-memory write");
                         }
 
-                        self.log.add_range_error_with_notes(Some(source), record.range, text, notes.into_boxed_slice())?;
+                        self.log.add_range_error_with_notes(Some(source), record.range, text, notes.into_boxed_slice());
                     }
                 }
             }
@@ -1831,7 +1831,7 @@ impl<'a> LinkerContext<'a> {
                                 E::RequireString { import_record_index, ..Default::default() },
                                 loc,
                             )),
-                        }]).expect("unreachable"),
+                        }]),
                         ..Default::default()
                     },
                     record.range.loc,
@@ -1857,7 +1857,7 @@ impl<'a> LinkerContext<'a> {
                             decls: G::DeclList::from_slice(&[G::Decl {
                                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
                                 value: Some(Expr::init(E::RequireString { import_record_index, ..Default::default() }, loc)),
-                            }])?,
+                            }]),
                             ..Default::default()
                         },
                         loc,
@@ -2707,7 +2707,7 @@ impl<'a> LinkerContext<'a> {
                                     "Cannot import a \".{}\" file into a CSS file",
                                     <&'static str>::from(loader),
                                 ),
-                            ).expect("OOM");
+                            );
                         }
                         Loader::Css | Loader::File | Loader::Toml | Loader::Wasm
                         | Loader::Base64 | Loader::Dataurl | Loader::Text | Loader::Bunsh => {}
@@ -2764,7 +2764,7 @@ impl<'a> LinkerContext<'a> {
 
                 // generate a dummy part that depends on the "__commonJS" symbol.
                 let dependencies: DependencyList = if self.options.output_format != Format::InternalBakeDev {
-                    let mut deps = Vec::<Dependency>::init_capacity(common_js_parts.len()).expect("OOM");
+                    let mut deps = Vec::<Dependency>::init_capacity(common_js_parts.len());
                     for &part in common_js_parts {
                         deps.append_assume_capacity(Dependency {
                             part_index: part,
@@ -2856,7 +2856,7 @@ impl<'a> LinkerContext<'a> {
 
                 // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
                 let mut dependencies =
-                    Vec::<Dependency>::init_capacity(esm_parts.len() + promise_all_parts.len()).expect("OOM");
+                    Vec::<Dependency>::init_capacity(esm_parts.len() + promise_all_parts.len());
                 for &part in esm_parts {
                     dependencies.append_assume_capacity(Dependency { part_index: part, source_index: js_ast::Index::RUNTIME });
                 }
@@ -3166,7 +3166,7 @@ impl<'a> LinkerContext<'a> {
                                 bstr::BStr::new(alias),
                                 bstr::BStr::new(&source.path.pretty),
                             ),
-                        ).expect("unreachable");
+                        );
                     }
                 }
 
@@ -3250,7 +3250,7 @@ impl<'a> LinkerContext<'a> {
                                 ),
                                 format_args!("Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options."),
                                 r,
-                            ).expect("unreachable");
+                            );
                         } else {
                             self.log.add_range_warning_fmt(
                                 Some(source), r,
@@ -3259,7 +3259,7 @@ impl<'a> LinkerContext<'a> {
                                     bstr::BStr::new(alias),
                                     bstr::BStr::new(&next_source.path.pretty),
                                 ),
-                            ).expect("unreachable");
+                            );
                         }
                     } else if self.resolver().opts.target == Target::Browser
                         && next_source.path.text.starts_with(NodeFallbackModules::IMPORT_PATH)
@@ -3273,7 +3273,7 @@ impl<'a> LinkerContext<'a> {
                             ),
                             format_args!("Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options."),
                             r,
-                        ).expect("unreachable");
+                        );
                     } else {
                         self.log.add_range_error_fmt(
                             Some(source), r,
@@ -3282,7 +3282,7 @@ impl<'a> LinkerContext<'a> {
                                 bstr::BStr::new(&next_source.path.pretty),
                                 bstr::BStr::new(alias),
                             ),
-                        ).expect("unreachable");
+                        );
                     }
                 }
                 ImportTrackerStatus::ProbablyTypescriptType => {
@@ -3484,7 +3484,7 @@ impl<'a> LinkerContext<'a> {
                             "Detected cycle while resolving import \"{}\"",
                             bstr::BStr::new(alias),
                         ),
-                    ).expect("unreachable");
+                    );
                 }
                 MatchImportKind::ProbablyTypescriptType => {
                     self.graph.meta.items_probably_typescript_type_mut()[source_index as usize]
@@ -3511,7 +3511,7 @@ impl<'a> LinkerContext<'a> {
                                 "Import \"{}\" will always be undefined because there are multiple matching exports",
                                 bstr::BStr::new(alias),
                             ),
-                        ).expect("unreachable");
+                        );
                     } else {
                         self.log.add_range_error_fmt(
                             Some(source), r,
@@ -3519,7 +3519,7 @@ impl<'a> LinkerContext<'a> {
                                 "Ambiguous import \"{}\" has multiple matching exports",
                                 bstr::BStr::new(alias),
                             ),
-                        ).expect("unreachable");
+                        );
                     }
                 }
                 MatchImportKind::Ignore => {}
@@ -3564,7 +3564,7 @@ impl<'a> LinkerContext<'a> {
 
         self.graph.generate_symbol_import_and_use(source_index, part_index, module_ref, 1, crate::Index::init(source_index))?;
         let top_level = &mut self.graph.meta.items_top_level_symbol_to_parts_overlay_mut()[source_index as usize];
-        top_level.put(r#ref, Vec::<u32>::from_slice(&[part_index])?)?;
+        top_level.put(r#ref, Vec::<u32>::from_slice(&[part_index]))?;
 
         let resolved_exports = &mut self.graph.meta.items_resolved_exports_mut()[source_index as usize];
         resolved_exports.put(alias, crate::ExportData {
@@ -3794,11 +3794,11 @@ impl InsideWrapperPrefix {
 
             let promise_all = Expr::init(E::Identifier { ref_: promise_all_ref, ..Default::default() }, Loc::EMPTY);
 
-            let mut items = js_ast::ExprNodeList::init_capacity(2)?;
+            let mut items = js_ast::ExprNodeList::init_capacity(2);
             items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
             // PERF(port): was assume_capacity
 
-            let mut args = js_ast::ExprNodeList::init_capacity(1)?;
+            let mut args = js_ast::ExprNodeList::init_capacity(1);
             args.append_assume_capacity(Expr::init(E::Array { items, ..Default::default() }, Loc::EMPTY));
             // PERF(port): was assume_capacity
 
@@ -3836,22 +3836,20 @@ impl StmtList {
         }
     }
 
-    pub fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt]) -> Result<(), AllocError> {
+    pub fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt]) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.extend_from_slice(stmts),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.extend_from_slice(stmts),
             StmtListWhich::AllStmts => self.all_stmts.extend_from_slice(stmts),
         }
-        Ok(())
     }
 
-    pub fn append(&mut self, list: StmtListWhich, stmt: Stmt) -> Result<(), AllocError> {
+    pub fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.push(stmt),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.push(stmt),
             StmtListWhich::AllStmts => self.all_stmts.push(stmt),
         }
-        Ok(())
     }
 }
 

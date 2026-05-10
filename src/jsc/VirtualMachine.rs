@@ -4026,12 +4026,12 @@ impl VirtualMachine {
             } else {
                 bun_options_types::ImportKind::Require
             };
-            let printed = bun_core::handle_oom(crate::ResolveMessage::fmt(
+            let printed = crate::ResolveMessage::fmt(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 bun_core::err!("NameTooLong"),
                 import_kind.into(),
-            ));
+            );
             let msg = logger::Msg {
                 data: logger::range_data(None, logger::Range::NONE, printed),
                 ..Default::default()
@@ -4143,18 +4143,18 @@ impl VirtualMachine {
                 .find_map(|m| {
                     if let logger::Metadata::Resolve(r) = &m.metadata {
                         err = r.err;
-                        Some(bun_core::handle_oom(m.clone()))
+                        Some(m.clone())
                     } else {
                         None
                     }
                 })
                 .unwrap_or_else(|| {
-                    let printed = bun_core::handle_oom(crate::ResolveMessage::fmt(
+                    let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
                         source_utf8.slice(),
                         err,
                         import_kind.into(),
-                    ));
+                    );
                     logger::Msg {
                         data: logger::range_data(None, logger::Range::NONE, printed.clone()),
                         metadata: logger::Metadata::Resolve(logger::MetadataResolve {
@@ -4680,7 +4680,7 @@ impl VirtualMachine {
                     if let Some(log) = self.log {
                         let _ = unsafe {
                             (*log.as_ptr())
-                                .add_msg(bun_core::handle_oom(build_error.msg.clone()))
+                                .add_msg(build_error.msg.clone())
                         };
                     }
                 }
@@ -4704,7 +4704,7 @@ impl VirtualMachine {
                     if let Some(log) = self.log {
                         let _ = unsafe {
                             (*log.as_ptr())
-                                .add_msg(bun_core::handle_oom(resolve_error.msg.clone()))
+                                .add_msg(resolve_error.msg.clone())
                         };
                     }
                 }

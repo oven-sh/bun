@@ -21,12 +21,12 @@ pub struct StringBuilder {
 }
 
 impl StringBuilder {
-    pub fn init_capacity(cap: usize) -> Result<StringBuilder, bun_alloc::AllocError> {
+    pub fn init_capacity(cap: usize) -> StringBuilder {
         // allocator.alloc(u8, cap)
         let mut buf = Box::<[u8]>::new_uninit_slice(cap);
         let ptr = NonNull::new(buf.as_mut_ptr().cast::<u8>());
         core::mem::forget(buf);
-        Ok(StringBuilder { cap, len: 0, ptr })
+        StringBuilder { cap, len: 0, ptr }
     }
 
     pub fn count_z(&mut self, slice: &[u8]) {

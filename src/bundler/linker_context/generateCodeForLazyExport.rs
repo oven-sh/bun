@@ -175,7 +175,7 @@ pub fn generate_code_for_lazy_export(
                     let loc = ast.local_scope.get_adapted(name, SliceBoxAdapter).unwrap().loc;
 
                     // PORT NOTE: was `catch |err| bun.handleOom(err)` — crash on OOM.
-                    bun_core::handle_oom(self.log.add_range_error_fmt_with_note(
+                    self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
                         bun_logger::Range { loc: compose_loc, ..Default::default() },
                         format_args!(
@@ -187,7 +187,7 @@ pub fn generate_code_for_lazy_export(
                             bun_fmt::quote(name),
                         ),
                         bun_logger::Range { loc, ..Default::default() },
-                    ));
+                    );
                 }
 
                 fn visit_composes(
@@ -217,7 +217,7 @@ pub fn generate_code_for_lazy_export(
                                             self.all_css_asts[import_record.source_index.get() as usize]
                                                 .as_deref()
                                         else {
-                                            bun_core::handle_oom(self.log.add_error_fmt(
+                                            self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
                                                 compose.loc,
                                                 format_args!(
@@ -229,7 +229,7 @@ pub fn generate_code_for_lazy_export(
                                                             .pretty
                                                     ),
                                                 ),
-                                            ));
+                                            );
                                             continue;
                                         };
                                         for name in compose.names.slice() {
@@ -286,7 +286,7 @@ pub fn generate_code_for_lazy_export(
                                         let Some(name_entry) =
                                             ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
                                         else {
-                                            bun_core::handle_oom(self.log.add_error_fmt(
+                                            self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
                                                 compose.loc,
                                                 format_args!(
@@ -294,7 +294,7 @@ pub fn generate_code_for_lazy_export(
                                                     bun_fmt::quote(name_v),
                                                     bun_fmt::quote(&self.all_sources[idx as usize].path.pretty),
                                                 ),
-                                            ));
+                                            );
                                             continue;
                                         };
                                         let name_ref = name_entry.ref_;
@@ -491,7 +491,7 @@ pub fn generate_code_for_lazy_export(
                                         expr.loc,
                                     ),
                                     value: Some(value),
-                                }])?,
+                                }]),
                                 ..Default::default()
                             },
                             key.loc,

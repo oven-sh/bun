@@ -123,19 +123,19 @@ impl ResolveMessage {
         referrer: &[u8],
         err: bun_core::Error,
         import_kind: ImportKind,
-    ) -> Result<Vec<u8>, bun_alloc::AllocError> {
+    ) -> Vec<u8> {
         use bstr::BStr;
         let mut out = Vec::new();
         if import_kind != ImportKind::RequireResolve && specifier.starts_with(b"node:") {
             // This matches Node.js exactly.
             write!(&mut out, "No such built-in module: {}", BStr::new(specifier)).ok();
-            return Ok(out);
+            return out;
         }
         // PORT NOTE: matching against interned bun_core::Error consts (Zig: `switch (err)`).
         if err == bun_core::err!("ModuleNotFound") {
             if referrer == b"bun:main" {
                 write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
-                return Ok(out);
+                return out;
             }
             if bun_resolver::is_package_path(specifier) && !strings::contains_char(specifier, b'/')
             {
@@ -155,7 +155,7 @@ impl ResolveMessage {
                 )
                 .ok();
             }
-            return Ok(out);
+            return out;
         }
         if err == bun_core::err!("InvalidDataURL") {
             write!(
@@ -165,7 +165,7 @@ impl ResolveMessage {
                 BStr::new(referrer),
             )
             .ok();
-            return Ok(out);
+            return out;
         }
         if err == bun_core::err!("InvalidURL") {
             write!(
@@ -175,7 +175,7 @@ impl ResolveMessage {
                 BStr::new(referrer),
             )
             .ok();
-            return Ok(out);
+            return out;
         }
         // else
         if bun_resolver::is_package_path(specifier) {
@@ -197,7 +197,7 @@ impl ResolveMessage {
             )
             .ok();
         }
-        Ok(out)
+        out
     }
 
     pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
@@ -281,7 +281,7 @@ impl ResolveMessage {
         referrer: &[u8],
     ) -> JsResult<JSValue> {
         let resolve_error = ResolveMessage {
-            msg: msg.clone()?,
+            msg: msg.clone(),
             referrer: Some(Box::<[u8]>::from(referrer)),
             logged: false,
         };

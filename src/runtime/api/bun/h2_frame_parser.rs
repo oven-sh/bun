@@ -5664,7 +5664,7 @@ impl H2FrameParser {
             POOL.with_borrow_mut(|pool| {
                 let pool =
                     pool.get_or_insert_with(|| Box::new(H2FrameParserHiveAllocator::init()));
-                let slot = bun_core::handle_oom(pool.try_get());
+                let slot = pool.try_get();
                 // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
                 // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves
                 // `init` in without dropping prior contents.

@@ -234,8 +234,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                                         first_decorator_loc,
                                         b"TypeScript does not allow decorators on class constructors",
-                                    )
-                                    .expect("unreachable");
+                                    );
                             }
                         }
                     }
@@ -578,7 +577,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // If this isn't an arrow function, then types aren't allowed
         if type_colon_range.len > 0 {
             p.log()
-                .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"")?;
+                .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"");
             return Err(err!("SyntaxError"));
         }
 
@@ -605,7 +604,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.log_expr_errors(&mut errors);
             if spread_range.len > 0 {
                 p.log()
-                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"")?;
+                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
                 return Err(err!("SyntaxError"));
             }
 
@@ -673,7 +672,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     p.lexer.range(),
                     b"Cannot use \"await\" as an identifier here",
-                )?;
+                );
             }
 
             name = Some(LocRef { loc: name_loc, ref_: None });
@@ -805,7 +804,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     token_range.loc,
                     b"Cannot use \"export\" with a \"using\" declaration",
-                )?;
+                );
             }
 
             p.lexer.next()?;
@@ -843,7 +842,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                     token_range.loc,
                     b"Cannot use \"export\" with an \"await using\" declaration",
-                )?;
+                );
             }
 
             if p.fn_or_arrow_data_parse.is_top_level {
@@ -949,8 +948,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                             p.lexer.range(),
                             b"Cannot use \"yield\" or \"await\" here.",
-                        )
-                        .expect("unreachable");
+                        );
                 }
 
                 let ref_ = p.store_name_in_ref(name).expect("unreachable");
@@ -1005,8 +1003,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                                         p.lexer.range(),
                                         b"Unexpected \",\" after rest pattern",
-                                    )
-                                    .expect("unreachable");
+                                    );
                                 return Err(err!("SyntaxError"));
                             }
                         }
@@ -1064,8 +1061,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                                     p.lexer.range(),
                                     b"Unexpected \",\" after rest pattern",
-                                )
-                                .expect("unreachable");
+                                );
                             return Err(err!("SyntaxError"));
                         }
 
@@ -1213,8 +1209,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                         p.lexer.range(),
                         b"Cannot use \"let\" as an identifier here",
-                    )
-                    .expect("unreachable");
+                    );
             }
 
             let mut value: Option<js_ast::Expr> = None;
@@ -1479,7 +1474,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Some(p.source),
                             logger::Loc { start: return_without_semicolon_start + 6 },
                             b"The following expression is not returned because of an automatically-inserted semicolon",
-                        )?;
+                        );
                     }
 
                     return_without_semicolon_start = -1;

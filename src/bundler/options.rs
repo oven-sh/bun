@@ -111,8 +111,7 @@ pub fn validate_path(
                 bstr::BStr::new(path_kind),
                 bstr::BStr::new(rel_path),
             ),
-        )
-        .expect("unreachable");
+        );
         return Box::default();
     }
     Box::from(out)
@@ -216,8 +215,7 @@ pub fn init_external_modules(
                         "External path \"{}\" cannot have more than one \"*\" wildcard",
                         bstr::BStr::new(external)
                     ),
-                )
-                .expect("unreachable");
+                );
                 return result;
             }
 
@@ -2356,10 +2354,10 @@ impl TransformResult {
         for msg in log.msgs.iter() {
             match msg.kind {
                 logger::Kind::Err => {
-                    errors.push(msg.clone()?);
+                    errors.push(msg.clone());
                 }
                 logger::Kind::Warn => {
-                    warnings.push(msg.clone()?);
+                    warnings.push(msg.clone());
                 }
                 _ => {}
             }

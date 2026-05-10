@@ -493,8 +493,7 @@ impl ValkeyClient {
 
         self.write_buffer
             .byte_list
-            .ensure_unused_capacity(total_bytelength)
-            .unwrap_or_oom();
+            .ensure_unused_capacity(total_bytelength);
         for _ in 0..pipelineable_count {
             let cmd = self.queue.read_item().expect("count was precomputed");
             self.in_flight

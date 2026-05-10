@@ -997,8 +997,7 @@ impl TarballStream {
                         err.name(),
                         bstr::BStr::new(tarball.name.slice()),
                     ),
-                )
-                .expect("unreachable");
+                );
             (*task).err = Some(err);
             (*task).status = TaskStatus::Fail;
             return;
@@ -1014,8 +1013,7 @@ impl TarballStream {
                             "Integrity check failed<r> for tarball: {}",
                             bstr::BStr::new(tarball.name.slice()),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                 (*task).err = Some(bun_core::err!("IntegrityCheckFailed"));
                 (*task).status = TaskStatus::Fail;
                 return;

@@ -1794,17 +1794,17 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if let Some(entry_naming) = args.option(b"--entry-naming") {
             ctx.bundler_options.entry_naming =
-                strings::concat(&[b"./", strings::remove_leading_dot_slash(entry_naming)])?;
+                strings::concat(&[b"./", strings::remove_leading_dot_slash(entry_naming)]);
         }
 
         if let Some(chunk_naming) = args.option(b"--chunk-naming") {
             ctx.bundler_options.chunk_naming =
-                strings::concat(&[b"./", strings::remove_leading_dot_slash(chunk_naming)])?;
+                strings::concat(&[b"./", strings::remove_leading_dot_slash(chunk_naming)]);
         }
 
         if let Some(asset_naming) = args.option(b"--asset-naming") {
             ctx.bundler_options.asset_naming =
-                strings::concat(&[b"./", strings::remove_leading_dot_slash(asset_naming)])?;
+                strings::concat(&[b"./", strings::remove_leading_dot_slash(asset_naming)]);
         }
 
         if args.flag(b"--server-components") {

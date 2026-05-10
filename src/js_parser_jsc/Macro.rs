@@ -158,8 +158,7 @@ impl MacroContext {
                         import_record_path,
                         bun_options_types::ImportKind::Stmt.into(),
                         e,
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(err!("MacroNotFound"));
                 }
                 Err(e) => {
@@ -171,8 +170,7 @@ impl MacroContext {
                             e.name(),
                             bstr::BStr::new(import_record_path)
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                     return Err(e);
                 }
             };
@@ -644,8 +642,7 @@ impl<'a> Run<'a> {
                             bstr::BStr::new(name),
                             value.js_type(),
                         ),
-                    )
-                    .expect("unreachable");
+                    );
                 Err(MacroError::MacroFailed)
             }
         }
@@ -749,7 +746,7 @@ impl<'a> Run<'a> {
 
                 // Process all array items
                 // PERF(port): was allocator.alloc(Expr, iter.len) — profile in Phase B
-                let mut array = bun_core::handle_oom(ExprNodeList::init_capacity(iter.len as usize));
+                let mut array = ExprNodeList::init_capacity(iter.len as usize);
                 // (errdefer free deleted — drops on `?`)
                 let expr = Expr::init(
                     E::Array {
@@ -766,7 +763,7 @@ impl<'a> Run<'a> {
                     if elem.is_missing() {
                         continue;
                     }
-                    VecExt::append(&mut array, elem)?;
+                    VecExt::append(&mut array, elem);
                     i += 1;
                 }
 
@@ -812,7 +809,7 @@ impl<'a> Run<'a> {
 
                 // Build properties list
                 let mut properties =
-                    bun_core::handle_oom(G::PropertyList::init_capacity(object_iter.len));
+                    G::PropertyList::init_capacity(object_iter.len);
                 // (errdefer clearAndFree deleted — drops on `?`)
 
                 while let Some(prop) = object_iter.next()? {
@@ -824,14 +821,14 @@ impl<'a> Run<'a> {
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] =
                         self.bump.alloc_slice_copy(&prop.to_owned_slice());
-                    bun_core::handle_oom(VecExt::append(&mut properties, G::Property {
+                    VecExt::append(&mut properties, G::Property {
                         key: Some(Expr::init(
                             E::EString::init(key_bytes),
                             self.caller.loc,
                         )),
                         value: Some(object_value),
                         ..Default::default()
-                    }));
+                    });
                 }
 
                 if let ExprData::EObject(mut e_object) = expr.data {
@@ -949,8 +946,7 @@ impl<'a> Run<'a> {
                     "cannot coerce {:?} to Bun's AST. Please return a simpler type",
                     value.js_type(),
                 ),
-            )
-            .expect("unreachable");
+            );
         Err(MacroError::MacroFailed)
     }
 }

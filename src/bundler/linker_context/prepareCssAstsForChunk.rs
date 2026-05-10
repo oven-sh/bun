@@ -253,11 +253,11 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             ) {
                                 Ok(v) => v,
                                 Err(e) => {
-                                    bun_core::handle_oom(c.log.add_error_fmt(
+                                    c.log.add_error_fmt(
                                         None,
                                         Loc::EMPTY,
                                         format_args!("Error generating CSS for import: {}", e),
-                                    ));
+                                    );
                                     continue;
                                 }
                             };

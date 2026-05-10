@@ -581,8 +581,7 @@ impl JSBundleCompletionTask {
                         None,
                         logger::Loc::EMPTY,
                         format_args!("{}", bstr::BStr::new(err.slice())),
-                    )
-                    .expect("oom");
+                    );
                 // `this.result.value.deinit()` — owned fields drop with the
                 // overwrite below; `output_files` (moved out above) drops here.
                 drop(output_files);

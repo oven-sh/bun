@@ -143,7 +143,7 @@ impl SmolStr {
     pub fn from_slice(values: &[u8]) -> Result<SmolStr, AllocError> {
         if values.len() > Inlined::MAX_LEN {
             // TODO(port): verify Vec::<u8>::init_capacity / append_slice_assume_capacity API.
-            let mut baby_list = Vec::<u8>::init_capacity(values.len())?;
+            let mut baby_list = Vec::<u8>::init_capacity(values.len());
             baby_list.append_slice_assume_capacity(values);
             // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
             return Ok(SmolStr::from_baby_list(baby_list));
@@ -168,7 +168,7 @@ impl SmolStr {
         if self.is_inlined() {
             let mut inlined = self.to_inlined();
             if inlined.len() as usize + 1 > Inlined::MAX_LEN {
-                let mut baby_list = Vec::<u8>::init_capacity(inlined.len() as usize + 1)?;
+                let mut baby_list = Vec::<u8>::init_capacity(inlined.len() as usize + 1);
                 baby_list.append_slice_assume_capacity(inlined.slice());
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
                 baby_list.push(char);
@@ -201,7 +201,7 @@ impl SmolStr {
             let mut inlined = self.to_inlined();
             let old_len = inlined.len() as usize;
             if old_len + values.len() > Inlined::MAX_LEN {
-                let mut baby_list = Vec::<u8>::init_capacity(old_len + values.len())?;
+                let mut baby_list = Vec::<u8>::init_capacity(old_len + values.len());
                 baby_list.append_slice_assume_capacity(inlined.slice());
                 baby_list.append_slice_assume_capacity(values);
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B

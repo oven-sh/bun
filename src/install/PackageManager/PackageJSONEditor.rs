@@ -74,7 +74,7 @@ pub fn edit_patched_dependencies(
             patched_dependencies.is_parenthesized = obj.is_parenthesized;
             patched_dependencies.was_originally_macro = obj.was_originally_macro;
             for p in obj.properties.slice() {
-                VecExt::append(&mut patched_dependencies.properties, copy_property(p))?;
+                VecExt::append(&mut patched_dependencies.properties, copy_property(p));
             }
         }
     }
@@ -186,7 +186,7 @@ pub fn edit_trusted_dependencies(
 
         Expr::init(
             E::Array {
-                items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice())?,
+                items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
                 ..Default::default()
             },
             logger::Loc::EMPTY,
@@ -904,7 +904,7 @@ pub fn edit(
             Expr::allocate(
                 arena,
                 E::Array {
-                    items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice())?,
+                    items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
                     ..Default::default()
                 },
                 logger::Loc::EMPTY,

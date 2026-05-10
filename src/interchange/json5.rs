@@ -194,7 +194,8 @@ impl Error {
             Error::InvalidIdentifier { .. } => b"Invalid identifier start character",
             Error::TrailingData { .. } => b"Unexpected token after JSON5 value",
         };
-        log.add_error(Some(source), loc, msg).map_err(|_| AddToLogError::OutOfMemory)
+        log.add_error(Some(source), loc, msg);
+        Ok(())
     }
 }
 

@@ -319,47 +319,40 @@ it(
         stdin: "ignore",
       });
 
-      let reloadCounter = 0;
-      const code = readFileSync(root, "utf-8");
-      async function onReload() {
-        writeFileSync(root + ".another.yet.js", code);
-        unlinkSync(root + ".another.yet.js");
+      // First await the initial run's output — racing this against a fixed
+      // sleep meant a slow CI box's >200 ms subprocess startup lost the race
+      // and `reloadCounter` stayed 0.
+      const reader = runner.stdout.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (!/\[#!root\] Reloaded: 1\n/.test(buf)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("subprocess exited before initial run output");
+        buf += dec.decode(value);
       }
-      var finished = false;
-      await Promise.race([
-        Bun.sleep(200),
+      // Now write+unlink an unrelated file and assert it does NOT trigger a
+      // second reload. Only the bounded "did anything else arrive?" check is
+      // time-based; the condition we care about (initial output) is awaited.
+      const code = readFileSync(root, "utf-8");
+      writeFileSync(root + ".another.yet.js", code);
+      unlinkSync(root + ".another.yet.js");
+      buf = "";
+      const sawSecond = await Promise.race([
+        Bun.sleep(200).then(() => false),
         (async () => {
-          if (finished) {
-            return;
-          }
-          var str = "";
-          for await (const line of runner.stdout) {
-            if (finished) {
-              return;
-            }
-
-            str += new TextDecoder().decode(line);
-            if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
-
-            for (let line of str.split("\n")) {
-              if (!line.includes("[#!root]")) continue;
-              if (finished) {
-                return;
-              }
-              await onReload();
-
-              reloadCounter++;
-              str = "";
-              expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
-            }
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) return false;
+            buf += dec.decode(value);
+            if (/\[#!root\] Reloaded: 2/.test(buf)) return true;
           }
         })(),
       ]);
-      finished = true;
+      reader.releaseLock();
       runner.kill(0);
       runner.unref();
 
-      expect(reloadCounter).toBe(1);
+      expect(sawSecond).toBe(false);
     } finally {
       // @ts-ignore
       runner?.unref?.();

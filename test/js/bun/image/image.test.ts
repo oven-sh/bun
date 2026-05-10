@@ -678,34 +678,53 @@ describe("Bun.Image", () => {
     // that flips bit_depth 8→16 on an otherwise-accepted pixel count must
     // reject before any allocation runs.
     test("maxPixels budget halves for 16-bpc sources (decode rejects before allocating)", async () => {
-      // Build a tiny 16-bpc PNG (width/height will be patched below), with
-      // just enough IDAT to be structurally valid. The rejection must
-      // happen at the guard step — before libspng is asked to allocate —
-      // so the truncated IDAT never needs to inflate.
-      const bomb = makePng16(1, 1, () => [0, 0, 0, 0xffff]);
-      // Patch width and height in the IHDR. A 4096×4096 16-bpc RGBA
-      // allocation is 128 MiB; `maxPixels: 8_000_000` would comfortably
-      // admit that many 8-bpc pixels (~32 MiB) but must reject at 16 bpc
-      // because the effective budget halves to 4 MP.
-      const dv = new DataView(bomb.buffer, bomb.byteOffset);
-      dv.setUint32(16, 4096);
-      dv.setUint32(20, 4096);
-      // Recompute IHDR CRC (chunk-data spans bytes 12..28 inclusive; CRC
-      // itself lives at byte 29).
-      let c = ~0 >>> 0;
-      for (let i = 12; i < 29; i++) {
-        c ^= bomb[i];
-        for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
-      }
-      dv.setUint32(29, ~c >>> 0);
+      // The pixel count must sit strictly inside the open interval
+      // (max_pixels, 2*max_pixels) so the halving is the deciding factor —
+      // otherwise a future refactor that drops the halving would still
+      // reject via the base guard and the test would pass silently.
+      //
+      // 4096×4096 = 16,777,216 pixels. With maxPixels = 20_000_000:
+      //   • regular guard:  16.7M ≤ 20M  → accepts
+      //   • halved (16-bpc): 16.7M > 10M → rejects
+      // so a 16-bpc source rejects ONLY because of the halving.
+      const pixels = 4096 * 4096; // 16,777,216
+      const budget = 20_000_000;
+      // Build tiny 16-bpc and 8-bpc fixtures, patch both to 4096×4096.
+      // The 8-bpc fixture is the control — same dimensions, same budget,
+      // but the halving shouldn't apply, so it must ACCEPT where the
+      // 16-bpc one rejects. This is what makes the test prove halving
+      // is doing the work.
+      const patch4k = (buf: Uint8Array) => {
+        const dv = new DataView(buf.buffer, buf.byteOffset);
+        dv.setUint32(16, 4096);
+        dv.setUint32(20, 4096);
+        // IHDR chunk-data spans bytes 12..28 inclusive; CRC at byte 29.
+        let c = ~0 >>> 0;
+        for (let i = 12; i < 29; i++) {
+          c ^= buf[i];
+          for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+        }
+        dv.setUint32(29, ~c >>> 0);
+      };
+      const bomb16 = makePng16(1, 1, () => [0, 0, 0, 0xffff]);
+      patch4k(bomb16);
+      const bomb8 = makePng(1, 1, () => [0, 0, 0, 255]);
+      patch4k(bomb8);
       // `metadata()` uses `probe()`, which must apply the same 16-bpc
       // halving — otherwise `.metadata()` accepts and `.bytes()` rejects.
-      await expect(new Bun.Image(bomb, { maxPixels: 8_000_000 }).metadata()).rejects.toThrow(/maxPixels/);
-      await expect(new Bun.Image(bomb, { maxPixels: 8_000_000 }).bytes()).rejects.toThrow(/maxPixels/);
-      // Doubling the budget clears the halved cap → accepts. probe() only
-      // reads the header so this is cheap even though the IDAT is bogus.
-      const meta = await new Bun.Image(bomb, { maxPixels: 4096 * 4096 * 2 + 1 }).metadata();
-      expect(meta).toEqual({ width: 4096, height: 4096, format: "png" });
+      await expect(new Bun.Image(bomb16, { maxPixels: budget }).metadata()).rejects.toThrow(/maxPixels/);
+      await expect(new Bun.Image(bomb16, { maxPixels: budget }).bytes()).rejects.toThrow(/maxPixels/);
+      // Control: same dimensions, same budget, but 8-bpc. If the halving
+      // were wrongly applied here (or applied unconditionally), this
+      // would reject too — which is how we know the halving is scoped
+      // to 16-bpc only.
+      const meta8 = await new Bun.Image(bomb8, { maxPixels: budget }).metadata();
+      expect(meta8).toEqual({ width: 4096, height: 4096, format: "png" });
+      // And doubling the 16-bpc budget clears the halved cap: 10M → 20M
+      // is still < 16.7M, so push the budget to 2×pixels + 1 which makes
+      // the halved comparison (w*h > max_pixels/2) strictly false.
+      const meta16 = await new Bun.Image(bomb16, { maxPixels: pixels * 2 + 1 }).metadata();
+      expect(meta16).toEqual({ width: 4096, height: 4096, format: "png" });
     });
 
     // Overflow guard on the 16-bpc probe — `w` and `h` are unvalidated u32

@@ -1987,8 +1987,7 @@ describe("global install", () => {
     expect(exitCode).toBe(0);
 
     // POSIX: `bin-from-pkg` symlink. Windows: `bin-from-pkg.exe` shim.
-    const hasBin =
-      existsSync(join(globalBinDir, "bin-from-pkg")) || existsSync(join(globalBinDir, "bin-from-pkg.exe"));
+    const hasBin = existsSync(join(globalBinDir, "bin-from-pkg")) || existsSync(join(globalBinDir, "bin-from-pkg.exe"));
     expect(hasBin).toBe(true);
   });
 

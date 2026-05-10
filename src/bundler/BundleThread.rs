@@ -366,6 +366,32 @@ impl<C: CompletionStruct> BundleThread<C> {
         }
 
         ast_memory_store.pop();
+
+        // Zig allocated `transpiler` / `ast_memory_store` from the arena and
+        // relied on `defer heap.deinit()` to bulk-free them. That works there
+        // because every container they hold (`Resolver` caches, `BundleOptions`
+        // strings, the AST allocator's own `mi_heap` handle, …) is itself
+        // arena-backed. The Rust port replaced those containers with global-heap
+        // `Vec`/`Box`/`HashMap`, so dropping `heap` (`mi_heap_destroy`) reclaims
+        // the struct bytes but never runs `Transpiler::drop` /
+        // `ASTMemoryAllocator::drop` — leaking the resolver's directory/file
+        // caches and an entire `mi_heap` per `Bun.build()` call. LSan does not
+        // flag the latter (mimalloc bypasses the ASAN `malloc` interceptor), so
+        // the symptom is RSS-only: ~32 MB/build linear growth in the
+        // bun-build-api "does not leak sourcemap JSON" test.
+        //
+        // SAFETY: both pointers are the unique `&'a mut` slots returned by
+        // `bump.alloc(...)` above; nothing else holds a reference to either
+        // past `init_and_run` (`set_transpiler` was cleared by
+        // `deinit_without_freeing_arena`, `pop()` restored the AST-allocator
+        // thread-local). The arena bytes themselves are bulk-freed afterwards
+        // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
+        // global-heap* state, so there is no double free.
+        unsafe {
+            core::ptr::drop_in_place(transpiler_ptr);
+            core::ptr::drop_in_place(ast_memory_store as *mut js_ast::ASTMemoryAllocator);
+        }
+
         run
     }
 }

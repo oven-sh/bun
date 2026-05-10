@@ -62,7 +62,17 @@ describe("backpressure", () => {
     }
 
     expect(totalBytes).toBe(TwoGBPayload.byteLength);
-  }, 30_000);
+    // `response.body.getReader()` now couples the fetch client's
+    // socket read to JS consumption: the HTTP thread counts bytes
+    // delivered-but-not-yet-reported-consumed and pauses the socket
+    // past 4 MiB; the cross-thread consume report runs on the next
+    // HTTP-thread loop iteration, so on a fast loopback the counter
+    // can reach the threshold before the first credit lands even
+    // when the reader keeps up. For 2 GiB that's ~150 pause/resume
+    // cycles; each adds a loop wakeup and an epoll/kqueue mod. The
+    // overhead is ~10–20% in release — acceptable for the feature —
+    // but on the slow darwin-14-x64 CI runner 30s had no headroom.
+  }, 60_000);
 
   it("should handle backpressure with more than INT_MAX bytes", async () => {
     // enough to fill the socket buffer
@@ -94,5 +104,5 @@ describe("backpressure", () => {
     }
 
     expect(totalBytes).toBe(TwoGBPayload.byteLength + smallPayloadSize);
-  }, 30_000);
+  }, 60_000);
 });

@@ -124,8 +124,31 @@ unsafe impl Allocator for AstAlloc {
     }
 
     #[inline]
-    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
-        // Intentionally a no-op. Arena-heap buffers are bulk-freed by
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
+        // Only free when no AST scope is active. While a TL heap is set the
+        // buffer (whether it landed in that heap or — via realloc/migration —
+        // in another mimalloc heap) is reclaimed by `mi_heap_destroy` on the
+        // next `MimallocArena::reset()`, and the no-op here is what keeps
+        // `Expr::Data::clone_in`'s `ptr::read` bitwise copy of `Vec` headers
+        // sound: both copies live in arena slots, neither ever has `Drop`
+        // run, and even if one were moved out and dropped, the no-op avoids
+        // freeing the buffer the arena-resident copy still references.
+        //
+        // When the TL heap is *null* the buffer was allocated on the global
+        // mimalloc heap (bundler block-store path / any parse outside an
+        // `ASTMemoryAllocator` scope) and there is no arena reset to reclaim
+        // it. Before AstAlloc this was a `Vec<T, Global>` whose `Drop` *did*
+        // free; an unconditional no-op would regress that path. `mi_free` is
+        // heap-agnostic and thread-safe, so freeing here is correct for the
+        // global-fallback case. The `clone_in` invariant is unaffected:
+        // `clone_in` only runs under an active AST scope (it allocates the
+        // clone via `bump.alloc`), so this branch is never taken there.
+        if thread_heap().is_null() {
+            // SAFETY: `ptr` came from `mi_[heap_]malloc*` per `allocate`/`grow`;
+            // `mi_free` accepts any mimalloc pointer regardless of owning heap.
+            unsafe { mimalloc::mi_free(ptr.as_ptr().cast()) };
+        }
+        // TL heap set → no-op. Arena-heap buffers are bulk-freed by
         // `mi_heap_destroy` on `MimallocArena::reset()`; global-fallback
         // buffers leak until process exit (status quo ante — see module doc).
         // This is what makes `Expr::Data::clone_in`'s `ptr::read` bitwise copy

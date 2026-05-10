@@ -909,7 +909,7 @@ export function validateBunConfig(cfg: Config): void {
   // time with an opaque `error: ... .rcgu.o: Invalid record`. Fail at
   // configure time instead with a hint that points at the real problem.
   if (
-    cfg.lto &&
+    cfg.crossLangLto &&
     cfg.rustToolchain !== undefined &&
     cfg.rustLlvmVersion !== undefined &&
     cfg.clangVersion !== undefined

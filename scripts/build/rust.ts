@@ -414,7 +414,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // and the `bun_bin` staticlib has no link step, so it's normally dead — but
   // if a target cdylib ever appears it'd fail with "could not open '-fuse-ld=lld'".
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
-  if (cfg.lto) {
+  if (cfg.crossLangLto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
     // so the final lld `-flto=full` link sees through Rust↔C++ call edges.
     // `linker-plugin-lto` supersedes Cargo's `[profile.release] lto="fat"`
@@ -503,7 +503,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // across worktrees; rustup's directory walk could otherwise resolve a
   // different worktree's `rust-toolchain.toml`.
   if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
-  if (cfg.lto) {
+  if (cfg.crossLangLto) {
     // The workspace `[profile.release]` sets `lto = "fat"` so non-LTO release
     // builds (where the rust .a is linked as native code) still get
     // intra-Rust inlining. With `-Clinker-plugin-lto` that pre-merge is

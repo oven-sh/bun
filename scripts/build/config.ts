@@ -105,6 +105,18 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
+  /**
+   * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
+   * `libbun_rust.a` so the final lld `-flto=full` link sees through Rust↔C++
+   * call edges. When false but `lto` is true, both halves still LTO
+   * independently (C++ via `-flto=full`, Rust via `[profile.release] lto =
+   * "fat"`); only the cross-language inlining is lost.
+   *
+   * Normally tracks `lto`. Exists as a separate field so per-target toolchain
+   * bugs can disable just the cross-language part without giving up LTO
+   * entirely — see workarounds.ts "globalopt-crash-aarch64-musl".
+   */
+  crossLangLto: boolean;
   /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
@@ -611,6 +623,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lto = false;
   }
 
+  // Cross-language LTO normally tracks `lto`. Gated off for aarch64-musl
+  // where LLVM's `globalopt` pass segfaults on the `bun_runtime` bitcode
+  // module during the merged link (CI build #53109). Both halves still LTO
+  // independently when this is false — only the Rust↔C++ inlining is lost.
+  // Tracked in workarounds.ts ("globalopt-crash-aarch64-musl").
+  const crossLangLto = lto && !(arm64 && abi === "musl");
+
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
   // forward-compatible only (newer reader, older writer), so when rustc's
@@ -627,7 +646,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const clangMajor = majorOf(toolchain.clangVersion);
   const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
   if (
-    lto &&
+    crossLangLto &&
     toolchain.rustLld !== undefined &&
     clangMajor !== undefined &&
     rustLlvmMajor !== undefined &&
@@ -812,6 +831,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: partial.mode ?? "full",
     lto,
+    crossLangLto,
     pgoGenerate,
     pgoUse,
     asan,

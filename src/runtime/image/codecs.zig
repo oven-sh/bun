@@ -181,7 +181,11 @@ pub const Decoded = struct {
     /// are 8-bpc formats). The buffer is shrunk via `realloc` so the tail
     /// memory is released — mimalloc's shrink is in-place when the new
     /// size stays in the same size class, so this is free in practice.
-    pub fn downconvertTo8(self: *Decoded) Error!void {
+    /// Infallible: the only operation that could fail is the shrinking
+    /// realloc, which is routed through `handleOom` (abort) because a
+    /// genuine OOM mid-shrink isn't recoverable in the worker and matches
+    /// every other critical path in Bun.
+    pub fn downconvertTo8(self: *Decoded) void {
         if (self.bit_depth != 16) return;
         // Treat `rgba` as a u16 slice of host-endian channel samples. The
         // allocator returned 2-byte alignment at minimum (alloc of u8
@@ -220,7 +224,11 @@ pub const Error = error{
 };
 
 /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this
-/// cap is ~1 GiB, which is already past where you'd want to be.
+/// cap is ~1 GiB, which is already past where you'd want to be. 16-bpc PNG
+/// decode (issue #30462) doubles bytes-per-pixel, so the guard in
+/// `codec_png.decode` and in `probe` halves the effective pixel budget for
+/// 16-bpc sources to keep the byte cap at that same ~1 GiB regardless of
+/// source depth.
 pub const default_max_pixels: u64 = 0x3FFF * 0x3FFF;
 
 /// Hint from the pipeline about the eventual output size. JPEG can do M/8
@@ -284,10 +292,18 @@ pub fn probe(bytes: []const u8, max_pixels: u64) Error!struct { format: Format, 
     var h: u32 = 0;
     switch (fmt) {
         .png => {
-            // sig(8) · IHDR{len(4) type(4) w(4) h(4) ...}
-            if (bytes.len < 24) return error.DecodeFailed;
+            // sig(8) · IHDR{len(4) type(4) w(4) h(4) bit_depth(1) ...}
+            if (bytes.len < 25) return error.DecodeFailed;
             w = std.mem.readInt(u32, bytes[16..20], .big);
             h = std.mem.readInt(u32, bytes[20..24], .big);
+            // 16-bpc PNG decode allocates 8 bytes/pixel instead of 4, so
+            // the `max_pixels` byte budget (documented ~1 GiB at the cap)
+            // has to halve to stay consistent. Keep probe() in lockstep
+            // with codec_png.decode()'s guard so `.metadata()` and
+            // `.bytes()` agree on what's too big. Issue #30462.
+            if (bytes[24] == 16) {
+                if (@as(u64, w) * @as(u64, h) * 2 > max_pixels) return error.TooManyPixels;
+            }
         },
         .jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).

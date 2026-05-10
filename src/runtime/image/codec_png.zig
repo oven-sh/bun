@@ -80,7 +80,6 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     if (spng_set_png_buffer(ctx, bytes.ptr, bytes.len) != 0) return error.DecodeFailed;
     var ihdr: Ihdr = undefined;
     if (spng_get_ihdr(ctx, &ihdr) != 0) return error.DecodeFailed;
-    try codecs.guard(ihdr.width, ihdr.height, max_pixels);
     // 16-bpc IHDR → keep full precision (issue #30462); everything else is
     // 8-bpc in the internal buffer. libspng promotes 1/2/4-bpc indexed and
     // greyscale to 8 on its own, so the only source bit-depth that needs a
@@ -89,6 +88,14 @@ pub fn decode(bytes: []const u8, max_pixels: u64) codecs.Error!codecs.Decoded {
     // format enum — libspng does the colour-type expansion.
     const fmt: c_int = if (ihdr.bit_depth == 16) SPNG_FMT_RGBA16 else SPNG_FMT_RGBA8;
     const bit_depth: u8 = if (ihdr.bit_depth == 16) 16 else 8;
+    // The `max_pixels` budget is documented in byte terms (codecs.zig's
+    // `default_max_pixels` targets ~1 GiB for RGBA8). 16-bpc doubles
+    // bytes-per-pixel, so a hostile IHDR flipping bit_depth 8→16 would
+    // otherwise buy a 2× allocation for the same pixel count — halve the
+    // budget here so the byte cap stays constant regardless of source
+    // depth.
+    const effective_max_pixels: u64 = if (ihdr.bit_depth == 16) max_pixels / 2 else max_pixels;
+    try codecs.guard(ihdr.width, ihdr.height, effective_max_pixels);
     var size: usize = 0;
     if (spng_decoded_image_size(ctx, fmt, &size) != 0) return error.DecodeFailed;
     const out = try bun.default_allocator.alloc(u8, size);

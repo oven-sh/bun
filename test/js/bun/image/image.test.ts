@@ -672,6 +672,41 @@ describe("Bun.Image", () => {
       }
       expect(hasIccp).toBe(true);
     });
+
+    // Decompression-bomb guard — 16-bpc doubles bytes-per-pixel, so the
+    // pixel budget halves to keep the byte cap bounded. A hostile IHDR
+    // that flips bit_depth 8→16 on an otherwise-accepted pixel count must
+    // reject before any allocation runs.
+    test("maxPixels budget halves for 16-bpc sources (decode rejects before allocating)", async () => {
+      // Build a tiny 16-bpc PNG (width/height will be patched below), with
+      // just enough IDAT to be structurally valid. The rejection must
+      // happen at the guard step — before libspng is asked to allocate —
+      // so the truncated IDAT never needs to inflate.
+      const bomb = makePng16(1, 1, () => [0, 0, 0, 0xffff]);
+      // Patch width and height in the IHDR. A 4096×4096 16-bpc RGBA
+      // allocation is 128 MiB; `maxPixels: 8_000_000` would comfortably
+      // admit that many 8-bpc pixels (~32 MiB) but must reject at 16 bpc
+      // because the effective budget halves to 4 MP.
+      const dv = new DataView(bomb.buffer, bomb.byteOffset);
+      dv.setUint32(16, 4096);
+      dv.setUint32(20, 4096);
+      // Recompute IHDR CRC (chunk-data spans bytes 12..28 inclusive; CRC
+      // itself lives at byte 29).
+      let c = ~0 >>> 0;
+      for (let i = 12; i < 29; i++) {
+        c ^= bomb[i];
+        for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+      }
+      dv.setUint32(29, ~c >>> 0);
+      // `metadata()` uses `probe()`, which must apply the same 16-bpc
+      // halving — otherwise `.metadata()` accepts and `.bytes()` rejects.
+      await expect(new Bun.Image(bomb, { maxPixels: 8_000_000 }).metadata()).rejects.toThrow(/maxPixels/);
+      await expect(new Bun.Image(bomb, { maxPixels: 8_000_000 }).bytes()).rejects.toThrow(/maxPixels/);
+      // Doubling the budget clears the halved cap → accepts. probe() only
+      // reads the header so this is cheap even though the IDAT is bogus.
+      const meta = await new Bun.Image(bomb, { maxPixels: 4096 * 4096 * 2 + 1 }).metadata();
+      expect(meta).toEqual({ width: 4096, height: 4096, format: "png" });
+    });
   });
 
   // ICC colour profile preservation — #30197. The RGBA pixel buffer the

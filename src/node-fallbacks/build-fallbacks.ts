@@ -74,6 +74,9 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
       }
 
       await Bun.write(`${outdir}/${name}`, outfile);
+      // Release builds @embedFile the .zst variant and decompress it lazily
+      // on first access; debug builds read the uncompressed .js at runtime.
+      await Bun.write(`${outdir}/${name}.zst`, Bun.zstdCompressSync(outfile, { level: 19 }));
     }),
   );
 }

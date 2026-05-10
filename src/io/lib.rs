@@ -268,6 +268,9 @@ use bun_sys::{self as sys, Fd, FdExt, E};
 #[allow(non_upper_case_globals)]
 pub static io_loop: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
+// All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on
+// Windows the IoRequestLoop is `panic!`-stubbed, so gate the macro to match.
+#[cfg(not(windows))]
 macro_rules! log {
     ($($args:tt)*) => { bun_core::scoped_log!(io_loop, $($args)*) };
 }
@@ -479,13 +482,15 @@ impl IoRequestLoop {
         {
             panic!("Do not use this API on windows");
         }
+        #[cfg(not(windows))]
+        {
+            ONCE.get_or_init(|| { Self::load(); });
 
-        ONCE.get_or_init(|| { Self::load(); });
-
-        // SAFETY: LOOP initialized by `load()` exactly once above; callers uphold the
-        // Zig invariant that only the IO thread mutates non-atomic fields and other
-        // threads only call `schedule()` (lock-free queue + waker).
-        unsafe { (*LOOP.get()).assume_init_mut() }
+            // SAFETY: LOOP initialized by `load()` exactly once above; callers uphold the
+            // Zig invariant that only the IO thread mutates non-atomic fields and other
+            // threads only call `schedule()` (lock-free queue + waker).
+            unsafe { (*LOOP.get()).assume_init_mut() }
+        }
     }
 
     pub fn on_spawn_io_thread() {

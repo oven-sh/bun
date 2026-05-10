@@ -5,6 +5,7 @@
 use core::ffi::c_char;
 #[cfg(target_os = "macos")]
 use core::ffi::{c_int, c_void};
+#[cfg(unix)]
 use core::sync::atomic::Ordering;
 
 #[cfg(target_os = "macos")]
@@ -17,6 +18,7 @@ use crate::posix_spawn::posix_spawn;
 #[allow(unused_imports)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 
+#[cfg(unix)]
 use crate::{Argv, Envp};
 
 // ──────────────────────────────────────────────────────────────────────────

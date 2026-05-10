@@ -38,7 +38,9 @@ fn loop_sub_active(_loop: &mut Loop, _value: u32) {}
 bun_core::declare_scope!(KeepAlive, visible);
 
 // TODO(b2-blocked): bun_sys::syslog — macro not exported from bun_sys yet.
-// Local no-op shim so debug log call sites compile.
+// Local no-op shim so debug log call sites compile. All call sites live in
+// `#[cfg(not(windows))] impl FilePoll`, so gate the definition to match.
+#[cfg(not(windows))]
 macro_rules! syslog {
     ($($arg:tt)*) => {{ let _ = ::core::format_args!($($arg)*); }};
 }

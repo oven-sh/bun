@@ -518,7 +518,7 @@ pub mod dir_iterator {
                     // SAFETY: FFI; all pointer args are valid for the call.
                     let rc = unsafe {
                         w::ntdll::NtQueryDirectoryFile(
-                            dir.cast(),
+                            dir.native(),
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
@@ -2614,7 +2614,7 @@ mod windows_impl {
             // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
             let rc = unsafe {
                 w::kernel32::ReadFile(
-                    fd.cast(),
+                    fd.native(),
                     buf.as_mut_ptr(),
                     adjusted_len,
                     &mut amount_read,
@@ -2644,7 +2644,7 @@ mod windows_impl {
         // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
         let rc = unsafe {
             w::kernel32::WriteFile(
-                fd.cast(),
+                fd.native(),
                 buf.as_ptr(),
                 adjusted_len,
                 &mut bytes_written,
@@ -2690,7 +2690,7 @@ mod windows_impl {
             // synchronous call (handle was not opened FILE_FLAG_OVERLAPPED).
             let rc = unsafe {
                 w::kernel32::ReadFile(
-                    fd.cast(),
+                    fd.native(),
                     buf.as_mut_ptr(),
                     adjusted_len,
                     &mut amount_read,
@@ -2732,7 +2732,7 @@ mod windows_impl {
         // synchronous call (handle was not opened FILE_FLAG_OVERLAPPED).
         let rc = unsafe {
             w::kernel32::WriteFile(
-                fd.cast(),
+                fd.native(),
                 buf.as_ptr(),
                 adjusted_len,
                 &mut bytes_written,
@@ -2789,7 +2789,7 @@ mod windows_impl {
         // SAFETY: FFI; fd is a valid HANDLE, eof/io valid for the call.
         let rc = unsafe {
             w::ntdll::NtSetInformationFile(
-                fd.cast(),
+                fd.native(),
                 &mut io,
                 core::ptr::from_mut(&mut eof).cast::<core::ffi::c_void>(),
                 core::mem::size_of::<bun_windows_sys::FILE_END_OF_FILE_INFORMATION>() as u32,
@@ -2906,7 +2906,7 @@ mod windows_impl {
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_str::strings::paths::to_nt_path(&mut wbuf, path.as_bytes());
         super::windows::DeleteFileBun(wpath, super::windows::DeleteFileOptions {
-            dir: if dir.is_valid() { Some(dir.cast()) } else { None },
+            dir: if dir.is_valid() { Some(dir.native()) } else { None },
             remove_dir: (flags & AT_REMOVEDIR) != 0,
         })
     }
@@ -3280,7 +3280,7 @@ mod windows_impl {
         // `_isatty()` ultimately calls).
         match fd.kind() {
             FdKind::Uv => uv::uv_guess_handle(fd.uv()) == uv::UV_TTY,
-            FdKind::System => w::GetFileType(fd.cast()) == w::FILE_TYPE_CHAR,
+            FdKind::System => w::GetFileType(fd.native()) == w::FILE_TYPE_CHAR,
         }
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
@@ -3573,7 +3573,7 @@ impl File {
     pub fn kind(&self) -> Maybe<FileKind> {
         #[cfg(windows)]
         {
-            let rt = windows::GetFileType(self.handle.cast());
+            let rt = windows::GetFileType(self.handle.native());
             if rt == windows::FILE_TYPE_UNKNOWN {
                 let err = windows::get_last_win32_error();
                 if err != windows::Win32Error::SUCCESS {
@@ -5385,7 +5385,7 @@ pub fn normalize_path_windows_opts<'a>(
     }
 
     // Otherwise: resolve `dir_fd` to its full path, join, normalize.
-    let base_fd = if dir_fd.is_valid() { dir_fd.cast() } else { Fd::cwd().cast() };
+    let base_fd = if dir_fd.is_valid() { dir_fd.native() } else { Fd::cwd().native() };
     let mut base_buf = bun_paths::w_path_buffer_pool::get();
     let base = match windows::GetFinalPathNameByHandle(
         base_fd,
@@ -5504,9 +5504,9 @@ pub fn open_dir_at_windows_nt_path(
         RootDirectory: if bun_paths::is_absolute_windows_wtf16(p) {
             core::ptr::null_mut()
         } else if dir_fd.is_valid() {
-            dir_fd.cast()
+            dir_fd.native()
         } else {
-            Fd::cwd().cast()
+            Fd::cwd().native()
         },
         Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         ObjectName: &mut nt_name,
@@ -5577,9 +5577,9 @@ pub fn open_file_at_windows_nt_path(
         RootDirectory: if has_nt_prefix {
             core::ptr::null_mut()
         } else if dir.is_valid() {
-            dir.cast()
+            dir.native()
         } else {
-            Fd::cwd().cast()
+            Fd::cwd().native()
         },
         Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
         SecurityDescriptor: core::ptr::null_mut(),
@@ -5892,9 +5892,9 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
             RootDirectory: if bun_paths::is_absolute_windows_wtf16(path) {
                 core::ptr::null_mut()
             } else if dir.is_valid() {
-                dir.cast()
+                dir.native()
             } else {
-                Fd::cwd().cast()
+                Fd::cwd().native()
             },
             Attributes: 0,
             ObjectName: &mut nt_name,
@@ -6195,7 +6195,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         // then transcode WTF-16 → UTF-8 into `out`.
         let mut wide_buf = bun_paths::w_path_buffer_pool::get();
         let wide_slice = match crate::windows::GetFinalPathNameByHandle(
-            fd.cast(),
+            fd.native(),
             Default::default(),
             &mut wide_buf.0[..],
         ) {

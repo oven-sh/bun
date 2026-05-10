@@ -1632,11 +1632,14 @@ impl<'a> CopyFileWindows<'a> {
     /// SAFETY: `this` must have been produced by `heap::alloc` in `init()` and
     /// not yet destroyed. After this call `this` is dangling.
     pub unsafe fn destroy(this: *mut Self) {
-        (*this).read_write_loop.close();
-        // destination_file_store.deref() / source_file_store.deref() — Arc Drop on Box drop
-        // promise.deinit() — handled by JscStrong's Drop on Box drop
-        (*this).io_request.deinit();
-        drop(bun_core::heap::take(this));
+        // SAFETY: caller contract — `this` is a live `heap::alloc`-ed pointer.
+        unsafe {
+            (*this).read_write_loop.close();
+            // destination_file_store.deref() / source_file_store.deref() — Arc Drop on Box drop
+            // promise.deinit() — handled by JscStrong's Drop on Box drop
+            (*this).io_request.deinit();
+            drop(bun_core::heap::take(this));
+        }
     }
 
     fn mkdirp(&mut self) {

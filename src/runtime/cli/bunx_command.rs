@@ -405,7 +405,7 @@ impl BunxCommand {
                     // SAFETY: FFI call with valid out-params
                     let rc = unsafe {
                         win::ntdll::NtQueryInformationFile(
-                            target_package_json_fd.cast(),
+                            target_package_json_fd.native(),
                             &mut io_status_block,
                             (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
                             u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>()).expect("int cast"),
@@ -876,7 +876,7 @@ impl BunxCommand {
                                 // SAFETY: FFI call with valid out-params
                                 let rc = unsafe {
                                     win::ntdll::NtQueryInformationFile(
-                                        fd.cast(),
+                                        fd.native(),
                                         &mut io_status_block,
                                         (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
                                         u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>()).expect("int cast"),

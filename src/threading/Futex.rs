@@ -124,17 +124,17 @@ mod windows_impl {
     use super::*;
     use bun_sys::windows;
 
-    pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
-        let mut timeout_value: windows::LARGE_INTEGER = 0;
-        let mut timeout_ptr: Option<*const windows::LARGE_INTEGER> = None;
-
+    pub(super) fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
         // NTDLL functions work with time in units of 100 nanoseconds.
         // Positive values are absolute deadlines while negative values are relative durations.
-        if let Some(delay) = timeout {
-            timeout_value = windows::LARGE_INTEGER::try_from(delay / 100).unwrap();
-            timeout_value = -timeout_value;
-            timeout_ptr = Some(&timeout_value);
-        }
+        let timeout_value: windows::LARGE_INTEGER;
+        let timeout_ptr: *const windows::LARGE_INTEGER = match timeout {
+            Some(delay) => {
+                timeout_value = -windows::LARGE_INTEGER::try_from(delay / 100).unwrap();
+                &timeout_value
+            }
+            None => core::ptr::null(),
+        };
 
         // SAFETY: ptr is a valid &AtomicU32 for the duration of the call; expect is a
         // stack local; timeout_ptr is either null or points at the stack local above.
@@ -143,7 +143,7 @@ mod windows_impl {
                 ptr.as_ptr().cast::<c_void>(),
                 (&expect as *const u32).cast::<c_void>(),
                 core::mem::size_of::<u32>(),
-                timeout_ptr.unwrap_or(core::ptr::null()),
+                timeout_ptr,
             )
         };
 
@@ -157,7 +157,7 @@ mod windows_impl {
         }
     }
 
-    pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
         let address: *const c_void = ptr.as_ptr().cast();
         debug_assert!(max_waiters != 0);
 

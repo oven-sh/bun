@@ -533,9 +533,9 @@ pub fn page_size() -> usize {
             // `sizeof(SYSTEM_INFO)` (48 bytes on both x86 and x64).
             #[repr(C)]
             struct SystemInfo {
-                wProcessorArchitecture: u16,
-                wReserved: u16,
-                dwPageSize: u32,
+                _w_processor_architecture: u16,
+                _w_reserved: u16,
+                dw_page_size: u32,
                 _tail: [*mut core::ffi::c_void; 3],
                 _ints: [u32; 5],
             }
@@ -544,7 +544,7 @@ pub fn page_size() -> usize {
             }
             let mut info = core::mem::zeroed::<SystemInfo>();
             GetSystemInfo(&mut info);
-            info.dwPageSize as usize
+            info.dw_page_size as usize
         }
     })
 }

@@ -419,9 +419,9 @@ unsafe extern "system" {
 pub fn GetFileType(hFile: HANDLE) -> DWORD {
     // SAFETY: hFile is a valid HANDLE owned by caller
     let rc = unsafe { GetFileType_raw(hFile) };
-    if cfg!(feature = "debug_logs") {
-        bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
-    }
+    // `syslog!` self-gates on `cfg!(debug_assertions)` (see lib.rs); no extra
+    // feature flag needed (there is no `debug_logs` feature in bun_sys).
+    bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
     rc
 }
 
@@ -4246,7 +4246,7 @@ pub enum Subsystem {
 pub fn edit_win32_binary_subsystem(fd: bun_sys::File, subsystem: Subsystem) -> Result<(), bun_core::Error> {
     const _: () = assert!(cfg!(windows));
     // SAFETY: fd.handle is a valid Windows HANDLE
-    if unsafe { externs::SetFilePointerEx(fd.handle.cast(), PE_HEADER_OFFSET_LOCATION, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
+    if unsafe { externs::SetFilePointerEx(fd.handle.native(), PE_HEADER_OFFSET_LOCATION, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
     // Zig: `fd.reader().readInt(u32, .little)` — std.io.Reader loops until
@@ -4258,7 +4258,7 @@ pub fn edit_win32_binary_subsystem(fd: bun_sys::File, subsystem: Subsystem) -> R
     if n != 4 { return Err(bun_core::err!("EndOfStream")); }
     let offset: u32 = u32::from_le_bytes(off_bytes);
     // SAFETY: fd.handle is a valid Windows HANDLE
-    if unsafe { externs::SetFilePointerEx(fd.handle.cast(), offset as i64 + SUBSYSTEM_OFFSET, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
+    if unsafe { externs::SetFilePointerEx(fd.handle.native(), offset as i64 + SUBSYSTEM_OFFSET, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
     // Zig: `fd.writer().writeInt(u16, ..., .little)` — std.io.Writer loops
@@ -4464,8 +4464,8 @@ pub fn update_stdio_mode_flags(i: bun_sys::Stdio, opts: UpdateStdioModeFlagsOpts
     let fd = i.fd();
     let mut original_mode: DWORD = 0;
     // SAFETY: fd is a valid console handle
-    if unsafe { externs::GetConsoleMode(fd.cast(), &mut original_mode) } != 0 {
-        if unsafe { externs::SetConsoleMode(fd.cast(), (original_mode | opts.set) & !opts.unset) } == 0 {
+    if unsafe { externs::GetConsoleMode(fd.native(), &mut original_mode) } != 0 {
+        if unsafe { externs::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) } == 0 {
             return Err(get_last_error());
         }
     } else {
@@ -4500,7 +4500,7 @@ impl Drop for StdinModeGuard {
         if let Some(mode) = self.original {
             // SAFETY: stdin handle is valid for the lifetime of the process.
             unsafe {
-                let _ = externs::SetConsoleMode(bun_sys::Stdio::StdIn.fd().cast(), mode);
+                let _ = externs::SetConsoleMode(bun_sys::Stdio::StdIn.fd().native(), mode);
             }
         }
     }
@@ -4705,9 +4705,9 @@ pub fn spawn_watcher_child(
             cbReserved2: 0,
             lpReserved2: ptr::null_mut(),
             // TODO(port): std.fs.File.stdin/stdout/stderr().handle — use bun_sys stdio handles
-            hStdInput: bun_sys::Fd::stdin().cast(),
-            hStdOutput: bun_sys::Fd::stdout().cast(),
-            hStdError: bun_sys::Fd::stderr().cast(),
+            hStdInput: bun_sys::Fd::stdin().native(),
+            hStdOutput: bun_sys::Fd::stdout().native(),
+            hStdError: bun_sys::Fd::stderr().native(),
         },
         lpAttributeList: p.as_mut_ptr(),
     };
@@ -4793,7 +4793,7 @@ pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
     // SAFETY: fd valid; info/io valid
     let rc = unsafe {
         ntdll::NtSetInformationFile(
-            fd.cast(),
+            fd.native(),
             &mut io,
             core::ptr::from_mut(&mut info).cast::<c_void>(),
             size_of::<win32::FILE_DISPOSITION_INFORMATION_EX>() as u32,
@@ -4869,7 +4869,7 @@ pub fn move_opened_file_at(
     unsafe {
         ptr::write(rename_info, win32::FILE_RENAME_INFORMATION_EX {
             Flags: flags,
-            RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) { ptr::null_mut() } else { new_dir_fd.cast() },
+            RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) { ptr::null_mut() } else { new_dir_fd.native() },
             FileNameLength: u32::try_from(new_file_name.len() * 2).expect("int cast"), // already checked error.NameTooLong
             FileName: [0; 1], // overwritten below
         });
@@ -4887,7 +4887,7 @@ pub fn move_opened_file_at(
     // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
     let rc = unsafe {
         ntdll::NtSetInformationFile(
-            src_fd.cast(),
+            src_fd.native(),
             &mut io_status_block,
             rename_info.cast::<c_void>(),
             u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
@@ -5002,9 +5002,9 @@ mod kernel32_2 {
     // TODO(port): move to windows_sys
     unsafe extern "system" {
         /// No preconditions; allocates and returns the env block (or null).
-        pub safe fn GetEnvironmentStringsW() -> LPWSTR;
-        pub fn FreeEnvironmentStringsW(penv: LPWSTR) -> BOOL;
-        pub fn GetEnvironmentVariableW(lpName: LPCWSTR, lpBuffer: *mut WCHAR, nSize: DWORD) -> DWORD;
+        pub(super) safe fn GetEnvironmentStringsW() -> LPWSTR;
+        pub(super) fn FreeEnvironmentStringsW(penv: LPWSTR) -> BOOL;
+        pub(super) fn GetEnvironmentVariableW(lpName: LPCWSTR, lpBuffer: *mut WCHAR, nSize: DWORD) -> DWORD;
     }
 }
 

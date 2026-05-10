@@ -119,6 +119,7 @@ pub mod TestingAPIs {
     ) -> JsResult<JSValue> {
         #[cfg(not(unix))]
         {
+            let _ = global;
             return Ok(JSValue::UNDEFINED);
         }
         #[cfg(unix)]

@@ -577,7 +577,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 }
 
 #[cfg(windows)]
-pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
+fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
     let mut count: c_int = 0;
     // SAFETY: valid out-pointers

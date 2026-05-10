@@ -18,7 +18,7 @@ pub static ORIG_ENVIRON: bun_core::RacyCell<Option<(*mut *mut c_char, usize)>> =
 #[cfg(feature = "ci_assert")]
 static ENV_CONVERTED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
-// TODO(port): `Environment.ci_assert` mapped to cfg(feature = "ci_assert"); confirm feature name in Phase B.
+// PORT NOTE: `Environment.ci_assert` → cfg(feature = "ci_assert") (matches bun_safety/bun_http_types).
 
 /// Converts all strings in `std.os.environ` to WTF-8.
 ///

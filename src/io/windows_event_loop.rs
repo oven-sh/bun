@@ -486,7 +486,7 @@ impl Store {
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
         debug_assert!(
             vm.after_event_loop_callback().is_none()
-                || vm.after_event_loop_callback() == Some(callback)
+                || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
         );
         vm.set_after_event_loop_callback(Some(callback), self as *mut Store as *mut c_void);
     }
@@ -571,8 +571,8 @@ impl Waker {
 mod waker_c {
     use super::WindowsLoop;
     unsafe extern "C" {
-        pub fn us_loop_run(loop_: *mut WindowsLoop);
-        pub fn us_wakeup_loop(loop_: *mut WindowsLoop);
+        pub(super) fn us_loop_run(loop_: *mut WindowsLoop);
+        pub(super) fn us_wakeup_loop(loop_: *mut WindowsLoop);
     }
 }
 

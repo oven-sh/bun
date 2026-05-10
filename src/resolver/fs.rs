@@ -1090,7 +1090,7 @@ pub struct RealFS {
 }
 
 #[cfg(windows)]
-pub type Tmpfile = TmpfileWindows;
+pub(crate) type Tmpfile = TmpfileWindows;
 #[cfg(not(windows))]
 pub(crate) type Tmpfile = TmpfilePosix;
 
@@ -1105,7 +1105,7 @@ pub(crate) mod limit {
         // SAFETY: all-zero is a valid Rlimit (POD)
         bun_core::RacyCell::new(bun_core::ffi::zeroed());
     #[cfg(not(unix))]
-    pub static HANDLES_BEFORE: () = ();
+    pub(crate) static HANDLES_BEFORE: () = ();
 }
 
 thread_local! {
@@ -1680,7 +1680,7 @@ impl TmpfileWindows {
     }
 
     #[cfg(windows)]
-    pub fn promote_to_cwd(
+    pub(crate) fn promote_to_cwd(
         &mut self,
         _from_name: &CStr,
         name: &ZStr,

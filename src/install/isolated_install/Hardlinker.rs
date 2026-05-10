@@ -107,10 +107,14 @@ impl Hardlinker {
                 // restore via `set_length` after the body (and before any error
                 // return) so the truncation happens on every exit, matching `defer`.
                 let src_saved_len = self.src.len();
-                self.src.append(entry.path.as_slice());
+                // `OsAbsPath`/`OsPath` use `CheckLength::ASSUME`, so `append`'s
+                // `Err(MaxPathExceeded)` arm is statically unreachable (Zig returns
+                // `void` here). Route through `handle_oom` to crash loudly if that
+                // invariant ever breaks — matches the parent module's convention.
+                bun_core::handle_oom(self.src.append(entry.path.as_slice()));
 
                 let dest_saved_len = self.dest.len();
-                self.dest.append(entry.path.as_slice());
+                bun_core::handle_oom(self.dest.append(entry.path.as_slice()));
 
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {

@@ -46,8 +46,11 @@
 //! thread-2: condition.signal()
 //! ```
 
-use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(not(windows))]
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering;
 
+#[cfg(not(windows))]
 use crate::Futex;
 use crate::Mutex;
 
@@ -147,7 +150,7 @@ mod windows_impl {
 
     use bun_core::time::NS_PER_MS;
 
-    pub struct WindowsImpl {
+    pub(super) struct WindowsImpl {
         condition: core::cell::UnsafeCell<windows::CONDITION_VARIABLE>,
     }
 
@@ -211,11 +214,8 @@ mod windows_impl {
 
             // Return TimeoutError::Timeout if we know the timeout elapsed correctly.
             if rc == windows::FALSE {
-                debug_assert!({
-                    // SAFETY: GetLastError has no preconditions; reads thread-local last-error.
-                    // GetLastError returns DWORD; `Win32Error` is a u16 newtype — compare raw.
-                    unsafe { windows::GetLastError() == windows::Win32Error::TIMEOUT.0 as u32 }
-                });
+                // GetLastError returns DWORD; `Win32Error` is a u16 newtype — compare raw.
+                debug_assert!(windows::GetLastError() == windows::Win32Error::TIMEOUT.0 as u32);
                 if !timeout_overflowed {
                     return Err(TimeoutError::Timeout);
                 }
@@ -236,12 +236,14 @@ mod windows_impl {
 #[cfg(windows)]
 use windows_impl::WindowsImpl;
 
+#[cfg(not(windows))]
 #[derive(Default)]
 struct FutexImpl {
     state: AtomicU32,
     epoch: AtomicU32,
 }
 
+#[cfg(not(windows))]
 impl FutexImpl {
     const ONE_WAITER: u32 = 1;
     const WAITER_MASK: u32 = 0xffff;

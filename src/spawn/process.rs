@@ -1,12 +1,18 @@
 use core::ffi::{c_char, c_int};
 #[cfg(any(windows, target_os = "macos"))]
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(unix)]
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering;
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
+#[cfg(unix)]
 use bun_io::{FilePoll, KeepAlive};
-use bun_core::{Global, Output};
+use bun_core::Output;
+#[cfg(unix)]
+use bun_core::Global;
+#[cfg(unix)]
 use bun_io::ParentDeathWatchdog;
 use bun_event_loop::EventLoopHandle;
 use bun_sys::{self, Fd, Maybe};
@@ -517,7 +523,10 @@ impl Process {
         if let Some(sig) = signal_code {
             this.close();
             this.on_exit(Status::Signaled(sig), &rusage);
-        } else if exit_code >= 0 {
+        } else if exit_status >= 0 {
+            // Zig spec compares `exit_code >= 0` (a `u8` tautology) here; the
+            // intended check — per the `else` arm's comment — is on the signed
+            // libuv `exit_status`, so a negative `-UV_E*` reaches the Err arm.
             this.close();
             this.on_exit(
                 Status::Exited(Exited { code: exit_code, signal: 0 }),
@@ -1385,8 +1394,14 @@ pub mod waiter_thread_posix {
 
 }
 
+/// Windows stub mirroring the unix `WaiterThreadPosix as WaiterThread` re-export.
+/// An uninhabited type with associated fns so callers can use
+/// `WaiterThread::should_use_waiter_thread()` uniformly on both platforms.
 #[cfg(not(unix))]
-pub mod WaiterThread {
+pub enum WaiterThread {}
+
+#[cfg(not(unix))]
+impl WaiterThread {
     #[inline]
     pub fn should_use_waiter_thread() -> bool {
         false
@@ -1797,10 +1812,11 @@ pub fn spawn_process_windows(
     };
 
     let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
-    let mut failed = false;
 
-    // defer: close uv_files_to_close — handled at each return site below
-    // TODO(port): errdefer failed = true — handled inline
+    // defer: close uv_files_to_close — handled at each return site below.
+    // PORT NOTE: Zig's `errdefer failed = true` + `defer { if (failed) ... }`
+    // pair is flattened to explicit cleanup calls at each error return; no
+    // `failed` flag is needed.
 
     if let Some(hpcon) = options.pseudoconsole {
         uv_process_options.pseudoconsole = hpcon;
@@ -1896,7 +1912,6 @@ pub fn spawn_process_windows(
                     };
                     req.deinit();
                     if let Some(err) = rc.to_error(bun_sys::Tag::open) {
-                        failed = true;
                         cleanup_uv_files(&uv_files_to_close, loop_);
                         return Ok(Err(err));
                     }
@@ -1911,7 +1926,6 @@ pub fn spawn_process_windows(
                     if let Some(err) =
                         unsafe { (&mut **my_pipe).init(loop_, false) }.to_error(bun_sys::Tag::uv_pipe)
                     {
-                        failed = true;
                         cleanup_uv_files(&uv_files_to_close, loop_);
                         return Ok(Err(err));
                     }
@@ -1981,7 +1995,6 @@ pub fn spawn_process_windows(
                 };
                 req.deinit();
                 if let Some(err) = rc.to_error(bun_sys::Tag::open) {
-                    failed = true;
                     cleanup_uv_files(&uv_files_to_close, loop_);
                     return Ok(Err(err));
                 }
@@ -1995,7 +2008,6 @@ pub fn spawn_process_windows(
                 if let Some(err) =
                     unsafe { (&mut **my_pipe).init(loop_, true) }.to_error(bun_sys::Tag::uv_pipe)
                 {
-                    failed = true;
                     cleanup_uv_files(&uv_files_to_close, loop_);
                     return Ok(Err(err));
                 }
@@ -2010,7 +2022,6 @@ pub fn spawn_process_windows(
                 if let Some(err) =
                     unsafe { (&mut **my_pipe).init(loop_, false) }.to_error(bun_sys::Tag::uv_pipe)
                 {
-                    failed = true;
                     cleanup_uv_files(&uv_files_to_close, loop_);
                     return Ok(Err(err));
                 }
@@ -2076,7 +2087,6 @@ pub fn spawn_process_windows(
         uv_proc.spawn(loop_, &mut uv_process_options).to_error(bun_sys::Tag::uv_spawn)
     };
     if let Some(err) = spawn_err {
-        failed = true;
         cleanup_dup(true);
         cleanup_uv_files(&uv_files_to_close, loop_);
         // SAFETY: process is valid
@@ -2091,7 +2101,17 @@ pub fn spawn_process_windows(
     unsafe {
         let Poller::Uv(ref uv_proc) = (*process).poller else { unreachable!() };
         (*process).pid = uv_proc.pid;
-        debug_assert!(uv_proc.exit_cb == Some(Process::on_exit_uv));
+        // Function pointers compared by address (`as usize`): direct
+        // `fn == fn` is unreliable across codegen units and triggers
+        // `unpredictable_function_pointer_comparisons`.
+        debug_assert_eq!(
+            uv_proc.exit_cb.map(|cb| cb as usize),
+            Some(
+                Process::on_exit_uv
+                    as unsafe extern "C" fn(*mut uv::uv_process_t, i64, c_int)
+                    as usize,
+            ),
+        );
     }
 
     // No FRU `..Default::default()` here: `WindowsSpawnResult` impls `Drop`,
@@ -2642,9 +2662,7 @@ pub mod sync {
             p.ref_();
             // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
             // caller's stack; `p` is owned by it and dropped before return.
-            p.set_exit_handler(unsafe {
-                ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr)
-            });
+            p.set_exit_handler(ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr));
             p.enable_keeping_event_loop_alive();
         }
 

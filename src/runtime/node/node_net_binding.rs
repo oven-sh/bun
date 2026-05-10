@@ -99,28 +99,19 @@ pub fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -
 pub use self::{BlockList as block_list, SocketAddress as socket_address};
 
 // Zig: `pub const SocketAddress = bun.jsc.Codegen.JSSocketAddress.getConstructor;`
-// The per-class `JS${Type}` codegen modules are not yet emitted in Rust; bind the
-// `${Type}__getConstructor` externs directly (same symbols the `#[bun_jsc::JsClass]`
-// proc-macro wires up — see src/jsc_macros/lib.rs `get_ctor_sym`).
+// Forward to the codegen'd `js_${Type}::get_constructor` wrappers — they go through
+// `jsc_abi_extern!` so the extern uses `extern "sysv64"` on win-x64 (matching
+// C++ `JSC_CALLCONV`). A bare `extern "C"` redecl here would be the wrong ABI on
+// Windows and trips `clashing_extern_declarations`.
 #[allow(non_snake_case)]
 pub fn SocketAddress(global: &JSGlobalObject) -> JSValue {
-    unsafe extern "C" {
-        // `*mut JSGlobalObject` to match `generated_classes.rs` / the
-        // `#[bun_jsc::JsClass]` macro (avoids `clashing_extern_declarations`).
-        #[link_name = "SocketAddress__getConstructor"]
-        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-    }
-    __get_constructor(global.as_mut_ptr())
+    crate::generated_classes::js_SocketAddress::get_constructor(global)
 }
 
 // Zig: `pub const BlockList = jsc.Codegen.JSBlockList.getConstructor;`
 #[allow(non_snake_case)]
 pub fn BlockList(global: &JSGlobalObject) -> JSValue {
-    unsafe extern "C" {
-        #[link_name = "BlockList__getConstructor"]
-        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-    }
-    __get_constructor(global.as_mut_ptr())
+    crate::generated_classes::js_BlockList::get_constructor(global)
 }
 
 #[bun_jsc::host_fn]

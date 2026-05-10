@@ -631,15 +631,21 @@ describe("WebTransport over HTTP/3", () => {
 
     // Allowed path: open() fires with the per-request data attached.
     const a = spawnClient(port, "/allow");
-    await a.expectEvent("open");
-    expect(await readLine()).toBe("opened ok");
-    a.kill();
+    try {
+      await a.expectEvent("open");
+      expect(await readLine()).toBe("opened ok");
+    } finally {
+      a.kill();
+    }
 
     // Denied path: client sees 403, server never logs "opened".
     const d = spawnClient(port, "/deny");
-    const e = await d.expectEvent("error");
-    expect(e[1]).toBe("status-403");
-    d.kill();
+    try {
+      const e = await d.expectEvent("error");
+      expect(e[1]).toBe("status-403");
+    } finally {
+      d.kill();
+    }
 
     proc.stdin.end();
   });

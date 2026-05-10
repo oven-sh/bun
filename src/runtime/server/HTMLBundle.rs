@@ -334,6 +334,7 @@ impl Route {
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_output::scoped_log!(debug, "onRequest: {} - pending", bstr::BStr::new(req.url()));
                     }
+                    // TODO(dezig-oom): verify route.schedule_bundle is fallible
                     bun_core::handle_oom(route.schedule_bundle(server));
                     continue;
                 }
@@ -586,6 +587,7 @@ impl Route {
                 // Create static routes for each output file
                 // PORT NOTE: index loop because the SourceMap branch reads a sibling entry.
                 for i in 0..output_files.len() {
+                    // TODO(dezig-oom): verify OutputFile::to_blob is fallible
                     let blob =
                         AnyBlob::Blob(bun_core::handle_oom(output_files[i].to_blob(global_this)));
                     let mut headers = Headers::default();
@@ -670,6 +672,7 @@ impl Route {
                         continue;
                     }
 
+                    // TODO(dezig-oom): verify server.append_static_route is fallible
                     bun_core::handle_oom(server.append_static_route(
                         route_path,
                         AnyRoute::Static(static_route),
@@ -682,8 +685,10 @@ impl Route {
                 });
                 // SAFETY: html_route is a fresh heap::alloc with ref_count=1;
                 // sole owner before registration.
+                // TODO(dezig-oom): verify StaticRoute::clone is fallible
                 let html_route_clone =
                     bun_core::handle_oom(unsafe { &mut *html_route.as_ptr() }.clone(global_this));
+                // TODO(dezig-oom): verify server.append_static_route is fallible
                 bun_core::handle_oom(server.append_static_route(
                     &html_route_path,
                     AnyRoute::Static(html_route),
@@ -691,6 +696,7 @@ impl Route {
                 ));
                 self.state = State::Html(html_route_clone);
 
+                // TODO(dezig-oom): verify server.reload_static_routes is fallible
                 if !bun_core::handle_oom(server.reload_static_routes()) {
                     // Server has shutdown, so it won't receive any new requests
                     // TODO: handle this case

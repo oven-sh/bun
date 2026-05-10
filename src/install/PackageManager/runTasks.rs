@@ -426,23 +426,25 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     } else {
                         let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
-                            bun_core::handle_oom(logger::add_error_pretty!(
+                            logger::add_error_pretty!(
                                 manager.log_mut(),
                                 None,
                                 logger::Loc::EMPTY,
                                 "{} downloading package manifest <b>{}<r>",
                                 fmt_args.0,
                                 bstr::BStr::new(fmt_args.1),
-                            ));
+                            )
+                            .expect("unreachable");
                         } else {
-                            bun_core::handle_oom(logger::add_warning_pretty!(
+                            logger::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
                                 logger::Loc::EMPTY,
                                 "{} downloading package manifest <b>{}<r>",
                                 fmt_args.0,
                                 bstr::BStr::new(fmt_args.1),
-                            ));
+                            )
+                            .expect("unreachable");
                         }
 
                         if manager.subcommand != Subcommand::Remove {
@@ -484,23 +486,25 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if manager.is_network_task_required(task.task_id) {
-                        bun_core::handle_oom(logger::add_error_pretty!(
+                        logger::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
-                        ));
+                        )
+                        .expect("unreachable");
                     } else {
-                        bun_core::handle_oom(logger::add_warning_pretty!(
+                        logger::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
-                        ));
+                        )
+                        .expect("unreachable");
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
@@ -740,7 +744,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        bun_core::handle_oom(logger::add_error_pretty!(
+                        logger::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
@@ -751,9 +755,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 &manager.lockfile.buffers.string_bytes,
                                 PathSep::Auto,
                             ),
-                        ));
+                        )
+                        .expect("unreachable");
                     } else {
-                        bun_core::handle_oom(logger::add_warning_pretty!(
+                        logger::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
@@ -764,7 +769,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 &manager.lockfile.buffers.string_bytes,
                                 PathSep::Auto,
                             ),
-                        ));
+                        )
+                        .expect("unreachable");
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
@@ -834,23 +840,25 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        bun_core::handle_oom(logger::add_error_pretty!(
+                        logger::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
-                        ));
+                        )
+                        .expect("unreachable");
                     } else {
-                        bun_core::handle_oom(logger::add_warning_pretty!(
+                        logger::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
-                        ));
+                        )
+                        .expect("unreachable");
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
@@ -979,14 +987,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &(*req.network).url_buf },
                         );
                     } else {
-                        bun_core::handle_oom(logger::add_error_pretty!(
+                        logger::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
                             "{} parsing package manifest for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(name),
-                        ));
+                        )
+                        .expect("unreachable");
                     }
 
                     continue;
@@ -1099,14 +1108,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    bun_core::handle_oom(logger::add_error_pretty!(
+                    logger::add_error_pretty!(
                         manager.log_mut(),
                         None,
                         logger::Loc::EMPTY,
                         "{} extracting tarball from <b>{}<r>",
                         err.name(),
                         bstr::BStr::new(alias),
-                    ));
+                    )
+                    .expect("unreachable");
 
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
@@ -1323,14 +1333,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
                     } else if log_level != Options::LogLevel::Silent {
-                        bun_core::handle_oom(logger::add_error_pretty!(
+                        logger::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(name),
-                        ));
+                        )
+                        .expect("unreachable");
                     }
                     continue;
                 }
@@ -1442,14 +1453,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.lockfile.str(repo),
                         );
                     } else {
-                        bun_core::handle_oom(logger::add_error_pretty!(
+                        logger::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
                             "{} checking out repository for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(alias.slice()),
-                        ));
+                        )
+                        .expect("unreachable");
                     }
 
                     continue;

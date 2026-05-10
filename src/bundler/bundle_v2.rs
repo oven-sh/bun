@@ -4135,6 +4135,80 @@ impl<'a> BundleV2<'a> {
                 // own elements are POD-ish, so `Drop` (slab free) suffices.
                 *t = Default::default();
             }
+
+            // `MultiArrayList<BundledAst>` is the dominant retainer (LSan with
+            // System allocator: ~67 MB/iter `Vec<Part>` via `add_part_to_file`,
+            // ~9 MB/iter `Scope::members` via `prepare_for_visit_pass`). Zig
+            // covers this with `Ast::deinit` (parts/symbols/import_records) +
+            // `graph.heap.deinit()` for the rest; the Rust port's
+            // `MultiArrayList::drop` is slab-only and these are global-heap
+            // `Vec`/`HashMap`. `linker.graph.ast` is a bitwise SoA `memcpy` of
+            // `graph.ast` (see `MultiArrayList::clone`, line 2840), then
+            // mutated in-place (e.g. `add_part_to_file` reallocates `parts`),
+            // so it is the post-mutation owner; the parse-side rows are
+            // bitwise aliases (or stale post-realloc) and — being slab-only on
+            // drop — never run element destructors, so freeing here once is
+            // not a double-free. If `link()` errored before the clone ran the
+            // linker side is empty and the parse side is the sole owner.
+            macro_rules! take_ast_cols {
+                ($ast:expr) => {{
+                    let ast = $ast;
+                    for v in ast.items_parts_mut() {
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_symbols_mut() {
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_import_records_mut() {
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_named_imports_mut() {
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_named_exports_mut() {
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_export_star_import_records_mut() {
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_module_scope_mut() {
+                        // Not in Zig `Ast::deinit` — Zig's `Scope::members` /
+                        // `children` were arena-backed, the port's are
+                        // global-heap `HashMap` / `Vec`.
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_top_level_symbols_to_parts_mut() {
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_commonjs_named_exports_mut() {
+                        drop(core::mem::take(v));
+                    }
+                    for v in ast.items_ts_enums_mut() {
+                        drop(core::mem::take(v));
+                    }
+                }};
+            }
+            if self.linker.graph.ast.len() != 0 {
+                take_ast_cols!(&mut self.linker.graph.ast);
+            } else {
+                take_ast_cols!(&mut self.graph.ast);
+            }
+            // `LinkerGraph::meta` (also a slab-only `MultiArrayList`); LSan
+            // ~12 MB/iter `Vec<ExportData>` via `LinkerContext::load`.
+            macro_rules! take_col {
+                ($mal:expr, $m:ident) => {
+                    for v in $mal.$m() {
+                        drop(core::mem::take(v));
+                    }
+                };
+            }
+            let meta = &mut self.linker.graph.meta;
+            take_col!(meta, items_probably_typescript_type_mut);
+            take_col!(meta, items_imports_to_bind_mut);
+            take_col!(meta, items_resolved_exports_mut);
+            take_col!(meta, items_sorted_and_filtered_export_aliases_mut);
+            take_col!(meta, items_top_level_symbol_to_parts_overlay_mut);
+            take_col!(meta, items_cjs_export_copies_mut);
         }
 
         // Drop the lazily-created client transpiler (if any) before tearing

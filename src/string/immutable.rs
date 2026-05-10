@@ -3119,6 +3119,13 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     if utf16.is_empty() {
         return Ok(list);
     }
+    // Zig: `list.ensureTotalCapacityPrecise(length + 16)` then `convertUTF16ToUTF8`.
+    // `convert_utf16_to_utf8_append` writes directly into `spare_capacity_mut()` and
+    // requires the caller to pre-reserve (its doc says so explicitly); without this
+    // reserve a fresh `Vec::new()` has a dangling `0x1` spare pointer and simdutf
+    // segfaults writing to it. The +16 padding mirrors Zig's SIMD over-read slack.
+    let length = simdutf::length::utf8::from::utf16::le(utf16);
+    list.try_reserve(length + 16).map_err(|_| AllocError)?;
     // PORT NOTE: Zig's path validates UTF-16 first then falls back to a manual
     // loop on failure (`toUTF8ListWithTypeBun`). For B-2 we route through
     // `bun_core::strings::convert_utf16_to_utf8_append`, which already replaces

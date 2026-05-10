@@ -225,6 +225,18 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.default_arena = Arena.init();
     bun.http.default_allocator = bun.http.default_arena.allocator();
 
+    // uSockets' long-timeout counter is `% 240` minutes (see
+    // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
+    // values above 239 min wrap around and fire early. Clamp here — it's the
+    // only assignment — so the underlying timer can't wrap, and round values
+    // above 240s up to a whole minute so `socket.setTimeout`'s floor-to-
+    // minute long-timer path never yields a timeout *shorter* than requested.
+    // Normalising once here keeps the h1 (`HTTPClient.setTimeout`) and h2
+    // (`ClientSession.rearmTimeout`) paths identical without duplicating the
+    // math at each call site.
+    const raw: u64 = @min(bun.env_var.BUN_CONFIG_HTTP_IDLE_TIMEOUT.get(), 239 * 60);
+    bun.http.idle_timeout_seconds = @intCast(if (raw > 240) ((raw + 59) / 60) * 60 else raw);
+
     const loop = bun.jsc.MiniEventLoop.initGlobal(null, null);
 
     if (Environment.isWindows) {

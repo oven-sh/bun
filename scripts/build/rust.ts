@@ -364,6 +364,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // (flags.ts:293-301). Needed so profilers and crash backtraces walk Rust
   // frames the same as the Zig binary did.
   rustflags.push("-Cforce-frame-pointers=yes");
+  if (cfg.windows) {
+    // rustc hardcodes addrsig OFF on `*-msvc` (because MSVC link.exe corrupts
+    // unknown sections). We link with lld-link, which reads `.llvm_addrsig`
+    // for `/OPT:SAFEICF` — without it, every Rust monomorphization is treated
+    // as address-taken and *none* fold (#53159: 33,162 extra `.pdata` entries
+    // vs Zig main, all from Rust functions). C++ already emits the table via
+    // `-faddrsig` (flags.ts:350). `-Cllvm-args=-addrsig` flips the same LLVM
+    // module flag clang's `-faddrsig` sets, via the stable `-Cllvm-args` knob.
+    rustflags.push("-Cllvm-args=-addrsig");
+  }
   // Match the C++ side's CPU target (`cpuTargetFlags` in flags.ts) so Rust
   // codegen sees the same ISA. Without this, C++ is built with
   // `-march=haswell` while Rust defaults to generic x86-64 (SSE2 only),

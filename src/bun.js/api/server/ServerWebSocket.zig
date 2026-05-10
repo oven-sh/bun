@@ -30,10 +30,10 @@ inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
     return this.#flags.websocket();
 }
 
-/// App-level publish (the publish_to_self / closed-socket fallback). H3
-/// WebTransport sessions live under a separate TopicTree on the H3App, so
-/// route by `kind` instead of `flags.ssl` — otherwise WT subscribers miss
-/// every message that goes through the fallback.
+/// App-level publish on the sender's own-transport TopicTree (the
+/// publish_to_self / closed-socket fallback). H3 WebTransport sessions
+/// live under a separate TopicTree on the H3App, so route by `kind`
+/// instead of `flags.ssl`.
 inline fn appPublish(this: *const ServerWebSocket, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
     if (this.#flags.kind == .h3_wt) {
         const h3_app: *uws.H3.App = @ptrCast(@alignCast(this.#handler.h3_app orelse return false));
@@ -41,6 +41,32 @@ inline fn appPublish(this: *const ServerWebSocket, topic: []const u8, message: [
     }
     const app = this.#handler.app orelse return false;
     return uws.AnyWebSocket.publishWithOptions(this.#handler.flags.ssl, app, topic, message, opcode, compress);
+}
+
+/// App-level publish on the *other* transport's TopicTree. The sender
+/// cannot be subscribed there, so no exclusion is needed. Lets
+/// ws.publish() reach subscribers regardless of whether they arrived
+/// over RFC 6455 or WebTransport.
+inline fn crossPublish(this: *const ServerWebSocket, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
+    if (this.#flags.kind == .h3_wt) {
+        const app = this.#handler.app orelse return false;
+        return uws.AnyWebSocket.publishWithOptions(this.#handler.flags.ssl, app, topic, message, opcode, compress);
+    }
+    const h3_app: *uws.H3.App = @ptrCast(@alignCast(this.#handler.h3_app orelse return false));
+    return h3_app.publishWithOptions(topic, message, opcode, compress);
+}
+
+/// ws.publish() and friends: publish on the sender's own tree (with
+/// sender exclusion when the socket is live and publish_to_self is
+/// off), then fan out to the other-transport tree so a mixed WS+WT
+/// room isn't silently partitioned by transport.
+inline fn doPublish(this: *const ServerWebSocket, publish_to_self: bool, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
+    const own = if (!publish_to_self and !this.isClosed())
+        this.websocket().publish(topic, message, opcode, compress)
+    else
+        this.appPublish(topic, message, opcode, compress);
+    const cross = this.crossPublish(topic, message, opcode, compress);
+    return own or cross;
 }
 
 pub const js = jsc.Codegen.JSServerWebSocket;
@@ -454,10 +480,7 @@ pub fn publish(
     if (message_value.asArrayBuffer(globalThis)) |array_buffer| {
         const buffer = array_buffer.slice();
 
-        const result = if (!publish_to_self and !this.isClosed())
-            this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
-        else
-            this.appPublish(topic_slice.slice(), buffer, .binary, compress);
+        const result = this.doPublish(publish_to_self, topic_slice.slice(), buffer, .binary, compress);
 
         return JSValue.jsNumber(
             // if 0, return 0
@@ -476,10 +499,7 @@ pub fn publish(
 
         const buffer = slice.slice();
 
-        const result = if (!publish_to_self and !this.isClosed())
-            this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
-        else
-            this.appPublish(topic_slice.slice(), buffer, .text, compress);
+        const result = this.doPublish(publish_to_self, topic_slice.slice(), buffer, .text, compress);
 
         return JSValue.jsNumber(
             // if 0, return 0
@@ -539,10 +559,7 @@ pub fn publishText(
 
     const buffer = slice.slice();
 
-    const result = if (!publish_to_self and !this.isClosed())
-        this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
-    else
-        this.appPublish(topic_slice.slice(), buffer, .text, compress);
+    const result = this.doPublish(publish_to_self, topic_slice.slice(), buffer, .text, compress);
 
     return JSValue.jsNumber(
         // if 0, return 0
@@ -599,10 +616,7 @@ pub fn publishBinary(
     };
     const buffer = array_buffer.slice();
 
-    const result = if (!publish_to_self and !this.isClosed())
-        this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
-    else
-        this.appPublish(topic_slice.slice(), buffer, .binary, compress);
+    const result = this.doPublish(publish_to_self, topic_slice.slice(), buffer, .binary, compress);
 
     return JSValue.jsNumber(
         // if 0, return 0
@@ -637,10 +651,7 @@ pub fn publishBinaryWithoutTypeChecks(
         return jsc.JSValue.jsNumber(0);
     }
 
-    const result = if (!publish_to_self and !this.isClosed())
-        this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
-    else
-        this.appPublish(topic_slice.slice(), buffer, .binary, compress);
+    const result = this.doPublish(publish_to_self, topic_slice.slice(), buffer, .binary, compress);
 
     return JSValue.jsNumber(
         // if 0, return 0
@@ -678,10 +689,7 @@ pub fn publishTextWithoutTypeChecks(
         return jsc.JSValue.jsNumber(0);
     }
 
-    const result = if (!publish_to_self and !this.isClosed())
-        this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
-    else
-        this.appPublish(topic_slice.slice(), buffer, .text, compress);
+    const result = this.doPublish(publish_to_self, topic_slice.slice(), buffer, .text, compress);
 
     return JSValue.jsNumber(
         // if 0, return 0

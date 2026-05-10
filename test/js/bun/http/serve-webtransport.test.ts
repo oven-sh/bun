@@ -202,10 +202,11 @@ async function spawnServer(handlers: string) {
       if (nl >= 0) {
         const l = buf.slice(0, nl);
         buf = buf.slice(nl + 1);
+        lines.push(l);
         return l;
       }
       const { value, done } = await reader.read();
-      if (done) throw new Error("server exited:\n" + lines.join("\n") + buf);
+      if (done) throw new Error("server exited:\n" + lines.join("\n") + "\n" + buf);
       buf += Buffer.from(value).toString();
     }
   };
@@ -368,6 +369,84 @@ describe("WebTransport over HTTP/3", () => {
     } finally {
       a.kill();
       b.kill();
+    }
+  });
+
+  itWT("ws.publish() crosses the WT/WS TopicTree boundary", async () => {
+    // A mixed room (one RFC 6455 client + one WebTransport client) must
+    // not be partitioned by transport: ws.publish() from either side has
+    // to reach subscribers on the other tree.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { tls } = require("harness");
+        const server = Bun.serve({
+          tls, port: 0, h3: true,
+          fetch(req, s) { if (s.upgrade(req)) return; return new Response("ok"); },
+          websocket: {
+            open(ws) { ws.subscribe("room"); console.log("joined"); },
+            message(ws, m) { ws.publish("room", "relay:" + m); },
+            close() {},
+          },
+        });
+        console.log(JSON.stringify({ port: server.port }));
+        // In-process RFC 6455 client on the SSL app's tree.
+        const wc = new WebSocket("wss://localhost:" + server.port + "/", {
+          tls: { rejectUnauthorized: false },
+        });
+        wc.onmessage = e => console.log("ws-recv " + e.data);
+        wc.onopen = () => console.log("ws-open");
+        process.stdin.on("data", d => {
+          const s = d.toString().trim();
+          if (s === "ws-send") wc.send("from-ws");
+        });
+        process.stdin.on("end", () => { wc.close(); server.stop(true); });
+        process.stdin.resume();
+      `,
+      ],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    let buf = "";
+    const readLine = async () => {
+      while (true) {
+        const nl = buf.indexOf("\n");
+        if (nl >= 0) {
+          const l = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          return l;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error("server exited:\n" + buf);
+        buf += Buffer.from(value).toString();
+      }
+    };
+    const { port } = JSON.parse(await readLine());
+    // The in-process WS client connects first; wait for both the
+    // server-side open() ("joined") and the client-side onopen
+    // ("ws-open") — order between them isn't guaranteed.
+    expect([await readLine(), await readLine()].sort()).toEqual(["joined", "ws-open"]);
+    const c = spawnClient(port);
+    try {
+      await c.expectEvent("open");
+      // WT client's open() → second "joined".
+      expect(await readLine()).toBe("joined");
+      // WT → WS: publish from the WT session must reach the WS client.
+      c.sendDatagram("from-wt");
+      expect(await readLine()).toBe("ws-recv relay:from-wt");
+      // WS → WT: publish from the WS session must reach the WT client.
+      proc.stdin.write("ws-send\n");
+      const d = await c.expectEvent("dgram");
+      expect(fromB64u(d[1]).toString()).toBe("relay:from-ws");
+    } finally {
+      c.kill();
+      proc.stdin.end();
     }
   });
 

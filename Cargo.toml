@@ -13,6 +13,7 @@ members = [
   "src/glob",
   "src/http",
   "src/install",
+  "src/install/windows-shim",
   "src/interchange",
   "src/io",
   "src/js",
@@ -156,6 +157,21 @@ codegen-units = 16
 inherits = "release"
 debug = "line-tables-only"
 strip = "none"
+
+# `bun_shim_impl.exe` — the Windows .bin/ launcher PE that gets
+# `include_bytes!`'d into bun.exe and copied next to every package binary by
+# `bun install`. Zig built it freestanding ReleaseFast (no libc,
+# single-threaded, ~13 KiB). The Rust port can't go fully freestanding while
+# depending on `bun_core`/`bun_sys`, but `panic = "abort"` drops the unwind
+# tables / landing pads (the shim never `catch_unwind`s — it
+# `RtlExitUserProcess`es), `opt-level = "z"` favours size, and
+# `strip = "symbols"` discards the .pdb-equivalent. Always release regardless
+# of bun's own profile: a debug bun should still write release shims.
+[profile.shim]
+inherits = "release"
+panic = "abort"
+opt-level = "z"
+strip = "symbols"
 
 [workspace.lints.clippy]
 # Prefer `.cast::<T>()` / `.cast_const()` / `.cast_mut()` / `ptr::from_ref` /

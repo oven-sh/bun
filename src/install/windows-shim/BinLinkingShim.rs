@@ -10,16 +10,14 @@
 //! - args always ends with a trailing space
 //!
 //! See 'bun_shim_impl.zig' for more details on how this file is consumed.
-
-use core::mem::size_of;
-
-use bun_str::strings;
-use bun_simdutf_sys::simdutf;
-
-#[inline]
-fn eql_comptime(a: &[u8], b: &'static [u8]) -> bool {
-    a == b
-}
+//!
+//! ## `shim_standalone` feature
+//!
+//! This file is compiled by *two* crates: `bun_install` (the encoder/host —
+//! feature unset) and `bun_shim_impl` (the standalone PE — feature set). The
+//! standalone bin only needs `Flags`/`VersionFlag` for decoding, and must NOT
+//! see `EMBEDDED_EXECUTABLE_DATA` (it would `include_bytes!` its own output).
+//! Everything host-side is gated `#[cfg(not(feature = "shim_standalone"))]`.
 
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
@@ -111,6 +109,30 @@ impl Flags {
         let compare_to: u16 = Flags::new(false, false, false, VersionFlag::CURRENT).bits();
         (self.0 & mask) == compare_to
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Host-side encoding / embedding. None of this is compiled into the
+// standalone shim PE — the doc header says "The latter exe does not include
+// this code", and including `EMBEDDED_EXECUTABLE_DATA` here would make the
+// shim crate `include_bytes!` its own output. Gate via inner module +
+// `pub use` so one `#[cfg]` covers the lot and visibility is preserved.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(not(feature = "shim_standalone"))]
+pub use host::*;
+
+#[cfg(not(feature = "shim_standalone"))]
+mod host {
+use super::{Flags, VersionFlag};
+
+use core::mem::size_of;
+
+use bun_str::strings;
+use bun_simdutf_sys::simdutf;
+
+#[inline]
+fn eql_comptime(a: &[u8], b: &'static [u8]) -> bool {
+    a == b
 }
 
 // `@embedFile("bun_shim_impl.exe")` — the shim PE is built as a separate
@@ -544,5 +566,6 @@ fn reinterpret_slice_u16(bytes: &[u8]) -> &[u16] {
     // SAFETY: alignment asserted immediately above; even length asserted by caller.
     unsafe { bun_core::ffi::slice(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) }
 }
+} // mod host
 
 // ported from: src/install/windows-shim/BinLinkingShim.zig

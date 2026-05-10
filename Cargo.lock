@@ -2063,6 +2063,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_shim_impl"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_windows_sys",
+ "strum",
+]
+
+[[package]]
 name = "bun_simdutf_sys"
 version = "0.0.0"
 dependencies = [

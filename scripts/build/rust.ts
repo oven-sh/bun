@@ -127,6 +127,18 @@ function rustTargetIsTier3(triple: string): boolean {
 }
 
 /**
+ * Absolute source-tree path the Windows .bin/ shim PE is copied to, where
+ * `bun_install`'s `include_bytes!("bun_shim_impl.exe")` reads it from. The
+ * build product lands in `rust-target/<triple>/shim/`; it's copied here so
+ * the embed path is a fixed relative-to-source string (no env-var plumbing).
+ * Git-ignored; `src/install/build.rs` creates a 0-byte placeholder for bare
+ * `cargo check` so the embed never sees ENOENT.
+ */
+function windowsShimDestPath(cfg: Config): string {
+  return resolve(cfg.cwd, "src", "install", "windows-shim", "bun_shim_impl.exe");
+}
+
+/**
  * Path to the `rustup` binary that owns `cfg.cargo`, or `undefined` if
  * `cfg.cargo` isn't a rustup proxy (a distro/Homebrew cargo, say).
  * `rustup target add` is only meaningful when rustup is the toolchain
@@ -223,6 +235,31 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // the chain (cmd's quote-stripping rule removes only the outermost pair,
   // preserving the embedded `"..."` around paths/env values). Same pattern as
   // codegen.ts / bun.ts.
+  // Windows .bin/ shim PE: cargo build → copy into the source tree for
+  // `include_bytes!`. One rule does both so the declared output is the
+  // source-tree path (cargo's own output path is an undeclared intermediate).
+  //
+  // Copy is *content-conditional* (`fc /b` returns 0 iff bytes match) so
+  // `restat` actually prunes: any `.rs` edit re-invokes this rule (it shares
+  // `rustSources` with the main build), cargo no-ops, and a blind `copy /Y`
+  // would still bump $out's mtime → `bun_install`'s `include_bytes!` dep-info
+  // sees a change → spurious recompile of `bun_install` + downstream on every
+  // build. Skipping the copy when bytes match keeps mtime stable and lets
+  // `restat` cut the edge.
+  //
+  // Windows-only — never registered elsewhere, so the rule body hard-assumes
+  // cmd.exe (`fc`, `copy`, `>nul`).
+  if (cfg.windows) {
+    n.rule("rust_shim", {
+      command:
+        `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
+        `( fc /b $shim_src $out >nul 2>&1 || copy /Y /B $shim_src $out >nul )"`,
+      description: "cargo bun_shim_impl → $out",
+      pool: "console",
+      restat: true,
+    });
+  }
+
   const rustup = findRustup(cfg);
   if (rustup !== undefined && cfg.rustToolchain !== undefined) {
     const chain =
@@ -478,6 +515,68 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
+  // ─── Windows .bin/ shim PE ───
+  // Replaces Zig's `mod.addAnonymousImport("bun_shim_impl.exe", ...)` (build.zig
+  // built `src/install/windows-shim/bun_shim_impl.zig` as a freestanding
+  // ReleaseFast PE and wired the artifact into `@embedFile`). The Rust port
+  // dropped emitZig entirely, so without this step `include_bytes!` embeds the
+  // 0-byte placeholder and `bun install` writes empty `.exe`s into
+  // `node_modules/.bin/`.
+  //
+  // Ordered before the main cargo build via `implicitInputs` below so the
+  // real PE is on disk when `bun_install` compiles. Same env as the main
+  // build (toolchain forwarding, CARGO_HOME) but no codegen / lol-html order
+  // dep — the shim crate's graph is bun_core/bun_sys/bun_string only.
+  const shimInputs: string[] = [];
+  if (cfg.windows) {
+    const shimDest = windowsShimDestPath(cfg);
+    // Always `--profile shim` (workspace `[profile.shim]`: panic=abort,
+    // opt-level=z, strip) regardless of bun's own profile — a debug bun should
+    // still write release shims (matches Zig's unconditional `.ReleaseFast`).
+    const shimArgs: string[] = [
+      "-p",
+      "bun_shim_impl",
+      "--bin",
+      "bun_shim_impl",
+      "--features",
+      "shim_standalone",
+      "--target-dir",
+      targetDir,
+      "--target",
+      triple,
+      "--profile",
+      "shim",
+    ];
+    const shimSrc = resolve(targetDir, triple, "shim", "bun_shim_impl.exe");
+    // Same env minus CARGO_ENCODED_RUSTFLAGS: the shim has its own panic
+    // strategy (abort) so `-Zsanitizer=address` (which assumes unwind) and
+    // `-Clinker-plugin-lto` (the PE is final-linked here, not deferred to
+    // bun's lld link) don't apply. `-Ctarget-cpu` is harmless to drop — the
+    // shim is I/O-bound and we want it small, not fast.
+    const { CARGO_ENCODED_RUSTFLAGS: _, ...shimEnv } = env;
+    n.build({
+      outputs: [shimDest],
+      rule: "rust_shim",
+      inputs: [],
+      // Same staleness signal as the main build (any .rs / Cargo.toml change
+      // re-invokes; cargo's own fingerprinting decides what actually
+      // recompiles). vendorStamps order the lol-html fetch first — the shim
+      // crate doesn't depend on lol-html, but cargo refuses to load the
+      // workspace manifest if any path-dep's `Cargo.toml` is missing.
+      implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps],
+      vars: {
+        cwd: cfg.cwd,
+        args: quoteArgs(shimArgs, hostWin),
+        shim_src: quote(shimSrc, hostWin),
+        env: Object.entries(shimEnv)
+          .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+          .join(" "),
+      },
+    });
+    n.phony("bun-shim", [shimDest]);
+    shimInputs.push(shimDest);
+  }
+
   // ─── Emit build node ───
   // When the toolchain is rustup-managed and pinned, route through
   // `rust_build_cross`, which does `rustup toolchain install --force ...`
@@ -500,7 +599,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // so depending on those orders the codegen step before cargo without
     // ninja needing to know the `.rs` paths. vendorStamps orders the
     // lol-html source fetch before cargo resolves the path dep.
-    implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps],
+    implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps, ...shimInputs],
     orderOnlyInputs: inputs.codegenOrderOnly,
     vars: {
       cwd: cfg.cwd,

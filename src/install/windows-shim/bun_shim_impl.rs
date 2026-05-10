@@ -46,6 +46,19 @@ use core::fmt::Write as _;
 use core::marker::ConstParamTy;
 use core::mem::{size_of, MaybeUninit};
 
+// Standalone PE: depend ONLY on `bun_windows_sys` (leaf, no native C, no
+// `#[no_mangle]` exports) so the link has no libuv/simdutf/ICU roots and the
+// binary stays tiny — matching Zig's freestanding build. `crate::compat`
+// re-exports `bun_windows_sys::*` and locally declares the few items
+// (`CreateProcessW`, `STARTUPINFOW`, `TEB`/`teb()`, …) that otherwise live in
+// `bun_sys::windows`. The local `bun_core`/`bun_str` shadows bring
+// `ffi::{slice,slice_mut,zeroed}` / `RacyCell` / `w!` into scope under the
+// same paths the in-process build resolves through the extern prelude.
+#[cfg(feature = "shim_standalone")]
+use crate::compat as w;
+#[cfg(feature = "shim_standalone")]
+use crate::{bun_core, bun_str};
+#[cfg(not(feature = "shim_standalone"))]
 use bun_sys::windows as w;
 use w::{BOOL, DWORD, HANDLE, IO_STATUS_BLOCK, LARGE_INTEGER, NTSTATUS, PVOID, ULONG, UNICODE_STRING};
 

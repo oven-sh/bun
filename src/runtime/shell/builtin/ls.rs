@@ -445,10 +445,12 @@ impl ShellLsTask {
         if !self.is_absolute {
             // If relative paths enabled, stdlib join is preferred over
             // ResolvePath.joinBuf because it doesn't try to normalize the path.
+            // Spec: `std.fs.path.joinZ` — its `isSep` accepts both '/' and '\'
+            // on Windows, so `["foo/", "bar"]` → `foo/bar` (no extra sep).
             let parent = self.path.as_bytes();
             let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
             v.extend_from_slice(parent);
-            if !parent.is_empty() && *parent.last().unwrap() != bun_paths::SEP {
+            if parent.last().is_some_and(|&c| !bun_paths::is_sep_native(c)) {
                 v.push(bun_paths::SEP);
             }
             v.extend_from_slice(child);

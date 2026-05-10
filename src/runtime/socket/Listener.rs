@@ -850,9 +850,13 @@ impl Listener {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(*uws_listener).socket::<false>();
-                let fd = socket.fd();
-                // TODO(port): `Fd::to_js_without_making_libuv_owned` — direct uv() encode for now.
-                JSValue::js_number(fd.uv() as f64)
+                // Zig: `uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned()`.
+                // On Windows the listening socket fd is a system-kind SOCKET
+                // handle; routing it through `.uv()` panics for anything but
+                // stdio. The sys_jsc helper branches on kind exactly like
+                // fd_jsc.zig (system→u64, uv→i32, posix→i32).
+                use bun_sys_jsc::FdJsc as _;
+                socket.fd().to_js_without_making_lib_uv_owned()
             }
             _ => JSValue::js_number(-1.0),
         }

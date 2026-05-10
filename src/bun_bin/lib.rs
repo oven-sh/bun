@@ -128,7 +128,11 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_sql::postgres::protocol::FieldMessage\n",
         "leak:bun_runtime::webcore::fetch::FetchTasklet>::to_response\n",
         "leak:bun_lolhtml_sys::lol_html::HTMLString\n",
-        "leak:bun_jsc::Debugger\n",
+        // Zig `jsc.Debugger.startJSDebuggerThread` — the Rust module is
+        // lowercase (`#[path = "Debugger.rs"] pub mod debugger;`), so the
+        // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous
+        // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
+        "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "leak:bun_runtime::socket::udp_socket::UDPSocket\n",
         "\0",
     )

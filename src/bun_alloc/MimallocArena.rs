@@ -12,6 +12,7 @@
 //! with the previous `Arena = bumpalo::Bump` alias.
 
 use core::alloc::{AllocError, Allocator, Layout};
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::{self, MaybeUninit};
 use core::ptr::{self, NonNull};
@@ -82,6 +83,27 @@ fn debug_thread_stamp() -> u64 {
 /// free + realloc — the thing `bumpalo::Bump` cannot do.
 pub struct MimallocArena {
     heap: NonNull<mimalloc::Heap>,
+    /// `(ptr, drop_in_place::<T>)` for every `alloc<T>()` where `T` has drop
+    /// glue. Walked (in reverse) by `reset()`/`Drop` *before* `mi_heap_destroy`.
+    ///
+    /// Zig had no such list because every container that the parser stored in
+    /// arena-allocated AST nodes (`BabyList(T)` etc.) was itself an arena-backed
+    /// slice, so `mi_heap_destroy` reclaimed the whole graph. The Rust port
+    /// replaced several of those with global-heap `Vec<T>` / `HashMap` for
+    /// borrowck ergonomics (e.g. `G::DeclList = Vec<Decl>`, `Scope::members`),
+    /// so a node like `S::Local { decls: Vec<Decl> }` bumped via `alloc::<S::Local>`
+    /// would leak the `Vec`'s global-heap buffer on every `reset()`. With
+    /// 10 000 `export const` statements that is ~720 KB/iter — the
+    /// require-cache.test.ts "via import() with a lot of long export names"
+    /// regression.
+    ///
+    /// `UnsafeCell` because `alloc<T>` takes `&self`; the arena's existing
+    /// thread-lock contract (see `assert_owning_thread`) makes single-threaded
+    /// `&mut` access here sound.
+    ///
+    /// Entry is `(ptr, len, drop_slice::<T>)`. Single-element `alloc<T>`
+    /// stores `len == 1` so one entry shape covers both cases.
+    drop_list: UnsafeCell<Vec<(NonNull<()>, usize, unsafe fn(*mut (), usize))>>,
     /// Zig: `thread_lock: bun.safety.ThreadLock` (debug-only). Stamped on
     /// `new()`/`reset()`; asserted on every `mi_heap_*` alloc/realloc path.
     /// Compiles out in release so the struct stays one pointer wide.
@@ -123,9 +145,48 @@ impl MimallocArena {
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
+            drop_list: UnsafeCell::new(Vec::new()),
             #[cfg(debug_assertions)]
             owning_thread: AtomicU64::new(debug_thread_stamp()),
         }
+    }
+
+    /// Walk the registered drop list in reverse allocation order, running each
+    /// `drop_in_place::<T>` so that global-heap fields embedded in arena objects
+    /// are released before the arena bytes themselves are bulk-freed. Idempotent
+    /// (drains the list).
+    #[inline]
+    fn run_drop_list(&mut self) {
+        // `&mut self` ⇒ exclusive access to `drop_list`.
+        let list = self.drop_list.get_mut();
+        // Reverse: a later `alloc<T>` may hold a `StoreRef` (raw ptr) into an
+        // earlier allocation. None of the AST node types have `Drop` impls that
+        // dereference such siblings, but reverse order matches RAII expectation
+        // and costs nothing.
+        for (p, len, dtor) in list.drain(..).rev() {
+            // SAFETY: `p` was returned by `alloc<T>` / `alloc_slice_fill_with`
+            // on this heap (still live — `mi_heap_destroy` runs *after* this
+            // loop), `dtor` is exactly `drop_in_place::<[T]>` for that `T` /
+            // `len`, and each pointer appears in the list at most once.
+            unsafe { dtor(p.as_ptr(), len) };
+        }
+    }
+
+    /// SAFETY: caller has already passed `assert_owning_thread()` (i.e. is on
+    /// the arena's allocation path under `&self`). `ptr` must point to `len`
+    /// initialised `T`s in this arena.
+    #[inline]
+    unsafe fn push_drop<T>(&self, ptr: NonNull<()>, len: usize) {
+        // SAFETY: per fn contract — single-threaded `&self`.
+        unsafe { &mut *self.drop_list.get() }.push((
+            ptr,
+            len,
+            // SAFETY: stored alongside its matching `*mut T` / `len` and only
+            // ever invoked on that exact pair in `run_drop_list`.
+            |raw: *mut (), n: usize| unsafe {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(raw.cast::<T>(), n))
+            },
+        ));
     }
 
     /// Zig: `Borrowed.assertThreadLock()` — debug-only check that the calling
@@ -175,6 +236,7 @@ impl MimallocArena {
     ///
     /// Any pointers previously returned by this arena are invalidated.
     pub fn reset(&mut self) {
+        self.run_drop_list();
         #[cfg(debug_assertions)]
         {
             HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -303,10 +365,16 @@ impl MimallocArena {
         let p = self.alloc_layout(Layout::new::<T>()).cast::<T>();
         // SAFETY: `p` is non-null, properly aligned, and points to at least
         // `size_of::<T>()` uninitialized bytes owned by this arena.
-        unsafe {
-            p.as_ptr().write(val);
-            &mut *p.as_ptr()
+        unsafe { p.as_ptr().write(val) };
+        if mem::needs_drop::<T>() {
+            // SAFETY: `assert_owning_thread()` has already fired (via
+            // `alloc_layout`); the arena's contract is single-threaded `&self`
+            // allocation, so forming `&mut Vec` from the `UnsafeCell` here
+            // does not alias any other live `&mut`.
+            unsafe { self.push_drop::<T>(p.cast::<()>(), 1) };
         }
+        // SAFETY: as above; the write completed and `p` is exclusively held.
+        unsafe { &mut *p.as_ptr() }
     }
 
     /// `bumpalo::Bump::alloc_str` parity.
@@ -369,6 +437,9 @@ impl MimallocArena {
         unsafe {
             for i in 0..len {
                 dst.as_ptr().add(i).write(f(i));
+            }
+            if mem::needs_drop::<T>() && len != 0 {
+                self.push_drop::<T>(dst.cast::<()>(), len);
             }
             core::slice::from_raw_parts_mut(dst.as_ptr(), len)
         }
@@ -434,6 +505,7 @@ impl MimallocArena {
 impl Drop for MimallocArena {
     #[inline]
     fn drop(&mut self) {
+        self.run_drop_list();
         #[cfg(debug_assertions)]
         HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
         // Zig: `deinit` → `mi_heap_destroy`. Destroys the heap and bulk-frees

@@ -1205,6 +1205,41 @@ unsafe fn bake_per_thread_source_map(
     Some(std::ptr::from_ref::<[u8]>(pt.bundled_outputs[idx.get() as usize].value.as_slice()))
 }
 
+/// Spec sourcemap_jsc/source_provider.zig:20 `BakeSourceProvider.getExternalData`.
+/// Link-time-resolved by `bun_sourcemap` (declared `extern "Rust"` there) so
+/// `SavedSourceMap::get_with_content`'s `BakeSourceProvider` branch reaches the
+/// real lookup instead of a stub — Zig had no crate split here. Returns `None`
+/// if not running under a `Bake::GlobalObject` (caller falls back to disk read),
+/// otherwise the bundled `.map` JSON for `source_filename` (or `b""` if absent).
+#[unsafe(no_mangle)]
+pub static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]> =
+    bake_external_sourcemap;
+
+fn bake_external_sourcemap(source_filename: &[u8]) -> Option<*const [u8]> {
+    unsafe extern "C" {
+        fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
+        fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut c_void;
+    }
+    let global = VirtualMachine::get().global;
+    // SAFETY: `global` is the live JSGlobalObject for this VM thread.
+    if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
+        return None;
+    }
+    // SAFETY: `global` is a `Bake::GlobalObject` (checked above).
+    let pt = unsafe { BakeGlobalObject__getPerThreadData(global) };
+    if pt.is_null() {
+        // `m_perThreadData` is null between VM init and `PerThread::attach`;
+        // no bundled outputs exist yet, so fall back to disk.
+        return None;
+    }
+    // SAFETY: per `bake_per_thread_source_map` contract — `pt` is the live
+    // non-null `*mut PerThread` per above; called on the JS thread.
+    if let Some(slice) = unsafe { bake_per_thread_source_map(pt, source_filename) } {
+        return Some(slice);
+    }
+    Some(std::ptr::from_ref::<[u8]>(b""))
+}
+
 /// `node_cluster_binding.handleInternalMessageChild(global, data)` — Spec
 /// VirtualMachine.zig:3960 (`IPCInstance.handleIPCMessage` `.internal` arm).
 ///

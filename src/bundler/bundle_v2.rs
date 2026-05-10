@@ -4104,8 +4104,38 @@ impl<'a> BundleV2<'a> {
             drop(on_parse_finalizers);
         }
 
-        // TODO(port): defer block — graph.ast/input_files/entry_points/entry_point_original_names deinit
-        // In Rust these are dropped automatically; arena-backed slices are bulk-freed.
+        // Zig spec (bundle_v2.zig:2229): `defer { this.graph.{ast,input_files,
+        // entry_points,entry_point_original_names}.deinit(this.allocator()) }`.
+        // In Zig those `MultiArrayList`s only free their slab — the per-element
+        // payloads (file contents, quoted source-map JSON, …) live in
+        // `this.graph.heap` (a mimalloc thread-local heap), so the caller's
+        // `defer heap.deinit()` bulk-frees them. The Rust port reads file
+        // contents and JSON-quoted source contents into the *global* heap
+        // (`Vec<u8>`/`Box<[u8]>` — see ParseTask.rs `read_file_with_allocator`
+        // TODO and `compute_quoted_source_contents`), and `MultiArrayList::drop`
+        // matches Zig in *not* running element destructors. Result: every
+        // `Bun.build()` leaked the entry source plus its quoted source contents
+        // (~2× input size — test/bundler/bun-build-api.test.ts "does not leak
+        // sourcemap JSON" observed ~100MB/build for a 30MB input). Explicitly
+        // take-and-drop the global-heap-owned columns here so the slab-only
+        // drop that follows (when `bv2` goes out of scope) doesn't strand them.
+        {
+            use crate::linker_graph::FileColumns as _;
+            for s in self.graph.input_files.items_source_mut() {
+                // `Source.contents: Cow<'static, [u8]>` — borrowed arms (arena
+                // slices, FileMap entries) are no-ops; only `Owned(Vec<u8>)`
+                // from `read_file_with_allocator` actually frees here.
+                s.contents = std::borrow::Cow::Borrowed(&b""[..]);
+            }
+            for q in self.linker.graph.files.items_quoted_source_contents_mut() {
+                drop(q.take());
+            }
+            for t in self.linker.graph.files.items_line_offset_table_mut() {
+                // `LineOffsetTable::List` is itself a `MultiArrayList`; its
+                // own elements are POD-ish, so `Drop` (slab free) suffices.
+                *t = Default::default();
+            }
+        }
 
         // Drop the lazily-created client transpiler (if any) before tearing
         // down workers — matches the .zig spec ordering where the arena slot

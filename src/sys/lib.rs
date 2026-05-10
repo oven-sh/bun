@@ -2962,8 +2962,6 @@ mod windows_impl {
         if sub.len() >= buf.0.len() {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
         }
-        buf.0[..sub.len()].copy_from_slice(sub);
-        buf.0[sub.len()] = 0;
 
         let is_sep = |b: u8| b == b'/' || b == b'\\';
 
@@ -2990,22 +2988,35 @@ mod windows_impl {
             }
         };
 
-        // Record the end offset of each component (`component.path` =
-        // `sub[..ends[k]]`). Zig's `last()/previous()/next()` is index walk.
+        // Build a *normalized* copy of `sub` into `buf`, collapsing `.` and
+        // `..` segments, and record the end offset of each surviving component
+        // (`component.path` = `buf[..ends[k]]`). Zig's `last()/previous()/
+        // next()` is then an index walk over `ends[]`.
         //
-        // We skip `.` components: Zig's `std.fs.Dir.makePath` calls
-        // `std.posix.mkdirat`, which on Windows normalizes the path through
-        // `sliceToPrefixedFileW` → `removeDotDirsSanitized`, collapsing every
-        // `.` segment to nothing before `NtCreateFile`. Our `mkdirat` below
-        // routes through `to_nt_path` which only flips slashes, so a literal
-        // `"."` ObjectName reaches `NtCreateFile` and comes back as
-        // `OBJECT_NAME_NOT_FOUND` (ENOENT) instead of the
-        // `OBJECT_NAME_COLLISION` (EEXIST) that the back/forward walk expects.
-        // Dropping `.` here matches the stdlib's effective behavior — for an
-        // input of just `"."` we end up with zero components and return Ok,
-        // i.e. `makePath(".")` is a no-op as in Zig.
+        // Zig's `std.fs.Dir.makePath` calls `std.posix.mkdirat`, which on
+        // Windows normalizes each prefix through `sliceToPrefixedFileW` →
+        // `removeDotDirsSanitized` (relative) / `RtlGetFullPathName_U`
+        // (absolute), collapsing every `.` and `..` segment before
+        // `NtCreateFile`. Our `mkdirat` below routes through `to_nt_path`
+        // which only flips slashes, so a literal `"."`/`".."` ObjectName
+        // reaches `NtCreateFile` un-normalized. For `.` that yields
+        // `OBJECT_NAME_NOT_FOUND` → ENOENT (not the EEXIST the walk expects);
+        // for `a\..\b` the walk live-locks: `mkdirat("a")` → OK, step
+        // forward, `mkdirat("a\..")` → ENOENT, step back, `mkdirat("a")` →
+        // EEXIST, step forward… forever (90s timeout in
+        // compile-outfile-subdirs.test.ts "works with . and .. in paths",
+        // outfile `./output/../output/./app.exe`). Normalizing here matches
+        // the stdlib's effective behavior — an input that fully cancels (e.g.
+        // `a/..`) yields zero components and returns Ok, i.e. a no-op as in
+        // Zig.
+        buf.0[..root_end].copy_from_slice(&sub[..root_end]);
+        let mut w = root_end; // write cursor into buf
         let mut ends: [usize; 256] = [0; 256];
         let mut n_ends = 0usize;
+        // Count of leading `..` that couldn't pop a prior component (relative
+        // paths only). These are written literally and pinned — a later `..`
+        // must not pop them (`removeDotDirsSanitized` keeps them too).
+        let mut pinned_dotdot = 0usize;
         {
             let mut i = root_end;
             loop {
@@ -3013,16 +3024,36 @@ mod windows_impl {
                 if i >= sub.len() { break; }
                 let start = i;
                 while i < sub.len() && !is_sep(sub[i]) { i += 1; }
-                if i - start == 1 && sub[start] == b'.' {
+                let comp = &sub[start..i];
+                if comp == b"." {
                     continue;
+                }
+                if comp == b".." {
+                    if n_ends > pinned_dotdot {
+                        // Pop the previous component from both `ends` and `buf`.
+                        n_ends -= 1;
+                        w = if n_ends > 0 { ends[n_ends - 1] } else { root_end };
+                        continue;
+                    }
+                    if root_end > 0 {
+                        // Absolute: `..` at root is the root itself — drop it.
+                        continue;
+                    }
+                    // Relative with nothing to pop: keep `..` literally so
+                    // `mkdirat(dir, "..\foo")` still targets `dir`'s parent.
+                    pinned_dotdot += 1;
                 }
                 if n_ends == ends.len() {
                     return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
                 }
-                ends[n_ends] = i;
+                if w > root_end { buf.0[w] = b'\\'; w += 1; }
+                buf.0[w..w + comp.len()].copy_from_slice(comp);
+                w += comp.len();
+                ends[n_ends] = w;
                 n_ends += 1;
             }
         }
+        buf.0[w] = 0;
         if n_ends == 0 { return Ok(()); }
 
         // `it.last()` → walk back on ENOENT, forward on Ok/EEXIST.
@@ -3030,10 +3061,13 @@ mod windows_impl {
         loop {
             let end = ends[idx];
             buf.0[end] = 0;
-            // SAFETY: NUL written at buf.0[end]; [0..end] copied from `sub`.
+            // SAFETY: NUL written at buf.0[end]; [0..end] is the normalized prefix.
             let z = ZStr::from_buf(&buf.0[..], end);
             let res = mkdirat(dir, z, mode);
-            if end < sub.len() { buf.0[end] = sub[end]; }
+            // Restore the separator we overwrote (every intermediate `ends[k]`
+            // sits on a `\` we wrote above; the final one sits on the
+            // terminating NUL at `w`, which needs no restore).
+            if end < w { buf.0[end] = b'\\'; }
             match res {
                 Ok(()) => {
                     // `component = it.next() orelse return;`

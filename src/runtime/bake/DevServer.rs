@@ -410,7 +410,16 @@ pub struct DevServer {
     pub server_register_update_callback: jsc::StrongOptional,
 
     // Watching
-    pub bun_watcher: Box<Watcher>,
+    // PORT NOTE: Zig stores `*bun.Watcher` and calls `deinit(true)` in
+    // `DevServer.deinit`, which *transfers* ownership to the watcher thread
+    // (the thread frees the allocation in `threadMain`). Auto-dropping a
+    // `Box<Watcher>` here would free the heap block while the watcher thread
+    // is still blocked in `GetQueuedCompletionStatus`/`read()` holding a
+    // `*mut Watcher` into it (and on Windows the kernel still has a pending
+    // `ReadDirectoryChangesW` against the inline `DirWatcher.buf`/`overlapped`).
+    // `ManuallyDrop` so `Drop for DevServer` can hand the raw pointer to
+    // `Watcher::shutdown` instead.
+    pub bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub directory_watchers: DirectoryWatchStore,
     pub watcher_atomics: WatcherAtomics,
     /// See doc comment in Zig source.
@@ -693,9 +702,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
     };
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
-    unsafe { w!(bun_watcher, bun_watcher) };
-    // errdefer dev.bun_watcher.deinit(false) — handled by `Drop for Watcher` when
-    // `dev_uninit` is dropped on an error path after `assume_init()`.
+    unsafe { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
+    // errdefer dev.bun_watcher.deinit(false) — handled by `Watcher::shutdown` in
+    // `Drop for DevServer` when `dev_uninit` is dropped on an error path after
+    // `assume_init()`.
 
     // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
@@ -1087,8 +1097,18 @@ impl Drop for DevServer {
             self.timer_heap().remove(timer_ptr);
         }
         self.graph_safety_lock.lock();
-        // bun_watcher is Box<Watcher> — Drop handles, but Zig passed `true` for stop-thread.
-        // TODO(port): Watcher::deinit(true) semantics — ensure Drop stops thread.
+        // Zig: `.bun_watcher = dev.bun_watcher.deinit(true),` — hand ownership of
+        // the heap allocation to the watcher thread (which frees it in
+        // `thread_main` once `running` flips false). Auto-dropping the `Box`
+        // here would free the allocation out from under the still-running
+        // thread; on Windows the kernel additionally retains a pending
+        // `ReadDirectoryChangesW` against the inline 64 KiB `DirWatcher.buf` +
+        // `overlapped`, so the freed block being recycled by mimalloc for a
+        // later allocation is a kernel write into live unrelated heap data.
+        // SAFETY: `bun_watcher` was written exactly once in `init()` and is
+        // never taken elsewhere; this is `Drop`, so the field is not read again.
+        let watcher = unsafe { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };
+        Watcher::shutdown(Box::into_raw(watcher), true);
 
         #[cfg(feature = "bake_debugging_features")]
         if let Some(dir) = self.dump_dir.take() {
@@ -3009,7 +3029,7 @@ impl DevServer {
             )),
             heap,
         )?;
-        bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut *self.bun_watcher));
+        bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
         // Zig: `linker.dev_server = transpiler.options.dev_server` inside init.
         let dev_handle = self.bundler_handle();

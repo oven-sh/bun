@@ -44,15 +44,83 @@ pub use internal_source_map::InternalSourceMap;
 /// Opaque FFI handle. The real type lives in `bun_jsc` (tier 6); this crate
 /// only ever sees it as a pointer.
 bun_opaque::opaque_ffi! { pub struct BakeSourceProvider; }
+
+// TODO(port): move to <area>_sys
+unsafe extern "C" {
+    // C++ accessor is read-only (`provider->source()`). Taking `*const` avoids
+    // casting away const from the `&self` borrow below; any interior mutation
+    // lives behind the FFI boundary in C++-owned storage that Rust has no
+    // provenance over (this type is an opaque ZST marker).
+    fn BakeSourceProvider__getSourceSlice(this: *const BakeSourceProvider) -> bun_str::String;
+}
+
+unsafe extern "Rust" {
+    /// Link-time-resolved by `bun_runtime::jsc_hooks` (same pattern as
+    /// `__BUN_RUNTIME_HOOKS`). Spec sourcemap_jsc/source_provider.zig:20
+    /// `BakeSourceProvider.getExternalData` — looks up the bundled `.map`
+    /// JSON for `source_filename` via the live `Bake::GlobalObject`'s
+    /// `PerThread.source_maps`. Returns `None` if not running under Bake
+    /// (caller falls back to disk read), or `Some("")` if the table has no
+    /// entry. The slice borrows `PerThread.bundled_outputs` (lives for the
+    /// bake build session, which outlives any error-stack source-map
+    /// resolution). Zig had no crate split here.
+    static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]>;
+}
+
 impl BakeSourceProvider {
+    #[inline]
+    pub fn get_source_slice(&self) -> bun_str::String {
+        // SAFETY: opaque FFI handle; address-only pass-through, callee does not
+        // write Rust-visible memory.
+        unsafe { BakeSourceProvider__getSourceSlice(self) }
+    }
+
+    pub fn to_source_content_ptr(&self) -> SourceContentPtr {
+        // SAFETY: opaque ZST handle — `UnsafeCell<[u8; 0]>` at offset 0 grants
+        // interior-mutability provenance, so deriving `*mut Self` from `&self`
+        // is sound. C++ owns the real storage; the `*mut` exists only to match
+        // `SourceContentPtr::from_bake_provider`'s signature (stores it as a
+        // raw address in a packed u60).
+        SourceContentPtr::from_bake_provider(self._p.get().cast::<Self>())
+    }
+
+    /// Returns the pre-bundled sourcemap JSON for `source_filename` if the
+    /// current global is a `Bake::GlobalObject`; `None` otherwise (caller falls
+    /// back to reading `<source>.map` from disk).
+    pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
+        // SAFETY: link-time-resolved `&'static` Rust-ABI static; the returned
+        // slice borrows `PerThread.bundled_outputs`, which outlives this
+        // `BakeSourceProvider` (the provider is created from a
+        // `bundled_outputs` entry), so reborrowing as `&'self [u8]` is sound.
+        let slice = unsafe { __BUN_BAKE_EXTERNAL_SOURCEMAP }(source_filename)?;
+        // SAFETY: per the hook contract above.
+        Some(unsafe { &*slice })
+    }
+
+    /// The last two arguments to this specify loading hints
     pub fn get_source_map(
         &self,
-        _source_filename: &[u8],
-        _load_hint: SourceMapLoadHint,
-        _result: ParseUrlResultHint,
+        source_filename: &[u8],
+        load_hint: SourceMapLoadHint,
+        result: ParseUrlResultHint,
     ) -> Option<ParseUrl> {
-        // Real impl is in bun_sourcemap_jsc; here we only hold the pointer.
-        None
+        get_source_map_impl(self, source_filename, load_hint, result)
+    }
+}
+
+// PORT NOTE: Zig dispatched via `comptime SourceProviderKind: type` + `@hasDecl`;
+// Rust uses a trait per PORTING.md §Dispatch.
+impl SourceProvider for BakeSourceProvider {
+    const HAS_EXTERNAL_DATA: bool = true;
+
+    fn get_source_slice(&self) -> bun_str::String {
+        Self::get_source_slice(self)
+    }
+    fn to_source_content_ptr(&self) -> SourceContentPtr {
+        Self::to_source_content_ptr(self)
+    }
+    fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
+        Self::get_external_data(self, source_filename)
     }
 }
 

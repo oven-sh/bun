@@ -49,32 +49,25 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             };
         }
 
-        pub fn push(comptime len: anytype, chars_: *const [len]u8, allo: std.mem.Allocator) callconv(bun.callconv_inline) Escaped(u8) {
-            const chars = chars_.*;
+        pub fn push(chars: []const u8, allo: std.mem.Allocator) Escaped(u8) {
             var total: usize = 0;
-
-            comptime var remain_to_comp = len;
-            comptime var comp_i = 0;
-
-            inline while (remain_to_comp > 0) : (remain_to_comp -= 1) {
-                total += lengths[chars[comp_i]];
-                comp_i += 1;
+            for (chars) |c| {
+                total += lengths[c];
             }
 
-            if (total == len) {
+            if (total == chars.len) {
                 return .{ .original = {} };
             }
 
             const output = allo.alloc(u8, total) catch unreachable;
             var head = output.ptr;
-            inline for (comptime bun.range(0, len)) |i| {
-                head += @This().append(head, chars[i]);
+            for (chars) |c| {
+                head += @This().append(head, c);
             }
 
             return Escaped(u8){ .allocated = output };
         }
     };
-    @setEvalBranchQuota(5000);
     switch (latin1.len) {
         0 => return Escaped(u8){ .static = "" },
         1 => return switch (latin1[0]) {
@@ -110,36 +103,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
         },
 
         // The simd implementation is slower for inputs less than 32 bytes.
-        3 => return Scalar.push(3, latin1[0..3], allocator),
-        4 => return Scalar.push(4, latin1[0..4], allocator),
-        5 => return Scalar.push(5, latin1[0..5], allocator),
-        6 => return Scalar.push(6, latin1[0..6], allocator),
-        7 => return Scalar.push(7, latin1[0..7], allocator),
-        8 => return Scalar.push(8, latin1[0..8], allocator),
-        9 => return Scalar.push(9, latin1[0..9], allocator),
-        10 => return Scalar.push(10, latin1[0..10], allocator),
-        11 => return Scalar.push(11, latin1[0..11], allocator),
-        12 => return Scalar.push(12, latin1[0..12], allocator),
-        13 => return Scalar.push(13, latin1[0..13], allocator),
-        14 => return Scalar.push(14, latin1[0..14], allocator),
-        15 => return Scalar.push(15, latin1[0..15], allocator),
-        16 => return Scalar.push(16, latin1[0..16], allocator),
-        17 => return Scalar.push(17, latin1[0..17], allocator),
-        18 => return Scalar.push(18, latin1[0..18], allocator),
-        19 => return Scalar.push(19, latin1[0..19], allocator),
-        20 => return Scalar.push(20, latin1[0..20], allocator),
-        21 => return Scalar.push(21, latin1[0..21], allocator),
-        22 => return Scalar.push(22, latin1[0..22], allocator),
-        23 => return Scalar.push(23, latin1[0..23], allocator),
-        24 => return Scalar.push(24, latin1[0..24], allocator),
-        25 => return Scalar.push(25, latin1[0..25], allocator),
-        26 => return Scalar.push(26, latin1[0..26], allocator),
-        27 => return Scalar.push(27, latin1[0..27], allocator),
-        28 => return Scalar.push(28, latin1[0..28], allocator),
-        29 => return Scalar.push(29, latin1[0..29], allocator),
-        30 => return Scalar.push(30, latin1[0..30], allocator),
-        31 => return Scalar.push(31, latin1[0..31], allocator),
-        32 => return Scalar.push(32, latin1[0..32], allocator),
+        3...32 => return Scalar.push(latin1, allocator),
 
         else => {
             var remaining = latin1;

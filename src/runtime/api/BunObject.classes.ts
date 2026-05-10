@@ -121,6 +121,10 @@ export default [
       stdio: {
         getter: "getStdio",
       },
+      takeStdioFd: {
+        fn: "takeStdioFd",
+        length: 1,
+      },
       terminal: {
         getter: "getTerminal",
         cache: true,

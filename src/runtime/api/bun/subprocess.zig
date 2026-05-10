@@ -507,6 +507,40 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
     return array;
 }
 
+/// Transfers ownership of the extra pipe fd at `stdio_pipes[slot_index]` to
+/// the caller. Returns the fd number and marks the slot `.unavailable` so
+/// `finalizeStreams` won't double-close it. Used by `node:child_process` when
+/// it adopts the fd into a `net.Socket` via `net.connect({ fd })` — uSockets
+/// then owns the fd lifecycle. Returns `null` if the slot is out of range,
+/// already taken, or (on Windows) isn't an fd-style pipe.
+pub fn takeStdioFd(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const slot_js = callframe.argumentsAsArray(1)[0];
+    const slot = try globalThis.validateIntegerRange(slot_js, i32, 0, .{ .min = 0, .field_name = "slot" });
+    const idx: usize = @intCast(slot);
+    if (idx >= this.stdio_pipes.items.len) return .null;
+
+    if (Environment.isWindows) {
+        // On Windows the extra pipes are uv pipes (not raw fds) — there is
+        // nothing to transfer out as a plain fd number. node:child_process
+        // only takes this path on POSIX.
+        return .null;
+    }
+
+    switch (this.stdio_pipes.items[idx]) {
+        .owned_fd => |fd| {
+            // Caller now owns the fd.
+            this.stdio_pipes.items[idx] = .unavailable;
+            return JSValue.jsNumber(fd.cast());
+        },
+        .unowned_fd => |fd| {
+            // Caller supplied this fd in the original stdio array and still
+            // owns it; just hand back the number.
+            return JSValue.jsNumber(fd.cast());
+        },
+        .unavailable => return .null,
+    }
+}
+
 pub const Source = union(enum) {
     blob: jsc.WebCore.Blob.Any,
     array_buffer: jsc.ArrayBuffer.Strong,

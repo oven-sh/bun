@@ -1214,9 +1214,24 @@ class ChildProcess extends EventEmitter {
         switch (io) {
           case "pipe":
             if (!NetModule) NetModule = require("node:net");
-            const fd = handle && handle.stdio[i];
-            if (!fd) return null;
-            return NetModule.connect({ fd });
+            // Transfer ownership of the fd from the Subprocess to the adopted
+            // net.Socket. Reading `handle.stdio[i]` would only hand back a
+            // borrowed fd number — the Subprocess's finalizer would still
+            // close it, racing the socket's own close and corrupting the next
+            // spawn's fd table (#30443).
+            if (!handle) return null;
+            const fd = handle.takeStdioFd(i - 3);
+            if (typeof fd !== "number" || fd < 0) return null;
+            try {
+              return NetModule.connect({ fd });
+            } catch (err) {
+              // Ownership has been transferred to us — net.connect normally
+              // adopts the fd into a uSockets poll and closes it on socket
+              // close. A synchronous throw here (bad fd, OOM, etc.) means
+              // nothing owns the fd, so close it before re-throwing.
+              try { require("node:fs").closeSync(fd); } catch {}
+              throw err;
+            }
         }
         return null;
     }

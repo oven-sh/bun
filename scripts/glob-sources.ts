@@ -73,9 +73,18 @@ const patterns = {
   bindgenV2Internal: {
     paths: ["src/codegen/bindgenv2/**/*.ts"],
   },
-  /** NOT filtered; includes codegen-written files (see bun.ts) */
+  /**
+   * NOT filtered; includes codegen-written files (see bun.ts).
+   *
+   * `src/cli/**` is excluded: it is a committed symlink → `runtime/cli`
+   * which `node:fs.globSync` follows on POSIX (double-counts every file)
+   * but cannot traverse on Windows agents where git materialises the link
+   * as a text file. Excluding the alias keeps the file set platform-stable
+   * for ban-words count pinning.
+   */
   zig: {
     paths: ["src/**/*.zig"],
+    exclude: ["src/cli/**"],
   },
   /**
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
@@ -136,12 +145,19 @@ export function globAllSources(): Sources {
   const result = {} as Sources;
 
   for (const [field, spec] of Object.entries(patterns) as [keyof Sources, SourcePattern][]) {
-    const excludes = new Set((spec.exclude ?? []).map(normalize));
+    const excludeExact = new Set<string>();
+    const excludePrefix: string[] = [];
+    for (const ex of (spec.exclude ?? []).map(normalize)) {
+      if (ex.endsWith("/**"))
+        excludePrefix.push(ex.slice(0, -2)); // keep trailing '/'
+      else excludeExact.add(ex);
+    }
     const files: string[] = [];
     for (const pattern of spec.paths) {
       for (const rel of globSync(pattern, { cwd: root })) {
         const normalized = normalize(rel);
-        if (excludes.has(normalized)) continue;
+        if (excludeExact.has(normalized)) continue;
+        if (excludePrefix.some(p => normalized.startsWith(p))) continue;
         files.push(resolve(root, normalized));
       }
     }

@@ -57,8 +57,11 @@ test.skipIf(isWindows)(
 
       // Give grandchildren time to write, exit, and for the pipes to reach
       // EOF and fire onReaderDone → onCloseIO on the event loop. Then GC.
-      for (let i = 0; i < 60 && collected < ITERS; i++) {
-        await Bun.sleep(25);
+      // Under release-ASAN each grandchild is itself a full \`bun -e\` process
+      // with ASAN startup + LSan-exit overhead; the loop exits as soon as all
+      // are collected, so the upper bound only affects the failing case.
+      for (let i = 0; i < 400 && collected < ITERS; i++) {
+        await Bun.sleep(50);
         Bun.gc(true);
       }
 

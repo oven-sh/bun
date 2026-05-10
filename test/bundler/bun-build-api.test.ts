@@ -811,6 +811,19 @@ identity(mod23);
   expect(text).toContain(" globalThis.");
 });
 
+test.concurrent("conditions array with many entries does not crash", async () => {
+  const dir = tempDirWithFiles("bun-build-many-conditions", {
+    "entry.js": `export const a = 1;`,
+  });
+
+  const build = await Bun.build({
+    entrypoints: [join(dir, "entry.js")],
+    conditions: ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh"],
+  });
+
+  expect(build.success).toBe(true);
+});
+
 describe.concurrent("sourcemap boolean values", () => {
   test("sourcemap: true should work (boolean)", async () => {
     const dir = tempDirWithFiles("sourcemap-true-boolean", {

@@ -809,6 +809,20 @@ impl PosixBufferedReader {
 
                             // Keep reading as much as we can
                             if (stack_buffer_len - head_start) < stack_buffer_cutoff {
+                                // PORT NOTE: `&& !received_hup` mirrors the
+                                // after-inner-loop flush below (line ~855).
+                                // Without it, a peer close (HUP) with >cutoff
+                                // bytes still buffered makes a parent that
+                                // returns `false` on `.eof` (e.g. shell
+                                // `PipeReader::on_read_chunk`) early-return
+                                // here with data left in the kernel and no
+                                // `register_poll`/`done()` → 90s hang in
+                                // shell-blocking-pipe.test.ts. The Zig spec
+                                // has the same asymmetry (PipeReader.zig:605)
+                                // but the Rust port hits the timing window
+                                // far more often; once HUP is set the kernel
+                                // returns the remaining bytes then 0, so
+                                // draining to `bytes_read == 0` is bounded.
                                 if !parent.vtable.on_read_chunk(
                                     &stack_buffer[..head_start],
                                     if received_hup {
@@ -816,7 +830,8 @@ impl PosixBufferedReader {
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) {
+                                ) && !received_hup
+                                {
                                     return;
                                 }
                                 head_start = 0;

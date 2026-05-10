@@ -1277,8 +1277,14 @@ impl FetchTasklet {
         // PORT NOTE: reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
-        let status_text = BunString::create_atom_if_possible(&http_response.status);
-        let url = BunString::create_atom_if_possible(metadata.url.slice());
+        // status_text and url must NOT be atomized: the Response can be
+        // destroyed from the HTTP thread via deref_from_thread() -> deinit()
+        // when the VM is shutting down (see is_shutting_down() branch), and
+        // atom strings live in a per-thread table — deref'ing them off-thread
+        // trips the `wasRemoved` RELEASE_ASSERT in AtomStringImpl::remove().
+        // Plain WTFStringImpl refcounts are atomic, so clone_utf8 is safe.
+        let status_text = BunString::clone_utf8(&http_response.status);
+        let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
         Response::init(
             crate::webcore::response::Init {

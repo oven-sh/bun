@@ -822,8 +822,25 @@ where
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
         // across the loop.
         let ctx: *mut Watcher = std::ptr::from_mut(self.get_context());
-        // `defer ctx.flushEvictions(); defer Output.flush();` — Zig defers run LIFO,
-        // so Output.flush() fires first, then ctx.flushEvictions().
+        // Zig: `defer current_task.enqueue();` — wrap the Task itself in the guard
+        // so any exit path (including future early-returns) flushes the buffered
+        // hashes. Dereferenced as `&mut *current_task` for the loop body below.
+        //
+        // PORT NOTE: declared *before* `_flush` (inverting the Zig defer order)
+        // so `flush_evictions()` runs **before** `enqueue()` on drop. The Zig
+        // order (`enqueue` → `Output.flush` → `flushEvictions`) opens a window
+        // where the JS thread can pick up the concurrent task, look the file up
+        // in the watchlist, and read the cached fd while this thread is still
+        // about to `close()` + `swap_remove()` it in `flush_evictions` —
+        // surfacing as `EBADF`/`EISDIR reading "<path>"` in hot.test.ts under
+        // load. Evicting first is side-effect-free: `enqueue` carries hashes
+        // (not indices) and never reads the watchlist.
+        let mut current_task = scopeguard::guard(
+            Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self),
+            |mut t| t.enqueue(),
+        );
+        // `defer ctx.flushEvictions(); defer Output.flush();` — see PORT NOTE
+        // above for why this drops *before* `current_task`.
         let _flush = scopeguard::guard(ctx, |ctx| {
             Output::flush();
             // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
@@ -835,13 +852,6 @@ where
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         let mut _on_file_update_path_buf = PathBuffer::uninit();
-        // Zig: `defer current_task.enqueue();` — wrap the Task itself in the guard
-        // so any exit path (including future early-returns) flushes the buffered
-        // hashes. Dereferenced as `&mut *current_task` for the loop body below.
-        let mut current_task = scopeguard::guard(
-            Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self),
-            |mut t| t.enqueue(),
-        );
 
         for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.

@@ -672,7 +672,25 @@ impl ThreadPool {
 pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     // 4mb
     const DEFAULT: u32 = 4 * 1024 * 1024;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        // PORT NOTE: Zig's `std.Thread.spawn` on Windows calls `CreateThread`
+        // with `dwCreationFlags = 0`, so `dwStackSize` sets the *commit* size
+        // and the thread inherits the executable's *reserve* size from the PE
+        // header (`/STACK:0x1200000` = 18 MB — see scripts/build/flags.ts).
+        // Rust's `std::thread::Builder::stack_size` instead passes
+        // `STACK_SIZE_PARAM_IS_A_RESERVATION`, so the value here *is* the
+        // reserve. Passing 4 MB therefore gave Rust worker threads 4 MB of
+        // stack vs Zig's 18 MB, and the deeply-nested-AST stress tests
+        // (`lots-of-for-loop.js`, 15k nested `for`) overflow on the 4 MB
+        // worker stack before the parser's `StackCheck` can fire (each
+        // `parse_stmt`→`t_for` cycle is small enough that 15k levels fit, but
+        // the visit/print passes that follow do not). Match Zig parity by
+        // reserving the same 18 MB the PE header would have given us.
+        let _ = DEFAULT;
+        0x1200000
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     {
         DEFAULT
     }

@@ -89,11 +89,13 @@ impl<'a> Tmpfile<'a> {
             }
         }
 
-        // TODO(b2-blocked): `move_file_z_with_handle` lives in the gated 5500L
-        // sys draft (renameat with EXDEV fallback to copy_file_range+unlink).
-        // Until that lands, do a plain `renameat` — same as Zig's fast path.
-        crate::renameat(self.destination_dir, self.tmpfilename, self.destination_dir, destname)?;
-        Ok(())
+        crate::move_file_z_with_handle(
+            self.fd,
+            self.destination_dir,
+            self.tmpfilename,
+            self.destination_dir,
+            destname,
+        )
     }
 }
 

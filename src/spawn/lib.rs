@@ -292,7 +292,61 @@ pub struct RunResult {
 /// The argv/envp marshalling mirrors `std.process.Child.spawnPosix`: each arg
 /// is NUL-terminated, the array is NULL-terminated, and env entries are
 /// flattened to `KEY=VALUE\0`.
+#[cfg_attr(windows, allow(unreachable_code, unused_variables, unused_mut))]
 pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
+    // Windows: Zig's `std.process.Child.run` (the spec for this fn) calls
+    // `CreateProcessW`+`ReadFile` directly — no libuv. `process::sync::spawn`
+    // below is libuv-based on Windows and reads `options.windows.loop_` to get
+    // the `uv_loop_t*`, but the only caller (`repository::exec`) runs on a
+    // ThreadPool worker thread that has no event loop; supplying one via
+    // `MiniEventLoop::init_global` from a worker thread would create a second
+    // `us_loop` wrapping the *process-global* `uv_default_loop()` and then
+    // `uv_run` it concurrently with the main install thread (libuv UB). Route
+    // through `std::process` here instead to faithfully port the Zig spec —
+    // the PORTING.md `std::process` ban is about not bypassing Bun's event
+    // loop, which is exactly what the Zig call site already does intentionally
+    // for off-thread `git`.
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        // `std.process.Child.spawnWindows` decodes argv as WTF-8 → WTF-16; use
+        // the simdutf-backed converter (no slash normalization — argv carries
+        // URLs, not just filesystem paths).
+        fn to_os(b: &[u8]) -> OsString {
+            let mut wbuf = vec![0u16; b.len() + 1];
+            let n = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, b).len();
+            OsString::from_wide(&wbuf[..n])
+        }
+
+        let mut iter = opts.argv.iter();
+        let argv0 = iter.next().ok_or(bun_core::err!("FileNotFound"))?;
+        // `Command::new` does PATH/PATHEXT lookup on Windows, matching
+        // `std.process.Child.spawnWindows`'s `windowsCreateProcessPathExt`.
+        let mut cmd = std::process::Command::new(to_os(argv0));
+        for arg in iter {
+            cmd.arg(to_os(arg));
+        }
+        cmd.env_clear();
+        for (k, v) in opts.env_map {
+            cmd.env(k, v);
+        }
+        cmd.stdin(std::process::Stdio::null());
+
+        let out = cmd.output().map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => bun_core::err!("FileNotFound"),
+            std::io::ErrorKind::PermissionDenied => bun_core::err!("AccessDenied"),
+            _ => bun_core::err!("Unexpected"),
+        })?;
+
+        let term = match out.status.code() {
+            Some(code) => Term::Exited(code as u32),
+            None => Term::Unknown(0),
+        };
+        return Ok(RunResult { term, stdout: out.stdout, stderr: out.stderr });
+    }
+
     // `std.process.Child.spawnPosix` resolves `argv[0]` against `$PATH` (it
     // calls `posix.execvpeZ_expandArg0`). `process::sync::spawn` below execs
     // via `execve` (no PATH search), so do the lookup here. Use the *child's*
@@ -353,6 +407,25 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         stdout: process::sync::SyncStdio::Buffer,
         stderr: process::sync::SyncStdio::Buffer,
         argv0: argv0_ptr,
+        // Zig `std.process.Child.run` (the spec for this fn) spawns via raw
+        // `CreateProcessW`+`ReadFile` and needs no uv loop. The Rust port
+        // routes through `process::sync::spawn` → `spawn_process_windows`,
+        // which *does* read `options.windows.loop_` to get the `uv_loop_t*`.
+        // `WindowsOptions::default()` leaves `loop_` zeroed (Zig: `= undefined`),
+        // so the deref segfaults at the `uv_loop` field offset. Supply the
+        // thread's mini event loop — `init_global` is idempotent and, for the
+        // sole caller (`repository.exec` under `bun add`/`install`), returns
+        // the `MiniEventLoop` the PackageManager already published into
+        // `GLOBAL` (PackageManager.rs:2110), matching what other install-side
+        // `bun.spawnSync` callers pass (`.loop = EventLoopHandle.init(
+        // jsc.MiniEventLoop.initGlobal(env, null))`).
+        #[cfg(windows)]
+        windows: process::sync::WindowsOptions {
+            loop_: EventLoopHandle::init_mini(
+                bun_event_loop::MiniEventLoop::init_global(None, None),
+            ),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

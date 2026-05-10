@@ -7581,7 +7581,18 @@ impl<'a> Resolver<'a> {
 
                 let safe_path = _safe_path.unwrap();
 
-                let dir_path_i = strings::index_of(safe_path, queue_top_unsafe_path).expect("unreachable");
+                // Spec resolver.zig:2965 calls `std.mem.indexOf` (returns 0 for an
+                // empty needle), not `bun.strings.indexOf` (returns null for an
+                // empty needle). On Windows `queue_top_unsafe_path` is empty when
+                // `windows_filesystem_root` cannot classify the input — e.g.
+                // `import(":://x")` is "absolute" per std but has no drive root,
+                // so `root_path` is `path[0..0]`. Match the spec so the resolver
+                // caches a not-found instead of panicking.
+                let dir_path_i = if queue_top_unsafe_path.is_empty() {
+                    0
+                } else {
+                    strings::index_of(safe_path, queue_top_unsafe_path).expect("unreachable")
+                };
                 let mut end = dir_path_i + queue_top_unsafe_path.len();
 
                 // Directories must always end in a trailing slash or else various bugs can occur.

@@ -1021,10 +1021,13 @@ impl MatchedRoute {
 }
 
 // PORT NOTE: `bun.ThreadlocalBuffers(struct { buf: if (isWindows) [MAX_PATH_BYTES*2]u8 else void })`
+// Heap-backed so only a Box pointer lives in TLS — a `const { [0u8; MAX_PATH_BYTES*2] }`
+// initializer here would put ~192 KB of zeros directly into the PE `.tls` section
+// (PE/COFF has no TLS-BSS). See test/js/bun/binary/tls-segment-size.
 #[cfg(windows)]
 thread_local! {
-    static WIN32_NORMALIZE_BUF: core::cell::RefCell<[u8; MAX_PATH_BYTES * 2]> =
-        const { core::cell::RefCell::new([0u8; MAX_PATH_BYTES * 2]) };
+    static WIN32_NORMALIZE_BUF: core::cell::RefCell<Box<[u8; MAX_PATH_BYTES * 2]>> =
+        core::cell::RefCell::new(bun_core::boxed_zeroed());
 }
 
 // ported from: src/runtime/api/filesystem_router.zig

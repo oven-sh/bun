@@ -469,9 +469,14 @@ pub mod cli {
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
-            // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
-            // `Output::error_writer()` is `*mut io::Writer`. Route through a
-            // shim once io::Writer implements fmt::Write.
+            // Spec cli.zig:21 — print accumulated diagnostics BEFORE the
+            // generic `handle_root_error` "An internal error occurred (..)"
+            // message. The bake production path returns `error.BuildFailed`
+            // with the actual parse/link errors sitting in `ctx.log` (== this
+            // `log`); without this print, users see only the opaque error name.
+            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                bun_core::Output::error_writer(),
+            ));
             bun_crash_handler::handle_root_error(err, None);
         }
     }

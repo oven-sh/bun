@@ -507,7 +507,15 @@ pub fn run_task(
             )?;
         }
         task_tag::BundleV2DeferredBatchTask => {
-            cast!(BundleV2DeferredBatchTask).run_on_js_thread();
+            // Zig: `Plugin.drainDeferred` is wrapped in `fromJSHostCallGeneric`
+            // (== `call_check_slow`) and the only caller does `catch return`.
+            // `bun_bundler` is JSC-free so the exception-scope check is hoisted
+            // to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s
+            // THROW_SCOPE is left unchecked and trips JSC exception validation
+            // at the next `drainMicrotasks` scope.
+            let _ = bun_jsc::call_check_slow(global, || {
+                cast!(BundleV2DeferredBatchTask).run_on_js_thread();
+            });
         }
         task_tag::FlushPendingFileSinkTask => {
             FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));

@@ -320,8 +320,11 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     let std_map = env.std_env_map()?;
     // TODO(port): narrow error set
 
-    // TODO(port): std::process is banned — replace with bun_spawn::spawn_sync.
-    // Zig used std.process.Child.run on both Windows and POSIX (identical arms).
+    // Zig used `std.process.Child.run` on both Windows and POSIX (identical
+    // arms). `bun_spawn::run` is its Rust port — POSIX argv/envp marshalling
+    // + `process::sync::spawn`. On Windows it supplies the thread's
+    // `MiniEventLoop` (idempotent `init_global` — same handle PackageManager
+    // already published) so `spawn_process_windows` has a real `uv_loop_t*`.
     let result = bun_spawn::run(bun_spawn::RunOptions { argv, env_map: std_map.get() })?;
 
     match result.term {

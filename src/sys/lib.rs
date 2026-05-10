@@ -2939,6 +2939,25 @@ mod windows_impl {
         // by recording separator boundaries *after* the disk designator and
         // walking back-then-forward over them.
         if sub.is_empty() { return Ok(()); }
+        // Strip leading `./` (`.\`) segments and a bare `.` — Zig's
+        // `std.fs.Dir.makePath` reaches `dir.makeDir(".")` →
+        // `std.posix.mkdirat` → `windows.sliceToPrefixedFileW`, which
+        // *normalizes* `.` away (relative `"."` becomes the empty string,
+        // so NtCreateFile targets the RootDirectory itself → COLLISION →
+        // `error.PathAlreadyExists` → success). Our `mkdirat` below routes
+        // through bun's `toNTPath` which only flips slashes, leaving a
+        // literal `"."` ObjectName that the NT object manager rejects with
+        // OBJECT_NAME_NOT_FOUND → ENOENT → the `idx == 0` arm bubbles it
+        // out. The bundler's chunk paths are always `./<name>` (see
+        // `linker_context::writeOutputFilesToDisk`), so without this strip
+        // every `--outdir` write on Windows fails "ENOENT creating outdir
+        // \".\"".
+        let mut sub = sub;
+        while sub.len() >= 2 && sub[0] == b'.' && (sub[1] == b'/' || sub[1] == b'\\') {
+            sub = &sub[2..];
+            while !sub.is_empty() && (sub[0] == b'/' || sub[0] == b'\\') { sub = &sub[1..]; }
+        }
+        if sub.is_empty() || sub == b"." { return Ok(()); }
         let mut buf = bun_core::PathBuffer::default();
         if sub.len() >= buf.0.len() {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
@@ -2973,6 +2992,18 @@ mod windows_impl {
 
         // Record the end offset of each component (`component.path` =
         // `sub[..ends[k]]`). Zig's `last()/previous()/next()` is index walk.
+        //
+        // We skip `.` components: Zig's `std.fs.Dir.makePath` calls
+        // `std.posix.mkdirat`, which on Windows normalizes the path through
+        // `sliceToPrefixedFileW` → `removeDotDirsSanitized`, collapsing every
+        // `.` segment to nothing before `NtCreateFile`. Our `mkdirat` below
+        // routes through `to_nt_path` which only flips slashes, so a literal
+        // `"."` ObjectName reaches `NtCreateFile` and comes back as
+        // `OBJECT_NAME_NOT_FOUND` (ENOENT) instead of the
+        // `OBJECT_NAME_COLLISION` (EEXIST) that the back/forward walk expects.
+        // Dropping `.` here matches the stdlib's effective behavior — for an
+        // input of just `"."` we end up with zero components and return Ok,
+        // i.e. `makePath(".")` is a no-op as in Zig.
         let mut ends: [usize; 256] = [0; 256];
         let mut n_ends = 0usize;
         {
@@ -2980,7 +3011,11 @@ mod windows_impl {
             loop {
                 while i < sub.len() && is_sep(sub[i]) { i += 1; }
                 if i >= sub.len() { break; }
+                let start = i;
                 while i < sub.len() && !is_sep(sub[i]) { i += 1; }
+                if i - start == 1 && sub[start] == b'.' {
+                    continue;
+                }
                 if n_ends == ends.len() {
                     return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
                 }
@@ -3702,11 +3737,12 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             return Ok(rc as usize);
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        // TODO(b2-windows): route through `uv_fs_write` with `uv_buf_t[]`.
-        let _ = (fd, vecs, offset);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::pwritev))
+        // sys.zig:1953 — `if (Environment.isWindows) return sys_uv.pwritev(...)`.
+        // `PlatformIoVecConst` is layout-identical to `uv_buf_t` on Windows
+        // (asserted below), so the slice forwards as-is.
+        sys_uv::pwritev(fd, vecs, offset)
     }
 }
 

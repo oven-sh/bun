@@ -3783,9 +3783,44 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
         let code = if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { -1 };
         Ok(SpawnStatus { code })
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        // TODO(port): Windows path via CreateProcessW in bun_spawn.
+        // Zig spec call sites (init_command.zig:855, :1237) use
+        // `std.process.Child{.stderr,stdin,stdout = .Inherit}.spawnAndWait()`,
+        // which on Windows is `windowsCreateProcessPathExt` → CreateProcessW
+        // with no event loop. Route through `std::process::Command` (also
+        // CreateProcessW) with inherited stdio — see spawn/lib.rs:307 for the
+        // PORTING.md rationale on why off-loop spawns may bypass bun_spawn on
+        // Windows. Do NOT return `err!(Unexpected)` here: that bubbles up as
+        // `error: An unknown error occurred (Unexpected)` and fails every
+        // `bun init` invocation on Windows (test/cli/init/init.test.ts).
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        // argv is WTF-8 (selfExePath etc.); decode to WTF-16 for CreateProcessW.
+        fn to_os(b: &[u8]) -> OsString {
+            let mut wbuf = vec![0u16; b.len() + 1];
+            let n = crate::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, b).len();
+            OsString::from_wide(&wbuf[..n])
+        }
+
+        let mut iter = argv.iter();
+        let argv0 = iter.next().ok_or(crate::err!("FileNotFound"))?;
+        let mut cmd = std::process::Command::new(to_os(argv0.as_ref()));
+        for arg in iter {
+            cmd.arg(to_os(arg.as_ref()));
+        }
+        // Inherit stdio + environ (Command default), matching Zig `.Inherit`.
+        let status = cmd.status().map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => crate::err!("FileNotFound"),
+            std::io::ErrorKind::PermissionDenied => crate::err!("AccessDenied"),
+            _ => crate::Error::from(e),
+        })?;
+        let code = status.code().unwrap_or(-1);
+        Ok(SpawnStatus { code })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
         let _ = argv;
         Err(crate::err!(Unexpected))
     }

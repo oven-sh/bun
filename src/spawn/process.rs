@@ -1574,8 +1574,16 @@ impl Default for WindowsOptions {
         Self {
             verbatim_arguments: false,
             hide_window: true,
-            // TODO(port): EventLoopHandle has no Default; Phase B must require it as a ctor arg.
-            // SAFETY: placeholder — Zig field is `= undefined`; never read before assignment.
+            // Zig spec (process.zig:1172): `loop: jsc.EventLoopHandle = undefined`
+            // — every `bun.spawnSync` call site sets it explicitly. Mirroring
+            // that with a zeroed handle here keeps `..Default::default()` usable
+            // for the other fields. `spawn_process_windows` (the sole consumer)
+            // asserts non-null at the read site so a forgotten `loop_` panics
+            // with a pointed message instead of segfaulting at the `.uv_loop`
+            // field offset.
+            // SAFETY: `EventLoopHandle` is a `Copy` enum of raw pointers; the
+            // all-zero bit pattern is discriminant 0 with a null payload —
+            // valid representation, never dereferenced before assignment.
             loop_: unsafe { bun_core::ffi::zeroed_unchecked() },
         }
     }
@@ -1749,9 +1757,24 @@ pub fn spawn_process_windows(
     uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
     uv_process_options.exit_cb = Some(Process::on_exit_uv);
     // PERF(port): was stack-fallback allocator (8192)
-    // SAFETY: `platform_event_loop()` returns the live `uws::WindowsLoop*`
-    // backing this `EventLoopHandle`; it is valid for the duration of spawn.
-    let loop_ = unsafe { (*options.windows.loop_.platform_event_loop()).uv_loop };
+    // `WindowsOptions::default()` leaves `loop_` zeroed (Zig: `= undefined`;
+    // every `bun.spawnSync` call site sets it explicitly). A zeroed
+    // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
+    // so `platform_event_loop()` returns null and the deref below segfaults
+    // at the `.uv_loop` field offset. Catch that with a clear panic instead
+    // of an opaque exit-code-3. Release-build assert: this is the contract
+    // boundary, not a debug aid.
+    let uws_loop = options.windows.loop_.platform_event_loop();
+    assert!(
+        !uws_loop.is_null(),
+        "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
+         WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
+         every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
+         (`.loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(...))`)."
+    );
+    // SAFETY: non-null verified above; `uws::WindowsLoop` is the live
+    // singleton backing this `EventLoopHandle`, valid for the spawn's duration.
+    let loop_ = unsafe { (*uws_loop).uv_loop };
 
     let mut cwd_buf = bun_core::PathBuffer::uninit();
     cwd_buf[..options.cwd.len()].copy_from_slice(&options.cwd);

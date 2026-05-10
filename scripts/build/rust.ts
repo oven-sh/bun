@@ -359,6 +359,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // are PIC-compatible with the no-PIE link, and forcing `static`
   // workspace-wide would break proc-macro dylibs.
   const rustflags: string[] = [];
+  // Keep frame pointers — matches Zig's `omit_frame_pointer = false`
+  // (build.zig:319,841) and the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
+  // (flags.ts:293-301). Needed so profilers and crash backtraces walk Rust
+  // frames the same as the Zig binary did.
+  rustflags.push("-Cforce-frame-pointers=yes");
   // Match the C++ side's CPU target (`cpuTargetFlags` in flags.ts) so Rust
   // codegen sees the same ISA. Without this, C++ is built with
   // `-march=haswell` while Rust defaults to generic x86-64 (SSE2 only),

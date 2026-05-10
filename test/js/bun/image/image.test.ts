@@ -678,17 +678,18 @@ describe("Bun.Image", () => {
     // that flips bit_depth 8→16 on an otherwise-accepted pixel count must
     // reject before any allocation runs.
     test("maxPixels budget halves for 16-bpc sources (decode rejects before allocating)", async () => {
-      // The pixel count must sit strictly inside the open interval
-      // (max_pixels, 2*max_pixels) so the halving is the deciding factor —
-      // otherwise a future refactor that drops the halving would still
-      // reject via the base guard and the test would pass silently.
+      // The budget must sit strictly inside (pixels, 2*pixels) so the
+      // halving is the deciding factor — equivalently, pixels must sit
+      // in (max_pixels/2, max_pixels]. Otherwise a future refactor that
+      // drops the halving would still reject via the base guard and the
+      // test would pass silently.
       //
       // 4096×4096 = 16,777,216 pixels. With maxPixels = 20_000_000:
-      //   • regular guard:  16.7M ≤ 20M  → accepts
-      //   • halved (16-bpc): 16.7M > 10M → rejects
+      //   • regular guard:  16.7M > 20M   → false, accepts
+      //   • halved (16-bpc): 16.7M > 10M → true, rejects
       // so a 16-bpc source rejects ONLY because of the halving.
       const pixels = 4096 * 4096; // 16,777,216
-      const budget = 20_000_000;
+      const budget = 20_000_000; // ∈ (pixels, 2*pixels) = (16.7M, 33.5M)
       // Build tiny 16-bpc and 8-bpc fixtures, patch both to 4096×4096.
       // The 8-bpc fixture is the control — same dimensions, same budget,
       // but the halving shouldn't apply, so it must ACCEPT where the
@@ -720,9 +721,9 @@ describe("Bun.Image", () => {
       // to 16-bpc only.
       const meta8 = await new Bun.Image(bomb8, { maxPixels: budget }).metadata();
       expect(meta8).toEqual({ width: 4096, height: 4096, format: "png" });
-      // And doubling the 16-bpc budget clears the halved cap: 10M → 20M
-      // is still < 16.7M, so push the budget to 2×pixels + 1 which makes
-      // the halved comparison (w*h > max_pixels/2) strictly false.
+      // And bumping the 16-bpc budget to 2×pixels + 1 clears the halved
+      // cap: ⌊33,554,433 / 2⌋ = 16,777,216, so the halved comparison
+      // (w*h > max_pixels/2) is 16,777,216 > 16,777,216 — strictly false.
       const meta16 = await new Bun.Image(bomb16, { maxPixels: pixels * 2 + 1 }).metadata();
       expect(meta16).toEqual({ width: 4096, height: 4096, format: "png" });
     });

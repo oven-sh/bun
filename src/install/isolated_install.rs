@@ -2318,9 +2318,11 @@ pub fn install_isolated_packages(
                             );
                         }
                         ResolutionTag::Github => {
-                            // SAFETY: pkg_res_tag == Github; `git`/`github` arms share the
-                            // same `Repository` layout (Zig also reads `.git` here).
-                            let url = manager.alloc_github_url(pkg_res.git());
+                            // Zig (isolated_install.zig:1759) reads `pkg_res.value.git` here as
+                            // a raw union pun (`git`/`github` arms share `Repository` layout);
+                            // Rust's `.git()` accessor adds a `debug_assert_eq!(tag, Git)` that
+                            // fires under `Github`, so use the tag-correct `.github()` instead.
+                            let url = manager.alloc_github_url(pkg_res.github());
                             // (Drop frees url)
                             match manager.enqueue_tarball_for_download(
                                 dep_id,

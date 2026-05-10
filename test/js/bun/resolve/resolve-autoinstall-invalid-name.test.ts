@@ -55,6 +55,56 @@ test("resolver does not attempt auto-install for invalid npm package names", asy
   expect(exitCode).toBe(0);
 });
 
+// Auto-install's `sleepUntil` pumps the full JS event loop while the resolver
+// is on the stack holding slices that borrow from the referrer's
+// WTF::StringImpl. If pending JS (timers/GC) runs during that window, those
+// borrowed bytes must not be invalidated before the resolver reads them again
+// to build the ResolveMessage.
+test("resolver survives event-loop re-entrancy during auto-install", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  using dir = tempDir("resolve-autoinstall-reentrant", {
+    "index.js": `
+      let uncaught = 0;
+      process.on("uncaughtException", () => { uncaught++; });
+      let caught = 0;
+      for (let i = 0; i < 10; i++) {
+        setImmediate(() => { Bun.gc(true); throw new Error("from-immediate"); });
+        try {
+          require("pkg-does-not-exist-" + i);
+        } catch (e) {
+          if (typeof e.referrer !== "string" || !e.referrer.endsWith("index.js"))
+            throw new Error("bad referrer: " + e.referrer);
+          caught++;
+        }
+      }
+      setImmediate(() => console.log("caught=" + caught + " uncaught=" + uncaught));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--install=force", "index.js"],
+    env: {
+      ...bunEnv,
+      BUN_CONFIG_REGISTRY: server.url.href,
+      NPM_CONFIG_REGISTRY: server.url.href,
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("caught=10 uncaught=10");
+  expect(exitCode).toBe(0);
+});
+
 test("resolver still attempts auto-install for valid npm package names", async () => {
   let requests = 0;
   await using server = Bun.serve({

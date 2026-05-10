@@ -1905,10 +1905,16 @@ pub fn resolveMaybeNeedsTrailingSlash(
 
     var result = ResolveFunctionResult{ .path = "", .result = null };
     const jsc_vm = global.bunVM();
-    const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+    // `_resolve` below can reach the auto-install path whose `sleepUntil`
+    // pumps the JS event loop; arbitrary JS may run (timers, GC) while this
+    // frame is on the stack. Own the UTF-8 bytes instead of borrowing the
+    // WTF::StringImpl's inline buffer so a re-entrant deref/free doesn't
+    // leave `specifier_utf8`/`source_utf8` dangling when we read them again
+    // to build the ResolveMessage.
+    const specifier_utf8 = specifier.toUTF8Owned(bun.default_allocator);
     defer specifier_utf8.deinit();
 
-    const source_utf8 = source.toUTF8(bun.default_allocator);
+    const source_utf8 = source.toUTF8Owned(bun.default_allocator);
     defer source_utf8.deinit();
     if (jsc_vm.plugin_runner) |plugin_runner| {
         if (PluginRunner.couldBePlugin(specifier_utf8.slice())) {

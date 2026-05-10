@@ -2424,58 +2424,82 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match addr {
             Addr::Tcp { port, host } => {
-                if h1 {
-                    // SAFETY: app is a live uws handle owned by this server. No
-                    // `&*this` is live across this call; the trampoline's
-                    // `&mut *this` is the sole borrow while it runs.
-                    unsafe {
-                        (*app).listen_with_config(
-                            Some(trampoline::on_listen::<SSL, DEBUG>),
-                            this.cast::<c_void>(),
-                            uws_app_c::uws_app_listen_config_t {
-                                port: port as c_int,
-                                host,
-                                options,
-                            },
-                        );
+                // diverges from Zig: makes port:0 reliable for H3.
+                // With `{port: 0, h3: true}` we bind TCP:0 (kernel picks N),
+                // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may
+                // already be held by an unrelated process. When the user asked
+                // for "any port" (0), close TCP:N and retry the whole TCP+UDP
+                // bind so the kernel picks a fresh N. Never retry a
+                // user-specified non-zero port.
+                let max_attempts: u8 = if Self::HAS_H3 && h1 && port == 0 { 3 } else { 1 };
+                let mut attempt: u8 = 0;
+                loop {
+                    attempt += 1;
+                    if h1 {
+                        // SAFETY: app is a live uws handle owned by this server. No
+                        // `&*this` is live across this call; the trampoline's
+                        // `&mut *this` is the sole borrow while it runs.
+                        unsafe {
+                            (*app).listen_with_config(
+                                Some(trampoline::on_listen::<SSL, DEBUG>),
+                                this.cast::<c_void>(),
+                                uws_app_c::uws_app_listen_config_t {
+                                    port: port as c_int,
+                                    host,
+                                    options,
+                                },
+                            );
+                        }
                     }
-                }
 
-                if Self::HAS_H3 {
-                    // Re-derive: `listener` was just written by `on_listen`.
-                    if let Some(h3_app) = unsafe { (*this).h3_app } {
-                        // Same UDP port as the TCP listener so Alt-Svc works.
-                        let h3_port: u16 = match unsafe { (*this).listener } {
-                            // SAFETY: ls is a live uws ListenSocket FFI handle
-                            // (just set by on_listen).
-                            Some(ls) => bun_opaque::opaque_deref_mut(ls).get_local_port() as u16,
-                            None => port,
-                        };
-                        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                        // No `&*this` is live across this call; the h3
-                        // trampoline's `&mut *this` is the sole borrow while it
-                        // runs (the closure is capture-less).
-                        bun_opaque::opaque_deref_mut(h3_app).listen_with_config(
-                            this,
-                            |s: &mut Self, ls: Option<&mut uws_sys::h3::ListenSocket>| {
-                                s.on_h3_listen(ls.map(|l| std::ptr::from_mut(l)));
-                            },
-                            uws_sys::h3::ListenConfig { port: h3_port, host, options },
-                        );
-                        // Re-derive: `h3_listener` was just written by `on_h3_listen`.
-                        if unsafe { (*this).h3_listener }.is_none() && !global.has_exception() {
-                            let _ = global.throw(format_args!(
-                                "Failed to listen on UDP port {h3_port} for HTTP/3"
-                            ));
-                            // post-match `has_exception()` check below handles
-                            // deinit + return ZERO.
-                        }
-                        if !unsafe { &*this }.config.h1 {
-                            // SAFETY: per-thread VM singleton; no aliasing `&mut`.
-                            jsc::VirtualMachine::get().as_mut().event_loop_handle =
-                                Some(bun_io::Loop::get());
+                    if Self::HAS_H3 {
+                        // Re-derive: `listener` was just written by `on_listen`.
+                        if let Some(h3_app) = unsafe { (*this).h3_app } {
+                            // Same UDP port as the TCP listener so Alt-Svc works.
+                            let h3_port: u16 = match unsafe { (*this).listener } {
+                                // SAFETY: ls is a live uws ListenSocket FFI handle
+                                // (just set by on_listen).
+                                Some(ls) => bun_opaque::opaque_deref_mut(ls).get_local_port() as u16,
+                                None => port,
+                            };
+                            // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                            // No `&*this` is live across this call; the h3
+                            // trampoline's `&mut *this` is the sole borrow while it
+                            // runs (the closure is capture-less).
+                            bun_opaque::opaque_deref_mut(h3_app).listen_with_config(
+                                this,
+                                |s: &mut Self, ls: Option<&mut uws_sys::h3::ListenSocket>| {
+                                    s.on_h3_listen(ls.map(|l| std::ptr::from_mut(l)));
+                                },
+                                uws_sys::h3::ListenConfig { port: h3_port, host, options },
+                            );
+                            // Re-derive: `h3_listener` was just written by `on_h3_listen`.
+                            if unsafe { (*this).h3_listener }.is_none() {
+                                if attempt < max_attempts {
+                                    // UDP:N is taken — release TCP:N so the next
+                                    // attempt gets a fresh kernel-chosen port.
+                                    // Only retry if TCP actually succeeded.
+                                    if let Some(ls) = unsafe { (*this).listener.take() } {
+                                        bun_opaque::opaque_deref_mut(ls).close();
+                                        continue;
+                                    }
+                                }
+                                if !global.has_exception() {
+                                    let _ = global.throw(format_args!(
+                                        "Failed to listen on UDP port {h3_port} for HTTP/3"
+                                    ));
+                                    // post-match `has_exception()` check below handles
+                                    // deinit + return ZERO.
+                                }
+                            }
+                            if !unsafe { &*this }.config.h1 {
+                                // SAFETY: per-thread VM singleton; no aliasing `&mut`.
+                                jsc::VirtualMachine::get().as_mut().event_loop_handle =
+                                    Some(bun_io::Loop::get());
+                            }
                         }
                     }
+                    break;
                 }
             }
             Addr::Unix { ptr, len } => {

@@ -704,6 +704,13 @@ impl FetchTasklet {
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
             self.start_request_stream();
+            // Intentionally diverges from Zig: makes wpt-h2 number-chunk test deterministic.
+            // `assignStreamIntoResumableSink` kicks off `await reader.read()`; an invalid
+            // chunk type (e.g. a JS number) throws inside `sink.write` and lands in
+            // `writeEndRequest` → `abort_reason` on the next microtask. Drain now so the
+            // abort is observable below before we commit to resolving the Response.
+            // SAFETY: event_loop ptr is live for the VM's lifetime; see enqueue_task below.
+            let _ = unsafe { (*vm.event_loop()).drain_microtasks() };
         }
         // if we already respond the metadata and still need to process the body
         if self.is_waiting_body {
@@ -793,6 +800,25 @@ impl FetchTasklet {
             // already handled by the early return above, so the fall-through
             // here always has either metadata to resolve with or a failure to
             // reject with.
+        }
+
+        // Intentionally diverges from Zig (paired with the microtask drain after
+        // startRequestStream above): the request-body sink may have set `abort_reason`
+        // via writeEndRequest while the HTTP result is still a success — server HEADERS
+        // raced ahead of the scheduled shutdown. Reject with that reason instead of
+        // resolving a 200 Response. Makes wpt-h2 number-chunk test deterministic.
+        if self.result.is_success() && self.abort_reason.has() {
+            let promise = promise_value.as_any_promise().unwrap();
+            let tracker = self.tracker;
+            // get_abort_error consumes abort_reason and clears the signal handler.
+            let mut err = self.get_abort_error().unwrap();
+            promise_value.ensure_still_alive();
+            let r = promise.reject_with_async_stack(&global_this, err.to_js(&global_this));
+            err.reset();
+            tracker.did_dispatch(&global_this);
+            self.promise = jsc::JSPromiseStrong::empty();
+            cleanup(self);
+            return r;
         }
 
         let tracker = self.tracker;

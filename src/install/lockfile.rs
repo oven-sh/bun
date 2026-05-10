@@ -2065,21 +2065,6 @@ impl Lockfile {
         };
         let buf = self.buffers.string_bytes.as_slice();
 
-        // Determinism guard for the `satisfies` fallback below: when the caller
-        // already computed a concrete npm `resolution` (the best version from the
-        // manifest for this dependency's range), only dedupe against an existing
-        // package whose version is *at least* that. Otherwise the first-inserted
-        // satisfying version wins, which is decided by network/manifest completion
-        // order — e.g. `*` deduping to an existing `1.0.2` instead of resolving to
-        // `2.0.2` depending on which sibling's manifest landed first. The
-        // package_index `.ids` list is kept sorted descending, so the first
-        // candidate we accept here is also the highest existing satisfier.
-        let resolved_npm_floor = if resolution.tag == ResolutionTag::Npm {
-            Some(resolution.npm().version)
-        } else {
-            None
-        };
-
         match entry {
             PackageIndexEntry::Id(id) => {
                 if cfg!(debug_assertions) {
@@ -2093,11 +2078,7 @@ impl Lockfile {
                 if resolutions[*id as usize].tag == ResolutionTag::Npm {
                     if let Some(npm_v) = npm_version {
                         let res_ver = resolutions[*id as usize].npm().version;
-                        if npm_v.satisfies(res_ver, buf, buf)
-                            && resolved_npm_floor.is_none_or(|floor| {
-                                res_ver.order(floor, buf, buf) != Ordering::Less
-                            })
-                        {
+                        if npm_v.satisfies(res_ver, buf, buf) {
                             return Some(*id);
                         }
                     }
@@ -2116,11 +2097,7 @@ impl Lockfile {
                     if resolutions[id as usize].tag == ResolutionTag::Npm {
                         if let Some(npm_v) = npm_version {
                             let res_ver = resolutions[id as usize].npm().version;
-                            if npm_v.satisfies(res_ver, buf, buf)
-                                && resolved_npm_floor.is_none_or(|floor| {
-                                    res_ver.order(floor, buf, buf) != Ordering::Less
-                                })
-                            {
+                            if npm_v.satisfies(res_ver, buf, buf) {
                                 return Some(id);
                             }
                         }

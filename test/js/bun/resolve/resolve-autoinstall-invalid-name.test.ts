@@ -61,9 +61,11 @@ test("resolver does not attempt auto-install for invalid npm package names", asy
 // borrowed bytes must not be invalidated before the resolver reads them again
 // to build the ResolveMessage.
 test("resolver survives event-loop re-entrancy during auto-install", async () => {
+  let requests = 0;
   await using server = Bun.serve({
     port: 0,
     fetch() {
+      requests++;
       return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
     },
   });
@@ -102,6 +104,7 @@ test("resolver survives event-loop re-entrancy during auto-install", async () =>
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("caught=10 uncaught=10");
+  expect(requests).toBeGreaterThan(0);
   expect(exitCode).toBe(0);
 });
 

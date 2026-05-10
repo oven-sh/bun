@@ -486,9 +486,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
             createError(globalObject, "Sampling profiler was never started"_s)));
 
     WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON()->toJSONString();
-    JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
-    scope.releaseAssertNoException();
-    return result;
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSONParse(globalObject, jsonString)));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetRandomSeed);
@@ -797,9 +795,9 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
 
         jsonString = snapshotBuilder.json();
     }
-    scope.releaseAssertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
-    return JSValue::encode(JSONParse(globalObject, WTF::move(jsonString)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, WTF::move(jsonString))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSerialize,

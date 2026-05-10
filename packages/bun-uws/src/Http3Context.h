@@ -155,13 +155,23 @@ struct Http3Context {
                 Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(s));
                 WebTransportSession *ws = (WebTransportSession *) s;
                 WebTransportSessionData *d = rd->wt;
-                if (!d->isShuttingDown) {
-                    d->isShuttingDown = true;
-                    if (d->subscriber) {
-                        cd->wt.topicTree->freeSubscriber(d->subscriber);
-                        d->subscriber = nullptr;
-                    }
-                    if (cd->wt.closeHandler) cd->wt.closeHandler(ws, 1006, {});
+                d->isShuttingDown = true;
+                /* Subscriber cleanup and closeHandler live here — not in
+                 * end() alone — so send()'s closeOnBackpressureLimit path
+                 * (which can run from inside TopicTree::publishBig()'s
+                 * range-for over the Topic set) can defer to this point
+                 * via us_quic_stream_close() instead of mutating the set
+                 * it's iterating. end() nulls d->subscriber and sets
+                 * closeFired, so a user-initiated ws.close() still runs
+                 * them synchronously and this becomes a no-op. */
+                if (d->subscriber) {
+                    cd->wt.topicTree->freeSubscriber(d->subscriber);
+                    d->subscriber = nullptr;
+                }
+                if (!d->closeFired) {
+                    d->closeFired = true;
+                    if (cd->wt.closeHandler)
+                        cd->wt.closeHandler(ws, d->closeCode, d->closeReason);
                 }
                 delete d;
                 rd->wt = nullptr;

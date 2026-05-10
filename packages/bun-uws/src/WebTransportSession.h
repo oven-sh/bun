@@ -50,6 +50,13 @@ struct WebTransportSessionData {
      * gets one post-upgrade wantwrite to flush the 2xx HEADERS) doesn't
      * surface a spurious drain() with bufferedAmount == 0. */
     bool hadBackpressure = false;
+    /* Set once closeHandler has run so on_stream_close doesn't fire it a
+     * second time after end(). Carries the code/reason for the deferred
+     * path (send()'s closeOnBackpressureLimit) where closeHandler must
+     * wait until on_stream_close to avoid TopicTree reentrancy. */
+    bool closeFired = false;
+    int closeCode = 1006;
+    std::string closeReason;
     /* Incoming WT_CLOSE_SESSION capsule reassembly on the CONNECT stream. */
     std::string capsuleBuf;
 };
@@ -117,8 +124,24 @@ struct WebTransportSession {
         if (r < 0) {
             /* -2 is the only "queue would exceed maxBackpressure" return; -1
              * means the session is gone (or OOM). closeOnBackpressureLimit
-             * should never tear the session down for the latter. */
-            if (r == -2 && cd->closeOnBackpressureLimit) end(1009, "Backpressure limit");
+             * should never tear the session down for the latter.
+             *
+             * send() runs from inside TopicTree::publishBig()'s range-for
+             * over the Topic (an unordered_set<Subscriber*>), so calling
+             * end() here — which would freeSubscriber() and fire the JS
+             * close handler synchronously — invalidates that iterator.
+             * Mirror WebSocket<>::send()'s us_socket_shutdown_read(): mark
+             * the session dead so subsequent sends drop, stash the close
+             * code, and close the stream. lsquic schedules on_close for
+             * the next service pass (maybe_schedule_call_on_close), and
+             * on_stream_close does the subscriber cleanup + closeHandler
+             * once we're outside the iteration. */
+            if (r == -2 && cd->closeOnBackpressureLimit) {
+                d->isShuttingDown = true;
+                d->closeCode = 1009;
+                d->closeReason = "Backpressure limit";
+                us_quic_stream_close((us_quic_stream_t *) this);
+            }
             return DROPPED;
         }
         /* r is the queued bytes *before* this send. Datagrams always queue
@@ -178,6 +201,7 @@ struct WebTransportSession {
             cd->topicTree->freeSubscriber(d->subscriber);
             d->subscriber = nullptr;
         }
+        d->closeFired = true;
         if (cd->closeHandler) cd->closeHandler(this, code, message);
     }
 

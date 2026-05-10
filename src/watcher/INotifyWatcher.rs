@@ -408,7 +408,22 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // so the borrow of `this.watchlist` ends before we mutably borrow other
     // `this` fields inside the batching loop below.
     // PERF(port): Zig used the column slice directly.
-    let eventlist_index: Vec<EventListIndex> = this.watchlist.items_eventlist_index().to_vec();
+    //
+    // PORT NOTE: locked — diverges from Zig spec (which reads this column
+    // unlocked). `on_file_update` may evict watchlist entries via
+    // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
+    // evicts the matched file watch). The enqueued reload then re-imports the
+    // module on the JS thread, whose `add_file` re-appends the entry under
+    // `this.mutex`, potentially reallocating the MultiArrayList backing while
+    // this thread is mid-`items_eventlist_index()` on the next cycle. Under
+    // load (`watch-many-dirs.test.ts` writes 129 files concurrently, > the
+    // 128 `max_count` batch size, so the dir-event-only batch is common) the
+    // unlocked read raced the realloc and the process occasionally died with
+    // a non-zero exit code. Snapshot under the same mutex `add_file` takes.
+    let eventlist_index: Vec<EventListIndex> = {
+        let _guard = this.mutex.lock_guard();
+        this.watchlist.items_eventlist_index().to_vec()
+    };
 
     let mut event_id: usize = 0;
     let mut events_processed: usize = 0;

@@ -1466,6 +1466,34 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
+            // PORT NOTE (intentional divergence from Zig spec): process-exit
+            // and fd-3-readable race in the event loop. `ipc_reader.start()`
+            // only registers a poll on POSIX — it does not synchronously read.
+            // If `watch_or_reap()`/SIGCHLD delivers the exit before the poll
+            // fires (a fast-exiting scanner under CI load), tearing down the
+            // reader here drops the kernel-buffered IPC payload on the floor
+            // and `handle_results` reports "exited without sending data".
+            //
+            // The child has exited, so the write end of fd 3 is closed: a
+            // synchronous drain cannot block. Read until EOF/EAGAIN before
+            // closing. Windows reads via libuv (async) and the fd here is a
+            // uv-owned pipe handle — skip the sync drain there.
+            #[cfg(not(windows))]
+            {
+                let fd = self.ipc_reader.get_fd();
+                if fd != Fd::INVALID {
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        match bun_sys::read(fd, &mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => self.ipc_data.extend_from_slice(&buf[..n]),
+                            Err(e) if e.get_errno() == bun_sys::E::EAGAIN => break,
+                            Err(_) => break,
+                        }
+                    }
+                    self.has_received_ipc = !self.ipc_data.is_empty();
+                }
+            }
             // Must use deinit() (close-without-reporting), NOT close(): close()
             // would re-enter on_reader_done and decrement remaining_fds a
             // second time, underflowing it and hanging sleep_until.

@@ -1198,8 +1198,10 @@ where
             }
         }
 
-        // Drop order (LIFO, matches Zig defers): current_task guard → enqueue(),
-        // then _flush guard → Output::flush() + ctx.flush_evictions().
+        // Drop order (LIFO): `_flush` guard → Output::flush() +
+        // ctx.flush_evictions(), then `current_task` guard → enqueue(). See
+        // PORT NOTE on `current_task` above for why this inverts the Zig
+        // defer order.
     }
 }
 

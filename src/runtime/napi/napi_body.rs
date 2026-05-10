@@ -2233,11 +2233,29 @@ impl ThreadSafeFunction {
                     .dispatch_state
                     .store(DispatchState::Pending as u8, Ordering::SeqCst);
             } else {
-                // We're done running tasks, for now.
-                self_
+                // We're done running tasks, for now. Transition Running → Idle
+                // via CAS instead of an unconditional store: between
+                // dispatch_one() observing an empty queue (and dropping the
+                // lock) and this point, another thread may have enqueued an
+                // item and called schedule_dispatch(). That swap() saw
+                // Running, so it intentionally did *not* schedule a new
+                // concurrent task — it relies on this loop to pick the item
+                // up. If we blindly stored Idle we'd overwrite that Pending
+                // and the callback would be dropped (flaky lost-wakeup under
+                // load). On CAS failure, loop and re-drain.
+                if self_
                     .dispatch_state
-                    .store(DispatchState::Idle as u8, Ordering::SeqCst);
-                break;
+                    .compare_exchange(
+                        DispatchState::Running as u8,
+                        DispatchState::Idle as u8,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
+                // state was bumped to Pending by enqueue()/release(); re-dispatch.
             }
         }
 

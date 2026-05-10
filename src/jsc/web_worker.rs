@@ -747,23 +747,32 @@ impl WebWorker {
             return;
         }
 
-        if let Err(err) = self.start_vm() {
-            bun_core::output::panic(format_args!(
-                "An unhandled error occurred while starting a worker: {}\n",
-                err.name()
-            ));
-        }
+        let vm_ptr = match self.start_vm() {
+            Ok(vm) => vm,
+            Err(err) => {
+                bun_core::output::panic(format_args!(
+                    "An unhandled error occurred while starting a worker: {}\n",
+                    err.name()
+                ));
+            }
+        };
 
         // PORT NOTE: `start_vm()` may have observed `requested_terminate` and
         // run `shutdown()` itself (which now returns instead of `noreturn`).
-        // In that case `vm` is null and there is nothing left to do — fall
-        // out of `thread_main` so the thread exits cleanly.
-        if self.vm_ptr().is_null() {
+        // In that case it returns `Ok(null)` and there is nothing left to do —
+        // fall out of `thread_main` so the thread exits cleanly. We must NOT
+        // read `self.vm_ptr()` here to make that decision: `shutdown()` has
+        // already posted `dispatchExit`, after which `self` may be freed by
+        // `~Worker` on the parent thread (the close task drops the
+        // thread-held ref; if the JS wrapper has been GC'd, `WebWorker__destroy`
+        // races this read — sporadic UAF in worker_threads tests that
+        // `terminate()` immediately after `new Worker()`).
+        if vm_ptr.is_null() {
             return;
         }
 
         // SAFETY: start_vm published vm under vm_lock; non-null here.
-        let global = unsafe { &*self.vm_ptr() }.global;
+        let global = unsafe { &*vm_ptr }.global;
         // PORT NOTE: Zig calls `holdAPILock(this, OpaqueWrap(spin))`; the
         // callback ends in `bun.exitThread()` (`pthread_exit`), whose forced
         // unwind cannot walk Zig frames (no unwind tables), so glibc falls
@@ -792,7 +801,13 @@ impl WebWorker {
     }
 
     /// Phase 1: build the worker's arena + VirtualMachine and publish `vm`.
-    fn start_vm(&self) -> Result<(), bun_core::Error> {
+    ///
+    /// Returns the published VM pointer so `thread_main` need not re-read it
+    /// from `self` — `Ok(null)` means the early-terminate checkpoint already
+    /// ran `shutdown()` (after which `self` may be freed by `~Worker` on the
+    /// parent thread; touching `self` past that point is the UAF this return
+    /// shape exists to prevent).
+    fn start_vm(&self) -> Result<*mut VirtualMachine, bun_core::Error> {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 
@@ -876,7 +891,10 @@ impl WebWorker {
         if self.has_requested_terminate() {
             drop(temp_proxy_slots);
             self.shutdown();
-            return Ok(());
+            // `self` may be freed past this point (shutdown posted dispatchExit
+            // → parent close task may drop the last Worker ref). Do NOT touch
+            // `self`; signal "already shut down" via the null return.
+            return Ok(core::ptr::null_mut());
         }
 
         let vm = VirtualMachine::init_worker(
@@ -945,7 +963,7 @@ impl WebWorker {
         // walks the resolver's global dir_cache) and entry-point loading.
         // spin() will observe the flag and shutdown() under the API lock.
         if self.has_requested_terminate() {
-            return Ok(());
+            return Ok(vm);
         }
 
         // SAFETY: see post-publish note above.
@@ -956,12 +974,12 @@ impl WebWorker {
                 // bails immediately; vm.log carries the error for flushLogs.
                 (*vm).exit_handler.exit_code = 1;
                 let _ = self.set_requested_terminate();
-                return Ok(());
+                return Ok(vm);
             }
 
             (*vm).load_extra_env_and_source_code_printer();
         }
-        Ok(())
+        Ok(vm)
     }
 
     /// Phase 2: load the entry point, dispatch 'online', run the event loop.

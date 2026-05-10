@@ -2222,23 +2222,25 @@ fn transpile_source_code_inner(
                         is_symlink: path.is_symlink,
                     }
                 } else {
-                    let store = Fs::FilenameStore::instance();
-                    let text: &'static [u8] =
-                        bun_core::handle_oom(store.append_slice(path.text));
+                    // PORT NOTE: route through `intern_transpile_path` (dedup)
+                    // instead of `FilenameStore::append_slice` directly — see
+                    // that fn's doc for the leak this closes
+                    // (require-cache.test.ts "don't leak file paths").
+                    let text: &'static [u8] = intern_transpile_path(path.text);
                     let pretty: &'static [u8] =
                         if core::ptr::eq(path.pretty.as_ptr(), path.text.as_ptr())
                             && path.pretty.len() == path.text.len()
                         {
                             text
                         } else {
-                            bun_core::handle_oom(store.append_slice(path.pretty))
+                            intern_transpile_path(path.pretty)
                         };
                     // `Fs::Path::init` always sets namespace to the `b"file"`
                     // literal; only intern if a caller overrode it.
                     let namespace: &'static [u8] = if path.namespace == b"file" {
                         b"file"
                     } else {
-                        bun_core::handle_oom(store.append_slice(path.namespace))
+                        intern_transpile_path(path.namespace)
                     };
                     bun_logger::fs::Path {
                         pretty,
@@ -3677,6 +3679,42 @@ thread_local! {
     /// PORTING.md §Forbidden permits the leak for true thread-local singletons).
     static TRANSPILE_PRINTER: Cell<*mut bun_js_printer::BufferPrinter> =
         const { Cell::new(ptr::null_mut()) };
+
+    /// Dedup cache for [`intern_transpile_path`] — see that fn's PORT NOTE.
+    /// `&'static [u8]` keys point into the `FilenameStore` BSS singleton, so
+    /// the set itself owns nothing beyond its bucket array.
+    static TRANSPILE_PATH_INTERN: core::cell::RefCell<
+        std::collections::HashSet<&'static [u8]>,
+    > = core::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Intern `value` into the process-lifetime `FilenameStore`, returning a
+/// `&'static` view — but **deduplicated** by content so repeated calls with
+/// equal bytes return the same backing slice instead of appending a fresh
+/// copy each time.
+///
+/// PORT NOTE: the Zig spec passes `path: Fs.Path` by value into
+/// `transpileSourceCode` with no intern (ModuleLoader.zig:90); the
+/// `bun_logger::fs::Path<'static>` shape forced the Rust port to re-intern on
+/// every call. `BSSStringList::append` does not dedupe, so a `require()`
+/// loop that busts `require.cache` (test/cli/run/require-cache.test.ts —
+/// "files transpiled and loaded don't leak file paths") leaked one path-len
+/// buffer per iteration into the never-freed BSS store, eventually pushing
+/// RSS over the test's threshold on busy CI hosts. The thread-local
+/// `HashSet<&'static [u8]>` makes the intern idempotent: each distinct path
+/// is appended exactly once (matching the resolver's own per-file semantics),
+/// and the 10⁴–10⁵-iteration leak tests pay zero growth after the first call.
+fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
+    TRANSPILE_PATH_INTERN.with(|cell| {
+        let mut set = cell.borrow_mut();
+        if let Some(interned) = set.get(value) {
+            return *interned;
+        }
+        let interned: &'static [u8] =
+            bun_core::handle_oom(Fs::FilenameStore::instance().append_slice(value));
+        set.insert(interned);
+        interned
+    })
 }
 
 /// Spec ModuleLoader.zig:879 `const always_sync_modules = .{"reflect-metadata"};`.

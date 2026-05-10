@@ -2079,7 +2079,16 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        self.unix_socket_path = ZigStringSlice::EMPTY;
+        // PORT NOTE: Zig deinit'd then assigned `.empty` here; the bitwise
+        // `task.http.?.* = async_http.*` copy-back later overwrote the
+        // JS-thread original's slice with `.empty`, so the buffer was freed
+        // exactly once. The Rust port has no struct copy-back
+        // (`sync_progress_from` skips owned fields) and the original retains
+        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
+        // clone was created via `ptr::read`). Dropping it here would
+        // double-free when the original later runs `clear_data()`. Forget the
+        // clone's view; the original is the sole owner.
+        core::mem::forget(core::mem::take(&mut self.unix_socket_path));
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -3468,7 +3477,10 @@ impl<'a> HTTPClient<'a> {
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }
-        self.unix_socket_path = ZigStringSlice::EMPTY;
+        // See `do_redirect`: the HTTP-thread clone shares this allocation
+        // with the JS-thread original (created via `ptr::read`); dropping it
+        // here double-frees once the original runs `clear_data()`.
+        core::mem::forget(core::mem::take(&mut self.unix_socket_path));
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
         {

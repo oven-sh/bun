@@ -925,26 +925,52 @@ impl ShellRmTask {
     }
 
     /// Spec: rm.zig `removeEntry`.
-    fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<()> {
-        let mut vtable = RemoveFileVTable { task: self, child_of_dir: false };
+    ///
+    /// Returns `Ok(true)` when [`remove_entry_dir`] published
+    /// `need_to_wait = true` on `dir_task`. Once that store is visible, a
+    /// child finishing on another thread may run
+    /// [`DirTask::delete_after_waiting_for_children`] → `post_run` → `deinit`
+    /// (or, for the root, the main thread may free the whole
+    /// [`ShellRmTask`]). Callers must therefore treat `dir_task` as
+    /// potentially-freed when this returns `Ok(true)`. The bool is threaded
+    /// out locally instead of re-reading the atomic so the caller never
+    /// dereferences `dir_task` to find out — the Zig spec re-reads
+    /// `deleting_after_waiting_for_children` after this returns, which is the
+    /// same race; the Rust port closes it.
+    fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<bool> {
+        let mut waiting = false;
+        let mut vtable = RemoveFileVTable {
+            task: self,
+            child_of_dir: false,
+            need_to_wait_out: &mut waiting,
+        };
         let mut buf = bun_paths::PathBuffer::uninit();
         // SAFETY: `dir_task` is live; this thread owns it. `kind_hint` /
         // `path` are read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
         match kind_hint {
             EntryKindHint::Idk | EntryKindHint::File => {
-                self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable)
+                self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable)?;
             }
-            EntryKindHint::Dir => self.remove_entry_dir(dir_task, is_absolute, &mut buf),
+            EntryKindHint::Dir => {
+                self.remove_entry_dir(dir_task, is_absolute, &mut buf, &mut waiting)?;
+            }
         }
+        Ok(waiting)
     }
 
     /// Spec: rm.zig `removeEntryDir`.
+    ///
+    /// `need_to_wait_out` is set to `true` immediately before the
+    /// `need_to_wait` atomic store that hands `dir_task` off to its children;
+    /// see [`remove_entry`] for why the caller needs this on its own stack
+    /// rather than reading it back from `dir_task`.
     fn remove_entry_dir(
         &self,
         dir_task: *mut DirTask,
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
+        need_to_wait_out: &mut bool,
     ) -> bun_sys::Maybe<()> {
         // SAFETY: `dir_task` is live; this thread owns it.
         let path = unsafe { (*dir_task).path.as_zstr() };
@@ -1018,7 +1044,13 @@ impl ShellRmTask {
         }
 
         let mut iterator = dir_iterator::iterate(fd);
-        let mut child_vtable = RemoveFileVTable { task: self, child_of_dir: true };
+        let mut child_vtable = RemoveFileVTable {
+            task: self,
+            child_of_dir: true,
+            // Never read: `child_of_dir == true` makes both vtable callbacks
+            // enqueue and return early before reaching `remove_entry_dir`.
+            need_to_wait_out: core::ptr::null_mut(),
+        };
 
         let mut i: usize = 0;
         loop {
@@ -1064,6 +1096,14 @@ impl ShellRmTask {
         unsafe {
             let dt = &*dir_task;
             if dt.subtask_count.load(Ordering::SeqCst) > 1 {
+                // Record locally first: once `need_to_wait` is published a
+                // child may immediately drive `delete_after_waiting_for_children`
+                // → `post_run` → `deinit` on `dir_task` (or free the owning
+                // ShellRmTask via the main thread for the root), so nothing
+                // after this store may dereference `dir_task`. The directory
+                // fd is closed by the `close_fd` scopeguard on return — that
+                // touches only a stack local, not `dir_task`.
+                *need_to_wait_out = true;
                 dt.need_to_wait.store(true, Ordering::SeqCst);
                 return Ok(());
             }
@@ -1276,16 +1316,34 @@ impl DirTask {
         // overlap any DirTask and the field-level `&mut` taken inside
         // `verbose_deleted` cannot pop its tag under Stacked Borrows.
         let tm = unsafe { &*tm_ptr };
-        if let Err(err) = tm.remove_entry(this, is_absolute) {
-            tm.handle_err(err);
-        }
-
-        // SAFETY: caller contract; atomic load is fine even if children are
-        // already running.
-        unsafe {
-            if !(*this).deleting_after_waiting_for_children.load(Ordering::SeqCst) {
-                Self::post_run(this);
+        let waiting = match tm.remove_entry(this, is_absolute) {
+            Ok(waiting) => waiting,
+            Err(err) => {
+                tm.handle_err(err);
+                // `need_to_wait` is only stored on the `Ok(())` return path of
+                // `remove_entry_dir`, so an error guarantees ownership of
+                // `this` was not handed off.
+                false
             }
+        };
+
+        // PORT NOTE: rm.zig re-reads `this.deleting_after_waiting_for_children`
+        // here to decide whether to skip `postRun`. That load (and `postRun`'s
+        // own `need_to_wait` load) is a use-after-free race: once
+        // `remove_entry_dir` publishes `need_to_wait = true`, the last child
+        // may run `delete_after_waiting_for_children(this)` → `post_run` →
+        // `deinit` (or, for the root, the main thread may drop the whole
+        // `ShellRmTask`) before we get here. The Rust port instead threads the
+        // hand-off out as a stack-local bool via `remove_entry`'s return value
+        // and never touches `this` again when set. When `waiting` is false the
+        // hand-off never happened, so `deleting_after_waiting_for_children`
+        // (only ever stored by a child that observed `need_to_wait == true`)
+        // is necessarily false and `post_run` is both safe and required.
+        if !waiting {
+            // SAFETY: `waiting == false` ⇒ `need_to_wait` was never published,
+            // so no other thread can have driven `delete_after_waiting_for_children`
+            // / `deinit` on `this`; it is still live and owned by this worker.
+            unsafe { Self::post_run(this) };
         }
     }
 
@@ -1494,6 +1552,12 @@ impl RemoveFileHandler for DummyRemoveFile {
 struct RemoveFileVTable<'a> {
     task: &'a ShellRmTask,
     child_of_dir: bool,
+    /// Out-param forwarded to [`ShellRmTask::remove_entry_dir`] on the
+    /// `child_of_dir == false` path so [`ShellRmTask::remove_entry`] learns
+    /// — without re-reading the (possibly already-freed) DirTask — that
+    /// `need_to_wait` was published. Null when `child_of_dir == true`, where
+    /// both callbacks return before the recursive call.
+    need_to_wait_out: *mut bool,
 }
 impl RemoveFileHandler for RemoveFileVTable<'_> {
     fn on_is_dir(
@@ -1508,7 +1572,10 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
                 .enqueue_no_join(parent, ZBox::from_bytes(path.as_bytes()), EntryKindHint::Dir);
             return Ok(());
         }
-        self.task.remove_entry_dir(parent, is_absolute, buf)
+        // SAFETY: `child_of_dir == false` is only constructed in
+        // `remove_entry`, which sets `need_to_wait_out` to a live stack bool.
+        let out = unsafe { &mut *self.need_to_wait_out };
+        self.task.remove_entry_dir(parent, is_absolute, buf, out)
     }
     fn on_dir_not_empty(
         &mut self,
@@ -1522,7 +1589,9 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
                 .enqueue_no_join(parent, ZBox::from_bytes(path.as_bytes()), EntryKindHint::Dir);
             return Ok(());
         }
-        self.task.remove_entry_dir(parent, is_absolute, buf)
+        // SAFETY: see `on_is_dir`.
+        let out = unsafe { &mut *self.need_to_wait_out };
+        self.task.remove_entry_dir(parent, is_absolute, buf, out)
     }
 }
 

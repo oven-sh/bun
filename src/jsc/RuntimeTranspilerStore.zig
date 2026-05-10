@@ -349,6 +349,9 @@ pub const RuntimeTranspilerStore = struct {
                         // of calling `seekTo` on a bogus handle.
                         fd = if (watcher_fd.isValid() and watcher_fd.stdioTag() == null) watcher_fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
+                        if (fd) |cached_fd| {
+                            if (ModuleLoader.cachedFdIsStale(&path, cached_fd)) fd = null;
+                        }
                     }
                 },
                 else => {},
@@ -624,6 +627,7 @@ pub const RuntimeTranspilerStore = struct {
 };
 
 const Fs = @import("../resolver/fs.zig");
+const ModuleLoader = @import("./ModuleLoader.zig");
 const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.zig");
 const node_fallbacks = @import("../resolver/node_fallbacks.zig");
 const std = @import("std");

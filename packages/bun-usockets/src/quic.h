@@ -101,6 +101,11 @@ void us_quic_socket_context_on_wt_stream_close(us_quic_socket_context_t *ctx,
     void (*on_wt_close)(us_quic_stream_t *, us_quic_stream_t *session));
 void us_quic_socket_context_on_datagram(us_quic_socket_context_t *ctx,
     void (*on_datagram)(us_quic_stream_t *session, const char *, unsigned int));
+/* Fires once a session's outgoing datagram queue transitions to empty.
+ * Lets the WebSocket-shaped drain() handler actually track datagram
+ * backpressure instead of the CONNECT stream's (unrelated) writability. */
+void us_quic_socket_context_on_datagram_drain(us_quic_socket_context_t *ctx,
+    void (*on_datagram_drain)(us_quic_stream_t *session));
 
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
  * (may be < len under flow-control backpressure). */

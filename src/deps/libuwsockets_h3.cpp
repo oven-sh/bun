@@ -396,6 +396,10 @@ bool uws_h3_publish(uws_h3_app_t* app, const char* topic, size_t topic_len,
 {
     return ((H3App*)app)->publish(sv(topic, topic_len), sv(msg, msg_len), (uWS::OpCode)op);
 }
+unsigned uws_h3_num_subscribers(uws_h3_app_t* app, const char* topic, size_t topic_len)
+{
+    return ((H3App*)app)->numSubscribers(sv(topic, topic_len));
+}
 
 size_t uws_h3_wt_get_buffered_amount(uws_websocket_t* ws)
 {

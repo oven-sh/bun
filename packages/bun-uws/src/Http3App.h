@@ -102,6 +102,13 @@ struct H3App {
             });
     }
 
+    unsigned numSubscribers(std::string_view topic) {
+        WebTransportContextData *cd = &http3Context->getContextData()->wt;
+        if (!cd->topicTree) return 0;
+        Topic *t = cd->topicTree->lookupTopic(topic);
+        return t ? (unsigned) t->size() : 0;
+    }
+
     H3App &&listen(const std::string &host, int port, int /*options*/,
                    MoveOnlyFunction<void(us_quic_listen_socket_t *)> &&cb) {
         cb(http3Context->listen(host.empty() ? nullptr : host.c_str(), port));

@@ -45,6 +45,11 @@ struct WebTransportSessionData {
      * cap-minus-one. */
     size_t inflightBytes = 0;
     bool isShuttingDown = false;
+    /* Set once send() reports BACKPRESSURE; cleared when the datagram queue
+     * drains. Gates drainHandler so a fresh session (whose CONNECT stream
+     * gets one post-upgrade wantwrite to flush the 2xx HEADERS) doesn't
+     * surface a spurious drain() with bufferedAmount == 0. */
+    bool hadBackpressure = false;
     /* Incoming WT_CLOSE_SESSION capsule reassembly on the CONNECT stream. */
     std::string capsuleBuf;
 };
@@ -113,7 +118,9 @@ struct WebTransportSession {
          * (they go out at the next process_conns), so the post-send buffered
          * amount is never zero; report SUCCESS when the queue was empty so a
          * single send() doesn't immediately trip the JS backpressure path. */
-        return r == 0 ? SUCCESS : BACKPRESSURE;
+        if (r == 0) return SUCCESS;
+        d->hadBackpressure = true;
+        return BACKPRESSURE;
     }
 
     /* draft-ietf-webtrans-http3 §6: WT_CLOSE_SESSION (0x2843) capsule —

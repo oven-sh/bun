@@ -116,20 +116,33 @@ struct Http3Context {
             cd->wt.messageHandler((WebTransportSession *) session, std::string_view{data, len}, BINARY);
         });
 
+        /* ws.send() backpressure is the per-session datagram queue, not the
+         * CONNECT stream's flow control, so drain() is driven off the queue
+         * going empty rather than on_stream_writable. Gate on hadBackpressure
+         * so the first send() (which reports SUCCESS) doesn't fire drain()
+         * once it leaves the queue. */
+        us_quic_socket_context_on_datagram_drain(ctx, [](us_quic_stream_t *session) {
+            WebTransportSessionData *d = ((Http3ResponseData *) us_quic_stream_ext(session))->wt;
+            if (!d || d->isShuttingDown || !d->hadBackpressure) return;
+            d->hadBackpressure = false;
+            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(session));
+            if (cd->wt.drainHandler) cd->wt.drainHandler((WebTransportSession *) session);
+        });
+
         us_quic_socket_context_on_stream_writable(ctx, [](us_quic_stream_t *s) {
             Http3Response *res = (Http3Response *) s;
             Http3ResponseData *rd = res->getHttpResponseData();
             if (rd->wt) {
                 /* WebTransportSession::end() may have stashed a partial
                  * WT_CLOSE_SESSION capsule in backpressure; flush + FIN via
-                 * the same path the HTTP body uses. */
+                 * the same path the HTTP body uses. CONNECT-stream
+                 * writability is otherwise unrelated to datagram drainage
+                 * (handled by on_datagram_drain above), so there is nothing
+                 * to do here for an open session — the one guaranteed
+                 * callback is the post-upgrade flush of the 2xx HEADERS. */
                 if (rd->backpressure.length() || rd->endAfterDrain) {
                     if (!res->drain()) us_quic_stream_want_write(s, 1);
-                    return;
                 }
-                Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(s));
-                if (cd->wt.drainHandler && !rd->wt->isShuttingDown)
-                    cd->wt.drainHandler((WebTransportSession *) s);
                 return;
             }
             if (!res->drain()) us_quic_stream_want_write(s, 1);

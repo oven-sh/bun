@@ -634,7 +634,27 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return JSValue.jsNumber(0);
             }
 
-            return JSValue.jsNumber((this.app.?.numSubscribers(topic.slice())));
+            return JSValue.jsNumber(this.numSubscribersTotal(topic.slice()));
+        }
+
+        /// WebTransport sessions subscribe onto a separate TopicTree owned
+        /// by the H3App, so server.subscriberCount() and server.publish()
+        /// must sum / fan out over both trees when `h3: true` is set.
+        pub fn numSubscribersTotal(this: *ThisServer, topic: []const u8) u32 {
+            var n: u32 = this.app.?.numSubscribers(topic);
+            if (comptime has_h3) if (this.h3_app) |h3| {
+                n += h3.numSubscribers(topic);
+            };
+            return n;
+        }
+
+        pub fn publishAllTrees(this: *ThisServer, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
+            const ok_tcp = uws.AnyWebSocket.publishWithOptions(ssl_enabled, this.app.?, topic, message, opcode, compress);
+            var ok_h3 = false;
+            if (comptime has_h3) if (this.h3_app) |h3| {
+                ok_h3 = h3.publishWithOptions(topic, message, opcode, compress);
+            };
+            return ok_tcp or ok_h3;
         }
 
         pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*ThisServer {
@@ -711,8 +731,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (this.config.websocket == null)
                 return JSValue.jsNumber(0);
 
-            const app = this.app.?;
-
             if (topic.len == 0) {
                 httplog("publish() topic invalid", .{});
                 return globalThis.throw("publish requires a topic string", .{});
@@ -732,7 +750,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return JSValue.jsNumber(
                     // if 0, return 0
                     // else return number of bytes sent
-                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
+                    @as(i32, @intFromBool(this.publishAllTrees(topic_slice.slice(), buffer.slice(), .binary, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
                 );
             }
 
@@ -748,7 +766,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return JSValue.jsNumber(
                     // if 0, return 0
                     // else return number of bytes sent
-                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer, .text, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
+                    @as(i32, @intFromBool(this.publishAllTrees(topic_slice.slice(), buffer, .text, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
                 );
             }
         }
@@ -3645,10 +3663,10 @@ pub const AnyServer = struct {
 
     pub fn publish(this: AnyServer, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
         return switch (this.ptr.tag()) {
-            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).app.?.publish(topic, message, opcode, compress),
-            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).app.?.publish(topic, message, opcode, compress),
-            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).app.?.publish(topic, message, opcode, compress),
-            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).app.?.publish(topic, message, opcode, compress),
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).publishAllTrees(topic, message, opcode, compress),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).publishAllTrees(topic, message, opcode, compress),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).publishAllTrees(topic, message, opcode, compress),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).publishAllTrees(topic, message, opcode, compress),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
@@ -3687,10 +3705,10 @@ pub const AnyServer = struct {
     }
     pub fn numSubscribers(this: AnyServer, topic: []const u8) u32 {
         return switch (this.ptr.tag()) {
-            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).app.?.numSubscribers(topic),
-            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).app.?.numSubscribers(topic),
-            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).app.?.numSubscribers(topic),
-            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).app.?.numSubscribers(topic),
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).numSubscribersTotal(topic),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).numSubscribersTotal(topic),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).numSubscribersTotal(topic),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).numSubscribersTotal(topic),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }

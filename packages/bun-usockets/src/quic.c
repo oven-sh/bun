@@ -88,6 +88,7 @@ struct us_quic_socket_context_s {
     void (*on_wt_stream_data)(us_quic_stream_t *, us_quic_stream_t *, const char *, unsigned int, int);
     void (*on_wt_stream_close)(us_quic_stream_t *, us_quic_stream_t *);
     void (*on_datagram)(us_quic_stream_t *, const char *, unsigned int);
+    void (*on_datagram_drain)(us_quic_stream_t *);
 
     char read_buf[US_QUIC_READ_BUF];
     /* ext follows */
@@ -695,15 +696,29 @@ static ssize_t us_quic_on_dg_write(lsquic_conn_t *conn, void *buf, size_t sz) {
         qs->dgram_head = d->next;
         if (!qs->dgram_head) qs->dgram_tail = NULL;
         qs->dgram_bytes -= d->len;
-        if (d->session) d->session->wt_dgram_bytes -= d->len;
+        us_quic_stream_t *drained = NULL;
+        if (d->session) {
+            d->session->wt_dgram_bytes -= d->len;
+            if (d->session->wt_dgram_bytes == 0) drained = d->session;
+        }
         if (d->len <= sz) {
             memcpy(buf, d + 1, d->len);
             ssize_t r = (ssize_t) d->len;
             free(d);
             if (qs->dgram_head) lsquic_conn_want_datagram_write(conn, 1);
+            /* Fire drain after the datagram is handed to lsquic so a
+             * ws.send() inside the handler queues behind this one rather
+             * than racing it. The session's stream slot is still live
+             * (wt_session only clears in on_stream_close). */
+            if (drained && qs->ctx->on_datagram_drain)
+                qs->ctx->on_datagram_drain(drained);
             return r;
         }
         free(d);
+        /* Oversize entry dropped; if it was the last one for this session
+         * the queue is still drained from the caller's perspective. */
+        if (drained && qs->ctx->on_datagram_drain)
+            qs->ctx->on_datagram_drain(drained);
     }
 }
 
@@ -967,6 +982,7 @@ DEF_CB(on_stream_data, void (*cb)(us_quic_stream_t *, const char *, unsigned int
 DEF_CB(on_stream_writable, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_close, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_datagram, void (*cb)(us_quic_stream_t *, const char *, unsigned int))
+DEF_CB(on_datagram_drain, void (*cb)(us_quic_stream_t *))
 #undef DEF_CB
 
 void us_quic_socket_context_on_wt_stream_data(us_quic_socket_context_t *ctx,

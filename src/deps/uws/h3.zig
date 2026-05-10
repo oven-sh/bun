@@ -349,6 +349,9 @@ pub const App = opaque {
     pub fn publishWithOptions(this: *App, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
         return c.uws_h3_publish(this, topic.ptr, topic.len, message.ptr, message.len, opcode, compress);
     }
+    pub fn numSubscribers(this: *App, topic: []const u8) u32 {
+        return c.uws_h3_num_subscribers(this, topic.ptr, topic.len);
+    }
 
     pub fn listenWithConfig(
         this: *App,
@@ -500,6 +503,7 @@ const c = struct {
 
     extern fn uws_h3_ws(*App, ?*anyopaque, [*]const u8, usize, usize, *const uws.WebSocketBehavior) void;
     extern fn uws_h3_publish(*App, [*]const u8, usize, [*]const u8, usize, uws.Opcode, bool) bool;
+    extern fn uws_h3_num_subscribers(*App, [*]const u8, usize) u32;
     extern fn uws_h3_res_upgrade(*Response, *anyopaque) ?*WebTransportSession;
     extern fn uws_h3_wt_get_user_data(*uws.RawWebSocket) ?*anyopaque;
     extern fn uws_h3_wt_close(*uws.RawWebSocket) void;

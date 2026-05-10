@@ -371,6 +371,64 @@ describe("WebTransport over HTTP/3", () => {
     }
   });
 
+  itWT("server.publish() and subscriberCount() reach the H3 TopicTree", async () => {
+    // WT sessions subscribe onto the H3App's tree, not the TCP/SSL app's;
+    // the server-level APIs must fan out to / sum from both.
+    await using server = await spawnServer(`
+      open(ws) {
+        ws.subscribe("room");
+        console.log("subs " + server.subscriberCount("room"));
+      },
+      message(ws, m) {
+        const r = server.publish("room", "broadcast:" + m);
+        console.log("publish " + (r > 0 ? "ok" : "zero"));
+      },
+      close() {},
+    `);
+    const c = spawnClient(server.port);
+    try {
+      await c.expectEvent("open");
+      expect(await server.readLine()).toBe("subs 1");
+      c.sendDatagram("ping");
+      expect(await server.readLine()).toBe("publish ok");
+      const e = await c.expectEvent("dgram");
+      expect(fromB64u(e[1]).toString()).toBe("broadcast:ping");
+    } finally {
+      c.kill();
+    }
+  });
+
+  itWT("drain() fires only after backpressure, not on open", async () => {
+    // open() does one send (SUCCESS) so hadBackpressure stays false across
+    // the post-upgrade wantwrite flush; message() then queues two sends so
+    // the second reports BACKPRESSURE and drain fires once the queue empties.
+    await using server = await spawnServer(`
+      open(ws) { ws.send("hello"); console.log("opened"); },
+      message(ws) {
+        ws.send(Buffer.alloc(800, "a").toString());
+        ws.send(Buffer.alloc(800, "b").toString());
+        console.log("queued " + (ws.getBufferedAmount() > 0));
+      },
+      drain(ws) { console.log("drain " + ws.getBufferedAmount()); },
+      close() {},
+    `);
+    const c = spawnClient(server.port);
+    try {
+      await c.expectEvent("open");
+      expect(await server.readLine()).toBe("opened");
+      // Consume the open()-time send, then trigger the backpressure path.
+      const first = await c.expectEvent("dgram");
+      expect(fromB64u(first[1]).toString()).toBe("hello");
+      c.sendDatagram("go");
+      // If drain fired on the post-upgrade flush it would appear before
+      // "queued", so the first line after "opened" must be "queued true".
+      expect(await server.readLine()).toBe("queued true");
+      expect(await server.readLine()).toBe("drain 0");
+    } finally {
+      c.kill();
+    }
+  });
+
   itWT("ws.send() returns DROPPED for over-MTU payload", async () => {
     await using server = await spawnServer(`
       open(ws) {

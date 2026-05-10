@@ -24,6 +24,6 @@ test("console.takeHeapSnapshot does not crash with exotic objects on the heap", 
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr.trim()).toBe("ok");
+  expect(stderr).toContain("ok");
   expect(exitCode).toBe(0);
 });

@@ -188,6 +188,23 @@ struct Http3Context {
         return (Http3Context *) ctx;
     }
 
+    /* Synchronous-close helper shared by the CONNECT-stream capsule
+     * paths below and WebTransportSession::end(). Sets closeFired so the
+     * later on_stream_close (which fires once lsquic tears the stream
+     * down) doesn't invoke the user's close() a second time with the
+     * default 1006/"" — a regression the deferred-close refactor would
+     * otherwise introduce for every client-initiated WT close. */
+    static void fireClose(Http3ContextData *cd, WebTransportSession *ws,
+                          WebTransportSessionData *d, int code, std::string_view msg) {
+        d->isShuttingDown = true;
+        if (d->subscriber) {
+            cd->wt.topicTree->freeSubscriber(d->subscriber);
+            d->subscriber = nullptr;
+        }
+        d->closeFired = true;
+        if (cd->wt.closeHandler) cd->wt.closeHandler(ws, code, msg);
+    }
+
     /* Capsule Protocol parsing on the CONNECT stream body. Only
      * WT_CLOSE_SESSION (0x2843) is acted on; everything else is skipped by
      * length. The wire is varint type, varint length, payload — but we may
@@ -202,12 +219,7 @@ struct Http3Context {
          * The same cap applies to slow-dripping a capsule body — without
          * this a single client can append forever and OOM the process. */
         if (d->capsuleBuf.length() + len > cd->wt.maxPayloadLength) {
-            d->isShuttingDown = true;
-            if (d->subscriber) {
-                cd->wt.topicTree->freeSubscriber(d->subscriber);
-                d->subscriber = nullptr;
-            }
-            if (cd->wt.closeHandler) cd->wt.closeHandler(ws, 1009, {});
+            fireClose(cd, ws, d, 1009, {});
             us_quic_stream_close((us_quic_stream_t *) ws);
             return;
         }
@@ -231,12 +243,7 @@ struct Http3Context {
                  * Do this on the advertised length so a header-only attack
                  * (huge clen, never send the body) can't sit out the idle
                  * timeout. */
-                d->isShuttingDown = true;
-                if (d->subscriber) {
-                    cd->wt.topicTree->freeSubscriber(d->subscriber);
-                    d->subscriber = nullptr;
-                }
-                if (cd->wt.closeHandler) cd->wt.closeHandler(ws, 1009, {});
+                fireClose(cd, ws, d, 1009, {});
                 us_quic_stream_close((us_quic_stream_t *) ws);
                 return;
             }
@@ -248,12 +255,7 @@ struct Http3Context {
                                  (uint32_t)p[2] << 8  | (uint32_t)p[3]);
                     msg = {(const char *)(p + 4), (size_t)(clen - 4)};
                 }
-                d->isShuttingDown = true;
-                if (d->subscriber) {
-                    cd->wt.topicTree->freeSubscriber(d->subscriber);
-                    d->subscriber = nullptr;
-                }
-                if (cd->wt.closeHandler) cd->wt.closeHandler(ws, code, msg);
+                fireClose(cd, ws, d, code, msg);
                 us_quic_stream_shutdown((us_quic_stream_t *) ws);
                 d->capsuleBuf.clear();
                 return;
@@ -267,12 +269,7 @@ struct Http3Context {
              * schedules on_close once both U_READ_DONE and U_WRITE_DONE are
              * set, so leaving the write side open would leak the stream and
              * its WebTransportSessionData until connection teardown. */
-            d->isShuttingDown = true;
-            if (d->subscriber) {
-                cd->wt.topicTree->freeSubscriber(d->subscriber);
-                d->subscriber = nullptr;
-            }
-            if (cd->wt.closeHandler) cd->wt.closeHandler(ws, 0, {});
+            fireClose(cd, ws, d, 0, {});
             us_quic_stream_shutdown((us_quic_stream_t *) ws);
         }
     }

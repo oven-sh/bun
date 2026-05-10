@@ -334,11 +334,17 @@ describe("WebTransport over HTTP/3", () => {
     }
   });
 
-  itWT("client WT_CLOSE_SESSION fires close(code, reason)", async () => {
+  itWT("client WT_CLOSE_SESSION fires close(code, reason) exactly once", async () => {
+    // The capsule path fires close() synchronously; on_stream_close (which
+    // lsquic schedules for the next service pass) must not fire it again
+    // with (1006, ""). Count invocations and probe via a second session.
     await using server = await spawnServer(`
       open() {},
-      message() {},
-      close(ws, code, reason) { console.log("closed " + code + " " + reason); },
+      message(ws, m) { console.log("closes=" + globalThis.__n); },
+      close(ws, code, reason) {
+        globalThis.__n = (globalThis.__n ?? 0) + 1;
+        console.log("closed " + code + " " + reason);
+      },
     `);
     const c = spawnClient(server.port);
     try {
@@ -347,6 +353,18 @@ describe("WebTransport over HTTP/3", () => {
       expect(await server.readLine()).toBe("closed 4321 client-says-goodbye");
     } finally {
       c.kill();
+    }
+    // By the time a fresh session's datagram round-trips, lsquic has
+    // long since dispatched c's on_stream_close. A double-fire would
+    // show up as an extra "closed ..." line before "closes=1", and/or
+    // as closes=2.
+    const c2 = spawnClient(server.port);
+    try {
+      await c2.expectEvent("open");
+      c2.sendDatagram("probe");
+      expect(await server.readLine()).toBe("closes=1");
+    } finally {
+      c2.kill();
     }
   });
 

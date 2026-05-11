@@ -2785,6 +2785,24 @@ describe("fs/promises", () => {
       expect(entries[0]).toBeInstanceOf(Dirent);
       expect(entries[0].name).toBeInstanceOf(Buffer);
       expect((entries[0].name as unknown as Buffer).toString()).toBe("foo.js");
+      expect(typeof entries[0].parentPath).toBe("string");
+      expect(entries[0].parentPath).toBe(String(dir));
+    });
+
+    it("readdir (async callback, Buffer path): Buffer parentPath", async () => {
+      using dir = tempDir("readdir-buf-dirent-cb-buf-path", { "foo.js": "1" });
+      const pathBytes = Buffer.from(String(dir));
+      const { promise, resolve, reject } = Promise.withResolvers<Dirent[]>();
+      fs.readdir(pathBytes, { withFileTypes: true, encoding: "buffer" }, (err, entries) => {
+        if (err) reject(err);
+        else resolve(entries);
+      });
+      const [entry] = await promise;
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect((entry.parentPath as unknown as Buffer).equals(pathBytes)).toBe(true);
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("foo.js");
     });
 
     it("promises.readdir: Dirent with Buffer name", async () => {
@@ -2797,6 +2815,22 @@ describe("fs/promises", () => {
       expect(entries[0]).toBeInstanceOf(Dirent);
       expect(entries[0].name).toBeInstanceOf(Buffer);
       expect((entries[0].name as unknown as Buffer).toString()).toBe("bar.ts");
+      expect(typeof entries[0].parentPath).toBe("string");
+      expect(entries[0].parentPath).toBe(String(dir));
+    });
+
+    it("promises.readdir (Buffer path): Buffer parentPath", async () => {
+      using dir = tempDir("readdir-buf-dirent-prom-buf-path", { "bar.ts": "1" });
+      const pathBytes = Buffer.from(String(dir));
+      const [entry] = await promises.readdir(pathBytes, {
+        withFileTypes: true,
+        encoding: "buffer",
+      });
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect((entry.parentPath as unknown as Buffer).equals(pathBytes)).toBe(true);
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("bar.ts");
     });
 
     it("readdirSync recursive: Dirent with Buffer name", () => {

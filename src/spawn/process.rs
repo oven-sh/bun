@@ -255,10 +255,12 @@ impl Process {
             // NLL: `uv_proc`'s borrow of `p.poller` ends here; `p` is free
             // to be reborrowed whole for `close()` / `on_exit()`.
             p.close();
-            let _ = p.on_exit(
+            if let Some(delivery) = p.on_exit(
                 Status::Exited(Exited { code: 0, signal: 0 }),
                 &rusage,
-            );
+            ) {
+                unsafe { __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut()) };
+            }
         }
     }
 
@@ -557,18 +559,22 @@ impl Process {
 
         if let Some(sig) = signal_code {
             this.close();
-            let _ = this.on_exit(Status::Signaled(sig), &rusage);
+            if let Some(delivery) = this.on_exit(Status::Signaled(sig), &rusage) {
+                unsafe { __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut()) };
+            }
         } else if exit_status >= 0 {
             // Zig spec compares `exit_code >= 0` (a `u8` tautology) here; the
             // intended check — per the `else` arm's comment — is on the signed
             // libuv `exit_status`, so a negative `-UV_E*` reaches the Err arm.
             this.close();
-            let _ = this.on_exit(
+            if let Some(delivery) = this.on_exit(
                 Status::Exited(Exited { code: exit_code, signal: 0 }),
                 &rusage,
-            );
+            ) {
+                unsafe { __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut()) };
+            }
         } else {
-            let _ = this.on_exit(
+            if let Some(delivery) = this.on_exit(
                 // libuv exit_status is negative (a `-UV_E*` code) on this arm;
                 // `E::from_raw` takes the unsigned table ordinal, so route
                 // through the libuv→bun errno map via the i32 ctor.
@@ -577,7 +583,9 @@ impl Process {
                     bun_sys::Tag::waitpid,
                 )),
                 &rusage,
-            );
+            ) {
+                unsafe { __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut()) };
+            }
         }
     }
 

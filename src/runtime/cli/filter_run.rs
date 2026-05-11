@@ -170,13 +170,20 @@ impl<'a> ProcessHandle<'a> {
             RuntimeProcessExitTarget::FilterRunHandle { index: handle.idx },
         ));
 
+        let context = core::ptr::from_mut(state).cast::<c_void>();
         match process.watch_or_reap() {
-            Ok(_) => {}
+            Ok(result) => {
+                if let Some(delivery) = result.into_delivery() {
+                    crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, context);
+                }
+            }
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    let _ = process.on_exit(Status::Err(err), &rusage);
+                    if let Some(delivery) = process.on_exit(Status::Err(err), &rusage) {
+                        crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, context);
+                    }
                 }
             }
         }

@@ -511,14 +511,16 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let buf2_u16: *mut u16 = buf2.as_mut_ptr().cast::<u16>();
     let buf2_u8: *mut u8 = buf2_u16.cast::<u8>();
 
-    // The NT prefix is not needed for non-standalone, as we only need this
-    // for reading the metadata file which is skipped in non-standalone.
+    // The NT prefix is only *functionally* required in standalone mode (NtCreateFile needs an
+    // NT object path), but we write it unconditionally so that buf1[0..4] is always initialized.
+    // The Zig original gated this on `is_standalone` as a micro-optimization; in Rust that leaves
+    // those four u16s as uninitialized memory, and the DBG `BufferAfterRead` dump below forms a
+    // `&[u16]` over buf1 starting at index 0 — reading uninit integers there is UB. Eight bytes
+    // of unconditional store is negligible and keeps every later buf1 read defined.
     //
     // BUF1: '\??\!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
-    if IS_STANDALONE {
-        // SAFETY: buf1 has at least 8 bytes; we write 4 u16s (the NT prefix).
-        unsafe { buf1_u8.cast::<[u16; 4]>().write_unaligned(NT_OBJECT_PREFIX) };
-    }
+    // SAFETY: buf1 has at least 8 bytes; we write 4 u16s (the NT prefix).
+    unsafe { buf1_u8.cast::<[u16; 4]>().write_unaligned(NT_OBJECT_PREFIX) };
 
     // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
     let suffix: &'static [u16] = if IS_STANDALONE {
@@ -822,6 +824,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         let total = (((read_ptr as usize) - (buf1_u8 as usize)) + read_len) / 2;
         debug!(
             "BufferAfterRead: '{}'",
+            // SAFETY: buf1_u16[0..total] is fully initialized in both build modes:
+            // [0..4] by the unconditional NT_OBJECT_PREFIX store above, [4..read_ptr) by the
+            // image-path memcpy, and [read_ptr..read_ptr+read_len) by NtReadFile.
             fmt16(unsafe { bun_core::ffi::slice(buf1_u16, total) })
         );
     }

@@ -315,6 +315,53 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Regression test for https://github.com/oven-sh/bun/issues/30503.
+  //
+  // When a project has both `bun-types` and the DefinitelyTyped `@types/bun` stub
+  // installed (the layout `bun add -d @types/bun` produces by default), the old
+  // `bun-types/bun.ns.d.ts` did `import * as BunModule from "bun"` to build the
+  // global `Bun` namespace alias. Under TypeScript 6's tighter module resolution,
+  // that `"bun"` resolves to the `@types/bun/index.d.ts` stub (a one-line
+  // `/// <reference types="bun-types" />`) — not the `declare module "bun"` block
+  // in `bun-types/bun.d.ts`. The stub has no exports, so `BunModule` ends up as
+  // an empty namespace. Downstream, every `Bun.X` reference inside `bun-types`'
+  // own `.d.ts` files resolves against that empty namespace and fails, which
+  // then leaves a cascade of interfaces (`ReadableStream`, `Worker`, `WebSocket`,
+  // …) in `globals.d.ts` with no members.
+  //
+  // The fix routes the import through an internal `"bun-types:internal"` alias
+  // module whose name contains a `:` so TypeScript treats it as an absolute URI
+  // and skips file-based module resolution. The ambient alias in `bun.d.ts`
+  // re-exports `"bun"`, so `BunModule` gets the real members and the cascade
+  // above does not happen.
+  test("Bun global namespace is populated under TypeScript 6 (#30503)", async () => {
+    const fixtureDir = await createIsolatedFixture();
+
+    const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
+      files: {
+        "bun-namespace-30503.ts": `
+          // Direct references via the global Bun namespace. If the namespace
+          // alias resolved to an empty module, each of these would produce a
+          // TS2694 ("Namespace 'Bun' has no exported member 'X'") diagnostic.
+          const f: Bun.BunFile = Bun.file("./tsconfig.json");
+          const s: Bun.S3Client = new Bun.S3Client({ bucket: "x" });
+          const h: Bun.HeadersInit = { foo: "bar" };
+          const n: number = Bun.nanoseconds();
+          void f; void s; void h; void n;
+        `,
+      },
+    });
+
+    // 1. The user file itself type-checks cleanly.
+    const userDiagnostics = diagnostics.filter(d => d.line?.startsWith("bun-namespace-30503.ts"));
+    expect(userDiagnostics).toEqual([]);
+
+    // 2. No additional interfaces collapsed to empty because of the cascade
+    //    described above. Without the fix this set grows by ~26 entries
+    //    (`ReadableStream`, `Worker`, `WebSocket`, `MessageEvent`, …).
+    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+  });
+
   // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,
   // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
   // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/

@@ -131,11 +131,7 @@ describe.skipIf(!featureEnabled)("Bun.build reactCompiler", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("error:");
     expect(stdout).toContain("react/compiler-runtime");
@@ -172,11 +168,7 @@ describe.skipIf(featureEnabled)("Bun.build reactCompiler (feature disabled)", ()
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Flag accepted, build succeeds, but no compiler signature in output.
     expect(stderr).not.toContain("Unknown option");

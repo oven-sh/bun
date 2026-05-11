@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import http from "node:http";
-import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
-import { bunEnv, bunExe } from "harness";
+import { connect } from "node:net";
 
 // Regression: `@azure/msal-node`'s `LoopbackClient.closeServer` calls
 //   server.close();

@@ -806,6 +806,14 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // https://stackoverflow.com/questions/62438021/can-ntreadfile-produce-a-short-read-without-reaching-eof
         // In the context of this program, I don't think that is possible, but I will handle it
         {
+            // STATUS_END_OF_FILE on a fresh sync handle at offset 0 means zero bytes were
+            // written into buf1. The Zig source yields `read_max_len` here and lets the
+            // (uninitialized) trailing bytes fail `is_valid()`; in Rust, reading those
+            // never-written bytes is UB. Zero the last u16 of buf1 — that is exactly where
+            // the Flags read below lands when `read_len == read_max_len` — so the read is
+            // defined and `is_valid()` deterministically rejects it.
+            // SAFETY: BUF1_LEN - 1 is in bounds of buf1.
+            unsafe { buf1_u16.add(BUF1_LEN - 1).write(0) };
             read_max_len
         }
         rc => {
@@ -831,10 +839,16 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         );
     }
 
-    // SAFETY: read_len >= sizeof(Flags) for any valid .bunx; if not, the unaligned read below
-    // will read garbage and `is_valid()` will reject it.
+    // All three `read_len` outcomes land on initialized memory:
+    //   - SUCCESS, read_len >= 2  → inside the bytes NtReadFile just wrote.
+    //   - SUCCESS, read_len < 2   → moves *backward* into the image-path prefix we
+    //                               copied into buf1 above (initialized, junk-as-flags).
+    //   - END_OF_FILE             → lands on buf1[BUF1_LEN-1], zeroed in that arm above.
+    // The latter two yield a Flags value whose version_tag ≠ CURRENT, so `is_valid()`
+    // rejects them — same observable behavior as the Zig source, without the uninit read.
     read_ptr = read_ptr.cast::<u8>().wrapping_add(read_len).wrapping_sub(size_of::<Flags>()).cast::<u16>();
-    // SAFETY: Flags is a packed u16; read_ptr is within buf1.
+    // SAFETY: Flags is repr(transparent) over u16 (all bit patterns valid); per the case
+    // analysis above, read_ptr is within buf1 and the 2 bytes there are initialized.
     let flags: Flags = unsafe { read_ptr.cast::<Flags>().read_unaligned() };
 
     if DBG {

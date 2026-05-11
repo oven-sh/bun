@@ -19,6 +19,7 @@
 
 #include "internal/internal.h"
 #include "libusockets.h"
+#include <limits.h>
 #include <string.h>
 #include <stdatomic.h>
 
@@ -372,6 +373,68 @@ static int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STOR
 end:
   BIO_free(in);
   return count > 0;
+}
+
+/* Defined below; forward-declare so us_ssl_ctx_add_ca_pem can reference it. */
+static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx);
+
+/* Post-construction variant of add_ca_cert_to_ctx_store for Node's
+ * `SecureContext.addCACert`. Node silently ignores empty/malformed input and
+ * duplicate CAs, and leaves the store untouched if the input has no valid
+ * PEM blocks — so there's no error return; we just count what stuck.
+ *
+ * If the CTX was built without `options.ca` its verify_mode is still
+ * SSL_VERIFY_NONE and its cert_store is the empty one SSL_CTX_new hands out.
+ * Mirror the `options.ca` path in us_ssl_ctx_build_raw: install the default
+ * trust store (OS roots + baked-in Bun roots) and flip verify_mode to
+ * SSL_VERIFY_PEER, so (a) the per-socket client override in
+ * us_internal_ssl_attach doesn't discard the CA, and (b) the CA we just
+ * added is actually consulted at handshake time. */
+int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
+  if (ctx == NULL || pem == NULL || pem_len == 0) return 0;
+  /* BoringSSL's BIO_new_mem_buf takes `ossl_ssize_t` (ptrdiff_t). Cap at
+   * INT_MAX, which is far beyond any real PEM blob. */
+  if (pem_len > (size_t)INT_MAX) return 0;
+
+  ERR_clear_error();
+
+  /* First call after a VERIFY_NONE build: upgrade to default_ca_store so the
+   * added CA joins (not replaces) the OS/baked-in trust anchors, and flip
+   * verify_mode so the client attach-time override preserves this store. */
+  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
+  if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
+    X509_STORE *new_store = us_get_default_ca_store();
+    if (new_store != NULL) {
+      SSL_CTX_set_cert_store(ctx, new_store);
+      store = new_store;
+    }
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, us_verify_callback);
+  }
+  if (store == NULL) return 0;
+
+  BIO *in = BIO_new_mem_buf(pem, (int)pem_len);
+  if (in == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    return 0;
+  }
+
+  int added = 0;
+  X509 *x;
+  while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                SSL_CTX_get_default_passwd_cb_userdata(ctx))) != NULL) {
+    if (X509_STORE_add_cert(store, x) == 1) {
+      added++;
+    }
+    /* Node behavior: swallow per-cert add failures so stray errors
+     * (X509_R_CERT_ALREADY_IN_HASH_TABLE for duplicates, anything else
+     * per-cert) don't blow up unrelated BoringSSL calls later. */
+    ERR_clear_error();
+    X509_free(x);
+  }
+  /* PEM_read_bio_X509 sets PEM_R_NO_START_LINE on EOF — normal termination. */
+  ERR_clear_error();
+  BIO_free(in);
+  return added;
 }
 
 static int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {

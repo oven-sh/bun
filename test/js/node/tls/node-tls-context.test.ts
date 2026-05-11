@@ -499,3 +499,199 @@ describe("Bun.serve SNI", () => {
     }
   });
 });
+
+// Regression: https://github.com/oven-sh/bun/issues/30485
+// `tls.createSecureContext().context.addCACert` used to be `undefined` — the
+// native SecureContext prototype was empty.
+describe("tls.createSecureContext().context.addCACert", () => {
+  it("is a function on the native context", () => {
+    const ctx = tls.createSecureContext();
+    expect(typeof ctx.context.addCACert).toBe("function");
+  });
+
+  it("accepts no arg options (Node parity)", () => {
+    // Node: `createSecureContext()` with no argument is equivalent to `{}`.
+    // Previously threw `TLSOptions must be an object` in Bun.
+    const ctx = tls.createSecureContext();
+    expect(typeof ctx.context.addCACert).toBe("function");
+  });
+
+  it("makes the added CA trusted on a fresh context", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<{ authorized: boolean; error: any }>();
+    await using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { cert: agent1Cert, key: agent1Key },
+      socket: { data() {}, error() {}, open(s) { s.end(); } },
+    });
+
+    const ctx = tls.createSecureContext();
+    ctx.context.addCACert(ca1);
+
+    const client = tls.connect(
+      {
+        port: server.port,
+        host: "127.0.0.1",
+        secureContext: ctx,
+        rejectUnauthorized: false,
+        servername: "agent1",
+      },
+      () => {
+        resolve({ authorized: client.authorized, error: (client as any).authorizationError });
+        client.end();
+      },
+    );
+    client.on("error", reject);
+
+    const result = await promise;
+    expect(result.authorized).toBe(true);
+  });
+
+  it("rejects a cert signed by a different CA (added CA is not wildcard-trusted)", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<{ authorized: boolean; error: any }>();
+    await using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { cert: agent1Cert, key: agent1Key },
+      socket: { data() {}, error() {}, open(s) { s.end(); } },
+    });
+
+    // Add ca2 — server cert is signed by ca1, so authorization must fail.
+    const ctx = tls.createSecureContext();
+    ctx.context.addCACert(ca2);
+
+    const client = tls.connect(
+      {
+        port: server.port,
+        host: "127.0.0.1",
+        secureContext: ctx,
+        rejectUnauthorized: false,
+        servername: "agent1",
+      },
+      () => {
+        resolve({ authorized: client.authorized, error: (client as any).authorizationError });
+        client.end();
+      },
+    );
+    client.on("error", reject);
+
+    const result = await promise;
+    expect(result.authorized).toBe(false);
+    expect(String(result.error)).toMatch(/UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|CERT/);
+  });
+
+  it("accepts Buffer input in addition to string", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    await using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { cert: agent1Cert, key: agent1Key },
+      socket: { data() {}, error() {}, open(s) { s.end(); } },
+    });
+
+    const ctx = tls.createSecureContext();
+    ctx.context.addCACert(Buffer.from(ca1));
+
+    const client = tls.connect(
+      {
+        port: server.port,
+        host: "127.0.0.1",
+        secureContext: ctx,
+        rejectUnauthorized: false,
+        servername: "agent1",
+      },
+      () => {
+        resolve(client.authorized);
+        client.end();
+      },
+    );
+    client.on("error", reject);
+
+    expect(await promise).toBe(true);
+  });
+
+  it("silently ignores non-PEM input (Node parity)", () => {
+    // Node's addCACert is lenient — it doesn't throw on malformed input,
+    // empty strings, or anything that doesn't coerce to bytes it recognises.
+    const ctx = tls.createSecureContext();
+    expect(() => ctx.context.addCACert("")).not.toThrow();
+    expect(() => ctx.context.addCACert("not pem")).not.toThrow();
+    expect(() => ctx.context.addCACert(Buffer.alloc(0))).not.toThrow();
+    expect(() => ctx.context.addCACert(null)).not.toThrow();
+    expect(() => ctx.context.addCACert(undefined)).not.toThrow();
+    expect(() => ctx.context.addCACert(42)).not.toThrow();
+    expect(() => ctx.context.addCACert({})).not.toThrow();
+  });
+
+  it("is idempotent on duplicate CAs", () => {
+    const ctx = tls.createSecureContext();
+    expect(() => ctx.context.addCACert(ca1)).not.toThrow();
+    expect(() => ctx.context.addCACert(ca1)).not.toThrow();
+    expect(() => ctx.context.addCACert(ca1)).not.toThrow();
+  });
+
+  it("accepts a multi-cert bundle in a single call", async () => {
+    // Bundle two CAs; only ca1 is needed for the handshake — this asserts
+    // the PEM reader walks past the first END CERTIFICATE and picks up the
+    // second. Order doesn't matter to the reader.
+    const bundle = ca2 + "\n" + ca1;
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    await using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { cert: agent1Cert, key: agent1Key },
+      socket: { data() {}, error() {}, open(s) { s.end(); } },
+    });
+
+    const ctx = tls.createSecureContext();
+    ctx.context.addCACert(bundle);
+
+    const client = tls.connect(
+      {
+        port: server.port,
+        host: "127.0.0.1",
+        secureContext: ctx,
+        rejectUnauthorized: false,
+        servername: "agent1",
+      },
+      () => {
+        resolve(client.authorized);
+        client.end();
+      },
+    );
+    client.on("error", reject);
+
+    expect(await promise).toBe(true);
+  });
+
+  it("preserves OS/default trust anchors", async () => {
+    // After addCACert, connecting to a host signed by a public CA must still
+    // work — we should ADD to the default trust store, not REPLACE it.
+    const ctx = tls.createSecureContext();
+    ctx.context.addCACert(ca2); // unrelated private CA
+
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const client = tls.connect(
+      {
+        port: 443,
+        host: "bun.sh",
+        secureContext: ctx,
+        rejectUnauthorized: true,
+        servername: "bun.sh",
+      },
+      () => {
+        resolve(client.authorized);
+        client.end();
+      },
+    );
+    client.on("error", reject);
+
+    expect(await promise).toBe(true);
+  });
+
+  it("requires at least one argument", () => {
+    const ctx = tls.createSecureContext();
+    // @ts-expect-error — intentionally calling with no args
+    expect(() => ctx.context.addCACert()).toThrow();
+  });
+});

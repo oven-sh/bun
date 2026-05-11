@@ -130,6 +130,13 @@ pub const BunSocketContextOptions = extern struct {
 pub const c = struct {
     pub extern fn us_ssl_ctx_from_options(BunSocketContextOptions, *uws.create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
     pub extern fn us_ssl_ctx_live_count() c_long;
+    /// Node's `SecureContext.addCACert` — appends one-or-more PEM X509s to
+    /// `ctx`'s trust store, lazily installing the default CA store and
+    /// flipping verify_mode to SSL_VERIFY_PEER on first use (so the per-socket
+    /// client override in us_internal_ssl_attach doesn't discard the added
+    /// CA). Returns the count of certs that actually stuck; 0 is not an
+    /// error (Node silently ignores empty / malformed input).
+    pub extern fn us_ssl_ctx_add_ca_pem(*BoringSSL.SSL_CTX, [*c]const u8, usize) c_int;
 };
 
 const std = @import("std");

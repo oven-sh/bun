@@ -341,6 +341,46 @@ Reducer prework that still needs owner type movement
         └─> Ready lets bun_runtime consume status and continue cron-specific state transitions
 ```
 
+```
+Remaining owner movement
+  ├─> LifecycleScriptSubprocess
+  │     ├─> current owner: install/lifecycle_script_runner.rs::LifecycleScriptSubprocess
+  │     │     - owns PackageManager backref, process ref, stdout/stderr readers, envp, timer, intrusive heap node
+  │     ├─> current re-entry: LifecycleScriptSubprocess::on_process_exit
+  │     │     - validates ProcessIdentity, updates LifecycleScriptExit, then calls apply_exit_action()
+  │     ├─> synchronous effect: LifecycleScriptSubprocess::handle_exit
+  │     │     - may print output, mutate PackageManager/installer state, spawn the next script, destroy self, or exit process
+  │     └─> honest next move
+  │           - move the lifecycle owner/effect boundary far enough into bun_install_types that ProcessExitTarget can carry a typed state/handle whose Ready action is directly consumable
+  │           - a NonNull<LifecycleScriptExit> target by itself is only reducer state; using it to recover LifecycleScriptSubprocess would be the old owner-pointer coupling under a field-offset disguise
+  ├─> CronRegisterJob / CronRemoveJob
+  │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
+  │     │     - own promise/global/KeepAlive, process ref, stdout/stderr readers, tmp path, error state, and state-machine enum
+  │     ├─> current re-entry: CronJobBase::on_process_exit
+  │     │     - updates ProcessExitReadiness and immediately calls maybe_finished(this)
+  │     ├─> synchronous effect: maybe_finished / advance_state / finish
+  │     │     - may resolve/reject promises, spawn the next cron command, free the job, or continue cron-specific cleanup
+  │     └─> honest next move
+  │           - split the cron job state/effect boundary into a runtime sidecar shape that both bun_spawn and bun_runtime can name
+  │           - a ProcessIdentity lookup through PackageManager/runtime state would add a registry path that this branch is deliberately avoiding
+  ├─> Bun.spawn Subprocess
+  │     ├─> current owner: runtime/api/bun/subprocess.rs::Subprocess
+  │     │     - owns BackRef<Process>, JSGlobalObject/JSValue refs, stdio wrappers, abort/timer/max-buffer state, IPC state, and process auto-killer integration
+  │     ├─> current re-entry: Subprocess::on_process_exit
+  │     │     - updates resource usage, removes timers/signals, closes terminal/stdin, resumes stdout/stderr, resolves promises, invokes onExit, disconnects IPC, and derefs self
+  │     └─> honest next move
+  │           - move the stable subprocess state/effect boundary out of the JSC wrapper enough that bun_spawn stores a typed target and bun_runtime consumes a typed action
+  │           - ProcessIdentity plus a runtime-side lookup would preserve neither the current allocation shape nor the direct owner lifetime edge
+  └─> JS shell subprocesses
+        ├─> current owner: runtime/shell/subproc.rs::ShellSubprocess
+        │     - Mini shell now uses ShellCommand { command: NodeId } because its tick context is the live Interpreter
+        ├─> remaining JS path
+        │     - a single JS EventLoop.current_context cannot identify one Interpreter because multiple shell interpreters can be live on one JS event loop
+        └─> honest next move
+              - move JS shell interpreter identity into sidecar state, or arrange a per-shell typed driver context that is already present when the process exit is delivered
+              - storing ShellSubprocess* or CmdHandle in ProcessExitTarget would be the old owner callback in typed clothing
+```
+
 ## Runtime Tasks
 
 Runtime tasks follow the same split: the queue item shape can be a closed enum,

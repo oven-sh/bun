@@ -339,12 +339,18 @@ mod platform {
 mod platform {
     use super::*;
 
+    /// Zig: `buf: [8192]u8 align(@alignOf(linux.dirent64))`.
+    /// `dirent64` leads with `d_ino: u64` (align 8); a bare `[u8; N]` field has
+    /// alignment 1, so wrap it to force 8-byte alignment of the buffer base.
+    /// The kernel pads `d_reclen` to a multiple of 8, so every record stays
+    /// 8-aligned as long as the base is.
+    #[repr(C, align(8))]
+    pub struct DirentBuf(pub [u8; 8192]);
+    const _: () = assert!(core::mem::align_of::<DirentBuf>() >= core::mem::align_of::<libc::dirent64>());
+
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
-        // The if guard is solely there to prevent compile errors from missing `linux.dirent64`
-        // definition when compiling for other OSes. It doesn't do anything when compiling for Linux.
-        // TODO(port): align(@alignOf(linux.dirent64))
-        pub buf: [u8; 8192],
+        pub buf: DirentBuf,
         pub index: usize,
         pub end_index: usize,
     }
@@ -363,8 +369,8 @@ mod platform {
                         libc::syscall(
                             libc::SYS_getdents64,
                             self.dir.native() as libc::c_long,
-                            self.buf.as_mut_ptr(),
-                            self.buf.len(),
+                            self.buf.0.as_mut_ptr(),
+                            self.buf.0.len(),
                         )
                     };
                     if rc < 0 {
@@ -379,16 +385,27 @@ mod platform {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                // SAFETY: index within filled buf; packed dirent64
-                let linux_entry = unsafe {
-                    &*self.buf.as_ptr().add(self.index).cast::<libc::dirent64>()
+                // Records are variable-length; `libc::dirent64` declares
+                // `d_name: [c_char; 256]` but the kernel only writes up to
+                // `d_reclen` bytes, so forming a `&dirent64` could span past
+                // the filled region (or past `buf` near the end). Never form a
+                // reference — read each field through the raw pointer.
+                // SAFETY: index < end_index ≤ 8192; kernel wrote a valid
+                // record header at this offset. `DirentBuf` is align(8) and
+                // d_reclen is always a multiple of 8, so `entry` is 8-aligned.
+                let entry = unsafe {
+                    self.buf.0.as_ptr().add(self.index).cast::<libc::dirent64>()
                 };
-                let next_index = self.index + linux_entry.d_reclen as usize;
+                debug_assert!(entry.is_aligned());
+                // SAFETY: entry points at a valid record header within buf.
+                let d_reclen: u16 = unsafe { core::ptr::addr_of!((*entry).d_reclen).read() };
+                let d_type: u8 = unsafe { core::ptr::addr_of!((*entry).d_type).read() };
+                let next_index = self.index + d_reclen as usize;
                 self.index = next_index;
 
                 // SAFETY: dirent64.d_name is NUL-terminated within the record
                 let name = unsafe {
-                    let p = linux_entry.d_name.as_ptr().cast::<u8>();
+                    let p = core::ptr::addr_of!((*entry).d_name).cast::<u8>();
                     let mut len = 0usize;
                     while *p.add(len) != 0 {
                         len += 1;
@@ -401,7 +418,7 @@ mod platform {
                     continue 'start_over;
                 }
 
-                let entry_kind: EntryKind = match linux_entry.d_type {
+                let entry_kind: EntryKind = match d_type {
                     libc::DT_BLK => EntryKind::BlockDevice,
                     libc::DT_CHR => EntryKind::CharacterDevice,
                     libc::DT_DIR => EntryKind::Directory,
@@ -897,7 +914,7 @@ where
                     index: 0,
                     end_index: 0,
                     // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
-                    buf: [0u8; 8192],
+                    buf: platform::DirentBuf([0u8; 8192]),
                 },
             };
         }

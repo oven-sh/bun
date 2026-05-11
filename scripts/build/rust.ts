@@ -368,10 +368,22 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
 
   // ─── rustflags ───
   // CARGO_ENCODED_RUSTFLAGS: U+001F-separated so multi-arg flags survive.
-  // `-C relocation-model` is left at the default (pic) — the Rust objects
-  // are PIC-compatible with the no-PIE link, and forcing `static`
-  // workspace-wide would break proc-macro dylibs.
   const rustflags: string[] = [];
+  // Match the C/C++ side's `-fno-pic` / `-Wl,-no-pie` (flags.ts:929,1001) on
+  // the targets where bun links as a position-dependent ET_EXEC. With the
+  // default `pic`, every Rust `&'static [T]` / `&'static str` / vtable is a
+  // GOT-relative reference and the constant ends up in `.data.rel.ro` (RW
+  // segment, eagerly faulted) instead of `.rodata`; libbun_rust.a alone
+  // contributes ~561 KiB of `.data.rel.ro` that the Zig binary placed in
+  // shareable read-only pages. `static` lets rustc emit absolute references
+  // and the constants land in `.rodata`. This is a *target* RUSTFLAG: with
+  // `--target` set, cargo does NOT apply it to host artifacts (proc-macro
+  // dylibs / build scripts), so those still build PIC. Darwin (Mach-O is
+  // always PIC), Android (bionic loader requires PIE — flags.ts:934), and
+  // Windows (COFF has its own model) are excluded.
+  if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
+    rustflags.push("-Crelocation-model=static");
+  }
   // Keep frame pointers — matches Zig's `omit_frame_pointer = false`
   // (build.zig:319,841) and the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
   // (flags.ts:293-301). Needed so profilers and crash backtraces walk Rust

@@ -1281,10 +1281,51 @@ macro_rules! bss_singleton {
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
 #[inline]
 pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
-    let ptr = mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()).cast::<T>();
+    // The point of `bss_singleton!` is to behave like Zig's `var foo: T = undefined`
+    // in `.bss`: pages are demand-zero-faulted as the process touches them, so an
+    // 8192-slot `BSSList` only commits the entries it actually fills. `mi_malloc`
+    // (and `Box::new`) commit the whole region up front — for `BSSList<Entry,8192>`
+    // that's ~1.35 MiB of resident pages charged on first access. An anonymous
+    // `mmap(MAP_NORESERVE)` gives back exactly the lazy-fault behaviour we lost by
+    // moving the storage out of `.bss`, while keeping the heap address (so the
+    // binary's own `.bss` stays tiny). The mapping is process-lifetime: never
+    // unmapped, never grown, matching Zig's singleton.
+    #[cfg(unix)]
+    let ptr = {
+        // mmap returns page-aligned memory; every `bss_singleton!` payload is a
+        // plain array of POD entries (`BSSList`/`BSSStringList`/`BSSMap*`) with
+        // alignment ≤ 16, so page alignment is always sufficient.
+        debug_assert!(core::mem::align_of::<T>() <= 4096);
+        // SAFETY: mmap with MAP_ANONYMOUS ignores fd/offset; len is `size_of::<T>()`
+        // (non-zero — the macro is never instantiated with a ZST); on success the
+        // returned region is owned exclusively by this process and zero-filled on
+        // first touch.
+        let p = unsafe {
+            libc::mmap(
+                core::ptr::null_mut(),
+                size_of::<T>(),
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                -1,
+                0,
+            )
+        };
+        if p == libc::MAP_FAILED {
+            crate::out_of_memory();
+        }
+        p.cast::<T>()
+    };
+    #[cfg(not(unix))]
+    let ptr = {
+        // Windows: `VirtualAlloc(MEM_RESERVE)`-only would require commit-on-touch
+        // plumbing through a guard-page handler. The largest singleton is ~1.3 MiB
+        // and Windows already faults `.bss` eagerly per-page on first write anyway,
+        // so the simpler eager allocation is kept.
+        mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()).cast::<T>()
+    };
     let ptr = NonNull::new(ptr).expect("OOM");
     // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
-    // process lifetime (singleton; never freed, matching Zig).
+    // process lifetime (singleton; never freed/unmapped, matching Zig).
     unsafe { init_at(ptr.as_ptr()) };
     ptr
 }

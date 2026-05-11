@@ -284,8 +284,6 @@ pub mod analyze_transpiled_module {
             unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), ptr.as_ptr(), len) };
             Self { ptr, len }
         }
-        #[inline]
-        fn as_ptr(&self) -> *const u8 { self.ptr.as_ptr() }
     }
     impl core::ops::Deref for AlignedBytes {
         type Target = [u8];
@@ -380,39 +378,31 @@ pub mod analyze_transpiled_module {
             Self::create(source).ok()
         }
         pub fn as_ref(&self) -> ModuleInfoDeserialized<'_> {
-            // SAFETY: offsets/lengths were validated in `create`; every byte in the
-            // `record_kinds` range was checked against `RecordKind::try_from_u8` so the
-            // `#[repr(u8)]` enum slice contains only valid discriminants; the remaining
-            // backing types are `#[repr(transparent)]` over `u32` (all bit patterns
-            // valid); the serialized stream keeps every u32 field at a 4-byte offset by
-            // construction; and `backing` is an `AlignedBytes` whose base pointer is
-            // 4-byte aligned, so each `.add(off).cast::<u32>()` yields a properly-aligned
-            // pointer.
-            unsafe {
-                ModuleInfoDeserialized {
-                    record_kinds: core::slice::from_raw_parts(
-                        self.backing.as_ptr().add(self.record_kinds.0).cast(),
-                        self.record_kinds.1,
-                    ),
-                    buffer: core::slice::from_raw_parts(
-                        self.backing.as_ptr().add(self.buffer.0).cast(),
-                        self.buffer.1 / 4,
-                    ),
-                    requested_modules_keys: core::slice::from_raw_parts(
-                        self.backing.as_ptr().add(self.requested_modules_keys.0).cast(),
-                        self.requested_modules_keys.1 / 4,
-                    ),
-                    requested_modules_values: core::slice::from_raw_parts(
-                        self.backing.as_ptr().add(self.requested_modules_values.0).cast(),
-                        self.requested_modules_values.1 / 4,
-                    ),
-                    strings_lens: core::slice::from_raw_parts(
-                        self.backing.as_ptr().add(self.strings_lens.0).cast(),
-                        self.strings_lens.1 / 4,
-                    ),
-                    strings_buf: &self.backing[self.strings_buf.0..self.strings_buf.0 + self.strings_buf.1],
-                    flags: self.flags,
-                }
+            let bytes: &[u8] = &self.backing;
+            #[inline(always)]
+            fn sub<T: bytemuck::Pod>(bytes: &[u8], (off, len): (usize, usize)) -> &[T] {
+                // `create` derives every (off, len) from `count * size_of::<T>()`
+                // and pads to 4-byte boundaries; `AlignedBytes` guarantees a
+                // 4-aligned base — so `cast_slice`'s align/size checks pass.
+                bytemuck::cast_slice(&bytes[off..off + len])
+            }
+            ModuleInfoDeserialized {
+                // SAFETY: every byte in `record_kinds` was validated against
+                // `RecordKind::try_from_u8` in `create`, so the `#[repr(u8)]`
+                // enum slice contains only valid discriminants; size/align are
+                // 1, so the sub-slice pointer is trivially well-aligned. (Not
+                // expressible via `bytemuck::Pod` because invalid bit patterns
+                // exist; the validation in `create` is what makes this sound.)
+                record_kinds: unsafe {
+                    let r = &bytes[self.record_kinds.0..self.record_kinds.0 + self.record_kinds.1];
+                    core::slice::from_raw_parts(r.as_ptr().cast::<RecordKind>(), r.len())
+                },
+                buffer: sub::<StringID>(bytes, self.buffer),
+                requested_modules_keys: sub::<StringID>(bytes, self.requested_modules_keys),
+                requested_modules_values: sub::<FetchParameters>(bytes, self.requested_modules_values),
+                strings_lens: sub::<u32>(bytes, self.strings_lens),
+                strings_buf: &bytes[self.strings_buf.0..self.strings_buf.0 + self.strings_buf.1],
+                flags: self.flags,
             }
         }
     }

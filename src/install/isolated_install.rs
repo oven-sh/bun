@@ -1060,7 +1060,7 @@ pub fn install_isolated_packages(
                 hoisted,
                 step: core::sync::atomic::AtomicU32::new(0),
                 entry_hash: 0,
-                scripts: core::cell::UnsafeCell::new(None),
+                scripts: core::cell::Cell::new(None),
             };
 
             let new_entry_id: store::entry::Id = store::entry::Id::from(u32::try_from(store_entries.len()).expect("int cast"));

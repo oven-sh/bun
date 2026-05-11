@@ -80,7 +80,14 @@ pub struct BundleV2<'a> {
     pub transpiler: &'a mut Transpiler<'a>,
     /// When Server Components is enabled, this is used for the client bundles
     /// and `transpiler` is used for the server bundles.
-    pub client_transpiler: Option<NonNull<Transpiler<'a>>>,
+    ///
+    /// `ParentRef` (not raw `NonNull`): set once in `init` (from `BakeOptions`
+    /// or `initialize_client_transpiler`), the pointee is live for `'a`, and
+    /// the read-only projection (`client_transpiler_ref`) is the common path —
+    /// so the safe `Deref` removes the per-accessor `unsafe { p.as_ref() }`.
+    /// The two `&mut` sites in `transpiler_for_target` go through the explicit
+    /// `unsafe assume_mut` escape hatch.
+    pub client_transpiler: Option<bun_ptr::ParentRef<Transpiler<'a>>>,
     /// Owns the storage backing `client_transpiler` when it was lazily created
     /// by `initialize_client_transpiler` (browser-target request from a
     /// server-side build). Stays `None` when `client_transpiler` is borrowed
@@ -211,10 +218,7 @@ impl<'a> BundleV2<'a> {
     /// live for `'a`.
     #[inline]
     pub fn client_transpiler_ref(&self) -> Option<&Transpiler<'a>> {
-        // SAFETY: BACKREF — points at a `Transpiler` owned by `BakeOptions` /
-        // `owned_client_transpiler`, both of which outlive every bundle-pass
-        // caller. Never reassigned after init.
-        self.client_transpiler.map(|p| unsafe { p.as_ref() })
+        self.client_transpiler.as_deref()
     }
 
     /// Safe projection of the `plugins` backref (opaque C++ `BunPlugin`).
@@ -237,6 +241,19 @@ impl<'a> BundleV2<'a> {
         self.plugins.map(|mut p| unsafe { p.as_mut() })
     }
 
+    /// Mutable projection of the `bun_watcher` backref for `Watcher::add_file`.
+    /// Centralises the two open-coded `unsafe { ptr.as_mut() }` sites so the
+    /// liveness/exclusivity argument lives in one place.
+    #[inline]
+    pub fn bun_watcher_mut(&mut self) -> Option<&mut bun_watcher::Watcher> {
+        // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
+        // `install_bun_watcher`), live for the process under `--watch`. The
+        // watcher storage is disjoint from `self`; `&mut self` excludes any
+        // other safe projection from this `BundleV2`, and `add_file` is only
+        // ever driven from the single bundle thread (`thread_lock`-asserted).
+        self.bun_watcher.map(|mut p| unsafe { p.as_mut() })
+    }
+
     #[inline]
     pub fn path_to_source_index_map(&mut self, target: options::Target) -> &mut PathToSourceIndexMap {
         self.graph.path_to_source_index_map(target)
@@ -251,9 +268,12 @@ impl<'a> BundleV2<'a> {
         // spins up a client transpiler.
         if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
             if target == Target::Browser && self.transpiler.options.target.is_server_side() {
-                if let Some(mut p) = self.client_transpiler {
-                    // SAFETY: client_transpiler is live for `'a` (set in `init`).
-                    return unsafe { p.as_mut() };
+                if let Some(p) = self.client_transpiler {
+                    // SAFETY: client_transpiler is live for `'a` (set in `init`);
+                    // pointer carries write provenance (constructed from `&mut`
+                    // / `NonNull::from(&mut _)`), and `&mut self` excludes any
+                    // overlapping `client_transpiler_ref()` borrow.
+                    return unsafe { p.assume_mut() };
                 }
                 // bundle_v2.zig:250-252 — `client_transpiler orelse initializeClientTranspiler() catch panic`.
                 return self.initialize_client_transpiler().unwrap_or_else(|e| {
@@ -266,7 +286,7 @@ impl<'a> BundleV2<'a> {
         // `client_transpiler` arm is only reached when bake populated it.
         unsafe {
             match target {
-                Target::Browser => self.client_transpiler.unwrap().as_mut(),
+                Target::Browser => self.client_transpiler.unwrap().assume_mut(),
                 Target::BakeServerComponentsSsr => &mut *self.ssr_transpiler,
                 _ => &mut *self.transpiler,
             }
@@ -785,10 +805,12 @@ pub mod api {
                 path: &BunString,
                 args: *mut crate::parse_task::parse_worker::OnBeforeParseArguments,
                 result: *mut crate::parse_task::parse_worker::OnBeforeParseResult,
-                should_continue_running: *mut i32,
+                should_continue_running: &core::cell::Cell<i32>,
             ) -> i32 {
                 // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches
                 // JSBundlerPlugin.cpp `JSBundlerPlugin__callOnBeforeParsePlugins`.
+                // `Cell<i32>` is repr(transparent) over UnsafeCell<i32>; `as_ptr()`
+                // yields the `*mut i32` C++ expects.
                 unsafe {
                     JSBundlerPlugin__callOnBeforeParsePlugins(
                         self,
@@ -797,7 +819,7 @@ pub mod api {
                         path,
                         args.cast(),
                         result.cast(),
-                        should_continue_running,
+                        should_continue_running.as_ptr(),
                     )
                 }
             }
@@ -1647,7 +1669,7 @@ impl<'a> BundleV2<'a> {
         // uniqueness, invalidating any previously-derived raw pointer).
         self.owned_client_transpiler = Some(boxed);
         let ct: &mut Transpiler<'a> = self.owned_client_transpiler.as_deref_mut().unwrap();
-        self.client_transpiler = Some(NonNull::from(&mut *ct));
+        self.client_transpiler = Some(NonNull::from(&mut *ct).into());
         Ok(ct)
     }
 
@@ -2482,7 +2504,7 @@ impl<'a> BundleV2<'a> {
         heap: ThreadLocalArena,
     ) -> Result<Box<BundleV2<'a>>, Error> {
         // TODO(port): arena-allocate self via bump.alloc — Box::new is wrong arena (Zig: arena.create(@This()) on arena)
-        unsafe { (*transpiler.env).load_tracy() };
+        transpiler.env().load_tracy();
 
         transpiler.options.mark_builtins_as_external = transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
         transpiler.resolver.opts.mark_builtins_as_external = transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
@@ -2526,7 +2548,7 @@ impl<'a> BundleV2<'a> {
             requested_exports: ArrayHashMap::new(),
         });
         if let Some(bo) = bake_options {
-            this.client_transpiler = Some(bo.client_transpiler);
+            this.client_transpiler = Some(bo.client_transpiler.into());
             this.ssr_transpiler = bo.ssr_transpiler.as_ptr();
             let separate_ssr = bo.framework.server_components.as_ref()
                 .map(|sc| sc.separate_ssr_graph).unwrap_or(false);
@@ -2607,8 +2629,8 @@ impl<'a> BundleV2<'a> {
         // written above has no Drop, so overwriting via `*pool = ...` is fine.
         unsafe { *pool = ThreadPool::init(&mut *this, thread_pool)?; }
         this.graph.pool = NonNull::new(pool).expect("arena allocation is non-null");
-        // SAFETY: arena slot is live; reborrow for `start()`.
-        unsafe { (*pool).start(); }
+        // `Graph::pool` wraps the `NonNull` deref; `start()` takes `&self`.
+        this.graph.pool().start();
         Ok(this)
     }
 
@@ -3818,7 +3840,7 @@ impl<'a> BundleV2<'a> {
                 parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                 this.graph.pool().schedule(parse_task);
 
-                if let Some(mut watcher_ptr) = this.bun_watcher {
+                if this.bun_watcher.is_some() {
                     'add_watchers: {
                         if !this.should_add_watcher_plugin(&load.namespace, &load.path) {
                             break 'add_watchers;
@@ -3843,9 +3865,7 @@ impl<'a> BundleV2<'a> {
                         };
 
                         // Zig: `_ = this.bun_watcher.?.addFile(...) catch {};`
-                        // SAFETY: hot_reloader-owned heap Watcher; live for the
-                        // process under --watch (see `install_bun_watcher`).
-                        let _ = unsafe { watcher_ptr.as_mut() }.add_file::<true>(
+                        let _ = this.bun_watcher_mut().unwrap().add_file::<true>(
                             fd,
                             &load.path,
                             bun_wyhash::hash(load.path.as_ref()) as u32,
@@ -4370,8 +4390,8 @@ impl<'a> BundleV2<'a> {
 
         // Write metafile outputs to disk and add them as OutputFiles.
         // Metafile paths are relative to outdir, like all other output files.
-        // SAFETY: `resolver` is a `*mut Resolver` backref valid for the bundle.
-        let outdir = unsafe { &(*self.linker.resolver).opts.output_dir };
+        // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
+        let outdir = &self.linker.resolver().opts.output_dir;
         if !self.linker.options.metafile_json_path.is_empty() {
             if let Some(mf) = &metafile {
                 write_metafile_output(&mut output_files, outdir, &self.linker.options.metafile_json_path, mf, crate::options::OutputKind::MetafileJson)?;
@@ -5857,7 +5877,7 @@ impl<'a> BundleV2<'a> {
         }
 
         // To minimize contention, watchers are appended on the bundle thread.
-        if let Some(mut bun_watcher) = this.bun_watcher {
+        if this.bun_watcher.is_some() {
             if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
                 let source_index = match &parse_result.value {
                     parse_task::ResultValue::Empty { source_index } => source_index.get(),
@@ -5871,11 +5891,9 @@ impl<'a> BundleV2<'a> {
                     .text;
                 let loader = this.graph.input_files.items_loader()[source_index as usize];
                 if this.should_add_watcher(&source_path) {
-                    // SAFETY: hot_reloader-owned heap Watcher; live for the
-                    // process under --watch (see `install_bun_watcher`).
                     // PORT NOTE: const generic `CLONE_FILE_PATH = isWindows`
                     // matches `cfg!(windows)` at compile time.
-                    let _ = unsafe { bun_watcher.as_mut() }.add_file::<{ cfg!(windows) }>(
+                    let _ = this.bun_watcher_mut().unwrap().add_file::<{ cfg!(windows) }>(
                         parse_result.watcher_data.fd,
                         &source_path,
                         bun_wyhash::hash(source_path.as_ref()) as u32,

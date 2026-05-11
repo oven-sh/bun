@@ -87,17 +87,15 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         )?;
         debug_assert!(n as usize <= buf.len());
         buf.truncate(n as usize);
-        // Freeze into a heap-stable Box before taking the address: the slice
-        // fields in the returned URLPath borrow from this allocation, and the
-        // Box is moved into that same URLPath, so the borrow is valid for the
-        // struct's whole lifetime (Box heap address is stable across moves).
-        let boxed: Box<[u8]> = buf.into_boxed_slice();
-        // SAFETY: `boxed` is a single heap allocation that is never resized and
-        // is moved into `decoded_storage` (and from there into the returned
-        // URLPath) below. Every slice derived from `decoded_pathname` therefore
-        // remains valid for as long as the returned URLPath exists.
-        decoded_pathname = unsafe { core::slice::from_raw_parts(boxed.as_ptr(), boxed.len()) };
-        decoded_storage = Some(boxed);
+        // Freeze into a heap-stable Box and park it in `decoded_storage` before
+        // borrowing: the slice fields in the returned URLPath borrow from this
+        // allocation, and the Box is later moved into that same URLPath, so the
+        // borrow is valid for the struct's whole lifetime (Box heap address is
+        // stable across moves). NLL releases the local borrow after the last
+        // use of `decoded_pathname` in the struct-literal field initialisers,
+        // before `_decoded_storage` is moved.
+        decoded_storage = Some(buf.into_boxed_slice());
+        decoded_pathname = decoded_storage.as_deref().unwrap();
     }
 
     let mut question_mark_i: i16 = -1;

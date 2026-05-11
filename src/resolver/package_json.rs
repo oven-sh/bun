@@ -1340,10 +1340,7 @@ impl PackageJSON {
 
                 // // if there is a name & version, check if the lockfile has the package
                 if !package_json.name.is_empty() && !package_json.version.is_empty() {
-                    if let Some(mut pm) = r.package_manager {
-                        // SAFETY: BACKREF — `pm` is the bun_install-owned PackageManager
-                        // pointer; live for the resolver's lifetime once installed.
-                        let pm: &mut dyn AutoInstaller = unsafe { pm.as_mut() };
+                    if let Some(pm) = r.auto_installer() {
                         let tag = pm.infer_dependency_tag(&package_json.version);
 
                         if tag == DependencyVersionTag::Npm {
@@ -1354,7 +1351,7 @@ impl PackageJSON {
                                 &package_json.version,
                                 DependencyVersionTag::Npm,
                                 &sliced,
-                                r.log,
+                                r_log,
                             ) {
                                 if dependency_version.is_exact_npm() {
                                     if let Some(resolved) =
@@ -1456,18 +1453,14 @@ impl PackageJSON {
                                     // isn't, still record the dependency name (with an
                                     // uninitialized-tag version) — `bun run --filter` reads
                                     // only the map keys to compute workspace ordering.
-                                    let dependency_version = match r.package_manager {
-                                        Some(mut pm) => {
-                                            // SAFETY: see BACKREF note above.
-                                            let pm: &mut dyn AutoInstaller = unsafe { pm.as_mut() };
-                                            pm.parse_dependency(
-                                                name,
-                                                Some(name_hash),
-                                                version_str,
-                                                &sliced_str,
-                                                r.log,
-                                            )
-                                        }
+                                    let dependency_version = match r.auto_installer() {
+                                        Some(pm) => pm.parse_dependency(
+                                            name,
+                                            Some(name_hash),
+                                            version_str,
+                                            &sliced_str,
+                                            r_log,
+                                        ),
                                         None => Some(DependencyVersion::default()),
                                     };
                                     if let Some(dependency_version) = dependency_version {

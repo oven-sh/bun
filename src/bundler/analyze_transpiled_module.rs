@@ -39,6 +39,9 @@ pub type ImportAttributes = FetchParameters;
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RecordKind(pub u8);
+// SAFETY: `#[repr(transparent)]` over `u8` — no padding, every bit pattern is
+// a valid `u8`. Enables `bytemuck::cast_slice` in `slice_as_bytes` below.
+unsafe impl bytemuck::NoUninit for RecordKind {}
 
 impl RecordKind {
     /// var_name
@@ -425,12 +428,10 @@ fn bytes_as_slice<T>(bytes: &[u8]) -> Result<*const [T], ModuleInfoError> {
     ))
 }
 
-/// Reinterpret `&[T]` as bytes (Zig: `std.mem.sliceAsBytes`). `T` must be POD.
+/// Reinterpret `&[T]` as bytes (Zig: `std.mem.sliceAsBytes`).
 #[inline]
-fn slice_as_bytes<T: Copy>(s: &[T]) -> &[u8] {
-    // SAFETY: T is Copy/POD with no padding for the types used here
-    // (u8/u32-transparent newtypes); reading their bytes is sound.
-    unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), core::mem::size_of_val(s)) }
+fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
+    bytemuck::cast_slice(s)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

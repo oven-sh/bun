@@ -231,15 +231,29 @@ impl PostgresSQLConnection {
     fn global(&self) -> &JSGlobalObject {
         self.global_object.get()
     }
-    /// SAFETY: returns `&mut VirtualMachine` derived from `&self`; two calls
-    /// alias the same VM. Caller must not hold another live `&mut` to it.
-    /// (JSC_BORROW — vm outlives this connection.)
-    ///
-    /// PORT NOTE: the returned lifetime is **unbounded** (not tied to `&self`).
-    /// `self.vm` is a raw pointer to the singleton VM, so the borrow does not
-    /// actually overlap any of `self`'s own bytes.
+    /// Shared borrow of the JS-thread `VirtualMachine` singleton stored in this
+    /// connection. JSC_BORROW — the VM strictly outlives every connection it
+    /// creates, so projecting `&'static` is sound. The borrow does not overlap
+    /// any of `self`'s own bytes (`self.vm` is a raw pointer into a disjoint
+    /// allocation), so it does not conflict with `&self`/`JsCell` projections.
     #[inline]
-    unsafe fn vm<'a>(&self) -> &'a mut VirtualMachine {
+    fn vm(&self) -> &'static VirtualMachine {
+        // SAFETY: process-lifetime singleton (set once in `call()` from
+        // `VirtualMachine::get_mut_ptr()`); never null, never freed.
+        unsafe { &*self.vm }
+    }
+
+    /// `&mut VirtualMachine` for the few `vm.timer()` / `vm.sql_state()` callers
+    /// whose trait methods take `&mut self`. The VM is a JS-thread singleton; we
+    /// never hold two `&mut` to it at once in this module. Explicit `'static` so
+    /// the return does not reborrow `*self` — callers pair this with
+    /// `self.timer.with_mut(|t| ...)` in the same expression.
+    #[inline]
+    fn vm_mut(&self) -> &'static mut VirtualMachine {
+        // SAFETY: process-lifetime singleton; stored as `*mut` to preserve write
+        // provenance from `VirtualMachine::get_mut_ptr()`. Caller must not hold
+        // another live `&mut VirtualMachine` (single-threaded event-loop affinity
+        // makes this trivially true at every call site below).
         unsafe { &mut *self.vm }
     }
 
@@ -369,7 +383,7 @@ impl PostgresSQLConnection {
             && self.status.get() == Status::Connected
         // and we need to be connected
         {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self.as_ctx_ptr(), unsafe { self.vm() });
+            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self.as_ctx_ptr(), self.vm());
             self.auto_flusher.with_mut(|a| a.registered = true);
         }
     }
@@ -377,7 +391,7 @@ impl PostgresSQLConnection {
     fn unregister_auto_flusher(&self) {
         debug!("unregisterAutoFlusher registered: {}", self.auto_flusher.get().registered);
         if self.auto_flusher.get().registered {
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self.as_ctx_ptr(), unsafe { self.vm() });
+            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self.as_ctx_ptr(), self.vm());
             self.auto_flusher.with_mut(|a| a.registered = false);
         }
     }
@@ -393,8 +407,7 @@ impl PostgresSQLConnection {
     pub fn disable_connection_timeout(&self) {
         self.timer.with_mut(|t| {
             if t.state == EventLoopTimerState::ACTIVE {
-                // SAFETY: `self.vm` is the live VM singleton stored in this connection.
-                unsafe { self.vm() }.timer().remove(t);
+                self.vm_mut().timer().remove(t);
             }
             t.state = EventLoopTimerState::CANCELLED;
         });
@@ -408,15 +421,13 @@ impl PostgresSQLConnection {
         let interval = self.get_timeout_interval();
         self.timer.with_mut(|t| {
             if t.state == EventLoopTimerState::ACTIVE {
-                // SAFETY: `self.vm` is the live VM singleton stored in this connection.
-                unsafe { self.vm() }.timer().remove(t);
+                self.vm_mut().timer().remove(t);
             }
             if interval == 0 {
                 return;
             }
             t.next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, i64::from(interval));
-            // SAFETY: `self.vm` is the live VM singleton stored in this connection.
-            unsafe { self.vm() }.timer().insert(t);
+            self.vm_mut().timer().insert(t);
         });
     }
 
@@ -535,8 +546,7 @@ impl PostgresSQLConnection {
                 return;
             }
             t.next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, i64::from(self.max_lifetime_interval_ms));
-            // SAFETY: `self.vm` is the live VM singleton stored in this connection.
-            unsafe { self.vm() }.timer().insert(t);
+            self.vm_mut().timer().insert(t);
         });
     }
 
@@ -648,7 +658,7 @@ impl PostgresSQLConnection {
 
         self.status.set(status);
         self.reset_connection_timeout();
-        if unsafe { self.vm() }.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             self.update_has_pending_activity();
             return;
         }
@@ -768,7 +778,7 @@ impl PostgresSQLConnection {
     pub fn on_close(&self) {
         self.unregister_auto_flusher();
 
-        if unsafe { self.vm() }.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             self.stop_timers();
             if self.status.get() == Status::Failed {
                 self.update_has_pending_activity();
@@ -899,7 +909,7 @@ impl PostgresSQLConnection {
 
     fn drain_internal(&self) {
         debug!("drainInternal");
-        if unsafe { self.vm() }.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             return self.close();
         }
 
@@ -1300,7 +1310,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>) {
-        if unsafe { this.vm() }.is_shutting_down() {
+        if this.vm().is_shutting_down() {
             #[cold]
             fn cold(this: &PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1310,7 +1320,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     fn on_handshake_(this: &PostgresSQLConnection, _: SocketType<SSL>, success: i32, ssl_error: uws::us_bun_verify_error_t) {
-        if unsafe { this.vm() }.is_shutting_down() {
+        if this.vm().is_shutting_down() {
             #[cold]
             fn cold(this: &PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1333,7 +1343,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
-        if unsafe { this.vm() }.is_shutting_down() {
+        if this.vm().is_shutting_down() {
             #[cold]
             fn cold(this: &PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1343,7 +1353,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_timeout(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
-        if unsafe { this.vm() }.is_shutting_down() {
+        if this.vm().is_shutting_down() {
             #[cold]
             fn cold(this: &PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1353,7 +1363,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_data(this: &PostgresSQLConnection, _socket: SocketType<SSL>, data: &[u8]) {
-        if unsafe { this.vm() }.is_shutting_down() {
+        if this.vm().is_shutting_down() {
             #[cold]
             fn cold(this: &PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1363,7 +1373,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_writable(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
-        if unsafe { this.vm() }.is_shutting_down() {
+        if this.vm().is_shutting_down() {
             #[cold]
             fn cold(this: &PostgresSQLConnection) { this.close(); }
             cold(this);
@@ -1409,12 +1419,12 @@ impl PostgresSQLConnection {
     pub fn stop_timers(&self) {
         self.timer.with_mut(|t| {
             if t.state == EventLoopTimerState::ACTIVE {
-                unsafe { self.vm() }.timer().remove(t);
+                self.vm_mut().timer().remove(t);
             }
         });
         self.max_lifetime_timer.with_mut(|t| {
             if t.state == EventLoopTimerState::ACTIVE {
-                unsafe { self.vm() }.timer().remove(t);
+                self.vm_mut().timer().remove(t);
             }
         });
     }
@@ -1467,9 +1477,11 @@ impl PostgresSQLConnection {
         // black_box launder (b818e70e1c57-style) is no longer needed.
         // The connection is kept alive by the caller's `ref_and_close` ref
         // bracket for the duration of this loop, so re-entry never frees `*self`.
-        while let Some(request_ptr) = self.current() {
+        while self.requests.get().readable_length() > 0 {
+            let request_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(0);
             // SAFETY: request is a valid *mut PostgresSQLQuery owned by the queue.
             // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
+            // Raw `*mut` retained for `PostgresSQLQuery::deref(request_ptr)` below.
             let request = unsafe { &*request_ptr };
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
@@ -1484,7 +1496,7 @@ impl PostgresSQLConnection {
                     let stmt = unsafe { &mut *stmt };
                     stmt.error_response = Some(StatementError::PostgresError(AnyPostgresError::ConnectionClosed));
                     stmt.status = StatementStatus::Failed;
-                    if !unsafe { self.vm() }.is_shutting_down() {
+                    if !self.vm().is_shutting_down() {
                         let global = self.global();
                         if let Some(reason) = js_reason {
                             request.on_js_error(reason, global);
@@ -1501,7 +1513,7 @@ impl PostgresSQLConnection {
                 | QueryStatus::Running
                 | QueryStatus::PartialResponse => {
                     self.finish_request(request);
-                    if !unsafe { self.vm() }.is_shutting_down() {
+                    if !self.vm().is_shutting_down() {
                         let global = self.global();
                         if let Some(reason) = js_reason {
                             request.on_js_error(reason, global);
@@ -1544,12 +1556,22 @@ impl PostgresSQLConnection {
         }
     }
 
-    fn current(&self) -> Option<*mut PostgresSQLQuery> {
+    /// Shared borrow of the queue's head request, if any.
+    ///
+    /// Encapsulates the single backref deref (`&*ptr`) so the dozen-plus callers
+    /// in `on()` need no per-site `unsafe`. The queue holds an intrusive ref on
+    /// every `*mut PostgresSQLQuery` it stores; `PostgresSQLQuery` is `Cell`/
+    /// `JsCell`-backed (R-2), so a shared `&` is sound even across re-entrant JS.
+    fn current(&self) -> Option<&PostgresSQLQuery> {
         let q = self.requests.get();
         if q.readable_length() == 0 {
             return None;
         }
-        Some(q.peek_item(0))
+        let ptr: *mut PostgresSQLQuery = q.peek_item(0);
+        // SAFETY: queue invariant — every stored pointer is a live, heap-allocated
+        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself; it cannot
+        // be freed while still enqueued. R-2: deref as shared (`&*`) only.
+        Some(unsafe { &*ptr })
     }
 
     pub fn has_query_running(&self) -> bool {
@@ -1572,24 +1594,23 @@ impl PostgresSQLConnection {
     }
 }
 
-// PORT NOTE: Zig's `Writer.connection: *PostgresSQLConnection` is a raw
+// PORT NOTE: Zig's `Writer.connection: *PostgresSQLConnection` is a
 // backref (LIFETIMES.tsv BACKREF). The connection strictly outlives any Writer
 // (Writers are only constructed via `self.writer()` and never stored). R-2:
-// `*const` — `write_buffer` is a `JsCell`, so mutation routes through
+// `BackRef` (shared) — `write_buffer` is a `JsCell`, so mutation routes through
 // `with_mut`/`get_mut`.
 #[derive(Clone, Copy)]
 pub struct Writer {
-    pub connection: *const PostgresSQLConnection,
+    pub connection: BackRef<PostgresSQLConnection>,
 }
 
 impl Writer {
     #[inline]
     fn write_buffer(&self) -> &mut OffsetByteList {
-        // SAFETY: connection outlives the Writer; `write_buffer` is a `JsCell`
-        // (UnsafeCell-backed) so projecting `&mut OffsetByteList` from `*const`
-        // is the cell escape hatch. Single-JS-thread; no other `&mut` to this
-        // cell is live while a Writer is.
-        unsafe { (*self.connection).write_buffer.get_mut() }
+        // SAFETY: `write_buffer` is a `JsCell` (UnsafeCell-backed); single-JS-thread
+        // and no other `&mut` to this cell is live while a Writer is. The backref
+        // deref itself is safe (`BackRef` invariant: connection outlives Writer).
+        unsafe { self.connection.write_buffer.get_mut() }
     }
 
     pub fn write(&mut self, data: &[u8]) -> Result<(), AnyPostgresError> {
@@ -1619,34 +1640,33 @@ impl protocol::WriterContext for Writer {
 impl PostgresSQLConnection {
     pub fn writer(&self) -> protocol::NewWriter<Writer> {
         protocol::NewWriter {
-            wrapped: Writer { connection: self as *const PostgresSQLConnection },
+            wrapped: Writer { connection: BackRef::new(self) },
         }
     }
 }
 
-// PORT NOTE: Zig's `Reader.connection: *PostgresSQLConnection` is a raw
+// PORT NOTE: Zig's `Reader.connection: *PostgresSQLConnection` is a
 // backref (LIFETIMES.tsv BACKREF). `PostgresRequest::on_data` passes both
-// `&PostgresSQLConnection` and a `NewReader<Reader>` into `on()`. R-2: `*const`
-// — `read_buffer`/`last_message_start` are `JsCell`/`Cell`.
+// `&PostgresSQLConnection` and a `NewReader<Reader>` into `on()`. R-2: `BackRef`
+// (shared) — `read_buffer`/`last_message_start` are `JsCell`/`Cell`.
 #[derive(Clone, Copy)]
 pub struct Reader {
-    pub connection: *const PostgresSQLConnection,
+    pub connection: BackRef<PostgresSQLConnection>,
 }
 
 impl Reader {
     #[inline]
     fn read_buffer(&self) -> &mut OffsetByteList {
-        // SAFETY: connection outlives the Reader; `read_buffer` is a `JsCell`
-        // (UnsafeCell-backed). Single-JS-thread; `on()` never touches
-        // `read_buffer` through its own `&self` while a Reader is live, so no
-        // two `&mut OffsetByteList` coexist.
-        unsafe { (*self.connection).read_buffer.get_mut() }
+        // SAFETY: `read_buffer` is a `JsCell` (UnsafeCell-backed). Single-JS-thread;
+        // `on()` never touches `read_buffer` through its own `&self` while a Reader
+        // is live, so no two `&mut OffsetByteList` coexist. The backref deref itself
+        // is safe (`BackRef` invariant: connection outlives Reader).
+        unsafe { self.connection.read_buffer.get_mut() }
     }
 
     pub fn mark_message_start(&mut self) {
         let head = self.read_buffer().head;
-        // SAFETY: connection outlives the Reader; `last_message_start` is a `Cell<u32>`.
-        unsafe { (*self.connection).last_message_start.set(head) };
+        self.connection.last_message_start.set(head);
     }
 
     pub fn ensure_length(&self, count: usize) -> bool {
@@ -1712,7 +1732,7 @@ impl protocol::ReaderContext for Reader {
 impl PostgresSQLConnection {
     pub fn buffered_reader(&self) -> protocol::NewReader<Reader> {
         protocol::NewReader {
-            wrapped: Reader { connection: self as *const PostgresSQLConnection },
+            wrapped: Reader { connection: BackRef::new(self) },
         }
     }
 
@@ -1782,7 +1802,7 @@ impl PostgresSQLConnection {
         }
 
         while self.requests.get().readable_length() > offset && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
-            if unsafe { self.vm() }.is_shutting_down() {
+            if self.vm().is_shutting_down() {
                 self.close();
                 defer_cleanup!(self);
                 return;
@@ -2193,10 +2213,7 @@ impl PostgresSQLConnection {
 
         match message_type {
             MessageType::DataRow => {
-                let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                // SAFETY: request is a valid *mut PostgresSQLQuery owned by the queue.
-                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                let request = unsafe { &*request_ptr };
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
 
                 let statement_ptr = request.statement.get().ok_or(AnyPostgresError::ExpectedStatement)?;
                 // SAFETY: statement is valid for the duration of the request.
@@ -2322,10 +2339,7 @@ impl PostgresSQLConnection {
                 });
                 self.socket_set_timeout(300);
 
-                if let Some(request_ptr) = self.current() {
-                    // SAFETY: valid queue item.
-                    // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                    let request = unsafe { &*request_ptr };
+                if let Some(request) = self.current() {
                     if request.status.get() == QueryStatus::PartialResponse {
                         self.finish_request(request);
                         // if is a partial response, just signal that the query is now complete
@@ -2338,10 +2352,7 @@ impl PostgresSQLConnection {
                 self.update_ref();
             }
             MessageType::CommandComplete => {
-                let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                let request = unsafe { &*request_ptr };
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
 
                 let mut cmd: protocol::CommandComplete = Default::default();
                 cmd.decode_internal(reader.reborrow()).map_err(pg_err)?;
@@ -2353,19 +2364,14 @@ impl PostgresSQLConnection {
             }
             MessageType::BindComplete => {
                 reader.eat_message(&protocol::BIND_COMPLETE)?;
-                let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                let request = unsafe { &*request_ptr };
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 if request.status.get() == QueryStatus::Binding {
                     request.status.set(QueryStatus::Running);
                 }
             }
             MessageType::ParseComplete => {
                 reader.eat_message(&protocol::PARSE_COMPLETE)?;
-                let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &*request_ptr };
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 if let Some(statement_ptr) = request.statement.get() {
                     // SAFETY: request holds a ref on its statement; valid while request is queued.
                     let statement = unsafe { &mut *statement_ptr };
@@ -2379,15 +2385,13 @@ impl PostgresSQLConnection {
             MessageType::ParameterDescription => {
                 let description = protocol::ParameterDescription::decode_internal(reader.reborrow()).map_err(pg_err)?;
                 // errdefer bun.default_allocator.free(description.parameters);
-                let request_ptr = match self.current() {
+                let request = match self.current() {
                     Some(r) => r,
                     None => {
                         drop(description.parameters);
                         return Err(AnyPostgresError::ExpectedRequest);
                     }
                 };
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &*request_ptr };
                 let statement_ptr = match request.statement.get() {
                     Some(s) => s,
                     None => {
@@ -2409,12 +2413,10 @@ impl PostgresSQLConnection {
             MessageType::RowDescription => {
                 let description = protocol::RowDescription::decode_internal(reader.reborrow()).map_err(pg_err)?;
                 // errdefer description.deinit();
-                let request_ptr = match self.current() {
+                let request = match self.current() {
                     Some(r) => r,
                     None => return Err(AnyPostgresError::ExpectedRequest),
                 };
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                let request = unsafe { &*request_ptr };
                 let statement_ptr = match request.statement.get() {
                     Some(s) => s,
                     None => return Err(AnyPostgresError::ExpectedStatement),
@@ -2655,10 +2657,7 @@ impl PostgresSQLConnection {
             }
             MessageType::NoData => {
                 reader.eat_message(&protocol::NO_DATA)?;
-                let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                let request = unsafe { &*request_ptr };
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 if request.status.get() == QueryStatus::Binding {
                     request.status.set(QueryStatus::Running);
                 }
@@ -2679,13 +2678,10 @@ impl PostgresSQLConnection {
                     return Ok(());
                 }
 
-                let Some(request_ptr) = self.current() else {
+                let Some(request) = self.current() else {
                     debug!("ErrorResponse: {}", err);
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                let request = unsafe { &*request_ptr };
                 // Convert to JS while we still own `err` — Zig's `request.onError` only ever
                 // calls `err.toJS`, so materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
@@ -2718,10 +2714,7 @@ impl PostgresSQLConnection {
             }
             MessageType::CloseComplete => {
                 reader.eat_message(&protocol::CLOSE_COMPLETE)?;
-                let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                let request = unsafe { &*request_ptr };
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 request.on_result(b"CLOSECOMPLETE", self.global(), self.js_value.get().get(), false);
                 self.update_ref();
             }
@@ -2735,10 +2728,7 @@ impl PostgresSQLConnection {
             }
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
-                let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
-                // R-2: deref as shared (`&*`) — `PostgresSQLQuery` is Cell/JsCell-backed.
-                let request = unsafe { &*request_ptr };
+                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 request.on_result(b"", self.global(), self.js_value.get().get(), false);
                 self.update_ref();
             }

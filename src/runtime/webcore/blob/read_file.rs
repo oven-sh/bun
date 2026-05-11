@@ -756,11 +756,10 @@ impl ReadFile {
 
                 // We might read into the stack buffer, so we need to copy it into the heap.
                 if buf_ptr == stack_ptr {
-                    // SAFETY: `do_read` wrote `read_amount` initialized bytes
-                    // at `buf_ptr` (== `stack_buffer.as_mut_ptr()`); the stack
-                    // array is live for this iteration.
-                    let read =
-                        unsafe { core::slice::from_raw_parts(buf_ptr, read_amount) };
+                    // `do_read` wrote `read_amount` initialized bytes at
+                    // `stack_buffer[..read_amount]`; the stack array is live
+                    // for this iteration.
+                    let read = &stack_buffer[..read_amount];
                     if self.buffer.capacity() == 0 {
                         // We need to allocate a new buffer
                         // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount

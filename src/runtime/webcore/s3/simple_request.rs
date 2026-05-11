@@ -117,7 +117,9 @@ pub struct S3HttpSimpleTask {
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    pub vm: *mut VirtualMachine,
+    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
+    /// the inert `Default` placeholder (overwritten before the task escapes).
+    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: *mut c_void,
@@ -149,7 +151,7 @@ impl Default for S3HttpSimpleTask {
         }
         Self {
             http: core::mem::MaybeUninit::uninit(),
-            vm: core::ptr::null_mut(),
+            vm: None,
             sign_result: SignResult::default(),
             headers: Headers::default(),
             callback_context: core::ptr::null_mut(),
@@ -424,9 +426,9 @@ impl S3HttpSimpleTask {
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
             let this_ptr = std::ptr::from_mut::<Self>(this);
             let task = std::ptr::from_mut::<ConcurrentTask>(this.concurrent_task.from(this_ptr, AutoDeinit::ManualDeinit));
-            // SAFETY: `vm` is the live per-thread VM pointer captured at task creation; event_loop
-            // is set during VM init and outlives this task.
-            unsafe { (*(*this.vm).event_loop()).enqueue_task_concurrent(task) };
+            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
+            // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
+            this.vm.expect("vm set at task creation").event_loop_shared().enqueue_task_concurrent(task);
         }
     }
 }
@@ -555,7 +557,7 @@ pub fn execute_simple_s3_request(
         callback,
         range: options.range,
         headers,
-        vm: VirtualMachine::get_mut_ptr(),
+        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),

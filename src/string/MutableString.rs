@@ -91,7 +91,11 @@ impl MutableString {
 
     pub fn owns(&self, items: &[u8]) -> bool {
         // Zig: bun.isSliceInBuffer(items, this.list.items.ptr[0..this.list.capacity])
-        bun_alloc::is_slice_in_buffer(items, self.allocated_slice())
+        // Pointer-range check against the full allocation; done with addresses
+        // rather than forming a `&[u8]` over `[len..cap)` (uninit) bytes.
+        let base = self.list.as_ptr() as usize;
+        let item = items.as_ptr() as usize;
+        base <= item && item + items.len() <= base + self.list.capacity()
     }
 
     #[inline]
@@ -119,7 +123,7 @@ impl MutableString {
 
     pub fn write(&mut self, bytes: impl AsRef<[u8]>) -> Result<usize, AllocError> {
         let bytes = bytes.as_ref();
-        debug_assert!(bytes.is_empty() || !bun_alloc::is_slice_in_buffer(bytes, self.allocated_slice()));
+        debug_assert!(bytes.is_empty() || !self.owns(bytes));
         self.list.extend_from_slice(bytes);
         Ok(bytes.len())
     }
@@ -469,13 +473,6 @@ impl MutableString {
         Ok(bytes.len())
     }
 
-    /// Helper: full allocated slice `ptr[0..capacity]` (for `owns`/debug asserts).
-    fn allocated_slice(&self) -> &[u8] {
-        // SAFETY: ptr is valid for `capacity` bytes (Vec invariant). Bytes in
-        // [len..capacity] may be uninitialized; this is only used for pointer
-        // range comparison, never dereferenced beyond `len`.
-        unsafe { core::slice::from_raw_parts(self.list.as_ptr(), self.list.capacity()) }
-    }
 }
 
 // Zig: `MutableString.init2048` is the default `Init` fn passed to

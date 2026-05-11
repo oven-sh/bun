@@ -1425,17 +1425,19 @@ impl Lockfile {
     ) -> Result<(), tree::SubtreeError> {
         let slice = self.packages.slice();
 
-        // PORT NOTE: `tree::Builder` stores `lockfile: *const Lockfile` so the
-        // `&mut buffers.resolutions` split-borrow below can coexist with the
-        // read-only lockfile view inside the builder (see Tree.rs SAFETY note).
-        let lockfile_ptr: *const Lockfile = &raw const *self;
+        // PORT NOTE: `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
+        // the `&mut buffers.resolutions` split-borrow below can coexist with
+        // the read-only lockfile view inside the builder (see Tree.rs note).
+        // SAFETY: `self` is `&mut Lockfile`; the `Builder` does not outlive
+        // this borrow (dropped before `hoist` returns).
+        let lockfile_ref = unsafe { bun_ptr::ParentRef::<Lockfile>::from_raw(&raw const *self) };
         let mut builder = tree::Builder::<METHOD> {
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
             resolutions: self.buffers.resolutions.as_mut_slice(),
             dependencies: self.buffers.dependencies.as_slice(),
             log,
-            lockfile: lockfile_ptr,
+            lockfile: lockfile_ref,
             manager,
             install_root_dependencies,
             workspace_filters,

@@ -21,35 +21,41 @@ impl Signals {
             && self.upgraded.is_none()
     }
 
-    // PERF(port): was `comptime field: std.meta.FieldEnum(Signals)` + `@field` reflection —
-    // demoted to a runtime match; profile in Phase B.
-    pub fn get(self, field: Field) -> bool {
-        let ptr: Option<NonNull<AtomicBool>> = match field {
+    /// Resolve `field` to a shared borrow of its `AtomicBool` slot, if wired.
+    ///
+    /// Centralises the single back-reference deref so [`get`]/[`store`] are
+    /// unsafe-free. The returned borrow is tied to `&self` (a `Copy` view), not
+    /// forged to `'static`.
+    #[inline]
+    fn slot(&self, field: Field) -> Option<&AtomicBool> {
+        let ptr: NonNull<AtomicBool> = match field {
             Field::HeaderProgress => self.header_progress,
             Field::ResponseBodyStreaming => self.response_body_streaming,
             Field::Aborted => self.aborted,
             Field::CertErrors => self.cert_errors,
             Field::Upgraded => self.upgraded,
-        };
-        let Some(ptr) = ptr else { return false };
-        // SAFETY: ptr was created via `NonNull::from(&store.<field>)` in `Store::to`;
-        // the caller guarantees the Store outlives this Signals.
-        unsafe { ptr.as_ref() }.load(Ordering::Relaxed) // Zig .monotonic == LLVM monotonic == Rust Relaxed
+        }?;
+        // SAFETY: every non-None pointer here was created via
+        // `NonNull::from(&store.<field>)` in `Store::to` (or an equivalent
+        // caller-side `NonNull::from(&signal_store.<field>)`); the BACKREF
+        // invariant is that the `Store` outlives every `Signals` derived from
+        // it. `AtomicBool` is `Sync` interior-mutable, so a shared `&` suffices
+        // for both load and store.
+        Some(unsafe { ptr.as_ref() })
+    }
+
+    // PERF(port): was `comptime field: std.meta.FieldEnum(Signals)` + `@field` reflection —
+    // demoted to a runtime match; profile in Phase B.
+    pub fn get(self, field: Field) -> bool {
+        // Zig .monotonic == LLVM monotonic == Rust Relaxed
+        self.slot(field).is_some_and(|a| a.load(Ordering::Relaxed))
     }
 
     /// Store `value` into the named signal slot if present. No-op when the
     /// slot is `None` (matches Zig `if (this.signals.<field>) |p| p.store(..)`).
     pub fn store(self, field: Field, value: bool, ordering: Ordering) {
-        let ptr: Option<NonNull<AtomicBool>> = match field {
-            Field::HeaderProgress => self.header_progress,
-            Field::ResponseBodyStreaming => self.response_body_streaming,
-            Field::Aborted => self.aborted,
-            Field::CertErrors => self.cert_errors,
-            Field::Upgraded => self.upgraded,
-        };
-        if let Some(ptr) = ptr {
-            // SAFETY: see [`Signals::get`].
-            unsafe { ptr.as_ref() }.store(value, ordering);
+        if let Some(a) = self.slot(field) {
+            a.store(value, ordering);
         }
     }
 }

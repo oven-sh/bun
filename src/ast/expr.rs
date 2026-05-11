@@ -2309,20 +2309,14 @@ impl Data {
         H: bun_core::Hasher + ?Sized,
         S: crate::base::SymbolTable + ?Sized,
     {
-        // Local mirror of `bun.writeAnyToHasher` for arbitrary `Copy` POD —
+        // Local mirror of `bun.writeAnyToHasher` for padding-free POD —
         // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
-        // we cannot extend that trait from this crate-file scope.
+        // we cannot extend that trait from this crate-file scope. `NoUninit`
+        // bound lets `bytemuck::bytes_of` view the value's bytes safely
+        // (mirrors Zig `hasher.update(std.mem.asBytes(&thing))`).
         #[inline(always)]
-        fn raw<H: bun_core::Hasher + ?Sized, T: Copy>(h: &mut H, v: T) {
-            // SAFETY: `T: Copy` ⇒ no drop glue / no interior refs we care about;
-            // we read exactly size_of::<T> initialized bytes from `v`'s stack slot.
-            // Mirrors Zig `hasher.update(std.mem.asBytes(&thing))`.
-            h.update(unsafe {
-                core::slice::from_raw_parts(
-                    core::ptr::addr_of!(v).cast::<u8>(),
-                    core::mem::size_of::<T>(),
-                )
-            });
+        fn raw<H: bun_core::Hasher + ?Sized, T: bytemuck::NoUninit>(h: &mut H, v: T) {
+            h.update(bytemuck::bytes_of(&v));
         }
         #[inline(always)]
         fn name_of<H: bun_core::Hasher + ?Sized, S: crate::base::SymbolTable + ?Sized>(
@@ -2362,13 +2356,16 @@ impl Data {
             Data::ENew(_) | Data::ECall(_) => {}
             Data::EFunction(_) => {}
             Data::EDot(e) => {
-                raw(hasher, e.optional_chain);
+                // Encode `Option<#[repr(u8)] OptionalChain>` as its niche byte
+                // (Some(Start)=0, Some(Continuation)=1, None=2) — same bytes
+                // the prior raw-byte reinterpretation produced.
+                raw(hasher, e.optional_chain.map_or(2u8, |c| c as u8));
                 raw(hasher, e.name.len());
                 e.target.data.write_to_hasher(hasher, symbol_table);
                 hasher.update(&e.name);
             }
             Data::EIndex(e) => {
-                raw(hasher, e.optional_chain);
+                raw(hasher, e.optional_chain.map_or(2u8, |c| c as u8));
                 e.target.data.write_to_hasher(hasher, symbol_table);
                 e.index.data.write_to_hasher(hasher, symbol_table);
             }

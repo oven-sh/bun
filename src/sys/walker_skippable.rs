@@ -256,14 +256,9 @@ pub fn walk(
 
 /// Reinterpret a slice of `OSPathChar` (or any POD `T`) as bytes.
 /// Mirrors `std.mem.sliceAsBytes`.
-// TODO(port): move to a shared helper in bun_core / bun_str if not already present.
 #[inline]
-fn slice_as_bytes<T>(s: &[T]) -> &[u8] {
-    // SAFETY: reading any `T` slice as raw bytes is sound for POD path chars (u8/u16);
-    // length is `len * size_of::<T>()` and alignment of u8 is 1.
-    unsafe {
-        core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), core::mem::size_of_val(s))
-    }
+fn slice_as_bytes<T: bun_core::NoUninit>(s: &[T]) -> &[u8] {
+    bun_core::cast_slice(s)
 }
 
 // ported from: src/sys/walker_skippable.zig

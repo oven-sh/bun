@@ -369,11 +369,10 @@ impl BlobExt for Blob {
         // and route through `to_js_host_call` so the exception scope is asserted.
         fn wrapped<F: read_file::ReadFileToJs>(
             b: &Blob,
-            g: *const JSGlobalObject,
+            g: bun_ptr::BackRef<JSGlobalObject>,
             by: &mut [u8],
         ) -> JSValue {
-            // SAFETY: `g` is the `&JSGlobalObject` stored on the task in `init`.
-            let g = unsafe { &*g };
+            let g = g.get();
             jsc::host_fn::to_js_host_call(g, || F::call(b, g, std::ptr::from_mut::<[u8]>(by), Lifetime::Clone))
         }
         S3BlobDownloadTask::init(global, self, wrapped::<F>)
@@ -4627,7 +4626,7 @@ pub fn write_file_internal(
                             .throw_invalid_arguments(format_args!("ReadableStream has already been used")));
                     }
                     let task = bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
-                        global_this,
+                        global_this: bun_ptr::BackRef::new(global_this),
                         // Zig moves `destination_blob` by value into the task
                         // (single store ref transfers; outer local is dead after the
                         // early return). `dupe()` here would leak one StoreRef since
@@ -5158,13 +5157,15 @@ pub fn to_stream_with_offset(
 
 pub struct S3BlobDownloadTask {
     pub blob: Blob,
-    pub global_this: *const JSGlobalObject,
+    /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
+    /// the borrow detaches from `&self` (Copy) for use across `&mut self` calls.
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: bun_io::KeepAlive,
     pub handler: S3ReadHandler,
 }
 
-pub type S3ReadHandler = fn(&Blob, *const JSGlobalObject, &mut [u8]) -> JSValue;
+pub type S3ReadHandler = fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, &mut [u8]) -> JSValue;
 
 impl S3BlobDownloadTask {
     pub fn call_handler(&mut self, raw_bytes: &mut [u8]) -> JSValue {
@@ -5180,13 +5181,10 @@ impl S3BlobDownloadTask {
         let _drop = scopeguard::guard(std::ptr::from_mut::<S3BlobDownloadTask>(this), |p| unsafe {
             drop(bun_core::heap::take(p));
         });
-        // NOTE(accessor-sweep): no `&`-returning accessor for
-        // `S3BlobDownloadTask::global_this` — the borrow must outlive
-        // `&mut this` calls (`this.call_handler`, `this.promise.*`) below,
-        // which a `fn(&self) -> &JSGlobalObject` lifetime cannot express.
-        // SAFETY: `global_this` is set from a live `&JSGlobalObject` in
-        // `init()` and `poll_ref` keeps the VM alive until this resolves.
-        let global = unsafe { &*this.global_this };
+        // Copy the `BackRef` out so the `&JSGlobalObject` borrow is detached
+        // from `this` (it must coexist with `&mut this` calls below).
+        let global_ref = this.global_this;
+        let global = global_ref.get();
         match result {
             crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
                 // PORT NOTE: Zig leaks `response.body` here (no Drop on
@@ -5228,7 +5226,7 @@ impl S3BlobDownloadTask {
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
         let this = bun_core::heap::into_raw(Box::new(S3BlobDownloadTask {
-            global_this: global_this,
+            global_this: bun_ptr::BackRef::new(global_this),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(global_this),
             poll_ref: bun_io::KeepAlive::default(),

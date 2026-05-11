@@ -178,8 +178,7 @@ pub fn write<W: Write + ?Sized>(
     let bv2: &BundleV2<'_> = unsafe {
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
-    // SAFETY: `bv2.transpiler` is always initialized before linking runs.
-    let options = unsafe { &(*bv2.transpiler).options };
+    let options = &bv2.transpiler().options;
     let mut entry_point_bits = AutoBitSet::init_empty(graph.entry_points.len())?;
 
     let root_dir: &[u8] = if !options.root_dir.is_empty() {

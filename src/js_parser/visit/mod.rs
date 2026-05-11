@@ -97,8 +97,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        // PORT NOTE: FnOnlyDataVisit holds `Option<&'a mut Ref>` (non-Copy); save/restore
-        // via `take` instead of by-value copy.
+        // PORT NOTE: FnOnlyDataVisit holds `Option<&'a Cell<Ref>>`; save/restore via
+        // `take` so the old value is moved out before we overwrite the field.
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
@@ -819,14 +819,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.enclosing_class_keyword = class.class_keyword;
         self.vis_scope()
             .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
-        // PORT NOTE: `FnOnlyDataVisit::class_name_ref` is `Option<&'a mut Ref>`, so the
-        // shadow ref must outlive the parser. Allocate it in the bump arena (Zig kept it
-        // on the stack and passed `&shadow_ref` — Rust's lifetime on the field forbids that).
-        // We hold it as a raw `*mut Ref` and only materialise a `&'a mut Ref` at the
-        // moment we hand it to `fn_only_data_visit.class_name_ref`; all other reads/writes
-        // go through the raw pointer so two `&mut Ref` to the same allocation never
-        // coexist (the field's `&mut` is restored/overwritten before any read here).
-        let shadow_ref_ptr: *mut Ref = std::ptr::from_mut::<Ref>(self.arena.alloc(Ref::NONE));
+        // PORT NOTE: `FnOnlyDataVisit::class_name_ref` is `Option<&'a Cell<Ref>>`, so the
+        // shadow ref must outlive the parser borrow. Allocate it in the bump arena (Zig kept
+        // it on the stack and passed `&shadow_ref` — Rust's `'a` bound on the field forbids
+        // that). `Cell` lets us hand out a shared `&'a Cell<Ref>` to nested frames while
+        // still reading/writing it here, with no raw-pointer `unsafe`.
+        let shadow_ref: &'a core::cell::Cell<Ref> =
+            core::cell::Cell::from_mut(self.arena.alloc(Ref::NONE));
 
         // Insert a shadowing name that spans the whole class, which matches
         // JavaScript's semantics. The class body (and extends clause) "captures" the
@@ -836,10 +835,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
         if let Some(name) = class.class_name {
-            // SAFETY: shadow_ref_ptr is a fresh bump allocation valid for 'a; sole access.
-            let shadow_ref = name.ref_.expect("infallible: ref bound");
-            unsafe { *shadow_ref_ptr = shadow_ref };
-            let original_name: &'a [u8] = self.symbols[shadow_ref.inner_index() as usize].original_name.slice();
+            let name_ref = name.ref_.expect("infallible: ref bound");
+            shadow_ref.set(name_ref);
+            let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize].original_name.slice();
             self.vis_scope()
                 .members
                 .put(
@@ -859,12 +857,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let new_ref = self
                 .new_symbol(SymbolKind::Constant, name_str)
                 .expect("unreachable");
-            // SAFETY: shadow_ref_ptr is a fresh bump allocation valid for 'a; sole access.
-            unsafe { *shadow_ref_ptr = new_ref };
+            shadow_ref.set(new_ref);
         }
 
-        // SAFETY: shadow_ref_ptr valid for 'a; no live &mut alias here.
-        self.record_declared_symbol(unsafe { *shadow_ref_ptr });
+        self.record_declared_symbol(shadow_ref.get());
 
         if let Some(extends) = class.extends.as_mut() {
             self.visit_expr(extends);
@@ -886,8 +882,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
                         is_new_target_allowed: true,
-                        // SAFETY: shadow_ref is bump-allocated for 'a.
-                        class_name_ref: Some(unsafe { &mut *shadow_ref_ptr }),
+                        class_name_ref: Some(shadow_ref),
 
                         // TODO: down transpilation
                         should_replace_this_with_class_name_ref: false,
@@ -942,8 +937,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let old_class_name_ref = self.fn_only_data_visit.class_name_ref.take();
                 self.fn_only_data_visit.is_this_nested = true;
                 self.fn_only_data_visit.is_new_target_allowed = true;
-                // SAFETY: shadow_ref is bump-allocated for 'a; reborrow per-iter.
-                self.fn_only_data_visit.class_name_ref = Some(unsafe { &mut *shadow_ref_ptr });
+                self.fn_only_data_visit.class_name_ref = Some(shadow_ref);
                 // defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
                 // defer p.fn_only_data_visit.class_name_ref = old_class_name_ref;
                 // — manual restore at end of loop body; no `continue` after this point.
@@ -1182,18 +1176,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             self.enclosing_class_keyword = old_enclosing_class_keyword;
         }
 
-        // SAFETY: shadow_ref_ptr valid for 'a; the per-property `class_name_ref` &mut was
-        // restored to `old_class_name_ref` (and the static-block one to `old_fn_only_data`)
-        // before reaching here, so no live &mut alias to this allocation exists.
-        if self.symbols[unsafe { *shadow_ref_ptr }.inner_index() as usize].use_count_estimate == 0 {
+        if self.symbols[shadow_ref.get().inner_index() as usize].use_count_estimate == 0 {
             // If there was originally no class name but something inside needed one
             // (e.g. there was a static property initializer that referenced "this"),
             // store our generated name so the class expression ends up with a name.
-            // SAFETY: see above.
-            unsafe { *shadow_ref_ptr = Ref::NONE };
+            shadow_ref.set(Ref::NONE);
         } else if class.class_name.is_none() {
-            // SAFETY: see above.
-            let sr = unsafe { *shadow_ref_ptr };
+            let sr = shadow_ref.get();
             class.class_name = Some(LocRef {
                 ref_: Some(sr),
                 loc: name_scope_loc,
@@ -1204,8 +1193,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // class name scope
         self.pop_scope();
 
-        // SAFETY: see above.
-        unsafe { *shadow_ref_ptr }
+        shadow_ref.get()
     }
 
     // Try separating the list for appending, so that it's not a pointer.

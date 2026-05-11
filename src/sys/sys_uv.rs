@@ -663,16 +663,9 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
             )
         };
 
-        // TODO(port): PlatformIOVecConst vs PlatformIOVec — same repr on Windows (uv_buf_t)
-        let chunk_capacity = sum_bufs_len(
-            // SAFETY: PlatformIOVecConst and PlatformIOVec are both uv_buf_t on Windows.
-            unsafe {
-                core::slice::from_raw_parts(
-                    chunk_bufs.as_ptr().cast::<PlatformIOVec>(),
-                    chunk_bufs.len(),
-                )
-            },
-        );
+        // `sum_bufs_len` expects `&[PlatformIOVec]`; rather than repr-punning the
+        // const slice through `from_raw_parts`, sum the `.len` fields directly.
+        let chunk_capacity: usize = chunk_bufs.iter().map(|b| b.len as usize).sum();
 
         if cfg!(debug_assertions) {
             log!(

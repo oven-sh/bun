@@ -198,13 +198,9 @@ impl MySQLStatement {
             &mut stack_ids[..non_duplicated_count]
         } else {
             heap_ids = Vec::with_capacity(non_duplicated_count);
-            // SAFETY: spare capacity treated as MaybeUninit; fully initialized below.
-            unsafe {
-                core::slice::from_raw_parts_mut(
-                    heap_ids.as_mut_ptr().cast::<MaybeUninit<ExternColumnIdentifier>>(),
-                    non_duplicated_count,
-                )
-            }
+            // Spare capacity is exactly the uninitialized `[MaybeUninit<T>]` view
+            // we need; fully initialized in the loop below before any read.
+            &mut heap_ids.spare_capacity_mut()[..non_duplicated_count]
         };
 
         let mut i: usize = 0;

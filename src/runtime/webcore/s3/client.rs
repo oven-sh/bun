@@ -309,7 +309,7 @@ pub fn list_objects(
         callback_context,
         callback: s3_simple_request::Callback::ListObjects(callback),
         headers,
-        vm: VirtualMachine::get_mut_ptr(),
+        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
@@ -339,8 +339,12 @@ pub fn list_objects(
     } else {
         None
     };
-    // SAFETY: `task.vm` is the live per-thread VM pointer from `VirtualMachine::get()`.
-    let vm = unsafe { &mut *task.vm };
+    // SAFETY: `task.vm` is the live per-thread VM BackRef from
+    // `VirtualMachine::get()`; `get_mut` exclusivity holds — single-threaded
+    // dispatch on the JS thread, no other `&`/`&mut VirtualMachine` is live for
+    // this call's duration.
+    let mut vm_ref = task.vm.expect("vm set at task creation");
+    let vm = unsafe { vm_ref.get_mut() };
 
     task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
@@ -987,8 +991,8 @@ pub fn download_stream(
         callback,
         range: range.map(Vec::into_boxed_slice),
         headers,
-        // `VirtualMachine::get()` returns the live per-thread VM singleton (`*mut VirtualMachine`).
-        vm: VirtualMachine::get_mut_ptr(),
+        // `VirtualMachine::get()` returns the live per-thread VM singleton.
+        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
         has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
         signal_store: Default::default(),
         signals: Default::default(),

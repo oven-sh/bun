@@ -37,14 +37,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let hash = Scope::get_member_hash(name);
 
         let ref_: Ref = 'brk: {
-            // TODO(port): lifetime — Scope.parent is an arena-backref Option<NonNull>; walk via raw ptr.
-            let mut current: *mut Scope = self.current_scope;
+            // `Scope.parent` is an arena-backref `Option<StoreRef<Scope>>`; walk via the
+            // safe `StoreRef` wrapper (Deref) instead of a raw-ptr loop. Seed from
+            // `self.current_scope` (always non-null once `init()` ran) via `NonNull::new`.
+            let mut current: Option<js_ast::StoreRef<Scope>> =
+                core::ptr::NonNull::new(self.current_scope).map(js_ast::StoreRef::from);
 
             let mut did_forbid_arguments = false;
 
-            // SAFETY: scopes are arena-owned and valid for the parser 'a lifetime; the
-            // parent backref chain terminates at module_scope (whose parent is None).
-            while let Some(scope) = unsafe { current.as_ref() } {
+            while let Some(scope) = current {
                 // Track if we're inside a "with" statement body
                 if scope.kind == js_ast::scope::Kind::With {
                     is_inside_with_scope = true;
@@ -100,10 +101,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
 
-                current = match scope.parent {
-                    Some(p) => p.as_ptr(),
-                    None => core::ptr::null_mut(),
-                };
+                current = scope.parent;
             }
 
             // Allocate an "unbound" symbol

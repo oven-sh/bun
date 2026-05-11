@@ -2309,11 +2309,10 @@ pub mod printer {
     ) -> Result<(), bun_core::Error> {
         debug_assert!(!json || quote_char == b'"');
         // utf16 view over the same bytes (only used when encoding == Utf16).
-        // SAFETY: callers pass 2-byte-aligned even-length input for Utf16.
+        // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
+        // panics (rather than UB) if that contract is violated.
         let text16: &[u16] = if encoding == StrEncoding::Utf16 {
-            unsafe {
-                core::slice::from_raw_parts(text_in.as_ptr().cast::<u16>(), text_in.len() / 2)
-            }
+            bun_core::cast_slice::<u8, u16>(text_in)
         } else {
             &[]
         };

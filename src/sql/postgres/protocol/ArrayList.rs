@@ -23,34 +23,36 @@ impl<'a> ArrayList<'a> {
 }
 
 // PORT NOTE: Zig methods took `@This()` by value (a `*ArrayList(u8)` is Copy).
-// `WriterContext` requires `Copy`, so the context wraps a raw pointer to the
-// caller's `Vec<u8>` and the `'a` borrow is the safety invariant.
+// `WriterContext` requires `Copy`, so the context wraps a `BackRef` to the
+// caller's `Vec<u8>`; the `'a` borrow is the safety invariant (Vec outlives ctx).
 #[derive(Clone, Copy)]
 pub struct ArrayListCtx<'a> {
-    array: *mut Vec<u8>,
+    array: bun_ptr::BackRef<Vec<u8>>,
     _p: core::marker::PhantomData<&'a mut Vec<u8>>,
 }
 
 impl<'a> ArrayListCtx<'a> {
     #[inline]
     pub fn new(array: &'a mut Vec<u8>) -> Self {
-        Self { array: std::ptr::from_mut::<Vec<u8>>(array), _p: core::marker::PhantomData }
+        Self { array: bun_ptr::BackRef::new_mut(array), _p: core::marker::PhantomData }
     }
 }
 
 impl<'a> WriterContext for ArrayListCtx<'a> {
     fn offset(self) -> usize {
-        // SAFETY: 'a guarantees the Vec outlives this ctx; no aliasing &mut held.
-        unsafe { (&*self.array).len() }
+        self.array.len()
     }
-    fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError> {
-        // SAFETY: same as above.
-        unsafe { (&mut *self.array).extend_from_slice(bytes) };
+    fn write(mut self, bytes: &[u8]) -> Result<(), AnyPostgresError> {
+        // SAFETY: 'a guarantees the Vec outlives this ctx; constructed via
+        // `new_mut` (write provenance); `WriterContext` is used single-threaded
+        // with no overlapping `&`/`&mut` to the same Vec.
+        unsafe { self.array.get_mut() }.extend_from_slice(bytes);
         Ok(())
     }
-    fn pwrite(self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
-        // SAFETY: same as above.
-        unsafe { (&mut *self.array)[i..i + bytes.len()].copy_from_slice(bytes) };
+    fn pwrite(mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
+        // SAFETY: same as `write` above.
+        let arr = unsafe { self.array.get_mut() };
+        arr[i..i + bytes.len()].copy_from_slice(bytes);
         Ok(())
     }
 }

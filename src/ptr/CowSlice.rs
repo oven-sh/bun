@@ -91,6 +91,22 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     // case ever appears.
     pub const EMPTY: Self = Self::init_static(&[]);
 
+    /// Debug-only accessor for the heap-allocated borrow-tracking data.
+    ///
+    /// Single `unsafe` deref site for the set-once `Option<NonNull<DebugData>>`
+    /// field; `borrow` / `into_owned` / `Drop` go through this instead of
+    /// repeating the raw deref at each call site.
+    #[cfg(debug_assertions)]
+    #[inline]
+    fn debug_data(&self) -> Option<&DebugData> {
+        // SAFETY: `self.debug` is `Some` only when populated by `init_owned` /
+        // `into_owned` with a fresh `heap::alloc`ed box. Owned cows free it
+        // exclusively in `Drop`; borrowed cows share the owner's box, which by
+        // API contract outlives every borrow. The returned `&DebugData` is tied
+        // to `&self` and so cannot dangle past the `CowSliceZ` itself.
+        self.debug.map(|d| unsafe { d.as_ref() })
+    }
+
     // TODO(port): Zig exposed `pub const Slice` / `SliceMut` associated type
     // aliases that switched on `sentinel` (`[:z]const T` vs `[]const T`). Rust
     // has no inherent associated type aliases; callers use `&[T]` / `&mut [T]`
@@ -225,9 +241,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// that perform `borrows` checks are performed.
     pub fn borrow(&self) -> Self {
         #[cfg(debug_assertions)]
-        if let Some(debug) = self.debug {
-            // SAFETY: `debug` is valid while the owning Cow is alive.
-            let debug = unsafe { debug.as_ref() };
+        if let Some(debug) = self.debug_data() {
             let mut borrows = debug.mutex.lock();
             *borrows += 1;
         }
@@ -290,9 +304,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
 
         #[cfg(debug_assertions)]
         {
-            if let Some(debug) = self.debug {
-                // SAFETY: `debug` is valid while the original owner is alive.
-                let dbg = unsafe { debug.as_ref() };
+            if let Some(dbg) = self.debug_data() {
                 let mut borrows = dbg.mutex.lock();
                 debug_assert!(*borrows > 0);
                 *borrows -= 1;
@@ -326,10 +338,7 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
     /// checks. In release builds it is a no-op.
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
-        if let Some(debug) = self.debug {
-            // SAFETY: `debug` is valid — owned Cows hold the box, borrowed Cows
-            // are required (by contract) to be dropped before the owner.
-            let dbg = unsafe { debug.as_ref() };
+        if let Some(dbg) = self.debug_data() {
             // PORT NOTE: Zig asserted `debug.allocator.vtable == allocator.vtable`
             // here. With a single global allocator that check is moot.
             if self.is_owned() {
@@ -342,7 +351,7 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
                 );
                 drop(borrows);
                 // SAFETY: owned ⇒ we created this via `heap::alloc`.
-                drop(unsafe { bun_core::heap::take(debug.as_ptr()) });
+                drop(unsafe { bun_core::heap::take(self.debug.unwrap().as_ptr()) });
             } else {
                 let mut borrows = dbg.mutex.lock();
                 *borrows -= 1; // double deinit of a borrowed string would underflow

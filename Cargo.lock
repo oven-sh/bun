@@ -918,6 +918,7 @@ dependencies = [
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
+ "bytemuck",
  "const_format",
  "enum-map",
  "enumset",

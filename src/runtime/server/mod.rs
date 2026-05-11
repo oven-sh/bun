@@ -161,12 +161,16 @@ pub enum AnyRoute {
 }
 
 impl AnyRoute {
+    // `Static`/`File` payloads are intrusive-refcounted heap allocations whose
+    // +1 ref is held by the route table for the entire lifetime of this
+    // `AnyRoute` value, so the `BackRef` invariant (pointee outlives holder)
+    // is satisfied for any borrow scoped to `&self`. Wrapping the `NonNull`
+    // in a transient `BackRef` centralises the deref under that invariant
+    // instead of repeating a raw `NonNull::as_ref` per arm.
     pub fn memory_cost(&self) -> usize {
         match self {
-            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
-            AnyRoute::Static(p) => unsafe { p.as_ref() }.memory_cost(),
-            // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { p.as_ref() }.memory_cost(),
+            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).memory_cost(),
+            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).memory_cost(),
             AnyRoute::Html(r) => r.data().memory_cost(),
             AnyRoute::FrameworkRouter(_) => core::mem::size_of::<crate::bake::FileSystemRouterType>(),
         }
@@ -174,10 +178,8 @@ impl AnyRoute {
 
     pub fn ref_(&self) {
         match self {
-            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
-            AnyRoute::Static(p) => unsafe { p.as_ref() }.ref_(),
-            // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { p.as_ref() }.ref_(),
+            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).ref_(),
+            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).ref_(),
             AnyRoute::Html(r) => {
                 // SAFETY: RefPtr keeps the pointee live while held in the route table.
                 unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
@@ -198,10 +200,8 @@ impl AnyRoute {
 
     pub fn set_server(&self, server: Option<AnyServer>) {
         match self {
-            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
-            AnyRoute::Static(p) => unsafe { p.as_ref() }.server.set(server),
-            // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { p.as_ref() }.set_server(server),
+            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).server.set(server),
+            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).set_server(server),
             AnyRoute::Html(r) => r.data().server.set(server),
             AnyRoute::FrameworkRouter(_) => {} // DevServer holds its own .server (server.zig:51-58)
         }
@@ -1456,17 +1456,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.js_value.downgrade();
         }
         if self.config.allow_hot && !self.config.id.is_empty() {
-            // PORT NOTE: reshaped for borrowck — `id` borrows `self.config`;
-            // `hot_map()` returns `&mut HotMap` reached via the VM singleton
-            // (raw ptr deref), so the two borrows do not overlap from rustc's
-            // POV. Snapshot the slice via raw ptr/len anyway to keep the
-            // `&self.config` borrow scoped tightly.
-            let (id_ptr, id_len) = (self.config.id.as_ptr(), self.config.id.len());
-            // SAFETY: `vm_mut()` is the non-null process-static VM pointer;
-            // `id` bytes live in `self.config` for this scope.
+            // `hot_map()` is reached via the thread-local VM singleton (raw ptr
+            // deref) and does not borrow `self`, so it cannot overlap with the
+            // `&self.config.id` borrow.
+            // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
             unsafe {
                 if let Some(hot) = (*self.vm_mut()).hot_map() {
-                    hot.remove(core::slice::from_raw_parts::<u8>(id_ptr, id_len));
+                    hot.remove(&self.config.id);
                 }
             }
         }

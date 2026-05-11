@@ -1653,24 +1653,26 @@ impl<T: Default> Default for RacyCell<T> {
 // ─── ThreadLock (from bun_safety) ─────────────────────────────────────────
 // Debug-only re-entrancy guard. Release builds compile to a ZST.
 //
-// `locked_at` is `UnsafeCell` so `lock()`/`lock_or_assert()` can take `&self`
+// `locked_at` is `Cell` so `lock()`/`lock_or_assert()` can take `&self`
 // (callers like `RefCount::assert_single_threaded` only have `&self`). The
 // whole point of ThreadLock is asserting single-threaded access, so the
 // unsynchronized write to `locked_at` is exactly the Zig semantics — if two
 // threads race here, the `owning_thread.swap` panic fires first.
 pub struct ThreadLock {
     #[cfg(debug_assertions)] owning_thread: core::sync::atomic::AtomicU64,
-    #[cfg(debug_assertions)] locked_at: core::cell::UnsafeCell<crate::StoredTrace>,
+    #[cfg(debug_assertions)] locked_at: core::cell::Cell<crate::StoredTrace>,
 }
 // SAFETY: `locked_at` is only written after `owning_thread.swap` proves the
-// current thread is the unique acquirer; concurrent access panics first.
+// current thread is the unique acquirer; concurrent access panics first. The
+// `Cell` is `!Sync` but the AcqRel `swap` on `owning_thread` is the lock that
+// serializes its non-atomic load/store across threads.
 unsafe impl Sync for ThreadLock {}
 const INVALID_THREAD_ID: u64 = 0;
 impl ThreadLock {
     pub const fn init_unlocked() -> Self {
         Self {
             #[cfg(debug_assertions)] owning_thread: core::sync::atomic::AtomicU64::new(INVALID_THREAD_ID),
-            #[cfg(debug_assertions)] locked_at: core::cell::UnsafeCell::new(crate::StoredTrace::EMPTY),
+            #[cfg(debug_assertions)] locked_at: core::cell::Cell::new(crate::StoredTrace::EMPTY),
         }
     }
     #[inline] pub fn init_locked() -> Self { let s = Self::init_unlocked(); s.lock(); s }
@@ -1707,17 +1709,17 @@ impl ThreadLock {
             let cur = thread_id();
             let prev = self.owning_thread.swap(cur, core::sync::atomic::Ordering::AcqRel);
             if prev != INVALID_THREAD_ID {
-                // SAFETY: read-only path; the prior holder wrote `locked_at`
-                // before its `swap` released, and we observe via AcqRel above.
-                let trace = unsafe { (*self.locked_at.get()).trace() };
-                crate::dump_stack_trace(&trace, crate::DumpStackTraceOptions {
+                // Prior holder wrote `locked_at` after its `swap`; our AcqRel
+                // swap observes it. Debug-only diagnostic on the panic path.
+                let stored = self.locked_at.get();
+                crate::dump_stack_trace(&stored.trace(), crate::DumpStackTraceOptions {
                     frame_count: 10, stop_at_jsc_llint: true, ..Default::default()
                 });
                 panic!("ThreadLock: thread {cur} tried to lock, already held by {prev}");
             }
-            // SAFETY: swap above proved we are the unique acquirer (prev was
-            // INVALID); no other thread can be in this branch concurrently.
-            unsafe { *self.locked_at.get() = crate::StoredTrace::capture(None); }
+            // swap above proved we are the unique acquirer (prev was INVALID);
+            // no other thread can be in this branch concurrently.
+            self.locked_at.set(crate::StoredTrace::capture(None));
         }
     }
     #[inline]
@@ -1726,8 +1728,8 @@ impl ThreadLock {
         {
             self.assert_locked(); // Zig: assert current thread holds it before reset.
             self.owning_thread.store(INVALID_THREAD_ID, core::sync::atomic::Ordering::Release);
-            // SAFETY: assert_locked above proved we are the unique holder.
-            unsafe { *self.locked_at.get() = crate::StoredTrace::EMPTY; }
+            // assert_locked above proved we are the unique holder.
+            self.locked_at.set(crate::StoredTrace::EMPTY);
         }
     }
     #[inline]

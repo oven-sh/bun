@@ -2438,15 +2438,11 @@ pub mod JSZlib {
                 // `global_deallocator`).
                 drop(reader);
                 list.shrink_to_fit();
-                let ptr = list.as_mut_ptr();
-                let len = list.len();
-                core::mem::forget(list);
-                // SAFETY: ptr/len leaked from `list` just above; freed via
+                // Ownership of the allocation transfers to JSC; freed via
                 // `global_deallocator` once the ArrayBuffer is finalized.
-                let array_buffer = ArrayBuffer::from_bytes(
-                    unsafe { core::slice::from_raw_parts_mut(ptr, len) },
-                    jsc::JSType::Uint8Array,
-                );
+                let leaked: &'static mut [u8] = list.leak();
+                let ptr = leaked.as_mut_ptr();
+                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
                 array_buffer.to_js_with_context(
                     global_this,
                     ptr.cast::<c_void>(),
@@ -2509,14 +2505,11 @@ pub mod JSZlib {
                     )));
                 }
 
-                let ptr = list.as_mut_ptr();
-                let len = list.len();
-                core::mem::forget(list);
-                let array_buffer = ArrayBuffer::from_bytes(
-                    // SAFETY: ptr/len leaked from Vec just above.
-                    unsafe { core::slice::from_raw_parts_mut(ptr, len) },
-                    jsc::JSType::Uint8Array,
-                );
+                // Ownership of the allocation transfers to JSC; freed via
+                // `global_deallocator` once the ArrayBuffer is finalized.
+                let leaked: &'static mut [u8] = list.leak();
+                let ptr = leaked.as_mut_ptr();
+                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
                 array_buffer.to_js_with_context(
                     global_this,
                     ptr.cast::<c_void>(),
@@ -2612,14 +2605,11 @@ pub mod JSZlib {
                 // it before leaking `list` into the ArrayBuffer.
                 drop(reader);
                 list.shrink_to_fit();
-                let ptr = list.as_mut_ptr();
-                let len = list.len();
-                core::mem::forget(list);
-                // SAFETY: ptr/len leaked from `list`; freed via `global_deallocator`.
-                let array_buffer = ArrayBuffer::from_bytes(
-                    unsafe { core::slice::from_raw_parts_mut(ptr, len) },
-                    jsc::JSType::Uint8Array,
-                );
+                // Ownership of the allocation transfers to JSC; freed via
+                // `global_deallocator` once the ArrayBuffer is finalized.
+                let leaked: &'static mut [u8] = list.leak();
+                let ptr = leaked.as_mut_ptr();
+                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
                 array_buffer.to_js_with_context(
                     global_this,
                     ptr.cast::<c_void>(),
@@ -2672,15 +2662,11 @@ pub mod JSZlib {
                     )));
                 }
 
-                let ptr = list.as_mut_ptr();
-                let len = list.len();
-                core::mem::forget(list);
-                let array_buffer = ArrayBuffer::from_bytes(
-                    // SAFETY: ptr/len leaked from the Vec just above; memory remains valid
-                    // until global_deallocator frees it via the ArrayBuffer finalizer.
-                    unsafe { core::slice::from_raw_parts_mut(ptr, len) },
-                    jsc::JSType::Uint8Array,
-                );
+                // Ownership of the allocation transfers to JSC; freed via
+                // `global_deallocator` once the ArrayBuffer is finalized.
+                let leaked: &'static mut [u8] = list.leak();
+                let ptr = leaked.as_mut_ptr();
+                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
                 array_buffer.to_js_with_context(
                     global_this,
                     ptr.cast::<c_void>(),

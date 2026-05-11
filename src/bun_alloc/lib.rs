@@ -1733,16 +1733,13 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
 
     pub fn exists(&self, value: &[u8]) -> bool {
         // Zig: `isSliceInBuffer(value, &instance.backing_buf)` — pointer-range check
-        // against the backing storage as raw bytes.
-        // SAFETY: reading the byte range of `backing_buf` for a pointer-containment check
-        // (no dereference of element data). `MaybeUninit<T>` storage is always validly addressable.
-        let buf = unsafe {
-            core::slice::from_raw_parts(
-                self.backing_buf.as_ptr().cast::<u8>(),
-                core::mem::size_of_val(&self.backing_buf),
-            )
-        };
-        is_slice_in_buffer(value, buf)
+        // against the backing storage as raw bytes. Done with addresses rather
+        // than forming a `&[u8]` over `MaybeUninit<T>` storage (which would
+        // assert byte-validity of uninitialized memory).
+        let base = self.backing_buf.as_ptr() as usize;
+        let end = base + core::mem::size_of_val(&self.backing_buf);
+        let p = value.as_ptr() as usize;
+        base <= p && p + value.len() <= end
     }
 
     fn append_overflow(

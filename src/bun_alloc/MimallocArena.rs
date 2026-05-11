@@ -14,7 +14,7 @@
 use core::alloc::{AllocError, Allocator, Layout};
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::mem::{self, MaybeUninit};
+use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 #[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -960,20 +960,13 @@ impl<'a, T> ArenaVecExt<'a, T> for Vec<T, &'a MimallocArena> {
     }
     #[inline]
     fn into_bump_slice(self) -> &'a [T] {
-        let mut me = mem::ManuallyDrop::new(self);
-        let len = me.len();
-        let ptr = me.as_mut_ptr();
-        // SAFETY: storage is owned by the arena and lives for `'a`; we forgo
-        // `Vec`'s drop so the arena reclaims it on `reset`/`Drop`.
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        // Storage is owned by the arena and lives for `'a`; `Vec::leak` forgoes
+        // the `Vec` drop so the arena reclaims it on `reset`/`Drop`.
+        &*self.leak()
     }
     #[inline]
     fn into_bump_slice_mut(self) -> &'a mut [T] {
-        let mut me = mem::ManuallyDrop::new(self);
-        let len = me.len();
-        let ptr = me.as_mut_ptr();
-        // SAFETY: see `into_bump_slice`.
-        unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+        self.leak()
     }
     #[inline]
     fn bump(&self) -> &'a MimallocArena {

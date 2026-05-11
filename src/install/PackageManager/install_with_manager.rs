@@ -149,7 +149,7 @@ pub fn install_with_manager(
                     Output::warn("Ignoring lockfile");
                 }
 
-                if unsafe { (*ctx.log).errors } > 0 {
+                if manager.log_mut().errors > 0 {
                     manager.log_mut()
                         .print(std::ptr::from_mut(Output::error_writer()))?;
                     manager.log_mut().reset();
@@ -247,7 +247,7 @@ pub fn install_with_manager(
                 ) {
                     WorkspacePackageJsonCacheResult::Entry(entry) => entry,
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
-                        if unsafe { (*ctx.log).errors } > 0 {
+                        if manager.log_mut().errors > 0 {
                             manager.log_mut()
                                 .print(std::ptr::from_mut(Output::error_writer()))?;
                         }
@@ -255,7 +255,7 @@ pub fn install_with_manager(
                         Global::exit(1);
                     }
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
-                        if unsafe { (*ctx.log).errors } > 0 {
+                        if manager.log_mut().errors > 0 {
                             manager.log_mut()
                                 .print(std::ptr::from_mut(Output::error_writer()))?;
                         }
@@ -638,7 +638,7 @@ pub fn install_with_manager(
         ) {
             WorkspacePackageJsonCacheResult::Entry(entry) => entry,
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
-                if unsafe { (*ctx.log).errors } > 0 {
+                if manager.log_mut().errors > 0 {
                     manager.log_mut()
                         .print(std::ptr::from_mut(Output::error_writer()))?;
                 }
@@ -646,7 +646,7 @@ pub fn install_with_manager(
                 Global::exit(1);
             }
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
-                if unsafe { (*ctx.log).errors } > 0 {
+                if manager.log_mut().errors > 0 {
                     manager.log_mut()
                         .print(std::ptr::from_mut(Output::error_writer()))?;
                 }

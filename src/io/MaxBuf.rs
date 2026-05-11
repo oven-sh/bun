@@ -26,6 +26,19 @@ pub struct MaxBuf {
 // heap::alloc/disowned()/destroy() refcount will not typecheck against those field types in
 // Phase B — reconcile by retyping to Option<Arc<MaxBuf>> and dropping destroy()/disowned().
 impl MaxBuf {
+    /// Single nonnull-asref projection for the dual-owner back-pointer.
+    ///
+    /// Type invariant: every `NonNull<MaxBuf>` reachable from a subprocess or
+    /// pipe-reader slot was created by `create_for_subprocess` and stays live
+    /// until both owners have disowned it and `destroy` runs. All fields are
+    /// `Cell<_>`, so the shared `&MaxBuf` returned here is sufficient for every
+    /// mutation path and re-entrancy through the overflow callback is sound.
+    #[inline]
+    fn live<'a>(this: &'a NonNull<MaxBuf>) -> &'a MaxBuf {
+        // SAFETY: type invariant — see doc comment above.
+        unsafe { this.as_ref() }
+    }
+
     pub fn create_for_subprocess(
         ptr: &mut Option<NonNull<MaxBuf>>,
         initial: Option<i64>,
@@ -49,18 +62,14 @@ impl MaxBuf {
     /// `this` must have been allocated by `create_for_subprocess` (i.e. via `heap::alloc`)
     /// and must be fully disowned.
     unsafe fn destroy(this: NonNull<MaxBuf>) {
-        debug_assert!(unsafe { this.as_ref() }.disowned());
+        debug_assert!(Self::live(&this).disowned());
         // SAFETY: paired with heap::alloc in `create_for_subprocess`.
         drop(unsafe { bun_core::heap::take(this.as_ptr()) });
     }
 
     pub fn remove_from_subprocess(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
-        // SAFETY: `this_nn` came from `create_for_subprocess` (heap::alloc); allocation is
-        // live until `destroy`. `&MaxBuf` only — all mutation through `Cell`, so the
-        // re-entrant `on_read_bytes` path that may still be on the stack holds a
-        // compatible shared borrow.
-        let this = unsafe { this_nn.as_ref() };
+        let this = Self::live(&this_nn);
         debug_assert!(this.owned_by_subprocess.get());
         this.owned_by_subprocess.set(false);
         *ptr = None;
@@ -74,16 +83,14 @@ impl MaxBuf {
         let Some(value_nn) = value else { return };
         debug_assert!(ptr.is_none());
         *ptr = Some(value_nn);
-        // SAFETY: `value` is a live MaxBuf created by `create_for_subprocess`.
-        let v = unsafe { value_nn.as_ref() };
+        let v = Self::live(&value_nn);
         debug_assert!(!v.owned_by_reader.get());
         v.owned_by_reader.set(true);
     }
 
     pub fn remove_from_pipereader(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
-        // SAFETY: `ptr` was populated by `add_to_pipereader`; allocation is live until `destroy`.
-        let this = unsafe { this_nn.as_ref() };
+        let this = Self::live(&this_nn);
         debug_assert!(this.owned_by_reader.get());
         this.owned_by_reader.set(false);
         *ptr = None;
@@ -117,11 +124,7 @@ impl MaxBuf {
     /// `this` is live while `owned_by_reader` is set, which every caller has
     /// just checked via `Some(maxbuf)`).
     pub fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
-        // SAFETY: caller holds `this` from a live `Option<NonNull<MaxBuf>>`
-        // populated by `add_to_pipereader`; allocation is live until
-        // `remove_from_pipereader` (which the caller has not yet run). Shared
-        // borrow only — all mutation goes through `Cell`.
-        let this = unsafe { this.as_ref() };
+        let this = Self::live(&this);
         let delta = i64::try_from(bytes).unwrap_or(0);
         let remaining = this.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
         this.remaining_bytes.set(remaining);

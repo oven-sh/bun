@@ -117,8 +117,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     original_cwd: &[u8],
 ) -> Result<(), Error> {
     let log_level = manager.options.log_level;
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-    if unsafe { (*manager.log).errors } > 0 {
+    if manager.log_mut().errors > 0 {
         if log_level != LogLevel::Silent {
             let _ = manager.log_mut().print(std::ptr::from_mut(Output::error_writer()));
         }

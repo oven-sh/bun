@@ -1423,7 +1423,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // Sentinel — overwritten by `finish_concurrently` (gated by the
             // `has_result` CAS) before any read on the JS thread.
             result: core::cell::Cell::new(Ok(())),
-            evtloop: EventLoopHandle::Mini(mini),
+            evtloop: EventLoopHandle::init_mini(mini),
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker { id: 0 },
@@ -2044,10 +2044,10 @@ impl AsyncReaddirRecursiveTask {
         owned.push(0);
         let owned: Box<[u8]> = owned.into_boxed_slice();
         let len = owned.len() - 1; // exclude NUL
-        let ptr = bun_core::heap::into_raw(owned).cast::<u8>();
-        // SAFETY: `ptr[..len]` is the duped bytes; `ptr[len] == 0`. The Box<[u8]>
-        // backing is reconstructed and freed in `ReaddirSubtask::run_owned`.
-        let basename_ps = PathString::init(unsafe { core::slice::from_raw_parts(ptr, len) });
+        // Leak the boxed `[bytes.., 0]` allocation; the Box<[u8]> backing is
+        // reconstructed and freed in `ReaddirSubtask::run_owned`.
+        let leaked: &'static mut [u8] = Box::leak(owned);
+        let basename_ps = PathString::init(&leaked[..len]);
         // Spec (node_fs.zig:1061) `bun.assert(subtask_count.fetchAdd(1, .monotonic) > 0)`
         // — the fetch_add is load-bearing (refcounts the in-flight subtask). It
         // MUST run in release builds; only the `> 0` invariant check is debug-only.
@@ -2083,9 +2083,11 @@ impl AsyncReaddirRecursiveTask {
             let mut owned = Vec::with_capacity(src.len() + 1);
             owned.extend_from_slice(src);
             owned.push(0);
-            let raw = bun_core::heap::into_raw(owned.into_boxed_slice()).cast::<u8>();
-            // SAFETY: `raw[..src.len()]` is the duped bytes; `raw[src.len()] == 0`.
-            PathString::init(unsafe { core::slice::from_raw_parts(raw, src.len()) })
+            let len = src.len();
+            // Leak the boxed `[bytes.., 0]` allocation; reconstructed and freed
+            // in `free_root_path()`.
+            let leaked: &'static mut [u8] = Box::leak(owned.into_boxed_slice());
+            PathString::init(&leaked[..len])
         };
         let mut task = Self::new(AsyncReaddirRecursiveTask {
             promise: JSPromiseStrong::init(global_object),

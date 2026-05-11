@@ -1,4 +1,4 @@
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
 
@@ -35,9 +35,10 @@ pub struct FileRoute {
     status_code: u16,
     // Mutated on every request (`on()` runs `hash()`); FileRoute is reached via
     // a shared `*const Self` from the route table, so wrap for interior
-    // mutability. Sound: `on()` runs to completion synchronously on the
-    // single-threaded JS event loop — no overlapping `&mut StatHash`.
-    stat_hash: UnsafeCell<StatHash>,
+    // mutability. `StatHash` is small POD with `Default`, so `Cell` +
+    // `take()/set()` gives safe read-modify-write on the single-threaded JS
+    // event loop.
+    stat_hash: Cell<StatHash>,
     has_last_modified_header: bool,
     has_content_length_header: bool,
     has_content_range_header: bool,
@@ -94,9 +95,11 @@ impl FileRoute {
             }
         }
 
-        // SAFETY: single-threaded event loop; no concurrent &mut to stat_hash
-        // (see field comment).
-        let last_modified_u64 = unsafe { (*self.stat_hash.get()).last_modified_u64 };
+        // `Cell::take` then restore — single-threaded event loop, no re-entry
+        // reads `stat_hash` between take/set (see field comment).
+        let sh = self.stat_hash.take();
+        let last_modified_u64 = sh.last_modified_u64;
+        self.stat_hash.set(sh);
         if last_modified_u64 > 0 {
             return Ok(Some(last_modified_u64));
         }
@@ -115,7 +118,7 @@ impl FileRoute {
             blob,
             headers,
             status_code: opts.status_code,
-            stat_hash: UnsafeCell::new(StatHash::default()),
+            stat_hash: Cell::new(StatHash::default()),
         }))
     }
 
@@ -167,7 +170,7 @@ impl FileRoute {
                     blob,
                     headers,
                     status_code,
-                    stat_hash: UnsafeCell::new(StatHash::default()),
+                    stat_hash: Cell::new(StatHash::default()),
                 }))));
             }
         }
@@ -186,7 +189,7 @@ impl FileRoute {
                     has_last_modified_header: false,
                     has_content_range_header: false,
                     status_code: 200,
-                    stat_hash: UnsafeCell::new(StatHash::default()),
+                    stat_hash: Cell::new(StatHash::default()),
                 }))));
             }
         }
@@ -236,11 +239,13 @@ impl FileRoute {
         }
 
         if !self.has_last_modified_header {
-            // SAFETY: single-threaded event loop; no concurrent &mut to
-            // stat_hash (see field comment).
-            if let Some(last_modified) = unsafe { (*self.stat_hash.get()).last_modified() } {
+            // `Cell::take` then restore — `write_header` is a sync uWS buffer
+            // copy, no re-entry into `stat_hash` between take/set.
+            let sh = self.stat_hash.take();
+            if let Some(last_modified) = sh.last_modified() {
                 resp.write_header(b"last-modified", last_modified);
             }
+            self.stat_hash.set(sh);
         }
 
         if self.has_content_length_header {
@@ -282,14 +287,14 @@ impl FileRoute {
     // intrusive-refcounted heap object is captured raw into a `scopeguard`
     // whose closure may free `*this` via `deref()` before the local `&Self`
     // borrow lexically ends. Derive a single `&FileRoute` for all field reads;
-    // the only per-request mutation (`stat_hash.hash`) goes through
-    // `UnsafeCell`, so no `&mut Self` is ever materialized and the shared
-    // borrow stays valid under Stacked Borrows across that write.
+    // the only per-request mutation (`stat_hash.hash`) goes through `Cell`, so
+    // no `&mut Self` is ever materialized and the shared borrow stays valid
+    // under Stacked Borrows across that write.
     pub fn on(this_ptr: *mut FileRoute, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         // SAFETY: `this_ptr` is a live heap FileRoute for the duration of this
         // fn body — the `ref_()` taken below keeps it alive until
-        // `on_response_complete`. All mutation through `this` goes via
-        // `Cell`/`UnsafeCell`, so the shared borrow is sound.
+        // `on_response_complete`. All mutation through `this` goes via `Cell`,
+        // so the shared borrow is sound.
         let this = unsafe { &*this_ptr };
         debug_assert!(this.server.get().is_some());
         this.ref_();
@@ -388,10 +393,11 @@ impl FileRoute {
                 break 'brk (false, 0, FileType::File, false);
             }
 
-            // SAFETY: single-threaded event loop; `this: &FileRoute` is the
-            // only live borrow and `stat_hash` is `UnsafeCell`, so this write
-            // does not invalidate `this`'s shared tag.
-            unsafe { (*this.stat_hash.get()).hash(&stat, path) };
+            // `Cell::take` → mutate → `set`: single-threaded event loop, no
+            // re-entry reads `stat_hash` between take/set.
+            let mut sh = this.stat_hash.take();
+            sh.hash(&stat, path);
+            this.stat_hash.set(sh);
 
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
                 break 'brk (true, _size, FileType::Pipe, true);

@@ -28,14 +28,9 @@ impl Signature {
         // `bun_wyhash` crate exposes the streaming API as `Wyhash11` (and a
         // stateless `hash`); for now use the one-shot `bun_wyhash::hash` over
         // a concatenated byte view.
-        // SAFETY: Int4 is POD; reinterpreting &[Int4] as bytes is sound (matches
+        // `Int4` (= u32) is `NoUninit`; safe `&[u32]` → `&[u8]` view (matches
         // Zig `std.mem.sliceAsBytes`).
-        let fields_bytes = unsafe {
-            core::slice::from_raw_parts(
-                self.fields.as_ptr().cast::<u8>(),
-                self.fields.len() * core::mem::size_of::<Int4>(),
-            )
-        };
+        let fields_bytes: &[u8] = bun_core::cast_slice(&self.fields[..]);
         // PERF(port): Zig fed two slices into a streaming Wyhash; bun_wyhash
         // currently lacks the std-compatible streaming `Wyhash` type. Concatenate
         // into a temp Vec until `bun_wyhash::Wyhash` (streaming, seed-0) lands.

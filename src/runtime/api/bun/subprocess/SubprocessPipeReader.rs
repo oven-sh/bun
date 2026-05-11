@@ -8,7 +8,7 @@ use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 use bun_io::pipes::ReadState;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-use bun_ptr::{IntrusiveRc, RefCount, RefCounted, ScopedRef};
+use bun_ptr::{IntrusiveRc, ParentRef, RefCount, RefCounted, ScopedRef};
 use crate::webcore::ReadableStream;
 use bun_sys;
 
@@ -32,10 +32,12 @@ impl Default for State {
 
 pub struct PipeReader {
     pub reader: IOReader,
-    // TODO(port): lifetime — backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
-    // NonNull is a raw pointer; `'static` erases the borrow-checker lifetime since this is only
-    // dereferenced unsafely while the owning Subprocess is known-live.
-    pub process: Option<NonNull<Subprocess<'static>>>,
+    // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
+    // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
+    // the Subprocess owns this PipeReader (via `Readable::Pipe`) and is guaranteed
+    // live whenever `process.is_some()` — see `on_close_io`/`finalize` ordering.
+    // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
+    pub process: Option<ParentRef<Subprocess<'static>>>,
     // TODO(port): lifetime — long-lived borrow of the VM's event loop
     pub event_loop: NonNull<EventLoop>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
@@ -122,7 +124,7 @@ impl PipeReader {
     ) -> IntrusiveRc<PipeReader> {
         let mut this = Box::new(PipeReader {
             ref_count: RefCount::init(),
-            process: Some(process),
+            process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
             event_loop,
             event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
@@ -161,7 +163,7 @@ impl PipeReader {
         event_loop: NonNull<EventLoop>,
     ) -> bun_sys::Result<()> {
         self.r#ref();
-        self.process = Some(process);
+        self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop;
         self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
         #[cfg(windows)]
@@ -223,9 +225,9 @@ impl PipeReader {
         let owned = self.to_owned_slice();
         self.state = State::Done(owned);
         if let Some(process) = self.process.take() {
-            // SAFETY: `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(unsafe { process.as_ref() });
-            unsafe { (*process.as_ptr()).on_close_io(kind) };
+            // `process` backref is valid while set; cleared before deref.
+            let kind = self.kind(process.get());
+            process.on_close_io(kind);
             // SAFETY: last use of `self`; raw ptr derived from `&mut self` carries
             // write provenance, and the caller (BufferedReader vtable) holds only a
             // raw parent pointer, so freeing here does not invalidate any live `&mut`.
@@ -329,11 +331,7 @@ impl PipeReader {
                 // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
                 // boxed slice so JS becomes the owner — same pattern as
                 // `MarkedArrayBuffer::from_string`.
-                let boxed = bytes.into_boxed_slice();
-                let len = boxed.len();
-                let ptr = bun_core::heap::into_raw(boxed).cast::<u8>();
-                // SAFETY: ptr/len from heap::alloc; backed by global mimalloc.
-                let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+                let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
             }
@@ -345,9 +343,9 @@ impl PipeReader {
         // Zig: if state == .done, free state.done — handled by Drop of the replaced Vec.
         self.state = State::Err(err);
         if let Some(process) = self.process.take() {
-            // SAFETY: `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(unsafe { process.as_ref() });
-            unsafe { (*process.as_ptr()).on_close_io(kind) };
+            // `process` backref is valid while set; cleared before deref.
+            let kind = self.kind(process.get());
+            process.on_close_io(kind);
             // SAFETY: last use of `self`; see `on_reader_done` for rationale.
             unsafe { PipeReader::deref(self) };
         }
@@ -462,10 +460,10 @@ impl BufferedReaderParent for PipeReader {
         // SAFETY: `this` is live per trait contract; raw place read of the
         // `process` backref (the embedded reader may hold `&mut self` higher
         // on the stack, so no `&Self` is materialized).
-        let Some(mut process) = (unsafe { (*this).process }) else { return };
-        // SAFETY: `process` is the owning Subprocess back-pointer; live until
+        let Some(process) = (unsafe { (*this).process }) else { return };
+        // `process` is the owning Subprocess back-pointer; live until
         // `detach()`/finalize, both of which clear `(*this).process` first.
-        let sp = unsafe { process.as_ref() };
+        let sp = process.get();
         let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {
             let mut mb = sp.stdout_maxbuf.get();
             bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut mb);

@@ -819,6 +819,13 @@ impl Task {
         let installer = unsafe { &*installer_ptr };
         let manager_ptr: *mut PackageManager = installer.manager;
         let lockfile_ptr: *mut Lockfile = installer.lockfile;
+        // SAFETY: BACKREF — `manager_ptr` is non-null and the `PackageManager`
+        // outlives every `Task` (see top-of-fn note). Wrapped once as
+        // `ParentRef` so the read-only deref sites below go through safe
+        // `Deref`/`get()` instead of per-site `unsafe { &* }`. Mutation and
+        // narrowed `addr_of_mut!` field projections still go through the raw
+        // `manager_ptr` directly (same provenance tag as `manager_ref.ptr`).
+        let manager_ref = unsafe { bun_ptr::ParentRef::<PackageManager>::from_raw(manager_ptr) };
         let lockfile: &Lockfile = unsafe { &*lockfile_ptr };
 
         let pkgs = lockfile.packages.slice();
@@ -1010,8 +1017,7 @@ impl Task {
                             let patch_info =
                                 installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
 
-                            // SAFETY: read-only access to `PackageManager`; see top-of-fn note.
-                            let manager = unsafe { &*manager_ptr };
+                            let manager = manager_ref.get();
                             // SAFETY: `tag` discriminates the active `Resolution.value` variant
                             // for each arm below.
                             match tag {
@@ -1175,8 +1181,7 @@ impl Task {
                                 }
                                 #[cfg(target_os = "macos")]
                                 {
-                                    // SAFETY: read-only `PackageManager` access; see top-of-fn note.
-                                    if unsafe { &*manager_ptr }.options.log_level.is_verbose() {
+                                    if manager_ref.options.log_level.is_verbose() {
                                         Output::pretty_errorln(format_args!(
                                             "Cloning {} to {}",
                                             bun_core::fmt::fmt_os_path(
@@ -1508,8 +1513,7 @@ impl Task {
 
                 Step::RunPreinstall => {
                     let current_step = Step::RunPreinstall;
-                    // SAFETY: read-only `PackageManager` access; see top-of-fn note.
-                    if !unsafe { &*manager_ptr }.options.do_.contains(Do::RUN_SCRIPTS)
+                    if !manager_ref.options.do_.contains(Do::RUN_SCRIPTS)
                         || self.entry_id == StoreEntryId::ROOT
                     {
                         step = self.next_step(current_step);
@@ -1558,8 +1562,7 @@ impl Task {
                             break 'enqueue_lifecycle_scripts;
                         }
                         let mut pkg_scripts: package::scripts::Scripts = pkg_script_lists[pkg_id as usize];
-                        // SAFETY: read-only `PackageManager` access; see top-of-fn note.
-                        let manager = unsafe { &*manager_ptr };
+                        let manager = manager_ref.get();
                         if is_trusted
                             && manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
                                 postinstall_optimizer::PkgInfo {
@@ -1599,15 +1602,13 @@ impl Task {
                         if let Some(list) = scripts_list {
                             let clone: *mut package::scripts::List =
                                 bun_core::heap::into_raw(Box::new(list));
-                            // SAFETY: each Task is the sole writer for its own
-                            // `entry_id`'s `scripts` slot; no other thread reads
-                            // or writes it until this Task reaches
+                            // Each Task is the sole writer for its own `entry_id`'s
+                            // `scripts` slot; no other thread reads or writes it
+                            // until this Task reaches
                             // `Step::RunPostInstallAndPrePostPrepare`. The column
-                            // is `UnsafeCell` (see Store.rs) so writing through
-                            // `&Store` provenance is sound.
-                            unsafe {
-                                *entry_scripts[self.entry_id.get() as usize].get() = Some(clone);
-                            }
+                            // is `Cell<Option<*mut _>>` (see Store.rs) so writing
+                            // through `&Store` provenance is a safe `.set()`.
+                            entry_scripts[self.entry_id.get() as usize].set(Some(clone));
 
                             if is_trusted_through_update_request {
                                 let trusted_dep_to_add: Box<[u8]> =
@@ -1737,8 +1738,7 @@ impl Task {
                     };
                     let mut bin_linker = bin_real::Linker {
                         bin,
-                        // SAFETY: read-only `PackageManager` access; see top-of-fn note.
-                        global_bin_path: unsafe { &*manager_ptr }.options.bin_path,
+                        global_bin_path: manager_ref.options.bin_path,
                         package_name: strings::StringOrTinyString::init(dep_name),
                         target_package_name,
                         string_buf,
@@ -1763,8 +1763,7 @@ impl Task {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name = strings::StringOrTinyString::init(dep_name);
 
-                        // SAFETY: read-only `PackageManager` access; see top-of-fn note.
-                        if unsafe { &*manager_ptr }.options.log_level.is_verbose() {
+                        if manager_ref.options.log_level.is_verbose() {
                             Output::pretty_errorln(format_args!(
                                 "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                                 bstr::BStr::new(dep_name),
@@ -1792,18 +1791,18 @@ impl Task {
 
                 Step::RunPostInstallAndPrePostPrepare => {
                     let current_step = Step::RunPostInstallAndPrePostPrepare;
-                    // SAFETY: read-only `PackageManager` access; see top-of-fn note.
-                    if !unsafe { &*manager_ptr }.options.do_.contains(Do::RUN_SCRIPTS)
+                    if !manager_ref.options.do_.contains(Do::RUN_SCRIPTS)
                         || self.entry_id == StoreEntryId::ROOT
                     {
                         step = self.next_step(current_step);
                         continue;
                     }
 
-                    // SAFETY: this Task is the sole owner of its `entry_id`'s
-                    // `scripts` slot; written (if at all) by this same Task in
+                    // This Task is the sole owner of its `entry_id`'s `scripts`
+                    // slot; written (if at all) by this same Task in
                     // `Step::RunPreinstall` above, never touched concurrently.
-                    let Some(list) = (unsafe { *entry_scripts[self.entry_id.get() as usize].get() }) else {
+                    // `Cell::get` on a `Copy` payload — no unsafe needed.
+                    let Some(list) = entry_scripts[self.entry_id.get() as usize].get() else {
                         step = self.next_step(current_step);
                         continue;
                     };
@@ -1878,12 +1877,10 @@ impl Task {
             Yield::RunScripts(list) => {
                 if Environment::CI_ASSERT {
                     bun_core::assert_with_location(
-                        // SAFETY: this Task is the sole owner of its `entry_id`'s
-                        // `scripts` slot; read-only check.
-                        unsafe {
-                            (*installer.store.entries.items_scripts()[this.entry_id.get() as usize].get())
-                                .is_some()
-                        },
+                        // `Cell::get` on a `Copy` payload — read-only check.
+                        installer.store.entries.items_scripts()[this.entry_id.get() as usize]
+                            .get()
+                            .is_some(),
                         core::panic::Location::caller(),
                     );
                 }

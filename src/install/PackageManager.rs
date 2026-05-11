@@ -366,7 +366,10 @@ pub struct PackageManager {
     pub extracted_count: u32,
     pub default_features: Features,
     pub summary: Package::DiffSummary,
-    pub env: Option<NonNull<dot_env::Loader<'static>>>, // UNKNOWN — mixed ownership, no deinit // TODO(port): lifetime
+    // Set once in `init()`/`init_with_runtime()` to the process-singleton
+    // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
+    // encapsulates the liveness invariant so `env()` is a safe accessor.
+    pub env: Option<bun_ptr::BackRef<dot_env::Loader<'static>>>,
     pub progress: Progress,
     pub downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // UNKNOWN — points to caller stack-local // TODO(port): lifetime
@@ -1078,11 +1081,12 @@ impl PackageManager {
         ensure_temp_node_gyp_script_run(self)
     }
 
-    // Helper: deref env (UNKNOWN ownership wrapper)
+    // Helper: deref env (set-once BackRef to process-singleton loader)
     #[inline]
     pub fn env(&self) -> &dot_env::Loader<'static> {
-        // SAFETY: env is set during init() and never null afterward
-        unsafe { self.env.unwrap().as_ref() }
+        // `env` is set during init() and never None afterward; `BackRef::get`
+        // encapsulates the deref under the back-reference invariant.
+        self.env.as_ref().expect("env initialised").get()
     }
     /// Reborrow the process-global env loader.
     ///
@@ -1094,11 +1098,12 @@ impl PackageManager {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader<'static> {
-        // SAFETY: `env` is set during `init()` and never null afterward; the
+        // SAFETY: `env` is set during `init()` and never None afterward; the
         // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
         // that lives outside `self`, so the unbounded `'a` is sound under the
         // same single-threaded contract as `log_mut`/`scripts_node_mut`.
-        unsafe { self.env.unwrap().as_mut() }
+        // `BackRef` guarantees liveness; exclusivity is the caller's contract.
+        unsafe { &mut *self.env.expect("env initialised").as_ptr() }
     }
 }
 
@@ -1128,8 +1133,8 @@ fn configure_env_for_scripts_run(
     let mut this_transpiler_slot =
         core::mem::MaybeUninit::<transpiler::Transpiler<'static>>::uninit();
     // Zig spec PackageManager.zig:322 passes `this.env` (a `*DotEnv.Loader`).
-    // `self.env` is `Option<NonNull<Loader>>` here; pass the raw pointer so the
-    // shim's `Transpiler::init` reuses the manager's loader instead of
+    // `self.env` is `Option<BackRef<Loader>>` here; pass the raw pointer so
+    // the shim's `Transpiler::init` reuses the manager's loader instead of
     // allocating a fresh singleton.
     let env_ptr: Option<*mut dot_env::Loader<'static>> = this.env.map(|p| p.as_ptr());
     let _ = RunCommand::configure_env_for_run(
@@ -1979,9 +1984,9 @@ pub fn init(
                 // PORT NOTE: reborrow `&mut *env` so the local stays usable for
                 // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
                 // reads (Zig PackageManager.zig:910 keeps using `env` after
-                // storing it in the struct). `NonNull` is a raw pointer —
+                // storing it in the struct). `BackRef` stores a raw pointer —
                 // ending the reborrow here does not alias the later uses.
-                env: Some(NonNull::from(&mut *env)),
+                env: Some(bun_ptr::BackRef::new_mut(&mut *env)),
                 cpu_count,
                 thread_pool: ThreadPool::init(thread_pool::Config {
                     max_threads: cpu_count,
@@ -2383,9 +2388,9 @@ pub fn init_with_runtime_once(
                 // PORT NOTE: reborrow `&mut *env` so the local stays usable for
                 // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
                 // reads (Zig PackageManager.zig:1072 keeps using `env` after
-                // storing it in the struct). `NonNull` is a raw pointer —
+                // storing it in the struct). `BackRef` stores a raw pointer —
                 // ending the reborrow here does not alias the later uses.
-                env: Some(NonNull::from(&mut *env)),
+                env: Some(bun_ptr::BackRef::new_mut(&mut *env)),
                 cpu_count,
                 thread_pool: ThreadPool::init(thread_pool::Config {
                     max_threads: cpu_count,

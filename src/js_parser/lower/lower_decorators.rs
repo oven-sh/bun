@@ -1136,7 +1136,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut static_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
         let mut instance_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
         let mut static_element_order = BumpVec::<StaticElement>::new_in(bump);
-        let mut extracted_static_blocks = BumpVec::<NonNull<G::ClassStaticBlock>>::new_in(bump);
+        let mut extracted_static_blocks = BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut accessor_storage_counter: usize = 0;
@@ -1360,7 +1360,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             kind: StaticElementKind::Block,
                             index: extracted_static_blocks.len(),
                         });
-                        extracted_static_blocks.push(sb);
+                        extracted_static_blocks.push(js_ast::StoreRef::from(sb));
                     }
                     continue;
                 }
@@ -1654,8 +1654,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
             for sb_ptr in extracted_static_blocks.iter_mut() {
-                // SAFETY: arena-owned.
-                let sb = unsafe { sb_ptr.as_mut() };
+                // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
+                let sb = &mut **sb_ptr;
                 p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
             }
             for elem in static_non_field_elements.iter_mut() {
@@ -1744,8 +1744,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             for elem in static_element_order.iter() {
                 match elem.kind {
                     StaticElementKind::Block => {
-                        // SAFETY: arena-owned.
-                        let sb = unsafe { extracted_static_blocks[elem.index].as_mut() };
+                        // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
+                        let sb = &mut *extracted_static_blocks[elem.index];
                         let stmts_slice = sb.stmts.slice_mut();
                         p.rewrite_stmts(
                             stmts_slice,
@@ -2095,9 +2095,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if !expr_var_decls.is_empty() {
                 let decls = DeclList::from_bump_vec(expr_var_decls);
                 let var_decl_stmt = p.s(S::Local { decls, ..Default::default() }, loc);
-                if let Some(mut stmt_list) = p.nearest_stmt_list {
-                    // SAFETY: arena-owned BumpVec valid for 'a; exclusive during visit.
-                    unsafe { stmt_list.as_mut() }.push(var_decl_stmt);
+                if let Some(stmt_list) = p.nearest_stmt_list_mut() {
+                    stmt_list.push(var_decl_stmt);
                 }
             }
 

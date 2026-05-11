@@ -179,9 +179,8 @@ impl HotReloaderCtx for VirtualMachine {
         // Zig: `if (@hasField(Ctx, "log")) this.log.level.atLeast(.info)`.
         // Note `Level.atLeast` is `self <= other` (Verbose=0..Err=4), so this is
         // true for Verbose/Debug/Info — i.e. "verbose enough to print info".
-        // SAFETY: `log` is set in `VirtualMachine::init` and never cleared.
-        self.log
-            .map(|l| unsafe { l.as_ref() }.level.at_least(bun_ast::Level::Info))
+        self.log_ref()
+            .map(|l| l.level.at_least(bun_ast::Level::Info))
             .unwrap_or(false)
     }
 
@@ -236,11 +235,9 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn compute_clear_screen(&self) -> bool {
-        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
-        !unsafe {
-            (*self.transpiler.env)
-                .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
-        }
+        !self
+            .env_loader()
+            .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
     }
 }
 

@@ -945,7 +945,9 @@ pub type HTTPChannel = bun_threading::Channel<
 pub struct HTTPChannelContext<'a> {
     pub http: AsyncHTTP<'a>,
     // TODO(port): lifetime — no init/assignment found in src/http/; appears unused.
-    pub channel: Option<NonNull<HTTPChannel>>,
+    // BACKREF: set once by the owner before scheduling; the channel outlives
+    // every callback dispatched through it (Zig dereferenced unconditionally).
+    pub channel: Option<bun_ptr::BackRef<HTTPChannel>>,
 }
 
 impl HTTPChannelContext<'_> {
@@ -955,8 +957,10 @@ impl HTTPChannelContext<'_> {
             &mut *(bun_core::from_field_ptr!(HTTPChannelContext, http, data.0))
         };
         let boxed = bun_core::heap::into_raw(Box::new(data));
-        // SAFETY: channel is set by the owner before scheduling; Zig dereferenced unconditionally.
-        unsafe { this.channel.unwrap().as_ref() }
+        // `channel` is a set-once `BackRef`; `write_item` takes `&self`, so the
+        // safe `Deref` impl covers the access (no open-coded `unsafe as_ref`).
+        this.channel
+            .expect("HTTPChannelContext.channel set before scheduling")
             .write_item(boxed)
             .expect("HTTPChannel full");
     }

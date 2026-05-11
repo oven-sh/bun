@@ -360,11 +360,6 @@ mod shim {
         // `JsCell<Pipe>`), so deref as shared.
         unsafe { s.as_ref() }.unpipe_without_deref()
     }
-    #[inline] pub fn body_value_unref(v: &mut Body::Value) {
-        // SAFETY: every `Body::Value` reachable from `RequestContext.request_body`
-        // is the `.value` field of a pooled `HiveRef` slot (see field docs).
-        let _ = unsafe { v.unref() };
-    }
     #[inline] pub fn request_ensure_url(r: &Request) -> Result<(), bun_alloc::AllocError> {
         r.ensure_url()
     }
@@ -519,6 +514,43 @@ where
         // `*self`; it lives independently and outlives every context.
         let p = self.server.expect("infallible: server bound").as_ptr();
         unsafe { &*p }
+    }
+
+    /// Mutably borrow the pooled request-body slot, if attached.
+    ///
+    /// Returns an unbounded `&'r mut` because the slot is a separate
+    /// `HiveArray` allocation, **not** a sub-field of `*self`, so callers may
+    /// hold it across disjoint `&self`/`&mut self` reborrows of other
+    /// `RequestContext` fields (same pattern as [`server()`]). Replaces the
+    /// per-site raw `NonNull::as_mut` deref at each state-machine site.
+    ///
+    /// # Safety (encapsulated)
+    /// While `Some`, `request_body` points to a pooled `HiveRef<Body::Value>`
+    /// slot whose lifetime is governed by the intrusive ref this context holds
+    /// (released via [`request_body_take_unref`] in `deinit()` /
+    /// `on_buffered_body_chunk` last-chunk path). The slot is single-threaded
+    /// and never aliased from outside this `RequestContext`, so forming a
+    /// unique `&mut` for the duration of the caller's use is sound.
+    #[inline]
+    fn request_body_mut<'r>(&mut self) -> Option<&'r mut Body::Value> {
+        // SAFETY: see fn doc — pooled HiveRef slot live while `Some`,
+        // unaliased, single-threaded.
+        self.request_body.map(|mut p| unsafe { p.as_mut() })
+    }
+
+    /// Take the pooled request-body slot out of `self` and release the
+    /// intrusive ref this context held on it (returns it to the hive when
+    /// last). Mirrors the Zig `body.unref()` on `deinit` / final body chunk.
+    #[inline]
+    fn request_body_take_unref(&mut self) {
+        if let Some(mut p) = self.request_body.take() {
+            // SAFETY: pointee is the pooled `HiveRef` slot allocated by
+            // `init_request_body_value`; live until this `unref()` drops the
+            // last count. `Body::Value` reachable from `request_body` is
+            // always the `.value` field of a hive slot, satisfying `unref`'s
+            // container-of precondition.
+            let _ = unsafe { p.as_mut().unref() };
+        }
     }
 
     pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
@@ -736,13 +768,7 @@ where
         self.response_buf_owned = Vec::new();
         self.response_weakref.deref();
 
-        if let Some(mut body) = self.request_body.take() {
-            // SAFETY: pointee is the pooled HiveRef slot allocated by
-            // `init_request_body_value`; it remains live until the final unref
-            // returns it to the hive. `drop(NonNull)` is a Copy no-op, so we
-            // must call the intrusive refcount decrement explicitly.
-            shim::body_value_unref(unsafe { body.as_mut() });
-        }
+        self.request_body_take_unref();
 
         if let Some(cb) = self.additional_on_abort.take() {
             cb.deref();
@@ -2085,9 +2111,7 @@ where
 
         // if we cannot, we have to reject pending promises
         // first, we reject the request body promise
-        if let Some(body) = &mut self.request_body {
-            // SAFETY: pooled HiveRef slot is live while held.
-            let body = unsafe { body.as_mut() };
+        if let Some(body) = self.request_body_mut() {
             // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
             // but we received nothing or the connection was aborted
             if matches!(body, Body::Value::Locked(_)) {
@@ -3442,11 +3466,7 @@ where
                 // Moved out so the Strong (and its underlying GC handle) is
                 // released at scope exit via `Drop` on `strong::Optional`.
                 let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
-                if let Some(mut request_body) = this.request_body.take() {
-                    // SAFETY: pointee is the pooled HiveRef slot; live until this
-                    // unref drops the last count. `drop(NonNull)` is a Copy no-op.
-                    unsafe { let _ = request_body.as_mut().unref(); }
-                }
+                this.request_body_take_unref();
 
                 readable.value.ensure_still_alive();
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
@@ -3462,9 +3482,7 @@ where
         }
 
         // This is the start of a task, so it's a good time to drain
-        if let Some(mut body_ptr) = this.request_body {
-            // SAFETY: pooled HiveRef slot is live while held.
-            let body = unsafe { body_ptr.as_mut() };
+        if let Some(body) = this.request_body_mut() {
             // The up-front maxRequestBodySize check in server.zig only
             // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
             // omit it, so cap accumulated bytes here too — otherwise a
@@ -3594,9 +3612,7 @@ where
             {
                 // no content-length or 0 content-length
                 // no transfer-encoding
-                if let Some(body) = &mut self.request_body {
-                    // SAFETY: pooled HiveRef slot is live while held.
-                    let body = unsafe { body.as_mut() };
+                if let Some(body) = self.request_body_mut() {
                     let mut old = core::mem::replace(body, Body::Value::Null);
                     if let Body::Value::Locked(l) = &mut old {
                         l.on_receive_value = None;

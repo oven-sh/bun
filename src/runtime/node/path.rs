@@ -3013,15 +3013,11 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                         // path.zig declares `key_w: [*:0]const u16` and the sentinel
                         // is part of the object.
                         buf2[buf_size] = T::from_u8(0);
-                        // SAFETY: T == u16 when IS_U16; same layout as &[u16].
-                        break 'brk unsafe {
-                            core::slice::from_raw_parts(buf2.as_ptr().cast::<u16>(), buf_size + 1)
-                        };
+                        // T == u16 when IS_U16; bytemuck statically checks the layout.
+                        break 'brk bytemuck::cast_slice::<T, u16>(&buf2[..=buf_size]);
                     }
-                    // SAFETY: T == u8 when !IS_U16; same layout as &[u8].
-                    let key8 = unsafe {
-                        core::slice::from_raw_parts(buf2.as_ptr().cast::<u8>(), buf_size)
-                    };
+                    // T == u8 when !IS_U16; bytemuck statically checks the layout.
+                    let key8: &[u8] = bytemuck::cast_slice::<T, u8>(&buf2[..buf_size]);
                     // Zig spec (path.zig:2480-2482) writes `u16Buf[bufSize] = 0;`
                     // after widening so the LPCWSTR is properly terminated regardless
                     // of `WPathBuffer::uninit()`'s init state. Do the same here —
@@ -3045,10 +3041,8 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                         memmove(dst, &r);
                     } else {
                         // Reuse buf2 because it's used for path.
-                        // SAFETY: T == u8; same layout as &mut [u8].
-                        let dst = unsafe {
-                            core::slice::from_raw_parts_mut(buf2.as_mut_ptr().cast::<u8>(), buf2.len())
-                        };
+                        // T == u8 when !IS_U16; bytemuck statically checks the layout.
+                        let dst: &mut [u8] = bytemuck::cast_slice_mut::<T, u8>(&mut buf2[..]);
                         buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r)
                             .map(|s| s.len())
                             .unwrap_or(0);

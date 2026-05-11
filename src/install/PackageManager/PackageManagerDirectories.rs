@@ -351,9 +351,9 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         // root; see fn safety contract. Project `enable` narrowly so callers
         // may hold borrows into disjoint `options` sub-fields.
         if unsafe { (*this).options.enable.contains(Enable::CACHE) } {
-            // SAFETY: `env` is set by `init()` before any cache lookup; the
-            // `NonNull<Loader>` borrows the process-global env map (singleton-leaked).
-            let env = unsafe { (*this).env.expect("env initialised").as_mut() };
+            // SAFETY: caller-provided provenance root; `env_mut()` itself
+            // encapsulates the BackRef deref + singleton-liveness invariant.
+            let env = unsafe { &*this }.env_mut();
             // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
             let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
             // SAFETY: see fn safety contract.

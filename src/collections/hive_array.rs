@@ -239,9 +239,7 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
     #[inline]
     pub fn write(self, value: T) -> NonNull<T> {
         let mut this = ManuallyDrop::new(self);
-        // SAFETY: see `as_uninit`.
-        let slot = unsafe { this.slot.as_mut() };
-        NonNull::from(slot.write(value))
+        NonNull::from(this.as_uninit().write(value))
     }
 
     /// Caller has fully initialized the slot via [`as_uninit`](Self::as_uninit)

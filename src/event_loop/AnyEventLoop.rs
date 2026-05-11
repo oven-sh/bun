@@ -5,7 +5,7 @@ use bun_uws::Loop as UwsLoop;
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use crate::ConcurrentTask::ConcurrentTask;
 use crate::MiniEventLoop::{EventLoopKind, MiniEventLoop};
-use crate::{JsEventLoop, JsEventLoopKind};
+use crate::JsEventLoop;
 
 /// JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`.
 ///
@@ -18,10 +18,9 @@ use crate::{JsEventLoop, JsEventLoopKind};
 /// here as `extern "Rust"`. The linker resolves them at link time, so there is
 /// no vtable, no `AtomicPtr`, and no init-order hazard.
 ///
-/// The `Js` variant stores a [`JsEventLoop`] handle (the `link_interface!`
-/// newtype around the erased `*mut jsc::EventLoop`). The single `unsafe` is at
-/// handle construction (`JsEventLoop::new`); all dispatch sites are safe method
-/// calls.
+/// The `Js` variant stores a typed [`JsEventLoop`] handle over the erased
+/// `*mut jsc::EventLoop`. The single `unsafe` is at handle construction; all
+/// dispatch sites are safe method calls over that typed sidecar handle.
 unsafe extern "Rust" {
     /// `jsc::VirtualMachine::get().event_loop()` — erased `*mut jsc::EventLoop`
     /// for the current thread. Kept as a bare extern (no owner).
@@ -34,8 +33,8 @@ unsafe extern "Rust" {
 pub enum AnyEventLoop<'a> {
     Js {
         /// Typed handle wrapping the erased `*mut jsc::EventLoop`. The
-        /// `link_interface!` invariant ("owner is live for every dispatch") is
-        /// established once at construction; dispatch is safe.
+        /// owner-liveness invariant is established once at construction;
+        /// dispatch is safe.
         owner: JsEventLoop,
     },
     Mini(MiniEventLoop<'a>),
@@ -150,7 +149,7 @@ impl<'a> AnyEventLoop<'a> {
         // `vm.eventLoop()`). This is the single `unsafe` boundary for the
         // `AnyEventLoop::Js` arm — all subsequent dispatch is safe.
         AnyEventLoop::Js {
-            owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
+            owner: unsafe { JsEventLoop::from_raw(js_event_loop) },
         }
     }
 
@@ -372,7 +371,7 @@ impl EventLoopHandle {
         // handle). This is the single `unsafe` boundary for the
         // `EventLoopHandle::Js` arm.
         EventLoopHandle::Js {
-            owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
+            owner: unsafe { JsEventLoop::from_raw(js_event_loop) },
         }
     }
 
@@ -401,7 +400,7 @@ impl EventLoopHandle {
     #[inline]
     pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
-            EventLoopHandle::Js { owner, .. } => (1, owner.owner.cast()),
+            EventLoopHandle::Js { owner, .. } => (1, owner.as_void_ptr()),
             EventLoopHandle::Mini(mini) => (2, mini.cast()),
         }
     }
@@ -419,7 +418,7 @@ impl EventLoopHandle {
             // `into_tag_ptr` on a still-live event loop, so `ptr` is a live
             // erased `*mut jsc::EventLoop`.
             1 => EventLoopHandle::Js {
-                owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
+                owner: unsafe { JsEventLoop::from_raw(ptr.cast::<()>()) },
             },
             2 => EventLoopHandle::Mini(ptr.cast()),
             _ => unreachable!("invalid parent event-loop tag {}", tag),

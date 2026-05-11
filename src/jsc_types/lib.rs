@@ -4,6 +4,8 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
+pub mod event_loop;
+
 /// ABI-compatible encoded JSC value bits.
 ///
 /// This is the inert storage shape for `bun_jsc::JSValue`. The JSC owner crate
@@ -428,5 +430,17 @@ mod tests {
         assert_eq!(strong.take_strong_handle(), None);
 
         assert!(JsRefState::finalized().is_finalized());
+    }
+
+    #[test]
+    fn js_event_loop_handle_preserves_pointer_shape() {
+        assert_eq!(
+            core::mem::size_of::<event_loop::JsEventLoopHandle>(),
+            core::mem::size_of::<usize>()
+        );
+
+        let ptr = NonNull::<event_loop::JsEventLoop>::dangling().as_ptr().cast::<()>();
+        let handle = unsafe { event_loop::JsEventLoopHandle::from_raw(ptr) };
+        assert_eq!(handle.as_void_ptr(), ptr.cast::<core::ffi::c_void>());
     }
 }

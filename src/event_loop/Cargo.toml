@@ -7,7 +7,6 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
-bun_dispatch.workspace = true
 parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true
@@ -23,6 +22,7 @@ bun_collections.workspace = true
 bun_dotenv.workspace = true
 bun_io.workspace = true
 bun_io_types.workspace = true
+bun_jsc_types.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_sys.workspace = true

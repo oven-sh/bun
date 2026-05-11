@@ -1199,8 +1199,72 @@ pub fn loadNpmrc(
             }
         }
 
+        // Global nerf-dart map: key = "host[\x00][/path]" (normalized, no
+        // trailing slash). Used at request time so a token scoped to
+        // `/api/v4/projects/568/packages/npm/` authenticates tarball URLs
+        // under that path even when the scoped registry's URL lives at a
+        // different path. Each value accumulates the halves of the entry
+        // (token, auth, username, password) and is finalised at the end
+        // into `install.auth_configurations`.
+        var auth_by_dart = bun.StringHashMap(Registry.AuthConfigurationBuilder).init(allocator);
+        defer auth_by_dart.deinit();
+
         for (configs.items) |conf_item| {
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
+
+            // Record credential-bearing entries on the global nerf-dart map
+            // so the manager can do request-time longest-prefix lookup.
+            // The per-scope loop below still does its pathname-equality
+            // attachment for backward compat with consumers that read
+            // scope.token / scope.auth directly. Email / cert / key options
+            // aren't credentials, so they don't contribute darts.
+            switch (conf_item.optname) {
+                ._authToken, ._auth, .username, ._password => {
+                    const dart_host = bun.strings.withoutTrailingSlash(conf_item_url.host);
+                    const dart_path = bun.strings.withoutTrailingSlash(conf_item_url.pathname);
+                    // Normalize an empty/root path to "" so hash lookups are stable.
+                    const dart_path_norm = if (dart_path.len == 0 or std.mem.eql(u8, dart_path, "/"))
+                        ""
+                    else
+                        dart_path;
+                    // Host+path concatenated is the nerf-dart key. Using
+                    // "\x00" as a separator keeps it unambiguous without
+                    // extra state.
+                    const key_buf = try allocator.alloc(u8, dart_host.len + 1 + dart_path_norm.len);
+                    @memcpy(key_buf[0..dart_host.len], dart_host);
+                    key_buf[dart_host.len] = 0;
+                    @memcpy(key_buf[dart_host.len + 1 ..], dart_path_norm);
+
+                    const gop = try auth_by_dart.getOrPut(key_buf);
+                    if (!gop.found_existing) {
+                        gop.value_ptr.* = .{
+                            .host = try allocator.dupe(u8, dart_host),
+                            .path = try allocator.dupe(u8, dart_path_norm),
+                        };
+                    } else {
+                        allocator.free(key_buf);
+                    }
+
+                    switch (conf_item.optname) {
+                        ._authToken => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| gop.value_ptr.token = x;
+                        },
+                        ._auth => {
+                            // Keep `_auth` base64-encoded — that's what the
+                            // HTTP client wants for Basic auth headers.
+                            gop.value_ptr.auth_b64 = try allocator.dupe(u8, conf_item.value);
+                        },
+                        .username => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| gop.value_ptr.username = x;
+                        },
+                        ._password => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| gop.value_ptr.password = x;
+                        },
+                        else => unreachable,
+                    }
+                },
+                .email, .certfile, .keyfile => {},
+            }
 
             if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host)) and
                 std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.pathname), bun.strings.withoutTrailingSlash(conf_item_url.pathname)))
@@ -1272,6 +1336,20 @@ pub fn loadNpmrc(
                     continue;
                 }
             }
+        }
+
+        // Serialize the nerf-dart map into a flat slice for the manager.
+        if (auth_by_dart.count() > 0) {
+            const previous = install.auth_configurations;
+            const list = try allocator.alloc(Registry.AuthConfiguration, previous.len + auth_by_dart.count());
+            @memcpy(list[0..previous.len], previous);
+            var it = auth_by_dart.valueIterator();
+            var i: usize = previous.len;
+            while (it.next()) |v| : (i += 1) {
+                list[i] = try v.finalize(allocator);
+            }
+            install.auth_configurations = list;
+            if (previous.len > 0) allocator.free(previous);
         }
     }
 }

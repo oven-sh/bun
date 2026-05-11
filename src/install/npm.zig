@@ -377,6 +377,79 @@ pub const Registry = struct {
 
     pub const Map = std.HashMapUnmanaged(u64, Scope, IdentityContext(u64), 80);
 
+    /// A single `.npmrc` auth entry (`//host[/path]/:_authToken=…` etc.),
+    /// kept so the manager can do npm-style longest-prefix lookup at request
+    /// time. The registry scope's pre-resolved `token`/`auth` is still used
+    /// as a fallback, but when a request URL (e.g. a tarball URL that lives
+    /// at a different path than the scoped registry) matches one of these
+    /// nerf darts more specifically, these credentials win.
+    pub const AuthConfiguration = struct {
+        /// `host[:port]` without any trailing slash, lower-cased by the url parser.
+        host: string = "",
+        /// Path prefix without trailing slash. Empty means "covers the whole host".
+        path: string = "",
+        /// Bearer token (`_authToken`), empty if unset.
+        token: string = "",
+        /// `base64("user:pass")`, empty if unset. Populated from `_auth` or
+        /// from `username` + `_password`.
+        auth: string = "",
+
+        pub const Match = struct {
+            token: string = "",
+            auth: string = "",
+            /// Length of the matched path; callers compare this against the
+            /// scope's path length to decide whether the nerf-dart match is
+            /// more specific than whatever produced the scope's own token.
+            path_len: usize = 0,
+        };
+
+        /// Check whether the request URL (host + path) is covered by this
+        /// nerf dart. Matching is npm-compatible: exact, or the nerf dart's
+        /// path is a path-segment prefix of the request path. The empty path
+        /// covers the entire host.
+        pub fn matches(self: *const AuthConfiguration, req_host: string, req_path: string) bool {
+            if (!strings.eql(self.host, req_host)) return false;
+            if (self.path.len == 0) return true;
+            if (self.path.len > req_path.len) return false;
+            if (strings.eql(self.path, req_path)) return true;
+            if (!strings.startsWith(req_path, self.path)) return false;
+            // Segment boundary: avoid `/api/v4` matching `/api/v41`.
+            return req_path[self.path.len] == '/';
+        }
+    };
+
+    /// Transient accumulator used by `loadNpmrc` while building the nerf-dart
+    /// map. Holds the raw `username` / `_password` halves so we can combine
+    /// them into `base64("user:pass")` after every entry has been seen.
+    pub const AuthConfigurationBuilder = struct {
+        host: string = "",
+        path: string = "",
+        token: string = "",
+        auth_b64: string = "",
+        username: string = "",
+        password: string = "",
+
+        pub fn finalize(self: *AuthConfigurationBuilder, allocator: std.mem.Allocator) !AuthConfiguration {
+            var auth = self.auth_b64;
+            if (auth.len == 0 and self.username.len > 0 and self.password.len > 0) {
+                const raw = try allocator.alloc(u8, self.username.len + 1 + self.password.len);
+                defer allocator.free(raw);
+                @memcpy(raw[0..self.username.len], self.username);
+                raw[self.username.len] = ':';
+                @memcpy(raw[self.username.len + 1 ..], self.password);
+
+                const b64 = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(raw.len));
+                auth = std.base64.standard.Encoder.encode(b64, raw);
+            }
+            return .{
+                .host = self.host,
+                .path = self.path,
+                .token = self.token,
+                .auth = auth,
+            };
+        }
+    };
+
     const PackageVersionResponse = union(Tag) {
         pub const Tag = enum {
             cached,

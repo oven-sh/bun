@@ -1222,6 +1222,7 @@ pub const formatLaterVersionInCache = resolution.formatLaterVersionInCache;
 pub const getInstalledVersionsFromDiskCache = resolution.getInstalledVersionsFromDiskCache;
 pub const resolveFromDiskCache = resolution.resolveFromDiskCache;
 pub const scopeForPackageName = resolution.scopeForPackageName;
+pub const matchAuthForUrl = resolution.matchAuthForUrl;
 pub const verifyResolutions = resolution.verifyResolutions;
 
 pub const progress_zig = @import("./PackageManager/ProgressStrings.zig");

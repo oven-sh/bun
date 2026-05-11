@@ -1419,24 +1419,35 @@ impl Diff {
             // sticky-lockfile behaviour and lets `Lockfile::get_package_id`
             // apply its order-independence guard without overriding a locked
             // pin.
-            if let Some(mapping) = id_mapping.as_deref_mut() {
-                let from_res_id = from_resolutions[i];
-                if (from_res_id as usize) < from_lockfile.packages.len() {
-                    let from_pkg_resolution =
-                        from_lockfile.packages.items_resolution()[from_res_id as usize];
-                    let to_dep = &to_deps!()[cur_to_i];
-                    if to_dep.version.tag == dependency::version::Tag::Npm
-                        && from_pkg_resolution.tag == ResolutionTag::Npm
-                        && to_dep.version.npm().version.satisfies(
-                            from_pkg_resolution.npm().version,
-                            to_lockfile.buffers.string_bytes.as_slice(),
-                            from_lockfile.buffers.string_bytes.as_slice(),
-                        )
-                    {
-                        mapping[cur_to_i] = i as PackageID;
-                        // Still counted as an update so `had_any_diffs`
-                        // triggers the rebuild path; we just preserved the
-                        // resolved package.
+            //
+            // Skipped when the dependency is an explicit update target
+            // (`bun update <pkg>` or bare `bun update`): the user is asking
+            // for a fresh resolve and the old resolution must not be
+            // preserved. Same gate as the `Dependency::eql == true` branch
+            // above.
+            let is_explicit_update_target = matches!(update_requests, Some(updates)
+                if updates.is_empty()
+                    || updates.iter().any(|r| r.name_hash == from_dep.name_hash));
+            if !is_explicit_update_target {
+                if let Some(mapping) = id_mapping.as_deref_mut() {
+                    let from_res_id = from_resolutions[i];
+                    if (from_res_id as usize) < from_lockfile.packages.len() {
+                        let from_pkg_resolution =
+                            from_lockfile.packages.items_resolution()[from_res_id as usize];
+                        let to_dep = &to_deps!()[cur_to_i];
+                        if to_dep.version.tag == dependency::version::Tag::Npm
+                            && from_pkg_resolution.tag == ResolutionTag::Npm
+                            && to_dep.version.npm().version.satisfies(
+                                from_pkg_resolution.npm().version,
+                                to_lockfile.buffers.string_bytes.as_slice(),
+                                from_lockfile.buffers.string_bytes.as_slice(),
+                            )
+                        {
+                            mapping[cur_to_i] = i as PackageID;
+                            // Still counted as an update so `had_any_diffs`
+                            // triggers the rebuild path; we just preserved
+                            // the resolved package.
+                        }
                     }
                 }
             }

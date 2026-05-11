@@ -2055,6 +2055,15 @@ fn get_or_put_resolved_package_with_find_result(
     if cfg!(debug_assertions) {
         debug_assert!(package.meta.id != invalid_package_id);
     }
+    // Record exact-version pins so `Lockfile::get_package_id`'s
+    // order-independence guard can tell them apart from range-resolved
+    // entries (which it treats as network-order artefacts).
+    if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
+        // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
+        // `lockfile.exact_pinned` is disjoint from `package` (returned
+        // by-value above).
+        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
+    }
     // PORT NOTE: Zig used `defer successFn(...)`. Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
     // `this` reborrow below doesn't conflict with the closure capture.

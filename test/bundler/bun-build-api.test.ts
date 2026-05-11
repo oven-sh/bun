@@ -649,6 +649,23 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  test("many conditions does not crash", async () => {
+    // The capacity reservation for export-condition maps used to drop
+    // `conditions.len` from the total when addons were allowed (the default),
+    // so enough user conditions would overflow a putAssumeCapacity and panic.
+    const dir = tempDirWithFiles("bun-build-api-many-conditions", {
+      "index.ts": "export const x = 1;\n",
+    });
+    const conditions: string[] = [];
+    for (let i = 0; i < 64; i++) conditions.push("cond" + i);
+    const result = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      target: "browser",
+      conditions,
+    });
+    expect(result.success).toBe(true);
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

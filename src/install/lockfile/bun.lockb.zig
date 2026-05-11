@@ -168,10 +168,14 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
         var child_hashes = try std.ArrayListUnmanaged(PackageNameHash).initCapacity(z_allocator, scoped_n);
         defer child_hashes.deinit(z_allocator);
         child_hashes.items.len = scoped_n;
+        var parent_names = try std.ArrayListUnmanaged(String).initCapacity(z_allocator, scoped_n);
+        defer parent_names.deinit(z_allocator);
+        parent_names.items.len = scoped_n;
 
         for (this.overrides.scoped.keys(), 0..) |key, i| {
             parent_hashes.items[i] = key.parent_name_hash;
             child_hashes.items[i] = key.child_name_hash;
+            parent_names.items[i] = key.parent_name;
         }
 
         try Lockfile.Buffers.writeArray(
@@ -189,6 +193,14 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
             writer,
             []PackageNameHash,
             child_hashes.items,
+        );
+        try Lockfile.Buffers.writeArray(
+            StreamType,
+            stream,
+            @TypeOf(writer),
+            writer,
+            []String,
+            parent_names.items,
         );
 
         var external_scoped = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, scoped_n);
@@ -545,6 +557,13 @@ pub fn load(
                 );
                 defer child_hashes.deinit(allocator);
 
+                var parent_names = try Lockfile.Buffers.readArray(
+                    stream,
+                    allocator,
+                    std.ArrayListUnmanaged(String),
+                );
+                defer parent_names.deinit(allocator);
+
                 var scoped_versions_external = try Lockfile.Buffers.readArray(
                     stream,
                     allocator,
@@ -559,9 +578,9 @@ pub fn load(
                     .buffer = lockfile.buffers.string_bytes.items,
                     .package_manager = manager,
                 };
-                for (parent_hashes.items, child_hashes.items, scoped_versions_external.items) |parent_hash, child_hash, value| {
+                for (parent_hashes.items, child_hashes.items, parent_names.items, scoped_versions_external.items) |parent_hash, child_hash, parent_name, value| {
                     lockfile.overrides.scoped.putAssumeCapacity(
-                        .{ .parent_name_hash = parent_hash, .child_name_hash = child_hash },
+                        .{ .parent_name_hash = parent_hash, .child_name_hash = child_hash, .parent_name = parent_name },
                         Dependency.toDependency(value, context),
                     );
                 }

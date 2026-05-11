@@ -570,6 +570,44 @@ devTest("css import before create project relative", {
   },
 });
 
+// Regression test for https://github.com/oven-sh/bun/issues/30488
+// The dev server used to emit `<link rel="stylesheet">` tags in reverse source
+// order because the IncrementalGraph's import list stores edges head-first.
+// Per CSS Cascade L4 § 6.4.6 the later declaration of equal specificity wins,
+// so ordering of `<link>` tags must match source order.
+devTest("link tags are served in source order (issue #30488)", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <link rel="stylesheet" href="a.css">
+          <link rel="stylesheet" href="b.css">
+          <link rel="stylesheet" href="c.css">
+        </head>
+        <body>
+          <div class="target">should be green</div>
+        </body>
+      </html>
+    `,
+    "a.css": `.target { color: red; }`,
+    "b.css": `.target { color: blue; }`,
+    "c.css": `.target { color: green; }`,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const linkHrefs = [...html.matchAll(/<link[^>]+href="([^"]+\.css)"/g)].map(m => m[1]);
+    expect(linkHrefs).toHaveLength(3);
+
+    // Each link should resolve to the CSS whose source position matches its position in the HTML.
+    const markers = ["red", "#00f", "green"];
+    for (let i = 0; i < linkHrefs.length; i++) {
+      const css = await dev.fetch(linkHrefs[i]).text();
+      expect(css).toContain(markers[i]);
+    }
+  },
+});
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

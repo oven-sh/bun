@@ -1580,7 +1580,13 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     dev.client_graph.reset();
     try dev.traceAllRouteImports(route_bundle, &gts, .find_css);
 
+    // The graph's import lists are stored in reverse source order (see the
+    // comment above `new_imports` in `processChunkDependencies`), so DFS
+    // visits CSS roots in reverse source order. The cascade in CSS Cascade L4
+    // § 6.4.6 is "last declaration wins", so `<link>` tags must be emitted in
+    // source order — reverse the collected list to restore it.
     const css_ids = dev.client_graph.current_css_files.items;
+    std.mem.reverse(@TypeOf(css_ids[0]), css_ids);
 
     const payload_size = bundled_html.len +
         ("<link rel=\"stylesheet\" href=\"" ++ asset_prefix ++ "/0000000000000000.css\">").len * css_ids.len +
@@ -2133,7 +2139,9 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!j
     dev.client_graph.reset();
     try dev.traceAllRouteImports(route_bundle, &gts, .find_css);
 
+    // Reverse to restore source order (see comment in `generateHTMLPayload`).
     const names = dev.client_graph.current_css_files.items;
+    std.mem.reverse(@TypeOf(names[0]), names);
     const arr = try jsc.JSArray.createEmpty(dev.vm.global, names.len);
     for (names, 0..) |item, i| {
         var buf: [asset_prefix.len + @sizeOf(u64) * 2 + "/.css".len]u8 = undefined;
@@ -2756,7 +2764,9 @@ pub fn finalizeBundle(
                 gts.clear();
                 dev.client_graph.current_css_files.clearRetainingCapacity();
                 try dev.traceAllRouteImports(route_bundle, &gts, .find_css);
+                // Reverse to restore source order (see comment in `generateHTMLPayload`).
                 const css_ids = dev.client_graph.current_css_files.items;
+                std.mem.reverse(@TypeOf(css_ids[0]), css_ids);
 
                 try w.writeInt(i32, @intCast(css_ids.len), .little);
                 for (css_ids) |css_id| {

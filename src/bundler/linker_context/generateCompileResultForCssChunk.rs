@@ -93,13 +93,9 @@ fn generate_compile_result_for_css_chunk_impl(
     let symbols: &bun_ast::symbol::Map = unsafe {
         &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>()
     };
-    // `LocalsResultsMap` = `ArrayHashMap<bun_ast::Ref, *const [u8]>`;
-    // `c.mangled_props` is `ArrayHashMap<bun_ast::Ref, Box<[u8]>>`. Both `Ref`s are
-    // newtype-`u64` and `Box<[u8]>`/`*const [u8]` are both `(ptr, len)` fat ptrs — same
-    // layout, used read-only by the printer.
-    let local_names: &LocalsResultsMap = unsafe {
-        &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
-    };
+    // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
+    // `bun_js_printer::MangledProps`; no cast needed.
+    let local_names: &LocalsResultsMap = &c.mangled_props;
     let parse_graph = c.parse_graph();
     // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
     // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).

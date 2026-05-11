@@ -394,12 +394,13 @@ impl IdentOrRef {
         }
         let r = self.as_ref().unwrap();
         let final_ref = map.follow(r);
-        // SAFETY: LocalsResultsMap values are arena-owned `*const [u8]` slices
-        // valid for the symbol-map lifetime (see `Printer::lookup_symbol`).
+        // SAFETY: LocalsResultsMap values are `Box<[u8]>` owned by the linker
+        // for the symbol-map lifetime; `arena_str` erases to the placeholder
+        // `'static` until the proper `'bump` lifetime is threaded.
         local_names
             .unwrap()
             .get(&final_ref)
-            .map(|p| unsafe { crate::arena_str(*p) })
+            .map(|p| unsafe { crate::arena_str(&**p) })
     }
 
     pub fn as_original_string(self, symbols: &bun_ast::symbol::List) -> &[u8] {

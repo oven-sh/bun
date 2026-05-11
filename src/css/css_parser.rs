@@ -123,7 +123,12 @@ mod gated_shims {
     /// MOVE_DOWN'd into `bun_logger` (see logger/lib.rs:216).
     pub mod ast {
         pub use bun_ast::{Ref, RefTag};
-        pub type MangledProps = bun_collections::ArrayHashMap<Ref, *const [u8]>;
+        // Value type MUST match `bun_js_printer::MangledProps` exactly so the
+        // bundler can pass `&LinkerContext.mangled_props` straight through —
+        // the previous `*const [u8]` shim forced a `repr(Rust)` generic
+        // type-pun (`ArrayHashMap<_, Box<[u8]>>` → `ArrayHashMap<_, *const [u8]>`)
+        // whose layout equivalence the language does not guarantee.
+        pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
         /// `bun.fs.Path` — `ImportRecord.path` field type. The
         /// real `bun.fs.Path` was MOVE_DOWN'd into `bun_paths::fs`.
         pub mod fs {

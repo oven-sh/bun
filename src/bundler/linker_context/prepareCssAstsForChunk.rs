@@ -8,7 +8,7 @@ use crate::{BundleV2, Chunk, LinkerContext};
 
 use bun_collections::VecExt;
 use crate::bun_css::{
-    BundlerStyleSheet, ImportConditions, ImportInfo, LocalsResultsMap, PrinterOptions, Targets,
+    BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets,
 };
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
@@ -251,13 +251,9 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         )
                                     },
                                 }),
-                                // `LocalsResultsMap` = `ArrayHashMap<bun_ast::Ref, *const [u8]>`;
-                                // `c.mangled_props` is `ArrayHashMap<bun_ast::Ref, Box<[u8]>>`. Both `Ref`s
-                                // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
-                                // pointers — same layout, used read-only by the printer.
-                                Some(unsafe {
-                                    &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
-                                }),
+                                // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
+                                // alias as `bun_js_printer::MangledProps`; no cast needed.
+                                Some(&c.mangled_props),
                                 // `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
                                 // is `bun_ast::symbol::Map`. Both are
                                 // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is

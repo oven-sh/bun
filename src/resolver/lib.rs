@@ -1361,14 +1361,43 @@ pub mod fs {
     /// (`get`, `get_or_put`, `at_index`, `put`, `mark_not_found`). ZST handle —
     /// every call resolves to the `entries_option_map()` singleton; this keeps
     /// `RealFS.entries` field-shaped without inlining the (large) backing array.
+    ///
+    /// **Uniqueness invariant**: this is a ZST proxy for a process-global, so a
+    /// freely-mintable value would let two threads each hold a "unique" `&mut
+    /// EntriesMap` and alias the same backing storage. Construction is therefore
+    /// module-private (`new()` below) and the *only* instance lives at
+    /// `FileSystem::INSTANCE.fs.entries`, written once by `RealFS::init` during
+    /// single-threaded startup. `&mut self` on the methods below is thus a real
+    /// uniqueness witness — obtaining it requires `&mut` to that singleton field.
     pub struct EntriesMap(());
     impl EntriesMap {
+        /// Module-private: only `RealFS::init` may construct the singleton handle.
+        /// Widening this to `pub` re-opens the aliased-`&mut` hazard described on
+        /// the struct.
         #[inline]
-        pub const fn new() -> Self { Self(()) }
+        const fn new() -> Self { Self(()) }
         #[inline]
-        fn inner(&mut self) -> &'static mut EntriesOptionMap {
-            // SAFETY: `entries_option_map()` returns the raw `*mut` singleton (Zig `*Self`);
-            // all access goes through `RealFS.entries_mutex`.
+        fn inner(&mut self) -> &mut EntriesOptionMap {
+            // In debug builds, catch the cross-thread aliasing this wrapper
+            // exists to prevent: every documented call path holds either
+            // `RealFS.entries_mutex` (direct fs callers) or the global
+            // `RESOLVER_MUTEX` (resolver-side callers, matching Zig's
+            // `r.mutex`). Firing here means a caller reached the singleton
+            // without either guard.
+            #[cfg(debug_assertions)]
+            if INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed) {
+                debug_assert!(
+                    FileSystem::get().fs.entries_mutex.is_held_by_current_thread()
+                        || crate::__phase_a_body::RESOLVER_MUTEX.is_held_by_current_thread(),
+                    "EntriesMap accessed without holding RealFS.entries_mutex or RESOLVER_MUTEX",
+                );
+            }
+            // SAFETY: `entries_option_map()` yields the process-static `*mut`
+            // singleton. `&mut self` proves the caller holds the unique
+            // `RealFS.entries` field (see struct invariant), and the returned
+            // borrow is bounded by that `&mut self` — it cannot outlive the
+            // field borrow nor be sent to another thread independently of it.
+            // Cross-thread exclusion is provided by the mutex asserted above.
             unsafe { &mut *entries_option_map() }
         }
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
@@ -1726,6 +1755,13 @@ pub mod fs {
 
         /// Port of `RealFS.bustEntriesCache` in `fs.zig`.
         pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
+            // Zig took no lock here, but `entries` is the process-global
+            // BSSMap singleton and `remove` mutates it; callers (transpiler /
+            // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
+            // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
+            // invariant. No caller already holds it (no re-entry from
+            // `read_directory`/`dir_info_cached_maybe_log`).
+            let _g = self.entries_mutex.lock_guard();
             self.entries.remove(file_path)
         }
 
@@ -4160,7 +4196,9 @@ pub struct LoadResult {
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
 // TODO(port): `bun_threading::Mutex` has no `const fn new()`; use LazyLock until it does.
-static RESOLVER_MUTEX: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
+// `pub(crate)` so the `fs::EntriesMap::inner` debug-assert can verify it is held
+// (the resolver mutex is one of the two documented guards for the entries singleton).
+pub(crate) static RESOLVER_MUTEX: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
 // Zig had `resolver_Mutex_loaded` to lazily zero-init; Rust const init handles that.
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;

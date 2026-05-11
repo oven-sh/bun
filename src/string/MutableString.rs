@@ -80,10 +80,13 @@ impl MutableString {
     /// entire pooled scratch buffer before every `package.json` read.
     #[inline]
     pub fn expand_to_capacity(&mut self) {
-        // SAFETY: capacity bytes are allocated; the exposed tail is immediately
-        // overwritten by the caller before any read (same contract as
-        // `writable_n_bytes_assume_capacity` below and Zig `expandToCapacity`).
-        unsafe { self.list.set_len(self.list.capacity()) };
+        // Zero only the spare region so the exposed tail is defined (Zig's
+        // `expandToCapacity` leaves it `undefined` — we don't, to avoid
+        // CWE-908 uninit-memory exposure if a caller reads before write).
+        let old = self.list.len();
+        self.list.resize(self.list.capacity(), 0);
+        debug_assert_eq!(self.list.len(), self.list.capacity());
+        let _ = old;
     }
 
     pub fn owns(&self, items: &[u8]) -> bool {

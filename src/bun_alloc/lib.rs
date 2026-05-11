@@ -485,34 +485,30 @@ pub fn usable_size(ptr: *const u8) -> usize {
 // Source: src/bun.zig `outOfMemory()` → `crash_handler.crashHandler(.out_of_memory, ..)`.
 //
 // `bun_alloc` is T0 and cannot depend on `bun_crash_handler`, so the upward
-// call is routed through a fn-ptr installed by `crash_handler::install_hooks()`
-// (same pattern as `bun_core::WINDOWS_SEGFAULT_HANDLE`). Before the hook is
-// installed (very early startup) the fallback is a direct abort.
-
-static OUT_OF_MEMORY_HANDLER: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-/// Called once from `bun_crash_handler::install_hooks()` to route
-/// `out_of_memory()` through `crashHandler(.out_of_memory, ..)` so the
-/// trace-string + auto-report path runs (matching `src/bun.zig:outOfMemory`).
-pub fn set_out_of_memory_handler(handler: fn() -> !) {
-    OUT_OF_MEMORY_HANDLER.store(handler as *mut (), Ordering::Relaxed);
-}
+// call is routed through a link-time `extern "Rust"` symbol defined by
+// `bun_crash_handler`. Resolved at link time → the target lives in read-only
+// `.text`, so memory corruption cannot redirect it (the previous `AtomicPtr`
+// slot was writable). Under `cfg(test)` (this crate's standalone test binary
+// does not link `bun_crash_handler`) the fallback is a direct abort.
 
 #[cold]
 #[inline(never)]
 pub fn out_of_memory() -> ! {
-    let handler = OUT_OF_MEMORY_HANDLER.load(Ordering::Relaxed);
-    if !handler.is_null() {
-        // SAFETY: only `set_out_of_memory_handler` writes this slot, and it
-        // stores a `fn() -> !` cast to `*mut ()`; the inverse cast recovers
-        // the original function pointer with identical ABI.
-        let handler: fn() -> ! = unsafe { core::mem::transmute(handler) };
-        handler();
+    #[cfg(not(test))]
+    {
+        unsafe extern "Rust" {
+            fn __bun_crash_handler_out_of_memory() -> !;
+        }
+        // SAFETY: `__bun_crash_handler_out_of_memory` is defined
+        // `#[no_mangle] extern "Rust"` in `bun_crash_handler` and linked into
+        // every binary that depends on this crate; it has no preconditions.
+        unsafe { __bun_crash_handler_out_of_memory() }
     }
-    // Fallback (hook not yet installed): best-effort diagnostic + abort.
-    let _ = std::io::Write::write_all(&mut std::io::stderr(), b"bun: out of memory\n");
-    std::process::abort()
+    #[cfg(test)]
+    {
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), b"bun: out of memory\n");
+        std::process::abort()
+    }
 }
 
 // ── page_size ─────────────────────────────────────────────────────────────

@@ -1390,10 +1390,11 @@ pub mod MakePath {
 pub use bun_paths::Dirname;
 
 // Canonical impl lives in `bun_alloc` (T0); it dispatches through the
-// `OUT_OF_MEMORY_HANDLER` hook installed by `bun_crash_handler::install_hooks()`,
-// which routes to `crashHandler(.out_of_memory, ..)` — matching
-// `src/bun.zig:2632 outOfMemory()`. Re-export so `bun::out_of_memory()` callers
-// (zlib, test_command) keep working without taking a direct crash_handler dep.
+// link-time `__bun_crash_handler_out_of_memory` symbol defined by
+// `bun_crash_handler`, which routes to `crashHandler(.out_of_memory, ..)` —
+// matching `src/bun.zig:2632 outOfMemory()`. Re-export so `bun::out_of_memory()`
+// callers (zlib, test_command) keep working without taking a direct
+// crash_handler dep.
 pub use bun_alloc::out_of_memory;
 
 // ─── StackFallbackAllocator ───────────────────────────────────────────────────

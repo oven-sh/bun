@@ -271,23 +271,13 @@ impl<C: CompletionStruct> BundleThread<C> {
                 let completion = unsafe { &mut *completion };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };
-                // Zig's `@panic` aborts the process; a Rust unwind would kill only this
-                // thread and leave every later `Bun.build` awaiting a dead worker.
-                // Catch the unwind and surface it as a build error so the JS side
-                // resolves and the bundle thread keeps draining its queue.
-                let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    Self::generate_in_new_thread(completion, generation)
-                }));
-                match run {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => {
+                // `panic = "abort"` → a Rust panic on this thread enters the
+                // crash-handler hook and aborts the whole process (matching Zig's
+                // `@panic`). No `catch_unwind` — there is nothing to catch.
+                match Self::generate_in_new_thread(completion, generation) {
+                    Ok(()) => {}
+                    Err(err) => {
                         completion.set_result(BundleV2Result::Err(err));
-                        completion.complete_on_bundle_thread();
-                    }
-                    Err(_payload) => {
-                        // The default panic hook already printed the message; surface a
-                        // named error so the JS promise rejects instead of hanging.
-                        completion.set_result(BundleV2Result::Err(bun_core::err!("BundlerThreadPanic")));
                         completion.complete_on_bundle_thread();
                     }
                 }

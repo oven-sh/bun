@@ -1617,21 +1617,15 @@ pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'sta
     }
 }
 
-/// FFI panic barrier used by `#[uws_callback]` (see `bun_jsc_macros`).
+/// FFI helpers shared by `#[uws_callback]` thunks and raw C-string call sites.
 ///
-/// Unwinding out of an `extern "C"` callback into a C++ uWS / uSockets frame
-/// is UB (the C++ side has no landing pads, and with `panic=unwind` rustc's
-/// implicit abort shim fires *after* the foreign frame has been corrupted on
-/// some targets). Every macro-generated thunk routes its body through
-/// `catch_unwind_ffi`, which catches the panic, prints the payload, and
-/// hard-aborts — same end state as Zig `@panic` → `bun.crash_handler`, but
-/// without the UB window.
-///
-/// `AssertUnwindSafe` is sound here for the same reason as in
-/// `bun_jsc::host_fn::catch_panic`: the closure only borrows the
-/// caller-supplied `&mut Self` and FFI scalars; a torn `Self` is no worse than
-/// the Zig path (process is about to abort anyway), and the alternative — UB —
-/// is strictly worse.
+/// The former `catch_unwind_ffi` / `abort_on_panic` panic barrier was removed:
+/// the workspace builds with `panic = "abort"`, so Rust panics terminate inside
+/// `bun_crash_handler`'s `std::panic` hook before any unwind starts —
+/// `catch_unwind` always returns `Ok` and the wrapper was dead weight. JSC does
+/// not throw C++ exceptions across its public API, so there is no foreign
+/// unwind to catch either. Macro-generated `extern "C"` thunks now call the
+/// user body directly (same end state as Zig `@panic` → `bun.crash_handler`).
 pub mod ffi {
     /// Borrow a NUL-terminated C string from an FFI pointer.
     ///
@@ -1991,40 +1985,6 @@ pub mod ffi {
         unsafe { *errno_ptr() }
     }
 
-    #[inline]
-    pub fn catch_unwind_ffi<R>(f: impl FnOnce() -> R) -> R {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
-            Ok(v) => v,
-            Err(payload) => abort_on_panic(payload),
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    pub fn abort_on_panic(
-        payload: std::boxed::Box<dyn core::any::Any + Send + 'static>,
-    ) -> ! {
-        // The `std::panic` hook installed by `bun_crash_handler::install_hooks`
-        // runs *before* unwinding starts, so by the time `catch_unwind_ffi`
-        // hands us the payload the trace string + upload have already happened.
-        // Only print the fallback line if the hook didn't fire (very-early
-        // startup before `init()`, or a re-entrant panic the hook suppressed).
-        if !crate::PANIC_REPORTED.with(|c| c.replace(false)) {
-            let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
-                s
-            } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
-                s.as_str()
-            } else {
-                "<non-string panic payload>"
-            };
-            // Best-effort write to stderr; ignore errors (we're about to abort).
-            let _ = std::io::Write::write_all(
-                &mut std::io::stderr(),
-                format!("panic in extern \"C\" callback (aborting): {msg}\n").as_bytes(),
-            );
-        }
-        std::process::abort()
-    }
 }
 
 pub mod asan {

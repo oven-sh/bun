@@ -36,16 +36,35 @@ pub mod cpu_features;
 #[path = "handle_oom.rs"]
 pub mod handle_oom;
 
-/// Hook target for `bun_alloc::out_of_memory()` — registered by
-/// `install_hooks()` via `bun_alloc::set_out_of_memory_handler`. Mirrors
-/// `src/bun.zig:outOfMemory()` →
+/// Link-time target for `bun_alloc::out_of_memory()` — declared
+/// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
+/// and defined here. Mirrors `src/bun.zig:outOfMemory()` →
 /// `crash_handler.crashHandler(.out_of_memory, null, @returnAddress())`.
 /// `pub(crate)` so external callers route through the T0 `bun_alloc` entry
-/// (which has the early-startup abort fallback) rather than bypassing it.
+/// rather than bypassing it.
 #[cold]
 #[inline(never)]
 pub(crate) fn out_of_memory() -> ! {
     draft::crash_handler(draft::CrashReason::OutOfMemory, None, None)
+}
+
+/// `extern "Rust"` symbol resolved by `bun_alloc::out_of_memory()` at link
+/// time. Lives in `.text` (read-only) so memory corruption cannot redirect it.
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
+    out_of_memory()
+}
+
+/// `extern "Rust"` symbol resolved by `bun_core::dump_current_stack_trace()`
+/// at link time. Lives in `.text` (read-only).
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub extern "Rust" fn __bun_crash_handler_dump_stack_trace(
+    first_address: Option<usize>,
+    limits: bun_core::DumpStackTraceOptions,
+) {
+    draft::dump_current_stack_trace_from_core(first_address, limits)
 }
 
 pub use draft::*;
@@ -513,8 +532,8 @@ use bun_core::PANICKING;
 // to the bun_core (T0) copies. Re-export so `bun_crash_handler::{is_panicking,
 // sleep_forever_if_another_thread_is_crashing}` keeps resolving for any
 // out-of-tree callers. `dump_current_stack_trace` is intentionally NOT deduped:
-// the bun_core version is a hook-dispatch shim, this crate's is the real impl
-// (wired via `set_dump_stack_trace_hook` in `init()`).
+// the bun_core version is an `extern "Rust"` dispatch shim, this crate's is the
+// real impl (linked via `__bun_crash_handler_dump_stack_trace`).
 pub use bun_core::{is_panicking, sleep_forever_if_another_thread_is_crashing};
 
 // Locked to avoid interleaving panic messages from multiple threads.
@@ -1476,17 +1495,11 @@ pub fn init() {
 /// `raise_ignoring_panic_handler` does the SIG_DFL reset itself with libc.
 pub fn install_hooks() {
     bun_core::CRASH_HANDLER_INSTALLED.store(true, Ordering::Relaxed);
-    // Route T0 `bun_alloc::out_of_memory()` (re-exported as
-    // `bun_core::out_of_memory()`) through `crashHandler(.out_of_memory, ..)`
-    // so the trace-string + auto-report path runs — Zig's `bun.outOfMemory()`
-    // calls `crash_handler.crashHandler` directly.
-    bun_alloc::set_out_of_memory_handler(crate::out_of_memory);
-    // Route T0 `bun_core::dump_current_stack_trace()` to this crate's
-    // llvm-symbolizer / frame-filtered impl — Zig's `fd.zig` EBADF warn and
-    // `ref_count.zig` leak reports call `bun.crash_handler.dumpCurrentStackTrace`
-    // directly; the T0 fallback's `std::backtrace` DWARF parse costs ~8s on a
-    // debug binary, which made `closeSync(EBADF)` time out fs.test.ts.
-    bun_core::set_dump_stack_trace_hook(dump_current_stack_trace_from_core);
+    // T0 `bun_alloc::out_of_memory()` and `bun_core::dump_current_stack_trace()`
+    // reach this crate via link-time `extern "Rust"` symbols
+    // (`__bun_crash_handler_out_of_memory` / `__bun_crash_handler_dump_stack_trace`)
+    // — no runtime registration needed.
+    //
     // Route Rust `panic!()` through the trace-string + report path. Zig wires
     // `pub const panic = bun.crash_handler.panic` at the root so every
     // `@panic()` reports; the Rust port's bare `panic!` was printing the std
@@ -1496,8 +1509,8 @@ pub fn install_hooks() {
 
 /// `std::panic` hook: emit the same trace-string + auto-report as the fatal
 /// `crash_handler()` path, then **abort** (matches Zig's `noreturn` panic).
-/// `catch_unwind` boundaries in host_fn / ffi / BundleThread are therefore
-/// unreachable for Rust panics; they remain for foreign C++ exceptions.
+/// With `panic = "abort"` no unwind starts after this hook returns, so there
+/// are no `catch_unwind` boundaries to reach.
 #[cold]
 #[inline(never)]
 fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
@@ -1620,14 +1633,10 @@ fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
 
     report(trace_str_buf.const_slice());
 
-    // A Rust `panic!` is a bug. The process must not continue — unwinding
-    // through arbitrary Rust+C++ frames into a `catch_unwind` that softens it
-    // to a JS error would leave the runtime in an unknown state. This matches
-    // Zig's `pub const panic = bun.crash_handler.panic` (which is `noreturn`).
-    // The `catch_unwind` boundaries in `host_fn`/`ffi`/`BundleThread` remain
-    // for foreign C++ exceptions (JSC throws those across FFI), which do not
-    // trip this hook.
-    bun_core::PANIC_REPORTED.with(|c| c.set(true));
+    // A Rust `panic!` is a bug. The process must not continue — with
+    // `panic = "abort"` no unwind starts, so `catch_unwind` boundaries are
+    // unreachable for Rust panics. This matches Zig's
+    // `pub const panic = bun.crash_handler.panic` (which is `noreturn`).
     crash();
 }
 
@@ -1641,7 +1650,7 @@ fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
 /// (sub-ms, function names only). The full `dump_stack_trace` (with
 /// llvm-symbolizer source lines) is kept for actual crash/panic paths, which
 /// call it directly.
-fn dump_current_stack_trace_from_core(
+pub(crate) fn dump_current_stack_trace_from_core(
     first_address: Option<usize>,
     limits: bun_core::DumpStackTraceOptions,
 ) {

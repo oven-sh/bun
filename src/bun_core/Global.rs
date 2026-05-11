@@ -48,16 +48,6 @@ pub fn top_level_dir() -> &'static [u8] {
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
-thread_local! {
-    /// Set by `bun_crash_handler`'s `std::panic` hook after it has printed the
-    /// trace string + uploaded the report for the *current* unwind. Consumed
-    /// (read-and-clear) by `catch_unwind` boundaries (`ffi::abort_on_panic`,
-    /// `host_fn`, `BundleThread`) so they know the crash report already went
-    /// out and can skip their own fallback stderr line. Lives in T0 so the
-    /// boundaries don't need a forward dep on `bun_crash_handler`.
-    pub static PANIC_REPORTED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
-}
-
 /// VEH handle returned by `AddVectoredExceptionHandler`, written by
 /// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
 /// removes it before re-raising so the signal goes to the OS default.
@@ -170,52 +160,35 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     }
 }
 
-/// Hook slot routing T0 `dump_current_stack_trace` up to
-/// `bun_crash_handler::dump_current_stack_trace` once that crate's
-/// `install_hooks()` runs. Same fn-ptr-as-`*mut ()` pattern as
-/// `bun_alloc::OUT_OF_MEMORY_HANDLER` — the upward dep is forbidden, so the
-/// higher tier registers itself. Before installation (very early startup /
-/// unit tests that never link `bun_crash_handler`) the fallback prints raw
-/// addresses with no symbolication.
-static DUMP_STACK_TRACE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Called once from `bun_crash_handler::install_hooks()` so Zig callers of
-/// `bun.crash_handler.dumpCurrentStackTrace` (fd.zig EBADF warn, ref_count
-/// leak reports) reach the real llvm-symbolizer / frame-filtered impl instead
-/// of the slow `std::backtrace` DWARF parse.
-pub fn set_dump_stack_trace_hook(handler: fn(Option<usize>, DumpStackTraceOptions)) {
-    DUMP_STACK_TRACE_HOOK.store(handler as *mut (), Ordering::Relaxed);
-}
-
 /// Capture and dump the current call stack. Dispatches to
-/// `bun_crash_handler::dump_current_stack_trace` once the hook is installed
-/// (matching Zig `fd.zig`/`ref_count.zig` which call
-/// `bun.crash_handler.dumpCurrentStackTrace` directly). The pre-hook fallback
-/// prints raw return addresses only — `std::backtrace::Backtrace`'s in-process
-/// DWARF parse takes multiple seconds on a debug binary this size, which is
-/// unacceptable on a hot debug-warn path (`closeSync(EBADF)` etc.).
+/// `bun_crash_handler::dump_current_stack_trace` (matching Zig
+/// `fd.zig`/`ref_count.zig` which call `bun.crash_handler.dumpCurrentStackTrace`
+/// directly). The upward call is routed through a link-time `extern "Rust"`
+/// symbol defined by `bun_crash_handler` so the function pointer lives in
+/// read-only `.text` instead of a writable `AtomicPtr` slot — memory corruption
+/// cannot redirect it. Under `cfg(test)` (this crate's standalone test binary
+/// does not link `bun_crash_handler`) a stub note is printed instead.
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
-    let hook = DUMP_STACK_TRACE_HOOK.load(Ordering::Relaxed);
-    if !hook.is_null() {
-        // SAFETY: only `set_dump_stack_trace_hook` writes this slot, and it
-        // stores a `fn(Option<usize>, DumpStackTraceOptions)` cast to
-        // `*mut ()`; the inverse cast recovers the original function pointer
-        // with identical ABI.
-        let hook: fn(Option<usize>, DumpStackTraceOptions) =
-            unsafe { core::mem::transmute(hook) };
-        return hook(first_address, limits);
+    #[cfg(not(test))]
+    {
+        unsafe extern "Rust" {
+            fn __bun_crash_handler_dump_stack_trace(
+                first_address: Option<usize>,
+                limits: DumpStackTraceOptions,
+            );
+        }
+        // SAFETY: `__bun_crash_handler_dump_stack_trace` is defined
+        // `#[no_mangle] extern "Rust"` in `bun_crash_handler` and linked into
+        // every binary that depends on this crate; it has no unsafe
+        // preconditions beyond being called.
+        unsafe { __bun_crash_handler_dump_stack_trace(first_address, limits) }
     }
-    // Fallback (hook not yet installed). We do NOT use
-    // `std::backtrace::Backtrace::force_capture()` here — both its Display and
-    // Debug impls parse the full .debug_info section (hundreds of MB on a debug
-    // build), costing ~8s on first use. T0 callers hit this on debug-warn paths
-    // that must stay sub-millisecond. Since the hook is installed in
-    // `crash_handler::init()` before any user code runs, this branch is only
-    // reachable from unit tests / very-early startup; a stub note suffices.
-    let _ = first_address;
-    let _ = limits;
-    crate::output::flush();
-    eprintln!("    (stack trace unavailable: crash_handler hook not yet installed)");
+    #[cfg(test)]
+    {
+        let _ = (first_address, limits);
+        crate::output::flush();
+        eprintln!("    (stack trace unavailable: crash_handler not linked in test binary)");
+    }
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────

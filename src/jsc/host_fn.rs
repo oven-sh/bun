@@ -19,50 +19,16 @@ use bun_string::ZigString;
 
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
-// ──────────────────────── panic → JS exception barrier ────────────────────────
+// ──────────────────────── panic handling ─────────────────────────────────────
 //
-// Unwinding out of an `extern "C"` fn is UB (with `panic=unwind` the runtime
-// inserts an abort shim; with `-Zpanic_abort_tests` it just aborts). Every
-// codegen-emitted `#[no_mangle] extern "C"` thunk routes through one of the
+// The workspace builds with `panic = "abort"`: a Rust `panic!` enters
+// `bun_crash_handler`'s `std::panic` hook (trace string + report) and aborts
+// before any unwind starts, so `catch_unwind` always returns `Ok` and there is
+// no payload to convert into a JS exception. JSC does not throw C++ exceptions
+// across its public API, so there is no foreign unwind to catch either. The
 // closure-taking helpers below (`to_js_host_call`, `host_setter_result`,
-// `host_construct_result`, `host_fn_finalize`), so catching the panic here is
-// sufficient to make the entire generated-classes ABI surface unwind-safe: a
-// Rust `panic!` surfaces as a JS `Error("Rust panic: …")` instead of tearing
-// down the process or corrupting the C++ caller's stack.
-//
-// `AssertUnwindSafe` is sound here: the closure borrows `&JSGlobalObject` /
-// `&CallFrame` (both `repr(C)` opaque handles, no interior Rust invariants to
-// witness half-updated) and `&mut T` for the user's `m_ctx` payload. A panic
-// mid-method may leave `T` in an inconsistent *application* state, but that is
-// no worse than the Zig path (which `@panic`s → `bun.crash_handler`), and the
-// alternative — UB — is strictly worse.
-
-#[inline]
-pub(crate) fn catch_panic<R>(
-    f: impl FnOnce() -> R,
-) -> Result<R, alloc::boxed::Box<dyn core::any::Any + Send + 'static>> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-}
-
-#[cold]
-#[inline(never)]
-pub(crate) fn throw_panic_as_js_error(
-    global: &JSGlobalObject,
-    payload: alloc::boxed::Box<dyn core::any::Any + Send + 'static>,
-) {
-    let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
-        s
-    } else if let Some(s) = payload.downcast_ref::<alloc::string::String>() {
-        s.as_str()
-    } else {
-        "<non-string panic payload>"
-    };
-    // Don't double-throw if the panic happened with a JS exception already
-    // pending (e.g. an `unwrap()` on a `JsResult` after a throw).
-    if !global.has_exception() {
-        let _ = global.throw(format_args!("Rust panic: {msg}"));
-    }
-}
+// `host_construct_result`, `host_fn_finalize`) therefore call the user body
+// directly — same end state as Zig `@panic` → `bun.crash_handler`.
 
 // ───────────────────────────── type aliases ──────────────────────────────
 
@@ -545,21 +511,14 @@ pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
 /// other ref holders still alias it.
 #[inline]
 pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
-    // No `JSGlobalObject` in scope to surface the panic as a JS exception, but
-    // unwinding through the C++ GC finalizer path is still UB — swallow it.
-    // The panic hook (crash_handler) has already logged the message.
-    let _ = catch_panic(|| {
-        // SAFETY: `this` is the GC-owned `m_ctx` pointer, valid and not
-        // concurrently accessed (mutator-thread sweep). It was produced by
-        // `Box::into_raw` in the construct path (`IntoHostConstructReturn`).
-        // For intrusively-refcounted `T` other native code may hold raw
-        // pointers to the same allocation — see doc comment above re: the
-        // impl's obligation to `Box::leak` before doing fallible work.
-        // Constructing the Box inside the closure preserves the pre-refactor
-        // leak-on-panic failure mode for everything up to this point.
-        let boxed = unsafe { alloc::boxed::Box::from_raw(this) };
-        f(boxed)
-    });
+    // SAFETY: `this` is the GC-owned `m_ctx` pointer, valid and not
+    // concurrently accessed (mutator-thread sweep). It was produced by
+    // `Box::into_raw` in the construct path (`IntoHostConstructReturn`).
+    // For intrusively-refcounted `T` other native code may hold raw
+    // pointers to the same allocation — see doc comment above re: the
+    // impl's obligation to `Box::leak` before doing fallible work.
+    let boxed = unsafe { alloc::boxed::Box::from_raw(this) };
+    f(boxed)
 }
 
 /// Codegen thunk entry for prototype setters.
@@ -571,13 +530,7 @@ pub fn host_setter_result<R: IntoHostSetterReturn>(
 ) -> bool {
     let mut scope_storage = core::mem::MaybeUninit::uninit();
     let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global);
-    let r = match catch_panic(f) {
-        Ok(v) => to_js_host_setter_value(global, v.into_host_setter_return()),
-        Err(payload) => {
-            throw_panic_as_js_error(global, payload);
-            false
-        }
-    };
+    let r = to_js_host_setter_value(global, f().into_host_setter_return());
     scope.assert_exception_presence_matches(!r);
     r
 }
@@ -591,19 +544,13 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
 ) -> *mut c_void {
     let mut scope_storage = core::mem::MaybeUninit::uninit();
     let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global);
-    let ptr = match catch_panic(f) {
-        Ok(v) => match v.into_host_construct_return() {
-            Ok(p) => p,
-            Err(JsError::OutOfMemory) => {
-                let _ = global.throw_out_of_memory_value();
-                core::ptr::null_mut()
-            }
-            Err(_) => core::ptr::null_mut(),
-        },
-        Err(payload) => {
-            throw_panic_as_js_error(global, payload);
+    let ptr = match f().into_host_construct_return() {
+        Ok(p) => p,
+        Err(JsError::OutOfMemory) => {
+            let _ = global.throw_out_of_memory_value();
             core::ptr::null_mut()
         }
+        Err(_) => core::ptr::null_mut(),
     };
     scope.assert_exception_presence_matches(ptr.is_null());
     ptr
@@ -625,14 +572,7 @@ pub fn to_js_host_call(
     let mut scope_storage = core::mem::MaybeUninit::uninit();
     let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global_this);
 
-    let returned: JsResult<JSValue> = match catch_panic(f) {
-        Ok(r) => r,
-        Err(payload) => {
-            throw_panic_as_js_error(global_this, payload);
-            Err(JsError::Thrown)
-        }
-    };
-    let normal = match returned {
+    let normal = match f() {
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),

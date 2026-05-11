@@ -699,11 +699,12 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 //     raw pointers, and `#[repr(C)]` structs are forwarded unchanged).
 //     `&T` / `Option<&T>` are intentionally passed straight across the ABI
 //     boundary as thin pointers — the *caller* upholds non-null/aligned/live,
-//     same as the hand-written thunks this macro replaces;
-//   - wraps the call in `catch_unwind` and aborts on panic, because unwinding
-//     across the C++ uWS frame is UB. `no_catch` opts out (e.g. for thunks
-//     where the body is itself a panic barrier, or where aborting is
-//     undesirable and the caller has its own guard).
+//     same as the hand-written thunks this macro replaces.
+//
+// With `panic = "abort"` Rust panics terminate inside the crash-handler hook
+// before unwinding starts, so no `catch_unwind` wrapper is emitted — the body
+// runs directly. `no_catch` is still accepted for source compatibility but is
+// now a no-op.
 //
 // The user body contains **no `unsafe`** — all pointer reconstruction lives in
 // the generated thunk under a single `// SAFETY:` umbrella mirroring the Zig
@@ -880,15 +881,10 @@ fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<Token
         Self::#fn_name(__this, #(#call_args),*)
     };
 
-    let body = if args.no_catch {
-        quote! { #inner_call }
-    } else {
-        quote! {
-            ::bun_core::ffi::catch_unwind_ffi(
-                #[inline(always)] move || { #inner_call }
-            )
-        }
-    };
+    // `panic = "abort"` → no unwind ever reaches the thunk, so call the body
+    // directly. `no_catch` is parsed but ignored (kept for source compat).
+    let _ = args.no_catch;
+    let body = quote! { #inner_call };
 
     let thunk = quote! {
         #export_attr

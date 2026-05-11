@@ -28,10 +28,10 @@ pub use bun_uws_sys::{
 };
 
 /// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`
-/// thunk that recovers `Self` from `*mut c_void`, lowers `&[T]` params to
-/// `(ptr, len)` pairs, and guards the body with `catch_unwind` → abort. See
-/// `bun_jsc_macros::uws_callback` for the full contract; the runtime panic
-/// barrier lives in `bun_core::ffi::catch_unwind_ffi`.
+/// thunk that recovers `Self` from `*mut c_void` and lowers `&[T]` params to
+/// `(ptr, len)` pairs. See `bun_jsc_macros::uws_callback` for the full
+/// contract. With `panic = "abort"` Rust panics terminate in the crash-handler
+/// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};

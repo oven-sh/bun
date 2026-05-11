@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::RawSlice;
+use bun_ptr::{BackRef, RawSlice};
 
 use bun_collections::{VecExt, ByteVecExt};
 use crate::webcore::jsc::{
@@ -455,8 +455,8 @@ pub enum WritableFuture {
     None,
     Promise {
         strong: JSPromiseStrong,
-        // TODO(port): JSC_BORROW &JSGlobalObject — stored on heap struct; using raw ptr
-        global: *const JSGlobalObject,
+        // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
+        global: BackRef<JSGlobalObject>,
     },
     Handler(WritableHandler),
 }
@@ -470,7 +470,7 @@ impl WritablePending {
             _ => {
                 self.future = WritableFuture::Promise {
                     strong: JSPromiseStrong::init(global_this),
-                    global: std::ptr::from_ref(global_this),
+                    global: BackRef::new(global_this),
                 };
                 match &self.future {
                     WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>(strong.get()),
@@ -531,12 +531,10 @@ impl WritablePending {
 
         match core::mem::replace(&mut self.future, WritableFuture::None) {
             WritableFuture::Promise { mut strong, global } => {
-                // SAFETY: global stored from &JSGlobalObject param; outlives this call
-                let global = unsafe { &*global };
                 Writable::fulfill_promise(
                     core::mem::replace(&mut self.result, Writable::Done),
                     strong.swap(),
-                    global,
+                    &global,
                 );
                 // TODO(port): Zig moved p out then reassigned future = .none; mem::replace mirrors this
             }
@@ -664,7 +662,7 @@ impl Pending {
         let prom = std::ptr::from_mut::<JSPromise>(JSPromise::create(global_object));
         self.future = PendingFuture::Promise {
             promise: prom,
-            global_this: std::ptr::from_ref(global_object),
+            global_this: BackRef::new(global_object),
         };
         self.state = PendingState::Pending;
         prom
@@ -710,8 +708,8 @@ pub enum PendingFuture {
     Promise {
         // TODO(port): JSC_BORROW *mut JSPromise — GC-rooted via protect/unprotect
         promise: *mut JSPromise,
-        // TODO(port): JSC_BORROW &JSGlobalObject — stored on heap; using raw ptr
-        global_this: *const JSGlobalObject,
+        // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
+        global_this: BackRef<JSGlobalObject>,
     },
     Handler(PendingHandler),
 }
@@ -769,9 +767,7 @@ impl Pending {
         self.state = PendingState::Used;
         match &self.future {
             PendingFuture::Promise { promise, global_this } => {
-                // SAFETY: global_this stored from &JSGlobalObject; promise is GC-rooted
-                let global = unsafe { &**global_this };
-                StreamResult::fulfill_promise(&mut self.result, *promise, global);
+                StreamResult::fulfill_promise(&mut self.result, *promise, global_this);
             }
             PendingFuture::Handler(h) => {
                 // PORT NOTE: Zig left self.result intact (bitwise copy); reset to Done here —
@@ -1063,8 +1059,9 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub signal: Signal,
     pub pending_flush: Option<*mut JSPromise>,
     pub wrote_at_start_of_flush: BlobSizeType,
-    // TODO(port): JSC_BORROW &JSGlobalObject — heap struct with `= undefined` default; using raw ptr
-    pub global_this: *const JSGlobalObject,
+    // JSC_BORROW: process-lifetime VM global; `None` until `flush_from_js`/
+    // `end_from_js` install it. Safe `Deref` via `BackRef`.
+    pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
 
     pub requested_end: bool,
@@ -1092,7 +1089,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             signal: Signal::default(),
             pending_flush: None,
             wrote_at_start_of_flush: 0,
-            global_this: core::ptr::null(),
+            global_this: None,
             high_water_mark: 2048,
             requested_end: false,
             has_backpressure: false,
@@ -1108,14 +1105,15 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// Borrow the JS global stored at construction.
     ///
-    /// SAFETY (invariant): `global_this` is set before first use (any
-    /// auto-flusher registration / pending-flush creation) and the VM-owned
-    /// global outlives this sink (JSC_BORROW). Never null once initialized.
+    /// Invariant: `global_this` is set before first use (any auto-flusher
+    /// registration / pending-flush creation) and the VM-owned global outlives
+    /// this sink (JSC_BORROW). Never `None` once initialized.
     #[inline]
-    fn global_this(&self) -> &JSGlobalObject {
-        debug_assert!(!self.global_this.is_null());
-        // SAFETY: see doc comment — JSC_BORROW backref valid for `'_`.
-        unsafe { &*self.global_this }
+    pub fn global_this(&self) -> &JSGlobalObject {
+        self.global_this
+            .as_ref()
+            .expect("HTTPServerWritable.global_this used before init")
+            .get()
     }
 
     pub fn connect(&mut self, signal: Signal) {
@@ -1570,7 +1568,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
         self.wrote_at_start_of_flush = self.wrote;
         self.pending_flush = Some(JSPromise::create(global_this));
-        self.global_this = std::ptr::from_ref(global_this);
+        self.global_this = Some(BackRef::new(global_this));
         // SAFETY: just created
         let promise_value = unsafe { &*self.pending_flush.unwrap() }.to_js();
         promise_value.protect();
@@ -1825,7 +1823,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             let readable = unsafe { core::slice::from_raw_parts(slice_ptr, readable_len) };
             if !self.send(readable) {
                 self.pending_flush = Some(JSPromise::create(global_this));
-                self.global_this = std::ptr::from_ref(global_this);
+                self.global_this = Some(BackRef::new(global_this));
                 // SAFETY: just created
                 let value = unsafe { &*self.pending_flush.unwrap() }.to_js();
                 value.protect();
@@ -2099,8 +2097,8 @@ pub struct NetworkSink {
     // (intrusive refcount). Using IntrusiveArc-style raw ptr; Phase B: confirm Arc vs IntrusiveArc.
     pub task: Option<NonNull<bun_s3::MultiPartUpload>>,
     pub signal: Signal,
-    // TODO(port): JSC_BORROW &JSGlobalObject — heap struct; using raw ptr
-    pub global_this: *const JSGlobalObject,
+    // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
+    pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
     pub flush_promise: JSPromiseStrong,
     pub end_promise: JSPromiseStrong,
@@ -2114,7 +2112,7 @@ impl Default for NetworkSink {
         Self {
             task: None,
             signal: Signal::default(),
-            global_this: core::ptr::null(),
+            global_this: None,
             high_water_mark: 2048,
             flush_promise: JSPromiseStrong::default(),
             end_promise: JSPromiseStrong::default(),
@@ -2128,13 +2126,14 @@ impl Default for NetworkSink {
 impl NetworkSink {
     /// Borrow the JS global stored at construction.
     ///
-    /// SAFETY (invariant): `global_this` is set at construction and the
-    /// VM-owned global outlives this sink (JSC_BORROW). Never null once set.
+    /// Invariant: `global_this` is set at construction and the VM-owned global
+    /// outlives this sink (JSC_BORROW). Never `None` once set.
     #[inline]
-    fn global_this(&self) -> &JSGlobalObject {
-        debug_assert!(!self.global_this.is_null());
-        // SAFETY: see doc comment — JSC_BORROW backref valid for `'_`.
-        unsafe { &*self.global_this }
+    pub fn global_this(&self) -> &JSGlobalObject {
+        self.global_this
+            .as_ref()
+            .expect("NetworkSink.global_this used before init")
+            .get()
     }
 
     pub fn new(init: NetworkSink) -> Box<NetworkSink> {
@@ -2211,10 +2210,9 @@ impl NetworkSink {
             task.state as u8
         );
         if this.flush_promise.has_value() {
-            // SAFETY: global_this set at construction
-            let global = unsafe { &*this.global_this };
+            let global = this.global_this.expect("global_this set at construction");
             this.flush_promise
-                .resolve(global, JSValue::js_number(flushed as f64))?;
+                .resolve(&global, JSValue::js_number(flushed as f64))?;
         }
         Ok(())
     }
@@ -2538,39 +2536,29 @@ impl BufferAction {
     // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
     // `AnyPromise::from(*mut JSPromise)` adapter exists.
     
-    // PORT NOTE: callers (ByteStream) hold `*const JSGlobalObject` on a heap
-    // struct (JSC_BORROW). Accept the raw pointer here and re-borrow at the
-    // call boundary so callers don't need an `unsafe { &* }` at each site.
     pub fn fulfill(
         &mut self,
-        global: *const JSGlobalObject,
+        global: &JSGlobalObject,
         blob: &mut AnyBlob,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // SAFETY: `global` is a JSC_BORROW stored from a live `&JSGlobalObject`;
-        // valid for the program lifetime of the JS VM thread.
-        let global = unsafe { &*global };
         blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag())
         // TODO(port): Zig passed `this.*` (full enum) as 3rd arg; using tag()
     }
 
     pub fn reject(
         &mut self,
-        global: *const JSGlobalObject,
+        global: &JSGlobalObject,
         err: StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // SAFETY: see `fulfill`.
-        let global = unsafe { &*global };
         // SAFETY: swap returns valid promise ptr
         unsafe { &mut *self.swap() }.reject(global, Ok(err.to_js_weak(global).0))
     }
 
     pub fn resolve(
         &mut self,
-        global: *const JSGlobalObject,
+        global: &JSGlobalObject,
         result: JSValue,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // SAFETY: see `fulfill`.
-        let global = unsafe { &*global };
         // SAFETY: swap returns valid promise ptr
         unsafe { &mut *self.swap() }.resolve(global, result)
     }

@@ -472,20 +472,17 @@ fn construct_s3_file_internal(
 
 pub struct S3BlobStatTask {
     promise: bun_jsc::JSPromiseStrong,
-    // TODO(port): lifetime — heap-allocated across async callback; LIFETIMES.tsv says JSC_BORROW (&JSGlobalObject).
-    // Stored as raw `*const` so the struct can outlive the constructing frame.
-    global: *const JSGlobalObject,
+    // LIFETIMES.tsv: JSC_BORROW (&JSGlobalObject). `BackRef` so the heap task
+    // can outlive the constructing frame while reads stay safe.
+    global: bun_ptr::BackRef<JSGlobalObject>,
     store: StoreRef,
 }
 
 impl S3BlobStatTask {
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
     #[inline]
-    pub fn global(&self) -> &'static JSGlobalObject {
-        // SAFETY: `global` was stored from a live `&JSGlobalObject` when the
-        // task was created; the VM (and thus its global) outlives every async
-        // task it schedules.
-        unsafe { &*self.global }
+    pub fn global(&self) -> &JSGlobalObject {
+        self.global.get()
     }
 
     pub fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
@@ -498,7 +495,9 @@ impl S3BlobStatTask {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        let global = this.global();
+        // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
+        let global_ref = this.global;
+        let global = global_ref.get();
         match result {
             s3::S3StatResult::NotFound(_) => {
                 this.promise.resolve(global, JSValue::FALSE)?;
@@ -530,7 +529,9 @@ impl S3BlobStatTask {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        let global = this.global();
+        // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
+        let global_ref = this.global;
+        let global = global_ref.get();
 
         match result {
             s3::S3StatResult::Success(stat_result) => {
@@ -556,7 +557,9 @@ impl S3BlobStatTask {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        let global = this.global();
+        // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
+        let global_ref = this.global;
+        let global = global_ref.get();
         match result {
             s3::S3StatResult::Success(stat_result) => {
                 let s3_stat = match S3Stat::init(
@@ -590,7 +593,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: std::ptr::from_ref::<JSGlobalObject>(global),
+            global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -617,7 +620,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: std::ptr::from_ref::<JSGlobalObject>(global),
+            global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -643,7 +646,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: std::ptr::from_ref::<JSGlobalObject>(global),
+            global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };

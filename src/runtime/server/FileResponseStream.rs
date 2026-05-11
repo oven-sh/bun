@@ -29,9 +29,9 @@ bun_output::declare_scope!(FileResponseStream, hidden);
 pub struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: AnyResponse,
-    // PORT NOTE: LIFETIMES.tsv classes this `&'static VirtualMachine`. Stored
-    // raw so the struct stays `'static` for the uWS callback userdata slot.
-    vm: *const VirtualMachine,
+    // LIFETIMES.tsv: `&'static VirtualMachine`. `BackRef` keeps the struct
+    // `'static` for the uWS callback userdata slot while giving safe `Deref`.
+    vm: bun_ptr::BackRef<VirtualMachine>,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -88,7 +88,7 @@ pub struct StartOptions {
     pub fd: Fd,
     pub auto_close: bool,
     pub resp: AnyResponse,
-    pub vm: *const VirtualMachine,
+    pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub file_type: FileType,
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
@@ -115,8 +115,7 @@ impl FileResponseStream {
             ref_count: Cell::new(1),
             resp: opts.resp,
             vm: opts.vm,
-            // SAFETY: `opts.vm` is &'static; event_loop() returns its live JS loop.
-            event_loop_handle: EventLoopHandle::init(unsafe { (*opts.vm).event_loop() }.cast::<()>()),
+            event_loop_handle: EventLoopHandle::init(opts.vm.event_loop().cast::<()>()),
             fd: opts.fd,
             auto_close: opts.auto_close,
             idle_timeout: opts.idle_timeout,
@@ -243,12 +242,11 @@ impl FileResponseStream {
                             Ok(())
                         },
                     });
-                    // SAFETY: `vm` is `&'static VirtualMachine` (LIFETIMES.tsv);
-                    // its `event_loop()` returns the live JS loop. `eof_task` was
-                    // just set and lives inside `*this` which outlives the task
-                    // (refcount held until `on_reader_done`).
+                    // SAFETY: `vm.event_loop()` returns the live JS loop;
+                    // `eof_task` was just set and lives inside `*this` which
+                    // outlives the task (refcount held until `on_reader_done`).
                     unsafe {
-                        (*(*self.vm).event_loop()).enqueue_task(Task::init(
+                        (*self.vm.event_loop()).enqueue_task(Task::init(
                             std::ptr::from_mut::<AnyTask::AnyTask>(self.eof_task.as_mut().unwrap()),
                         ));
                     }
@@ -515,9 +513,7 @@ impl FileResponseStream {
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
-        // SAFETY: `vm` is `&'static VirtualMachine` (LIFETIMES.tsv); event_loop()
-        // returns its live `*mut jsc::EventLoop`.
-        EventLoopHandle::init(unsafe { (*self.vm).event_loop() }.cast::<()>())
+        EventLoopHandle::init(self.vm.event_loop().cast::<()>())
     }
 
     pub fn r#loop(&self) -> *mut bun_io::Loop {

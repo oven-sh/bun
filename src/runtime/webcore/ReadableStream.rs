@@ -329,7 +329,7 @@ impl ReadableStream {
                 // in place. Rust constructs with `Default` (no UB) and `setup()` overwrites
                 // the entire struct via `*self = ByteBlobLoader { ... }`.
                 let reader = NewSource::<ByteBlobLoader>::new(NewSource {
-                    global_this,
+                    global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: ByteBlobLoader::default(),
                     ..Default::default()
                 });
@@ -341,7 +341,7 @@ impl ReadableStream {
             }
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new(NewSource {
-                    global_this,
+                    global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
                         // returns a non-null *mut EventLoop. Both outlive this call.
@@ -403,7 +403,7 @@ impl ReadableStream {
         match &store.data {
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new(NewSource {
-                    global_this,
+                    global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
                         event_loop: jsc::EventLoopHandle::init(
@@ -432,7 +432,7 @@ impl ReadableStream {
         // TODO(port): Zig's `buffered_reader: anytype` — only ever instantiated with the
         // platform `PipeReader`/`PosixBufferedReader`.
         let source = NewSource::<FileReader>::new(NewSource {
-            global_this,
+            global_this: Some(bun_ptr::BackRef::new(global_this)),
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
                 event_loop: jsc::EventLoopHandle::init(
@@ -621,10 +621,10 @@ pub struct NewSource<C: SourceContext> {
     pub close_jsvalue: bun_jsc::strong::Optional,
     pub cancel_handler: Option<fn(Option<*mut c_void>)>,
     pub cancel_ctx: Option<*mut c_void>,
-    // PORT NOTE: JSC_BORROW. Stored raw because it's a heap m_ctx field reassigned in
-    // `start()` from a fresh `&JSGlobalObject` argument; a `'static` borrow would be a
-    // lie and a lifetime parameter would propagate into FFI codegen.
-    pub global_this: *const JSGlobalObject,
+    // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
+    // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
+    // projection without propagating a lifetime parameter into FFI codegen.
+    pub global_this: Option<bun_ptr::BackRef<JSGlobalObject>>,
     // SAFETY: this is the self-wrapper JSValue (points at the JSCell that owns this m_ctx).
     // Kept alive by the wrapper itself; zeroed in finalize() before sweep.
     pub this_jsvalue: JSValue,
@@ -643,7 +643,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             close_jsvalue: bun_jsc::strong::Optional::empty(),
             cancel_handler: None,
             cancel_ctx: None,
-            global_this: core::ptr::null(),
+            global_this: None,
             this_jsvalue: JSValue::ZERO,
             is_closed: false,
         }
@@ -730,13 +730,15 @@ const _: () = assert!(core::mem::offset_of!(NewSource<FileReader>, context) == 0
 
 impl<C: SourceContext> NewSource<C> {
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this`
-    /// back-pointer.
+    /// back-pointer. `global_this` is stored from a live `&JSGlobalObject` at
+    /// construction (or reassigned in `start()` from a fresh live one); the
+    /// VM-owned global outlives every `NewSource` it owns.
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
-        // SAFETY: `global_this` is stored from a live `&JSGlobalObject` at
-        // construction (or reassigned in `start()` from a fresh live one); the
-        // VM-owned global outlives every `NewSource` it owns (JSC_BORROW).
-        unsafe { &*self.global_this }
+        self.global_this
+            .as_ref()
+            .expect("NewSource.global_this used before init")
+            .get()
     }
 
     /// `bun.TrivialNew(@This())` — heap-allocate and hand back the raw pointer.
@@ -936,7 +938,7 @@ impl<C: SourceContext> NewSource<C> {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.global_this = global_this;
+        self.global_this = Some(bun_ptr::BackRef::new(global_this));
         self.this_jsvalue = call_frame.this();
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
@@ -1024,7 +1026,7 @@ impl<C: SourceContext> NewSource<C> {
         // stored fn pointer against `on_js_close` to decide whether to pass
         // `self` (JS path) or `close_ctx` (native path).
         self.close_handler = Some(Self::on_js_close);
-        self.global_this = global_object;
+        self.global_this = Some(bun_ptr::BackRef::new(global_object));
 
         if value.is_undefined() {
             self.close_jsvalue.deinit();
@@ -1048,7 +1050,7 @@ impl<C: SourceContext> NewSource<C> {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
-        self.global_this = global_object;
+        self.global_this = Some(bun_ptr::BackRef::new(global_object));
 
         if value.is_undefined() {
             <Self as NewSourceCodegen>::on_drain_callback_set_cached(

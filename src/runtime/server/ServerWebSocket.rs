@@ -31,7 +31,7 @@ bun_output::declare_scope!(WebSocketServer, visible);
 // `JsRef`) carries the writes.
 #[bun_jsc::JsClass]
 pub struct ServerWebSocket {
-    handler: *const WebSocketServerHandler,
+    handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
     // PORT NOTE (§Pointers): `?*bun.webcore.AbortSignal` is an opaque C++ type
@@ -177,16 +177,13 @@ impl ServerWebSocket {
         self.flags.set(flags);
     }
 
-    /// Deref the raw handler pointer. The handler lives in `ServerConfig.websocket`
-    /// for the server's lifetime; non-null while any `ServerWebSocket` exists.
-    /// PORT NOTE: returns an unbounded (`'a`) borrow detached from `&self` so
-    /// callers can interleave `&mut self` (flags mutation) with handler reads —
-    /// the Zig original aliased freely through `*Handler`.
+    /// The handler lives in `ServerConfig.websocket` for the server's lifetime;
+    /// non-null while any `ServerWebSocket` exists. All `ServerWebSocket` state
+    /// is interior-mutable (`Cell`/`JsCell`), so the borrow tied to `&self`
+    /// does not conflict with flag mutation.
     #[inline]
-    fn handler<'a>(&self) -> &'a WebSocketServerHandler {
-        let p = self.handler;
-        // SAFETY: see PORT NOTE on the `handler` field — outlives this socket.
-        unsafe { &*p }
+    fn handler(&self) -> &WebSocketServerHandler {
+        self.handler.get()
     }
 
     // pub const js = jsc.Codegen.JSServerWebSocket; — provided by #[bun_jsc::JsClass]
@@ -201,7 +198,7 @@ impl ServerWebSocket {
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
         let this = bun_core::heap::into_raw(Box::new(ServerWebSocket {
-            handler: std::ptr::from_ref::<WebSocketServerHandler>(handler),
+            handler: bun_ptr::BackRef::new(handler),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::default()),
             signal: Cell::new(signal),

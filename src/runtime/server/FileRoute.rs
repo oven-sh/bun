@@ -530,7 +530,7 @@ impl FileRoute {
             fd,
             auto_close: true,
             resp,
-            vm: this.server.get().unwrap().vm(),
+            vm: bun_ptr::BackRef::new(this.server.get().unwrap().vm()),
             file_type,
             pollable,
             offset: body_offset,

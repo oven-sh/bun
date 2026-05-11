@@ -887,7 +887,7 @@ impl Value {
                         // Zig: `.context = undefined` then `reader.context.setup()`; Rust
                         // default-constructs (ByteStream::default == post-setup state).
                         context: ByteStream::default(),
-                        global_this,
+                        global_this: Some(bun_ptr::BackRef::new(global_this)),
                         ..Default::default()
                     },
                 );
@@ -1543,7 +1543,7 @@ impl Value {
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new(
             webcore::readable_stream::NewSource {
                 context: ByteStream::default(),
-                global_this,
+                global_this: Some(bun_ptr::BackRef::new(global_this)),
                 ..Default::default()
             },
         );

@@ -1700,7 +1700,7 @@ where
             fd,
             auto_close,
             resp,
-            vm: std::ptr::from_ref::<VirtualMachine>(server.vm()),
+            vm: bun_ptr::BackRef::new(server.vm()),
             file_type,
             pollable,
             offset: self.sendfile.offset as u64,
@@ -1799,7 +1799,7 @@ where
                 buffer: Vec::<u8>::default(),
                 on_first_write: Some(Self::handle_first_stream_write_thunk),
                 ctx: Some(std::ptr::from_mut::<Self>(this).cast::<c_void>()),
-                global_this: std::ptr::from_ref(global_this),
+                global_this: Some(bun_ptr::BackRef::new(global_this)),
                 ..Default::default()
             },
         });
@@ -2489,11 +2489,10 @@ where
             wrote_anything = wrapper.sink.wrote > 0;
 
             wrapper.sink.finalize();
-            // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-            let sink_global = bun_opaque::opaque_deref(wrapper.sink.global_this);
+            let sink_global = wrapper.sink.global_this.expect("sink.global_this set in do_render_stream");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
                 &mut wrapper.sink.signal,
-                sink_global,
+                &sink_global,
             );
             Self::destroy_sink(wrapper_ptr);
         }
@@ -2569,11 +2568,10 @@ where
             let aborted = req.flags.aborted() || wrapper.sink.aborted;
             req.flags.set_aborted(aborted);
             wrapper.sink.finalize();
-            // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-            let sink_global = bun_opaque::opaque_deref(wrapper.sink.global_this);
+            let sink_global = wrapper.sink.global_this.expect("sink.global_this set in do_render_stream");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
                 &mut wrapper.sink.signal,
-                sink_global,
+                &sink_global,
             );
             Self::destroy_sink(wrapper_ptr);
         }

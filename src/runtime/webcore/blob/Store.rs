@@ -340,11 +340,9 @@ impl S3Ext for S3 {
         struct Wrapper {
             promise: bun_jsc::JSPromiseStrong,
             store: StoreRef,
-            // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject — but this struct is heap-allocated
-            // and passed through *anyopaque to an async callback, so a borrowed reference
-            // cannot be expressed without a lifetime that outlives the constructing frame.
-            // TODO(port): lifetime — using raw pointer for now.
-            global: *const JSGlobalObject,
+            // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject. `BackRef` so the heap
+            // wrapper can outlive the constructing frame while reads stay safe.
+            global: bun_ptr::BackRef<JSGlobalObject>,
         }
 
         impl Wrapper {
@@ -360,9 +358,7 @@ impl S3Ext for S3 {
                 // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
                 let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
-                // SAFETY: global was a valid &JSGlobalObject when the wrapper was created and
-                // the VM keeps it alive for the duration of the async op.
-                let global_object = unsafe { &*self_.global };
+                let global_object = self_.global.get();
                 match result {
                     S3DeleteResult::Success => {
                         self_.promise.resolve(global_object, JSValue::TRUE)?;
@@ -407,7 +403,7 @@ impl S3Ext for S3 {
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
                 // intrusive refcount (Zig: `store.ref()`).
                 store: unsafe { StoreRef::retained(NonNull::from(store)) },
-                global: std::ptr::from_ref(global_this),
+                global: bun_ptr::BackRef::new(global_this),
             })).cast::<c_void>(),
             proxy,
             aws_options.request_payer,
@@ -433,8 +429,8 @@ impl S3Ext for S3 {
             promise: bun_jsc::JSPromiseStrong,
             store: StoreRef,
             resolved_list_options: S3ListObjectsOptions,
-            // TODO(port): lifetime — JSC_BORROW per LIFETIMES.tsv; raw pointer for heap struct.
-            global: *const JSGlobalObject,
+            // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
+            global: bun_ptr::BackRef<JSGlobalObject>,
         }
 
         impl Wrapper {
@@ -445,8 +441,7 @@ impl S3Ext for S3 {
                 // SAFETY: opaque_self was created via heap::alloc below.
                 let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
-                // SAFETY: global was a valid &JSGlobalObject when the wrapper was created.
-                let global_object = unsafe { &*self_.global };
+                let global_object = self_.global.get();
 
                 match result {
                     S3ListObjectsResult::Success(list_result) => {
@@ -507,7 +502,7 @@ impl S3Ext for S3 {
             // intrusive refcount (Zig: `store.ref()`).
             store: unsafe { StoreRef::retained(NonNull::from(store)) },
             resolved_list_options: options,
-            global: std::ptr::from_ref(global_this),
+            global: bun_ptr::BackRef::new(global_this),
         }));
 
         s3_client::list_objects(

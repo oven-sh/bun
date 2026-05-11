@@ -1270,12 +1270,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         super::AnyServer::from(std::ptr::from_ref::<Self>(self))
     }
 
-    /// Shared `&VirtualMachine` accessor (struct stores it as `*const`).
+    /// Shared `&VirtualMachine` accessor.
     #[inline(always)]
     fn vm_ref(&self) -> &jsc::virtual_machine::VirtualMachine {
-        // SAFETY: `vm` is the per-thread singleton, set in `init()`; non-null
-        // and valid for the server's lifetime (LIFETIMES.tsv: STATIC).
-        unsafe { &*self.vm }
+        // `vm` is a `BackRef<VirtualMachine>` (per-thread singleton, set in
+        // `init()`); safe `Deref` projection.
+        self.vm.get()
     }
 
     /// Shared `&JSGlobalObject` accessor (struct stores it as `*const`).

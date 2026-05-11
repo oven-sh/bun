@@ -351,10 +351,9 @@ impl FileReader {
             ..Default::default()
         };
 
-        // SAFETY: see `parent()` — tight deref, no overlapping &mut held.
         // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
         // global); deref to call `event_loop()`.
-        let global = unsafe { &*(*self.parent()).global_this };
+        let global = self.parent_global();
         self.event_loop =
             EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
     }
@@ -418,11 +417,10 @@ impl FileReader {
             }
         }
 
-        // SAFETY: see `parent()` — tight deref, no overlapping &mut held.
         // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
         // global); deref to call `event_loop()`.
         {
-            let global = unsafe { &*(*self.parent()).global_this };
+            let global = self.parent_global();
             self.event_loop =
                 EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
         }
@@ -512,6 +510,19 @@ impl FileReader {
         unsafe {
             bun_core::from_field_ptr!(Source, context, std::ptr::from_mut::<Self>(self))
         }
+    }
+
+    /// Safe accessor for the parent `NewSource.global_this` back-reference.
+    ///
+    /// One unsafe (`from_field_ptr` raw-place projection of a `Copy` field —
+    /// no `&Source` is materialized so no aliasing with `&mut self`); callers
+    /// then `Deref` the returned `BackRef` with no unsafe.
+    #[inline]
+    fn parent_global(&mut self) -> bun_ptr::BackRef<jsc::JSGlobalObject> {
+        // SAFETY: see `parent()` — `self` is the `context` field of a live
+        // heap-allocated `Source`. Reading the `Copy` `global_this` via
+        // `(*ptr).field` is a raw-place read, not a `&Source` borrow.
+        unsafe { (*self.parent()).global_this }.expect("NewSource.global_this set before use")
     }
 
     pub fn on_cancel(&mut self) {
@@ -806,9 +817,8 @@ impl FileReader {
             // If not flowing (paused), don't initiate new reads
             if !self.flowing {
                 bun_core::scoped_log!(FileReader, "onPull({}) = pending (not flowing)", buffer.len());
-                // SAFETY: see `parent()`.
-                let global = unsafe { &*(*self.parent()).global_this };
-                self.pending_value.set(global, array);
+                let global = self.parent_global();
+                self.pending_value.set(&global, array);
                 self.pending_view = buffer;
                 return streams::Result::Pending(&raw mut self.pending);
             }
@@ -845,9 +855,8 @@ impl FileReader {
                     }
                     // PORT NOTE: fallthrough — but `buffer` was moved into read_inside_on_pull.
                     // Recover it from `remaining_buf` (amount_read == 0 ⇒ same slice).
-                    // SAFETY: see `parent()`.
-                    let global = unsafe { &*(*self.parent()).global_this };
-                    self.pending_value.set(global, array);
+                    let global = self.parent_global();
+                    self.pending_value.set(&global, array);
                     self.pending_view = remaining_buf;
                     bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
                     return streams::Result::Pending(&raw mut self.pending);
@@ -883,9 +892,8 @@ impl FileReader {
         }
 
         let buffer_len = buffer.len();
-        // SAFETY: see `parent()`.
-        let global = unsafe { &*(*self.parent()).global_this };
-        self.pending_value.set(global, array);
+        let global = self.parent_global();
+        self.pending_value.set(&global, array);
         self.pending_view = buffer;
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);

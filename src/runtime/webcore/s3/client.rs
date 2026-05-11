@@ -423,8 +423,10 @@ pub fn writable_stream(
 ) -> JsResult<JSValue> {
     // Local callback wrapper (Zig: `const Wrapper = struct { pub fn callback(...) }`)
     fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> JsTerminatedResult<()> {
-        // SAFETY: global_this set at construction; non-null while sink is live.
-        let global = unsafe { &*sink.global_this };
+        // `global_this` is a `BackRef` set at construction; copy it so the
+        // re-borrow does not hold `&sink` across the `&mut sink` calls below.
+        let global = sink.global_this.expect("NetworkSink.global_this set at construction");
+        let global = global.get();
         if sink.end_promise.has_value() || sink.flush_promise.has_value() {
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
             let event_loop = global.bun_vm().as_mut().event_loop();
@@ -522,7 +524,7 @@ pub fn writable_stream(
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink = bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
         task: NonNull::new(task_ptr),
-        global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+        global_this: Some(bun_ptr::BackRef::new(global_this)),
         high_water_mark: part_size as BlobSizeType,
         ..Default::default()
     }));
@@ -552,7 +554,7 @@ pub struct S3UploadStreamWrapper {
     pub callback: Option<fn(S3UploadResult, *mut c_void)>,
     pub callback_context: *mut c_void,
     /// this is owned by the task not by the wrapper
-    pub path: *const [u8],
+    pub path: bun_ptr::RawSlice<u8>,
     pub global: GlobalRef, // JSC_BORROW
 }
 
@@ -664,16 +666,13 @@ impl S3UploadStreamWrapper {
             S3UploadResult::Failure(err) => {
                 if let Some(sink) = self_.sink.take() {
                     // sink in progress, cancel it (will call writeEndRequest for cleanup and will reject the endPromise)
-                    // SAFETY: path borrowed from task which outlives self
-                    let js_err = s3_error_to_js(err, &self_.global, Some(unsafe { &*self_.path }));
+                    let js_err = s3_error_to_js(err, &self_.global, Some(self_.path.slice()));
                     // SAFETY: sink is a live Box-allocated ResumableSink.
                     unsafe { (*sink).cancel(js_err) };
                     // SAFETY: deref_ releases our ref (associated fn — raw-ptr receiver).
                     unsafe { ResumableS3UploadSink::deref_(sink) };
                 } else if self_.end_promise.has_value() {
-                    // SAFETY: path borrowed from task which outlives self
-                    let path = unsafe { &*self_.path };
-                    let js_err = s3_error_to_js(err, &self_.global, Some(path));
+                    let js_err = s3_error_to_js(err, &self_.global, Some(self_.path.slice()));
                     self_.end_promise.reject(&self_.global, Ok(js_err))?;
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
@@ -872,7 +871,7 @@ pub fn upload_stream(
         sink: None,
         callback,
         callback_context,
-        path: &raw const *task.path,
+        path: bun_ptr::RawSlice::new(&task.path),
         task: task_ptr,
         end_promise: bun_jsc::JSPromiseStrong::init(global_this),
         global: global_static,
@@ -1174,7 +1173,7 @@ pub fn readable_stream(
     let reader: *mut crate::webcore::byte_stream::Source = crate::webcore::byte_stream::Source::new(
         crate::webcore::readable_stream::NewSource {
             context: ByteStream::default(),
-            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+            global_this: Some(bun_ptr::BackRef::new(global_this)),
             ..Default::default()
         },
     );

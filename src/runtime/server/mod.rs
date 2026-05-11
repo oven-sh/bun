@@ -242,9 +242,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub h3_alt_svc: Box<[u8]>,
     pub js_value: jsc::JsRef,
     /// Potentially null before listen() is called, and once .destroy() is called.
-    // TODO(port): LIFETIMES.tsv = STATIC → `&'static VirtualMachine`. Shim type
-    // is opaque; raw ptr until bun_jsc::VirtualMachine is real.
-    pub vm: *const jsc::VirtualMachine,
+    // LIFETIMES.tsv = STATIC → `&'static VirtualMachine`. `BackRef` for safe
+    // `Deref` while keeping the struct `'static` (process-lifetime VM).
+    pub vm: bun_ptr::BackRef<jsc::VirtualMachine>,
     pub global_this: *const jsc::JSGlobalObject,
     pub base_url_string_for_joining: Box<[u8]>,
     pub config: ServerConfig,
@@ -413,11 +413,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         bun_opaque::opaque_deref(self.global_this)
     }
 
-    /// SAFETY: `vm` is a STATIC backref (LIFETIMES.tsv) set in `init()` from
+    /// `vm` is a STATIC backref (LIFETIMES.tsv) set in `init()` from
     /// `VirtualMachine::get()`; non-null for the server's lifetime.
     #[inline(always)]
     pub fn vm(&self) -> &jsc::VirtualMachine {
-        unsafe { &*self.vm }
+        self.vm.get()
     }
 
     /// Raw mutable pointer to the process-static VM. Returned as `*mut` (not
@@ -432,7 +432,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// the result UB.
     #[inline(always)]
     pub fn vm_mut(&self) -> *mut jsc::VirtualMachine {
-        debug_assert!(core::ptr::eq(self.vm, jsc::VirtualMachine::get_mut_ptr()));
+        debug_assert!(core::ptr::eq(self.vm.as_ptr(), jsc::VirtualMachine::get_mut_ptr()));
         jsc::VirtualMachine::get_mut_ptr()
     }
 
@@ -1379,12 +1379,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         }
         self.poll_ref
-            .ref_(jsc::VirtualMachine::event_loop_ctx(self.vm.cast_mut()));
+            .ref_(jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()));
     }
 
     pub fn unref(&mut self) {
         self.poll_ref
-            .unref(jsc::VirtualMachine::event_loop_ctx(self.vm.cast_mut()));
+            .unref(jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()));
     }
 
     pub fn stop_listening(&mut self, abrupt: bool) {
@@ -1735,7 +1735,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             global_this: std::ptr::from_ref(global),
             config: core::mem::take(config),
             base_url_string_for_joining: base_url,
-            vm: std::ptr::from_ref(jsc::VirtualMachine::get()),
+            vm: bun_ptr::BackRef::new(jsc::VirtualMachine::get()),
             dev_server: None,
             app: None,
             listener: None,

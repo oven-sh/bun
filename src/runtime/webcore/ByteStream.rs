@@ -159,11 +159,13 @@ impl ByteStream {
                 // here as explicit post-reject cleanup since `?` would skip it.
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
 
-                let global = self.parent().global_this;
+                // Copy the `BackRef` so the global borrow does not hold `&mut self`
+                // across the field mutations below.
+                let global = self.parent().global_this.expect("NewSource.global_this");
                 // PORT NOTE: reshaped for borrowck — re-borrow action via Option::take so we
                 // can mutate other fields afterwards.
                 let mut action = self.buffer_action.take().unwrap();
-                let res = action.reject(global, err.clone());
+                let res = action.reject(&global, err.clone());
 
                 self.buffer.clear();
                 self.buffer.shrink_to_fit();
@@ -182,7 +184,7 @@ impl ByteStream {
                     bun_output::scoped_log!(ByteStream, "ByteStream.onData done and action.fulfill()");
 
                     let mut blob = self.to_any_blob().unwrap();
-                    return action.fulfill(self.parent().global_this, &mut blob);
+                    return action.fulfill(self.parent().global_this(), &mut blob);
                 }
                 if self.buffer.capacity() == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
@@ -194,7 +196,7 @@ impl ByteStream {
                         // `stream`).
                         self.buffer = owned.move_to_list_managed();
                         let mut blob = self.to_any_blob().unwrap();
-                        return action.fulfill(self.parent().global_this, &mut blob);
+                        return action.fulfill(self.parent().global_this(), &mut blob);
                     }
                 }
 
@@ -206,7 +208,7 @@ impl ByteStream {
                 // (Temporary* variants are non-owning `RawSlice` and so are left alone, matching Zig).
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
-                return action.fulfill(self.parent().global_this, &mut blob);
+                return action.fulfill(self.parent().global_this(), &mut blob);
             } else {
                 self.buffer.extend_from_slice(stream.slice());
                 // Zig: `if owned* allocator.free(stream.slice())` — owned `Vec<u8>` payload of
@@ -330,10 +332,10 @@ impl ByteStream {
 
     pub fn set_value(&mut self, view: JSValue) {
         bun_jsc::mark_binding!();
-        // SAFETY: `global_this` is a JSC_BORROW raw pointer stored from a live
-        // `&JSGlobalObject`; valid for the lifetime of the JS VM thread.
-        let global = unsafe { &*self.parent().global_this };
-        self.pending_value.set(global, view);
+        // Copy the `BackRef` so the borrow does not hold `&mut self` across
+        // the `pending_value.set` call.
+        let global = self.parent().global_this.expect("NewSource.global_this");
+        self.pending_value.set(&global, view);
     }
 
     pub fn parent(&mut self) -> &mut Source {
@@ -418,9 +420,9 @@ impl ByteStream {
         }
 
         if let Some(mut action) = self.buffer_action.take() {
-            let global = self.parent().global_this;
+            let global = self.parent().global_this.expect("NewSource.global_this");
             // TODO: properly propagate exception upwards
-            let _ = action.reject(global, streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort));
+            let _ = action.reject(&global, streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort));
             self.buffer_action = None;
         }
     }

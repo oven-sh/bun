@@ -962,13 +962,13 @@ impl JSMySQLConnection {
             .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
     }
 
-    pub fn on_query_result(&self, request: &mut JSMySQLQuery, result: MySQLQueryResult) {
+    pub fn on_query_result(&self, request: &JSMySQLQuery, result: MySQLQueryResult) {
         request.resolve(self.get_queries_array(), result);
     }
 
     pub fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
         &self,
-        request: &mut JSMySQLQuery,
+        request: &JSMySQLQuery,
         statement: &mut MySQLStatement,
         reader: NewReader<C>,
     ) -> Result<(), OnResultRowError> {
@@ -1038,7 +1038,7 @@ impl JSMySQLConnection {
         Ok(())
     }
 
-    pub fn on_error(&self, request: Option<&mut JSMySQLQuery>, err: AnyMySQLErrorT) {
+    pub fn on_error(&self, request: Option<&JSMySQLQuery>, err: AnyMySQLErrorT) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();
@@ -1062,7 +1062,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn on_error_packet(&self, request: Option<&mut JSMySQLQuery>, err: ErrorPacket) {
+    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: ErrorPacket) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();

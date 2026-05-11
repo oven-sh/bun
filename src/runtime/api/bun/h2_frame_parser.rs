@@ -1755,50 +1755,94 @@ impl Stream {
     ) {
         let global_this = client.global_this;
 
-        if let Some(last_frame) = self.data_frame_queue.peek_last() {
+        // PORT NOTE: `dispatch_write_callback()` below re-enters JS, which can
+        // call back into `H2FrameParser` host-fns (e.g. `writeStream`) that
+        // look this `Stream` up by id from `client.streams` and reach
+        // `queue_frame()` again with a fresh `&mut Stream` aliasing this one.
+        // With our `&mut self` parameter marked LLVM-`noalias` and nothing
+        // self-derived passed into the dispatch call, LLVM was observed (ASM-
+        // verified by the noalias-hunt sweep) caching `*last_frame` loads
+        // across the call — the trailing `.callback.deinit()` / `=` then
+        // operated on a stale slot.
+        //
+        // Mitigation (matching `NodeHTTPResponse::cork` at b818e70e1c57):
+        // launder `self` through `black_box` so the resulting raw pointer is
+        // opaque (not provably derived from the `noalias` param), and derive
+        // `last_frame` from that laundered pointer. Both `black_box` calls
+        // around the dispatch independently force a reload of `*last_frame`
+        // afterwards. Stacked-Borrows is still violated by the re-entrant
+        // `&mut Stream` alias regardless — same as every re-entrant
+        // `.classes.ts` `&mut self` method (PORT_NOTES_PLAN R-2); this change
+        // addresses the observable miscompile only.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the live `&mut self` payload; no other `&` to
+        // `*this` exists between here and the dispatch call.
+        if let Some(last_frame_ref) = unsafe { (*this).data_frame_queue.peek_last() } {
+            // Raw, opaque-provenance pointer for post-dispatch accesses.
+            let last_frame: *mut PendingFrame =
+                core::hint::black_box(core::ptr::from_mut(last_frame_ref));
+            // SAFETY: helper for the pre-dispatch accesses below; `last_frame`
+            // is the unique tail slot in `self.data_frame_queue.data`, valid
+            // until the dispatch call (after which we re-`black_box` before
+            // every access — see PORT NOTE above).
+            macro_rules! lf {
+                () => {
+                    unsafe { &mut *last_frame }
+                };
+            }
             if bytes.is_empty() {
                 // just merge the end_stream
-                last_frame.end_stream = end_stream;
+                lf!().end_stream = end_stream;
                 // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                 // this is fine is like a per-stream CORKING in a frame level
-                if let Some(old_callback) = last_frame.callback.get() {
+                if let Some(old_callback) = lf!().callback.get() {
+                    // Escape `this` so a self-derived address is observable
+                    // across the opaque JS call (belt-and-suspenders; either
+                    // launder alone defeats the caching).
+                    core::hint::black_box(this);
                     client.dispatch_write_callback(old_callback);
-                    last_frame.callback.deinit();
+                    core::hint::black_box(last_frame);
+                    lf!().callback.deinit();
                 }
-                last_frame.callback = StrongOptional::create(callback, &global_this);
+                lf!().callback = StrongOptional::create(callback, &global_this);
                 return;
             }
-            if last_frame.len == 0 {
+            if lf!().len == 0 {
                 // we have an empty frame with means we can just use this frame with a new buffer
-                last_frame.buffer = vec![0u8; MAX_PAYLOAD_SIZE_WITHOUT_FRAME];
+                lf!().buffer = vec![0u8; MAX_PAYLOAD_SIZE_WITHOUT_FRAME];
             }
             let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME as u32;
-            let remaining = max_size - last_frame.len;
+            let remaining = max_size - lf!().len;
             if remaining > 0 {
                 // ok we can cork frames
                 let consumed_len = (remaining as usize).min(bytes.len());
                 let merge = &bytes[0..consumed_len];
-                last_frame.buffer[last_frame.len as usize..last_frame.len as usize + consumed_len]
-                    .copy_from_slice(merge);
-                last_frame.len += u32::try_from(consumed_len).expect("int cast");
+                let len = lf!().len as usize;
+                lf!().buffer[len..len + consumed_len].copy_from_slice(merge);
+                lf!().len += u32::try_from(consumed_len).expect("int cast");
                 bun_output::scoped_log!(H2FrameParser, "dataFrame merged {}", consumed_len);
 
                 client.queued_data_size += consumed_len as u64;
                 // lets fallthrough if we still have some data
                 let more_data = &bytes[consumed_len..];
                 if more_data.is_empty() {
-                    last_frame.end_stream = end_stream;
+                    lf!().end_stream = end_stream;
                     // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                     // this is fine is like a per-stream CORKING in a frame level
-                    if let Some(old_callback) = last_frame.callback.get() {
+                    if let Some(old_callback) = lf!().callback.get() {
+                        core::hint::black_box(this);
                         client.dispatch_write_callback(old_callback);
-                        last_frame.callback.deinit();
+                        core::hint::black_box(last_frame);
+                        lf!().callback.deinit();
                     }
-                    last_frame.callback = StrongOptional::create(callback, &global_this);
+                    lf!().callback = StrongOptional::create(callback, &global_this);
                     return;
                 }
                 // we keep the old callback because the new will be part of another frame
-                return self.queue_frame(client, more_data, callback, end_stream);
+                // SAFETY: `this` is the live `&mut self`; no borrow of `*this`
+                // is held here (the `last_frame` raw pointer is unused past
+                // this point).
+                return unsafe { (*this).queue_frame(client, more_data, callback, end_stream) };
             }
         }
         bun_output::scoped_log!(

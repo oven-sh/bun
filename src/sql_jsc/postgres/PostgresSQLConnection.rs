@@ -1457,7 +1457,23 @@ impl PostgresSQLConnection {
     }
 
     fn clean_up_requests(&mut self, js_reason: Option<JSValue>) {
-        while let Some(request_ptr) = self.current() {
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `request.on_js_error` / `on_error` reject the JS promise → user
+        // callback can re-enter via a fresh `&mut PostgresSQLConnection` from
+        // `m_ctx` and mutate `self.requests` (e.g. enqueue a new query). LLVM
+        // was caching `self.requests` head/state across the call so the
+        // post-call `current()` / `discard(1)` operated on a stale queue
+        // (ASM-verified PROVEN_CACHED). Launder so each loop iteration
+        // re-reads through an opaque pointer; mirrors the cork fix at
+        // b818e70e1c57.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY (applies to every `&*this` / `&mut *this` below): `this`
+        // aliases the live `&mut self`; single JS thread; the connection is
+        // kept alive by the caller's `ref_and_close` ref bracket for the
+        // duration of this loop, so re-entry never frees `*this`. Each
+        // `&mut *this` borrow ends before the next is created (no borrow held
+        // across the JS-re-entrant `on_js_error`/`on_error` call).
+        while let Some(request_ptr) = unsafe { &*this }.current() {
             // SAFETY: request is a valid *mut PostgresSQLQuery owned by the queue.
             let request = unsafe { &mut *request_ptr };
             match request.status {
@@ -1473,13 +1489,14 @@ impl PostgresSQLConnection {
                     let stmt = unsafe { &mut *stmt };
                     stmt.error_response = Some(StatementError::PostgresError(AnyPostgresError::ConnectionClosed));
                     stmt.status = StatementStatus::Failed;
-                    if !unsafe { self.vm() }.is_shutting_down() {
+                    if !unsafe { (*this).vm() }.is_shutting_down() {
+                        let global = unsafe { &*this }.global();
                         if let Some(reason) = js_reason {
-                            request.on_js_error(reason, self.global());
+                            request.on_js_error(reason, global);
                         } else {
                             request.on_error(
                                 StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
-                                self.global(),
+                                global,
                             );
                         }
                     }
@@ -1488,14 +1505,15 @@ impl PostgresSQLConnection {
                 QueryStatus::Binding
                 | QueryStatus::Running
                 | QueryStatus::PartialResponse => {
-                    self.finish_request(request);
-                    if !unsafe { self.vm() }.is_shutting_down() {
+                    unsafe { &mut *this }.finish_request(request);
+                    if !unsafe { (*this).vm() }.is_shutting_down() {
+                        let global = unsafe { &*this }.global();
                         if let Some(reason) = js_reason {
-                            request.on_js_error(reason, self.global());
+                            request.on_js_error(reason, global);
                         } else {
                             request.on_error(
                                 StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
-                                self.global(),
+                                global,
                             );
                         }
                     }
@@ -1504,7 +1522,7 @@ impl PostgresSQLConnection {
                 QueryStatus::Success | QueryStatus::Fail => {}
             }
             unsafe { PostgresSQLQuery::deref(request_ptr) };
-            self.requests.discard(1);
+            unsafe { (*this).requests.discard(1) };
         }
     }
 

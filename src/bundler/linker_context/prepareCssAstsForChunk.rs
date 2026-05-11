@@ -187,7 +187,20 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         while j != 1 {
                             j -= 1;
 
-                            let ast_import = BundlerStyleSheet {
+                            // PORT NOTE: Zig has no destructors, so when `ast_import` falls
+                            // out of scope the bitwise-duplicated `ImportConditions` inside
+                            // it (see `ptr::read` below) is simply abandoned. In Rust,
+                            // dropping `ast_import` would run `Drop` on that aliased
+                            // `ImportConditions` — freeing Global-backed buffers
+                            // (`MediaList.media_queries: Vec`, `SupportsCondition::{Box,Vec}`,
+                            // `LayerName.v: SmallList`) that are still owned by
+                            // `entry.conditions[j]`, i.e. a double-free / UAF. Wrap in
+                            // `ManuallyDrop` to mirror Zig's leak-on-scope-exit; the only
+                            // *fresh* allocation this leaks is the 1-element `rules.v` Vec
+                            // buffer — same trade-off documented at the top of
+                            // findImportedFilesInCSSOrder.rs for the `entry.conditions`
+                            // ecosystem.
+                            let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
                                 options: ParserOptions::default(None),
                                 license_comments: Default::default(),
                                 sources: Default::default(),
@@ -200,7 +213,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         loc: Location::dummy(),
                                         ..Default::default()
                                     };
-                                    // SAFETY: Zig `entry.conditions.at(j).*` — shallow struct copy.
+                                    // SAFETY: Zig `entry.conditions.at(j).*` — shallow struct
+                                    // copy. The duplicate is never dropped (`ManuallyDrop`
+                                    // above), so the aliased heap stays singly-owned by
+                                    // `entry.conditions[j]`.
                                     *import_rule.conditions_mut() =
                                         unsafe { core::ptr::read(entry.conditions.at(j)) };
                                     rules.v.push(BundlerCssRule::Import(import_rule));
@@ -208,7 +224,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 },
                                 composes: Default::default(),
                                 ..BundlerStyleSheet::empty()
-                            };
+                            });
 
                             let printer_options = PrinterOptions {
                                 targets: Targets::for_bundler_target(c.options.target),

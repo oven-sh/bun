@@ -130,9 +130,15 @@ edition = "2024"
 # `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
 # the whole Rust crate graph into one LLVM module, matching Zig's shape.
 #
-# `panic = "unwind"` is kept (NOT abort) — `host_fn::*` and the bundler thread
-# wrap entry points in `catch_unwind` to convert panics into JS errors / clean
-# thread teardown instead of taking the process down.
+# `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` prints the
+# trace string + uploads then aborts (matching Zig's `noreturn` panic), so
+# `catch_unwind` is unreachable for Rust panics anyway. Dropping unwind keeps
+# landing pads / drop-glue cleanup out of every function (smaller `.eh_frame`
+# on POSIX, smaller `.pdata`/`.xdata` on Windows). Stack traces are unaffected:
+# `Bun__captureStackTrace` walks frame pointers (`-Cforce-frame-pointers=yes`),
+# not unwind tables. JSC does not throw C++ exceptions across its API (it uses
+# VM exception slots), so nothing relies on `catch_unwind` catching foreign
+# unwinds either.
 #
 # Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
 # `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
@@ -143,6 +149,10 @@ lto = "fat"
 codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
 
 # Fast-iteration release build for local benching when fat LTO's link time
 # (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.

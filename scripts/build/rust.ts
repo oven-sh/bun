@@ -355,14 +355,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
     //          visible instead of stopping at the std boundary.
     //
-    // The workspace is `panic = "unwind"` (host_fn / bundler thread
-    // `catch_unwind` boundaries — see Cargo.toml), so build `panic_unwind`
-    // not `panic_abort`. `proc_macro` is needed because `cargo build --target`
-    // still resolves proc-macro crates for the host through the same
-    // `-Zbuild-std` flag set. Requires the `rust-src` component, which
-    // `rust-toolchain.toml` requests and CI images preinstall (Dockerfile /
-    // bootstrap.sh `rustup component add rust-src`).
-    args.push("-Zbuild-std=core,alloc,std,proc_macro,panic_unwind");
+    // The workspace is `panic = "abort"` (the crash-handler `set_hook` aborts;
+    // see Cargo.toml), so build `panic_abort` not `panic_unwind`. The
+    // `panic_immediate_abort` std feature also strips the formatting machinery
+    // out of `core::panicking` for size, but we keep it OFF — the panic *hook*
+    // wants the formatted message. `proc_macro` is needed because
+    // `cargo build --target` still resolves proc-macro crates for the host
+    // through the same `-Zbuild-std` flag set. Requires the `rust-src`
+    // component, which `rust-toolchain.toml` requests and CI images preinstall
+    // (Dockerfile / bootstrap.sh `rustup component add rust-src`).
+    args.push("-Zbuild-std=core,alloc,std,proc_macro,panic_abort");
   }
 
   // ─── rustflags ───

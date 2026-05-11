@@ -115,7 +115,7 @@ impl RunCommand {
         // Phase-A draft did) prints the raw `<b>`/`<r>` tags verbatim.
         pretty!("<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
         pretty!("<b>Flags:<r>");
-        bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS.as_slice());
+        bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS);
         pretty!(
             "\n\n\
 <b>Examples:<r>

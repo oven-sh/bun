@@ -2,14 +2,13 @@
 //!
 //! `parse()` runs `clap::parse()` against the per-tag table, handles
 //! `--help`/`-v`/`--revision`, and populates the full `api::TransformOptions`
-//! / `Context` from every recognised flag. Leaf param tables are const
-//! `&'static [ParamType]` via the `bun_clap::parse_param!` proc-macro
-//! (compile-time spec parsing, matching Zig's comptime `clap.parseParam`);
-//! concatenated tables (`AUTO_PARAMS` etc.) stay `LazyLock<Vec<_>>` because
-//! Rust has no const slice `++`.
+//! / `Context` from every recognised flag. All param tables — leaf and
+//! concatenated — are const `&'static [ParamType]` via the
+//! `bun_clap::parse_param!` proc-macro (compile-time spec parsing) plus a
+//! const-fn slice concat (`bun_clap::concat_params!`), matching Zig's comptime
+//! `clap.parseParam(...) ++ ...`.
 
 use bun_options_types::{LoaderExt as _, TargetExt as _};
-use std::sync::LazyLock;
 
 use bstr::BStr;
 use bun_bundler::options;
@@ -105,9 +104,13 @@ pub type ParamType = clap::Param<clap::Help>;
 
 // ─── param tables ────────────────────────────────────────────────────────────
 // Zig built these at comptime via `clap.parseParam("...") catch unreachable`
-// concatenated with `++`. `bun_clap::parse_param!` now expands to a const
-// `Param<Help>` literal, so leaf tables are real `&'static [_]`. Combined
-// tables use `LazyLock<Vec<_>>` (no const `++` in Rust).
+// concatenated with `++`. `bun_clap::parse_param!` expands to a const
+// `Param<Help>` literal, and `concat_params!` is a const-fn slice concat, so
+// every table — leaf and combined — lands in rodata with zero runtime init.
+//
+// Tables that feed into another `concat_params!` must be `const` (const-eval
+// cannot read `static`s); top-level tables that are only consumed are `static`
+// so the linker emits exactly one copy.
 
 // Zig: `if (Environment.show_crash_trace) debug_params else [_]ParamType{}`.
 // `SHOW_CRASH_TRACE` is a `const bool`, so the dead branch is eliminated.
@@ -121,37 +124,33 @@ macro_rules! maybe_debug_params {
 // has no error-return tracing, but `bun_crash_handler::VERBOSE_ERROR_TRACE`
 // still gates extra crash diagnostics. Expose the flag in crash-trace builds
 // (debug/test/asan), which is the closest analogue.
+const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] =
+    &[parse_param!("--verbose-error-trace             Dump error return traces")];
 macro_rules! maybe_verbose_error_trace {
     () => {
-        if bun_core::env::SHOW_CRASH_TRACE {
-            &[parse_param!("--verbose-error-trace             Dump error return traces")][..]
-        } else {
-            &[] as &[ParamType]
-        }
+        if bun_core::env::SHOW_CRASH_TRACE { VERBOSE_ERROR_TRACE_PARAMS } else { &[] as &[ParamType] }
     };
 }
 
-pub static BASE_PARAMS_: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(
-        maybe_debug_params!(),
-        [
-            parse_param!("--env-file <STR>...               Load environment variables from the specified file(s)"),
-            parse_param!("--no-env-file                     Disable automatic loading of .env files"),
-            parse_param!("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."),
-            parse_param!("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"),
-            parse_param!("-h, --help                        Display this menu and exit"),
-        ],
-        maybe_verbose_error_trace!(),
-        [parse_param!("<POS>...")],
-    )
-});
+pub const BASE_PARAMS_: &[ParamType] = concat_params!(
+    maybe_debug_params!(),
+    &[
+        parse_param!("--env-file <STR>...               Load environment variables from the specified file(s)"),
+        parse_param!("--no-env-file                     Disable automatic loading of .env files"),
+        parse_param!("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."),
+        parse_param!("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"),
+        parse_param!("-h, --help                        Display this menu and exit"),
+    ],
+    maybe_verbose_error_trace!(),
+    &[parse_param!("<POS>...")],
+);
 
-static DEBUG_PARAMS: &[ParamType] = &[
+const DEBUG_PARAMS: &[ParamType] = &[
     parse_param!("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"),
     parse_param!("--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string"),
 ];
 
-pub static TRANSPILER_PARAMS_: &[ParamType] = &[
+pub const TRANSPILER_PARAMS_: &[ParamType] = &[
     parse_param!("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent"),
     parse_param!("--preserve-symlinks               Preserve symlinks when resolving files"),
     parse_param!("--preserve-symlinks-main          Preserve symlinks when resolving the main entry point"),
@@ -170,7 +169,7 @@ pub static TRANSPILER_PARAMS_: &[ParamType] = &[
     parse_param!("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__"),
 ];
 
-pub static RUNTIME_PARAMS_: &[ParamType] = &[
+pub const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--watch                           Automatically restart the process on file change"),
     parse_param!("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler"),
     parse_param!("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled"),
@@ -224,7 +223,7 @@ pub static RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--cron-period <STR>              Cron period for cron execution mode"),
 ];
 
-pub static AUTO_OR_RUN_PARAMS: &[ParamType] = &[
+pub const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"),
     parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"),
     parse_param!("--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."),
@@ -235,59 +234,47 @@ pub static AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!("--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"),
 ];
 
-pub static AUTO_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(
-        [
-            // parse_param!("--all"),
-            parse_param!("--silent                          Don't print the script command"),
-            parse_param!("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."),
-            parse_param!("-v, --version                     Print version and exit"),
-            parse_param!("--revision                        Print version with revision and exit"),
-        ],
-        AUTO_OR_RUN_PARAMS,
-    )
-});
-pub static AUTO_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(AUTO_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_)
-});
+pub const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
+    &[
+        // parse_param!("--all"),
+        parse_param!("--silent                          Don't print the script command"),
+        parse_param!("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."),
+        parse_param!("-v, --version                     Print version and exit"),
+        parse_param!("--revision                        Print version with revision and exit"),
+    ],
+    AUTO_OR_RUN_PARAMS,
+);
+pub static AUTO_PARAMS: &[ParamType] =
+    concat_params!(AUTO_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
-pub static RUN_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(
-        [
-            parse_param!("--silent                          Don't print the script command"),
-            parse_param!("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."),
-        ],
-        AUTO_OR_RUN_PARAMS,
-    )
-});
-pub static RUN_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(RUN_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_)
-});
+pub const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
+    &[
+        parse_param!("--silent                          Don't print the script command"),
+        parse_param!("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."),
+    ],
+    AUTO_OR_RUN_PARAMS,
+);
+pub static RUN_PARAMS: &[ParamType] =
+    concat_params!(RUN_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
-pub static BUNX_COMMANDS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(
-        [parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)")],
-        AUTO_ONLY_PARAMS,
-    )
-});
+pub static BUNX_COMMANDS: &[ParamType] = concat_params!(
+    &[parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)")],
+    AUTO_ONLY_PARAMS,
+);
 
 // Zig: `if (FeatureFlags.bake_debugging_features) [_]ParamType{...} else [_]ParamType{}`.
+const BAKE_DEBUG_PARAMS: &[ParamType] = &[
+    parse_param!("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically"),
+    parse_param!("--debug-no-minify                When --app is set, do not minify anything"),
+];
 macro_rules! maybe_bake_debug_params {
     () => {
-        if FeatureFlags::BAKE_DEBUGGING_FEATURES {
-            &[
-                parse_param!("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically"),
-                parse_param!("--debug-no-minify                When --app is set, do not minify anything"),
-            ][..]
-        } else {
-            &[] as &[ParamType]
-        }
+        if FeatureFlags::BAKE_DEBUGGING_FEATURES { BAKE_DEBUG_PARAMS } else { &[] as &[ParamType] }
     };
 }
 
-pub static BUILD_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(
-        [
+pub const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
+    &[
             parse_param!("--production                     Set NODE_ENV=production and enable minification"),
             parse_param!("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production"),
             parse_param!("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"),
@@ -342,17 +329,15 @@ pub static BUILD_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
             parse_param!("--windows-publisher <STR>        When using --compile targeting Windows, set the executable company name"),
             parse_param!("--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)"),
             parse_param!("--windows-description <STR>      When using --compile targeting Windows, set the executable description"),
-            parse_param!("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright"),
-        ],
-        maybe_bake_debug_params!(),
-    )
-});
-pub static BUILD_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_)
-});
+        parse_param!("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright"),
+    ],
+    maybe_bake_debug_params!(),
+);
+pub static BUILD_PARAMS: &[ParamType] =
+    concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 // TODO: update test completions
-pub static TEST_ONLY_PARAMS: &[ParamType] = &[
+pub const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."),
     parse_param!("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."),
     parse_param!("-u, --update-snapshots           Update snapshot files"),
@@ -382,17 +367,13 @@ pub static TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."),
     parse_param!("--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."),
 ];
-pub static TEST_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(TEST_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_)
-});
+pub static TEST_PARAMS: &[ParamType] =
+    concat_params!(TEST_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 /// Fallback table for `Command::tag_params` (Zig: `base_params_ ++
-/// runtime_params_ ++ transpiler_params_`). Rust has no const slice `++`, so
-/// the concatenation is materialised once on first access — same approach as
-/// `AUTO_PARAMS`/`RUN_PARAMS` above.
-pub static BASE_RUNTIME_TRANSPILER_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
-    concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_)
-});
+/// runtime_params_ ++ transpiler_params_`).
+pub static BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
+    concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_);
 
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────
 // `AtomicBool` has the same size/alignment/bit-validity as `bool`, so the

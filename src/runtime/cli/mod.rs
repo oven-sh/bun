@@ -308,23 +308,11 @@ pub mod multi_run;
 pub use multi_run as MultiRun;
 
 // ─── crate-local helper for param-table concatenation ────────────────────────
-// `bun_clap::parse_param!` is now a real proc-macro (const `Param<Help>`
-// literal), so leaf param tables in `Arguments.rs` are `&'static [ParamType]`.
-// Zig concatenated them at comptime with `++`; Rust has no const slice concat,
-// so the *combined* tables (`AUTO_PARAMS`, `RUN_PARAMS`, …) stay
-// `LazyLock<Vec<_>>` built via this runtime concat. `Param<Help>` is `Copy`,
-// so this is a cheap memcpy on first access.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __cli_concat_params {
-    ($($part:expr),* $(,)?) => {{
-        let mut __v: ::std::vec::Vec<::bun_clap::Param<::bun_clap::Help>> =
-            ::std::vec::Vec::new();
-        $( __v.extend_from_slice(&$part[..]); )*
-        __v
-    }};
-}
-pub use crate::__cli_concat_params as concat_params;
+// `bun_clap::parse_param!` is a real proc-macro (const `Param<Help>` literal),
+// and `bun_clap::concat_params!` is a const-fn slice concat (Zig comptime `++`),
+// so combined tables (`AUTO_PARAMS`, `RUN_PARAMS`, …) are baked into rodata —
+// no `LazyLock`, no init closure in `.text`, no startup heap allocation.
+pub use ::bun_clap::concat_params;
 
 // ─── process-lifetime globals ────────────────────────────────────────────────
 // Zig `var start_time: i128 = undefined;` — written once in `Cli::start`
@@ -616,7 +604,7 @@ pub mod help_command {
                 );
                 if show_all_flags {
                     pretty!("\n<b>Flags:<r>");
-                    bun_clap::simple_help_bun_top_level(arguments::AUTO_PARAMS.as_slice());
+                    bun_clap::simple_help_bun_top_level(arguments::AUTO_PARAMS);
                     pretty!(
                         "\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n",
                     );
@@ -1549,12 +1537,12 @@ To create a project with the official Next.js scaffolding tool, run\n\
     /// `Tag` lacks `ConstParamTy` here so demoted to a value param).
     pub fn tag_params(cmd: Tag) -> &'static [arguments::ParamType] {
         match cmd {
-            Tag::AutoCommand => arguments::AUTO_PARAMS.as_slice(),
-            Tag::RunCommand | Tag::RunAsNodeCommand => arguments::RUN_PARAMS.as_slice(),
-            Tag::BuildCommand => arguments::BUILD_PARAMS.as_slice(),
-            Tag::TestCommand => arguments::TEST_PARAMS.as_slice(),
-            Tag::BunxCommand => arguments::RUN_PARAMS.as_slice(),
-            _ => arguments::BASE_RUNTIME_TRANSPILER_PARAMS.as_slice(),
+            Tag::AutoCommand => arguments::AUTO_PARAMS,
+            Tag::RunCommand | Tag::RunAsNodeCommand => arguments::RUN_PARAMS,
+            Tag::BuildCommand => arguments::BUILD_PARAMS,
+            Tag::TestCommand => arguments::TEST_PARAMS,
+            Tag::BunxCommand => arguments::RUN_PARAMS,
+            _ => arguments::BASE_RUNTIME_TRANSPILER_PARAMS,
         }
     }
 
@@ -1609,7 +1597,7 @@ Examples<d>:<r>
                 Output::flush();
                 pretty!("<b>Flags:<r>");
                 Output::flush();
-                bun_clap::simple_help(arguments::BUILD_ONLY_PARAMS.as_slice());
+                bun_clap::simple_help(arguments::BUILD_ONLY_PARAMS);
                 pretty!(
                     "\n\n\
 <b>Examples:<r>

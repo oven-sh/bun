@@ -1066,12 +1066,12 @@ pub mod command {
 
     pub fn tag_params<const CMD: Tag>() -> &'static [arguments::ParamType] {
         match CMD {
-            Tag::AutoCommand => &arguments::AUTO_PARAMS,
-            Tag::RunCommand | Tag::RunAsNodeCommand => &arguments::RUN_PARAMS,
-            Tag::BuildCommand => &arguments::BUILD_PARAMS,
-            Tag::TestCommand => &arguments::TEST_PARAMS,
-            Tag::BunxCommand => &arguments::RUN_PARAMS,
-            _ => &arguments::BASE_RUNTIME_TRANSPILER_PARAMS,
+            Tag::AutoCommand => arguments::AUTO_PARAMS,
+            Tag::RunCommand | Tag::RunAsNodeCommand => arguments::RUN_PARAMS,
+            Tag::BuildCommand => arguments::BUILD_PARAMS,
+            Tag::TestCommand => arguments::TEST_PARAMS,
+            Tag::BunxCommand => arguments::RUN_PARAMS,
+            _ => arguments::BASE_RUNTIME_TRANSPILER_PARAMS,
         }
     }
 
@@ -1175,7 +1175,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
                 Output::flush();
                 Output::pretty(format_args!("<b>Flags:<r>"));
                 Output::flush();
-                clap::simple_help(&arguments::BUILD_ONLY_PARAMS);
+                clap::simple_help(arguments::BUILD_ONLY_PARAMS);
                 Output::pretty(format_args!("{}", const_format::concatcp!("\n\n", OUTRO_TEXT)));
                 Output::flush();
             }

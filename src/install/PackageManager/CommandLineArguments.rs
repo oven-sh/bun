@@ -21,7 +21,7 @@ use crate::package_manager_real::Subcommand;
 // (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
 use crate::package_manager_real::PackageManagerCommand;
 
-use std::sync::{LazyLock, OnceLock};
+use std::sync::OnceLock;
 
 use super::package_manager_options as Options;
 
@@ -38,17 +38,10 @@ fn pretty_help(text: &str) {
 
 type ParamType = clap::Param<clap::Help>;
 
-// PORT NOTE: Zig `++` does comptime array concatenation. Rust has no const slice
-// concat, so the *combined* tables (`INSTALL_PARAMS`, …) are `LazyLock<Vec<_>>`
-// built via runtime concat on first access. `Param<Help>` is `Copy`, so this is
-// a cheap memcpy. Mirrors `bun_runtime::cli::concat_params!`.
-macro_rules! concat_params {
-    ($($part:expr),* $(,)?) => {{
-        let mut __v: ::std::vec::Vec<ParamType> = ::std::vec::Vec::new();
-        $( __v.extend_from_slice(&$part[..]); )*
-        __v
-    }};
-}
+// Zig `++` does comptime array concatenation. `bun_clap::concat_params!` is a
+// const-fn slice concat over `Param<Help>`, so combined tables
+// (`INSTALL_PARAMS`, …) are baked into rodata with zero runtime init.
+use bun_clap::concat_params;
 
 // PORT NOTE: Zig builds the `--backend` param spec via comptime string `++` against
 // `platform_specific_backend_label`. `clap::param!` is a proc-macro that requires a
@@ -64,14 +57,7 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
-// TODO(port): `clap.parseParam` is comptime in Zig (`catch unreachable`). In Rust this needs a
-// `const fn` parser or a proc-macro (`bun_clap::param!`). Phase B should pick one; written here
-// as `clap::param!(...)` which is assumed to expand to a `ParamType` value usable in a `static`.
-// TODO(port): Zig `++` does comptime array concatenation. `concat_params![a, b]` is a placeholder
-// for a `const`-capable concat (Phase B: `const_concat` crate, a build-time generator, or a
-// `LazyLock<Vec<ParamType>>`).
-
-static SHARED_PARAMS: &[ParamType] = &[
+const SHARED_PARAMS: &[ParamType] = &[
     clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
     clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
     clap::param!("-p, --production                      Don't install devDependencies"),
@@ -109,7 +95,7 @@ static SHARED_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
-pub static INSTALL_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+pub static INSTALL_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
     clap::param!("-D, --development"),
     clap::param!("--optional                        Add dependency to \"optionalDependencies\""),
@@ -119,17 +105,17 @@ pub static INSTALL_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_pa
     clap::param!("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)"),
     clap::param!("--only-missing                  Only add dependencies to package.json if they are not already present"),
     clap::param!("<POS> ...                         "),
-]]);
+]];
 
-pub static UPDATE_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+pub static UPDATE_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("--latest                              Update packages to their latest versions"),
     clap::param!("-i, --interactive                     Show an interactive list of outdated packages to select for update"),
     clap::param!("--filter <STR>...                     Update packages for the matching workspaces"),
     clap::param!("-r, --recursive                       Update packages in all workspaces"),
     clap::param!("<POS> ...                             \"name\" of packages to update"),
-]]);
+]];
 
-pub static PM_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+pub static PM_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("-a, --all"),
     clap::param!("--json                              Output in JSON format"),
     // clap::param!("--filter <STR>...                      Pack each matching workspace"),
@@ -144,9 +130,9 @@ pub static PM_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!
     clap::param!("--top                                Show only the first level of dependencies"),
     clap::param!("--depth <NUM>                          Maximum depth of the dependency tree to display"),
     clap::param!("<POS> ...                         "),
-]]);
+]];
 
-pub static ADD_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+pub static ADD_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
     clap::param!("-D, --development"),
     clap::param!("--optional                        Add dependency to \"optionalDependencies\""),
@@ -155,62 +141,61 @@ pub static ADD_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params
     clap::param!("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)"),
     clap::param!("--only-missing                  Only add dependencies to package.json if they are not already present"),
     clap::param!("<POS> ...                         \"name\" or \"name@version\" of package(s) to install"),
-]]);
+]];
 
-pub static REMOVE_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+pub static REMOVE_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                         \"name\" of package(s) to remove from package.json"),
-]]);
+]];
 
-pub static LINK_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+pub static LINK_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                         \"name\" install package as a link"),
-]]);
+]];
 
-pub static UNLINK_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+pub static UNLINK_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                         \"name\" uninstall package as a link"),
-]]);
+]];
 
-static PATCH_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+static PATCH_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                         \"name\" of the package to patch"),
     clap::param!("--commit                         Install a package containing modifications in `dir`"),
     clap::param!("--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)"),
-]]);
+]];
 
-static PATCH_COMMIT_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+static PATCH_COMMIT_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                         \"dir\" containing changes to a package"),
     clap::param!("--patches-dir <dir>                    The directory to put the patch file"),
-]]);
+]];
 
-static OUTDATED_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+static OUTDATED_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     // clap::param!("--json                                 Output outdated information in JSON format"),
     clap::param!("-F, --filter <STR>...                  Display outdated dependencies for each matching workspace"),
     clap::param!("-r, --recursive                        Check outdated packages in all workspaces"),
     clap::param!("<POS> ...                              Package patterns to filter by"),
-]]);
+]];
 
-static AUDIT_PARAMS: &[ParamType] = &[
+const AUDIT_PARAMS: &[ParamType] = &[
     clap::param!("<POS> ...                              Check installed packages for vulnerabilities"),
     clap::param!("--json                                 Output in JSON format"),
     clap::param!("--audit-level <STR>                    Only print advisories with severity greater than or equal to <level> (low, moderate, high, critical)"),
     clap::param!("--ignore <STR>...                      Ignore specific CVE IDs from audit"),
 ];
 
-static AUDIT_PARAMS_FULL: LazyLock<Vec<ParamType>> =
-    LazyLock::new(|| concat_params![SHARED_PARAMS, AUDIT_PARAMS]);
+static AUDIT_PARAMS_FULL: &[ParamType] = concat_params![SHARED_PARAMS, AUDIT_PARAMS];
 
-static INFO_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+static INFO_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                              Package name or path to package.json"),
     clap::param!("--json                                 Output in JSON format"),
-]]);
+]];
 
-static PACK_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+static PACK_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     // clap::param!("--filter <STR>...                      Pack each matching workspace"),
     clap::param!("--destination <STR>                    The directory the tarball will be saved in"),
     clap::param!("--filename <STR>                       The filename of the tarball"),
     clap::param!("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."),
     clap::param!("<POS> ...                              "),
-]]);
+]];
 
-static PUBLISH_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+static PUBLISH_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                              Package tarball to publish"),
     clap::param!("--access <STR>                         Set access level for scoped packages"),
     clap::param!("--tag <STR>                            Tag the release. Default is \"latest\""),
@@ -218,13 +203,13 @@ static PUBLISH_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params
     clap::param!("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')"),
     clap::param!("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."),
     clap::param!("--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number"),
-]]);
+]];
 
-static WHY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
+static WHY_PARAMS: &[ParamType] = concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                              Package name to explain why it's installed"),
     clap::param!("--top                                  Show only the top dependency tree instead of nested ones"),
     clap::param!("--depth <NUM>                          Maximum depth of the dependency tree to display"),
-]]);
+]];
 
 // NOTE: `string` (= `[]const u8`) fields here are slices into process argv (owned by `clap::Args`
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
@@ -852,25 +837,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         Output::set_is_verbose(Output::is_verbose());
 
         let params: &'static [ParamType] = match subcommand {
-            Subcommand::Install => INSTALL_PARAMS.as_slice(),
-            Subcommand::Update => UPDATE_PARAMS.as_slice(),
-            Subcommand::Pm => PM_PARAMS.as_slice(),
-            Subcommand::Add => ADD_PARAMS.as_slice(),
-            Subcommand::Remove => REMOVE_PARAMS.as_slice(),
-            Subcommand::Link => LINK_PARAMS.as_slice(),
-            Subcommand::Unlink => UNLINK_PARAMS.as_slice(),
-            Subcommand::Patch => PATCH_PARAMS.as_slice(),
-            Subcommand::PatchCommit => PATCH_COMMIT_PARAMS.as_slice(),
-            Subcommand::Outdated => OUTDATED_PARAMS.as_slice(),
-            Subcommand::Pack => PACK_PARAMS.as_slice(),
-            Subcommand::Publish => PUBLISH_PARAMS.as_slice(),
-            Subcommand::Why => WHY_PARAMS.as_slice(),
+            Subcommand::Install => INSTALL_PARAMS,
+            Subcommand::Update => UPDATE_PARAMS,
+            Subcommand::Pm => PM_PARAMS,
+            Subcommand::Add => ADD_PARAMS,
+            Subcommand::Remove => REMOVE_PARAMS,
+            Subcommand::Link => LINK_PARAMS,
+            Subcommand::Unlink => UNLINK_PARAMS,
+            Subcommand::Patch => PATCH_PARAMS,
+            Subcommand::PatchCommit => PATCH_COMMIT_PARAMS,
+            Subcommand::Outdated => OUTDATED_PARAMS,
+            Subcommand::Pack => PACK_PARAMS,
+            Subcommand::Publish => PUBLISH_PARAMS,
+            Subcommand::Why => WHY_PARAMS,
 
             // TODO: we will probably want to do this for other *_params. this way extra params
             // are not included in the help text
-            Subcommand::Audit => AUDIT_PARAMS_FULL.as_slice(),
-            Subcommand::Info => INFO_PARAMS.as_slice(),
-            Subcommand::Scan => PM_PARAMS.as_slice(), // scan uses the same params as pm command
+            Subcommand::Audit => AUDIT_PARAMS_FULL,
+            Subcommand::Info => INFO_PARAMS,
+            Subcommand::Scan => PM_PARAMS, // scan uses the same params as pm command
         };
 
         let mut diag = clap::Diagnostic::default();

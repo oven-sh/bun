@@ -42,6 +42,59 @@ macro_rules! param {
     };
 }
 
+/// Const-time `Param<Help>` slice concatenation — the Rust analogue of Zig's
+/// comptime `a ++ b ++ c` over param tables. Produces a `&'static [Param<Help>]`
+/// baked into rodata; no `LazyLock`, no heap, no init closure in `.text`.
+///
+/// Every `$part` must be a `const`-evaluable `&[Param<Help>]` (a `const` item or
+/// `&[literal, …]`); referencing a `static` is rejected by const-eval (E0013).
+#[macro_export]
+macro_rules! concat_params {
+    ($($part:expr),* $(,)?) => {{
+        const __PARTS: &[&[$crate::Param<$crate::Help>]] = &[$($part),*];
+        const __ARR: [$crate::Param<$crate::Help>; $crate::__param_slices_len(__PARTS)] =
+            $crate::__param_slices_concat::<{ $crate::__param_slices_len(__PARTS) }>(__PARTS);
+        &__ARR
+    }};
+}
+
+#[doc(hidden)]
+pub const fn __param_slices_len(parts: &[&[Param<Help>]]) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < parts.len() {
+        n += parts[i].len();
+        i += 1;
+    }
+    n
+}
+
+#[doc(hidden)]
+pub const fn __param_slices_concat<const N: usize>(parts: &[&[Param<Help>]]) -> [Param<Help>; N] {
+    // Placeholder element for the pre-fill; every slot is overwritten below.
+    const DUMMY: Param<Help> = Param {
+        id: Help { msg: b"", value: b"" },
+        names: Names { short: None, long: None, long_aliases: &[] },
+        takes_value: Values::None,
+    };
+    let mut out = [DUMMY; N];
+    let mut idx = 0;
+    let mut i = 0;
+    while i < parts.len() {
+        let part = parts[i];
+        let mut j = 0;
+        while j < part.len() {
+            out[idx] = part[j];
+            idx += 1;
+            j += 1;
+        }
+        i += 1;
+    }
+    // Const-eval panic (build error) if the caller's `N` undercounts.
+    assert!(idx == N);
+    out
+}
+
 /// Parse a `;`-separated list of param spec strings into a
 /// `&'static [Param<Help>]` at compile time.
 ///

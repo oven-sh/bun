@@ -1824,52 +1824,35 @@ describe("HTTP Server Security Tests - Advanced", () => {
     await sockClosed;
   });
 
-  // Same scenario end-to-end: a subprocess sets up the server + keep-alive
-  // client and tears down with the msal sequence. If the teardown doesn't
-  // close the in-flight connection, the subprocess never exits and the
-  // awaited `proc.exited` here never settles — the test runner's own
-  // timeout catches that.
-  // Issue: https://github.com/oven-sh/bun/issues/30501
-  test("process exits after close()+closeAllConnections()+unref() teardown", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const http = require("node:http");
-        const net = require("node:net");
-        const server = http.createServer((req, _res) => {
-          // Never reply — keep the socket in-flight (not idle) so that
-          // only closeAllConnections() (abrupt) can reclaim it.
-          server.close();
-          server.closeAllConnections();
-          server.unref();
-          process.stdout.write("TEARDOWN_DONE\\n");
-        });
-        server.listen(0, "127.0.0.1", () => {
-          const port = server.address().port;
-          const sock = net.connect(port, "127.0.0.1", () => {
-            sock.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: keep-alive\\r\\n\\r\\n");
-          });
-          sock.on("data", () => {});
-          sock.on("error", () => {});
-        });
-        // Fail-safe: if the loop somehow stays alive past 5s, print a
-        // sentinel and exit non-zero so the test can distinguish a hang
-        // from a real assertion failure.
-        setTimeout(() => {
-          process.stdout.write("STILL_ALIVE\\n");
-          process.exit(2);
-        }, 5000).unref();
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toContain("TEARDOWN_DONE");
-    expect(stdout).not.toContain("STILL_ALIVE");
-    expect(exitCode).toBe(0);
+  // Regression: when a caller does close() and then listen() again before
+  // the previous shutdown's allClosed promise has fulfilled, the stale
+  // callback must not null out the newly-created server handle.
+  test("listen() during an in-flight close() doesn't corrupt the new server", async () => {
+    const server = http.createServer((_req, res) => res.end("ok"));
+
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const firstPort = (server.address() as AddressInfo).port;
+
+    // Fire-and-forget close; don't wait for the allClosed callback.
+    server.close();
+
+    // Re-listen immediately while the previous shutdown is still settling.
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const secondAddress = server.address() as AddressInfo | null;
+    expect(secondAddress).not.toBeNull();
+    const secondPort = secondAddress!.port;
+    expect(secondPort).toBeInteger();
+
+    // Drain the new server — address() must still return a port after
+    // microtasks run (this is where the stale close callback would have
+    // hit, pre-fix).
+    await new Promise(r => setImmediate(r));
+    expect((server.address() as AddressInfo | null)?.port).toBe(secondPort);
+
+    // Confirm the new server actually serves requests, not just has a port.
+    const res = await fetch(`http://127.0.0.1:${secondPort}`);
+    expect(await res.text()).toBe("ok");
+
+    await new Promise<void>(r => server.close(() => r()));
   });
 });

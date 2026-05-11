@@ -78,14 +78,22 @@ function emitCloseServer(self: Server) {
   callCloseCallback(self);
   self.emit("close");
 }
-function emitCloseNTServer(this: Server) {
+function emitCloseNTServer(this: Server, closingServer) {
   // The underlying Bun server has finished shutting down — drop our
   // reference so the allClosed promise chain can settle and the event
   // loop can exit. msal and other consumers call
   // `close() → closeAllConnections() → unref()` in sequence; the
   // underlying reference has to survive past `close()` so the follow-up
   // calls can still reach the native layer.
-  this[serverSymbol] = undefined;
+  //
+  // Guard against re-listen: if the caller already started a fresh
+  // `listen()` before this callback fired, `this[serverSymbol]` now
+  // points at a NEW Bun.serve handle — nulling it would trash the new
+  // listener. Only clear when the handle still matches the one whose
+  // allClosed promise we're resolving.
+  if (this[serverSymbol] === closingServer) {
+    this[serverSymbol] = undefined;
+  }
   process.nextTick(emitCloseServer, this);
 }
 
@@ -751,8 +759,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       // },
     });
 
-    getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
-    isHTTPS = this[serverSymbol].protocol === "https";
+    // Capture the Bun.serve handle for this listen generation so the
+    // close callback can tell whether it's still the current one (see
+    // `emitCloseNTServer`). Without this, a fresh `listen()` that races
+    // the previous shutdown would have its new handle nulled out.
+    const bunServer = this[serverSymbol];
+    getBunServerAllClosedPromise(bunServer).$then(emitCloseNTServer.bind(this, bunServer));
+    isHTTPS = bunServer.protocol === "https";
     // always set strict method validation to true for node.js compatibility
     setServerCustomOptions(
       this[serverSymbol],

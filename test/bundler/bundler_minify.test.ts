@@ -1314,14 +1314,8 @@ export function go() { return aa + bb + cc + dd + ee + ff; }
       baseline: code,
       leadingLineComment: `// ${filler}\n` + code,
       leadingBlockComment: `/* ${filler} */\n` + code,
-      midFileLineComment: code.replace(
-        "export function",
-        `// ${filler}\nexport function`,
-      ),
-      midFileBlockComment: code.replace(
-        "export function",
-        `/* ${filler} */\nexport function`,
-      ),
+      midFileLineComment: code.replace("export function", `// ${filler}\nexport function`),
+      midFileBlockComment: code.replace("export function", `/* ${filler} */\nexport function`),
       trailingLineComment: code + `// ${filler}\n`,
       trailingBlockComment: code + `/* ${filler} */\n`,
     };
@@ -1339,10 +1333,7 @@ export function go() { return aa + bb + cc + dd + ee + ff; }
     test.concurrent.each(Object.keys(variants).filter(k => k !== "baseline"))(
       "%s produces identical output to baseline",
       async variant => {
-        const [baseline, withComment] = await Promise.all([
-          minify(variants.baseline),
-          minify(variants[variant]),
-        ]);
+        const [baseline, withComment] = await Promise.all([minify(variants.baseline), minify(variants[variant])]);
         expect(withComment).toBe(baseline);
       },
     );

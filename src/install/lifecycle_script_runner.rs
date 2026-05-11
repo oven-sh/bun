@@ -18,7 +18,8 @@ use bun_io::{FilePollFlag, PosixFlags};
 use bun_install_types::lifecycle::{InstallCtx, LifecycleScriptState};
 use bun_install_types::process_exit::LifecycleScriptExitAction;
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status};
-use bun_spawn_types::{ProcessExitContext, ProcessIdentity};
+use bun_io_types::reader::BufferedReaderHandle;
+use bun_spawn_types::{ProcessExitContext, ProcessHandle};
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
@@ -661,6 +662,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                     Self::reset_output_flags(&mut (*this).stdout, stdout);
                     (*this).stdout.start(stdout, true)?;
+                    (*this).state.record_stdout_reader(
+                        BufferedReaderHandle::from_ptr(&raw mut (*this).stdout)
+                            .expect("stdout reader pointer is non-null"),
+                    );
                     if let Some(poll) = (*this).stdout.handle.get_poll() {
                         poll.set_flag(FilePollFlag::Socket);
                     }
@@ -677,6 +682,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                     Self::reset_output_flags(&mut (*this).stderr, stderr);
                     (*this).stderr.start(stderr, true)?;
+                    (*this).state.record_stderr_reader(
+                        BufferedReaderHandle::from_ptr(&raw mut (*this).stderr)
+                            .expect("stderr reader pointer is non-null"),
+                    );
                     if let Some(poll) = (*this).stderr.handle.get_poll() {
                         poll.set_flag(FilePollFlag::Socket);
                     }
@@ -701,12 +710,20 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 (*this).stdout.set_parent(this.cast::<c_void>());
                 (*this).state.record_output_fd();
                 (*this).stdout.start_with_current_pipe()?;
+                (*this).state.record_stdout_reader(
+                    BufferedReaderHandle::from_ptr(&raw mut (*this).stdout)
+                        .expect("stdout reader pointer is non-null"),
+                );
             }
             if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
                 (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stderr.set_parent(this.cast::<c_void>());
                 (*this).state.record_output_fd();
                 (*this).stderr.start_with_current_pipe()?;
+                (*this).state.record_stderr_reader(
+                    BufferedReaderHandle::from_ptr(&raw mut (*this).stderr)
+                        .expect("stderr reader pointer is non-null"),
+                );
             }
         }
 
@@ -718,9 +735,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         debug_assert!((*this).process.is_null(), "forgot to call `resetPolls`");
         (*this).process = process;
-        let process_identity = ProcessIdentity::from_ptr(process)
+        let process_handle = ProcessHandle::from_ptr(process)
             .expect("spawned Process pointer must not be null");
-        (*this).state.initialize_exit_state(process_identity);
+        (*this).state.initialize_exit_state_from_handle(process_handle);
         // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
         // we hold no live `&mut Self` here, so the synchronous `on_exit`
         // dispatch below may reenter `on_process_exit` through it without
@@ -1019,13 +1036,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     /// This function may free the *LifecycleScriptSubprocess
     pub fn on_process_exit(&mut self, proc: *mut Process, status: Status, rusage: &Rusage) {
-        let Some(process_identity) = ProcessIdentity::from_ptr(proc) else {
+        let Some(process_handle) = ProcessHandle::from_ptr(proc) else {
             Output::debug_warn(format_args!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with null process"
             ));
             return;
         };
-        if self.process != proc {
+        if !self.state.matches_process_handle(process_handle) {
             Output::debug_warn(format_args!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
             ));
@@ -1033,7 +1050,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
         let action = self
             .state
-            .on_process_exit(&ProcessExitContext::new(process_identity, status, rusage));
+            .on_process_exit(&ProcessExitContext::from_handle(process_handle, status, rusage));
         self.apply_exit_action(action);
     }
 

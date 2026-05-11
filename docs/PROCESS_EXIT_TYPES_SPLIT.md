@@ -218,10 +218,14 @@ subprocess.
 Lifecycle scripts now also keep their pure command/readiness state in
 `bun_install_types::lifecycle::LifecycleScriptState`: script list, copied
 package name, current script index, output-fd readiness, timer, alive-count
-state, install-task context, and the `LifecycleScriptExit` reducer. The install
-context stores the entry id plus a typed installer handle; the concrete
-`Installer<'_>` pointer is recovered only at the `bun_install` effect sites.
-Their `ProcessExit` owner re-entry remains a separate type-movement problem:
+state, install-task context, lower `ProcessHandle`, stdout/stderr
+`BufferedReaderHandle`s, and the `LifecycleScriptExit` reducer. The production
+spawn path records those lower handles in the sidecar state, and the current
+owner callback validates process exit through the sidecar-owned `ProcessHandle`
+before feeding `LifecycleScriptExit`. The install context stores the entry id
+plus a typed installer handle; the concrete `Installer<'_>` pointer is
+recovered only at the `bun_install` effect sites. Their `ProcessExit` owner
+re-entry remains a separate type-movement problem:
 when process exit is the last event, the current callback synchronously resumes
 the owning lifecycle state and may free or restart that owner. Cron
 register/remove now keep their child-process
@@ -405,14 +409,14 @@ Remaining owner movement
   ├─> LifecycleScriptSubprocess
   │     ├─> current owner: install/lifecycle_script_runner.rs::LifecycleScriptSubprocess
   │     │     - owns PackageManager backref, process ref, stdout/stderr readers, envp, shell path, intrusive heap node
-  │     │     - embeds LifecycleScriptState for command/readiness/timer/install-task state
+  │     │     - embeds LifecycleScriptState for command/readiness/timer/install-task state and lower process/reader handles
   │     │     - spawn_next_script_inner still installs ProcessExit::LifecycleScript after ProcessIdentity exists
   │     ├─> current event-loop context
   │     │     - PackageManager::tick_lifecycle_scripts passes PackageManager* directly
   │     │     - PackageManager::sleep_until now separates task/is_done closure context from current typed context and exposes PackageManager*
   │     │     - that proves the manager is live, but it does not identify which active LifecycleScriptSubprocess finished
   │     ├─> current re-entry: LifecycleScriptSubprocess::on_process_exit
-  │     │     - validates ProcessIdentity, updates LifecycleScriptExit, then calls apply_exit_action()
+  │     │     - validates through LifecycleScriptState::process_handle, updates LifecycleScriptExit, then calls apply_exit_action()
   │     ├─> synchronous effect: LifecycleScriptSubprocess::handle_exit
   │     │     - may print output, mutate PackageManager/installer state, spawn the next script, destroy self, or exit process
   │     └─> honest next move
@@ -468,6 +472,7 @@ What a real next split must change
   ├─> lifecycle
   │     ├─> current typed reducer: LifecycleScriptExit in bun_install_types
   │     ├─> current typed command/readiness state: ScriptsList + LifecycleScriptState in bun_install_types
+  │     ├─> current lower handles in sidecar state: ProcessHandle + stdout/stderr BufferedReaderHandle
   │     ├─> missing typed consumer: exact lifecycle owner/effect state, not PackageManager as a broad context
   │     └─> valid shape: move the lifecycle completion state that owns "spawn next / finish / destroy" decisions into an install sidecar type, then let bun_install apply only the package-manager effects
   ├─> cron
@@ -496,8 +501,8 @@ Required deeper type movement
   │     ├─> ScriptsList has moved into bun_install_types as the first command-data piece; the old lockfile path re-exports that sidecar type so install callers keep the same surface
   │     ├─> LifecycleScriptState has moved the current index, copied package name, output readiness count, and LifecycleScriptExit reducer into bun_install_types without changing the old package-name allocation shape
   │     ├─> LifecycleScriptState now also owns timer, alive-count state, and InstallCtx; bun_install reconstructs `entry::Id`/`Installer<'_>*` only while applying completion effects
-  │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle
-  │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks
+  │     ├─> ProcessHandle is now carried by ProcessExitContext as the lower-tier process identity handle and stored in LifecycleScriptState by the production spawn path
+  │     ├─> BufferedReaderHandle is now threaded through typed BufferedReaderTarget callbacks and lifecycle stdout/stderr handles are stored in LifecycleScriptState once the readers start
   │     ├─> the generic intrusive heap metadata moved to bun_io_types, and lifecycle/timer production code imports that sidecar path directly
   │     ├─> PackageManager::sleep_until now preserves the closure callback context while exposing PackageManager as current typed context
   │     ├─> lifecycle still needs the process/reader/env/effect storage split that owns those handles without recovering LifecycleScriptSubprocess

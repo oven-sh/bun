@@ -1073,6 +1073,7 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
+ "bun_io_types",
  "bun_logger",
  "bun_semver",
  "bun_spawn_types",

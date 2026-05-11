@@ -425,7 +425,7 @@ impl ShellSubprocess {
                 Writable::Pipe(pipe) => {
                     // Mirrors Zig `this.stdin.pipe.signal.clear()` — DerefMut
                     // on the owning `&mut FileSinkPtr` encapsulates the access.
-                    pipe.signal.clear();
+                    pipe.signal.with_mut(|s| s.clear());
                     // FileSinkPtr::drop derefs (Zig: `pipe.deref()`).
                     self.stdin = Writable::Ignore;
                 }
@@ -807,8 +807,8 @@ impl ShellSubprocess {
                 // path that drops the FileSinkPtr. `init_with_type` is
                 // `unsafe fn` (caller asserts the handler outlives the
                 // `Signal`).
-                pipe.signal =
-                    unsafe { webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr) };
+                pipe.signal
+                    .set(unsafe { webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr) });
             }
         }
 
@@ -989,7 +989,7 @@ impl Writable {
 
                         // SAFETY: `create_with_pipe` returns a freshly-boxed
                         // non-null FileSink with refcount 1; sole reference.
-                        match unsafe { (*pipe_ptr).writer.start_with_current_pipe() } {
+                        match unsafe { (*pipe_ptr).writer.with_mut(|w| w.start_with_current_pipe()) } {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
                                 // SAFETY: pipe_ptr is live with refcount 1;

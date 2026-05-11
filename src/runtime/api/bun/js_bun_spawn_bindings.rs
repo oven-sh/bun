@@ -1473,8 +1473,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
         unsafe {
             if let Writable::Pipe(pipe) = &mut (*subprocess_ptr).stdin {
-                (*pipe.as_ptr()).signal =
-                    WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(subprocess_ptr);
+                (*pipe.as_ptr()).signal.set(
+                    WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(subprocess_ptr),
+                );
             }
         }
     }

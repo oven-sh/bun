@@ -427,7 +427,8 @@ impl FileSink {
         let has_pending_data = self.writer.get().has_pending_data();
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
-        self.writer.get().update_ref(self.io_evtloop(), has_pending_data);
+        // `with_mut`: Windows `update_ref` is `&mut self` (posix is `&self`).
+        self.writer.with_mut(|w| w.update_ref(self.io_evtloop(), has_pending_data));
 
         if has_pending_data {
             // PORT NOTE: inline `js_vm()` to avoid holding an immutable borrow of
@@ -666,7 +667,7 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
-                        self.writer.get().update_ref(self.io_evtloop(), false);
+                        self.writer.with_mut(|w| w.update_ref(self.io_evtloop(), false));
                     }
                 }
                 return sys::Result::Ok(());
@@ -682,7 +683,7 @@ impl FileSink {
             sys::Result::Ok(()) => {
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
-                self.writer.get().update_ref(self.io_evtloop(), false);
+                self.writer.with_mut(|w| w.update_ref(self.io_evtloop(), false));
                 #[cfg(unix)]
                 {
                     if self.nonblocking.get() {
@@ -1105,11 +1106,16 @@ impl FileSink {
     }
 
     pub fn update_ref(&self, value: bool) {
-        if value {
-            self.writer.get().enable_keeping_process_alive(self.io_evtloop());
-        } else {
-            self.writer.get().disable_keeping_process_alive(self.io_evtloop());
-        }
+        // `with_mut`: the Windows `BaseWindowsPipeWriter` impls take `&mut self`
+        // (the posix `PosixStreamingWriter` impls are `&self`); `with_mut`
+        // covers both. No JS re-entry — pure libuv ref/unref.
+        self.writer.with_mut(|w| {
+            if value {
+                w.enable_keeping_process_alive(self.io_evtloop());
+            } else {
+                w.disable_keeping_process_alive(self.io_evtloop());
+            }
+        });
     }
 }
 
@@ -1460,7 +1466,7 @@ impl FileSink {
                 // SAFETY: `as_any_promise` returned non-null.
                 match unsafe { (*js_promise).status() } {
                     bun_jsc::js_promise::Status::Pending => {
-                        self.writer.get().enable_keeping_process_alive(self.io_evtloop());
+                        self.writer.with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
                         self.ref_();
                         // TODO: properly propagate exception upwards
                         // PORT NOTE: `JSValue::then` takes already-wrapped C-ABI

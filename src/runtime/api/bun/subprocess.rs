@@ -489,7 +489,7 @@ impl Subprocess<'_> {
                     let pipe = *pipe;
                     // SAFETY: Writable::Pipe holds a live `*FileSink` for the
                     // subprocess lifetime; we're on the mutator thread.
-                    unsafe { (*pipe.as_ptr()).signal.clear() };
+                    unsafe { (*pipe.as_ptr()).signal.with_mut(|s| s.clear()) };
                     self.stdin = Writable::Ignore;
                     // SAFETY: `Writable::Pipe` owns one intrusive ref (NonNull,
                     // no Drop impl); release it explicitly now that the variant
@@ -1071,13 +1071,14 @@ impl Subprocess<'_> {
             // not `&self.stdin` — see `SignalHandler for Subprocess`.)
             if pipe
                 .signal
+                .get()
                 .ptr
                 .map(|p| p.as_ptr().cast_const())
                 == Some(std::ptr::from_ref::<Self>(self).cast::<c_void>())
             {
                 // SAFETY: `pipe_ptr` is unique on the mutator thread; Zig mutates
                 // through `*FileSink` here.
-                unsafe { (*pipe_ptr.as_ptr()).signal.clear() };
+                unsafe { (*pipe_ptr.as_ptr()).signal.with_mut(|s| s.clear()) };
             }
             let must_deref = self.flags.contains(Flags::DEREF_ON_STDIN_DESTROYED);
             self.flags.remove(Flags::DEREF_ON_STDIN_DESTROYED);

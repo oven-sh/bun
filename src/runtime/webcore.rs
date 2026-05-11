@@ -211,7 +211,11 @@ impl AutoFlusher {
 impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
     fn auto_flusher(&mut self) -> &mut AutoFlusher {
-        &mut self.auto_flusher
+        // R-2: `auto_flusher` is `JsCell` for the `&self` host-fn paths;
+        // `HasAutoFlusher`'s `register_*` helpers still take `&mut Self`, so a
+        // direct `&mut` projection is sound here (no aliased `&` exists).
+        // SAFETY: `&mut self` proves the `JsCell` is uniquely borrowed.
+        unsafe { self.auto_flusher.get_mut() }
     }
     fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: `this` was registered as `&mut FileSink` cast to `*mut c_void`;

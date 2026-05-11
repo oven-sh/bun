@@ -1372,13 +1372,19 @@ impl BlobExt for Blob {
                     ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
-                unsafe { (*sink).writer.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)) };
+                unsafe {
+                    (*sink)
+                        .writer
+                        .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)))
+                };
 
                 #[cfg(windows)]
                 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
                 if is_stdout_or_stderr {
                     // SAFETY: sink is live; sole owner here.
-                    if let bun_sys::Result::Err(err) = unsafe { (*sink).writer.start_sync(fd, false) } {
+                    if let bun_sys::Result::Err(err) =
+                        unsafe { (*sink).writer.with_mut(|w| w.start_sync(fd, false)) }
+                    {
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1387,7 +1393,9 @@ impl BlobExt for Blob {
                     }
                 } else {
                     // SAFETY: sink is live; sole owner here.
-                    if let bun_sys::Result::Err(err) = unsafe { (*sink).writer.start(fd, true) } {
+                    if let bun_sys::Result::Err(err) =
+                        unsafe { (*sink).writer.with_mut(|w| w.start(fd, true)) }
+                    {
                         unsafe { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1439,16 +1447,20 @@ impl BlobExt for Blob {
         };
 
         // SAFETY: file_sink is a live +1 *mut FileSink for the rest of this fn.
-        let signal = unsafe { &mut (*file_sink).signal };
-        *signal = webcore::file_sink::SinkSignal::init(JSValue::ZERO);
+        let signal = unsafe { &(*file_sink).signal };
+        signal.set(webcore::file_sink::SinkSignal::init(JSValue::ZERO));
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
-        signal.clear();
-        debug_assert!(signal.is_dead());
+        signal.with_mut(|s| s.clear());
+        debug_assert!(signal.get().is_dead());
 
+        // SAFETY: `JsCell<Signal>` is `#[repr(transparent)]` over
+        // `UnsafeCell<Signal>` and `Signal` is `#[repr(C)]` with `ptr` as its
+        // first field, so the cell's address is the address of `ptr`. C++
+        // (`JSSink::assignToStream`) writes through this as `void**`.
         let signal_ptr: *mut *mut c_void =
-            unsafe { (&raw mut (*file_sink).signal.ptr).cast::<*mut c_void>() };
+            unsafe { (&raw const (*file_sink).signal).cast::<*mut c_void>().cast_mut() };
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
@@ -1460,7 +1472,7 @@ impl BlobExt for Blob {
         assignment_result.ensure_still_alive();
 
         // assert that it was updated
-        debug_assert!(!signal.is_dead());
+        debug_assert!(!signal.get().is_dead());
 
         if let Some(err) = assignment_result.to_error() {
             // SAFETY: release our +1 ref on the sink.
@@ -1694,13 +1706,13 @@ impl BlobExt for Blob {
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
             let sink_mut = unsafe { &mut *sink };
-            sink_mut.writer.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
+            sink_mut
+                .writer
+                .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
-            let start_result = if is_stdout_or_stderr {
-                sink_mut.writer.start_sync(fd, false)
-            } else {
-                sink_mut.writer.start(fd, true)
-            };
+            let start_result = sink_mut.writer.with_mut(|w| {
+                if is_stdout_or_stderr { w.start_sync(fd, false) } else { w.start(fd, true) }
+            });
             if let bun_sys::Result::Err(err) = start_result {
                 // SAFETY: release the +1 ref from `init`.
                 unsafe { webcore::FileSink::deref(sink) };

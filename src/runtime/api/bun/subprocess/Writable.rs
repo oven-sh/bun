@@ -153,7 +153,7 @@ impl<'a> Writable<'a> {
                         // SAFETY: `create_with_pipe` returns a freshly-boxed non-null pointer.
                         let pipe = unsafe { &mut *pipe_ptr };
 
-                        match pipe.writer.start_with_current_pipe() {
+                        match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
                                 // SAFETY: pipe was just created with refcount 1.
@@ -164,7 +164,7 @@ impl<'a> Writable<'a> {
                                 return Err(err!("UnexpectedCreatingStdin"));
                             }
                         }
-                        pipe.writer.set_parent(pipe_ptr);
+                        pipe.writer.with_mut(|w| w.set_parent(pipe_ptr));
                         subprocess.weak_file_sink_stdin_ptr = NonNull::new(pipe_ptr);
                         subprocess.ref_();
                         subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
@@ -249,7 +249,7 @@ impl<'a> Writable<'a> {
                 // SAFETY: `create` returns a freshly-boxed non-null pointer.
                 let pipe = unsafe { &mut *pipe_ptr };
 
-                match pipe.writer.start(pipe.fd, true) {
+                match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
                         // SAFETY: pipe was just created with refcount 1.
@@ -265,9 +265,11 @@ impl<'a> Writable<'a> {
                 // Zig: `pipe.writer.handle.poll.flags.insert(.socket);`
                 // `handle` is `PollOrFd` (enum) in Rust; flag mutation goes
                 // through the FilePoll vtable shim.
-                if let Some(poll) = pipe.writer.handle.get_poll() {
-                    poll.set_flag(bun_io::FilePollFlag::Socket);
-                }
+                pipe.writer.with_mut(|w| {
+                    if let Some(poll) = w.handle.get_poll() {
+                        poll.set_flag(bun_io::FilePollFlag::Socket);
+                    }
+                });
 
                 subprocess.weak_file_sink_stdin_ptr = NonNull::new(pipe_ptr);
                 subprocess.ref_();
@@ -387,10 +389,10 @@ impl<'a> Writable<'a> {
                         subprocess.ref_();
                         subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
                     }
-                    if pipe.signal.ptr
+                    if pipe.signal.get().ptr
                         == NonNull::new(std::ptr::from_mut::<Subprocess>(subprocess).cast::<c_void>())
                     {
-                        pipe.signal.clear();
+                        pipe.signal.with_mut(|s| s.clear());
                     }
                     pipe.to_js_with_destructor(
                         global_this,
@@ -422,8 +424,8 @@ impl<'a> Writable<'a> {
             Writable::Pipe(pipe_nn) => {
                 // SAFETY: pipe is live for the duration of the variant.
                 let pipe = unsafe { &mut *pipe_nn.as_ptr() };
-                if pipe.signal.ptr == parent_ptr {
-                    pipe.signal.clear();
+                if pipe.signal.get().ptr == parent_ptr {
+                    pipe.signal.with_mut(|s| s.clear());
                 }
 
                 // SAFETY: pipe is live; deref may free it.

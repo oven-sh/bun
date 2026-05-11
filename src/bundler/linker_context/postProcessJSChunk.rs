@@ -564,12 +564,7 @@ pub fn post_process_js_chunk(
         c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
     let emit_targets_in_commands = show_comments
-        && (if let Some(fw) = c.framework {
-            // SAFETY: framework is a non-null bundler-owned pointer when Some.
-            unsafe { (*fw).server_components.is_some() }
-        } else {
-            false
-        });
+        && c.framework.is_some_and(|fw| fw.server_components.is_some());
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     let targets: &[options::Target] = c.parse_graph().ast.items_target();

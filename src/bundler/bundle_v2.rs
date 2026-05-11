@@ -2500,7 +2500,7 @@ impl<'a> BundleV2<'a> {
             let separate_ssr = bo.framework.server_components.as_ref()
                 .map(|sc| sc.separate_ssr_graph).unwrap_or(false);
             this.framework = Some(bo.framework);
-            this.linker.framework = this.framework.as_ref().map(|f| std::ptr::from_ref(f));
+            this.linker.framework = this.framework.as_ref().map(bun_ptr::BackRef::new);
             this.plugins = bo.plugins;
             if this.transpiler.options.server_components {
                 debug_assert!(unsafe { this.client_transpiler.unwrap().as_ref() }.options.server_components);
@@ -2514,7 +2514,7 @@ impl<'a> BundleV2<'a> {
         // Rust `Transpiler<'a>`/`Resolver<'a>` store `&'a Arena` and `Log.msgs`
         // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
         // backref into the now-stable `this.graph.heap` slot.
-        this.linker.graph.bump = &raw const this.graph.heap;
+        this.linker.graph.bump = bun_ptr::BackRef::new(&this.graph.heap);
         this.transpiler.log_mut().clone_line_text = true;
 
         // We don't expose an option to disable this. Bake forbids tree-shaking
@@ -3173,8 +3173,12 @@ impl<'a> BundleV2<'a> {
         // result posts back to the bundle thread.
         let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
             data,
-            // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (matches Zig `*BundleV2`).
-            ctx: std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
+            // Lifetime-erase `'a` → `'static` for the BACKREF (matches Zig `*BundleV2`).
+            // `NonNull::from(&mut *self)` carries write provenance for `assume_mut`
+            // in `on_complete`; `ParentRef::from(NonNull)` is the safe wrapper.
+            ctx: Some(bun_ptr::ParentRef::from(
+                core::ptr::NonNull::from(&mut *self).cast::<BundleV2<'static>>(),
+            )),
             source: task_source,
             // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
             ..Default::default()

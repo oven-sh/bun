@@ -32,10 +32,9 @@ impl<'a> StaticRouteVisitor<'a> {
 
         // PORT NOTE: `self.c` is `&'a LinkerContext` (Copy), so these slice
         // borrows are tied to `'a`, not to `&self`, and do not conflict with
-        // the `&mut self` call below.
-        // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for
-        // the lifetime of the link pass; SoA columns are not reallocated here.
-        let parse_graph = unsafe { &*self.c.parse_graph };
+        // the `&mut self` call below. `parse_graph()` is the safe backref
+        // accessor (one centralized `unsafe`, see `LinkerContext::parse_graph`).
+        let parse_graph = self.c.parse_graph();
         let all_import_records: &[import_record::List] =
             parse_graph.ast.items_import_records();
         let referenced_source_indices: &[u32] = parse_graph

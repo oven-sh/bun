@@ -1007,9 +1007,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                     Some(
                         chunk.entry_point.source_index()
-                            - (if let Some(&fw) = c.framework.as_ref() {
-                                // SAFETY: framework pointer outlives the linker.
-                                if unsafe { &*fw }.server_components.is_some() { 3 } else { 1 }
+                            - (if let Some(fw) = c.framework {
+                                if fw.server_components.is_some() { 3 } else { 1 }
                             } else {
                                 1
                             }) as u32,
@@ -1030,8 +1029,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if c.framework.is_none() || IS_DEV_SERVER {
                         break 'brk BakeExtra::default();
                     }
-                    // SAFETY: framework pointer outlives the linker.
-                    if !unsafe { &**c.framework.as_ref().unwrap() }.is_built_in_react {
+                    if !c.framework.unwrap().is_built_in_react {
                         break 'brk BakeExtra::default();
                     }
 

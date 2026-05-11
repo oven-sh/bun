@@ -63,11 +63,11 @@ pub fn compute_chunks(
     // link step. Raw deref (not `this.parse_graph()`) because the loop below
     // needs disjoint `&mut this.graph.*` borrows while `parse_graph` is held.
     let parse_graph = unsafe { &*this.parse_graph };
-    // SAFETY: `bump` is a backref into `BundleV2.graph.arena`, valid for the link step.
-    // Hoisted as a raw deref so the loop can hold disjoint &mut borrows into `this.graph`.
+    // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the link step.
+    // Hoisted so the loop can hold disjoint &mut borrows into `this.graph`.
     // PORT NOTE: `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
     // Phase B when arena threading lands.
-    let _arena: &Arena = unsafe { &*this.graph.bump };
+    let _arena: &Arena = this.graph.arena();
 
     // PORT NOTE: borrowck escape hatch — the SoA column slices below hold disjoint
     // immutable borrows into `this.graph` while several helpers (and the BundleV2

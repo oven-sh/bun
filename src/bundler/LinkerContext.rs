@@ -221,7 +221,7 @@ pub struct LinkerContext<'a> {
     /// Used by Bake to extract []CompileResult before it is joined.
     /// CYCLEBREAK GENUINE: erased bake::DevServer (see bundle_v2::dispatch).
     pub dev_server: Option<crate::dispatch::DevServerHandle>,
-    pub framework: Option<*const bake::Framework>,
+    pub framework: Option<bun_ptr::BackRef<bake::Framework>>,
 
     pub mangled_props: MangledProps,
 }

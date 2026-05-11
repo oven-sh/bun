@@ -41,7 +41,7 @@ pub struct LinkerGraph {
     // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
     // grow a `'bump` parameter yet. Phase B: thread `'bump` once `Chunk` and
     // `html_import_manifest` gain lifetimes.
-    pub bump: *const Arena,
+    pub bump: bun_ptr::BackRef<Arena>,
 
     pub code_splitting: bool,
 
@@ -82,9 +82,9 @@ impl LinkerGraph {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
     pub fn arena(&self) -> &Arena {
-        // SAFETY: `bump` is a backref into `BundleV2.graph.arena`, valid for
-        // the lifetime of the link step that constructed this LinkerGraph.
-        unsafe { &*self.bump }
+        // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the
+        // lifetime of the link step that constructed this LinkerGraph.
+        self.bump.get()
     }
 }
 
@@ -96,7 +96,7 @@ impl LinkerGraph {
             files_live: BitSet::init_empty(file_count)?,
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
-            bump: std::ptr::from_ref::<Arena>(bump),
+            bump: bun_ptr::BackRef::new(bump),
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
@@ -116,8 +116,8 @@ impl Default for LinkerGraph {
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
             // PORT NOTE: `bump` is a backref assigned in `init`/`LinkerContext::load`;
-            // null sentinel mirrors Zig's `undefined`.
-            bump: core::ptr::null(),
+            // dangling sentinel mirrors Zig's `undefined` (never read before assignment).
+            bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),

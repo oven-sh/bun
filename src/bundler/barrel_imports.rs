@@ -347,15 +347,16 @@ pub fn schedule_barrel_deferred_imports(
     // `import_records` / `named_imports` for THIS index; the BFS (Phase 3)
     // takes fresh `&mut graph.ast` borrows after these raw reads are dead.
     //
-    // SAFETY: `graph.ast` SoA columns are not reallocated for the duration of
-    // this fn (no `graph.ast.append`/`set`); `items_*_mut()` in the BFS only
-    // re-slices the existing backing. The raw pointers below are dereferenced
-    // only during Phase 1/2 (queue seeding), strictly before the BFS takes any
-    // `&mut` to the same column.
-    let file_import_records: *const import_record::List =
-        &raw const this.graph.ast.items_import_records()[result_source_index as usize];
-    let file_named_imports: *const JSAst::NamedImports =
-        &raw const this.graph.ast.items_named_imports()[result_source_index as usize];
+    // `graph.ast` SoA columns are not reallocated for the duration of this fn
+    // (no `graph.ast.append`/`set`); `items_*_mut()` in the BFS only re-slices
+    // the existing backing. The backrefs below are dereferenced only during
+    // Phase 1/2 (queue seeding), strictly before the BFS takes any `&mut` to
+    // the same column. `BackRef` detaches the borrowck lifetime so later
+    // `&mut this.*` borrows don't conflict.
+    let file_import_records: bun_ptr::BackRef<import_record::List> =
+        bun_ptr::BackRef::new(&this.graph.ast.items_import_records()[result_source_index as usize]);
+    let file_named_imports: bun_ptr::BackRef<JSAst::NamedImports> =
+        bun_ptr::BackRef::new(&this.graph.ast.items_named_imports()[result_source_index as usize]);
 
     // PORT NOTE: `DevServerHandle` copied out so `&mut this.*` field borrows
     // don't conflict with the `&self` accessor.
@@ -377,18 +378,19 @@ pub fn schedule_barrel_deferred_imports(
     // BFS un-defer records. Resolve paths → source_indices here as a fallback.
     //
     // PORT NOTE: reshaped for borrowck — `path_to_source_index_map` borrows
-    // `&mut this.graph`; raw-ptr it so the long-lived read borrow doesn't
-    // conflict with `&mut this.requested_exports` / `&mut this.graph.ast`
-    // below. SAFETY: the map is not mutated for the duration of this fn.
-    let path_to_source_index_map: Option<*const crate::PathToSourceIndexMap::PathToSourceIndexMap> =
+    // `&mut this.graph`; wrap in `BackRef` so the long-lived read borrow
+    // doesn't conflict with `&mut this.requested_exports` /
+    // `&mut this.graph.ast` below. The map is not mutated for the duration of
+    // this fn.
+    let path_to_source_index_map: Option<bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>> =
         if dev_handle.is_some() {
-            Some(std::ptr::from_ref(this.path_to_source_index_map(result_ast_target)))
+            Some(bun_ptr::BackRef::new(this.path_to_source_index_map(result_ast_target)))
         } else {
             None
         };
 
-    // SAFETY: see PORT NOTE above — read-only deref valid through Phase 2.
-    let file_import_records = unsafe { &*file_import_records };
+    // See PORT NOTE above — read-only deref valid through Phase 2.
+    let file_import_records = file_import_records.get();
 
     // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
     // two `import { X } from 'mod'` statements become one, and the second
@@ -417,8 +419,8 @@ pub fn schedule_barrel_deferred_imports(
         }
     }
 
-    // SAFETY: see PORT NOTE above — read-only deref valid through Phase 2.
-    for ni in unsafe { &*file_named_imports }.values() {
+    // See PORT NOTE above — read-only deref valid through Phase 2.
+    for ni in file_named_imports.values() {
         if ni.import_record_index as usize >= file_import_records.len() {
             continue;
         }
@@ -439,8 +441,7 @@ pub fn schedule_barrel_deferred_imports(
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            // SAFETY: see PORT NOTE on `path_to_source_index_map`.
-            match unsafe { &*map }.get(resolved_path_text) {
+            match map.get().get(resolved_path_text) {
                 Some(t) => t,
                 None => continue,
             }
@@ -486,8 +487,7 @@ pub fn schedule_barrel_deferred_imports(
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            // SAFETY: see PORT NOTE on `path_to_source_index_map`.
-            match unsafe { &*map }.get_path(&ir.path) {
+            match map.get_path(&ir.path) {
                 Some(t) => t,
                 None => continue,
             }
@@ -523,8 +523,8 @@ pub fn schedule_barrel_deferred_imports(
     // PERF(port): was stack-fallback (8192) — profile in Phase B
     let mut queue: Vec<BarrelWorkItem> = Vec::new();
 
-    // SAFETY: see PORT NOTE above — read-only deref valid through Phase 2.
-    for ni in unsafe { &*file_named_imports }.values() {
+    // See PORT NOTE above — read-only deref valid through Phase 2.
+    for ni in file_named_imports.values() {
         if ni.import_record_index as usize >= file_import_records.len() {
             continue;
         }
@@ -537,8 +537,7 @@ pub fn schedule_barrel_deferred_imports(
         let ir_target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            // SAFETY: see PORT NOTE on `path_to_source_index_map`.
-            match unsafe { &*map }.get(resolved_path_text) {
+            match map.get().get(resolved_path_text) {
                 Some(t) => t,
                 None => continue,
             }
@@ -567,8 +566,7 @@ pub fn schedule_barrel_deferred_imports(
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
-            // SAFETY: see PORT NOTE on `path_to_source_index_map`.
-            match unsafe { &*map }.get_path(&ir.path) {
+            match map.get_path(&ir.path) {
                 Some(t) => t,
                 None => continue,
             }

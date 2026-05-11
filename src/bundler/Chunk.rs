@@ -1248,7 +1248,7 @@ pub enum CssImportOrderKind {
 // thread `'bump` (arena-borrowed) and confirm Clone semantics match deepCloneInfallible.
 pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
-    Borrowed(*const Vec<bun_css::LayerName>),
+    Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
     Owned(Vec<bun_css::LayerName>),
 }
 
@@ -1256,17 +1256,23 @@ impl Layers {
     #[inline]
     pub fn inner(&self) -> &Vec<bun_css::LayerName> {
         match self {
-            // SAFETY: borrowed pointer is into arena-owned storage that outlives
-            // the chunk pipeline (see TODO(port) above re: `'bump`).
-            Layers::Borrowed(p) => unsafe { &**p },
+            Layers::Borrowed(p) => p.get(),
             Layers::Owned(b) => b,
         }
     }
 
     /// Zig: `Chunk.CssImportOrder.Layers.borrow(ptr)` — Cow::Borrowed.
+    ///
+    /// Takes `NonNull` (not `&Vec`) because the sole caller in
+    /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
+    /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
+    /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
+    /// The pointee is arena-owned storage that outlives the chunk pipeline
+    /// (see TODO(port) above re: `'bump`); `BackRef` encapsulates that
+    /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
-    pub fn borrow(p: *const Vec<bun_css::LayerName>) -> Self {
-        Layers::Borrowed(p)
+    pub fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
+        Layers::Borrowed(bun_ptr::BackRef::from(p))
     }
 
     /// Zig: `bun.ptr.Cow.replace` — drop owned (arena-backed, so no-op) and
@@ -1280,9 +1286,7 @@ impl Layers {
     /// list and return `&mut` to it; if already owned, return as-is.
     pub fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
         if let Layers::Borrowed(p) = *self {
-            // SAFETY: see `inner()`.
-            let borrowed: &Vec<bun_css::LayerName> = unsafe { &*p };
-            *self = Layers::Owned(borrowed.deep_clone_with(|l| l.clone()));
+            *self = Layers::Owned(p.deep_clone_with(|l| l.clone()));
         }
         match self {
             Layers::Owned(b) => b,

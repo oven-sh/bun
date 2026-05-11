@@ -37,7 +37,9 @@ pub struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
     // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
-    pub ctx: *mut BundleV2<'static>,
+    // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
+    // so deref sites are safe; `None` only for the FRU `Default` placeholder.
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
     pub source: Source,
 }
 
@@ -76,8 +78,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         &mut *(bun_core::from_field_ptr!(ServerComponentParseTask, task, thread_pool_task))
     };
 
-    // SAFETY: `task.ctx` is a live BACKREF to the owning BundleV2.
-    let worker = Worker::get(unsafe { &*task.ctx });
+    // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
+    let ctx = task.ctx.expect("ServerComponentParseTask.ctx set at enqueue");
+    let worker = Worker::get(ctx.get());
     // PORT NOTE: `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
 
@@ -92,9 +95,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     };
 
     let result = Box::new(parse_task::Result {
-        // SAFETY: `task.ctx` is a live BACKREF to the owning BundleV2 with
-        // write provenance (set in `bundle_v2.rs` from `ptr::from_mut(self)`).
-        ctx: unsafe { bun_ptr::ParentRef::from_raw_mut(task.ctx) },
+        // `ctx` already a `ParentRef<BundleV2>` with write provenance
+        // (constructed from `NonNull::from(&mut self)` in `bundle_v2.rs`).
+        ctx,
         // SAFETY: Zig leaves `.task = undefined`; consumer overwrites before read.
         task: Default::default(),
         value,
@@ -142,8 +145,8 @@ fn task_callback(
     log: &mut Log,
     bump: &Arena,
 ) -> Result<Success, OOM> {
-    // SAFETY: `task.ctx` is a live BACKREF to the owning BundleV2.
-    let ctx: &BundleV2 = unsafe { &*task.ctx };
+    // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
+    let ctx: &BundleV2 = task.ctx.as_deref().expect("ServerComponentParseTask.ctx set at enqueue");
     // PORT NOTE: `Source` is not `Clone`; the original is consumed here
     // (Zig copied by value). Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
@@ -202,7 +205,7 @@ impl Default for ServerComponentParseTask {
                 callback: task_callback_wrap,
             },
             data: Data::ClientEntryWrapper(ClientEntryWrapper { path: Box::default() }),
-            ctx: core::ptr::null_mut(),
+            ctx: None,
             source: Source::default(),
         }
     }

@@ -87,7 +87,10 @@ pub fn find_imported_files_in_css_order<'a>(
         // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
         // dropped here to avoid an aliasing `&mut this.graph` borrow against
         // `arena`/`css_asts` (which already borrow `this.graph`).
-        parse_graph: *mut Graph,
+        // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
+        // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
+        // backref, valid for the link step).
+        parse_graph: bun_ptr::BackRef<Graph>,
 
         has_external_import: bool,
         visited: Vec<Index>,
@@ -97,9 +100,7 @@ pub fn find_imported_files_in_css_order<'a>(
     impl<'a> Visitor<'a> {
         #[inline]
         fn input_file_pretty(&self, source_index: Index) -> &BStr {
-            // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid
-            // for the lifetime of the link step.
-            let sources = unsafe { &*self.parse_graph }.input_files.items_source();
+            let sources = self.parse_graph.input_files.items_source();
             BStr::new(&sources[source_index.get() as usize].path.pretty)
         }
 
@@ -302,7 +303,9 @@ pub fn find_imported_files_in_css_order<'a>(
 
     let mut visitor = Visitor {
         arena,
-        parse_graph: this.parse_graph,
+        parse_graph: bun_ptr::BackRef::from(
+            core::ptr::NonNull::new(this.parse_graph).expect("parse_graph set in load()"),
+        ),
         visited: Vec::<Index>::init_capacity(16),
         // SAFETY: re-borrow the same column slices; lifetime erased to decouple
         // from the shared `this.graph` borrow (Zig holds these as raw slice views).
@@ -410,12 +413,14 @@ pub fn find_imported_files_in_css_order<'a>(
                             // PORT NOTE: `crate::bun_css::LayerName` (lifetime-erased
                             // shadow) and `::bun_css::LayerName` are distinct nominal
                             // types until the ungate shadow is removed; cast through
-                            // raw pointer to satisfy `Layers::borrow`.
-                            let layer_names_ptr = (&raw const css_asts[idx.get() as usize]
-                                .as_deref()
-                                .unwrap()
-                                .layer_names)
-                                .cast::<Vec<LayerName>>();
+                            // `NonNull` to satisfy `Layers::borrow`.
+                            let layer_names_ptr = core::ptr::NonNull::from(
+                                &css_asts[idx.get() as usize]
+                                    .as_deref()
+                                    .unwrap()
+                                    .layer_names,
+                            )
+                            .cast::<Vec<LayerName>>();
                             order.mut_(i as usize).kind =
                                 CssImportOrderKind::Layers(Layers::borrow(layer_names_ptr));
                             continue 'next_backward;

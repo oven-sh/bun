@@ -193,7 +193,21 @@ impl NativeZlib {
 
         let err = self.stream.set_params(level, strategy);
         if err.is_error() {
-            CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
+            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+            // `emit_error` → `run_callback` invokes the JS onerror handler,
+            // which can re-enter `close()`/`reset()` via a fresh `&mut Self`
+            // from `m_ctx` and write `self.pending_close` / `self.pending_reset`
+            // / `self.stream`. If `emit_error` inlines into this body those
+            // fields could be cached across the callback (SUSPECT, not yet
+            // ASM-cached). Launder through an opaque pointer so the reborrow
+            // does not inherit `noalias`; mirrors the cork fix at b818e70e1c57.
+            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
+            // The `&mut *this` borrow is not held across the re-entrant JS
+            // call inside `emit_error` by *this* frame, and `*this` cannot be
+            // freed re-entrantly (refcount held by the JS wrapper passed as
+            // `frame.this()`).
+            CompressionStream::<Self>::emit_error(unsafe { &mut *this }, global, frame.this(), err);
         }
         Ok(JSValue::UNDEFINED)
     }

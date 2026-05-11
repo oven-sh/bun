@@ -1658,35 +1658,62 @@ impl Terminal {
     // IOReader callbacks
     pub fn on_reader_done(&mut self) {
         bun_output::scoped_log!(Terminal, "onReaderDone");
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `call_exit_callback` → `run_callback` re-enters JS, which can call
+        // `close()`/`on_reader_error` and write `self.flags` via a fresh `&mut`.
+        // Without the launder, LLVM is free to cache the pre-call `self.flags`
+        // load and reuse it for the post-call `READER_DONE` check (SUSPECT —
+        // not yet ASM-PROVEN_CACHED, but one inlining change away). Mirrors the
+        // cork fix at b818e70e1c57.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // EOF from master - downgrade to weak ref to allow GC
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
-        if !self.flags.contains(Flags::FINALIZED) {
-            self.flags.remove(Flags::CONNECTED);
-            self.this_value.downgrade();
+        // SAFETY: `this` aliases the live `&mut self`; single JS thread, no
+        // concurrent mutator. All reads/writes go through `this` so no
+        // `&mut self`-derived borrow is held across the re-entrant call.
+        if unsafe { !(*this).flags.contains(Flags::FINALIZED) } {
+            unsafe { (*this).flags.remove(Flags::CONNECTED) };
+            unsafe { (*this).this_value.downgrade() };
             // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
-            self.call_exit_callback(0, None);
+            unsafe { (*this).call_exit_callback(0, None) };
+            // Re-escape after the JS call so the `flags` load below and the
+            // `deref_` ref_count write cannot be store-forwarded from before it.
+            core::hint::black_box(this);
         }
         // Release reader's ref (only once)
-        if !self.flags.contains(Flags::READER_DONE) {
-            self.flags.insert(Flags::READER_DONE);
-            self.deref_();
+        // SAFETY: `this` is still the live heap payload; reader holds a ref
+        // until the `deref_` below.
+        if unsafe { !(*this).flags.contains(Flags::READER_DONE) } {
+            unsafe { (*this).flags.insert(Flags::READER_DONE) };
+            unsafe { (*this).deref_() };
         }
     }
 
     pub fn on_reader_error(&mut self, err: sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
+        // PORT_NOTES_PLAN R-2: see `on_reader_done` above — same `noalias`
+        // hazard on `self.flags` across `call_exit_callback`'s JS re-entry
+        // (SUSPECT). Launder so the post-call `READER_DONE` check / `deref_`
+        // cannot fold a stale pre-call `flags` load.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // Error - downgrade to weak ref to allow GC
         // Skip JS interactions if already finalized
-        if !self.flags.contains(Flags::FINALIZED) {
-            self.flags.remove(Flags::CONNECTED);
-            self.this_value.downgrade();
+        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
+        if unsafe { !(*this).flags.contains(Flags::FINALIZED) } {
+            unsafe { (*this).flags.remove(Flags::CONNECTED) };
+            unsafe { (*this).this_value.downgrade() };
             // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
-            self.call_exit_callback(1, None);
+            unsafe { (*this).call_exit_callback(1, None) };
+            // Re-escape after the JS call so the `flags` load below and the
+            // `deref_` ref_count write cannot be store-forwarded from before it.
+            core::hint::black_box(this);
         }
         // Release reader's ref (only once)
-        if !self.flags.contains(Flags::READER_DONE) {
-            self.flags.insert(Flags::READER_DONE);
-            self.deref_();
+        // SAFETY: `this` is still the live heap payload; reader holds a ref
+        // until the `deref_` below.
+        if unsafe { !(*this).flags.contains(Flags::READER_DONE) } {
+            unsafe { (*this).flags.insert(Flags::READER_DONE) };
+            unsafe { (*this).deref_() };
         }
     }
 

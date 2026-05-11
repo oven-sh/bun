@@ -62,6 +62,7 @@ bun_semver.workspace = true
 bun_sha_hmac.workspace = true
 bun_simdutf_sys.workspace = true
 bun_spawn.workspace = true
+bun_spawn_types.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true

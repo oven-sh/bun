@@ -39,7 +39,8 @@ Natural sibling crates
   ├─> bun_spawn_types
   │     ├─> Status / Exited / WaitPidResult / Rusage
   │     ├─> ProcessIdentity
-  │     └─> ProcessExitContext
+  │     ├─> ProcessExitContext
+  │     └─> ProcessExitReadiness
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     └─> SecurityScanExit
@@ -117,14 +118,17 @@ Pollable production path
 
 ## Process Exit
 
-Process exit should use the same boundary, with value-only state below and
-effect application above.
+Process exit uses the same boundary for install-domain readiness gates and
+runtime cron readiness: value-only state lives below, effect application stays
+above.
 
 ```
-Process-exit target shape
+Process-exit production shape
   ├─> bun_spawn_types
   │     ├─> ProcessIdentity
   │     ├─> ProcessExitContext { process, status, rusage }
+  │     ├─> ProcessExitReadiness
+  │     │     └─> returns ProcessExitReadinessAction
   │     └─> common process status / rusage values
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
@@ -133,8 +137,8 @@ Process-exit target shape
   │           └─> returns SecurityScanExitAction
   └─> owning crates
         ├─> bun_spawn observes waitpid / platform wait completion
-        ├─> bun_runtime applies subprocess, shell, cron, webview, and JSC effects
-        └─> bun_install applies package-manager lifecycle/security effects
+        ├─> bun_install applies lifecycle/security package-manager effects
+        └─> bun_runtime applies cron register/remove effects
 ```
 
 The type-level transition receives values, mutates only its own state, and
@@ -147,41 +151,68 @@ pub struct ProcessExitContext<'a> {
     pub rusage: &'a Rusage,
 }
 
-pub enum ProcessExitEffect {
-    Updated {
-        status: ProcessStatusUpdate,
-    },
-    Subprocess {
-        status: ProcessStatusUpdate,
-        action: SubprocessExitAction,
-    },
-    LifecycleScript {
-        status: ProcessStatusUpdate,
-        action: LifecycleScriptExitAction,
-    },
-    SecurityScan {
-        status: ProcessStatusUpdate,
-        action: SecurityScanExitAction,
-    },
-    Cron {
-        status: ProcessStatusUpdate,
-        action: CronExitAction,
-    },
-    Webview {
-        status: ProcessStatusUpdate,
-        action: WebviewExitAction,
-    },
-    IgnoredWrongProcess,
+pub struct ProcessExitReadiness {
+    pub process: ProcessIdentity,
+    pub has_process_exited: bool,
+    pub exit_status: Option<Status>,
+    pub remaining_fds: i8,
+}
+
+pub enum ProcessExitReadinessAction {
+    WrongProcess,
+    Pending,
+    Ready,
+}
+
+pub struct LifecycleScriptExit {
+    pub process: ProcessIdentity,
+    pub has_called_process_exit: bool,
+    pub exit_status: Option<Status>,
+    pub remaining_fds: i8,
+}
+
+pub enum LifecycleScriptExitAction {
+    WrongProcess,
+    Pending,
+    MaybeFinished,
+}
+
+pub struct SecurityScanExit {
+    pub process: ProcessIdentity,
+    pub has_process_exited: bool,
+    pub has_received_ipc: bool,
+    pub remaining_fds: i8,
+    pub exit_status: Option<Status>,
+}
+
+pub enum SecurityScanExitAction {
+    WrongProcess,
+    Pending { close_ipc_reader: bool },
+    Ready { close_ipc_reader: bool },
 }
 ```
 
 ```
-Effect application
-  ├─> status writes stay with the live Process owner
-  ├─> promise / callback / microtask work stays with bun_runtime
-  ├─> lifecycle and security scan package-manager work stays with bun_install
-  ├─> process refs and WebKit/JSC handles stay in their owning crate
-  └─> pure completion ordering and readiness gates can live in sibling types crates
+Process-exit production wiring
+  ├─> install/lifecycle_script_runner.rs
+  │     ├─> counts output readers before process identity exists
+  │     ├─> initializes LifecycleScriptExit once spawned Process exists
+  │     ├─> reader callbacks call record_reader_done()
+  │     ├─> process-exit callback calls on_process_exit(ProcessExitContext)
+  │     └─> MaybeFinished applies handle_exit() in bun_install
+  ├─> install/PackageManager/security_scanner.rs
+  │     ├─> initializes SecurityScanExit with ipc_reader + json_writer count
+  │     ├─> JSON writer close calls record_json_writer_closed()
+  │     ├─> IPC reader done/error calls record_ipc_done()
+  │     ├─> process-exit callback calls on_process_exit(ProcessExitContext)
+  │     └─> close_ipc_reader action drains/deinits the reader in bun_install
+  └─> runtime/api/cron.rs
+        ├─> generic SpawnCmdTarget counts stdout/stderr readers before identity exists
+        ├─> initializes ProcessExitReadiness once spawned Process exists
+        ├─> CronRegisterJob and CronRemoveJob store the reducer directly
+        ├─> reader callbacks call record_reader_done()
+        ├─> process-exit callback calls on_process_exit(ProcessExitContext)
+        └─> Ready lets bun_runtime consume status and continue cron-specific state transitions
 ```
 
 ## Runtime Tasks

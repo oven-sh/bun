@@ -32,6 +32,9 @@ use bun_resolver::fs::{FileSystem, RealFS};
 // `spawn::spawn_process(...)` call site below resolves.
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use bun_spawn_types::process_exit::{
+    ProcessExitContext, ProcessExitReadiness, ProcessExitReadinessAction, ProcessIdentity,
+};
 use bun_jsc::JsClass as _;
 use bun_io::pipe_reader::BufferedReaderParent;
 use bun_sys::FdDirExt as _;
@@ -81,10 +84,9 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
 // has no protector and ends at last use under NLL, so field access via `s`
 // followed by `Self::finish(this)` is sound.
 trait CronJobBase: Sized {
-    fn remaining_fds_mut(&mut self) -> &mut i8;
+    fn pending_output_fds_mut(&mut self) -> &mut i8;
+    fn exit_state_mut(&mut self) -> &mut Option<ProcessExitReadiness>;
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>>;
-    fn has_called_process_exit_mut(&mut self) -> &mut bool;
-    fn exit_status_mut(&mut self) -> &mut Option<Status>;
     /// May free `this`. Caller must not touch `this` afterward.
     unsafe fn maybe_finished(this: *mut Self);
 
@@ -109,8 +111,13 @@ trait CronJobBase: Sized {
     unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
         let s = unsafe { &mut *this };
-        debug_assert!(*s.remaining_fds_mut() > 0);
-        *s.remaining_fds_mut() -= 1;
+        if let Some(exit_state) = s.exit_state_mut().as_mut() {
+            let _ = exit_state.record_reader_done();
+        } else {
+            let remaining = s.pending_output_fds_mut();
+            debug_assert!(*remaining > 0);
+            *remaining = (*remaining).saturating_sub(1);
+        }
         unsafe { Self::maybe_finished(this) };
     }
 
@@ -118,8 +125,13 @@ trait CronJobBase: Sized {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
         // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
         let s = unsafe { &mut *this };
-        debug_assert!(*s.remaining_fds_mut() > 0);
-        *s.remaining_fds_mut() -= 1;
+        if let Some(exit_state) = s.exit_state_mut().as_mut() {
+            let _ = exit_state.record_reader_done();
+        } else {
+            let remaining = s.pending_output_fds_mut();
+            debug_assert!(*remaining > 0);
+            *remaining = (*remaining).saturating_sub(1);
+        }
         if s.err_msg_mut().is_none() {
             let mut msg = Vec::new();
             let _ = write!(
@@ -133,11 +145,25 @@ trait CronJobBase: Sized {
     }
 
     /// May free `this` via `maybe_finished`.
-    unsafe fn on_process_exit(this: *mut Self, _proc: &Process, status: Status, _rusage: &Rusage) {
+    unsafe fn on_process_exit(this: *mut Self, proc: &Process, status: Status, rusage: &Rusage) {
         // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
         let s = unsafe { &mut *this };
-        *s.has_called_process_exit_mut() = true;
-        *s.exit_status_mut() = Some(status);
+        let process_identity = ProcessIdentity::from_ref(proc);
+        if s.exit_state_mut().is_none() {
+            let pending_output_fds = *s.pending_output_fds_mut();
+            *s.exit_state_mut() = Some(ProcessExitReadiness::new(
+                process_identity,
+                pending_output_fds,
+            ));
+        }
+        let action = s
+            .exit_state_mut()
+            .as_mut()
+            .expect("exit state initialized above")
+            .on_process_exit(&ProcessExitContext::new(process_identity, status, rusage));
+        if matches!(action, ProcessExitReadinessAction::WrongProcess) {
+            return;
+        }
         unsafe { Self::maybe_finished(this) };
     }
 }
@@ -164,9 +190,8 @@ pub struct CronRegisterJob {
     process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
-    remaining_fds: i8,
-    has_called_process_exit: bool,
-    exit_status: Option<Status>,
+    pending_output_fds: i8,
+    exit_state: Option<ProcessExitReadiness>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
@@ -211,10 +236,9 @@ impl BufferedReaderParent for CronRegisterJob {
 }
 
 impl CronJobBase for CronRegisterJob {
-    fn remaining_fds_mut(&mut self) -> &mut i8 { &mut self.remaining_fds }
+    fn pending_output_fds_mut(&mut self) -> &mut i8 { &mut self.pending_output_fds }
+    fn exit_state_mut(&mut self) -> &mut Option<ProcessExitReadiness> { &mut self.exit_state }
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }
-    fn has_called_process_exit_mut(&mut self) -> &mut bool { &mut self.has_called_process_exit }
-    fn exit_status_mut(&mut self) -> &mut Option<Status> { &mut self.exit_status }
     unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRegisterJob::maybe_finished(this) } }
 }
 
@@ -232,7 +256,11 @@ impl CronRegisterJob {
         // SAFETY: local reborrow (no FnEntry protector); not used after any
         // call below that may free `this`.
         let s = unsafe { &mut *this };
-        if !s.has_called_process_exit || s.remaining_fds != 0 {
+        if !s
+            .exit_state
+            .as_ref()
+            .is_some_and(ProcessExitReadiness::is_ready)
+        {
             return;
         }
         if let Some(proc) = s.process.take() {
@@ -245,7 +273,11 @@ impl CronRegisterJob {
         if s.err_msg.is_some() {
             return unsafe { Self::finish(this) };
         }
-        let Some(status) = s.exit_status.take() else { return };
+        let Some(status) = s
+            .exit_state
+            .as_mut()
+            .and_then(|exit_state| exit_state.exit_status.take())
+        else { return };
         match status {
             Status::Exited(exited) => {
                 if exited.code != 0
@@ -753,9 +785,8 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             process: None,
             stdout_reader: OutputReader::init::<CronRegisterJob>(),
             stderr_reader: OutputReader::init::<CronRegisterJob>(),
-            remaining_fds: 0,
-            has_called_process_exit: false,
-            exit_status: None,
+            pending_output_fds: 0,
+            exit_state: None,
             err_msg: None,
             tmp_path: None,
             // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
@@ -902,9 +933,8 @@ pub struct CronRemoveJob {
     process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
-    remaining_fds: i8,
-    has_called_process_exit: bool,
-    exit_status: Option<Status>,
+    pending_output_fds: i8,
+    exit_state: Option<ProcessExitReadiness>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
@@ -947,10 +977,9 @@ impl BufferedReaderParent for CronRemoveJob {
 }
 
 impl CronJobBase for CronRemoveJob {
-    fn remaining_fds_mut(&mut self) -> &mut i8 { &mut self.remaining_fds }
+    fn pending_output_fds_mut(&mut self) -> &mut i8 { &mut self.pending_output_fds }
+    fn exit_state_mut(&mut self) -> &mut Option<ProcessExitReadiness> { &mut self.exit_state }
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }
-    fn has_called_process_exit_mut(&mut self) -> &mut bool { &mut self.has_called_process_exit }
-    fn exit_status_mut(&mut self) -> &mut Option<Status> { &mut self.exit_status }
     unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRemoveJob::maybe_finished(this) } }
 }
 
@@ -968,7 +997,11 @@ impl CronRemoveJob {
         // SAFETY: local reborrow (no FnEntry protector); not used after any
         // call below that may free `this`.
         let s = unsafe { &mut *this };
-        if !s.has_called_process_exit || s.remaining_fds != 0 {
+        if !s
+            .exit_state
+            .as_ref()
+            .is_some_and(ProcessExitReadiness::is_ready)
+        {
             return;
         }
         if let Some(proc) = s.process.take() {
@@ -981,7 +1014,11 @@ impl CronRemoveJob {
         if s.err_msg.is_some() {
             return unsafe { Self::finish(this) };
         }
-        let Some(status) = s.exit_status.take() else { return };
+        let Some(status) = s
+            .exit_state
+            .as_mut()
+            .and_then(|exit_state| exit_state.exit_status.take())
+        else { return };
         match status {
             Status::Exited(exited) => {
                 let is_acceptable_nonzero = (s.state == RemoveState::ReadingCrontab
@@ -1236,9 +1273,8 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             process: None,
             stdout_reader: OutputReader::init::<CronRemoveJob>(),
             stderr_reader: OutputReader::init::<CronRemoveJob>(),
-            remaining_fds: 0,
-            has_called_process_exit: false,
-            exit_status: None,
+            pending_output_fds: 0,
+            exit_state: None,
             err_msg: None,
             tmp_path: None,
             // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
@@ -1900,7 +1936,8 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     fn process_slot(&mut self) -> &mut Option<*mut Process>;
     fn stdout_reader(&mut self) -> &mut OutputReader;
     fn stderr_reader(&mut self) -> &mut OutputReader;
-    fn remaining_fds(&mut self) -> &mut i8;
+    fn pending_output_fds(&mut self) -> &mut i8;
+    fn exit_state(&mut self) -> &mut Option<ProcessExitReadiness>;
 }
 
 bun_spawn::link_impl_ProcessExit! {
@@ -1924,7 +1961,8 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
-    fn remaining_fds(&mut self) -> &mut i8 { &mut self.remaining_fds }
+    fn pending_output_fds(&mut self) -> &mut i8 { &mut self.pending_output_fds }
+    fn exit_state(&mut self) -> &mut Option<ProcessExitReadiness> { &mut self.exit_state }
 }
 impl SpawnCmdTarget for CronRemoveJob {
     const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
@@ -1933,7 +1971,8 @@ impl SpawnCmdTarget for CronRemoveJob {
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
-    fn remaining_fds(&mut self) -> &mut i8 { &mut self.remaining_fds }
+    fn pending_output_fds(&mut self) -> &mut i8 { &mut self.pending_output_fds }
+    fn exit_state(&mut self) -> &mut Option<ProcessExitReadiness> { &mut self.exit_state }
 }
 
 /// Generic spawn used by both CronRegisterJob and CronRemoveJob.
@@ -1951,9 +1990,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // SAFETY: local reborrow (no FnEntry protector). Re-derived after each
     // section so no `&mut T` outlives a potentially-freeing call.
     let s = unsafe { &mut *this };
-    *s.has_called_process_exit_mut() = false;
-    *s.exit_status_mut() = None;
-    *s.remaining_fds() = 0;
+    *s.exit_state() = None;
+    *s.pending_output_fds() = 0;
 
     #[allow(unused_mut)]
     let mut resolved_argv0: Option<*const c_char> = None;
@@ -2068,7 +2106,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             if !spawned.memfds[1] {
                 s.stdout_reader().set_parent(this_ptr);
                 let _ = sys::set_nonblocking(stdout);
-                *s.remaining_fds() += 1;
+                *s.pending_output_fds() += 1;
                 {
                     use bun_io::pipe_reader::PosixFlags;
                     let flags = &mut s.stdout_reader().flags;
@@ -2106,7 +2144,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             core::mem::forget(dup);
             s.stderr_reader()
                 .set_parent(this.cast::<core::ffi::c_void>());
-            *s.remaining_fds() += 1;
+            *s.pending_output_fds() += 1;
             if s.stderr_reader().start_with_current_pipe().is_err() {
                 s.set_err(format_args!("Failed to start reading stderr"));
                 return unsafe { T::finish(this) };
@@ -2118,9 +2156,16 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle, false);
     *s.process_slot() = Some(process);
+    let process_identity =
+        ProcessIdentity::from_ptr(process).expect("spawned Process pointer must not be null");
+    let pending_output_fds = *s.pending_output_fds();
+    *s.exit_state() = Some(ProcessExitReadiness::new(
+        process_identity,
+        pending_output_fds,
+    ));
     // SAFETY: `process` was just allocated by `to_process`; we hold the only
     // ref. `this` is the owning `Box<T>` (only freed in `T::finish`, gated on
-    // `has_called_process_exit`), so it outlives `process`.
+    // the type-owned exit state), so it outlives `process`.
     unsafe { (*process).set_exit_handler(bun_spawn::ProcessExit::new(T::EXIT_KIND, this)) };
     // `s` not used past this point — `watch_or_reap` may synchronously invoke
     // the exit handler, which can free `this`.

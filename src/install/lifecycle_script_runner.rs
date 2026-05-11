@@ -15,7 +15,9 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
+use bun_install_types::process_exit::{LifecycleScriptExit, LifecycleScriptExitAction};
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status};
+use bun_spawn_types::{ProcessExitContext, ProcessIdentity};
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
@@ -203,14 +205,14 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub scripts: ScriptsList,
     pub current_script_index: u8,
 
-    pub remaining_fds: i8,
+    pub pending_output_fds: i8,
     /// Zig: `?*Process`. `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
     /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
     /// in `reset_polls` (mirrors Zig `process.close(); process.deref();`). Null = none.
     pub process: *mut Process,
     pub stdout: OutputReader,
     pub stderr: OutputReader,
-    pub has_called_process_exit: bool,
+    pub exit_state: Option<LifecycleScriptExit>,
     /// Zig: `manager: *PackageManager`. Stored as raw `*mut` (not `&'a`) so
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
     /// `progress`, `scripts_node`) through the long-lived backref without
@@ -340,15 +342,25 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn on_reader_done(&mut self) {
-        debug_assert!(self.remaining_fds > 0);
-        self.remaining_fds -= 1;
+        let action = if let Some(exit_state) = self.exit_state.as_mut() {
+            exit_state.record_reader_done()
+        } else {
+            debug_assert!(self.pending_output_fds > 0);
+            self.pending_output_fds = self.pending_output_fds.saturating_sub(1);
+            LifecycleScriptExitAction::Pending
+        };
 
-        self.maybe_finished();
+        self.apply_exit_action(action);
     }
 
     pub fn on_reader_error(&mut self, err: bun_sys::Error) {
-        debug_assert!(self.remaining_fds > 0);
-        self.remaining_fds -= 1;
+        let action = if let Some(exit_state) = self.exit_state.as_mut() {
+            exit_state.record_reader_done()
+        } else {
+            debug_assert!(self.pending_output_fds > 0);
+            self.pending_output_fds = self.pending_output_fds.saturating_sub(1);
+            LifecycleScriptExitAction::Pending
+        };
 
         Output::pretty_errorln(
             format_args!(
@@ -360,22 +372,28 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ),
         );
         Output::flush();
-        self.maybe_finished();
+        self.apply_exit_action(action);
     }
 
-    fn maybe_finished(&mut self) {
-        if !self.has_called_process_exit || self.remaining_fds != 0 {
-            return;
+    fn apply_exit_action(&mut self, action: LifecycleScriptExitAction) {
+        match action {
+            LifecycleScriptExitAction::WrongProcess => {
+                Output::debug_warn(format_args!(
+                    "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
+                ));
+            }
+            LifecycleScriptExitAction::Pending => {}
+            LifecycleScriptExitAction::MaybeFinished => {
+                let Some(status) = self
+                    .exit_state
+                    .as_ref()
+                    .and_then(|exit_state| exit_state.exit_status.clone())
+                else {
+                    return;
+                };
+                self.handle_exit(status);
+            }
         }
-
-        let process = self.process;
-        if process.is_null() {
-            return;
-        }
-        // SAFETY: `process` is the live intrusive-refcounted `*mut Process` set in
-        // `spawn_next_script`; we hold a strong ref until `reset_polls`.
-        let status = unsafe { (*process).status.clone() };
-        self.handle_exit(status);
     }
 
     /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
@@ -502,7 +520,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         Self::ensure_not_in_heap(this);
 
         (*this).current_script_index = next_script_index;
-        (*this).has_called_process_exit = false;
+        (*this).pending_output_fds = 0;
+        (*this).exit_state = None;
 
         let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
         replace_package_manager_run(&mut copy_script, original_script)?;
@@ -632,7 +651,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ..Default::default()
         };
 
-        (*this).remaining_fds = 0;
+        (*this).pending_output_fds = 0;
         (*this).started_at =
             bun_core::Timespec::now(bun_core::TimespecMockMode::AllowMockedTime).ns();
         // Store the allocation-rooted `this` in the intrusive heap — not a `&mut self`
@@ -678,7 +697,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if !spawned.memfds[1] {
                     (*this).stdout.set_parent(this.cast::<c_void>());
                     let _ = bun_sys::set_nonblocking(stdout);
-                    (*this).remaining_fds += 1;
+                    (*this).pending_output_fds += 1;
 
                     Self::reset_output_flags(&mut (*this).stdout, stdout);
                     (*this).stdout.start(stdout, true)?;
@@ -694,7 +713,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if !spawned.memfds[2] {
                     (*this).stderr.set_parent(this.cast::<c_void>());
                     let _ = bun_sys::set_nonblocking(stderr);
-                    (*this).remaining_fds += 1;
+                    (*this).pending_output_fds += 1;
 
                     Self::reset_output_flags(&mut (*this).stderr, stderr);
                     (*this).stderr.start(stderr, true)?;
@@ -720,13 +739,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
                 (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stdout.set_parent(this.cast::<c_void>());
-                (*this).remaining_fds += 1;
+                (*this).pending_output_fds += 1;
                 (*this).stdout.start_with_current_pipe()?;
             }
             if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
                 (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
                 (*this).stderr.set_parent(this.cast::<c_void>());
-                (*this).remaining_fds += 1;
+                (*this).pending_output_fds += 1;
                 (*this).stderr.start_with_current_pipe()?;
             }
         }
@@ -739,6 +758,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         debug_assert!((*this).process.is_null(), "forgot to call `resetPolls`");
         (*this).process = process;
+        let process_identity = ProcessIdentity::from_ptr(process)
+            .expect("spawned Process pointer must not be null");
+        (*this).exit_state = Some(LifecycleScriptExit::new(
+            process_identity,
+            (*this).pending_output_fds,
+        ));
         // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
         // we hold no live `&mut Self` here, so the synchronous `on_exit`
         // dispatch below may reenter `on_process_exit` through it without
@@ -1032,20 +1057,40 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// This function may free the *LifecycleScriptSubprocess
-    pub fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
+    pub fn on_process_exit(&mut self, proc: *mut Process, status: Status, rusage: &Rusage) {
+        let Some(process_identity) = ProcessIdentity::from_ptr(proc) else {
+            Output::debug_warn(format_args!(
+                "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with null process"
+            ));
+            return;
+        };
         if self.process != proc {
             Output::debug_warn(format_args!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
             ));
             return;
         }
-        self.has_called_process_exit = true;
-        self.maybe_finished();
+        if self.exit_state.is_none() {
+            self.exit_state = Some(LifecycleScriptExit::new(
+                process_identity,
+                self.pending_output_fds,
+            ));
+        }
+        let action = self
+            .exit_state
+            .as_mut()
+            .expect("exit state initialized above")
+            .on_process_exit(&ProcessExitContext::new(process_identity, status, rusage));
+        self.apply_exit_action(action);
     }
 
     pub fn reset_polls(&mut self) {
         if cfg!(debug_assertions) {
-            debug_assert!(self.remaining_fds == 0);
+            debug_assert!(
+                self.exit_state
+                    .as_ref()
+                    .is_none_or(LifecycleScriptExit::output_drained)
+            );
         }
 
         let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
@@ -1062,6 +1107,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.stderr.deinit();
         self.stdout = OutputReader::init::<Self>();
         self.stderr = OutputReader::init::<Self>();
+        self.exit_state = None;
+        self.pending_output_fds = 0;
     }
 
     /// Consumes and frees a heap-allocated `LifecycleScriptSubprocess` created by [`Self::new`].
@@ -1128,11 +1175,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ctx,
             // defaults:
             current_script_index: 0,
-            remaining_fds: 0,
+            pending_output_fds: 0,
             process: core::ptr::null_mut(),
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
-            has_called_process_exit: false,
+            exit_state: None,
             timer: None,
             has_incremented_alive_count: false,
             started_at: 0,

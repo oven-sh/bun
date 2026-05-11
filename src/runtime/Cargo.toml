@@ -68,6 +68,7 @@ bun_md.workspace = true
 bun_options_types.workspace = true
 bun_output.workspace = true
 bun_spawn.workspace = true
+bun_spawn_types.workspace = true
 bun_sql_jsc.workspace = true
 bun_paths.workspace = true
 bun_picohttp.workspace = true

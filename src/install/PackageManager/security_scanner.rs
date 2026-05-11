@@ -19,6 +19,7 @@ use crate::bun_json::{Expr, ExprAccessors as _, ExprData};
 use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
+use bun_install_types::process_exit::{SecurityScanExit, SecurityScanExitAction};
 use bun_io::{BufferedReader, ReadState};
 use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 // MOVE_DOWN(b0): bun_jsc::subprocess → bun_spawn::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
@@ -27,6 +28,7 @@ use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_logger as logger;
 use bun_ptr::{RefPtr, ThreadSafeRefCount};
 use bun_spawn::{self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
+use bun_spawn_types::{ProcessExitContext, ProcessIdentity};
 use bun_str::strings;
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -904,10 +906,7 @@ fn attempt_security_scan_with_retry(
         ipc_reader: BufferedReader::init::<SecurityScanSubprocess>(),
         ipc_data: Vec::new(),
         stderr_data: Vec::new(),
-        has_process_exited: false,
-        has_received_ipc: false,
-        exit_status: None,
-        remaining_fds: 0,
+        exit_state: None,
         json_writer: None,
     });
     // Cleanup of code/json_data/process handled by `Drop for SecurityScanSubprocess` when Box drops.
@@ -955,10 +954,7 @@ pub struct SecurityScanSubprocess<'a> {
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
     stderr_data: Vec<u8>,
-    has_process_exited: bool,
-    has_received_ipc: bool,
-    exit_status: Option<Status>,
-    remaining_fds: i8,
+    exit_state: Option<SecurityScanExit>,
     /// Intrusive `RefPtr` (Zig `?*StaticPipeWriter`). `StaticPipeWriter<P>` is
     /// `RefCounted`; `Rc` would double-count against the embedded refcount.
     json_writer: Option<RefPtr<StaticPipeWriter>>,
@@ -1307,15 +1303,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `bun_sys::subprocess::Source::from_owned_bytes(Box<[u8]>)`.
         let json_source = subprocess::Source::from_owned_bytes(json_data_copy);
 
-        // 2 = ipc_reader (fd 3) + json_writer (fd 4). Both must complete before
-        // isDone() returns true, otherwise we risk freeing this struct while
-        // StaticPipeWriter still holds a pointer to it (child crash case).
-        self.remaining_fds = 2;
-        // Zig: `try this.ipc_reader.start(ipc_read_fd, true).unwrap()` — propagate silently.
-        self.ipc_reader
-            .start(ipc_read_fd, true)
-            .map_err(|e| e.to_zig_err())?;
-
         // PORT NOTE: `to_process` consumes `SpawnResult` by value on POSIX (and
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
@@ -1329,19 +1316,33 @@ impl<'a> SecurityScanSubprocess<'a> {
         // inside this frame, so from here on we touch `*self` only through
         // `parent` to keep a single provenance path (no overlapping `&mut`).
         let parent: *mut Self = self;
+        // 2 = ipc_reader (fd 3) + json_writer (fd 4). Both must complete before
+        // isDone() returns true, otherwise we risk freeing this struct while
+        // StaticPipeWriter still holds a pointer to it (child crash case).
+        let process_identity = ProcessIdentity::from_ptr(process)
+            .expect("spawned Process pointer must not be null");
         // SAFETY: `process` is the freshly-allocated intrusive `*mut Process`
         // (refcount == 1, owned by us); `parent` was just derived from
         // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
         unsafe {
+            (*parent).exit_state = Some(SecurityScanExit::new(process_identity, 2));
             (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
             (*parent).process = Some(process);
+        }
+
+        // Zig: `try this.ipc_reader.start(ipc_read_fd, true).unwrap()` — propagate silently.
+        unsafe {
+            (*parent)
+                .ipc_reader
+                .start(ipc_read_fd, true)
+                .map_err(|e| e.to_zig_err())?;
         }
 
         // Zig: `this.json_writer = StaticPipeWriter.create(...)` — assign the
         // field BEFORE `start()`. `start()` may complete the write synchronously
         // (small JSON fits the 64KB pipe buffer on POSIX) and re-enter
         // `on_close_io` via the `parent` backref; that callback must observe
-        // `json_writer.is_some()` to decrement `remaining_fds`, otherwise
+        // `json_writer.is_some()` to decrement the exit state, otherwise
         // `is_done()` never returns true and `sleep_until` hangs.
         let writer = StaticPipeWriter::create(
             event_loop,
@@ -1403,12 +1404,16 @@ impl<'a> SecurityScanSubprocess<'a> {
             // (single-threaded event loop callback).
             unsafe { (*writer.as_ptr()).source.detach() };
             writer.deref();
-            self.remaining_fds -= 1;
+            if let Some(exit_state) = self.exit_state.as_mut() {
+                let _ = exit_state.record_json_writer_closed();
+            }
         }
     }
 
     pub fn is_done(&self) -> bool {
-        self.has_process_exited && self.remaining_fds == 0
+        self.exit_state
+            .as_ref()
+            .is_some_and(SecurityScanExit::is_done)
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {
@@ -1429,14 +1434,16 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn on_reader_done(&mut self) {
-        self.has_received_ipc = true;
-        self.remaining_fds -= 1;
+        if let Some(exit_state) = self.exit_state.as_mut() {
+            let _ = exit_state.record_ipc_done();
+        }
     }
 
     pub fn on_reader_error(&mut self, err: bun_sys::Error) {
         Output::err_generic("Failed to read security scanner IPC: {}", (err,));
-        self.has_received_ipc = true;
-        self.remaining_fds -= 1;
+        if let Some(exit_state) = self.exit_state.as_mut() {
+            let _ = exit_state.record_ipc_done();
+        }
     }
 
     pub fn on_stderr_chunk(&mut self, chunk: &[u8]) {
@@ -1461,11 +1468,28 @@ impl<'a> SecurityScanSubprocess<'a> {
         true
     }
 
-    pub fn on_process_exit(&mut self, _: &mut Process, status: Status, _: &Rusage) {
-        self.has_process_exited = true;
-        self.exit_status = Some(status);
+    pub fn on_process_exit(&mut self, process: &mut Process, status: Status, rusage: &Rusage) {
+        let process_identity = ProcessIdentity::from_ref(process);
+        let Some(exit_state) = self.exit_state.as_mut() else {
+            Output::debug_warn(format_args!(
+                "<d>[SecurityScanSubprocess]<r> onProcessExit called before exit state was initialized"
+            ));
+            return;
+        };
+        let action =
+            exit_state.on_process_exit(&ProcessExitContext::new(process_identity, status, rusage));
+        let close_ipc_reader = match action {
+            SecurityScanExitAction::WrongProcess => {
+                Output::debug_warn(format_args!(
+                    "<d>[SecurityScanSubprocess]<r> onProcessExit called with wrong process"
+                ));
+                false
+            }
+            SecurityScanExitAction::Pending { close_ipc_reader }
+            | SecurityScanExitAction::Ready { close_ipc_reader } => close_ipc_reader,
+        };
 
-        if !self.has_received_ipc {
+        if close_ipc_reader {
             // PORT NOTE (intentional divergence from Zig spec): process-exit
             // and fd-3-readable race in the event loop. `ipc_reader.start()`
             // only registers a poll on POSIX — it does not synchronously read.
@@ -1518,14 +1542,12 @@ impl<'a> SecurityScanSubprocess<'a> {
                             },
                         }
                     }
-                    self.has_received_ipc = !self.ipc_data.is_empty();
                 }
             }
             // Must use deinit() (close-without-reporting), NOT close(): close()
-            // would re-enter on_reader_done and decrement remaining_fds a
-            // second time, underflowing it and hanging sleep_until.
+            // would re-enter on_reader_done and decrement the type-owned exit
+            // state a second time, hanging sleep_until.
             self.ipc_reader.deinit();
-            self.remaining_fds -= 1;
         }
     }
 
@@ -1542,15 +1564,17 @@ impl<'a> SecurityScanSubprocess<'a> {
     ) -> Result<ScanAttemptResult, Error> {
         // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
 
-        if self.exit_status.is_none() {
+        let Some(status) = self
+            .exit_state
+            .as_ref()
+            .and_then(|exit_state| exit_state.exit_status.clone())
+        else {
             Output::err_generic(
                 "Security scanner terminated without an exit status. This is a bug in Bun.",
                 (),
             );
             return Err(err!("SecurityScannerProcessFailedWithoutExitStatus"));
-        }
-
-        let status = self.exit_status.clone().unwrap();
+        };
 
         if self.ipc_data.is_empty() {
             match &status {

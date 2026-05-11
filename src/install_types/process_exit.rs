@@ -52,6 +52,11 @@ impl LifecycleScriptExit {
             LifecycleScriptExitAction::Pending
         }
     }
+
+    #[inline]
+    pub const fn output_drained(&self) -> bool {
+        self.remaining_fds == 0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

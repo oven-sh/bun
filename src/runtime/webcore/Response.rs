@@ -305,39 +305,39 @@ impl BodyMixin for Response {
 // `Response::get_text(...)` without `BodyMixin` in scope) resolve.
 impl Response {
     #[inline]
-    pub fn get_text(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_text(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_text(self, global, callframe)
     }
     #[inline]
-    pub fn get_body(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_body(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_body(self, global)
     }
     #[inline]
-    pub fn get_bytes(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_bytes(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_bytes(self, global, callframe)
     }
     #[inline]
-    pub fn get_body_used(&mut self, global: &JSGlobalObject) -> JSValue {
+    pub fn get_body_used(&self, global: &JSGlobalObject) -> JSValue {
         <Self as BodyMixin>::get_body_used(self, global)
     }
     #[inline]
-    pub fn get_json(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_json(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_json(self, global, callframe)
     }
     #[inline]
-    pub fn get_array_buffer(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_array_buffer(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_array_buffer(self, global, callframe)
     }
     #[inline]
-    pub fn get_blob(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_blob(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_blob(self, global, callframe)
     }
     #[inline]
-    pub fn get_blob_without_call_frame(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_blob_without_call_frame(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_blob_without_call_frame(self, global)
     }
     #[inline]
-    pub fn get_form_data(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn get_form_data(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_form_data(self, global, callframe)
     }
 }

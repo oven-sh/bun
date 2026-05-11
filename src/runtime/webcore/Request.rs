@@ -168,23 +168,23 @@ impl crate::webcore::body::BodyOwnerJs for Request {
 impl Request {
     #[inline]
     pub fn get_text(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_text(self, global_object, callframe)
     }
     #[inline]
-    pub fn get_body(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         <Self as BodyMixin>::get_body(self, global_this)
     }
     #[inline]
-    pub fn get_body_used(&mut self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn get_body_used(&self, global_object: &JSGlobalObject) -> JSValue {
         <Self as BodyMixin>::get_body_used(self, global_object)
     }
     #[inline]
     pub fn get_json(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -192,7 +192,7 @@ impl Request {
     }
     #[inline]
     pub fn get_array_buffer(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -200,7 +200,7 @@ impl Request {
     }
     #[inline]
     pub fn get_bytes(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -208,7 +208,7 @@ impl Request {
     }
     #[inline]
     pub fn get_form_data(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -216,7 +216,7 @@ impl Request {
     }
     #[inline]
     pub fn get_blob(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {

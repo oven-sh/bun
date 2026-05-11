@@ -98,6 +98,8 @@ export default [
 
   define({
     name: "NodeHTTPResponse",
+    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
+    sharedThis: true,
     JSType: "0b11101110",
     proto: {
       writeHead: {

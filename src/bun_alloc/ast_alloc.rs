@@ -58,6 +58,47 @@ pub fn thread_heap() -> *mut mimalloc::Heap {
     AST_HEAP.with(|c| c.get())
 }
 
+/// RAII guard that forces enclosed [`AstAlloc`] allocations onto the **global**
+/// mimalloc heap (process-lifetime) regardless of any active AST arena.
+///
+/// `new()` saves [`thread_heap`] and nulls it; `Drop` restores. Use when
+/// constructing `AstVec`s that must outlive every `MimallocArena::reset()` /
+/// `store_ast_alloc_heap::reset()` — e.g. the `--define` JSON
+/// `From<logger::js_ast::expr::Data>` deep-walk and
+/// `WorkspacePackageJSONCache`'s `Expr::deep_clone`, both of which build
+/// process-lifetime `E::Object`/`E::Array` whose embedded `Vec<Property,
+/// AstAlloc>` would otherwise land in an active side-arena and be
+/// `mi_heap_destroy`d on the next reset (the cross-reset UAF documented in
+/// `js_parser::ast::store_ast_alloc_heap`).
+///
+/// Nests trivially (inner guard saves null, restores null), so it is safe to
+/// hold one inside a recursive walk.
+#[must_use = "AST_HEAP is restored on drop; bind to a named local"]
+pub struct GlobalHeapScope(*mut mimalloc::Heap);
+
+impl GlobalHeapScope {
+    #[inline]
+    pub fn new() -> Self {
+        let prev = thread_heap();
+        set_thread_heap(core::ptr::null_mut());
+        Self(prev)
+    }
+}
+
+impl Default for GlobalHeapScope {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for GlobalHeapScope {
+    #[inline]
+    fn drop(&mut self) {
+        set_thread_heap(self.0);
+    }
+}
+
 /// Zero-sized `Allocator` that routes to [`thread_heap`] when set, else to
 /// global mimalloc. `deallocate` is a no-op (arena reclaims on `reset()`).
 ///

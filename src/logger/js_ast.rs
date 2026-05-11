@@ -1065,6 +1065,15 @@ pub mod expr {
         /// through unchanged.
         pub fn deep_clone(&self) -> Result<Data, AllocError> {
             use super::IntoExprData;
+            // The cloned node lands in `DATA_STORE` (process-lifetime); the
+            // `AstVec<Expr>` / `AstVec<Property>` it embeds must too. Force
+            // `AstAlloc` onto the global mimalloc heap so an active
+            // `store_ast_alloc_heap` side-arena (bundler) or
+            // `ASTMemoryAllocator` scope cannot back — and later
+            // `mi_heap_destroy` — these buffers on its next reset, which would
+            // UAF cached trees held across `initialize_store()` (workspace
+            // package.json cache, `bun pm pkg`, `--define`).
+            let _g = bun_alloc::ast_alloc::GlobalHeapScope::new();
             Ok(match *self {
                 Data::EArray(a) => {
                     let mut items = bun_alloc::AstAlloc::vec();

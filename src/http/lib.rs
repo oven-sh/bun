@@ -3330,9 +3330,31 @@ impl<'a> HTTPClient<'a> {
                 true
             };
 
+            // PORT NOTE (diverges from Zig): the same early-reply hazard
+            // described above for tunnels applies to direct connections — a
+            // server may answer (200, Content-Length: 0) before a large PUT
+            // body has finished writing (e.g. S3 multipart UploadPart against
+            // a mock that ignores req.body). Pooling that socket lets the next
+            // request's bytes interleave with the previous body's tail on the
+            // wire, which the server then mis-parses. The redirect path
+            // (do_redirect) already gates on request_stage == Done for exactly
+            // this reason; mirror that gate here for the non-redirect
+            // completion path. `request_stage` alone is insufficient because
+            // a fully-sent small request parks at `.body` (see on_writable),
+            // so for byte-buffer bodies check the unsent slice instead.
+            // Stream/Sendfile are left at Zig parity (they don't track an
+            // unsent slice here).
+            let request_side_drained = match &self.state.original_request_body {
+                HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
+                    self.state.request_body.is_empty()
+                }
+                _ => true,
+            };
+
             if self.is_keep_alive_possible()
                 && !socket_is_closed_or_has_error(&socket)
                 && tunnel_poolable
+                && request_side_drained
             {
                 bun_core::scoped_log!(fetch, "release socket");
                 // Hand the client's strong ref straight to the pool: `release_socket`

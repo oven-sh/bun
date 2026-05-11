@@ -1177,6 +1177,13 @@ impl IntoExprData for &E::EString {
 impl From<logger::js_ast::expr::Data> for Data {
     fn from(d: logger::js_ast::expr::Data) -> Self {
         use logger::js_ast::expr::Data as V;
+        // Nodes here are process-lifetime (`StoreRef::from_box`); the
+        // `ExprNodeList` / `G::PropertyList` (= `Vec<_, AstAlloc>`) embedded
+        // in them must be too. Force `AstAlloc` onto the global mimalloc heap
+        // for this walk so a live `store_ast_alloc_heap` side-arena cannot
+        // claim — and later `mi_heap_destroy` — those buffers on the next
+        // `reset_store()` (cross-reset UAF; `--define` / workspace cache).
+        let _g = bun_alloc::ast_alloc::GlobalHeapScope::new();
         #[inline(always)]
         fn leak<T>(v: T) -> StoreRef<T> {
             StoreRef::from_box(Box::new(v))

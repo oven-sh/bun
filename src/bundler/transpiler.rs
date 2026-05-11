@@ -394,12 +394,22 @@ impl<'a> Transpiler<'a> {
         // `E::Object`) — same lifetime as the block-store. Only the bundler
         // resets it; install/`--define` (which also use the block-store) hold
         // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
-        // the block-store's `DISABLE_RESET` gate: macro evaluation pins the
-        // store via `DisableStoreReset` and re-enters here, so the
-        // `data_store_reset` calls above are a no-op there — the side-arena
-        // must be too, or the macro's `AstVec` buffers are freed under live
-        // `StoreRef`s (macro-test segfault@0x0, #22656 SIGABRT on asan).
-        if !js_ast::ast::stmt::data::Store::disable_reset() {
+        // the block-store's FULL early-return gate (`DISABLE_RESET ||
+        // memory_allocator() != null`, Stmt.rs `Store::reset`): macro
+        // evaluation pins the store via `DisableStoreReset`, and
+        // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
+        // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
+        // and `AST_HEAP` belongs to that scope's arena, NOT the side-arena).
+        // If we ran `store_ast_alloc_heap::reset()` there it would (a)
+        // `mi_heap_destroy` whatever side-arena buffers earlier main-thread
+        // transpiles left and (b) clobber `AST_HEAP` to the side-arena's new
+        // heap, so subsequent `AstVec` allocations land in the side-arena
+        // instead of the active `ASTMemoryAllocator` arena and survive its
+        // `enter()` reset → cross-reset UAF (hot.test.ts "Unexpected NUL" /
+        // transpiled `:1:12` coords on aarch64).
+        if !js_ast::ast::stmt::data::Store::disable_reset()
+            && js_ast::ast::stmt::data::Store::memory_allocator().is_null()
+        {
             js_ast::ast::store_ast_alloc_heap::reset();
         }
     }

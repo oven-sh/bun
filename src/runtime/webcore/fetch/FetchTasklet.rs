@@ -713,16 +713,22 @@ impl FetchTasklet {
             // Only drain when this same progress tick would otherwise *resolve* the
             // promise (i.e. response metadata is already present). On the common
             // can_stream-only first progress (`metadata == None`) we early-return
-            // right below anyway, and draining the whole microtask queue from inside
-            // `tick_queue_with_count` while `self.mutex` is held is both an aliased
-            // `&mut EventLoop` (`run_task` already holds one) and observable in
-            // `fetch-leak-test-fixture-5.js`'s post-batch `heapStats().Promise`
-            // count for the streaming-body cases — the extra `release_weak_refs`
-            // + JSC drain per task perturbs Promise lifetimes enough to push the
-            // count over its 35-object threshold (#53208 flaky annotation).
+            // right below anyway.
+            //
+            // Drain ONLY the JSC microtask queue, NOT Bun's `EventLoop::drain_microtasks`:
+            // `on_progress_update` is itself running inside `tick_queue_with_count`,
+            // which already holds `&mut EventLoop`. Re-entering via
+            // `(*vm.event_loop()).drain_microtasks()` was an aliased `&mut EventLoop`
+            // (UB) and additionally ran `release_weak_refs` + `deferred_tasks.run()`,
+            // which is observable in `fetch-leak-test-fixture-5.js`'s post-batch
+            // `heapStats().Promise` count for the streaming-body cases when a fast
+            // loopback coalesces `can_stream` and `metadata` into one callback —
+            // pushed the count over its 35-object threshold (#53208/#53214 flaky).
+            // The JSC-only drain is `&self`, runs just promise reactions (sufficient
+            // for the queued `endSink(err)` to land in `write_end_request` →
+            // `abort_reason`), and leaves the Bun event loop untouched.
             if self.metadata.is_some() && !self.is_waiting_body {
-                // SAFETY: event_loop ptr is live for the VM's lifetime; see enqueue_task below.
-                let _ = unsafe { (*vm.event_loop()).drain_microtasks() };
+                vm.jsc_vm().drain_microtasks();
             }
         }
         // if we already respond the metadata and still need to process the body

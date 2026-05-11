@@ -565,6 +565,11 @@ pub trait SourceContext: Sized {
     fn on_start(&mut self) -> streams::Start;
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
     fn on_cancel(&mut self);
+    /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
+    /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
+    /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
+    /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
+    /// here would deallocate the storage backing the live `&mut self` borrow (UAF).
     fn deinit_fn(&mut self);
 
     /// `setRefUnrefFn` — default no-op (Zig: `?fn`, null ⇒ ref/unref are no-ops).
@@ -831,21 +836,40 @@ impl<C: SourceContext> NewSource<C> {
         self.ref_count += 1;
     }
 
-    pub fn decrement_count(&mut self) -> u32 {
-        if cfg!(debug_assertions) {
-            if self.ref_count == 0 {
+    /// Release one reference. If the count hits zero, runs context teardown and
+    /// **frees the allocation** (`bun.destroy(this)`).
+    ///
+    /// Takes a raw pointer (not `&mut self`) because the zero-refcount path
+    /// deallocates `*this`; holding a live `&mut Self` across that drop would be
+    /// a dangling-reference UAF (Stacked Borrows: protected tag on freed memory).
+    ///
+    /// SAFETY: `this` must point at a live `NewSource<C>` produced by
+    /// [`Self::new`] (i.e. `Box::into_raw`). Caller must not dereference `this`
+    /// — nor any interior pointer such as `&mut context` — after this returns.
+    pub unsafe fn decrement_count(this: *mut Self) -> u32 {
+        // SAFETY: caller contract — `this` is live for the duration of this block.
+        let remaining = unsafe {
+            let r = &mut (*this).ref_count;
+            #[cfg(debug_assertions)]
+            if *r == 0 {
                 panic!("Attempted to decrement ref count below zero");
             }
-        }
-
-        self.ref_count -= 1;
-        if self.ref_count == 0 {
-            self.close_jsvalue.deinit();
-            self.context.deinit_fn();
+            *r -= 1;
+            *r
+        };
+        if remaining == 0 {
+            // SAFETY: still live; run side-effect teardown while fields are valid.
+            unsafe {
+                (*this).close_jsvalue.deinit();
+                (*this).context.deinit_fn();
+            }
+            // SAFETY: `this` originated from `Box::into_raw` in `Self::new`. No
+            // `&mut` borrow of `*this` is live at this point — reclaim and drop,
+            // which runs `Drop` on `context` and all other fields, then frees.
+            drop(unsafe { bun_core::heap::take(this) });
             return 0;
         }
-
-        self.ref_count
+        remaining
     }
 
     pub fn get_error(&mut self) -> Option<syscall::Error> {
@@ -899,14 +923,10 @@ impl<C: SourceContext> NewSource<C> {
         self.context.memory_cost_fn() + core::mem::size_of::<Self>()
     }
 
-    /// `bun.TrivialDeinit(@This())` — drops the heap allocation. Called from
-    /// context `deinit` (e.g. `ByteStream::finalize` → `parent().deinit()`).
-    /// SAFETY: `self` must have been produced by [`Self::new`] (i.e.
-    /// `heap::alloc(Box::new(..))`) and must not be used after this call.
-    pub unsafe fn deinit(&mut self) {
-        // SAFETY: see fn-level doc — caller guarantees Box provenance.
-        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
-    }
+    // `bun.TrivialDeinit(@This())` is folded into [`Self::decrement_count`]'s
+    // zero-refcount path. A `&mut self` deinit here would free the storage
+    // backing the live `self` borrow (dangling UAF), so the drop is performed
+    // there via raw `*mut Self` instead.
 }
 
 // ─── codegen-facing inherent methods ─────────────────────────────────────────
@@ -1096,10 +1116,12 @@ impl<C: SourceContext> NewSource<C> {
     pub fn finalize(self: Box<Self>) {
         // Refcounted: `decrement_count` releases the JS wrapper's +1; allocation
         // may outlive this call if other refs remain, so hand ownership back to
-        // the raw refcount.
-        let this = bun_core::heap::release(self);
-        this.this_jsvalue = JSValue::ZERO;
-        let _ = this.decrement_count();
+        // the raw refcount via a raw pointer (the call may free `*this`).
+        let this = Box::into_raw(self);
+        // SAFETY: `this` is live — just unwrapped from `Box`.
+        unsafe { (*this).this_jsvalue = JSValue::ZERO };
+        // SAFETY: `this` came from `Box::into_raw`; not accessed after.
+        let _ = unsafe { Self::decrement_count(this) };
     }
 
     pub fn drain_from_js(

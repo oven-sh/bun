@@ -44,6 +44,7 @@ test.concurrent("experimentalDecorators: true is preserved through an extends ch
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("legacy\nOK\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -69,6 +70,7 @@ test.concurrent("experimentalDecorators inherited from the base tsconfig still w
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("legacy\nOK\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -99,6 +101,7 @@ test.concurrent("child experimentalDecorators: false overrides parent true (disa
 
   // Child explicitly opts out of legacy decorators — stage-3 should win.
   expect(stdout).toBe("stage-3\nOK\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -141,13 +144,13 @@ console.log(typeof Foo);
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  if (exitCode !== 0) {
-    console.log("stderr:", stderr);
-  }
-  expect(exitCode).toBe(0);
   // __legacyMetadataTS is only emitted when emitDecoratorMetadata is on.
   // Child opted out, so the bundled output must NOT contain it.
   expect(stdout).not.toContain("__legacyMetadataTS");
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("--tsconfig-override picks up experimentalDecorators via extends", async () => {
@@ -174,11 +177,11 @@ test.concurrent("--tsconfig-override picks up experimentalDecorators via extends
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout).toBe("legacy\nOK\n");
   // The bogus "Internal error: directory mismatch" warning from the
   // override-fd path must not appear — the resolver now passes an
   // invalid dirname_fd when the override path isn't a child of the
   // directory being iterated.
   expect(stderr).not.toContain("directory mismatch");
-  expect(stdout).toBe("legacy\nOK\n");
   expect(exitCode).toBe(0);
 });

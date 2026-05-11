@@ -1,4 +1,4 @@
-use core::mem::{align_of, size_of};
+use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
 use bun_core::Output;
@@ -160,9 +160,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
 pub fn write_array<S, T>(
     stream: &mut S,
     array: &[T],
-    type_name: &'static str,
-    size: usize,
-    align: usize,
+    prefix: &'static str,
 ) -> Result<(), bun_core::Error>
 where
     // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over the
@@ -176,8 +174,6 @@ where
     // a const-eval padding check on `T`; Phase B can add a `const _: () = assert!(...)`
     // per call site or a `NoPadding` marker trait.
     assert_no_uninitialized_padding(array);
-    debug_assert_eq!(size, size_of::<T>());
-    debug_assert_eq!(align, align_of::<T>());
 
     // SAFETY: `T` has no uninitialized padding (asserted above in Zig); reading
     // its bytes is sound. Matches `std.mem.sliceAsBytes`.
@@ -190,14 +186,11 @@ where
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
 
     // PORT NOTE: Zig built this with `std.fmt.comptimePrint` over
-    // `@typeName/@sizeOf/@alignOf(std.meta.Child(ArrayList))`. `@typeName` has no
-    // stable Rust equivalent, so each monomorphized call site passes
-    // `type_name`/`size`/`align` explicitly and we format at runtime — the reader
-    // skips this prefix by absolute offset, so only per-`T` determinism matters.
-    // TODO(port): verify prefix string byte-for-byte matches Zig `@typeName` output
-    // for migration compat (call sites currently pass Rust-spelled names).
-    let prefix = format!("\n<{}> {} sizeof, {} alignof\n", type_name, size, align);
-    // PERF(port): was `comptimePrint` (zero-cost &'static str) — profile in Phase B
+    // `@typeName/@sizeOf/@alignOf(std.meta.Child(ArrayList))`. The reader skips
+    // this prefix by absolute offset so it is semantically inert, but we emit the
+    // exact bytes Zig produces so that re-saving an unchanged lockfile is a byte
+    // no-op across the Zig→Rust migration. Call sites pass the verbatim Zig
+    // `@typeName` string (including its sizeof/alignof suffix) as a literal.
     stream.write_all(prefix.as_bytes())?;
 
     if !bytes.is_empty() {
@@ -246,7 +239,7 @@ where
     // order (see `sizes` module note — the comptime sort was a no-op).
 
     macro_rules! save_generic_field {
-        ($field:ident, $name:literal, $elem:ty) => {{
+        ($field:ident, $name:literal, $elem:ty, $prefix:literal) => {{
             if options.log_level.is_verbose() {
                 Output::pretty_errorln(format_args!(
                     "Saving {} {}",
@@ -261,14 +254,7 @@ where
             let mut clone: Vec<$elem> = Vec::with_capacity(buffers.$field.len());
             clone.extend_from_slice(buffers.$field.as_slice());
             // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-            write_array(
-                stream,
-                clone.as_slice(),
-                // TODO(port): @typeName parity — Zig emits fully-qualified name
-                stringify!($elem),
-                size_of::<$elem>(),
-                align_of::<$elem>(),
-            )?;
+            write_array(stream, clone.as_slice(), $prefix)?;
             #[cfg(debug_assertions)]
             {
                 // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, pos, stream.get_pos()?));
@@ -300,10 +286,11 @@ where
         write_array(
             stream,
             clone.as_slice(),
-            // TODO(port): @typeName parity — Zig emits fully-qualified name
-            "Tree",
-            size_of::<tree::External>(),
-            align_of::<tree::External>(),
+            // Verbatim Zig `@typeName(Tree)` output. Zig writes raw `Tree` (the
+            // `Type == Tree` branch is dead — see PORT NOTE above), so it reports
+            // `4 alignof` even though we serialize `tree::External` (`[u8;20]`,
+            // align 1). The reader ignores this string; we match Zig's bytes.
+            "\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n",
         )?;
         #[cfg(debug_assertions)]
         {
@@ -312,10 +299,20 @@ where
     }
 
     // -- hoisted_dependencies --
-    save_generic_field!(hoisted_dependencies, "hoisted_dependencies", DependencyID);
+    save_generic_field!(
+        hoisted_dependencies,
+        "hoisted_dependencies",
+        DependencyID,
+        "\n<u32> 4 sizeof, 4 alignof\n"
+    );
 
     // -- resolutions --
-    save_generic_field!(resolutions, "resolutions", PackageID);
+    save_generic_field!(
+        resolutions,
+        "resolutions",
+        PackageID,
+        "\n<u32> 4 sizeof, 4 alignof\n"
+    );
 
     // -- dependencies --
     {
@@ -394,10 +391,8 @@ where
         write_array(
             stream,
             to_clone.as_slice(),
-            // TODO(port): @typeName parity — Zig emits fully-qualified name
-            "Dependency.External",
-            size_of::<dependency::External>(),
-            align_of::<dependency::External>(),
+            // Zig: `@typeName(Dependency.External)` where `External = [26]u8`.
+            "\n<[26]u8> 26 sizeof, 1 alignof\n",
         )?;
 
         #[cfg(debug_assertions)]
@@ -410,11 +405,17 @@ where
     save_generic_field!(
         extern_strings,
         "extern_strings",
-        bun_semver::ExternalString
+        bun_semver::ExternalString,
+        "\n<semver.ExternalString.ExternalString> 16 sizeof, 8 alignof\n"
     );
 
     // -- string_bytes --
-    save_generic_field!(string_bytes, "string_bytes", u8);
+    save_generic_field!(
+        string_bytes,
+        "string_bytes",
+        u8,
+        "\n<u8> 1 sizeof, 1 alignof\n"
+    );
 
     Ok(())
 }

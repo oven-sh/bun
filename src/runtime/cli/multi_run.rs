@@ -10,6 +10,8 @@ use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
+use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_spawn_types::ProcessIdentity;
 use bun_str::strings;
 
 use crate::filter_arg as FilterArg;
@@ -114,6 +116,7 @@ struct ProcessSlot {
 }
 
 pub struct ProcessHandle<'a> {
+    idx: usize,
     config: &'a ScriptConfig,
     state: *const State<'a>,
     color_idx: usize,
@@ -235,16 +238,12 @@ impl<'a> ProcessHandle<'a> {
 
         self.process = Some(ProcessSlot { ptr: process, status: Status::Running });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
-        // owner backref set before any reap callback can fire.
+        // typed target set before any reap callback can fire.
         let process = unsafe { &mut *process };
-        // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
-        // it lives for the whole event loop and outlives `process`.
-        process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::MultiRunHandle,
-                std::ptr::from_mut::<Self>(self),
-            )
-        });
+        // `self.idx` names the stable slot in `State.handles`.
+        process.set_exit_target(bun_spawn::ProcessExitTarget::Runtime(
+            RuntimeProcessExitTarget::MultiRunHandle { index: self.idx },
+        ));
 
         match process.watch_or_reap() {
             Ok(_) => {}
@@ -261,15 +260,38 @@ impl<'a> ProcessHandle<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    MultiRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(_process, status, _rusage) => {
-            (*this).process.as_mut().unwrap().status = status;
-            (*this).end_time = Instant::now().into();
-            let state = &mut *(*this).state.cast_mut();
-            let _ = state.process_exit(&mut *this);
-        },
+impl<'a> ProcessHandle<'a> {
+    fn on_process_exit(&mut self, process: ProcessIdentity, status: Status) {
+        let process_slot = self.process.as_mut().unwrap();
+        debug_assert_eq!(ProcessIdentity::from_ptr(process_slot.ptr), Some(process));
+        process_slot.status = status;
+        self.end_time = Instant::now().into();
+        let state = unsafe { &mut *self.state.cast_mut() };
+        let _ = state.process_exit(self);
     }
+}
+
+pub(crate) unsafe fn on_process_exit_from_mini_context(
+    context: *mut c_void,
+    index: usize,
+    process: ProcessIdentity,
+    status: Status,
+) {
+    if context.is_null() {
+        debug_assert!(!context.is_null());
+        return;
+    }
+
+    let handle = unsafe {
+        let state = &mut *context.cast::<State<'_>>();
+        if index >= state.handles.len() {
+            debug_assert!(index < state.handles.len());
+            return;
+        }
+        &raw mut state.handles[index]
+    };
+
+    unsafe { (*handle).on_process_exit(process, status) };
 }
 
 const COLORS: [&[u8]; 6] = [
@@ -1114,6 +1136,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         }
 
         handles.push(ProcessHandle {
+            idx: i,
             state: &raw const state,
             config,
             color_idx,

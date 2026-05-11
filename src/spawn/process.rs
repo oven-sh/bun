@@ -1,6 +1,4 @@
-use core::ffi::{c_char, c_int};
-#[cfg(any(windows, target_os = "macos"))]
-use core::ffi::c_void;
+use core::ffi::{c_char, c_int, c_void};
 #[cfg(unix)]
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
@@ -87,6 +85,13 @@ const PROCESS_POLL_ONE_SHOT: bool = !cfg!(target_os = "linux");
 pub use crate::{
     ProcessExit, ProcessExitDelivery, ProcessExitHandler, ProcessExitKind, ProcessExitTarget,
 };
+
+unsafe extern "Rust" {
+    fn __bun_dispatch_process_exit_delivery(
+        delivery: ProcessExitDelivery,
+        context: *mut c_void,
+    );
+}
 
 #[inline]
 pub(crate) fn call_exit_handler(
@@ -974,22 +979,26 @@ pub mod waiter_thread_posix {
             bun_core::heap::into_raw(Box::new(v))
         }
 
-        pub fn run_from_main_thread(self: Box<Self>) {
+        pub fn run_from_main_thread(self: Box<Self>) -> Option<ProcessExitDelivery> {
             let result = self.result;
             let subprocess = self.subprocess;
             // bun.destroy(self) — Box drops at end of scope.
             // SAFETY: see ResultTask::run_from_main_thread.
-            let _ = unsafe {
+            unsafe {
                 T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed())
-            };
+            }
         }
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
         /// shape — `C = ()`). Default Rust ABI.
-        pub fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
+        pub fn run_from_main_thread_mini(this: *mut Self, context: *mut ()) {
             // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
             // event loop hands ownership back here exactly once.
-            unsafe { bun_core::heap::take(this) }.run_from_main_thread();
+            if let Some(delivery) = unsafe { bun_core::heap::take(this) }.run_from_main_thread() {
+                // SAFETY: this is the same high-tier delivery dispatcher used by
+                // FilePoll exits; the Mini task context is supplied by tick_once.
+                unsafe { __bun_dispatch_process_exit_delivery(delivery, context.cast()) };
+            }
         }
     }
 

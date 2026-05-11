@@ -13,6 +13,8 @@ use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
+use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_spawn_types::ProcessIdentity;
 use bun_str::{strings, ZStr};
 use bun_sys as sys;
 
@@ -42,7 +44,7 @@ struct ScriptConfig {
 // Anonymous struct in Zig: `process: ?struct { ptr, status }`
 struct ProcessInfo {
     // Intrusive ref-counted (`ThreadSafeRefCount<Process>`); raw `*mut` matches
-    // `to_process()` and `set_exit_handler` callers (Zig: `*Process`).
+    // `to_process()` and process-target callers (Zig: `*Process`).
     ptr: *mut Process,
     status: Status,
 }
@@ -51,6 +53,7 @@ struct ProcessInfo {
 // and `dependents` holds raw pointers into that same `handles` slice. This is self-referential in
 // Zig; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub struct ProcessHandle<'a> {
+    idx: usize,
     config: &'a ScriptConfig,
     state: bun_ptr::BackRef<State<'a>>,
 
@@ -163,16 +166,12 @@ impl<'a> ProcessHandle<'a> {
 
         handle.process = Some(ProcessInfo { ptr: process, status: Status::Running });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
-        // sole owner until reaped, owner backref set before reap callback can fire.
+        // sole owner until reaped; typed target set before reap callback can fire.
         let process = unsafe { &mut *process };
-        // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
-        // it owns `process` and outlives it.
-        process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::FilterRunHandle,
-                std::ptr::from_mut::<ProcessHandle<'a>>(handle),
-            )
-        });
+        // `handle.idx` names the stable slot in `State.handles`.
+        process.set_exit_target(bun_spawn::ProcessExitTarget::Runtime(
+            RuntimeProcessExitTarget::FilterRunHandle { index: handle.idx },
+        ));
 
         match process.watch_or_reap() {
             Ok(_) => {}
@@ -204,19 +203,13 @@ impl<'a> ProcessHandle<'a> {
 
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    FilterRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, &*rusage),
-    }
-}
-
 impl<'a> ProcessHandle<'a> {
-    pub fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
-        self.process.as_mut().unwrap().status = status;
+    fn on_process_exit(&mut self, process: ProcessIdentity, status: Status) {
+        let process_info = self.process.as_mut().unwrap();
+        debug_assert_eq!(ProcessIdentity::from_ptr(process_info.ptr), Some(process));
+        process_info.status = status;
         self.end_time = Some(Instant::now());
         // We just leak the process because we're going to exit anyway after all processes are done
-        let _ = proc;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
         let state = unsafe { state_ref.get_mut() };
@@ -240,6 +233,29 @@ impl<'a> ProcessHandle<'a> {
             return unsafe { (*self.state.event_loop).loop_ };
         }
     }
+}
+
+pub(crate) unsafe fn on_process_exit_from_mini_context(
+    context: *mut c_void,
+    index: usize,
+    process: ProcessIdentity,
+    status: Status,
+) {
+    if context.is_null() {
+        debug_assert!(!context.is_null());
+        return;
+    }
+
+    let handle = unsafe {
+        let state = &mut *context.cast::<State<'_>>();
+        if index >= state.handles.len() {
+            debug_assert!(index < state.handles.len());
+            return;
+        }
+        &raw mut state.handles[index]
+    };
+
+    unsafe { (*handle).on_process_exit(process, status) };
 }
 
 // SAFETY: `this` is the `*mut ProcessHandle` registered via `set_parent`; the
@@ -928,8 +944,9 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     let state_ptr: bun_ptr::BackRef<State> =
         unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
-    for script in scripts.iter() {
+    for (idx, script) in scripts.iter().enumerate() {
         handles_vec.push(ProcessHandle {
+            idx,
             state: state_ptr,
             config: script,
             stdout: BufferedReader::init::<ProcessHandle>(),

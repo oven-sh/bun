@@ -85,9 +85,22 @@ pub enum ProcessExitTarget {
     SyncWindows(*mut process::sync::SyncWindowsProcess),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum ProcessExitDelivery {
-    Runtime(bun_runtime_types::process_exit::RuntimeProcessExitAction),
+    Runtime {
+        event_loop: EventLoopHandle,
+        action: bun_runtime_types::process_exit::RuntimeProcessExitAction,
+    },
+}
+
+impl core::fmt::Debug for ProcessExitDelivery {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Runtime { action, .. } => {
+                f.debug_struct("Runtime").field("action", action).finish()
+            }
+        }
+    }
 }
 
 impl ProcessExitTarget {
@@ -120,7 +133,13 @@ impl ProcessExitTarget {
                     status,
                     rusage,
                 );
-                Some(ProcessExitDelivery::Runtime(target.on_process_exit(&ctx)))
+                // `event_loop` is kept with the typed action so Mini waiter-thread
+                // completions can re-enter the same stack context as FilePoll exits.
+                let event_loop = unsafe { (*process).event_loop };
+                Some(ProcessExitDelivery::Runtime {
+                    event_loop,
+                    action: target.on_process_exit(&ctx),
+                })
             }
             #[cfg(windows)]
             Self::SyncWindows(this) => {
@@ -131,16 +150,12 @@ impl ProcessExitTarget {
     }
 }
 
-// Variant types live in `bun_runtime`/`bun_install`; each provides its body
-// via `bun_spawn::link_impl_ProcessExit!`. Adding a handler kind = add a
-// variant here + one `link_impl_ProcessExit!` in the owning crate.
+// Legacy owner-pointer handlers that have not yet moved to ProcessExitTarget.
 bun_dispatch::link_interface! {
     pub ProcessExit[
         Subprocess,
         LifecycleScript,
         Shell,
-        FilterRunHandle,
-        MultiRunHandle,
         TestParallelWorker,
         CronRegister,
         CronRemove,

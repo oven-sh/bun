@@ -110,6 +110,7 @@ pub struct MiniEventLoop<'a> {
     // PORT NOTE: Zig field is `[]const u8` with mixed provenance (literal "", borrowed `cwd`
     // param, or `allocator.dupe`). Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,
+    pub current_context: Option<NonNull<c_void>>,
     // TODO(port): lifetime — opaque ctx assigned externally, only read/cleared here.
     pub after_event_loop_callback_ctx: Option<NonNull<c_void>>,
     pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
@@ -321,6 +322,7 @@ impl<'a> MiniEventLoop<'a> {
             file_polls_: None,
             env: None,
             top_level_dir: Box::default(),
+            current_context: None,
             after_event_loop_callback_ctx: None,
             after_event_loop_callback: None,
             pipe_read_buffer: None,
@@ -377,7 +379,17 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     #[inline]
+    pub fn current_context(&self) -> *mut c_void {
+        self.current_context
+            .map(NonNull::as_ptr)
+            .unwrap_or(core::ptr::null_mut())
+    }
+
+    #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
+        let previous_context = self.current_context;
+        self.current_context = NonNull::new(context);
+
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
             // SAFETY: see `loop_ptr()` invariant.
             unsafe {
@@ -393,9 +405,14 @@ impl<'a> MiniEventLoop<'a> {
             // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
             unsafe { (*task).run(context) };
         }
+
+        self.current_context = previous_context;
     }
 
     pub fn tick_without_idle(&mut self, context: *mut c_void) {
+        let previous_context = self.current_context;
+        self.current_context = NonNull::new(context);
+
         loop {
             let _ = self.tick_concurrent_with_count();
             while let Some(task) = self.tasks.read_item() {
@@ -412,6 +429,7 @@ impl<'a> MiniEventLoop<'a> {
         }
         // PORT NOTE: Zig `defer this.onAfterEventLoop()` at fn scope; no early returns above.
         self.on_after_event_loop();
+        self.current_context = previous_context;
     }
 
     pub fn tick<F>(&mut self, context: *mut c_void, is_done: F)

@@ -162,7 +162,7 @@ Process exit uses the same boundary for install-domain readiness gates and
 runtime process completion: value-only state lives below, effect application
 stays above.
 
-This branch proves three production shapes. WebView process exits use the
+This branch proves five production shapes. WebView process exits use the
 runtime sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
 `RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the Chrome/Host
 effects. Security scanner exits use the install sidecar path: `bun_spawn` stores
@@ -170,7 +170,10 @@ an `InstallProcessExitTarget::SecurityScan(NonNull<SecurityScanExit>)` and only
 marks typed install state; `bun_install` consumes any local IO action before it
 reports the scanner done. The Windows sync-spawn path is a local spawn-internal
 case: `SyncWindowsProcess` is not a cross-crate owner, so it now uses a local
-`ProcessExitTarget::SyncWindows` arm inside `bun_spawn`.
+`ProcessExitTarget::SyncWindows` arm inside `bun_spawn`. `bun run --filter` and
+`bun run --parallel` use runtime sidecar targets keyed by their existing handle
+slots; `bun_runtime::dispatch` consumes the typed action and synchronously
+re-enters the current `MiniEventLoop` context.
 
 Lifecycle scripts and cron register/remove already use typed readiness reducers
 for process/output ordering, but their `ProcessExit` owner re-entry remains a
@@ -191,6 +194,12 @@ Process-exit production shape
   │     │     └─> returns LifecycleScriptExitAction
   │     └─> SecurityScanExit
   │           └─> returns SecurityScanExitAction
+  ├─> bun_runtime_types
+  │     ├─> RuntimeProcessExitTarget
+  │     │     ├─> ChromeProcess / HostProcess
+  │     │     └─> FilterRunHandle / MultiRunHandle slot indices
+  │     └─> RuntimeProcessExitAction
+  │           └─> carries process identity + status + target data
   └─> owning crates
         ├─> bun_spawn observes waitpid / platform wait completion
         ├─> bun_install applies lifecycle/security package-manager effects
@@ -266,6 +275,12 @@ Process-exit production wiring
   │     ├─> install ProcessExitTarget::Runtime(ChromeProcess | HostProcess)
   │     ├─> bun_spawn emits RuntimeProcessExitAction with ProcessIdentity + Status
   │     └─> bun_runtime::dispatch asks the runtime singleton owner to apply the effect
+  ├─> runtime/cli/filter_run.rs and multi_run.rs
+  │     ├─> store stable handle-slot indices in RuntimeProcessExitTarget
+  │     ├─> bun_spawn emits RuntimeProcessExitAction with index + ProcessIdentity + Status
+  │     ├─> FilePoll exits recover the active MiniEventLoop tick context
+  │     ├─> waiter-thread Mini tasks pass their task context to the same typed delivery dispatcher
+  │     └─> bun_runtime::dispatch indexes the existing State.handles slice and calls State::process_exit
   └─> spawn/process.rs sync Windows path
         ├─> stores ProcessExitTarget::SyncWindows for local spawn-internal state
         └─> never enters the cross-crate ProcessExit table

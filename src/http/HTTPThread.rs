@@ -950,8 +950,9 @@ mod _event_loop_draft {
         // SAFETY: `init_once` runs under `Once`; no other thread reads
         // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
         unsafe {
-            *crate::HTTP_THREAD.get() = Some(HttpThread::new());
+            (*crate::HTTP_THREAD.get()).write(HttpThread::new());
         }
+        crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);
         bun_libdeflate_sys::libdeflate::load();
         let opts_copy = opts.clone();
         let thread = std::thread::Builder::new()

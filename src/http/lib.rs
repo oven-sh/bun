@@ -653,13 +653,24 @@ impl Drop for HTTPClient<'_> {
 }
 
 // ── HTTP-thread globals (single-threaded; initialized by HTTPThread::on_start) ──
-pub static HTTP_THREAD: bun_core::RacyCell<Option<HTTPThread>> = bun_core::RacyCell::new(None);
+// `MaybeUninit` (not `Option`) so the static const-evals to all-zero bytes and
+// lands in `.bss`. `Option<HTTPThread>::None` has a non-zero niche value, which
+// forced the entire ~27 KB struct into `.data` and thus into startup RSS for
+// every process — Zig's `var http_thread: HTTPThread = undefined` is pure BSS.
+pub static HTTP_THREAD: bun_core::RacyCell<core::mem::MaybeUninit<HTTPThread>> =
+    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+pub(crate) static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[inline]
 pub fn http_thread() -> &'static mut HTTPThread {
+    debug_assert!(
+        HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Relaxed),
+        "http_thread initialized"
+    );
     // SAFETY: HTTP_THREAD is initialized before any HTTPClient runs and only
     // accessed from the single HTTP thread.
-    unsafe { (*HTTP_THREAD.get()).as_mut().expect("http_thread initialized") }
+    unsafe { (*HTTP_THREAD.get()).assume_init_mut() }
 }
 #[inline]
 pub fn http_thread_mut() -> &'static mut HTTPThread { http_thread() }

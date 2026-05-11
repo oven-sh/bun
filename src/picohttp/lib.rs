@@ -99,10 +99,15 @@ impl Default for Header {
 impl Header {
     /// All-zero sentinel — name/value are empty slices. Used by callers to
     /// initialize fixed-size header arrays before filling them.
+    ///
+    /// Uses `null()` (not `b"".as_ptr()`) so the const evaluates to all-zero
+    /// bytes — `[Header::ZERO; N]` statics land in `.bss` instead of `.data`,
+    /// matching Zig's `var buf: [N]Header = undefined`. `name()`/`value()` go
+    /// through `ffi::slice`, which tolerates `(null, 0)`.
     pub const ZERO: Self = Self {
-        name_ptr: b"".as_ptr(),
+        name_ptr: core::ptr::null(),
         name_len: 0,
-        value_ptr: b"".as_ptr(),
+        value_ptr: core::ptr::null(),
         value_len: 0,
     };
 

@@ -1699,11 +1699,39 @@ impl NodeHTTPResponse {
 
         let mut result: JSValue = JSValue::ZERO;
         let mut is_exception: bool = false;
-        self.ref_();
+
+        // PORT NOTE: `corked()` re-enters JS, which calls back into other
+        // prototype methods (`end()` → `mark_request_as_done()` → `deref()`)
+        // on this same heap object via a fresh `&mut Self` derived from C++'s
+        // `m_ctx`. With our outer `&mut self` parameter marked LLVM-`noalias`,
+        // and nothing derived from `self` passed into the `corked()` FFI call,
+        // LLVM was observed caching `ref_count` across the call — the trailing
+        // `deref()` then read a stale count and the inner deref was lost,
+        // leaking every `NodeHTTPResponse` (≈160 B/req under node:http).
+        //
+        // Mitigation: launder `self` through `black_box` so the resulting raw
+        // pointer is opaque (not provably derived from the `noalias` param),
+        // and additionally escape it into the corked closure (whose storage is
+        // handed to FFI as `*mut c_void`). Both independently force LLVM to
+        // re-load `*this` after the opaque call. Stacked-Borrows is still
+        // violated by the inner `&mut` alias regardless — same as every
+        // re-entrant `.classes.ts` `&mut self` method (tracked in
+        // PORT_NOTES_PLAN R-2); this change addresses the observable
+        // miscompile only.
+        let this: *mut Self = core::hint::black_box(ptr::from_mut(self));
+        // SAFETY: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
+        // alive across re-entry.
+        unsafe { (*this).ref_() };
         // defer this.deref(); — moved to tail.
 
-        if let Some(raw_response) = &self.raw_response {
+        // Snapshot before re-entry; `raw_response` is `Copy`.
+        // SAFETY: `this` is live (just ref'd).
+        let raw_response = unsafe { (*this).raw_response };
+        if let Some(raw_response) = raw_response {
             raw_response.corked(|| {
+                // Capture `this` so a `self`-derived pointer reaches the FFI
+                // closure-data slot (see PORT NOTE above).
+                let _escape = this;
                 handle_corked(global_object, arguments.ptr[0], &mut result, &mut is_exception)
             });
         } else {
@@ -1722,7 +1750,9 @@ impl NodeHTTPResponse {
             Ok(result)
         };
 
-        self.deref();
+        // SAFETY: `this` held alive by the `ref_()` above; this is the
+        // balancing release.
+        unsafe { (*this).deref() };
         ret
     }
 

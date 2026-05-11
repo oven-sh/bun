@@ -8,6 +8,7 @@ path = "lib.rs"
 
 [dependencies]
 bun_opaque.workspace = true
+bun_jsc_types.workspace = true
 bun_jsc_macros.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true

@@ -11,7 +11,7 @@ use crate::ErrorCode as NodeErrorCode;
 use crate::StringJsc as _; // .to_js() / .to_error_instance() on bun_string::String
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult, VM,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER,
+    GlobalRef, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER,
 };
 
 use bun_core::{fmt as bun_fmt, perf, Output, StackCheck};
@@ -26,59 +26,6 @@ use bun_string::{strings, OwnedString, String as BunString};
 // directly; all access is via FFI.
 // ──────────────────────────────────────────────────────────────────────────────
 bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
-
-/// VM-lifetime handle to a `JSGlobalObject`, stored as a raw pointer.
-///
-/// Replaces the `&'static`-lifetime `JSGlobalObject` borrows scattered across
-/// heap structs. `'static` was a lie — the global lives as long as its
-/// `VirtualMachine`, not the process — and the lie forced every constructor to
-/// erase a short-lived `&JSGlobalObject` to `'static`. `GlobalRef`
-/// centralises that one `unsafe` inside [`Deref`] (the global outlives any
-/// struct that holds a `GlobalRef`; see `LIFETIMES.tsv` JSC_BORROW), and the
-/// `From<&JSGlobalObject>` impl makes construction safe at every call site.
-///
-/// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via the
-/// raw pointer, matching `JSGlobalObject`'s own auto-traits (single JS thread).
-#[derive(Clone, Copy)]
-#[repr(transparent)]
-pub struct GlobalRef(*const JSGlobalObject);
-
-impl GlobalRef {
-    #[inline(always)]
-    pub fn new(global: &JSGlobalObject) -> Self {
-        Self(global)
-    }
-
-    /// Raw FFI pointer (mut, matching `JSGlobalObject::as_ptr`).
-    #[inline(always)]
-    pub fn as_ptr(self) -> *mut JSGlobalObject {
-        self.0.cast_mut()
-    }
-}
-
-impl core::ops::Deref for GlobalRef {
-    type Target = JSGlobalObject;
-    #[inline(always)]
-    fn deref(&self) -> &JSGlobalObject {
-        // SAFETY: constructed only from a live `&JSGlobalObject`; the global is
-        // owned by the VM and outlives every JSC_BORROW holder (LIFETIMES.tsv).
-        // Single `unsafe` for what was previously ~90 lifetime erasures to `'static`.
-        unsafe { &*self.0 }
-    }
-}
-
-impl From<&JSGlobalObject> for GlobalRef {
-    #[inline(always)]
-    fn from(g: &JSGlobalObject) -> Self {
-        Self::new(g)
-    }
-}
-
-impl core::fmt::Debug for GlobalRef {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("GlobalRef").field(&self.0).finish()
-    }
-}
 
 impl JSGlobalObject {
     /// Raw `*mut JSGlobalObject` for FFI. Sound for callees that mutate: the

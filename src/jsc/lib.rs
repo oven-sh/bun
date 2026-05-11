@@ -857,7 +857,8 @@ pub use abort_signal::{AbortSignal, AbortSignalRef};
 // type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
 // so `&T → *mut T` for FFI is sound under Stacked Borrows.
 pub use self::vm::{HeapType, Lock as ApiLock, VM};
-pub use self::js_global_object::{GlobalRef, JSGlobalObject};
+pub use self::js_global_object::JSGlobalObject;
+pub type GlobalRef = bun_jsc_types::GlobalRef<JSGlobalObject>;
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
 /// Mirrors Zig's `IntegerRange` (comptime min/max collapsed to i128 so every

@@ -79,6 +79,7 @@ members = [
   "src/windows_sys",
   "src/jsc",
   "src/jsc_macros",
+  "src/jsc_types",
   "src/ptr",
   "src/boringssl",
   "src/brotli_sys",
@@ -294,6 +295,7 @@ bun_url = { path = "src/url" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }
+bun_jsc_types = { path = "src/jsc_types" }
 bun_ptr = { path = "src/ptr" }
 bun_boringssl = { path = "src/boringssl" }
 bun_brotli_sys = { path = "src/brotli_sys" }

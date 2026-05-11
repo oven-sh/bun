@@ -1292,6 +1292,7 @@ dependencies = [
  "bun_js_parser",
  "bun_js_printer",
  "bun_jsc_macros",
+ "bun_jsc_types",
  "bun_logger",
  "bun_opaque",
  "bun_options_types",
@@ -1332,6 +1333,10 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "bun_jsc_types"
+version = "0.0.0"
 
 [[package]]
 name = "bun_libarchive"

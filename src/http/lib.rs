@@ -1705,7 +1705,11 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if self.allow_retry {
+        if self.allow_retry
+            && self.method.is_idempotent()
+            && self.state.response_stage != ResponseStage::Body
+            && self.state.response_stage != ResponseStage::BodyChunk
+        {
             self.allow_retry = false;
             // we need to retry the request, clean up the response message buffer and start again
             self.state.response_message_buffer = MutableString::default();

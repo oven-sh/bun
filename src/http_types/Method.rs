@@ -108,6 +108,22 @@ impl Method {
         !matches!(self, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
     }
 
+    /// Per RFC 7231 §4.2.2, idempotent methods are safe to retry on
+    /// keep-alive connection resets. POST and PATCH are NOT idempotent
+    /// and must not be silently retried.
+    pub fn is_idempotent(self) -> bool {
+        matches!(
+            self,
+            Method::GET
+                | Method::HEAD
+                | Method::PUT
+                | Method::DELETE
+                | Method::OPTIONS
+                | Method::TRACE
+                | Method::QUERY
+        )
+    }
+
     pub fn find(str: &[u8]) -> Option<Method> {
         Self::which(str)
     }

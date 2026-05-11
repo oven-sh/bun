@@ -169,6 +169,11 @@ Chrome/Host effects. The Chrome/Host owners stay in `bun_runtime`; `bun_spawn`
 does not store their owner pointers and does not call their methods through the
 erased `ProcessExit` table.
 
+The Windows sync-spawn path is the other intentionally local case:
+`SyncWindowsProcess` is not a cross-crate owner, so it now uses a local
+`ProcessExitTarget::SyncWindows` arm inside `bun_spawn` instead of occupying a
+global `ProcessExit` macro variant.
+
 ```
 Process-exit production shape
   ├─> bun_spawn_types

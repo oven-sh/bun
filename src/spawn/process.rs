@@ -84,21 +84,9 @@ pub use bun_spawn_sys::uv_getrusage;
 #[cfg(unix)]
 const PROCESS_POLL_ONE_SHOT: bool = !cfg!(target_os = "linux");
 
-pub use bun_spawn_types::{ProcessExitContext, ProcessIdentity};
 pub use crate::{
     ProcessExit, ProcessExitDelivery, ProcessExitHandler, ProcessExitKind, ProcessExitTarget,
 };
-
-#[cfg(windows)]
-type SyncProcess = sync::SyncWindowsProcess;
-// `opaque_ffi!` emits an inherent `impl` that doesn't carry inner `#[cfg]`
-// attrs, so gate the whole macro invocation rather than the struct alone.
-#[cfg(not(windows))]
-bun_opaque::opaque_ffi! {
-    pub struct SyncProcessPosix;
-}
-#[cfg(not(windows))]
-type SyncProcess = SyncProcessPosix;
 
 #[inline]
 pub(crate) fn call_exit_handler(
@@ -311,9 +299,7 @@ impl Process {
             self.detach();
         }
         if let Some(exit_target) = exit_target {
-            let process_identity = ProcessIdentity::from_ref(self);
-            let ctx = ProcessExitContext::new(process_identity, status, rusage);
-            return Some(exit_target.on_process_exit(&ctx));
+            return exit_target.on_process_exit(std::ptr::from_mut(self), status, rusage);
         }
         call_exit_handler(&exit_handler, self, status, rusage);
         None
@@ -2444,8 +2430,9 @@ pub mod sync {
         }
 
         /// `process` is the *same* `*mut Process` that was threaded through
-        /// `Process::on_exit_uv` → `Process::on_exit` → `ProcessExitHandler::call`
-        /// (which holds a protector-guarded `&mut Process` in its frame).
+        /// `Process::on_exit_uv` → `Process::on_exit` →
+        /// `ProcessExitTarget::on_process_exit` (which holds a
+        /// protector-guarded `&mut Process` in its frame).
         /// Re-deriving a `&mut Process` from the independent `self.process`
         /// root would pop that protected tag under Stacked Borrows, so we
         /// take the already-live pointer instead. Mirrors Zig
@@ -2581,9 +2568,9 @@ pub mod sync {
         unsafe {
             let p = &mut *(*this_ptr).process;
             p.ref_();
-            // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
-            // caller's stack; `p` is owned by it and dropped before return.
-            p.set_exit_handler(ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr));
+            // `SyncWindowsProcess` is a local spawn implementation detail, so
+            // it does not participate in the cross-crate ProcessExit table.
+            p.set_exit_target(ProcessExitTarget::SyncWindows(this_ptr));
             p.enable_keeping_event_loop_alive();
         }
 

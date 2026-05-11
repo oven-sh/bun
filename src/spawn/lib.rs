@@ -80,6 +80,8 @@ pub use process::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProcessExitTarget {
     Runtime(bun_runtime_types::process_exit::RuntimeProcessExitTarget),
+    #[cfg(windows)]
+    SyncWindows(*mut process::sync::SyncWindowsProcess),
 }
 
 #[derive(Clone, Debug)]
@@ -89,12 +91,28 @@ pub enum ProcessExitDelivery {
 
 impl ProcessExitTarget {
     #[inline]
-    pub fn on_process_exit(
+    pub(crate) fn on_process_exit(
         self,
-        ctx: &bun_spawn_types::ProcessExitContext<'_>,
-    ) -> ProcessExitDelivery {
+        process: *mut Process,
+        status: Status,
+        rusage: &Rusage,
+    ) -> Option<ProcessExitDelivery> {
         match self {
-            Self::Runtime(target) => ProcessExitDelivery::Runtime(target.on_process_exit(ctx)),
+            Self::Runtime(target) => {
+                let process_identity = bun_spawn_types::ProcessIdentity::from_ptr(process)
+                    .expect("Process::on_exit passes a live Process pointer");
+                let ctx = bun_spawn_types::ProcessExitContext::new(
+                    process_identity,
+                    status,
+                    rusage,
+                );
+                Some(ProcessExitDelivery::Runtime(target.on_process_exit(&ctx)))
+            }
+            #[cfg(windows)]
+            Self::SyncWindows(this) => {
+                process::sync::SyncWindowsProcess::on_process_exit(this, process, status, rusage);
+                None
+            }
         }
     }
 }
@@ -113,7 +131,6 @@ bun_dispatch::link_interface! {
         TestParallelWorker,
         CronRegister,
         CronRemove,
-        SyncWindows,
     ] {
         fn on_process_exit(process: *mut Process, status: Status, rusage: *const Rusage);
     }
@@ -122,25 +139,6 @@ bun_dispatch::link_interface! {
 /// `None` = no handler set (the default for `Process::exit_handler`).
 pub type ProcessExitHandler = Option<ProcessExit>;
 
-// In-crate `link_impl_*!` calls must be textually after the `link_interface!`
-// that emits the macro (`#[macro_export]` is path-addressable from *other*
-// crates only; same-crate use is textual-scope). POSIX `spawn_sync` waits
-// inline and never installs a handler, so the `SyncWindows` arm is genuinely
-// unreachable there — but every variant needs a body or the link fails.
-#[cfg(windows)]
-link_impl_ProcessExit! {
-    SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(process, status, rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
-    }
-}
-#[cfg(not(windows))]
-link_impl_ProcessExit! {
-    SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_process, _status, _rusage) =>
-            unreachable!("SyncWindows exit handler is Windows-only"),
-    }
-}
 /// Compat re-export: the `process::spawn_sys` shim module was dissolved into
 /// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on
 /// `bun_spawn`). Downstream `runtime/api/bun/*` still spells the old path.

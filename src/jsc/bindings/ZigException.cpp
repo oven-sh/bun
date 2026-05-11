@@ -481,12 +481,18 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // Prefer the Error instance's own stack (captured at construction) over
+    // the outer JSC::Exception wrapper's stack. When a user rethrows an
+    // existing Error — e.g. inside `process.on('uncaughtException')` — JSC
+    // wraps the value in a fresh Exception whose stack points at the
+    // `throw err` site. The interesting data is on the Error itself, not on
+    // the rethrow wrapper. This matches Node's behavior of using `err.stack`.
     bool getFromSourceURL = false;
-    if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, except.stack, global, flags);
-
-    } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
+
+    } else if (stackTrace != nullptr && stackTrace->size() > 0) {
+        populateStackTrace(vm, *stackTrace, except.stack, global, flags);
 
     } else {
         getFromSourceURL = true;
@@ -878,7 +884,15 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
-        if (jscException->stack().size() > 0) {
+        // Must mirror the stack-source selection used by `fromErrorInstance`
+        // above: OnlySourceLines indexes into the same frame vector recorded
+        // during OnlyPosition (via ZigStackFrame::jsc_stack_frame_index). If
+        // the Error has its own stack, use it; otherwise fall back to the
+        // wrapper's stack.
+        if (auto* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped);
+            error && error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
+            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);
+        } else if (jscException->stack().size() > 0) {
             populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
         }
 

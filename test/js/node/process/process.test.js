@@ -821,6 +821,34 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(1);
     expect(await proc.stderr.text()).toContain("bar");
   });
+
+  // https://github.com/oven-sh/bun/issues/30504
+  it("preserves the original Error stack when the uncaughtException handler rethrows", async () => {
+    using dir = tempDir("rethrow-uncaught", {
+      "index.cjs": `
+        'use strict';
+        process.on('uncaughtException', err => {
+          throw err;
+        });
+        function throwUncaughtError() {
+          throw new Error('Boom');
+        }
+        throwUncaughtError();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "index.cjs")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(7);
+    // Stack must reference the original throw site inside throwUncaughtError,
+    // not only the `throw err` rethrow site inside the handler.
+    expect(stderr).toContain("throwUncaughtError");
+    expect(stderr).toContain("Boom");
+  });
 });
 
 it("process.hasUncaughtExceptionCaptureCallback", () => {

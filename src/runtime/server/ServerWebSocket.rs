@@ -479,12 +479,12 @@ impl ServerWebSocket {
         let this_value_cell: &JsCell<JsRef> = &self.this_value;
         let _cleanup = scopeguard::guard(signal, move |sig| {
             if let Some(sig) = sig {
-                // SAFETY: `sig` was stored with a +1 ref by the upgrade caller;
-                // it stays live until this paired unref.
-                unsafe {
-                    sig.as_ref().pending_activity_unref();
-                    sig.as_ref().unref();
-                }
+                // `sig` was stored with a +1 ref by the upgrade caller; it
+                // stays live until this paired `unref()`, so the transient
+                // `BackRef` (pointee-outlives-holder) is sound for both calls.
+                let sig = bun_ptr::BackRef::from(sig);
+                sig.pending_activity_unref();
+                sig.unref();
             }
             if was_not_empty {
                 // R-2: closure-scoped `&mut JsRef` via `JsCell::with_mut` —
@@ -504,8 +504,9 @@ impl ServerWebSocket {
             let _loop_guard = vm.enter_event_loop_scope();
 
             if let Some(sig) = signal {
-                // SAFETY: `sig` is held alive by the +1 ref released in `_cleanup`.
-                let sig = unsafe { sig.as_ref() };
+                // `sig` is held alive by the +1 ref released in `_cleanup`;
+                // BackRef invariant (pointee outlives the temporary) holds.
+                let sig = bun_ptr::BackRef::from(sig);
                 if !sig.aborted() {
                     sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
                 }
@@ -538,8 +539,9 @@ impl ServerWebSocket {
         } else if let Some(sig) = signal {
             let _loop_guard = vm.enter_event_loop_scope();
 
-            // SAFETY: `sig` is held alive by the +1 ref released in `_cleanup`.
-            let sig = unsafe { sig.as_ref() };
+            // `sig` is held alive by the +1 ref released in `_cleanup`;
+            // BackRef invariant (pointee outlives the temporary) holds.
+            let sig = bun_ptr::BackRef::from(sig);
             if !sig.aborted() {
                 sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
             }

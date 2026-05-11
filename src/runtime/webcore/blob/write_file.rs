@@ -1197,7 +1197,10 @@ impl WriteFilePromise {
 
 pub struct WriteFileWaitFromLockedValueTask {
     pub file_blob: Blob,
-    pub global_this: *const JSGlobalObject,
+    /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
+    /// (being `Copy`) detaches from `&self` for use across `&mut self` and
+    /// past `heap::take(this)`.
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub mkdirp_if_not_exists: bool,
 }
@@ -1216,9 +1219,10 @@ impl WriteFileWaitFromLockedValueTask {
         let this_ref = unsafe { &mut *this };
         // `get()` returns a GC-owned cell, valid past `heap::take(this)`.
         let promise: *mut JSPromise = this_ref.promise.get();
-        // SAFETY: `global_this` was set from a live `&JSGlobalObject` when this
-        // task was scheduled; the global outlives every `Body::Value` callback.
-        let global_this = unsafe { &*this_ref.global_this };
+        // Copy the `BackRef` out so the borrow is detached from `this_ref`
+        // (must coexist with `&mut this_ref` and survive `heap::take(this)`).
+        let global_ref = this_ref.global_this;
+        let global_this = global_ref.get();
         // PORT NOTE: Zig `var file_blob = this.file_blob;` is a non-owning
         // bitwise copy — both bindings alias the same `*Store` with no ref
         // bump, and `bun.destroy(this)` later frees raw memory without running

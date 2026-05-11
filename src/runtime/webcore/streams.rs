@@ -1388,14 +1388,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     fn readable_slice(&self) -> &[u8] {
-        // SAFETY: offset <= len <= cap; ptr is valid for cap bytes
-        unsafe {
-            core::slice::from_raw_parts(
-                self.buffer.as_ptr().add(self.offset as usize),
-                (self.buffer.len() as u64 - self.offset) as usize,
-            )
-        }
-        // TODO(port): Zig `this.buffer.ptr[this.offset..this.buffer.len]` — verify Vec<u8> field access
+        // Zig `this.buffer.ptr[this.offset..this.buffer.len]`; `handle_wrote`
+        // maintains `offset <= buffer.len()`.
+        &self.buffer[self.offset as usize..]
     }
 
     pub fn on_writable(&mut self, write_offset: u64, _res: *mut UwsResponse<SSL, HTTP3>) -> bool {

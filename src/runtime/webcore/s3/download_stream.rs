@@ -19,9 +19,9 @@ pub struct S3HttpDownloadStreamingTask {
     // PORT NOTE: `MaybeUninit` because `AsyncHTTP` contains non-null references, so the Zig
     // `= undefined`-then-init pattern can't use `mem::zeroed()` here (mirrors `S3HttpSimpleTask`).
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    // PORT NOTE: `*mut` (not `&'static`) to match `VirtualMachine::get()`'s return type and to
-    // permit a null-but-never-read placeholder in `Default` (Zig has no field default for `vm`).
-    pub vm: *mut VirtualMachine,
+    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
+    /// the inert `Default` placeholder (overwritten before the task escapes).
+    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,
@@ -56,7 +56,7 @@ impl Default for S3HttpDownloadStreamingTask {
         Self {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
-            vm: core::ptr::null_mut(),
+            vm: None,
             sign_result: SignResult::default(),
             headers: Headers::default(),
             callback_context: NonNull::dangling(),
@@ -331,9 +331,9 @@ impl S3HttpDownloadStreamingTask {
             let task = std::ptr::from_mut::<ConcurrentTask>(self_
                 .concurrent_task
                 .from(this, AutoDeinit::ManualDeinit));
-            // SAFETY: `vm` is the live per-thread VM pointer captured at task creation; event_loop
-            // is initialized for the request's lifetime and enqueue is thread-safe.
-            unsafe { (*(*self_.vm).event_loop()).enqueue_task_concurrent(task) };
+            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
+            // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
+            self_.vm.expect("vm set at task creation").event_loop_shared().enqueue_task_concurrent(task);
         }
     }
 }

@@ -843,11 +843,11 @@ describe.concurrent(() => {
       stdout: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(7);
     // Stack must reference the original throw site inside throwUncaughtError,
     // not only the `throw err` rethrow site inside the handler.
     expect(stderr).toContain("throwUncaughtError");
     expect(stderr).toContain("Boom");
+    expect(exitCode).toBe(7);
   });
 });
 

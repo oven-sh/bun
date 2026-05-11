@@ -74,4 +74,75 @@ impl Default for ResolvedSource {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// RAII owner for the +1 `BunString` refs inside a `ResolvedSource`.
+//
+// `ResolvedSource` itself MUST stay `#[repr(C), Copy]` (it crosses to C++ by
+// value through `Errorable<ResolvedSource>`), so it cannot have `Drop`. That
+// makes every Rust-side construction a leak hazard: `source_code` is a fresh
+// `String::clone_utf8/clone_latin1` (+1 WTF refcount holding the entire
+// transpiled module text — kilobytes-to-megabytes), and any error path or
+// early return between construction and `into_ffi()` would orphan it.
+//
+// Hold the in-flight value as `OwnedResolvedSource`; the only way to extract
+// the raw `ResolvedSource` for FFI is `into_ffi()` (consumes, forgets). If the
+// owner is dropped instead, every contained `BunString` is `deref()`d.
+//
+// The `module_info` pointer (a `Box<ModuleInfoDeserialized>` leaked via
+// `heap::into_raw`) is intentionally NOT freed here — its ownership protocol
+// is separate (C++ calls `Bun__free_module_info` on success; on Rust-side drop
+// it would still leak today, tracked separately).
+// ──────────────────────────────────────────────────────────────────────────
+#[repr(transparent)]
+#[derive(Default)]
+pub struct OwnedResolvedSource(ResolvedSource);
+
+impl OwnedResolvedSource {
+    /// Adopt a freshly-constructed `ResolvedSource`. The caller transfers the
+    /// +1 on every `BunString` field to this owner.
+    #[inline]
+    pub const fn new(rs: ResolvedSource) -> Self {
+        Self(rs)
+    }
+
+    /// Hand the raw value to C++ (which takes over the `deref()` obligation
+    /// per `headers-handwritten.h` `BunString::deref` callers in
+    /// `Zig::ResolvedSource` consumers). After this, Rust must not touch the
+    /// strings.
+    #[inline]
+    pub fn into_ffi(self) -> ResolvedSource {
+        let rs = self.0;
+        core::mem::forget(self);
+        rs
+    }
+
+    /// Borrow the inner value for in-place mutation while keeping RAII
+    /// ownership. Used for the `source_url`/`specifier` late-fill in
+    /// `RuntimeTranspilerStore::run_from_js_thread`.
+    #[inline]
+    pub fn as_mut(&mut self) -> &mut ResolvedSource {
+        &mut self.0
+    }
+
+    #[inline]
+    pub fn get(&self) -> &ResolvedSource {
+        &self.0
+    }
+}
+
+impl Drop for OwnedResolvedSource {
+    #[inline]
+    fn drop(&mut self) {
+        // `source_code_needs_deref` mirrors the C++ consumer's gate (when
+        // `false`, the source_code is a borrowed/static slice the consumer
+        // must not deref either).
+        if self.0.source_code_needs_deref {
+            self.0.source_code.deref();
+        }
+        self.0.specifier.deref();
+        self.0.source_url.deref();
+        self.0.bytecode_origin_path.deref();
+    }
+}
+
 // ported from: src/jsc/ResolvedSource.zig

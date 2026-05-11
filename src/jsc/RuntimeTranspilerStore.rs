@@ -39,6 +39,8 @@ use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source_tag::ResolvedSourceTag;
+use crate::resolved_source::OwnedResolvedSource;
+use bun_string::OwnedString;
 use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
@@ -292,14 +294,14 @@ impl RuntimeTranspilerStore {
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
-        let mut resolved_source = ResolvedSource::default();
+        let mut resolved_source = OwnedResolvedSource::default();
         if let Some(pkg) = package_json {
             match pkg.module_type {
                 ModuleType::Cjs => {
-                    resolved_source.tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
-                    resolved_source.is_commonjs_module = true;
+                    resolved_source.as_mut().tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
+                    resolved_source.as_mut().is_commonjs_module = true;
                 }
-                ModuleType::Esm => resolved_source.tag = ResolvedSourceTag::PackageJsonTypeModule,
+                ModuleType::Esm => resolved_source.as_mut().tag = ResolvedSourceTag::PackageJsonTypeModule,
                 ModuleType::Unknown => {}
             }
         }
@@ -313,10 +315,10 @@ impl RuntimeTranspilerStore {
         let job: *mut TranspilerJob = self
             .store
             .get_init(TranspilerJob {
-                non_threadsafe_input_specifier: input_specifier,
+                non_threadsafe_input_specifier: OwnedString::new(input_specifier),
                 path: owned_path,
                 global_this: BackRef::new(global_object),
-                non_threadsafe_referrer: referrer,
+                non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
                 log: bun_ast::Log::init(),
                 loader,
@@ -364,8 +366,11 @@ pub struct TranspilerJob {
     // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
     // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
     pub path: bun_paths::fs::Path<'static>,
-    pub non_threadsafe_input_specifier: String,
-    pub non_threadsafe_referrer: String,
+    /// RAII: `Drop` derefs the WTF refcount. `reset_for_pool` still does the
+    /// explicit `take()` for symmetry with Zig, but if any path skips it
+    /// (`HiveArray::put` → `drop_in_place`), the strings no longer leak.
+    pub non_threadsafe_input_specifier: OwnedString,
+    pub non_threadsafe_referrer: OwnedString,
     pub loader: Loader,
     pub promise: StrongOptional,
     // PORT NOTE: struct is stored in a HiveArray and crosses to a worker thread;
@@ -378,7 +383,11 @@ pub struct TranspilerJob {
     pub generation_number: u32,
     pub log: bun_ast::Log,
     pub parse_error: Option<bun_core::Error>,
-    pub resolved_source: ResolvedSource,
+    /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
+    /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
+    /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
+    /// on any path that skips `run_from_js_thread` derefs them.
+    pub resolved_source: OwnedResolvedSource,
     pub work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
     pub next: unbounded_queue::Link<TranspilerJob>,
@@ -449,9 +458,11 @@ impl TranspilerJob {
         self.fetcher.deinit();
         self.fetcher = Fetcher::File;
         self.loader = Loader::File;
-        // bun_string::String is Copy with manual refcount; decrement and clear.
-        core::mem::replace(&mut self.non_threadsafe_input_specifier, String::empty()).deref();
-        core::mem::replace(&mut self.non_threadsafe_referrer, String::empty()).deref();
+        // OwnedString::Drop derefs the WTF refcount.
+        drop(core::mem::take(&mut self.non_threadsafe_input_specifier));
+        drop(core::mem::take(&mut self.non_threadsafe_referrer));
+        // OwnedResolvedSource::Drop derefs source_code/url/specifier/origin.
+        drop(core::mem::take(&mut self.resolved_source));
         // self.log.deinit() → Drop via take
         drop(core::mem::take(&mut self.log));
         // self.promise.deinit() → Drop via replace
@@ -484,16 +495,19 @@ impl TranspilerJob {
         // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
-        let referrer = core::mem::replace(&mut self.non_threadsafe_referrer, String::empty());
+        let referrer = core::mem::take(&mut self.non_threadsafe_referrer).into_inner();
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        let mut resolved_source = self.resolved_source;
+        // Take RAII ownership out of the job; `into_ffi()` below transfers the
+        // +1 strings to `AsyncModule::fulfill` → C++ `Zig::ResolvedSource`.
+        let mut owned_resolved_source = core::mem::take(&mut self.resolved_source);
+        let resolved_source = owned_resolved_source.as_mut();
         let specifier = 'brk: {
             if self.parse_error.is_some() {
                 break 'brk String::clone_utf8(self.path.text);
             }
 
             let out =
-                core::mem::replace(&mut self.non_threadsafe_input_specifier, String::empty());
+                core::mem::take(&mut self.non_threadsafe_input_specifier).into_inner();
 
             debug_assert!(resolved_source.source_url.is_empty());
             debug_assert!(resolved_source.specifier.is_empty());
@@ -510,6 +524,7 @@ impl TranspilerJob {
         // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
         unsafe { (*vm).transpiler_store.store.put(std::ptr::from_mut::<TranspilerJob>(self)) };
 
+        let mut resolved_source = owned_resolved_source.into_ffi();
         AsyncModule::fulfill(
             &global_this,
             promise,
@@ -628,7 +643,7 @@ impl TranspilerJob {
         let path = self.path.clone();
         let specifier = self.path.text;
         let loader = self.loader;
-        let this_tag = self.resolved_source.tag;
+        let this_tag = self.resolved_source.get().tag;
 
         // PORT NOTE: Zig threaded the arena into `output_code_allocator`; the Rust port of
         // RuntimeTranspilerCache dropped the per-allocator fields (Box<[u8]> + global mimalloc).
@@ -955,7 +970,7 @@ impl TranspilerJob {
                 ptr::null_mut()
             };
 
-            self.resolved_source = ResolvedSource {
+            self.resolved_source = OwnedResolvedSource::new(ResolvedSource {
                 source_code: match &mut entry.output_code {
                     OutputCode::String(s) => *s,
                     OutputCode::Utf8(utf8) => {
@@ -968,14 +983,14 @@ impl TranspilerJob {
                 module_info,
                 tag: this_tag,
                 ..Default::default()
-            };
+            });
 
             return;
         }
 
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
             let bytecode_slice = parse_result.already_bundled.bytecode_slice();
-            self.resolved_source = ResolvedSource {
+            self.resolved_source = OwnedResolvedSource::new(ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache: if !bytecode_slice.is_empty() {
@@ -987,8 +1002,8 @@ impl TranspilerJob {
                 is_commonjs_module: parse_result.already_bundled.is_common_js(),
                 tag: this_tag,
                 ..Default::default()
-            };
-            self.resolved_source.source_code.ensure_hash();
+            });
+            self.resolved_source.as_mut().source_code.ensure_hash();
             return;
         }
 
@@ -1148,7 +1163,7 @@ impl TranspilerJob {
 
             break 'brk result;
         };
-        self.resolved_source = ResolvedSource {
+        self.resolved_source = OwnedResolvedSource::new(ResolvedSource {
             source_code,
             is_commonjs_module,
             module_info: module_info
@@ -1159,7 +1174,7 @@ impl TranspilerJob {
                 .unwrap_or(ptr::null_mut()),
             tag: this_tag,
             ..Default::default()
-        };
+        });
 
         // PARSE_ARENA allocations stay live until the next `run()`'s `reset()`
         // (worker-thread-local; nothing references them past this point).

@@ -73,12 +73,17 @@ impl MutableString {
 
     /// Zig: `self.list.expandToCapacity()` — set `len = capacity` so callers
     /// can index into the spare region (e.g. `read()` into `&mut list[n..]`).
-    /// PORT NOTE: Zig leaves the new tail `undefined`; we zero-fill to keep
-    /// the `Vec<u8>` bytes initialized.
+    ///
+    /// Matches Zig semantics: the new tail is left **uninitialized** — callers
+    /// must treat `list[old_len..]` as write-only until overwritten (typically
+    /// by `read()`). The previous port zero-filled here, which memset the
+    /// entire pooled scratch buffer before every `package.json` read.
     #[inline]
     pub fn expand_to_capacity(&mut self) {
-        let cap = self.list.capacity();
-        self.list.resize(cap, 0);
+        // SAFETY: capacity bytes are allocated; the exposed tail is immediately
+        // overwritten by the caller before any read (same contract as
+        // `writable_n_bytes_assume_capacity` below and Zig `expandToCapacity`).
+        unsafe { self.list.set_len(self.list.capacity()) };
     }
 
     pub fn owns(&self, items: &[u8]) -> bool {

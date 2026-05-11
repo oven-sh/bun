@@ -136,7 +136,10 @@ pub struct Debug {
     pub js_call_count_outside_tick_queue: usize,
     pub drain_microtasks_count_outside_tick_queue: usize,
     pub _prev_is_inside_tick_queue: bool,
-    pub last_fn_name: bun_string::String,
+    /// RAII: deref-on-drop. `exit()` just `take()`s; if `Debug` is dropped
+    /// without `exit()` running, the +1 from the last `run_callback` no
+    /// longer leaks.
+    pub last_fn_name: bun_string::OwnedString,
     pub track_last_fn_name: bool,
 }
 
@@ -154,8 +157,7 @@ impl Debug {
         self._prev_is_inside_tick_queue = false;
         self.js_call_count_outside_tick_queue = 0;
         self.drain_microtasks_count_outside_tick_queue = 0;
-        self.last_fn_name.deref();
-        self.last_fn_name = bun_string::String::empty();
+        drop(core::mem::take(&mut self.last_fn_name));
     }
 }
 

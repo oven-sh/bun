@@ -22,7 +22,7 @@ class Foo {}
 console.log("OK");
 `;
 
-test("experimentalDecorators: true is preserved through an extends chain", async () => {
+test.concurrent("experimentalDecorators: true is preserved through an extends chain", async () => {
   using dir = tempDir("bun-30477-extends", {
     "base-tsconfig.json": JSON.stringify({
       compilerOptions: { target: "esnext" },
@@ -47,7 +47,7 @@ test("experimentalDecorators: true is preserved through an extends chain", async
   expect(exitCode).toBe(0);
 });
 
-test("experimentalDecorators inherited from the base tsconfig still wins", async () => {
+test.concurrent("experimentalDecorators inherited from the base tsconfig still wins", async () => {
   using dir = tempDir("bun-30477-base", {
     "base-tsconfig.json": JSON.stringify({
       compilerOptions: { target: "esnext", experimentalDecorators: true },
@@ -76,7 +76,7 @@ test("experimentalDecorators inherited from the base tsconfig still wins", async
 // `extends`: a child's explicit value wins over the parent's, even when the
 // child's value is `false`. Without this, `or`-merging made `true` sticky —
 // a base config could force legacy decorators on every child that extended it.
-test("child experimentalDecorators: false overrides parent true (disables legacy)", async () => {
+test.concurrent("child experimentalDecorators: false overrides parent true (disables legacy)", async () => {
   using dir = tempDir("bun-30477-child-false-exp", {
     "base-tsconfig.json": JSON.stringify({
       compilerOptions: { target: "esnext", experimentalDecorators: true },
@@ -102,7 +102,7 @@ test("child experimentalDecorators: false overrides parent true (disables legacy
   expect(exitCode).toBe(0);
 });
 
-test("child emitDecoratorMetadata: false overrides parent true", async () => {
+test.concurrent("child emitDecoratorMetadata: false overrides parent true", async () => {
   // When emitDecoratorMetadata is true, Bun emits __legacyMetadataTS(...)
   // calls into __legacyDecorateClassTS. A child that sets it back to false
   // must prevent that emission.
@@ -150,7 +150,7 @@ console.log(typeof Foo);
   expect(stdout).not.toContain("__legacyMetadataTS");
 });
 
-test("--tsconfig-override picks up experimentalDecorators via extends", async () => {
+test.concurrent("--tsconfig-override picks up experimentalDecorators via extends", async () => {
   using dir = tempDir("bun-30477-override", {
     "tsconfig.json": JSON.stringify({
       compilerOptions: { target: "esnext" },

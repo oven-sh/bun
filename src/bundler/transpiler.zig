@@ -285,7 +285,10 @@ pub const Transpiler = struct {
                 // env vars were already loaded above.
                 const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
 
-                if (dir_info.tsconfig_json) |tsconfig| {
+                // Same fallback as configureLinkerWithAutoJSX above: when
+                // top_level_dir has no tsconfig of its own (ancestor-only or
+                // --tsconfig-override), inherit from the enclosing chain.
+                if (dir_info.tsconfig_json orelse dir_info.enclosing_tsconfig_json) |tsconfig| {
                     this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
                 }
 

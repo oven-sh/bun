@@ -75,8 +75,10 @@ test.skipIf(isDebug)(
     const { deltaMB } = JSON.parse(stdout.trim());
 
     // Unfixed: ~50 MB over 3 measured passes. Fixed: ±1 MB plateau.
-    // Threshold sits at ~half the unfixed signal.
-    expect(deltaMB).toBeLessThan(25);
+    // Threshold sits well below the unfixed signal but above musl's
+    // mimalloc segment-purge oscillation (the high-water-mark sampling
+    // bounds it but alpine-aarch64 still showed 25.3 MB on a clean run).
+    expect(deltaMB).toBeLessThan(30);
     expect(exitCode).toBe(0);
   },
   15_000,

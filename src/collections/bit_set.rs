@@ -1019,10 +1019,9 @@ impl DynamicBitSetUnmanaged {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        let n = Self::num_masks(self.bit_length);
-        // SAFETY: `masks` points to `n` initialized usize words; reinterpreting
-        // `[usize; n]` as `[u8; n * size_of::<usize>()]` is always valid.
-        unsafe { slice::from_raw_parts(self.masks.cast::<u8>(), n * mem::size_of::<usize>()) }
+        // `masks_slice()` already encapsulates the `(ptr, num_masks)` invariant;
+        // reinterpreting `&[usize]` as `&[u8]` is a safe POD cast.
+        bun_core::cast_slice::<usize, u8>(self.masks_slice())
     }
 
     /// Returns the total number of set bits in this bit set.
@@ -1433,15 +1432,7 @@ impl AutoBitSet {
 
     pub fn raw_bytes(&self) -> &[u8] {
         match self {
-            AutoBitSet::Static(s) => {
-                // SAFETY: `[usize; N]` is POD; reinterpreting as bytes is sound.
-                unsafe {
-                    slice::from_raw_parts(
-                        s.masks.as_ptr().cast::<u8>(),
-                        mem::size_of_val(&s.masks),
-                    )
-                }
-            }
+            AutoBitSet::Static(s) => bun_core::cast_slice::<usize, u8>(&s.masks),
             AutoBitSet::Dynamic(d) => d.bytes(),
         }
     }

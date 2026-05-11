@@ -1728,9 +1728,9 @@ pub mod ffi {
     /// of [`cstr_bytes`] for inline arrays like `utsname::release`.
     #[inline]
     pub fn c_field_bytes(s: &[core::ffi::c_char]) -> &[u8] {
-        // SAFETY: `c_char` is `i8`/`u8`; both are byte-sized and every bit
-        // pattern is a valid `u8`. Same length, same provenance.
-        let b = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) };
+        // `c_char` is a type alias for `i8`/`u8`; both are `bytemuck::Pod`, so
+        // the byte-sized reinterpretation is a safe `cast_slice`.
+        let b: &[u8] = bytemuck::cast_slice(s);
         &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
     }
 

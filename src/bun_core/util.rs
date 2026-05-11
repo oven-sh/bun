@@ -2477,6 +2477,16 @@ pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
     bytemuck::bytes_of(v)
 }
 
+/// Port of Zig `std.mem.sliceAsBytes` / `bun.reinterpretSlice` for the
+/// read-only `&[A]` → `&[B]` direction. Safe: the [`bytemuck::NoUninit`] bound
+/// on `A` guarantees every source byte is initialized, and
+/// [`bytemuck::AnyBitPattern`] on `B` guarantees every byte pattern is a valid
+/// `B`. Panics if size/alignment don't divide evenly (same as `bytemuck`).
+#[inline]
+pub fn cast_slice<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(a: &[A]) -> &[B] {
+    bytemuck::cast_slice(a)
+}
+
 /// Port of `bun.writeAnyToHasher`. Zig fed `std.mem.asBytes(&thing)`; Rust
 /// can't take a generic by-value-as-bytes safely without `bytemuck`, so this
 /// accepts anything that is itself viewable as bytes (covers the actual call
@@ -2496,11 +2506,7 @@ macro_rules! as_bytes_pod {
     ($($t:ty),* $(,)?) => { $(
         impl AsBytes for $t {
             #[inline] fn as_bytes_for_hash(&self) -> &[u8] {
-                // SAFETY: POD integer; size_of::<Self> readable bytes.
-                unsafe { core::slice::from_raw_parts(
-                    core::ptr::from_ref::<Self>(self).cast::<u8>(),
-                    core::mem::size_of::<Self>(),
-                ) }
+                bytemuck::bytes_of(self)
             }
         }
     )* }

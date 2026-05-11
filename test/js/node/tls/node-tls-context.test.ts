@@ -7,8 +7,9 @@ import { secureContextVerifyMode } from "bun:internal-for-testing";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 import { readFileSync } from "node:fs";
-import { AddressInfo } from "node:net";
+import net, { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { Duplex } from "node:stream";
 import tls from "node:tls";
 
 function loadPEM(filename: string) {
@@ -830,9 +831,6 @@ describe("tls.createSecureContext().context.addCACert", () => {
   // discarded when TLS runs on top of a Duplex (Bun.TCPSocket-over-Duplex,
   // node:tls proxies, Windows named pipes).
   it("added CA survives on the Duplex-wrapped client path", async () => {
-    const { Duplex } = await import("node:stream");
-    const net = await import("node:net");
-
     await using server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,

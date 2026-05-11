@@ -4,13 +4,13 @@ use core::marker::{PhantomData, PhantomPinned};
 use bun_string::String as BunString;
 
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
-// `jsc.Strong.Optional` and `jsc.Weak(T)` collide with this module's own `Strong`/`Weak`,
-// so import them under aliases.
-use crate::strong::Optional as JscStrong;
+use crate::strong;
+// `jsc.Weak(T)` collides with this module's own `Weak`, so import it under an alias.
 use crate::weak::{Weak as JscWeak, WeakRefType};
 use crate::{JsTerminated, TopExceptionScope};
 use crate::top_exception_scope::SourceLocation;
 use crate::virtual_machine::VirtualMachine;
+use bun_jsc_types::JSPromiseStrongHandle;
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
@@ -165,21 +165,35 @@ impl<T> Weak<T> {
 
 #[derive(Default)]
 pub struct Strong {
-    strong: JscStrong,
+    strong: JSPromiseStrongHandle,
 }
 
 impl Strong {
-    pub const fn empty() -> Self { Self { strong: JscStrong::empty() } }
+    pub const fn empty() -> Self {
+        Self {
+            strong: JSPromiseStrongHandle::empty(),
+        }
+    }
+
+    #[inline]
+    fn raw_value(&self) -> Option<JSValue> {
+        let handle = self.strong.get()?;
+        let value = strong::get_handle(handle);
+        if value.is_empty() {
+            return None;
+        }
+        Some(value)
+    }
 
     pub fn reject_without_swap(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) {
-        let Some(v) = self.strong.get() else { return };
+        let Some(v) = self.raw_value() else { return };
         let val = val.unwrap_or_else(|_| global.try_take_exception().unwrap());
         // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell.
         let _ = unsafe { &mut *v.as_promise().unwrap() }.reject(global, Ok(val));
     }
 
     pub fn resolve_without_swap(&mut self, global: &JSGlobalObject, val: JSValue) {
-        let Some(v) = self.strong.get() else { return };
+        let Some(v) = self.raw_value() else { return };
         // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell.
         let _ = unsafe { &mut *v.as_promise().unwrap() }.resolve(global, val);
     }
@@ -234,7 +248,10 @@ impl Strong {
 
     pub fn init(global: &JSGlobalObject) -> Self {
         Self {
-            strong: JscStrong::create(JSPromise::create(global).to_js(), global),
+            strong: JSPromiseStrongHandle::new(strong::init_handle(
+                global,
+                JSPromise::create(global).to_js(),
+            )),
         }
     }
 
@@ -243,7 +260,13 @@ impl Strong {
     /// should replace the placeholder created by [`init`]).
     #[inline]
     pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
-        self.strong.set(global, value);
+        let Some(handle) = self.strong.get() else {
+            if !value.is_empty() {
+                self.strong.set(strong::init_handle(global, value));
+            }
+            return;
+        };
+        strong::set_handle(handle, global, value);
     }
 
     /// Wrap an existing promise `JSValue` in a fresh Strong handle.
@@ -255,7 +278,9 @@ impl Strong {
     pub fn from_value(value: JSValue, global: &JSGlobalObject) -> Self {
         // No `as_promise()` debug-check here: this is reached from finalizers
         // (Server::deinit_if_we_can) where JSCell::classInfo() would assert.
-        Self { strong: JscStrong::create(value, global) }
+        Self {
+            strong: JSPromiseStrongHandle::new(strong::init_handle(global, value)),
+        }
     }
 
     /// Borrow the GC-rooted `JSPromise` cell. Panics if the strong slot is
@@ -267,25 +292,34 @@ impl Strong {
     /// The pointer is the JSValue payload (not derived from `&self`) and the
     /// `Strong` root keeps the cell alive for the borrow's lifetime.
     pub fn get(&self) -> &mut JSPromise {
-        JSPromise::opaque_mut(self.strong.get().unwrap().as_promise().unwrap())
+        JSPromise::opaque_mut(self.raw_value().unwrap().as_promise().unwrap())
     }
 
     pub fn value(&self) -> JSValue {
-        self.strong.get().unwrap()
+        self.raw_value().unwrap()
     }
 
     pub fn value_or_empty(&self) -> JSValue {
-        self.strong.get().unwrap_or(JSValue::ZERO)
+        self.raw_value().unwrap_or(JSValue::ZERO)
     }
 
     pub fn has_value(&self) -> bool {
-        self.strong.has()
+        self.raw_value().is_some()
     }
 
     pub fn swap(&mut self) -> &mut JSPromise {
-        let prom = self.strong.swap().as_promise().unwrap();
+        let handle = self
+            .strong
+            .get()
+            .expect("JSPromiseStrong::swap called on empty handle");
+        let prom = strong::get_handle(handle).as_promise().unwrap();
+        strong::clear_handle(handle);
         // Zig: `this.strong.deinit()` — release the handle slot now.
-        self.strong = JscStrong::empty();
+        let handle = self
+            .strong
+            .take()
+            .expect("JSPromiseStrong handle vanished during swap");
+        unsafe { strong::destroy_handle(handle) };
         // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
         // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
         unsafe { &mut *prom }
@@ -296,7 +330,14 @@ impl Strong {
     }
 }
 
-// Zig `deinit` only does `this.strong.deinit()` — subsumed by `Drop` on `JscStrong`.
+impl Drop for Strong {
+    fn drop(&mut self) {
+        let Some(handle) = self.strong.take() else { return };
+        // SAFETY: the handle was allocated by `strong::init_handle` and is
+        // consumed exactly once here or by `swap`.
+        unsafe { strong::destroy_handle(handle) };
+    }
+}
 
 // ───────────────────────────── JSPromise methods ─────────────────────────────
 

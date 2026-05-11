@@ -97,7 +97,8 @@ Natural sibling crates
   │     │     └─> opaque strong-reference slot storage identity
   │     └─> StrongRefHandle
   │           ├─> non-null slot handle; allocation, mutation, clear, and drop stay in bun_jsc::strong
-  │           └─> OptionalStrongRefHandle is the nullable slot shape behind jsc.Strong.Optional
+  │           ├─> OptionalStrongRefHandle is the nullable slot shape behind jsc.Strong.Optional
+  │           └─> JSPromiseStrongHandle is the nullable promise-root slot shape behind JSPromiseStrong
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     ├─> LifecycleScriptState
@@ -290,17 +291,20 @@ runtime effect boundary. `GlobalRef<T>` has been moved into `bun_jsc_types`
 because it is only a copyable raw VM-lifetime pointer wrapper; `StrongRefSlot`,
 `StrongRefHandle`, and `OptionalStrongRefHandle` have also moved into
 `bun_jsc_types` as the opaque slot identity plus non-null/nullable handle
-shapes. `bun_jsc` now aliases `GlobalRef<JSGlobalObject>`,
+shapes. `JSPromiseStrongHandle` now lives there too as the semantic nullable
+promise-root handle shape. `bun_jsc` now aliases `GlobalRef<JSGlobalObject>`,
 `bun_jsc::strong::Impl`, `bun_jsc::strong::Handle`, and
 `bun_jsc::strong::OptionalHandle` so existing effect code keeps the same API
 shape while `bun_jsc::strong::{Strong, Optional}` still own allocation,
-mutation, clearing, and destruction of those slots. `JsRef`,
-`Strong::Optional`, and `JSPromiseStrong` still carry drop/effect semantics.
+mutation, clearing, and destruction of those slots. `JSPromiseStrong` now
+stores the sidecar handle but still owns promise reads, resolution/rejection
+entry points, clearing, and destruction in `bun_jsc`; `JsRef` and
+`Strong::Optional` likewise still carry drop/effect semantics.
 Moving the full `Subprocess`/cron job owner below `bun_runtime`
 is therefore not a matter of copying a few pointer-sized fields into
-`bun_runtime_types`; the drop-owning JSC handles still need a real lower
-handle/sys split, with effectful promise operations applied by
-`bun_runtime`. The JS shell path has the same interpreter-identity issue that
+`bun_runtime_types`; the remaining drop-owning JSC wrappers and runtime
+resources still need real sidecar state/effect splits, with effectful promise
+operations applied by `bun_runtime`. The JS shell path has the same interpreter-identity issue that
 Mini avoids with tick context: a JS event loop can have multiple live shell
 interpreters, so it carries an explicit sidecar-owned `InterpreterHandle`
 alongside the `NodeId` instead of relying on a single loop `current_context`.
@@ -513,10 +517,10 @@ Remaining owner movement
   │     │     - the sidecar OS-cron state now lives in CronRegisterJobState / CronRemoveJobState: phase, title/path/schedule/tmp path, parsed expression, inert GlobalRef<()>, process reducer, status-policy reducer, and error buffer
   │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after sidecar job state records the lower process/reader handles
   │     │     - spawn_cmd_generic also still wires stdout/stderr through BufferedReaderParentLink, so reader-last completion can re-enter maybe_finished(this)
-  │     │     - JSPromiseStrong is drop-owning JSC state; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
+  │     │     - JSPromiseStrong now stores an inert sidecar handle, but the wrapper still owns promise effects/drop; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
   │     ├─> current event-loop context
   │     │     - cron jobs run on the normal JS event loop; there is no per-cron current_context analogous to the Mini CLI State or test Coordinator context
-  │     │     - bun_runtime_types now depends on bun_spawn_types and bun_jsc_types; bun_jsc_types covers inert global pointer plus non-null/nullable strong slot-handle shapes but not drop-owning promise/strong handles
+  │     │     - bun_runtime_types now depends on bun_spawn_types and bun_jsc_types; bun_jsc_types covers inert global pointer plus non-null/nullable strong slot-handle shapes, including the JSPromiseStrongHandle shape, but not drop-owning promise/strong wrappers or promise effects
   │     ├─> current re-entry: CronJobBase::on_process_exit
   │     │     - updates ProcessExitReadiness and immediately calls maybe_finished(this)
   │     ├─> synchronous effect: maybe_finished / advance_state / finish
@@ -575,14 +579,14 @@ Required deeper type movement
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert GlobalRef<()> VM pointer through bun_jsc_types::GlobalRef
   │     ├─> CronRegisterJobState / CronRemoveJobState now own ready-status policy and return CronProcessCompletion
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
-  │     ├─> the JSC promise/strong side needs its own lower handle split before a complete cron job state can live below bun_runtime
+  │     ├─> JSPromiseStrongHandle has moved below bun_jsc, but promise resolution/rejection and slot destruction still stay in the bun_runtime/bun_jsc effect layer
   │     └─> if the promise/effect owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
   └─> Bun.spawn needs a separable subprocess exit state
         ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref
         ├─> SubprocessExitState now stores the lower ProcessHandle, stdout/stderr BufferedReaderHandle, and cached Rusage from the production spawn path
         ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
         ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
-        ├─> GlobalRef<T>, StrongRefSlot, StrongRefHandle, and OptionalStrongRefHandle have moved to bun_jsc_types as inert pointer/slot shapes, but JsRef/Strong/JSPromiseStrong still bring JSC handle-slot allocation, effects, and drop semantics with them
+        ├─> GlobalRef<T>, StrongRefSlot, StrongRefHandle, OptionalStrongRefHandle, and JSPromiseStrongHandle have moved to bun_jsc_types as inert pointer/slot shapes, but JsRef/Strong/JSPromiseStrong still bring JSC handle-slot allocation, effects, and drop semantics with them
         ├─> a real split therefore needs the remaining lower JSC handle/sys sidecar work before Subprocess or cron can move all owner state below bun_runtime
         └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
 ```

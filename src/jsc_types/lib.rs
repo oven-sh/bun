@@ -98,6 +98,54 @@ impl OptionalStrongRefHandle {
     }
 }
 
+/// Nullable strong-slot identity specifically used to root a `JSPromise`.
+///
+/// The semantic name matters for higher crates that need to talk about promise
+/// ownership without depending on `bun_jsc`. Like the lower optional handle, it
+/// is inert: creation, reads, mutation, resolution, and destruction stay in the
+/// JSC owner crate.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct JSPromiseStrongHandle(OptionalStrongRefHandle);
+
+impl JSPromiseStrongHandle {
+    #[inline(always)]
+    pub const fn empty() -> Self {
+        Self(OptionalStrongRefHandle::empty())
+    }
+
+    #[inline(always)]
+    pub fn new(handle: StrongRefHandle) -> Self {
+        Self(OptionalStrongRefHandle::new(handle))
+    }
+
+    /// Wrap an optional slot pointer allocated by the JSC strong-reference table.
+    ///
+    /// # Safety
+    /// Any non-null `slot` must satisfy [`StrongRefHandle::from_non_null`]'s
+    /// provenance/lifetime contract and must hold a `JSPromise` value when used
+    /// by the JSC owner crate's promise APIs.
+    #[inline(always)]
+    pub unsafe fn from_non_null(slot: Option<NonNull<StrongRefSlot>>) -> Self {
+        Self(unsafe { OptionalStrongRefHandle::from_non_null(slot) })
+    }
+
+    #[inline(always)]
+    pub fn get(self) -> Option<StrongRefHandle> {
+        self.0.get()
+    }
+
+    #[inline(always)]
+    pub fn take(&mut self) -> Option<StrongRefHandle> {
+        self.0.take()
+    }
+
+    #[inline(always)]
+    pub fn set(&mut self, handle: StrongRefHandle) {
+        self.0.set(handle);
+    }
+}
+
 /// VM-lifetime handle to a JSC-owned global object.
 ///
 /// This is only pointer identity. The concrete JSC crate supplies the typed
@@ -209,6 +257,32 @@ mod tests {
         assert_eq!(
             unsafe { OptionalStrongRefHandle::from_non_null(None) },
             OptionalStrongRefHandle::empty()
+        );
+    }
+
+    #[test]
+    fn js_promise_strong_handle_preserves_nullable_pointer_shape() {
+        assert_eq!(
+            core::mem::size_of::<JSPromiseStrongHandle>(),
+            core::mem::size_of::<usize>()
+        );
+
+        let slot = NonNull::<StrongRefSlot>::dangling();
+        let handle = unsafe { StrongRefHandle::from_non_null(slot) };
+        let mut promise = JSPromiseStrongHandle::new(handle);
+        assert_eq!(promise.get(), Some(handle));
+        assert_eq!(promise.take(), Some(handle));
+        assert_eq!(promise.get(), None);
+
+        promise.set(handle);
+        assert_eq!(promise.get(), Some(handle));
+        assert_eq!(
+            unsafe { JSPromiseStrongHandle::from_non_null(Some(slot)) },
+            JSPromiseStrongHandle::new(handle)
+        );
+        assert_eq!(
+            unsafe { JSPromiseStrongHandle::from_non_null(None) },
+            JSPromiseStrongHandle::empty()
         );
     }
 }

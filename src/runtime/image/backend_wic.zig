@@ -378,7 +378,7 @@ const GUID_WICPixelFormat64bppRGBA: GUID = .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d
 // Covers TIFF-16 (48bppRGB), HEIC/AVIF 10/12/16-bit (48bpp or 64bpp flavours),
 // and the 32bppR10G10B10A2 / HDR10 packed-10-bit formats that the Microsoft
 // HEIF Image Extension may emit for HEVC Main10 content.
-const high_bpc_sources: [14]GUID = .{
+const high_bpc_sources: [15]GUID = .{
     // 48bppRGB / 48bppBGR — no-alpha 16-bpc (common TIFF variants).
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x15 } },
     .{ .d1 = 0xe605a384, .d2 = 0xb468, .d3 = 0x46ce, .d4 = .{ 0xbb, 0x2e, 0x36, 0xf1, 0x80, 0xe6, 0x43, 0x13 } },
@@ -391,10 +391,15 @@ const high_bpc_sources: [14]GUID = .{
     // 48bppRGBHalf / 48bppRGBFixedPoint — emitted by HDR TIFF encoders.
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x3b } },
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x12 } },
-    // 64bppRGBHalf / 64bppRGBAHalf / 64bppRGBAFixedPoint / 64bppRGBFixedPoint.
+    // 64bppRGBHalf / 64bppRGBAHalf / 64bppRGBAFixedPoint / 64bppRGBFixedPoint
+    // / 128bppRGBFixedPoint. The 64bpp family is the normal HDR TIFF /
+    // high-bit-depth output; 128bpp is listed because WICConvertBitmapSource
+    // narrows it to 64bppRGBA correctly (u32/f32 channels → clamped u16) so
+    // the carry-through works uniformly even for 32-bit-per-channel sources.
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x42 } },
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x3a } },
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x1d } },
+    .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x40 } },
     .{ .d1 = 0x6fddc324, .d2 = 0x4e03, .d3 = 0x4bfe, .d4 = .{ 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x41 } },
     // 32bppR10G10B10A2 / 32bppR10G10B10A2HDR10 — 10-bit samples packed into
     // a 32-bit DWORD. The HEIF Image Extension can emit either for Main10

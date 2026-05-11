@@ -2399,14 +2399,8 @@ lexer_impl_header! {
     }
 
     pub fn raw(&self) -> &'a [u8] {
-        // TODO(port): lifetime — borrows self.source.contents (owned by value).
-        // SAFETY: source.contents outlives 'a (it's cloned from the borrowed Source).
-        unsafe {
-            core::slice::from_raw_parts(
-                self.source.contents.as_ptr().add(self.start),
-                self.end - self.start,
-            )
-        }
+        // `self.source: &'a Source`, so the slice borrow is `&'a [u8]` directly.
+        &self.source.contents[self.start..self.end]
     }
 
     pub fn is_contextual_keyword(&self, keyword: &'static [u8]) -> bool {
@@ -2777,14 +2771,11 @@ lexer_impl_header! {
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
             }
             StringLiteralRawFormat::Utf16 => {
-                // string_literal_raw_content is already parsed, duplicated, and utf-16
-                // SAFETY: content was created via sliceAsBytes from a [u16] dupe.
-                let utf16: &[u16] = unsafe {
-                    core::slice::from_raw_parts(
-                        self.string_literal_raw_content.as_ptr().cast::<u16>(),
-                        self.string_literal_raw_content.len() / 2,
-                    )
-                };
+                // string_literal_raw_content is already parsed, duplicated, and utf-16.
+                // It was created via `cast_slice::<u16, u8>` from an arena `[u16]` dupe,
+                // so the pointer is u16-aligned and `cast_slice` back is sound (panics
+                // if that invariant is ever broken — strictly safer than the raw cast).
+                let utf16: &[u16] = bytemuck::cast_slice::<u8, u16>(self.string_literal_raw_content);
                 Ok(js_ast::E::String::init_utf16(utf16))
                 // TODO(port): exact constructor name on js_ast::E::String for utf16
             }
@@ -3169,13 +3160,8 @@ lexer_impl_header! {
             }
 
             let dup = self.arena.alloc_slice_copy(&tmp);
-            // SAFETY: reinterpret &[u16] as &[u8]
-            self.string_literal_raw_content = unsafe {
-                core::slice::from_raw_parts(
-                    dup.as_ptr().cast::<u8>(),
-                    dup.len() * 2,
-                )
-            };
+            // Reinterpret &[u16] as &[u8] — `u16: Pod`, so `cast_slice` is safe.
+            self.string_literal_raw_content = bytemuck::cast_slice::<u16, u8>(dup);
             self.string_literal_raw_format = StringLiteralRawFormat::Utf16;
             tmp.clear();
             self.temp_buffer_u16 = tmp;
@@ -3261,13 +3247,8 @@ lexer_impl_header! {
                             return Err(e);
                         }
                         let dup = self.arena.alloc_slice_copy(&tmp);
-                        // SAFETY: reinterpret arena-owned &[u16] as &[u8]; alignment 1, len*2 bytes
-                        self.string_literal_raw_content = unsafe {
-                            core::slice::from_raw_parts(
-                                dup.as_ptr().cast::<u8>(),
-                                dup.len() * 2,
-                            )
-                        };
+                        // Reinterpret arena-owned &[u16] as &[u8] — `u16: Pod`.
+                        self.string_literal_raw_content = bytemuck::cast_slice::<u16, u8>(dup);
                         self.string_literal_raw_format = StringLiteralRawFormat::Utf16;
 
                         let was_empty = tmp.is_empty();
@@ -3528,11 +3509,8 @@ lexer_impl_header! {
         }
 
         if strings::index_of_char(text, b'\r').is_none() {
-            // TODO(port): lifetime — borrows source.contents
-            // SAFETY: see raw()
-            return unsafe {
-                core::slice::from_raw_parts(text.as_ptr(), text.len())
-            };
+            // `text` already borrows `self.source: &'a Source` → `&'a [u8]`.
+            return text;
         }
 
         // From the specification:

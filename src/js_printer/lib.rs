@@ -172,10 +172,17 @@ pub mod analyze_transpiled_module {
         }
     }
 
+    // SAFETY: `#[repr(u8)]` enum with no fields → single initialized byte, no padding.
+    unsafe impl bytemuck::NoUninit for RecordKind {}
+
     /// Index into `ModuleInfo`'s interned-string table. Two reserved sentinels.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     pub struct StringID(pub u32);
+    // SAFETY: `#[repr(transparent)]` over `u32`.
+    unsafe impl bytemuck::Zeroable for StringID {}
+    // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
+    unsafe impl bytemuck::Pod for StringID {}
     impl StringID {
         pub const STAR_DEFAULT: Self = Self(u32::MAX);
         pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
@@ -185,6 +192,10 @@ pub mod analyze_transpiled_module {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct FetchParameters(pub u32);
+    // SAFETY: `#[repr(transparent)]` over `u32`.
+    unsafe impl bytemuck::Zeroable for FetchParameters {}
+    // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
+    unsafe impl bytemuck::Pod for FetchParameters {}
     #[allow(non_upper_case_globals)]
     impl FetchParameters {
         pub const None: Self = Self(u32::MAX);
@@ -219,10 +230,8 @@ pub mod analyze_transpiled_module {
     impl<'a> ModuleInfoDeserialized<'a> {
         pub fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
             w.write_all(&u32::try_from(self.record_kinds.len()).unwrap().to_le_bytes())?;
-            // SAFETY: RecordKind is #[repr(u8)].
-            w.write_all(unsafe {
-                core::slice::from_raw_parts(self.record_kinds.as_ptr().cast::<u8>(), self.record_kinds.len())
-            })?;
+            // `RecordKind: NoUninit` (#[repr(u8)]) → safe byte view.
+            w.write_all(slice_as_bytes(self.record_kinds))?;
             let pad = (4 - (self.record_kinds.len() % 4)) % 4;
             w.write_all(&[0u8; 4][..pad])?; // alignment padding
 
@@ -647,9 +656,10 @@ pub mod analyze_transpiled_module {
     }
 
     #[inline]
-    fn slice_as_bytes<T: Copy>(s: &[T]) -> &[u8] {
-        // SAFETY: T is Copy + #[repr(transparent)]/#[repr(u8)] POD at every call site.
-        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), core::mem::size_of_val(s)) }
+    fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
+        // `NoUninit` statically guarantees `T` is POD with no uninitialized bytes,
+        // so the byte view is sound without an `unsafe` block at this layer.
+        bytemuck::cast_slice::<T, u8>(s)
     }
 }
 

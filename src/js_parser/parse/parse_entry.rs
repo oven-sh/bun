@@ -246,13 +246,8 @@ impl<'a> Options<'a> {
                 // this holds the values for the jsx optimizaiton flags, which have both been removed
                 // as the optimizations break newer versions of react, see https://github.com/oven-sh/bun/issues/11025
                 let jsx_optimizations: [bool; 2] = [false, false];
-                // SAFETY: [bool; 2] is POD; asBytes in Zig is a byte view of the value.
-                hasher.update(unsafe {
-                    core::slice::from_raw_parts(
-                        jsx_optimizations.as_ptr().cast::<u8>(),
-                        core::mem::size_of::<[bool; 2]>(),
-                    )
-                });
+                // `bool: NoUninit`, `u8: AnyBitPattern`; matches Zig `std.mem.asBytes`.
+                hasher.update(bytemuck::cast_slice::<bool, u8>(&jsx_optimizations));
             } else {
                 hasher.update(b"NO_JSX");
             }

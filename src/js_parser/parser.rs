@@ -392,10 +392,9 @@ pub mod Runtime {
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 
-            // SAFETY: `[bool; N]` is N bytes of 0x00/0x01; matches Zig `std.mem.asBytes(&bools)`.
-            hasher.update(unsafe {
-                core::slice::from_raw_parts(bools.as_ptr().cast::<u8>(), bools.len())
-            });
+            // `[bool; N]` is N bytes of 0x00/0x01; matches Zig `std.mem.asBytes(&bools)`.
+            // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
+            hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visitExpr.zig. When empty, we add

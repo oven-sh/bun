@@ -1249,26 +1249,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
                     if matches!(stmt.data, StmtData::SEnum(_)) {
-                        // PORT NOTE: `scope_order_to_visit: &'a mut [ScopeOrder<'a>]` —
-                        // save/restore via raw ptr+len (Zig used a slice copy).
-                        let old_ptr = p.scope_order_to_visit.as_mut_ptr();
-                        let old_len = p.scope_order_to_visit.len();
-
                         // SAFETY: arena-owned `&'a mut [ScopeOrder<'a>]`; we reborrow
                         // the same buffer the map stored at parse time. `Loc` lacks
                         // `Hash` (logger crate) so `ArrayHashMap::get` is unavailable;
                         // linear scan over `keys()`/`values()` (enums are rare).
                         // TODO(port): switch to `.get(&stmt.loc)` once `Loc: Hash`.
-                        p.scope_order_to_visit = unsafe {
+                        let new_order = unsafe {
                             scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc)
                         };
+                        // PORT NOTE: `scope_order_to_visit: &'a mut [ScopeOrder<'a>]` —
+                        // Zig saved/restored via slice copy; `mem::replace` moves the
+                        // old `&'a mut` out by value so it can be put back after the
+                        // visit without re-deriving from a raw pointer.
+                        let old = core::mem::replace(&mut p.scope_order_to_visit, new_order);
 
                         let mut temp = ListManaged::new_in(p.arena);
                         let res = p.visit_and_append_stmt(&mut temp, stmt);
-                        // SAFETY: `old_ptr/old_len` describe the same arena slice we
-                        // saved above; `defer p.scope_order_to_visit = old_scopes_in_order`.
-                        p.scope_order_to_visit =
-                            unsafe { core::slice::from_raw_parts_mut(old_ptr, old_len) };
+                        // `defer p.scope_order_to_visit = old_scopes_in_order`.
+                        p.scope_order_to_visit = old;
                         res?;
                         preprocessed_enums.push(temp.into_bump_slice());
                     }

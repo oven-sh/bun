@@ -5,7 +5,7 @@ use bun_event_loop::EventLoopHandle;
 use bun_io::{BufferedWriter, WriteStatus};
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
+use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
 use bun_sys;
 
 use crate::process::StdioKind;
@@ -45,7 +45,10 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// Slice into `self.source`'s storage, advanced as bytes are written.
     // TODO(port): lifetime — self-borrow into `self.source`; Phase B may store an
     // offset+len pair and re-slice from `self.source` instead of a raw self-pointer.
-    pub buffer: *const [u8],
+    // `RawSlice` (typed `*const [u8]` with safe `.slice()`) replaces the raw fat
+    // pointer so the per-access unsafe derefs are gone; the backing storage
+    // (`self.source`) outlives `self` by construction.
+    pub buffer: RawSlice<u8>,
 }
 
 // Zig: `const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});`
@@ -108,7 +111,7 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
         // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
         // Deref the raw `*const [u8]` directly (rather than via `&self`) so the
         // returned lifetime `'a` is unbound from `P`'s lifetime parameter.
-        unsafe { &*(*this).buffer }
+        unsafe { &*(*this).buffer.as_ptr() }
     }
     const HAS_ON_WRITABLE: bool = false;
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -155,7 +158,7 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsBufferedWriterParen
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
         // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
         // Deref the raw `*const [u8]` directly so `'a` is unbound from `P`.
-        unsafe { &*(*this).buffer }
+        unsafe { &*(*this).buffer.as_ptr() }
     }
     const HAS_ON_WRITABLE: bool = false;
 }
@@ -171,9 +174,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn get_buffer(&self) -> &[u8] {
-        // SAFETY: `buffer` always points into `self.source`'s storage (or the empty
-        // literal), which is kept alive for the lifetime of `self`.
-        unsafe { &*self.buffer }
+        // `RawSlice` invariant: backing storage (`self.source` or the empty
+        // literal) outlives `self`.
+        self.buffer.slice()
     }
 
     pub fn close(&mut self) {
@@ -210,7 +213,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             source,
             process: subprocess,
             event_loop,
-            buffer: std::ptr::from_ref::<[u8]>(b""),
+            buffer: RawSlice::EMPTY,
         }));
         // SAFETY: `this` was just allocated above and is non-null.
         let this_ref = unsafe { &mut *this };
@@ -253,7 +256,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // TODO(port): self-borrow — see `buffer` field note.
-        self.buffer = std::ptr::from_ref::<[u8]>(self.source.slice());
+        self.buffer = RawSlice::new(self.source.slice());
         #[cfg(windows)]
         {
             return self.writer.start_with_current_pipe();
@@ -293,10 +296,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             }
         );
         let len = self.buffer.len();
-        // SAFETY: `buffer` points into `self.source`'s storage, alive for `self`'s lifetime.
-        // Explicit `&*` avoids the implicit-autoref-on-raw-pointer lint when slicing.
-        self.buffer = std::ptr::from_ref::<[u8]>(unsafe { &(&*self.buffer)[amount.min(len)..] });
-        if status == WriteStatus::EndOfFile || self.buffer.len() == 0 {
+        self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
+        if status == WriteStatus::EndOfFile || self.buffer.is_empty() {
             self.writer.close();
         }
     }

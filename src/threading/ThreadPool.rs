@@ -1159,7 +1159,7 @@ impl Thread {
             }
 
             // SAFETY: self_ptr is our own stack-local Thread.
-            while let Some(result) = unsafe { (*self_ptr).pop(thread_pool) } {
+            while let Some(result) = unsafe { (*self_ptr).pop(pool) } {
                 if result.pushed || is_waking {
                     pool.notify(is_waking);
                 }
@@ -1200,7 +1200,12 @@ impl Thread {
 
     /// Try to dequeue a Node/Task from the ThreadPool.
     /// Spurious reports of dequeue() returning empty are allowed.
-    pub fn pop(&mut self, thread_pool: *const ThreadPool) -> Option<node::Stole> {
+    ///
+    /// Takes `&ThreadPool` (not `*const`) — the sole caller (`run()`) has
+    /// already proved liveness once (`join()` waits on every registered
+    /// worker), so the per-access raw-pointer derefs that the `*const`
+    /// signature forced are gone.
+    pub fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
         // Check our local buffer first
         if let Some(node) = self.run_buffer.pop() {
             return Some(node::Stole {
@@ -1215,22 +1220,18 @@ impl Thread {
         }
 
         // Then the global queue
-        // SAFETY: thread_pool is live for the duration of the worker.
-        if let Some(stole) = self.run_buffer.consume(unsafe { &(*thread_pool).run_queue }) {
+        if let Some(stole) = self.run_buffer.consume(&thread_pool.run_queue) {
             return Some(stole);
         }
 
         // Then try work stealing from other threads
-        // SAFETY: thread_pool outlives this worker (join() waits).
-        let mut num_threads =
-            unsafe { (*thread_pool).sync.load(Ordering::Relaxed).spawned() };
+        let mut num_threads = thread_pool.sync.load(Ordering::Relaxed).spawned();
         while num_threads > 0 {
             // Traverse the stack of registered threads on the thread pool
             let target = if !self.target.is_null() {
                 self.target
             } else {
-                // SAFETY: thread_pool outlives this worker (join() waits).
-                let t = unsafe { (*thread_pool).threads.load(Ordering::Acquire) };
+                let t = thread_pool.threads.load(Ordering::Acquire);
                 if t.is_null() {
                     unreachable!();
                 }

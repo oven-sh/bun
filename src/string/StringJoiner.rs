@@ -4,6 +4,7 @@
 use core::ptr::{self, NonNull};
 
 use bun_alloc::AllocError;
+use bun_ptr::RawSlice;
 use crate::strings;
 
 // PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
@@ -43,13 +44,16 @@ pub struct Node {
     /// is borrowed and the caller guarantees it outlives `done()`.
     owns_slice: bool,
     // TODO(port): lifetime — borrowed slices must outlive `done()`; Phase A forbids
-    // struct lifetime params so this is stored as a raw fat pointer.
-    slice: *const [u8],
+    // struct lifetime params so this is stored as a typed raw fat pointer.
+    // `RawSlice` (one encapsulated unsafe in `.slice()`) replaces the open-coded
+    // raw deref at every read site; the backing storage outlives the node by
+    // either ownership (`owns_slice`) or caller contract.
+    slice: RawSlice<u8>,
     next: *mut Node,
 }
 
 impl Node {
-    fn init(slice: *const [u8], owns_slice: bool) -> Box<Node> {
+    fn init(slice: RawSlice<u8>, owns_slice: bool) -> Box<Node> {
         // bun.handleOom(joiner_alloc.create(Node)) → Box::new (aborts on OOM)
         Box::new(Node {
             owns_slice,
@@ -60,9 +64,7 @@ impl Node {
 
     #[inline]
     fn slice(&self) -> &[u8] {
-        // SAFETY: `slice` is either a leaked Box<[u8]> owned by this node, or a caller-
-        // provided slice that the caller promised outlives `done()` / drop.
-        unsafe { &*self.slice }
+        self.slice.slice()
     }
 
 }
@@ -98,8 +100,8 @@ impl Drop for Node {
     fn drop(&mut self) {
         if self.owns_slice {
             // SAFETY: when owns_slice is true, slice was produced by Box::<[u8]>::into_raw
-            // in `push_cloned` and has not been freed.
-            drop(unsafe { bun_core::heap::take(self.slice.cast_mut()) });
+            // in `push_cloned`/`push_owned` and has not been freed.
+            drop(unsafe { bun_core::heap::take(self.slice.as_ptr().cast_mut()) });
         }
     }
 }
@@ -124,7 +126,9 @@ impl StringJoiner {
             return;
         }
         let raw: *const [u8] = bun_core::heap::into_raw(data);
-        self.push_raw(raw, true);
+        // SAFETY: `raw` is a fresh `Box::into_raw` allocation owned by the node
+        // until `Node::drop` reclaims it (`owns_slice = true`).
+        self.push_raw(unsafe { RawSlice::from_raw(raw) }, true);
     }
 
     /// `data` is cloned
@@ -133,9 +137,7 @@ impl StringJoiner {
             return;
         }
         // bun.handleOom(this.allocator.dupe(u8, data)) → Box<[u8]> (aborts on OOM)
-        let owned: Box<[u8]> = Box::from(data);
-        let raw: *const [u8] = bun_core::heap::into_raw(owned);
-        self.push_raw(raw, true);
+        self.push_owned(Box::from(data));
     }
 
     // PORT NOTE: Zig signature was `push(data: []const u8, ?Allocator param)`.
@@ -146,12 +148,11 @@ impl StringJoiner {
         if data.is_empty() {
             return;
         }
-        self.push_raw(std::ptr::from_ref::<[u8]>(data), false);
+        self.push_raw(RawSlice::new(data), false);
     }
 
-    fn push_raw(&mut self, data: *const [u8], owned: bool) {
-        // SAFETY: `data` is a valid slice pointer per callers (`push`/`push_cloned`).
-        let data_slice = unsafe { &*data };
+    fn push_raw(&mut self, data: RawSlice<u8>, owned: bool) {
+        let data_slice = data.slice();
         if data_slice.is_empty() {
             return;
         }

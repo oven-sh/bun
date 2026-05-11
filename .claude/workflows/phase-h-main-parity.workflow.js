@@ -127,6 +127,8 @@ const ported = !APPLY
           `Zig diff: git show ${m.sha}\nTarget .rs files: ${(m.rs_files || []).join(", ")}\n` +
           `Recipe from checker: ${m.port_recipe || "(derive from diff)"}\n` +
           `Apply the equivalent change to .rs. Match surrounding idiom (Cell/Maybe/etc). ` +
+          `**ALSO port the test/ hunks** from the same commit (git show ${m.sha} -- test/ | git apply --3way) — ` +
+          `the .zig commit's test changes are usually .ts/.js and apply directly. Skipping them = CI [new] failures. ` +
           `Then: cargo check --workspace 2>&1 | tail -20. ` +
           `Then: git add -u && git commit -m "port ${m.sha}: <subject> (.zig→.rs parity)". ` +
           `Return commit sha, files touched, build_ok.`,

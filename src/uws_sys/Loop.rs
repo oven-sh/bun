@@ -369,19 +369,43 @@ impl WindowsLoop {
         self.internal_loop_data.iteration_nr
     }
 
-    pub fn add_active(&self, val: u32) {
-        // SAFETY: uv_loop is set by C us_create_loop and valid for the loop's lifetime
-        unsafe { (*self.uv_loop).add_active(val) };
+    /// Shared borrow of the backing libuv loop.
+    ///
+    /// `uv_loop` is a back-reference set once by C `us_create_loop` and never
+    /// reassigned for the `WindowsLoop`'s lifetime, so projecting `&uv::Loop`
+    /// from `&self` is sound. Consolidates the `unsafe { (*self.uv_loop).… }`
+    /// pattern (one `unsafe`, N safe callers).
+    #[inline]
+    pub fn uv(&self) -> &uv::Loop {
+        // SAFETY: `uv_loop` is non-null after `us_create_loop` and remains
+        // valid for the entire lifetime of `*self`; `&self` bounds the
+        // returned borrow so it cannot outlive the wrapper.
+        unsafe { &*self.uv_loop }
     }
 
-    pub fn sub_active(&self, val: u32) {
-        // SAFETY: uv_loop is set by C us_create_loop and valid for the loop's lifetime
-        unsafe { (*self.uv_loop).sub_active(val) };
+    /// Exclusive borrow of the backing libuv loop. Used only for the
+    /// `active_handles` bookkeeping field (Bun-private; libuv itself only
+    /// reads it inside `uv__loop_alive`). `&mut self` provides exclusivity
+    /// over the wrapper; the `uv_loop_t` is the per-thread singleton so no
+    /// other Rust `&mut` to it is live on this thread.
+    #[inline]
+    fn uv_mut(&mut self) -> &mut uv::Loop {
+        // SAFETY: see `uv()` for liveness; `&mut self` is the sole Rust
+        // borrow path to the wrapper, and the only mutation performed via
+        // this accessor is the `active_handles` counter.
+        unsafe { &mut *self.uv_loop }
+    }
+
+    pub fn add_active(&mut self, val: u32) {
+        self.uv_mut().add_active(val);
+    }
+
+    pub fn sub_active(&mut self, val: u32) {
+        self.uv_mut().sub_active(val);
     }
 
     pub fn is_active(&self) -> bool {
-        // SAFETY: uv_loop is set by C us_create_loop and valid for the loop's lifetime
-        unsafe { (*self.uv_loop).is_active() }
+        self.uv().is_active()
     }
 
     pub fn wakeup(&mut self) {
@@ -436,13 +460,11 @@ impl WindowsLoop {
     }
 
     pub fn inc(&mut self) {
-        // SAFETY: uv_loop is set by C us_create_loop and valid for the loop's lifetime
-        unsafe { (*self.uv_loop).inc() };
+        self.uv_mut().inc();
     }
 
     pub fn dec(&mut self) {
-        // SAFETY: uv_loop is set by C us_create_loop and valid for the loop's lifetime
-        unsafe { (*self.uv_loop).dec() };
+        self.uv_mut().dec();
     }
 
     #[inline]

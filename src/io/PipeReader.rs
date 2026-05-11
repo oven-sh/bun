@@ -635,8 +635,7 @@ impl PosixBufferedReader {
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
                         if let Some(l) = parent.maxbuf {
-                            // SAFETY: live until `remove_from_pipereader`.
-                            if unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) } {
+                            if MaxBuf::on_read_bytes(l, bytes_read as u64) {
                                 parent.vtable.on_max_buffer_overflow(l);
                             }
                         }
@@ -683,8 +682,7 @@ impl PosixBufferedReader {
                     match sys::read_nonblocking(fd, buf) {
                         sys::Result::Ok(bytes_read) => {
                             if let Some(l) = parent.maxbuf {
-                                // SAFETY: live until `remove_from_pipereader`.
-                                if unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) } {
+                                if MaxBuf::on_read_bytes(l, bytes_read as u64) {
                                     parent.vtable.on_max_buffer_overflow(l);
                                 }
                             }
@@ -830,8 +828,7 @@ impl PosixBufferedReader {
                     match sys_fn(fd, buf, parent._offset) {
                         sys::Result::Ok(bytes_read) => {
                             if let Some(l) = parent.maxbuf {
-                                // SAFETY: live until `remove_from_pipereader`.
-                                if unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) } {
+                                if MaxBuf::on_read_bytes(l, bytes_read as u64) {
                                     parent.vtable.on_max_buffer_overflow(l);
                                 }
                             }
@@ -943,8 +940,7 @@ impl PosixBufferedReader {
                         parent._buffer.extend_from_slice(&stack_buffer[..bytes_read]);
                     }
                     if let Some(l) = parent.maxbuf {
-                        // SAFETY: live until `remove_from_pipereader`; see MaxBuf ownership note.
-                        if unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) } {
+                        if MaxBuf::on_read_bytes(l, bytes_read as u64) {
                             parent.vtable.on_max_buffer_overflow(l);
                         }
                     }
@@ -984,8 +980,7 @@ impl PosixBufferedReader {
             match sys_fn(fd, buf, parent._offset) {
                 sys::Result::Ok(bytes_read) => {
                     if let Some(l) = parent.maxbuf {
-                        // SAFETY: live until `remove_from_pipereader`; see MaxBuf ownership note.
-                        if unsafe { MaxBuf::on_read_bytes(l, bytes_read as u64) } {
+                        if MaxBuf::on_read_bytes(l, bytes_read as u64) {
                             parent.vtable.on_max_buffer_overflow(l);
                         }
                     }
@@ -1246,8 +1241,7 @@ impl WindowsBufferedReader {
 
     fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
         if let Some(m) = self.maxbuf {
-            // SAFETY: MaxBuf intrusive ownership; ptr live while in pipereader.
-            if unsafe { MaxBuf::on_read_bytes(m, buf.len() as u64) } {
+            if MaxBuf::on_read_bytes(m, buf.len() as u64) {
                 self.vtable.on_max_buffer_overflow(m);
             }
         }

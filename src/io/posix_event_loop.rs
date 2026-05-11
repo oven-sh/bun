@@ -663,13 +663,13 @@ impl FilePoll {
     // Phase B: callers normalize to EventLoopCtx before calling.
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
+        let generation_number = value.generation_number;
         // SAFETY: sole `&mut Store` borrow in this scope.
         let poll = unsafe { vm.file_polls() }.get_init(value).as_ptr();
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
             poll as usize,
-            // SAFETY: `get_init` just fully initialized the slot.
-            unsafe { (*poll).generation_number },
+            generation_number,
             fd
         );
         poll
@@ -677,6 +677,7 @@ impl FilePoll {
 
     pub fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
+        let generation_number = value.generation_number;
         // SAFETY: sole `&mut Store` borrow in this scope. (`alloc_file_poll`
         // resolved to `file_polls().get()` on every vtable impl, so going
         // through `file_polls()` directly is equivalent.)
@@ -684,8 +685,7 @@ impl FilePoll {
         syslog!(
             "FilePoll.initWithOwner(0x{:x}, generation_number={}, fd={})",
             poll as usize,
-            // SAFETY: `get_init` just fully initialized the slot.
-            unsafe { (*poll).generation_number },
+            generation_number,
             fd
         );
         poll

@@ -355,8 +355,7 @@ impl FilePoll {
     pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
-        // SAFETY: uv_loop is set by C us_create_loop; valid for loop lifetime.
-        bun_core::scoped_log!(FilePoll, "deactivate - {}", unsafe { (*loop_.uv_loop).active_handles });
+        bun_core::scoped_log!(FilePoll, "deactivate - {}", loop_.uv().active_handles);
         self.flags.remove(Flags::HasIncrementedPollCount);
     }
 
@@ -366,8 +365,7 @@ impl FilePoll {
             (!self.flags.contains(Flags::Closed)
                 && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,
         );
-        // SAFETY: uv_loop is set by C us_create_loop; valid for loop lifetime.
-        bun_core::scoped_log!(FilePoll, "activate - {}", unsafe { (*loop_.uv_loop).active_handles });
+        bun_core::scoped_log!(FilePoll, "activate - {}", loop_.uv().active_handles);
         self.flags.insert(Flags::HasIncrementedPollCount);
     }
 

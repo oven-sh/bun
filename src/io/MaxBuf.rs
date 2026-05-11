@@ -1,14 +1,22 @@
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 /// Tracks remaining byte budget for a subprocess stdout/stderr pipe.
 /// Dual-owned by the `Subprocess` and the pipe reader; freed when both disown it.
+///
+/// All mutable state is `Cell<T>` so the struct is only ever accessed via
+/// `&MaxBuf` (shared, `SharedReadOnly` provenance). This is required because
+/// the overflow callback fired from `on_read_bytes` re-enters via a sibling
+/// `NonNull<MaxBuf>` and writes `owned_by_subprocess` — a `&mut MaxBuf` on the
+/// caller's stack would be a Stacked-Borrows violation. With `Cell` the whole
+/// re-entrancy path is `&MaxBuf`-only and the aliasing question disappears.
 pub struct MaxBuf {
     /// `false` after subprocess finalize.
-    pub owned_by_subprocess: bool,
+    pub owned_by_subprocess: Cell<bool>,
     /// `false` after pipereader finalize.
-    pub owned_by_reader: bool,
+    pub owned_by_reader: Cell<bool>,
     /// If this goes negative, `on_max_buffer` is called on the subprocess.
-    pub remaining_bytes: i64,
+    pub remaining_bytes: Cell<i64>,
     // (once both are cleared, it is freed)
 }
 
@@ -16,8 +24,7 @@ pub struct MaxBuf {
 // {Posix,Windows}BufferedReader.maxbuf) as SHARED → Option<Arc<MaxBuf>>. The fn params below
 // (`ptr: &mut Option<NonNull<MaxBuf>>`, `value: Option<NonNull<MaxBuf>>`) and the hand-rolled
 // heap::alloc/disowned()/destroy() refcount will not typecheck against those field types in
-// Phase B — reconcile by retyping to Option<Arc<MaxBuf>> (with interior mutability for the
-// ownership flags) and dropping destroy()/disowned().
+// Phase B — reconcile by retyping to Option<Arc<MaxBuf>> and dropping destroy()/disowned().
 impl MaxBuf {
     pub fn create_for_subprocess(
         ptr: &mut Option<NonNull<MaxBuf>>,
@@ -28,14 +35,14 @@ impl MaxBuf {
             return;
         };
         *ptr = Some(bun_core::heap::into_raw_nn(Box::new(MaxBuf {
-            owned_by_subprocess: true,
-            owned_by_reader: false,
-            remaining_bytes: initial,
+            owned_by_subprocess: Cell::new(true),
+            owned_by_reader: Cell::new(false),
+            remaining_bytes: Cell::new(initial),
         })));
     }
 
     fn disowned(&self) -> bool {
-        !self.owned_by_subprocess && !self.owned_by_reader
+        !self.owned_by_subprocess.get() && !self.owned_by_reader.get()
     }
 
     /// # Safety
@@ -49,20 +56,15 @@ impl MaxBuf {
 
     pub fn remove_from_subprocess(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
-        let p = this_nn.as_ptr();
         // SAFETY: `this_nn` came from `create_for_subprocess` (heap::alloc); allocation is
-        // live until `destroy`. Raw-pointer field access only — this fn is reachable from the
-        // `on_overflow` vtable while `on_read_bytes` is still on the stack for the same
-        // allocation, so no `&mut MaxBuf` may exist on this re-entrancy path (Zig's `*T`
-        // permits aliasing; Rust does not).
-        unsafe {
-            debug_assert!((*p).owned_by_subprocess);
-            (*p).owned_by_subprocess = false;
-        }
+        // live until `destroy`. `&MaxBuf` only — all mutation through `Cell`, so the
+        // re-entrant `on_read_bytes` path that may still be on the stack holds a
+        // compatible shared borrow.
+        let this = unsafe { this_nn.as_ref() };
+        debug_assert!(this.owned_by_subprocess.get());
+        this.owned_by_subprocess.set(false);
         *ptr = None;
-        // SAFETY: same live allocation; `owned_by_subprocess` was just cleared, so disowned()
-        // reduces to `!owned_by_reader`. Read via raw place to avoid forming a reference.
-        if unsafe { !(*p).owned_by_reader } {
+        if this.disowned() {
             // SAFETY: both owners cleared ⇒ disowned(); paired with heap::alloc.
             unsafe { MaxBuf::destroy(this_nn) };
         }
@@ -73,17 +75,17 @@ impl MaxBuf {
         debug_assert!(ptr.is_none());
         *ptr = Some(value_nn);
         // SAFETY: `value` is a live MaxBuf created by `create_for_subprocess`.
-        let v = unsafe { &mut *value_nn.as_ptr() };
-        debug_assert!(!v.owned_by_reader);
-        v.owned_by_reader = true;
+        let v = unsafe { value_nn.as_ref() };
+        debug_assert!(!v.owned_by_reader.get());
+        v.owned_by_reader.set(true);
     }
 
     pub fn remove_from_pipereader(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
         // SAFETY: `ptr` was populated by `add_to_pipereader`; allocation is live until `destroy`.
-        let this = unsafe { &mut *this_nn.as_ptr() };
-        debug_assert!(this.owned_by_reader);
-        this.owned_by_reader = false;
+        let this = unsafe { this_nn.as_ref() };
+        debug_assert!(this.owned_by_reader.get());
+        this.owned_by_reader.set(false);
         *ptr = None;
         if this.disowned() {
             // SAFETY: just established `disowned()`; allocation originated from heap::alloc.
@@ -106,25 +108,24 @@ impl MaxBuf {
     /// subprocess still owns it (i.e. the caller should fire
     /// `BufferedReaderParentLink::on_max_buffer_overflow`).
     ///
-    /// # Safety
-    /// `this` must point to a live `MaxBuf` allocated by `create_for_subprocess`.
-    ///
-    /// Takes `NonNull` instead of `&mut self` because the overflow callback is contractually
-    /// required to call `remove_from_subprocess`, which writes `owned_by_subprocess = false`
-    /// through a sibling raw pointer to this same allocation. Under Stacked Borrows a `&mut self`
-    /// argument carries a protector, so that foreign-provenance write would pop a protected
-    /// Unique tag (UB). Raw place access keeps the whole overflow → callback →
-    /// `remove_from_subprocess` re-entrancy path free of `&mut MaxBuf`. Zig's `*T` has no
-    /// uniqueness guarantee, so the original `.zig` could re-enter freely; Rust cannot.
-    pub unsafe fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
-        let p = this.as_ptr();
+    /// Takes `NonNull` (not `&mut self`) because the overflow callback the
+    /// caller fires next is contractually required to call
+    /// `remove_from_subprocess`, which writes `owned_by_subprocess` through a
+    /// sibling pointer to this same allocation. With `Cell` fields a shared
+    /// `&MaxBuf` is sufficient and the re-entrancy is sound; the single
+    /// `unsafe` is the `NonNull → &MaxBuf` projection (the back-ref invariant:
+    /// `this` is live while `owned_by_reader` is set, which every caller has
+    /// just checked via `Some(maxbuf)`).
+    pub fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
+        // SAFETY: caller holds `this` from a live `Option<NonNull<MaxBuf>>`
+        // populated by `add_to_pipereader`; allocation is live until
+        // `remove_from_pipereader` (which the caller has not yet run). Shared
+        // borrow only — all mutation goes through `Cell`.
+        let this = unsafe { this.as_ref() };
         let delta = i64::try_from(bytes).unwrap_or(0);
-        // SAFETY: caller guarantees `this` is live; raw place access only (no `&mut`).
-        let remaining = unsafe { (*p).remaining_bytes }.checked_sub(delta).unwrap_or(-1);
-        // SAFETY: same live allocation; raw place write.
-        unsafe { (*p).remaining_bytes = remaining };
-        // SAFETY: same live allocation; raw place read.
-        remaining < 0 && unsafe { (*p).owned_by_subprocess }
+        let remaining = this.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
+        this.remaining_bytes.set(remaining);
+        remaining < 0 && this.owned_by_subprocess.get()
     }
 }
 

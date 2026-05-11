@@ -450,6 +450,14 @@ impl EventLoopHandle {
         }
     }
 
+    pub fn current_context(self) -> *mut core::ffi::c_void {
+        match self {
+            EventLoopHandle::Js { owner } => owner.current_context(),
+            // SAFETY: `mini` is a live backref (set in `init_global` / caller).
+            EventLoopHandle::Mini(mini) => unsafe { (*mini).current_context() },
+        }
+    }
+
     /// Erased `*mut webcore::blob::Store`.
     pub fn stdout(self) -> *mut () {
         match self {

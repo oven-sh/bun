@@ -9,6 +9,7 @@
 //! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
+use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
@@ -73,6 +74,7 @@ pub struct EventLoop {
     pub global: Option<NonNull<JSGlobalObject>>,
     // TODO(port): lifetime — *VirtualMachine backref (EventLoop is a field of VirtualMachine)
     pub virtual_machine: Option<NonNull<VirtualMachine>>,
+    pub current_context: Option<NonNull<c_void>>,
     pub waker: Option<Waker>,
     // TODO(port): lifetime — ?*uws.Timer FFI handle
     pub forever_timer: Option<NonNull<uws::Timer>>,
@@ -110,6 +112,7 @@ impl Default for EventLoop {
             concurrent_tasks: ConcurrentQueue::default(),
             global: None,
             virtual_machine: None,
+            current_context: None,
             waker: None,
             forever_timer: None,
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
@@ -325,6 +328,25 @@ impl EventLoop {
         // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
         unsafe { (*loop_).enter() };
         EventLoopEnterGuard { loop_ }
+    }
+
+    #[inline]
+    pub fn current_context(&self) -> *mut c_void {
+        self.current_context
+            .map(NonNull::as_ptr)
+            .unwrap_or(core::ptr::null_mut())
+    }
+
+    #[inline]
+    pub fn set_current_context(&mut self, context: *mut c_void) -> Option<NonNull<c_void>> {
+        let previous = self.current_context;
+        self.current_context = NonNull::new(context);
+        previous
+    }
+
+    #[inline]
+    pub fn restore_current_context(&mut self, previous: Option<NonNull<c_void>>) {
+        self.current_context = previous;
     }
 
     pub fn exit_maybe_drain_microtasks(&mut self, allow_drain_microtask: bool) -> Result<(), JsTerminated> {
@@ -1128,6 +1150,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         bun_vm() => (*this).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         stdout() => (*this).vm_ref().as_mut().rare_data().stdout().cast(),
         stderr() => (*this).vm_ref().as_mut().rare_data().stderr().cast(),
+        current_context() => (*this).current_context(),
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),

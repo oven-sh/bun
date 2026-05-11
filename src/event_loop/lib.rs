@@ -66,6 +66,7 @@ bun_dispatch::link_interface! {
         fn bun_vm() -> *mut ();
         fn stdout() -> *mut ();
         fn stderr() -> *mut ();
+        fn current_context() -> *mut core::ffi::c_void;
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);

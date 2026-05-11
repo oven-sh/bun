@@ -9,10 +9,12 @@ use bun_core::{self, Output};
 use bun_jsc as jsc;
 use bun_io as r#async;
 use bun_io;
+use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
+use bun_spawn_types::ProcessIdentity;
 use bun_sys;
 // `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
 // `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
+use crate::api::bun::process::{self as spawn, Process, SpawnOptions, SpawnResultExt as _, Status};
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(not(unix))]
@@ -286,14 +288,11 @@ impl Worker {
         this.alive = true;
         // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
         unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
-        // SAFETY: `this` is the live `Box<Worker>` slot in
-        // `Coordinator.workers`; it outlives `process`.
-        process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::TestParallelWorker,
-                &raw mut **this,
-            )
-        });
+        process.set_exit_target(bun_spawn::ProcessExitTarget::Runtime(
+            RuntimeProcessExitTarget::TestParallelWorker {
+                index: this.idx as usize,
+            },
+        ));
         match process.watch_or_reap() {
             Ok(_) => {}
             Err(e) => {
@@ -313,12 +312,6 @@ impl Worker {
         // Disarm the errdefer cleanup on success.
         let _ = scopeguard::ScopeGuard::into_inner(this);
         Ok(())
-    }
-
-    pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
-        self.alive = false;
-        // SAFETY: coord backref valid for worker lifetime; mutation — see field TODO.
-        unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
     /// Borrow the parent `Coordinator`.
@@ -384,10 +377,36 @@ impl Worker {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
-    TestParallelWorker for Worker => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, status, &*rusage),
+pub(crate) unsafe fn on_process_exit_from_event_loop_context(
+    context: *mut c_void,
+    index: usize,
+    process: ProcessIdentity,
+    status: Status,
+) {
+    if context.is_null() {
+        debug_assert!(!context.is_null());
+        return;
+    }
+
+    let (coord, worker) = unsafe {
+        let coord = context.cast::<Coordinator<'static>>();
+        let coord_ref = &mut *coord;
+        if index >= coord_ref.workers.len() {
+            debug_assert!(index < coord_ref.workers.len());
+            return;
+        }
+        (coord, coord_ref.workers.as_mut_ptr().add(index))
+    };
+
+    unsafe {
+        if let Some(actual) = (*worker).process {
+            debug_assert_eq!(ProcessIdentity::from_ptr(actual), Some(process));
+        } else {
+            debug_assert!((*worker).process.is_some());
+            return;
+        }
+        (*worker).alive = false;
+        (*coord).on_worker_exit(&mut *worker, status);
     }
 }
 

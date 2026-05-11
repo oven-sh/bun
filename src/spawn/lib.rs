@@ -156,7 +156,6 @@ bun_dispatch::link_interface! {
         Subprocess,
         LifecycleScript,
         Shell,
-        TestParallelWorker,
         CronRegister,
         CronRemove,
     ] {

@@ -162,7 +162,7 @@ Process exit uses the same boundary for install-domain readiness gates and
 runtime process completion: value-only state lives below, effect application
 stays above.
 
-This branch proves five production shapes. WebView process exits use the
+This branch proves six production paths. WebView process exits use the
 runtime sidecar path: `bun_spawn` stores a `RuntimeProcessExitTarget`, emits a
 `RuntimeProcessExitAction`, and `bun_runtime::dispatch` applies the Chrome/Host
 effects. Security scanner exits use the install sidecar path: `bun_spawn` stores
@@ -173,7 +173,10 @@ case: `SyncWindowsProcess` is not a cross-crate owner, so it now uses a local
 `ProcessExitTarget::SyncWindows` arm inside `bun_spawn`. `bun run --filter` and
 `bun run --parallel` use runtime sidecar targets keyed by their existing handle
 slots; `bun_runtime::dispatch` consumes the typed action and synchronously
-re-enters the current `MiniEventLoop` context.
+re-enters the current `MiniEventLoop` context. Parallel test workers use the
+same runtime sidecar action pattern with the JS event loop: the target stores
+only the worker slot index, and `run_as_coordinator` exposes its stack-owned
+`Coordinator` as the current JS-loop driver context while `coord.drive()` runs.
 
 Lifecycle scripts and cron register/remove already use typed readiness reducers
 for process/output ordering, but their `ProcessExit` owner re-entry remains a
@@ -197,7 +200,7 @@ Process-exit production shape
   ├─> bun_runtime_types
   │     ├─> RuntimeProcessExitTarget
   │     │     ├─> ChromeProcess / HostProcess
-  │     │     └─> FilterRunHandle / MultiRunHandle slot indices
+  │     │     └─> FilterRunHandle / MultiRunHandle / TestParallelWorker slot indices
   │     └─> RuntimeProcessExitAction
   │           └─> carries process identity + status + target data
   └─> owning crates
@@ -281,6 +284,11 @@ Process-exit production wiring
   │     ├─> FilePoll exits recover the active MiniEventLoop tick context
   │     ├─> waiter-thread Mini tasks pass their task context to the same typed delivery dispatcher
   │     └─> bun_runtime::dispatch indexes the existing State.handles slice and calls State::process_exit
+  ├─> runtime/cli/test/parallel/runner.rs and Worker.rs
+  │     ├─> run_as_coordinator sets JS EventLoop.current_context to the active Coordinator only around coord.drive()
+  │     ├─> Worker installs ProcessExitTarget::Runtime(TestParallelWorker { index })
+  │     ├─> bun_spawn emits RuntimeProcessExitAction with index + ProcessIdentity + Status
+  │     └─> bun_runtime::dispatch indexes the existing Coordinator.workers slice and calls on_worker_exit synchronously
   └─> spawn/process.rs sync Windows path
         ├─> stores ProcessExitTarget::SyncWindows for local spawn-internal state
         └─> never enters the cross-crate ProcessExit table

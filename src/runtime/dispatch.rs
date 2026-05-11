@@ -153,7 +153,7 @@ pub fn __bun_dispatch_process_exit_delivery(
                 process,
                 status,
             } => {
-                let context = mini_process_exit_context(event_loop, context);
+                let context = process_exit_context(event_loop, context);
                 unsafe {
                     crate::cli::filter_run::on_process_exit_from_mini_context(
                         context,
@@ -168,9 +168,24 @@ pub fn __bun_dispatch_process_exit_delivery(
                 process,
                 status,
             } => {
-                let context = mini_process_exit_context(event_loop, context);
+                let context = process_exit_context(event_loop, context);
                 unsafe {
                     crate::cli::multi_run::on_process_exit_from_mini_context(
+                        context,
+                        index,
+                        process,
+                        status,
+                    )
+                };
+            }
+            RuntimeProcessExitAction::TestParallelWorker {
+                index,
+                process,
+                status,
+            } => {
+                let context = process_exit_context(event_loop, context);
+                unsafe {
+                    crate::cli::test::parallel::worker::on_process_exit_from_event_loop_context(
                         context,
                         index,
                         process,
@@ -186,7 +201,7 @@ fn dispatch_process_exit_delivery(delivery: bun_spawn::ProcessExitDelivery) {
     __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
 }
 
-fn mini_process_exit_context(
+fn process_exit_context(
     event_loop: bun_event_loop::EventLoopHandle,
     context: *mut core::ffi::c_void,
 ) -> *mut core::ffi::c_void {
@@ -194,13 +209,7 @@ fn mini_process_exit_context(
         return context;
     }
 
-    match event_loop {
-        bun_event_loop::EventLoopHandle::Mini(mini) => {
-            // SAFETY: EventLoopHandle::Mini stores the live MiniEventLoop.
-            unsafe { (*mini).current_context() }
-        }
-        bun_event_loop::EventLoopHandle::Js { .. } => core::ptr::null_mut(),
-    }
+    event_loop.current_context()
 }
 
 /// Dispatch a single `Task` to its variant's `run`-style entry point.

@@ -3,7 +3,7 @@
 //! and `run_as_worker` (the `--test-worker` side that reads framed commands
 //! from stdin, runs each file under isolation, and streams results to fd 3).
 
-use core::ffi::c_char;
+use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
@@ -254,8 +254,20 @@ pub fn run_as_coordinator(
 
     // SAFETY: event_loop pointer is valid while vm lives.
     unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
-    // SAFETY: see vm_ptr note above.
-    unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
+    {
+        // Process-exit delivery for worker children carries only the worker
+        // slot index. The active coordinator is stack-owned by this function,
+        // so expose it through the JS loop only while this driver is running.
+        let event_loop = unsafe { (*vm_ptr).event_loop() };
+        let previous_context = unsafe {
+            (*event_loop).set_current_context((&raw mut coord).cast::<c_void>())
+        };
+        let _context_guard = scopeguard::guard((event_loop, previous_context), |(event_loop, previous_context)| {
+            unsafe { (*event_loop).restore_current_context(previous_context) };
+        });
+        // SAFETY: see vm_ptr note above.
+        unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
+    }
 
     if ctx.test_options.reporters.junit {
         if let Some(outfile) = &ctx.test_options.reporter_outfile {

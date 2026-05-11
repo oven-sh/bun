@@ -10,6 +10,9 @@ pub enum RuntimeProcessExitTarget {
     MultiRunHandle {
         index: usize,
     },
+    TestParallelWorker {
+        index: usize,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +31,11 @@ pub enum RuntimeProcessExitAction {
         status: Status,
     },
     MultiRunHandle {
+        index: usize,
+        process: ProcessIdentity,
+        status: Status,
+    },
+    TestParallelWorker {
         index: usize,
         process: ProcessIdentity,
         status: Status,
@@ -52,6 +60,11 @@ impl RuntimeProcessExitTarget {
                 status: ctx.status.clone(),
             },
             Self::MultiRunHandle { index } => RuntimeProcessExitAction::MultiRunHandle {
+                index,
+                process: ctx.process_identity(),
+                status: ctx.status.clone(),
+            },
+            Self::TestParallelWorker { index } => RuntimeProcessExitAction::TestParallelWorker {
                 index,
                 process: ctx.process_identity(),
                 status: ctx.status.clone(),
@@ -99,6 +112,19 @@ mod tests {
                 status,
             } => {
                 assert_eq!(index, 4);
+                assert_eq!(actual_process, process);
+                assert_eq!(status.exit_code(), Some(0));
+            }
+            _ => panic!("wrong action"),
+        }
+
+        match (RuntimeProcessExitTarget::TestParallelWorker { index: 5 }).on_process_exit(&ctx) {
+            RuntimeProcessExitAction::TestParallelWorker {
+                index,
+                process: actual_process,
+                status,
+            } => {
+                assert_eq!(index, 5);
                 assert_eq!(actual_process, process);
                 assert_eq!(status.exit_code(), Some(0));
             }

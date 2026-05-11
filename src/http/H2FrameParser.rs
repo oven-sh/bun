@@ -5,20 +5,11 @@
 
 pub const CLIENT_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
-/// View a `#[repr(C, packed)]` integer-only POD struct as a mutable byte slice
-/// for wire-format `copy_from_slice`. Centralises the per-`from()` cast that
-/// the Zig parser did via `@ptrCast`.
-///
-/// # Safety
-/// `T` MUST be `#[repr(C, packed)]` with no padding bytes and no niches, i.e.
-/// every byte pattern is a valid `T`. The only intended `T`s are the three
-/// packed frame structs in this module (`StreamPriority`, `FrameHeader`,
-/// `SettingsPayloadUnit`).
-#[inline(always)]
-unsafe fn packed_bytes_mut<T>(v: &mut T) -> &mut [u8] {
-    // SAFETY: caller contract above.
-    unsafe { core::slice::from_raw_parts_mut((v as *mut T).cast::<u8>(), core::mem::size_of::<T>()) }
-}
+// The three packed wire structs below (`StreamPriority`, `FrameHeader`,
+// `SettingsPayloadUnit`) are `#[repr(C, packed)]` with integer-only fields and
+// therefore have no padding bytes and no niches. They implement
+// `bytemuck::Pod`, so the per-`from()` byte-view that the Zig parser did via
+// `@ptrCast` is the safe `bytemuck::bytes_of_mut`.
 
 pub const MAX_WINDOW_SIZE: u32 = i32::MAX as u32;
 pub const MAX_HEADER_TABLE_SIZE: u32 = u32::MAX;
@@ -174,6 +165,11 @@ pub struct StreamPriority {
     pub stream_identifier: u32,
     pub weight: u8,
 }
+// SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
+// every 5-byte pattern is a valid value.
+unsafe impl bytemuck::Zeroable for StreamPriority {}
+// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
+unsafe impl bytemuck::Pod for StreamPriority {}
 
 impl Default for StreamPriority {
     fn default() -> Self {
@@ -186,8 +182,7 @@ impl StreamPriority {
 
     #[inline]
     pub fn from(dst: &mut StreamPriority, src: &[u8]) {
-        // SAFETY: StreamPriority is #[repr(C, packed)] u32+u8, no padding/niches.
-        unsafe { packed_bytes_mut(dst) }.copy_from_slice(src);
+        bytemuck::bytes_of_mut(dst).copy_from_slice(src);
         // std.mem.byteSwapAllFields(StreamPriority, dst)
         // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy
         // (rustc emits `read_unaligned`), and assignment to a packed field is
@@ -207,6 +202,11 @@ pub struct FrameHeader {
     pub flags: u8,
     pub stream_identifier: u32,
 }
+// SAFETY: `#[repr(C, packed)]` with `[u8;3] + u8 + u8 + u32` fields — no
+// padding, no niches, every 9-byte pattern is a valid value.
+unsafe impl bytemuck::Zeroable for FrameHeader {}
+// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
+unsafe impl bytemuck::Pod for FrameHeader {}
 
 impl Default for FrameHeader {
     fn default() -> Self {
@@ -231,8 +231,7 @@ impl FrameHeader {
 
     #[inline]
     pub fn from<const END: bool>(dst: &mut FrameHeader, src: &[u8], offset: usize) {
-        // SAFETY: FrameHeader is #[repr(C, packed)] [u8;3]+u8+u8+u32, no padding/niches.
-        let bytes = unsafe { packed_bytes_mut(dst) };
+        let bytes = bytemuck::bytes_of_mut(dst);
         bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // std.mem.byteSwapAllFields(FrameHeader, dst)
@@ -250,14 +249,18 @@ pub struct SettingsPayloadUnit {
     pub r#type: u16,
     pub value: u32,
 }
+// SAFETY: `#[repr(C, packed)]` with `u16 + u32` fields — no padding, no
+// niches, every 6-byte pattern is a valid value.
+unsafe impl bytemuck::Zeroable for SettingsPayloadUnit {}
+// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
+unsafe impl bytemuck::Pod for SettingsPayloadUnit {}
 
 impl SettingsPayloadUnit {
     pub const BYTE_SIZE: usize = 6;
 
     #[inline]
     pub fn from<const END: bool>(dst: &mut SettingsPayloadUnit, src: &[u8], offset: usize) {
-        // SAFETY: SettingsPayloadUnit is #[repr(C, packed)] u16+u32, no padding/niches.
-        let bytes = unsafe { packed_bytes_mut(dst) };
+        let bytes = bytemuck::bytes_of_mut(dst);
         bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // std.mem.byteSwapAllFields(SettingsPayloadUnit, dst)

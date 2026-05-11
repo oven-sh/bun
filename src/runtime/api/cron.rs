@@ -37,8 +37,8 @@ use bun_spawn_types::process_exit::{
     ProcessExitContext, ProcessExitReadinessAction, ProcessHandle,
 };
 use bun_runtime_types::cron::{
-    CronRegisterJobState, CronRegisterState as RegisterState, CronRemoveJobState,
-    CronRemoveState as RemoveState, ProcessState as CronProcessState,
+    CronProcessCompletion, CronRegisterJobState, CronRegisterState as RegisterState,
+    CronRemoveJobState, CronRemoveState as RemoveState, ProcessState as CronProcessState,
 };
 use bun_jsc::JsClass as _;
 use bun_io::pipe_reader::BufferedReaderParent;
@@ -266,71 +266,24 @@ impl CronRegisterJob {
             return unsafe { Self::finish(this) };
         }
         let Some(status) = s.state.process.take_exit_status() else { return };
-        match status {
-            Status::Exited(exited) => {
-                if exited.code != 0
-                    && !(s.state.phase == RegisterState::ReadingCrontab && exited.code == 1)
-                    && s.state.phase != RegisterState::BootingOut
-                {
-                    // Materialize the trimmed stderr into an owned buffer:
-                    // `final_buffer()` borrows `s` mutably, and `set_err`
-                    // below needs another `&mut s` — copy out so the two
-                    // borrows do not overlap (Windows only; POSIX ignores
-                    // stderr here).
-                    #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_string::immutable::trim(
-                        s.stderr_reader.final_buffer().as_slice(),
-                        &ASCII_WHITESPACE,
-                    )
-                    .to_vec();
-                    #[cfg(windows)]
-                    let stderr_output: &[u8] = stderr_owned.as_slice();
-                    #[cfg(not(windows))]
-                    let stderr_output: &[u8] = b"";
-                    // On Windows, detect the SID resolution error and provide
-                    // a clear message instead of the raw schtasks output.
-                    #[cfg(windows)]
-                    {
-                        if s.state.phase == RegisterState::InstallingCrontab
-                            && bun_str::strings::index_of(
-                                stderr_output,
-                                b"No mapping between account names",
-                            )
-                            .is_some()
-                        {
-                            s.set_err(format_args!(
-                                "Failed to register cron job: your Windows account's Security Identifier (SID) could not be resolved. \
-                                 This typically happens on headless servers or CI where the process runs under a service account. \
-                                 To fix this, either run Bun as a regular user account, or create the scheduled task manually with: \
-                                 schtasks /create /xml <file> /tn <name> /ru SYSTEM /f"
-                            ));
-                            return unsafe { Self::finish(this) };
-                        }
-                    }
-                    if !stderr_output.is_empty() {
-                        s.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
-                    } else {
-                        s.set_err(format_args!("Process exited with code {}", exited.code));
-                    }
-                    return unsafe { Self::finish(this) };
-                }
-            }
-            Status::Signaled(sig) => {
-                if s.state.phase != RegisterState::BootingOut {
-                    s.set_err(format_args!("Process killed by signal {}", sig as i32));
-                    return unsafe { Self::finish(this) };
-                }
-            }
-            Status::Err(err) => {
-                s.set_err(format_args!(
-                    "Process error: {}",
-                    <&'static str>::from(err.get_errno())
-                ));
-                return unsafe { Self::finish(this) };
-            }
-            Status::Running => return,
+        // Windows status policy inspects trimmed stderr. Copy it out because
+        // `final_buffer()` borrows the reader while the reducer mutates state.
+        #[cfg(windows)]
+        let stderr_owned: Vec<u8> = bun_string::immutable::trim(
+            s.stderr_reader.final_buffer().as_slice(),
+            &ASCII_WHITESPACE,
+        )
+        .to_vec();
+        #[cfg(windows)]
+        let stderr_output: &[u8] = stderr_owned.as_slice();
+        #[cfg(not(windows))]
+        let stderr_output: &[u8] = b"";
+
+        match s.state.on_ready_process_status(status, stderr_output) {
+            CronProcessCompletion::Pending => {}
+            CronProcessCompletion::Finish => unsafe { Self::finish(this) },
+            CronProcessCompletion::Advance => unsafe { Self::advance_state(this) },
         }
-        unsafe { Self::advance_state(this) };
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
@@ -975,51 +928,24 @@ impl CronRemoveJob {
             return unsafe { Self::finish(this) };
         }
         let Some(status) = s.state.process.take_exit_status() else { return };
-        match status {
-            Status::Exited(exited) => {
-                let is_acceptable_nonzero = (s.state.phase == RemoveState::ReadingCrontab
-                    && exited.code == 1)
-                    || s.state.phase == RemoveState::BootingOut
-                    // On Windows, schtasks /delete exits non-zero when the task doesn't exist;
-                    // removal of a non-existent job should resolve without error.
-                    || (cfg!(windows) && s.state.phase == RemoveState::InstallingCrontab);
-                if exited.code != 0 && !is_acceptable_nonzero {
-                    // Owned copy: `final_buffer()` is `&mut self` and would
-                    // alias `s.set_err` below. Copy the trimmed bytes out.
-                    #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_string::immutable::trim(
-                        s.stderr_reader.final_buffer().as_slice(),
-                        &ASCII_WHITESPACE,
-                    )
-                    .to_vec();
-                    #[cfg(windows)]
-                    let stderr_output: &[u8] = stderr_owned.as_slice();
-                    #[cfg(not(windows))]
-                    let stderr_output: &[u8] = b"";
-                    if !stderr_output.is_empty() {
-                        s.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
-                    } else {
-                        s.set_err(format_args!("Process exited with code {}", exited.code));
-                    }
-                    return unsafe { Self::finish(this) };
-                }
-            }
-            Status::Signaled(sig) => {
-                if s.state.phase != RemoveState::BootingOut {
-                    s.set_err(format_args!("Process killed by signal {}", sig as i32));
-                    return unsafe { Self::finish(this) };
-                }
-            }
-            Status::Err(err) => {
-                s.set_err(format_args!(
-                    "Process error: {}",
-                    <&'static str>::from(err.get_errno())
-                ));
-                return unsafe { Self::finish(this) };
-            }
-            Status::Running => return,
+        // Windows status policy inspects trimmed stderr. Copy it out because
+        // `final_buffer()` borrows the reader while the reducer mutates state.
+        #[cfg(windows)]
+        let stderr_owned: Vec<u8> = bun_string::immutable::trim(
+            s.stderr_reader.final_buffer().as_slice(),
+            &ASCII_WHITESPACE,
+        )
+        .to_vec();
+        #[cfg(windows)]
+        let stderr_output: &[u8] = stderr_owned.as_slice();
+        #[cfg(not(windows))]
+        let stderr_output: &[u8] = b"";
+
+        match s.state.on_ready_process_status(status, stderr_output) {
+            CronProcessCompletion::Pending => {}
+            CronProcessCompletion::Finish => unsafe { Self::finish(this) },
+            CronProcessCompletion::Advance => unsafe { Self::advance_state(this) },
         }
-        unsafe { Self::advance_state(this) };
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.

@@ -1961,6 +1961,7 @@ dependencies = [
 name = "bun_runtime_types"
 version = "0.0.0"
 dependencies = [
+ "bstr",
  "bun_core",
  "bun_io_types",
  "bun_spawn_types",

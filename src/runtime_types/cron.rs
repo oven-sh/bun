@@ -31,6 +31,13 @@ pub enum CronRemoveState {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CronProcessCompletion {
+    Pending,
+    Finish,
+    Advance,
+}
+
 pub struct CronRegisterJobState {
     pub bun_exe: &'static ZStr,
     pub abs_path: ZString,
@@ -67,6 +74,67 @@ impl CronRegisterJobState {
     pub fn set_error(&mut self, args: core::fmt::Arguments<'_>) {
         self.process.set_error(args);
     }
+
+    #[inline]
+    pub fn on_ready_process_status(
+        &mut self,
+        status: Status,
+        stderr_output: &[u8],
+    ) -> CronProcessCompletion {
+        match status {
+            Status::Exited(exited) => {
+                if exited.code != 0
+                    && !(self.phase == CronRegisterState::ReadingCrontab && exited.code == 1)
+                    && self.phase != CronRegisterState::BootingOut
+                {
+                    #[cfg(windows)]
+                    {
+                        // On Windows, detect the SID resolution error and provide
+                        // a clear message instead of the raw schtasks output.
+                        if self.phase == CronRegisterState::InstallingCrontab
+                            && contains_subslice(
+                                stderr_output,
+                                b"No mapping between account names",
+                            )
+                        {
+                            self.set_error(format_args!(
+                                "Failed to register cron job: your Windows account's Security Identifier (SID) could not be resolved. \
+                                 This typically happens on headless servers or CI where the process runs under a service account. \
+                                 To fix this, either run Bun as a regular user account, or create the scheduled task manually with: \
+                                 schtasks /create /xml <file> /tn <name> /ru SYSTEM /f"
+                            ));
+                            return CronProcessCompletion::Finish;
+                        }
+                    }
+                    if !stderr_output.is_empty() {
+                        self.process.set_error_bytes(stderr_output);
+                    } else {
+                        self.set_error(format_args!(
+                            "Process exited with code {}",
+                            exited.code
+                        ));
+                    }
+                    return CronProcessCompletion::Finish;
+                }
+            }
+            Status::Signaled(sig) => {
+                if self.phase != CronRegisterState::BootingOut {
+                    self.set_error(format_args!("Process killed by signal {}", sig as i32));
+                    return CronProcessCompletion::Finish;
+                }
+            }
+            Status::Err(err) => {
+                self.set_error(format_args!(
+                    "Process error: {}",
+                    <&'static str>::from(err.get_errno())
+                ));
+                return CronProcessCompletion::Finish;
+            }
+            Status::Running => return CronProcessCompletion::Pending,
+        }
+
+        CronProcessCompletion::Advance
+    }
 }
 
 pub struct CronRemoveJobState {
@@ -90,6 +158,51 @@ impl CronRemoveJobState {
     #[inline]
     pub fn set_error(&mut self, args: core::fmt::Arguments<'_>) {
         self.process.set_error(args);
+    }
+
+    #[inline]
+    pub fn on_ready_process_status(
+        &mut self,
+        status: Status,
+        stderr_output: &[u8],
+    ) -> CronProcessCompletion {
+        match status {
+            Status::Exited(exited) => {
+                let is_acceptable_nonzero =
+                    (self.phase == CronRemoveState::ReadingCrontab && exited.code == 1)
+                        || self.phase == CronRemoveState::BootingOut
+                        // On Windows, schtasks /delete exits non-zero when the task doesn't exist;
+                        // removal of a non-existent job should resolve without error.
+                        || (cfg!(windows) && self.phase == CronRemoveState::InstallingCrontab);
+                if exited.code != 0 && !is_acceptable_nonzero {
+                    if !stderr_output.is_empty() {
+                        self.process.set_error_bytes(stderr_output);
+                    } else {
+                        self.set_error(format_args!(
+                            "Process exited with code {}",
+                            exited.code
+                        ));
+                    }
+                    return CronProcessCompletion::Finish;
+                }
+            }
+            Status::Signaled(sig) => {
+                if self.phase != CronRemoveState::BootingOut {
+                    self.set_error(format_args!("Process killed by signal {}", sig as i32));
+                    return CronProcessCompletion::Finish;
+                }
+            }
+            Status::Err(err) => {
+                self.set_error(format_args!(
+                    "Process error: {}",
+                    <&'static str>::from(err.get_errno())
+                ));
+                return CronProcessCompletion::Finish;
+            }
+            Status::Running => return CronProcessCompletion::Pending,
+        }
+
+        CronProcessCompletion::Advance
     }
 }
 
@@ -182,6 +295,15 @@ impl ProcessState {
     }
 
     #[inline]
+    pub fn set_error_bytes(&mut self, bytes: &[u8]) {
+        if self.err_msg.is_none() {
+            let mut msg = Vec::new();
+            let _ = write!(&mut msg, "{}", bstr::BStr::new(bytes));
+            self.err_msg = Some(msg);
+        }
+    }
+
+    #[inline]
     pub fn on_process_exit(&mut self, ctx: &ProcessExitContext<'_>) -> ProcessExitReadinessAction {
         if self.exit_state.is_none() {
             self.initialize_exit_state(ctx.process_identity());
@@ -206,6 +328,15 @@ impl ProcessState {
             .as_mut()
             .and_then(|exit_state| exit_state.exit_status.take())
     }
+}
+
+#[cfg(windows)]
+#[inline]
+fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack.windows(needle.len()).any(|window| window == needle)
 }
 
 impl Default for ProcessState {
@@ -263,6 +394,86 @@ mod tests {
         let remove = CronRemoveJobState::new(ZString::from_bytes(b"title"));
         assert_eq!(remove.phase, CronRemoveState::ReadingCrontab);
         assert_eq!(remove.title.as_bytes(), b"title");
+    }
+
+    fn cron_expr() -> CronExpression {
+        CronExpression {
+            minutes: 1,
+            hours: 1,
+            days: 1 << 1,
+            months: 1 << 1,
+            weekdays: 1,
+            days_is_wildcard: false,
+            weekdays_is_wildcard: false,
+        }
+    }
+
+    #[test]
+    fn cron_register_ready_status_decides_finish_vs_advance() {
+        // This is the cron state-machine half of the ProcessExit split: once
+        // process output has drained, the type crate decides whether the owner
+        // should finish or advance to the next spawn. Promise resolution and
+        // spawning remain runtime effects.
+        let mut register = CronRegisterJobState::new(
+            ZStr::from_static(b"bun\0"),
+            ZString::from_bytes(b"/tmp/job.js"),
+            ZString::from_bytes(b"* * * * *"),
+            ZString::from_bytes(b"title"),
+            cron_expr(),
+        );
+
+        assert_eq!(
+            register.on_ready_process_status(
+                Status::Exited(Exited { code: 1, signal: 0 }),
+                b"ignored",
+            ),
+            CronProcessCompletion::Advance
+        );
+        assert!(register.process.err_msg.is_none());
+
+        register.phase = CronRegisterState::InstallingCrontab;
+        assert_eq!(
+            register.on_ready_process_status(
+                Status::Exited(Exited { code: 2, signal: 0 }),
+                b"crontab stderr",
+            ),
+            CronProcessCompletion::Finish
+        );
+        assert_eq!(register.process.err_msg.as_deref(), Some(&b"crontab stderr"[..]));
+    }
+
+    #[test]
+    fn cron_remove_ready_status_preserves_nonexistent_job_success() {
+        // Removal treats missing jobs as success in the same phases as the
+        // runtime owner code did. The type crate owns that decision now; the
+        // caller still performs the actual promise/global effects.
+        let mut remove = CronRemoveJobState::new(ZString::from_bytes(b"title"));
+        assert_eq!(
+            remove.on_ready_process_status(
+                Status::Exited(Exited { code: 1, signal: 0 }),
+                b"ignored",
+            ),
+            CronProcessCompletion::Advance
+        );
+        assert!(remove.process.err_msg.is_none());
+
+        remove.phase = CronRemoveState::InstallingCrontab;
+        assert_eq!(
+            remove.on_ready_process_status(
+                Status::Exited(Exited { code: 2, signal: 0 }),
+                b"delete failed",
+            ),
+            if cfg!(windows) {
+                CronProcessCompletion::Advance
+            } else {
+                CronProcessCompletion::Finish
+            }
+        );
+        if cfg!(windows) {
+            assert!(remove.process.err_msg.is_none());
+        } else {
+            assert_eq!(remove.process.err_msg.as_deref(), Some(&b"delete failed"[..]));
+        }
     }
 
     #[test]

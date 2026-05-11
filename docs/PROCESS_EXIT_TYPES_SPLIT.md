@@ -276,8 +276,10 @@ before feeding `ProcessExitReadiness`. Once output and process status are
 ready, `CronRegisterJobState::on_ready_process_status` /
 `CronRemoveJobState::on_ready_process_status` decide whether the owner should
 finish or advance and record the same first error bytes/messages as the old
-runtime match. `bun_runtime` still performs the effects: detach/deref the
-process, inspect/drain the runtime readers, cast the inert global pointer back
+runtime match. The cron owners no longer carry a second `Process*`; when
+cleanup runs, `bun_runtime` consumes the sidecar-owned `ProcessHandle` and
+performs the same detach/deref effect. `bun_runtime` still performs the other
+effects: inspect/drain the runtime readers, cast the inert global pointer back
 at the effect site, take the promise handle into a `JSPromiseStrong` effect
 wrapper for resolve/reject, spawn the next OS command, unlink temp paths, and
 free the job. Their exact job/effect owner still needs to move before
@@ -525,7 +527,7 @@ Remaining owner movement
   ├─> CronRegisterJob / CronRemoveJob
   │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
   │     │     - still own KeepAlive, process ref, stdout/stderr reader resources, and promise effects/drop
-  │     │     - the sidecar OS-cron state now lives in CronRegisterJobState / CronRemoveJobState: phase, title/path/schedule/tmp path, parsed expression, inert GlobalRef<()>, inert JSPromiseStrongHandle, process reducer, status-policy reducer, and error buffer
+  │     │     - the sidecar OS-cron state now lives in CronRegisterJobState / CronRemoveJobState: phase, title/path/schedule/tmp path, parsed expression, inert GlobalRef<()>, inert JSPromiseStrongHandle, ProcessHandle, reader handles, process reducer, status-policy reducer, and error buffer
   │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after sidecar job state records the lower process/reader handles
   │     │     - spawn_cmd_generic also still wires stdout/stderr through BufferedReaderParentLink, so reader-last completion can re-enter maybe_finished(this)
   │     │     - JSPromiseStrong and JsRef now store inert sidecar handle/state shapes, but their wrappers still own promise/ref effects/drop; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
@@ -587,6 +589,7 @@ Required deeper type movement
   │     ├─> CronRegisterState / CronRemoveState / ProcessState now live in bun_runtime_types::cron
   │     ├─> CronExpression / CronError now live in bun_runtime_types::cron_parser; only JSC date arithmetic remains in bun_runtime
   │     ├─> ProcessState now also stores ProcessHandle and output-reader handles from the production spawn path
+  │     ├─> CronRegisterJob / CronRemoveJob no longer store a duplicate Process*; detach/deref consumes ProcessState::take_process_handle() in bun_runtime
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert GlobalRef<()> VM pointer through bun_jsc_types::GlobalRef
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert JSPromiseStrongHandle promise-root slot through bun_jsc_types
   │     ├─> bun_io_types now owns KeepAliveState, but the cron owner still owns the KeepAlive effect wrapper and event-loop ref/unref calls

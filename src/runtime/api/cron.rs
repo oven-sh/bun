@@ -201,8 +201,6 @@ pub struct CronRegisterJob {
     poll: KeepAlive,
 
     state: CronRegisterJobState,
-    // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
-    process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
@@ -252,7 +250,8 @@ impl CronRegisterJob {
         if !s.state.process.is_ready() {
             return;
         }
-        if let Some(proc) = s.process.take() {
+        if let Some(process_handle) = s.state.process.take_process_handle() {
+            let proc = process_handle.as_ptr::<Process>();
             // SAFETY: `proc` is the intrusive-RC pointer returned by `to_process`.
             unsafe {
                 (*proc).detach();
@@ -723,7 +722,6 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 ZString::from_bytes(title_slice.slice()),
                 parsed,
             ),
-            process: None,
             stdout_reader: OutputReader::init::<CronRegisterJob>(),
             stderr_reader: OutputReader::init::<CronRegisterJob>(),
             // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
@@ -836,7 +834,8 @@ impl CronRegisterJob {
 impl Drop for CronRegisterJob {
     fn drop(&mut self) {
         // stdout_reader / stderr_reader drop via their own Drop.
-        if let Some(proc) = self.process.take() {
+        if let Some(process_handle) = self.state.process.take_process_handle() {
+            let proc = process_handle.as_ptr::<Process>();
             // SAFETY: intrusive-RC pointer; we hold a ref.
             unsafe {
                 (*proc).detach();
@@ -862,8 +861,6 @@ pub struct CronRemoveJob {
     poll: KeepAlive,
 
     state: CronRemoveJobState,
-    // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
-    process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
@@ -913,7 +910,8 @@ impl CronRemoveJob {
         if !s.state.process.is_ready() {
             return;
         }
-        if let Some(proc) = s.process.take() {
+        if let Some(process_handle) = s.state.process.take_process_handle() {
+            let proc = process_handle.as_ptr::<Process>();
             // SAFETY: intrusive-RC pointer; we hold a ref.
             unsafe {
                 (*proc).detach();
@@ -1151,7 +1149,6 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
                 promise.into_handle(),
                 ZString::from_bytes(title_slice.slice()),
             ),
-            process: None,
             stdout_reader: OutputReader::init::<CronRemoveJob>(),
             stderr_reader: OutputReader::init::<CronRemoveJob>(),
             // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
@@ -1205,7 +1202,8 @@ impl CronRemoveJob {
 
 impl Drop for CronRemoveJob {
     fn drop(&mut self) {
-        if let Some(proc) = self.process.take() {
+        if let Some(process_handle) = self.state.process.take_process_handle() {
+            let proc = process_handle.as_ptr::<Process>();
             // SAFETY: intrusive-RC pointer; we hold a ref.
             unsafe {
                 (*proc).detach();
@@ -1810,7 +1808,6 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);
     /// Consumes and frees `this`.
     unsafe fn finish(this: *mut Self);
-    fn process_slot(&mut self) -> &mut Option<*mut Process>;
     fn stdout_reader(&mut self) -> &mut OutputReader;
     fn stderr_reader(&mut self) -> &mut OutputReader;
 }
@@ -1833,7 +1830,6 @@ impl SpawnCmdTarget for CronRegisterJob {
     const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRegister;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRegisterJob::set_err(self, args) }
     unsafe fn finish(this: *mut Self) { unsafe { CronRegisterJob::finish(this) } }
-    fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
 }
@@ -1841,7 +1837,6 @@ impl SpawnCmdTarget for CronRemoveJob {
     const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRemoveJob::set_err(self, args) }
     unsafe fn finish(this: *mut Self) { unsafe { CronRemoveJob::finish(this) } }
-    fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
 }
@@ -2031,7 +2026,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
     let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle, false);
-    *s.process_slot() = Some(process);
     let process_handle =
         ProcessHandle::from_ptr(process).expect("spawned Process pointer must not be null");
     s.process_state_mut().initialize_exit_state_from_handle(process_handle);

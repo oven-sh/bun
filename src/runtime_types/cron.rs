@@ -269,6 +269,11 @@ impl ProcessState {
     }
 
     #[inline]
+    pub fn take_process_handle(&mut self) -> Option<ProcessHandle> {
+        self.process_handle.take()
+    }
+
+    #[inline]
     pub fn record_stdout_reader(&mut self, reader: BufferedReaderHandle) {
         self.stdout_reader = Some(reader);
     }

@@ -3016,10 +3016,13 @@ pub fn create_shell_interpreter(
 
     let parsed_shell_script = ParsedShellScript::from_js(parsed_shell_script_js)
         .ok_or_else(|| global.throw(format_args!("shell: expected a ParsedShellScript")))?;
-    // SAFETY: from_js returned a live wrapper-owned heap pointer.
-    let parsed_shell_script = unsafe { &mut *parsed_shell_script };
+    // SAFETY: from_js returned a live wrapper-owned heap pointer. R-2: deref as
+    // shared (`&*const`) — `ParsedShellScript`'s methods/fields are `&self` +
+    // interior-mutable, so no `&mut` is required (and forming one here would
+    // alias if JS re-enters another host fn on the same wrapper).
+    let parsed_shell_script: &ParsedShellScript = unsafe { &*parsed_shell_script };
 
-    if parsed_shell_script.args.is_none() {
+    if parsed_shell_script.args.get().is_none() {
         return Err(global.throw(format_args!(
             "shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.",
         )));

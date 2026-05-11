@@ -1,9 +1,10 @@
+use core::cell::Cell;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsRef,
-    JsResult, MarkedArgumentBuffer, StringJsc as _,
+    CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
+    JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 use bun_str::String as BunString;
 
@@ -15,32 +16,38 @@ use super::{EnvMap, EnvStr, Interpreter};
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
 // `#[bun_jsc::JsClass]` derive in Rust — do not hand-port them.
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
+// shim still emits `this: &mut ParsedShellScript` until Phase 1 lands —
+// `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct ParsedShellScript {
-    pub args: Option<Box<ShellArgs>>,
+    pub args: JsCell<Option<Box<ShellArgs>>>,
     /// allocated with arena in jsobjs
     // PORT NOTE: in Zig this Vec's backing storage lives in `args.arena` (self-referential
     // with the `args` field). Phase A uses a global-alloc Vec; revisit if profiling shows
     // the extra alloc matters. JSValues here are GC-rooted via `toJSWithValues` codegen
     // (own: array on the C++ wrapper), so storing them on the Rust heap is sound.
-    pub jsobjs: Vec<JSValue>,
-    pub export_env: Option<EnvMap>,
-    pub quiet: bool,
-    pub cwd: Option<BunString>,
+    pub jsobjs: JsCell<Vec<JSValue>>,
+    pub export_env: JsCell<Option<EnvMap>>,
+    pub quiet: Cell<bool>,
+    pub cwd: Cell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.
+    /// Read-only after construction; mutated only in `finalize(mut self: Box<Self>)`.
     pub this_jsvalue: JsRef,
+    /// Read-only after construction (set once before the JS wrapper exists).
     pub estimated_size_for_gc: usize,
 }
 
 impl Default for ParsedShellScript {
     fn default() -> Self {
         Self {
-            args: None,
-            jsobjs: Vec::new(),
-            export_env: None,
-            quiet: false,
-            cwd: None,
+            args: JsCell::new(None),
+            jsobjs: JsCell::new(Vec::new()),
+            export_env: JsCell::new(None),
+            quiet: Cell::new(false),
+            cwd: Cell::new(None),
             this_jsvalue: JsRef::empty(),
             estimated_size_for_gc: 0,
         }
@@ -50,16 +57,16 @@ impl Default for ParsedShellScript {
 impl ParsedShellScript {
     fn compute_estimated_size_for_gc(&self) -> usize {
         let mut size: usize = size_of::<ParsedShellScript>();
-        if let Some(args) = &self.args {
+        if let Some(args) = self.args.get() {
             size += args.memory_cost();
         }
-        if let Some(env) = &self.export_env {
+        if let Some(env) = self.export_env.get() {
             size += env.memory_cost();
         }
-        if let Some(cwd) = &self.cwd {
+        if let Some(cwd) = self.cwd.get() {
             size += cwd.estimated_size();
         }
-        size += self.jsobjs.capacity() * size_of::<JSValue>();
+        size += self.jsobjs.get().capacity() * size_of::<JSValue>();
         size
     }
 
@@ -74,7 +81,7 @@ impl ParsedShellScript {
     // PORT NOTE: reshaped from 5 out-params to a returned tuple; Zig used out-params
     // because the caller pre-declares slots. Rust callers destructure the tuple.
     pub fn take(
-        &mut self,
+        &self,
         _global: &JSGlobalObject,
     ) -> (
         Box<ShellArgs>,
@@ -83,11 +90,11 @@ impl ParsedShellScript {
         Option<BunString>,
         Option<EnvMap>,
     ) {
-        let args = self.args.take().expect("args already taken");
-        let jsobjs = core::mem::take(&mut self.jsobjs);
-        let quiet = self.quiet;
+        let args = self.args.replace(None).expect("args already taken");
+        let jsobjs = self.jsobjs.replace(Vec::new());
+        let quiet = self.quiet.get();
         let cwd = self.cwd.take();
-        let export_env = self.export_env.take();
+        let export_env = self.export_env.replace(None);
         (args, jsobjs, quiet, cwd, export_env)
     }
 
@@ -99,13 +106,13 @@ impl ParsedShellScript {
         self.this_jsvalue.finalize();
         // `export_env`/`args` have `Drop` impls; `cwd: Option<BunString>` does not
         // (`bun.String` is `Copy` for FFI), so deref it explicitly.
-        if let Some(cwd) = self.cwd.as_ref() {
+        if let Some(cwd) = self.cwd.get() {
             cwd.deref();
         }
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_cwd(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_cwd(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global.
         let vm = global.bun_vm();
@@ -114,26 +121,26 @@ impl ParsedShellScript {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
         };
         let str = BunString::from_js(str_js, global)?;
-        if let Some(prev) = self.cwd.as_ref() {
+        if let Some(prev) = self.cwd.get() {
             prev.deref();
         }
-        self.cwd = Some(str);
+        self.cwd.set(Some(str));
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn set_quiet(
-        &mut self,
+        &self,
         _global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arg = callframe.argument(0);
-        self.quiet = arg.to_boolean();
+        self.quiet.set(arg.to_boolean());
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_env(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn set_env(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let Some(value1) = callframe.argument(0).get_object() else {
             return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
         };
@@ -178,7 +185,7 @@ impl ParsedShellScript {
             valueref.deref();
         }
         // Dropping the previous Option<EnvMap> deinits it.
-        self.export_env = Some(env);
+        self.export_env.set(Some(env));
         Ok(JSValue::UNDEFINED)
     }
 }
@@ -298,8 +305,8 @@ fn create_parsed_shell_script_impl(
     shargs.set_script_ast(script_ast);
 
     let mut parsed_shell_script = Box::new(ParsedShellScript {
-        args: Some(shargs),
-        jsobjs,
+        args: JsCell::new(Some(shargs)),
+        jsobjs: JsCell::new(jsobjs),
         ..Default::default()
     });
     parsed_shell_script.estimated_size_for_gc = parsed_shell_script.compute_estimated_size_for_gc();

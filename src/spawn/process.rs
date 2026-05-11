@@ -483,9 +483,7 @@ impl Process {
             return Ok(());
         }
 
-        if let Poller::Fd(poll) = &mut self.poller {
-            // SAFETY: poll is a live hive slot, exclusive on the event-loop thread.
-            let fd = unsafe { poll.as_mut() };
+        if let Some(fd) = self.poller.fd_poll_mut() {
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
             let maybe = fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
@@ -861,38 +859,58 @@ impl PollerPosix {
         }
     }
 
-    pub fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+    /// Borrow the hive-allocated `FilePoll` slot if this poller is `Fd`.
+    ///
+    /// Single `unsafe` deref site for the `NonNull<FilePoll>` payload. The slot
+    /// lives in the hive `Store` until `deinit` returns it; the only Rust handle
+    /// is the `NonNull` inside this enum, so `&self` ⇒ no overlapping `&mut`.
+    #[inline]
+    fn fd_poll(&self) -> Option<&FilePoll> {
         match self {
-            PollerPosix::Fd(poll) => {
-                // SAFETY: poll is a live hive slot, exclusive on the event-loop thread.
-                unsafe { poll.as_mut() }.enable_keeping_process_alive(ctx);
-            }
-            PollerPosix::WaiterThread(waiter) => {
-                waiter.ref_(ctx);
-            }
-            _ => {}
+            // SAFETY: `Fd` holds the unique handle to a live hive slot, freed
+            // only via `deinit` (which consumes the variant). `&self` rules out
+            // any concurrent exclusive borrow of the slot.
+            PollerPosix::Fd(poll) => Some(unsafe { poll.as_ref() }),
+            _ => None,
+        }
+    }
+
+    /// Mutably borrow the hive-allocated `FilePoll` slot if this poller is `Fd`.
+    ///
+    /// See [`fd_poll`](Self::fd_poll); `&mut self` additionally guarantees the
+    /// returned `&mut FilePoll` is the only live reference to the slot
+    /// (event-loop-thread exclusive).
+    #[inline]
+    pub(crate) fn fd_poll_mut(&mut self) -> Option<&mut FilePoll> {
+        match self {
+            // SAFETY: see `fd_poll`. `&mut self` ⇒ exclusive access to the
+            // unique handle ⇒ exclusive access to the hive slot.
+            PollerPosix::Fd(poll) => Some(unsafe { poll.as_mut() }),
+            _ => None,
+        }
+    }
+
+    pub fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+        if let Some(poll) = self.fd_poll_mut() {
+            poll.enable_keeping_process_alive(ctx);
+        } else if let PollerPosix::WaiterThread(waiter) = self {
+            waiter.ref_(ctx);
         }
     }
 
     pub fn disable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
-        match self {
-            PollerPosix::Fd(poll) => {
-                // SAFETY: see `enable_keeping_event_loop_alive`.
-                unsafe { poll.as_mut() }.disable_keeping_process_alive(ctx);
-            }
-            PollerPosix::WaiterThread(waiter) => {
-                waiter.unref(ctx);
-            }
-            _ => {}
+        if let Some(poll) = self.fd_poll_mut() {
+            poll.disable_keeping_process_alive(ctx);
+        } else if let PollerPosix::WaiterThread(waiter) = self {
+            waiter.unref(ctx);
         }
     }
 
     pub fn has_ref(&self) -> bool {
+        if let Some(fd) = self.fd_poll() {
+            return fd.can_enable_keeping_process_alive();
+        }
         match self {
-            PollerPosix::Fd(fd) => {
-                // SAFETY: see `enable_keeping_event_loop_alive`.
-                unsafe { fd.as_ref() }.can_enable_keeping_process_alive()
-            }
             PollerPosix::WaiterThread(w) => w.is_active(),
             _ => false,
         }
@@ -1198,7 +1216,7 @@ pub mod waiter_thread_posix {
                                 ));
                                 owner.enqueue_task_concurrent(ct);
                             }
-                            EventLoopHandle::Mini(mini) => {
+                            EventLoopHandle::Mini(mut mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
                                     result,
                                     subprocess: process,
@@ -1210,7 +1228,7 @@ pub mod waiter_thread_posix {
                                         out,
                                         ResultTaskMini::<T>::run_from_main_thread_mini,
                                     );
-                                    (*mini).enqueue_task_concurrent(
+                                    mini.get_mut().enqueue_task_concurrent(
                                         core::ptr::addr_of_mut!((*out).task),
                                     );
                                 }

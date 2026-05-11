@@ -1,7 +1,7 @@
 // This file contains code derived from the following source:
 //   https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc#file-sync2-zig
 
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
 
 use bun_collections::LinearFifo;
@@ -24,8 +24,8 @@ bun_core::named_error_set!(ChannelError);
 
 // PORT NOTE: reshaped for borrowck / thread-safety. In Zig all methods take
 // `*Self` and the mutex guards `buffer`/`is_closed`. In Rust we need `&self`
-// (Channel is shared across threads), so the mutex-protected fields are
-// wrapped in `UnsafeCell` and accessed only while `mutex` is held.
+// (Channel is shared across threads), so `buffer` is wrapped in `UnsafeCell`
+// and `is_closed` in `Cell`, both accessed only while `mutex` is held.
 //
 // PORT NOTE: Zig's `comptime buffer_type: LinearFifoBufferType` const-enum
 // param is unstable in Rust (`adt_const_params`). `bun_collections::LinearFifo`
@@ -37,7 +37,10 @@ pub struct Channel<T, B: LinearFifoBuffer<T> = DynamicBuffer<T>> {
     putters: Condition,
     getters: Condition,
     buffer: UnsafeCell<LinearFifo<T, B>>,
-    is_closed: UnsafeCell<bool>,
+    // `Cell` (not `UnsafeCell`): `bool` is `Copy`, so safe `.get()/.set()` are
+    // exactly the non-atomic load/store the mutex already serializes. The
+    // `unsafe impl Sync` below is where the cross-thread safety burden lives.
+    is_closed: Cell<bool>,
 }
 
 // SAFETY: all interior-mutable state is guarded by `mutex`.
@@ -82,7 +85,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
             putters: Condition::default(),
             getters: Condition::default(),
             buffer: UnsafeCell::new(buffer),
-            is_closed: UnsafeCell::new(false),
+            is_closed: Cell::new(false),
         }
     }
 
@@ -91,12 +94,10 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
 
     pub fn close(&self) {
         let _guard = self.mutex.lock_guard();
-        // SAFETY: mutex is held; we are the only accessor of `is_closed` for this region.
-        let is_closed = unsafe { &mut *self.is_closed.get() };
-        if *is_closed {
+        if self.is_closed.get() {
             return;
         }
-        *is_closed = true;
+        self.is_closed.set(true);
         self.putters.broadcast();
         self.getters.broadcast();
     }
@@ -165,13 +166,13 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
 
         let mut pushed: usize = 0;
         while pushed < items.len() {
-            // Re-derive UnsafeCell refs each iteration: `Condition::wait` below
-            // releases the mutex, so a long-lived `&mut buffer` / `&is_closed`
-            // held across wait() would alias another thread's `&mut` (UB) and
-            // let the compiler hoist `*is_closed` to a single pre-loop load.
-            // SAFETY: mutex is held at this point in the loop body.
+            // Re-derive the `&mut buffer` each iteration: `Condition::wait`
+            // below releases the mutex, so a long-lived `&mut buffer` held
+            // across wait() would alias another thread's `&mut` (UB).
+            // `is_closed` is a `Cell` so `.get()` is already a fresh load each
+            // iteration (cannot be hoisted past the interior-mutable wait).
             let did_push = 'blk: {
-                if unsafe { *self.is_closed.get() } {
+                if self.is_closed.get() {
                     return Err(ChannelError::Closed);
                 }
                 // SAFETY: mutex is held; this &mut does not live across wait().
@@ -217,7 +218,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
                 // Buffer can contain null items but readItem will return null if the buffer is empty.
                 // we need to check if the buffer is empty before trying to read an item.
                 if buffer.readable_length() == 0 {
-                    if unsafe { *self.is_closed.get() } {
+                    if self.is_closed.get() {
                         return Err(ChannelError::Closed);
                     }
                     break 'blk None;

@@ -258,14 +258,12 @@ impl<T: ?Sized> ParentRef<T> {
         })
     }
 
-    /// Shared borrow of the parent. **Debug-asserts** liveness if anchored.
-    ///
-    /// Sound under the `ParentRef` invariant: the pointee outlives the holder
-    /// (by construction or by the caller's `from_raw*` contract). The returned
-    /// borrow is tied to `&self` so it cannot outlive the `ParentRef`.
+    /// Debug-only liveness assertion for anchored refs. Single `unsafe` deref
+    /// site for the set-once `marker: Option<NonNull<AtomicU64>>` field, shared
+    /// by [`get`](Self::get) and [`assume_mut`](Self::assume_mut).
+    #[cfg(debug_assertions)]
     #[inline]
-    pub fn get(&self) -> &T {
-        #[cfg(debug_assertions)]
+    fn debug_assert_live(&self) {
         if let Some(m) = self.marker {
             // SAFETY: best-effort debug check. `m` points into the parent's
             // `LiveMarker`; if the parent has been dropped-in-place this reads
@@ -280,6 +278,17 @@ impl<T: ?Sized> ParentRef<T> {
                 self.generation,
             );
         }
+    }
+
+    /// Shared borrow of the parent. **Debug-asserts** liveness if anchored.
+    ///
+    /// Sound under the `ParentRef` invariant: the pointee outlives the holder
+    /// (by construction or by the caller's `from_raw*` contract). The returned
+    /// borrow is tied to `&self` so it cannot outlive the `ParentRef`.
+    #[inline]
+    pub fn get(&self) -> &T {
+        #[cfg(debug_assertions)]
+        self.debug_assert_live();
         // SAFETY: ParentRef invariant — pointee outlives every copy of `self`;
         // non-null, aligned, dereferenceable. `&T` is `SharedReadOnly`.
         unsafe { self.ptr.as_ref() }
@@ -325,11 +334,7 @@ impl<T: ?Sized> ParentRef<T> {
     #[inline]
     pub unsafe fn assume_mut<'a>(self) -> &'a mut T {
         #[cfg(debug_assertions)]
-        if let Some(m) = self.marker {
-            // SAFETY: see `get()` — best-effort debug liveness check.
-            let live = unsafe { m.as_ref() }.load(Ordering::Relaxed);
-            debug_assert_eq!(live, self.generation, "ParentRef::assume_mut: use-after-parent-drop");
-        }
+        self.debug_assert_live();
         // SAFETY: caller contract (a)+(b)+(c).
         unsafe { &mut *self.ptr.as_ptr() }
     }

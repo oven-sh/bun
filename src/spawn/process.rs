@@ -2776,11 +2776,32 @@ pub mod sync {
         }
         string_builder.allocate()?;
 
-        let mut args: Vec<*const c_char> = Vec::with_capacity(argv.len() + 1);
+        // Stacked Borrows: `append_z` returns a borrow derived from a fresh
+        // `&mut` over the whole buffer, so each call would invalidate the raw
+        // pointer saved from the previous one. Instead, copy all strings first
+        // (recording offsets), then derive every argv pointer in one pass from
+        // the builder's base `NonNull` — those raw pointers share the
+        // allocation's original provenance and stay valid until `string_builder`
+        // drops after `spawn_with_argv` returns.
         for arg in argv {
-            // PERF(port): was assume_capacity
-            args.push(string_builder.append_z(arg).as_ptr().cast::<c_char>());
+            string_builder.append_count_z(arg);
         }
+        let base = string_builder
+            .ptr
+            .expect("allocate() succeeded")
+            .as_ptr()
+            .cast_const()
+            .cast::<c_char>();
+        let mut args: Vec<*const c_char> = Vec::with_capacity(argv.len() + 1);
+        let mut off = 0usize;
+        for arg in argv {
+            // SAFETY: `append_count_z` wrote `arg` + NUL at `[off, off+arg.len()+1)`
+            // contiguously in append order; `base` has provenance for the whole
+            // `cap`-byte buffer.
+            args.push(unsafe { base.add(off) });
+            off += arg.len() + 1;
+        }
+        debug_assert_eq!(off, string_builder.len);
         args.push(core::ptr::null());
 
         spawn_with_argv(options, args.as_ptr(), envp)

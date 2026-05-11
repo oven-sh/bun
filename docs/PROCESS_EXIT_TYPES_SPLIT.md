@@ -93,8 +93,10 @@ Natural sibling crates
   ├─> bun_jsc_types
   │     ├─> GlobalRef<T>
   │     │     └─> copyable VM-lifetime pointer wrapper; bun_jsc aliases it as GlobalRef<JSGlobalObject>
-  │     └─> StrongRefSlot
-  │           └─> opaque strong-reference slot identity; allocation, mutation, clear, and drop stay in bun_jsc::strong
+  │     ├─> StrongRefSlot
+  │     │     └─> opaque strong-reference slot storage identity
+  │     └─> StrongRefHandle
+  │           └─> non-null slot handle; allocation, mutation, clear, and drop stay in bun_jsc::strong
   ├─> bun_install_types
   │     ├─> LifecycleScriptExit
   │     ├─> LifecycleScriptState
@@ -283,10 +285,12 @@ owns the JSC refs, stdio wrappers, IPC, abort/timer, terminal, auto-killer
 cleanup, and self deref edges that have to move or be named through a typed
 runtime effect boundary. `GlobalRef<T>` has been moved into `bun_jsc_types`
 because it is only a copyable raw VM-lifetime pointer wrapper; `StrongRefSlot`
-has also moved into `bun_jsc_types` as only the opaque slot identity. `bun_jsc`
-now aliases `GlobalRef<JSGlobalObject>` and `bun_jsc::strong::Impl` so existing
-effect code keeps the same API shape while `bun_jsc::strong::{Strong, Optional}`
-still own allocation, mutation, clearing, and destruction of those slots.
+and `StrongRefHandle` have also moved into `bun_jsc_types` as the opaque slot
+identity and non-null handle shape. `bun_jsc` now aliases
+`GlobalRef<JSGlobalObject>`, `bun_jsc::strong::Impl`, and
+`bun_jsc::strong::Handle` so existing effect code keeps the same API shape
+while `bun_jsc::strong::{Strong, Optional}` still own allocation, mutation,
+clearing, and destruction of those slots.
 `JsRef`, `Strong::Optional`, and `JSPromiseStrong` still carry drop/effect
 semantics. Moving the full `Subprocess`/cron job owner below `bun_runtime`
 is therefore not a matter of copying a few pointer-sized fields into
@@ -508,7 +512,7 @@ Remaining owner movement
   │     │     - JSPromiseStrong is drop-owning JSC state; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
   │     ├─> current event-loop context
   │     │     - cron jobs run on the normal JS event loop; there is no per-cron current_context analogous to the Mini CLI State or test Coordinator context
-  │     │     - bun_runtime_types currently depends only on bun_spawn_types; bun_jsc_types now covers the inert global pointer wrapper but not drop-owning promise/strong handles
+  │     │     - bun_runtime_types currently depends only on bun_spawn_types; bun_jsc_types now covers inert global pointer and strong slot-handle shapes but not drop-owning promise/strong handles
   │     ├─> current re-entry: CronJobBase::on_process_exit
   │     │     - updates ProcessExitReadiness and immediately calls maybe_finished(this)
   │     ├─> synchronous effect: maybe_finished / advance_state / finish
@@ -573,7 +577,7 @@ Required deeper type movement
         ├─> SubprocessExitState now stores the lower ProcessHandle, stdout/stderr BufferedReaderHandle, and cached Rusage from the production spawn path
         ├─> the honest shape is to split stable exit state out of the wrapper so ProcessExitTarget can name that state and runtime applies JS effects from it
         ├─> the dependency graph currently prevents putting JSC handles in bun_runtime_types because bun_jsc depends on bun_spawn and bun_spawn depends on bun_runtime_types
-        ├─> GlobalRef<T> and StrongRefSlot have moved to bun_jsc_types as inert pointer/slot shapes, but JsRef/Strong/JSPromiseStrong still bring JSC handle-slot allocation, effects, and drop semantics with them
+        ├─> GlobalRef<T>, StrongRefSlot, and StrongRefHandle have moved to bun_jsc_types as inert pointer/slot shapes, but JsRef/Strong/JSPromiseStrong still bring JSC handle-slot allocation, effects, and drop semantics with them
         ├─> a real split therefore needs the remaining lower JSC handle/sys sidecar work before Subprocess or cron can move all owner state below bun_runtime
         └─> ProcessAutoKiller only tracks Process* for kill/deref and does not provide that state
 ```

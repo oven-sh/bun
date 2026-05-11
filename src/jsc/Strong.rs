@@ -7,12 +7,13 @@ use core::ptr::NonNull;
 use crate::{JSGlobalObject, JSValue};
 
 pub type Impl = bun_jsc_types::StrongRefSlot;
+pub type Handle = bun_jsc_types::StrongRefHandle;
 
 // PORT NOTE: field renamed from `impl` (Rust keyword) to `handle`.
 pub struct Strong {
-    handle: NonNull<Impl>,
-    // NonNull<T> is already !Send + !Sync, matching the requirement that
-    // Strong must be dropped on the JS thread (HandleSet is VM-owned).
+    handle: Handle,
+    // Handle wraps NonNull<T>, preserving the requirement that Strong must be
+    // dropped on the JS thread (HandleSet is VM-owned).
 }
 
 impl Strong {
@@ -48,7 +49,7 @@ impl Strong {
     /// `handle` must have been produced by `Bun__StrongRef__new` (or equivalent)
     /// and must not be owned by any other `Strong`/`Optional`.
     pub unsafe fn adopt(handle: NonNull<Impl>) -> Strong {
-        Strong { handle }
+        Strong { handle: unsafe { Handle::from_non_null(handle) } }
     }
 }
 
@@ -69,7 +70,7 @@ impl Drop for Strong {
 // pointer) so it stays FFI-safe when embedded in `extern "C"` structs.
 #[repr(transparent)]
 pub struct Optional {
-    handle: Option<NonNull<Impl>>,
+    handle: Option<Handle>,
 }
 
 impl Default for Optional {
@@ -90,7 +91,9 @@ impl Optional {
     /// If `Some`, `handle` must have been produced by `Bun__StrongRef__new`
     /// (or equivalent) and must not be owned by any other `Strong`/`Optional`.
     pub unsafe fn adopt(handle: Option<NonNull<Impl>>) -> Optional {
-        Optional { handle }
+        Optional {
+            handle: handle.map(|handle| unsafe { Handle::from_non_null(handle) }),
+        }
     }
 
     /// Hold a strong reference to a JavaScript value. Released on `Drop` or `clear`.
@@ -179,14 +182,14 @@ impl Drop for Optional {
     }
 }
 
-pub fn init_handle(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
+pub fn init_handle(global: &JSGlobalObject, value: JSValue) -> Handle {
     crate::mark_binding!();
     // SAFETY: FFI call; `global` is a live JSGlobalObject.
-    NonNull::new(unsafe { Bun__StrongRef__new(global, value) })
+    unsafe { Handle::from_raw(Bun__StrongRef__new(global, value)) }
         .expect("Bun__StrongRef__new returned null")
 }
 
-pub fn get_handle(this: NonNull<Impl>) -> JSValue {
+pub fn get_handle(this: Handle) -> JSValue {
     // `this` is actually a pointer to a `JSC::JSValue`; see Strong.cpp.
     // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue (encoded i64) for the
     // lifetime of the Impl handle. JSValue stub is `#[repr(transparent)] usize` (same
@@ -195,20 +198,20 @@ pub fn get_handle(this: NonNull<Impl>) -> JSValue {
     unsafe { *this.as_ptr().cast::<JSValue>() }
 }
 
-pub fn set_handle(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
+pub fn set_handle(this: Handle, global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();
     // SAFETY: `this` is a valid handle from `init_handle`.
     unsafe { Bun__StrongRef__set(this.as_ptr(), global, value) };
 }
 
-pub fn clear_handle(this: NonNull<Impl>) {
+pub fn clear_handle(this: Handle) {
     crate::mark_binding!();
     // SAFETY: `this` is a valid handle from `init_handle`.
     unsafe { Bun__StrongRef__clear(this.as_ptr()) };
 }
 
 /// SAFETY: `this` must be a valid handle from `init_handle`; consumed here (do not reuse).
-pub unsafe fn destroy_handle(this: NonNull<Impl>) {
+pub unsafe fn destroy_handle(this: Handle) {
     crate::mark_binding!();
     unsafe { Bun__StrongRef__delete(this.as_ptr()) };
 }

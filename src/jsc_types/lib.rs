@@ -1,14 +1,55 @@
 #![allow(dead_code)]
 
 use core::fmt;
+use core::ptr::NonNull;
 
-/// Opaque handle slot allocated by JSC's strong-reference table.
-///
-/// The type crate owns only the pointer identity shape. Allocation, mutation,
-/// clearing, and destruction stay in `bun_jsc::strong`, which owns the JSC FFI
-/// calls and the drop semantics.
+// Opaque handle slot allocated by JSC's strong-reference table.
+//
+// The type crate owns only the pointer identity shape. Allocation, mutation,
+// clearing, and destruction stay in `bun_jsc::strong`, which owns the JSC FFI
+// calls and the drop semantics.
 bun_opaque::opaque_ffi! {
     pub struct StrongRefSlot;
+}
+
+/// Non-null identity for a JSC strong-reference slot.
+///
+/// This is still only an inert handle shape. The crate that owns JSC effects
+/// decides when the slot is allocated, read, written, cleared, and destroyed.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StrongRefHandle(NonNull<StrongRefSlot>);
+
+impl StrongRefHandle {
+    /// Wrap a slot pointer allocated by the JSC strong-reference table.
+    ///
+    /// # Safety
+    /// `slot` must be a live strong-reference slot produced by the JSC owner
+    /// crate and must remain valid until that owner destroys it.
+    #[inline(always)]
+    pub unsafe fn from_non_null(slot: NonNull<StrongRefSlot>) -> Self {
+        Self(slot)
+    }
+
+    /// Wrap a raw slot pointer allocated by the JSC strong-reference table.
+    ///
+    /// # Safety
+    /// `slot` must be non-null and satisfy [`Self::from_non_null`]'s
+    /// provenance/lifetime contract.
+    #[inline(always)]
+    pub unsafe fn from_raw(slot: *mut StrongRefSlot) -> Option<Self> {
+        NonNull::new(slot).map(|slot| unsafe { Self::from_non_null(slot) })
+    }
+
+    #[inline(always)]
+    pub fn as_non_null(self) -> NonNull<StrongRefSlot> {
+        self.0
+    }
+
+    #[inline(always)]
+    pub fn as_ptr(self) -> *mut StrongRefSlot {
+        self.0.as_ptr()
+    }
 }
 
 /// VM-lifetime handle to a JSC-owned global object.
@@ -67,5 +108,31 @@ impl<T> From<&T> for GlobalRef<T> {
 impl<T> fmt::Debug for GlobalRef<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("GlobalRef").field(&self.0).finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strong_ref_handle_preserves_pointer_shape() {
+        assert_eq!(
+            core::mem::size_of::<StrongRefHandle>(),
+            core::mem::size_of::<usize>()
+        );
+        assert_eq!(
+            core::mem::size_of::<Option<StrongRefHandle>>(),
+            core::mem::size_of::<usize>()
+        );
+
+        let slot = NonNull::<StrongRefSlot>::dangling();
+        let handle = unsafe { StrongRefHandle::from_non_null(slot) };
+        assert_eq!(handle.as_non_null(), slot);
+        assert_eq!(
+            unsafe { StrongRefHandle::from_raw(handle.as_ptr()) },
+            Some(handle)
+        );
+        assert_eq!(unsafe { StrongRefHandle::from_raw(core::ptr::null_mut()) }, None);
     }
 }

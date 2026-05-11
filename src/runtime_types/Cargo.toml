@@ -14,5 +14,6 @@ strum.workspace = true
 thiserror.workspace = true
 bun_core.workspace = true
 bun_io_types.workspace = true
+bun_sys.workspace = true
 bun_string.workspace = true
 bun_spawn_types.workspace = true

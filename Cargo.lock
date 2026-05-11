@@ -1967,6 +1967,7 @@ dependencies = [
  "bun_jsc_types",
  "bun_spawn_types",
  "bun_string",
+ "bun_sys",
  "phf 0.11.3",
  "strum",
  "thiserror",

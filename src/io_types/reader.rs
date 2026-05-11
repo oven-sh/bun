@@ -1,5 +1,15 @@
 use core::num::NonZeroUsize;
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum ReadState {
+    /// The most common scenario: neither EOF nor EAGAIN.
+    Progress,
+    /// Received a 0-byte read.
+    Eof,
+    /// Received EAGAIN.
+    Drained,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BufferedReaderHandle(NonZeroUsize);
 
@@ -46,5 +56,12 @@ mod tests {
 
         assert_eq!(handle.as_ptr::<u8>(), ptr);
         assert_eq!(handle.get(), ptr.cast::<()>() as usize);
+    }
+
+    #[test]
+    fn read_state_preserves_pipe_reader_states() {
+        assert_eq!(ReadState::Progress, ReadState::Progress);
+        assert_eq!(ReadState::Eof, ReadState::Eof);
+        assert_eq!(ReadState::Drained, ReadState::Drained);
     }
 }

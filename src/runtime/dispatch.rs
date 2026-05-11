@@ -324,6 +324,48 @@ pub fn __bun_dispatch_runtime_buffered_reader_delivery(
                 pipe,
             )
         },
+        RuntimeBufferedReaderDelivery::ShellPipeReaderChunk {
+            command,
+            interpreter,
+            pipe,
+            chunk,
+            has_more,
+        } => crate::shell::subproc::PipeReader::dispatch_read_chunk(
+            context,
+            command,
+            interpreter,
+            pipe,
+            chunk,
+            has_more,
+        ),
+        RuntimeBufferedReaderDelivery::ShellPipeReaderDone {
+            command,
+            interpreter,
+            pipe,
+        } => {
+            crate::shell::subproc::PipeReader::dispatch_reader_done(
+                context,
+                command,
+                interpreter,
+                pipe,
+            );
+            true
+        }
+        RuntimeBufferedReaderDelivery::ShellPipeReaderError {
+            command,
+            interpreter,
+            pipe,
+            error,
+        } => {
+            crate::shell::subproc::PipeReader::dispatch_reader_error(
+                context,
+                command,
+                interpreter,
+                pipe,
+                error,
+            );
+            true
+        }
         RuntimeBufferedReaderDelivery::CronRegisterOutputDone { state } => {
             crate::api::cron::on_register_reader_done(state);
             true

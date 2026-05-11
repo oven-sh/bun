@@ -130,7 +130,7 @@ impl BufferedReaderTarget {
                 true
             }
             Self::Runtime { target, event_loop } => {
-                let delivery = target.on_read_chunk(chunk);
+                let delivery = target.on_read_chunk(chunk, _has_more);
                 // SAFETY: `delivery` carries borrowed data valid for this
                 // synchronous call only; the high-tier dispatcher must consume
                 // it before returning.
@@ -197,13 +197,18 @@ impl BufferedReaderTarget {
                 }
             }
             Self::Runtime { target, event_loop } => {
-                if let Some(delivery) = target.on_reader_error(
-                    RuntimeReaderError {
-                        errno: err.errno,
-                        name: <&'static str>::from(err.get_errno()),
-                    },
-                    reader,
-                ) {
+                let delivery = if matches!(target, RuntimeBufferedReaderTarget::ShellPipeReader { .. }) {
+                    target.on_system_reader_error(err)
+                } else {
+                    target.on_reader_error(
+                        RuntimeReaderError {
+                            errno: err.errno,
+                            name: <&'static str>::from(err.get_errno()),
+                        },
+                        reader,
+                    )
+                };
+                if let Some(delivery) = delivery {
                     // SAFETY: error delivery carries no borrowed bytes and is
                     // consumed synchronously by the high-tier dispatcher.
                     unsafe {

@@ -1,6 +1,7 @@
 use crate::cron::{CronRegisterJobStateHandle, CronRemoveJobStateHandle};
+use crate::shell::{InterpreterHandle, NodeId};
 use crate::subprocess::SubprocessExitStateHandle;
-use bun_io_types::reader::BufferedReaderHandle;
+use bun_io_types::reader::{BufferedReaderHandle, ReadState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimePipeKind {
@@ -25,6 +26,11 @@ pub enum RuntimeBufferedReaderTarget {
     CronRemoveOutput {
         state: CronRemoveJobStateHandle,
     },
+    ShellPipeReader {
+        command: NodeId,
+        interpreter: Option<InterpreterHandle>,
+        pipe: RuntimePipeKind,
+    },
     SubprocessPipeReader {
         state: SubprocessExitStateHandle,
         pipe: RuntimePipeKind,
@@ -37,7 +43,7 @@ pub struct RuntimeReaderError {
     pub name: &'static str,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum RuntimeBufferedReaderDelivery<'a> {
     FilterRunHandleChunk {
         index: usize,
@@ -53,9 +59,27 @@ pub enum RuntimeBufferedReaderDelivery<'a> {
         pipe: RuntimePipeKind,
         chunk: &'a [u8],
     },
+    ShellPipeReaderChunk {
+        command: NodeId,
+        interpreter: Option<InterpreterHandle>,
+        pipe: RuntimePipeKind,
+        chunk: &'a [u8],
+        has_more: ReadState,
+    },
     TestParallelWorkerPipeDone {
         index: usize,
         pipe: RuntimePipeKind,
+    },
+    ShellPipeReaderDone {
+        command: NodeId,
+        interpreter: Option<InterpreterHandle>,
+        pipe: RuntimePipeKind,
+    },
+    ShellPipeReaderError {
+        command: NodeId,
+        interpreter: Option<InterpreterHandle>,
+        pipe: RuntimePipeKind,
+        error: bun_sys::Error,
     },
     CronRegisterOutputDone {
         state: CronRegisterJobStateHandle,
@@ -94,7 +118,8 @@ impl RuntimeBufferedReaderTarget {
         match self {
             Self::FilterRunHandle { .. }
             | Self::MultiRunPipeReader { .. }
-            | Self::TestParallelWorkerPipe { .. } => true,
+            | Self::TestParallelWorkerPipe { .. }
+            | Self::ShellPipeReader { .. } => true,
             Self::CronRegisterOutput { .. }
             | Self::CronRemoveOutput { .. }
             | Self::SubprocessPipeReader { .. } => false,
@@ -102,7 +127,11 @@ impl RuntimeBufferedReaderTarget {
     }
 
     #[inline]
-    pub fn on_read_chunk<'a>(self, chunk: &'a [u8]) -> RuntimeBufferedReaderDelivery<'a> {
+    pub fn on_read_chunk<'a>(
+        self,
+        chunk: &'a [u8],
+        has_more: ReadState,
+    ) -> RuntimeBufferedReaderDelivery<'a> {
         match self {
             Self::FilterRunHandle { index } => RuntimeBufferedReaderDelivery::FilterRunHandleChunk {
                 index,
@@ -122,6 +151,17 @@ impl RuntimeBufferedReaderTarget {
                     chunk,
                 }
             }
+            Self::ShellPipeReader {
+                command,
+                interpreter,
+                pipe,
+            } => RuntimeBufferedReaderDelivery::ShellPipeReaderChunk {
+                command,
+                interpreter,
+                pipe,
+                chunk,
+                has_more,
+            },
             Self::CronRegisterOutput { .. }
             | Self::CronRemoveOutput { .. }
             | Self::SubprocessPipeReader { .. } => {
@@ -131,7 +171,7 @@ impl RuntimeBufferedReaderTarget {
     }
 
     #[inline]
-    pub const fn on_reader_done(
+    pub fn on_reader_done(
         self,
         reader: BufferedReaderHandle,
     ) -> Option<RuntimeBufferedReaderDelivery<'static>> {
@@ -148,6 +188,15 @@ impl RuntimeBufferedReaderTarget {
             Self::CronRemoveOutput { state } => {
                 Some(RuntimeBufferedReaderDelivery::CronRemoveOutputDone { state })
             }
+            Self::ShellPipeReader {
+                command,
+                interpreter,
+                pipe,
+            } => Some(RuntimeBufferedReaderDelivery::ShellPipeReaderDone {
+                command,
+                interpreter,
+                pipe,
+            }),
             Self::SubprocessPipeReader { state, pipe } => {
                 Some(RuntimeBufferedReaderDelivery::SubprocessPipeReaderDone {
                     state,
@@ -160,7 +209,7 @@ impl RuntimeBufferedReaderTarget {
     }
 
     #[inline]
-    pub const fn on_reader_error(
+    pub fn on_reader_error(
         self,
         error: RuntimeReaderError,
         reader: BufferedReaderHandle,
@@ -178,6 +227,9 @@ impl RuntimeBufferedReaderTarget {
                     name: error.name,
                 })
             }
+            Self::ShellPipeReader {
+                ..
+            } => unreachable!("shell pipe reader errors use on_system_reader_error"),
             Self::SubprocessPipeReader { state, pipe } => {
                 Some(RuntimeBufferedReaderDelivery::SubprocessPipeReaderError {
                     state,
@@ -191,7 +243,27 @@ impl RuntimeBufferedReaderTarget {
     }
 
     #[inline]
-    pub const fn on_max_buffer_overflow(
+    pub fn on_system_reader_error(
+        self,
+        error: bun_sys::Error,
+    ) -> Option<RuntimeBufferedReaderDelivery<'static>> {
+        match self {
+            Self::ShellPipeReader {
+                command,
+                interpreter,
+                pipe,
+            } => Some(RuntimeBufferedReaderDelivery::ShellPipeReaderError {
+                command,
+                interpreter,
+                pipe,
+                error,
+            }),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn on_max_buffer_overflow(
         self,
     ) -> Option<RuntimeBufferedReaderDelivery<'static>> {
         match self {
@@ -213,7 +285,7 @@ mod tests {
         let target = RuntimeBufferedReaderTarget::FilterRunHandle { index: 7 };
 
         assert!(target.has_on_read_chunk());
-        match target.on_read_chunk(chunk) {
+        match target.on_read_chunk(chunk, ReadState::Progress) {
             RuntimeBufferedReaderDelivery::FilterRunHandleChunk { index, chunk: actual } => {
                 assert_eq!(index, 7);
                 assert_eq!(actual, chunk);
@@ -230,7 +302,7 @@ mod tests {
             pipe: RuntimePipeKind::Stderr,
         };
 
-        match target.on_read_chunk(chunk) {
+        match target.on_read_chunk(chunk, ReadState::Progress) {
             RuntimeBufferedReaderDelivery::MultiRunPipeReaderChunk { index, pipe, chunk: actual } => {
                 assert_eq!(index, 2);
                 assert_eq!(pipe, RuntimePipeKind::Stderr);
@@ -241,7 +313,7 @@ mod tests {
         let mut reader = 0u8;
         let reader = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut reader)).unwrap();
 
-        assert_eq!(target.on_reader_done(reader), None);
+        assert!(target.on_reader_done(reader).is_none());
 
         let target = RuntimeBufferedReaderTarget::TestParallelWorkerPipe {
             index: 4,
@@ -251,6 +323,49 @@ mod tests {
             Some(RuntimeBufferedReaderDelivery::TestParallelWorkerPipeDone { index, pipe }) => {
                 assert_eq!(index, 4);
                 assert_eq!(pipe, RuntimePipeKind::Stdout);
+            }
+            _ => panic!("wrong delivery"),
+        }
+    }
+
+    #[test]
+    fn shell_pipe_reader_target_preserves_command_pipe_and_read_state() {
+        let chunk = b"chunk";
+        let target = RuntimeBufferedReaderTarget::ShellPipeReader {
+            command: crate::shell::NodeId(9),
+            interpreter: None,
+            pipe: RuntimePipeKind::Stderr,
+        };
+        let mut reader = 0u8;
+        let reader = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut reader)).unwrap();
+
+        assert!(target.has_on_read_chunk());
+        match target.on_read_chunk(chunk, ReadState::Eof) {
+            RuntimeBufferedReaderDelivery::ShellPipeReaderChunk {
+                command,
+                interpreter,
+                pipe,
+                chunk: actual,
+                has_more,
+            } => {
+                assert_eq!(command, crate::shell::NodeId(9));
+                assert_eq!(interpreter, None);
+                assert_eq!(pipe, RuntimePipeKind::Stderr);
+                assert_eq!(actual, chunk);
+                assert_eq!(has_more, ReadState::Eof);
+            }
+            _ => panic!("wrong delivery"),
+        }
+
+        match target.on_reader_done(reader) {
+            Some(RuntimeBufferedReaderDelivery::ShellPipeReaderDone {
+                command,
+                interpreter,
+                pipe,
+            }) => {
+                assert_eq!(command, crate::shell::NodeId(9));
+                assert_eq!(interpreter, None);
+                assert_eq!(pipe, RuntimePipeKind::Stderr);
             }
             _ => panic!("wrong delivery"),
         }

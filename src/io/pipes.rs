@@ -130,17 +130,6 @@ impl PollOrFd {
 // keeps the historical `bun_io::FileType` / `bun_io::pipes::FileType` paths.
 pub use crate::posix_event_loop::FileType;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ReadState {
-    /// The most common scenario
-    /// Neither EOF nor EAGAIN
-    Progress,
-
-    /// Received a 0-byte read
-    Eof,
-
-    /// Received an EAGAIN
-    Drained,
-}
+pub use bun_io_types::reader::ReadState;
 
 // ported from: src/io/pipes.zig

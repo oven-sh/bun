@@ -196,7 +196,6 @@ pub use max_buf as MaxBuf;
 // trait impl — see `buffered_reader_parent_link!` below.
 bun_dispatch::link_interface! {
     pub BufferedReaderParentLink[
-        ShellPipeReader,
         ShellIoReader,
         FileReader,
         FileResponseStream,

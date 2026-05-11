@@ -2129,17 +2129,16 @@ impl PackageManifest {
         string_builder.allocate()?;
 
         // PORT NOTE: Zig zeroed the freshly allocated buffer for determinism;
-        // `Builder::allocate` already produces a zeroed `Box<[u8]>`. The
-        // builder still owns the buffer; we keep a `*const u8`+len pair so
-        // sliced views into it stay valid across the appends below
-        // (borrowck would otherwise reject `&string_builder.ptr` while
-        // `string_builder.append` takes `&mut self`).
-        let (string_buf_ptr, string_buf_len) = match string_builder.ptr.as_deref() {
-            Some(b) => (b.as_ptr(), string_builder.cap),
-            None => (b"".as_ptr(), 0usize),
-        };
-        // SAFETY: builder buffer lives for the rest of this fn; reads only.
-        let string_buf: &[u8] = unsafe { bun_core::ffi::slice(string_buf_ptr, string_buf_len) };
+        // `Builder::allocate` already produces a zeroed `Box<[u8]>`.
+        //
+        // Zig kept a single `string_buf` slice over the builder's backing
+        // allocation for the rest of the function. In Rust that would alias a
+        // `&[u8]` across the `&mut self` borrows taken by every `append` below
+        // (Stacked Borrows UB even though the allocation never moves). Instead
+        // we re-borrow `string_builder.allocated_slice()` at each read site —
+        // `Builder::append*` only writes in-place and never grows/replaces
+        // `ptr`, so the slice contents are stable, and NLL releases each
+        // short-lived borrow before the next `append`.
 
         // Using `expected_name` instead of the name from the manifest. Custom registries might
         // have a different name than the dependency name in package.json.
@@ -2182,7 +2181,7 @@ impl PackageManifest {
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
-                    sliced_version = version_string.sliced(string_buf);
+                    sliced_version = version_string.sliced(string_builder.allocated_slice());
                     parsed_version = Semver::Version::parse(sliced_version);
                     if cfg!(debug_assertions) {
                         debug_assert!(parsed_version.valid);
@@ -2801,7 +2800,7 @@ impl PackageManifest {
 
                         let dist_tag_value_literal = string_builder.append::<ExternalString>(version_name);
 
-                        let sliced_string = dist_tag_value_literal.value.sliced(string_buf);
+                        let sliced_string = dist_tag_value_literal.value.sliced(string_builder.allocated_slice());
 
                         // SAFETY: dist_tag_versions_start + dist_tag_i < all_semver_versions.len()
                         unsafe {
@@ -2927,7 +2926,7 @@ impl PackageManifest {
                         *dest = i as Int;
                     }
 
-                    let string_bytes = string_buf;
+                    let string_bytes = string_builder.allocated_slice();
                     indices.sort_by(|&left, &right| {
                         cloned_versions[left as usize].order(
                             cloned_versions[right as usize],
@@ -2958,7 +2957,7 @@ impl PackageManifest {
                             // version
                             let first = semver_versions_[0];
                             let second = semver_versions_[1];
-                            let order = second.order(first, string_buf, string_buf);
+                            let order = second.order(first, string_bytes, string_bytes);
                             debug_assert!(order == core::cmp::Ordering::Greater);
                         }
                     }

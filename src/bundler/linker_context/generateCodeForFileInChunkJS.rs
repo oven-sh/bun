@@ -622,16 +622,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 struct ExportHoist {
                     decls: Vec<G::Decl>,
-                    arena: *const Bump,
+                    // BackRef: the arena is the caller's `temp_arena: &Bump`,
+                    // which strictly outlives this local helper struct.
+                    arena: bun_ptr::BackRef<Bump>,
                 }
 
                 impl ExportHoist {
                     fn wrap_identifier(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Expr {
-                        // SAFETY: `arena` was set from a live &Bump that outlives this struct.
-                        let bump = unsafe { &*self.arena };
+                        // Copy the BackRef so the `&Bump` borrow is detached
+                        // from `&mut self` (needed for `self.decls.push`).
+                        let arena = self.arena;
                         self.decls.push(G::Decl {
                             binding: Binding::alloc(
-                                bump,
+                                arena.get(),
                                 B::Identifier { r#ref: ref_ },
                                 loc,
                             ),
@@ -651,7 +654,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 let mut hoist = ExportHoist {
                     decls: Vec::new(),
-                    arena: std::ptr::from_ref::<Bump>(temp_arena),
+                    arena: bun_ptr::BackRef::new(temp_arena),
                 };
                 let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 

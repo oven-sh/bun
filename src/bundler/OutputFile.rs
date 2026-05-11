@@ -226,13 +226,13 @@ impl Value {
                         )));
                     }
                 }
-                let len = bytes.len();
-                let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
+                // Hand the `Box<[u8]>` to the ExternalStringImpl: `heap::release`
+                // (= `Box::leak`) yields a `&'static mut [u8]` borrow of the
+                // now-JSC-owned allocation; `on_free` reclaims it on GC.
+                let bytes: &'static mut [u8] = bun_core::heap::release(bytes);
                 // latin1 flag = true (matches Zig).
                 BunString::create_external::<*mut c_void>(
-                    // SAFETY: ptr/len come from a live `Box<[u8]>` leaked into the
-                    // external string just above; freed by `on_free`.
-                    unsafe { core::slice::from_raw_parts(ptr, len) },
+                    bytes,
                     true,
                     core::ptr::null_mut::<c_void>(),
                     on_free,

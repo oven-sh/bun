@@ -47,9 +47,12 @@ pub struct ThreadPool {
     /// On Linux, this was a performance regression.
     /// In some benchmarks on macOS, this yielded up to a 60% performance improvement in microbenchmarks that load ~10,000 files.
     // PORT NOTE: Zig left this `undefined` when `!uses_io_pool()`; `Option` makes
-    // that explicit. Stored as a raw pointer because all `ThreadPoolLib` driver
-    // methods (`schedule`, `warm`, `wake_for_idle_events`) take `&self`.
-    pub io_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
+    // that explicit. `ParentRef` (not raw `NonNull`) because the pointee is the
+    // module-static `io_thread_pool::THREAD_POOL`, live while `ref_count > 0`,
+    // and all `ThreadPoolLib` driver methods (`schedule`, `warm`,
+    // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
+    // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
+    pub io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
     // TODO(port): lifetime — TSV class UNKNOWN. Conditionally owned via
     // `worker_pool_is_owned`; kept raw so callers (bundle_v2.rs draft) can
     // dereference for `wake_for_idle_events()` without a borrow on `ThreadPool`.
@@ -244,7 +247,7 @@ impl ThreadPool {
     pub fn init_with_pool<V2>(v2: &V2, worker_pool: *mut ThreadPoolLib::ThreadPool) -> ThreadPool {
         ThreadPool {
             worker_pool,
-            io_pool: if Self::uses_io_pool() { Some(io_thread_pool::acquire()) } else { None },
+            io_pool: if Self::uses_io_pool() { Some(io_thread_pool::acquire().into()) } else { None },
             // BACKREF: lifetime erased behind the raw pointer.
             v2: std::ptr::from_ref::<V2>(v2).cast(),
             worker_pool_is_owned: false,
@@ -282,9 +285,7 @@ impl ThreadPool {
     /// `ref_count > 0` (i.e. while any bundler `ThreadPool` exists).
     #[inline]
     pub fn io_pool_ref(&self) -> Option<&ThreadPoolLib::ThreadPool> {
-        // SAFETY: points to the module-static THREAD_POOL, live while ref_count > 0;
-        // all driver methods (`schedule`, `warm`) take `&self`.
-        self.io_pool.map(|p| unsafe { p.as_ref() })
+        self.io_pool.as_deref()
     }
 
     pub fn start(&self) {
@@ -420,7 +421,7 @@ impl ThreadPool {
                 ctx: self.v2,
                 heap: None,
                 arena: ptr::null(),
-                thread: ThreadPoolLib::Thread::current(),
+                thread: NonNull::new(ThreadPoolLib::Thread::current()).map(bun_ptr::ParentRef::from),
                 data: None,
                 quit: false,
                 ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
@@ -466,8 +467,11 @@ pub struct Worker {
 
     pub ast_memory_store: ManuallyDrop<bun_ast::ASTMemoryAllocator>,
     pub has_created: bool,
-    /// `ThreadPoolLib.Thread.current` — null when called off a pool thread.
-    pub thread: *mut ThreadPoolLib::Thread,
+    /// `ThreadPoolLib.Thread.current` — `None` when called off a pool thread.
+    /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly
+    /// outlives the per-thread `Worker` it created, and the only access is
+    /// `push_idle_task(&self)` — so the safe `Deref` projection suffices.
+    pub thread: Option<bun_ptr::ParentRef<ThreadPoolLib::Thread>>,
 
     pub deinit_task: ThreadPoolLib::Task,
 
@@ -530,7 +534,7 @@ impl Worker {
     }
 
     pub fn deinit_soon(&mut self) {
-        if let Some(thread) = unsafe { self.thread.as_ref() } {
+        if let Some(thread) = self.thread {
             thread.push_idle_task(&raw mut self.deinit_task);
         } else {
             // `thread` is `ThreadPoolLib::Thread::current()` captured at

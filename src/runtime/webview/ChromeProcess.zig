@@ -83,6 +83,18 @@ pub export fn Bun__Chrome__ensure(
 
 pub fn onProcessExit(this: *ChromeProcess, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
     log("chrome exited: {f}", .{status});
+    // Browser-crash path: segfault, OOM, external SIGKILL. Bun__Chrome__kill
+    // only runs from closeAll() / dispatchOnExit — a straight-up browser
+    // crash never goes through it, so without a pgroup-kill here the
+    // helpers lose their parent-death coupling and reparent to PID 1 (same
+    // #30475 leak, different trigger). Same setpgid(0, 0) at spawn makes
+    // the browser the pgroup leader; signalling -pid reaches every helper
+    // that inherited that pgid. ESRCH is harmless if no helper survived
+    // the browser's own death. Must happen BEFORE deref/destroy — after
+    // destroy `this` is freed and the pid is gone.
+    if (comptime bun.Environment.isPosix) {
+        _ = std.c.kill(-this.process.pid, std.posix.SIG.KILL);
+    }
     const signo: i32 = if (status.signalCode()) |sig| @intFromEnum(sig) else 0;
     Bun__Chrome__died(signo);
     this.process.deref();

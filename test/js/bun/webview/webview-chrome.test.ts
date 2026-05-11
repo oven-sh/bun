@@ -511,53 +511,91 @@ test("WebView.closeAll is a static function", () => {
 // #30475 — closeAll() must reach the browser's helpers (renderer, GPU,
 // network, utility, crashpad) and not just the main browser pid. Real
 // Chrome doesn't opt in to PR_SET_PDEATHSIG on most of its helpers, so
-// they'd reparent to PID 1 when the browser-only SIGKILL runs. This uses
-// a stand-in "fake chrome" shell script that forks two children then
-// blocks on fd 3 (where Bun's socketpair lands); the three pids stand in
-// for the browser + two helpers. With the fix (setpgid in the child,
-// kill(-pid, SIGKILL) on teardown) all three die together; without it,
-// only the shell dies and the sleep children leak.
+// they'd reparent to PID 1 when the browser-only SIGKILL runs. Two
+// tests share the same fake-chrome fixture (a shell script that forks
+// two `sleep` children standing in for helpers, then parks on fd 3):
+//   1. closeAll() path — the explicit teardown from user code.
+//   2. browser-crash path — Chrome exits on its own (onProcessExit).
+// With the fix both paths kill(-pgid, SIGKILL); without either one,
+// the two sleeps leak.
+
+// A "dead" pid has two phases: task killed (kill(pid, 0) → 0, zombie
+// remains in the process table) then reaped (kill(pid, 0) → ESRCH).
+// Test a container that doesn't reap PID-1-adopted zombies (test runs
+// under bun, not an init) — so treat state 'Z' as dead on Linux.
+// macOS: no /proc. launchd reaps orphans eventually; kill(pid, 0) is
+// the only signal we have. Same helper is used by both tests below.
+const isDeadHelper = [
+  "import { readFileSync } from 'node:fs';",
+  "const isReapedOrZombie = (p) => {",
+  "  try { process.kill(p, 0); }",
+  "  catch { return true; }", // ESRCH — reaped (or never existed)
+  "  if (process.platform !== 'linux') return false;",
+  // /proc/<pid>/stat line: "<pid> (<comm>) <state> ..." — `comm` may
+  // contain spaces or parens; scan from the LAST ')' to skip it safely.
+  "  try {",
+  "    const s = readFileSync('/proc/' + p + '/stat', 'utf8');",
+  "    const i = s.lastIndexOf(')');",
+  "    return i > 0 && s[i + 2] === 'Z';",
+  "  } catch { return true; }", // /proc entry gone → reaped
+  "};",
+].join("\n");
+
+const fakeChrome =
+  "#!/bin/sh\n" +
+  "sleep 3600 &\nC1=$!\n" +
+  "sleep 3600 &\nC2=$!\n" +
+  'printf "%d %d %d" "$$" "$C1" "$C2" > "$PID_OUT"\n' +
+  // $TRIGGER: empty = park forever (closeAll path). non-empty = poll
+  // for the trigger file, then SIGKILL ourselves to simulate a browser
+  // crash (onProcessExit path). `exec cat <&3` so the main pid keeps
+  // stdin-reading from Bun's socketpair in the park-forever case.
+  'if [ -n "$TRIGGER" ]; then\n' +
+  '  while [ ! -e "$TRIGGER" ]; do sleep 0.05; done\n' +
+  "  kill -9 $$\n" +
+  "else\n" +
+  "  exec cat <&3 >/dev/null\n" +
+  "fi\n";
+
+function driver({ triggerCrash }: { triggerCrash: boolean }): string {
+  return [
+    "import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
+    isDeadHelper,
+    "chmodSync('./fake-chrome.sh', 0o755);",
+    "const view = new Bun.WebView({",
+    "  backend: { type: 'chrome', path: './fake-chrome.sh', url: false },",
+    "  width: 100, height: 100,",
+    "});",
+    // pid-trio is written after the shell forks; poll.
+    "const pidsDeadline = Date.now() + 5000;",
+    "while (Date.now() < pidsDeadline && !existsSync('pids.txt')) await Bun.sleep(10);",
+    "const pids = readFileSync('pids.txt', 'utf8').trim().split(' ').map(Number);",
+    "if (pids.length !== 3 || pids.some(p => !p)) throw new Error('bad pids: ' + JSON.stringify(pids));",
+    // Sanity: every pid must be alive right now. A vacuously empty
+    // survivor list at the end would "pass" even if the fixture broke.
+    "const beforeDead = pids.filter(isReapedOrZombie);",
+    "if (beforeDead.length) throw new Error('dead before trigger: ' + JSON.stringify(beforeDead));",
+    triggerCrash
+      ? // Trigger the browser-crash path: fake-chrome SIGKILLs itself,
+        // Bun's EVFILT_PROC → onProcessExit fires (which must then
+        // kill(-pgid, SIGKILL) to reach the sleep helpers).
+        "writeFileSync('go', '1');"
+      : // Trigger the closeAll path.
+        "Bun.WebView.closeAll();",
+    "const deadline = Date.now() + 5000;",
+    "while (Date.now() < deadline && !pids.every(isReapedOrZombie)) await Bun.sleep(25);",
+    "const survivors = pids.filter(p => !isReapedOrZombie(p));",
+    // Cleanup: anything that survived shouldn't be our problem to
+    // inherit, so reap.
+    "for (const p of survivors) { try { process.kill(p, 9); } catch {} }",
+    "console.log(JSON.stringify(survivors));",
+  ].join("\n");
+}
+
 test.skipIf(!isPosix)("chrome: closeAll() reaps the whole process group (#30475)", async () => {
   using dir = tempDir("chrome-closeall-pgid", {
-    // /bin/sh `&` job-control still inherits pgid, so the sleeps land in
-    // the same group as the shell. `exec cat <&3` replaces the shell with
-    // cat (same pid, so the browser "pid" the test sees is stable) and
-    // parks on the socketpair fd Bun dup2'd into position 3.
-    "fake-chrome.sh":
-      "#!/bin/sh\n" +
-      "sleep 3600 &\nC1=$!\n" +
-      "sleep 3600 &\nC2=$!\n" +
-      'printf "%d %d %d" "$$" "$C1" "$C2" > "$PID_OUT"\n' +
-      "exec cat <&3 >/dev/null\n",
-    "driver.ts":
-      'import { chmodSync, existsSync, readFileSync } from "node:fs";\n' +
-      'chmodSync("./fake-chrome.sh", 0o755);\n' +
-      "const view = new Bun.WebView({\n" +
-      '  backend: { type: "chrome", path: "./fake-chrome.sh", url: false },\n' +
-      "  width: 100, height: 100,\n" +
-      "});\n" +
-      // fake-chrome writes its pid-trio asynchronously from exec; poll.
-      "const deadline0 = Date.now() + 5000;\n" +
-      'while (Date.now() < deadline0 && !existsSync("pids.txt")) await Bun.sleep(10);\n' +
-      'const pids = readFileSync("pids.txt", "utf8").trim().split(" ").map(Number);\n' +
-      'if (pids.length !== 3 || pids.some(p => !p)) throw new Error("bad pids: " + JSON.stringify(pids));\n' +
-      "const isAlive = (p) => { try { process.kill(p, 0); return true; } catch { return false; } };\n" +
-      // Prove all three are alive first — otherwise a vacuously empty
-      // survivor list would "pass" even if the test is broken.
-      "const beforeDead = pids.filter(p => !isAlive(p));\n" +
-      'if (beforeDead.length) throw new Error("dead before closeAll: " + JSON.stringify(beforeDead));\n' +
-      "Bun.WebView.closeAll();\n" +
-      // Poll for every pid to be gone. kill(-pgid, SIGKILL) is delivered
-      // synchronously from closeAll(), but wait() to reap the zombies
-      // runs on the event loop tick after; kill(pid, 0) returns ESRCH
-      // as soon as the task is killed, independent of reaping.
-      "const deadline = Date.now() + 5000;\n" +
-      "while (Date.now() < deadline && pids.some(isAlive)) await Bun.sleep(25);\n" +
-      "const survivors = pids.filter(isAlive);\n" +
-      // Diagnostic: if anything survives, reap from the test so the sleep
-      // doesn't keep the container dirty for the rest of the run.
-      "for (const p of survivors) { try { process.kill(p, 9); } catch {} }\n" +
-      "console.log(JSON.stringify(survivors));\n",
+    "fake-chrome.sh": fakeChrome,
+    "driver.ts": driver({ triggerCrash: false }),
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "driver.ts"],
@@ -566,9 +604,29 @@ test.skipIf(!isPosix)("chrome: closeAll() reaps the whole process group (#30475)
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Zero survivors: browser + both "helpers" died together. With the bug
-  // the two sleeps survive (reparented to PID 1); with the fix they're
-  // reaped via kill(-pgid, SIGKILL).
+  if (exitCode !== 0) console.error(stderr);
+  // Zero survivors: browser + both helpers died together via kill(-pgid).
+  // Without the fix the two sleep children survive the browser-only kill.
+  expect(stdout.trim()).toBe("[]");
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(!isPosix)("chrome: onProcessExit reaps helpers when the browser crashes (#30475)", async () => {
+  // Same fixture, but the "browser" SIGKILLs itself — simulates a
+  // segfault / OOM / external kill. Bun__Chrome__kill isn't called in
+  // this path; onProcessExit must do the pgroup-kill itself or the
+  // helpers leak to PID 1 just like the closeAll path before the fix.
+  using dir = tempDir("chrome-crash-pgid", {
+    "fake-chrome.sh": fakeChrome,
+    "driver.ts": driver({ triggerCrash: true }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "driver.ts"],
+    env: { ...bunEnv, PID_OUT: `${dir}/pids.txt`, TRIGGER: `${dir}/go` },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) console.error(stderr);
   expect(stdout.trim()).toBe("[]");
   expect(exitCode).toBe(0);

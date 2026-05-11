@@ -202,6 +202,18 @@ pub fn jsLiveCount(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JS
     return jsc.JSValue.jsNumber(c.us_ssl_ctx_live_count());
 }
 
+/// Exposed via `bun:internal-for-testing`. Takes a JS `SecureContext.context`
+/// (a `JSSecureContext`) and returns its BoringSSL `SSL_CTX_get_verify_mode`
+/// value — used by tests to assert `addCACert` doesn't flip mode-neutral
+/// contexts to `SSL_VERIFY_PEER`, which would make servers send
+/// `CertificateRequest` unexpectedly.
+pub fn jsVerifyMode(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1) return global.throwNotEnoughArguments("secureContextVerifyMode", 1, 0);
+    const this = fromJS(args[0]) orelse return global.throwInvalidArgumentType("secureContextVerifyMode", "context", "SecureContext");
+    return jsc.JSValue.jsNumber(BoringSSL.SSL_CTX_get_verify_mode(this.ctx));
+}
+
 const ssl_ctx_base_cost: usize = 50 * 1024;
 
 pub const c = uws.SocketContext.c;

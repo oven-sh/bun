@@ -119,6 +119,13 @@ static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
+/* `us_ssl_ctx_add_ca_pem` (node:tls `SecureContext.addCACert`) flips this
+ * slot to !NULL. The client branch of `us_internal_ssl_attach` reads it to
+ * skip its `SSL_set0_verify_cert_store(ssl, shared_default_roots)` override
+ * — once user CAs were appended post-construction, the CTX's own store
+ * carries them, and overriding would make the added CAs invisible at
+ * handshake time. The pointer IS the value (NULL/!NULL), so no free_func. */
+static int us_ctx_user_ca_idx = -1;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
 #else
@@ -158,6 +165,7 @@ static void us_ex_idx_init(void) {
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_user_ca_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 }
 
 #ifdef _WIN32
@@ -375,21 +383,25 @@ end:
   return count > 0;
 }
 
-/* Defined below; forward-declare so us_ssl_ctx_add_ca_pem can reference it. */
-static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx);
-
 /* Post-construction variant of add_ca_cert_to_ctx_store for Node's
  * `SecureContext.addCACert`. Node silently ignores empty/malformed input and
  * duplicate CAs, and leaves the store untouched if the input has no valid
  * PEM blocks — so there's no error return; we just count what stuck.
  *
- * If the CTX was built without `options.ca` its verify_mode is still
- * SSL_VERIFY_NONE and its cert_store is the empty one SSL_CTX_new hands out.
- * Mirror the `options.ca` path in us_ssl_ctx_build_raw: install the default
- * trust store (OS roots + baked-in Bun roots) and flip verify_mode to
- * SSL_VERIFY_PEER, so (a) the per-socket client override in
- * us_internal_ssl_attach doesn't discard the CA, and (b) the CA we just
- * added is actually consulted at handshake time. */
+ * Unlike the `options.ca` construction-time path, we do NOT flip CTX-level
+ * `verify_mode`. `SecureContext` is mode-neutral (the same object may back
+ * `tls.connect` and `tls.createServer`), and `SSL_VERIFY_PEER` on a server
+ * CTX makes BoringSSL send `CertificateRequest` even when the user never set
+ * `requestCert`. Node's `SecureContext::AddCACert` also leaves verify_mode
+ * alone.
+ *
+ * The trust store is still upgraded on the first call: a SecureContext built
+ * without `ca` has the empty default-paths store from `SSL_CTX_new`, so just
+ * appending would make a client trust ONLY the added CA, not the public web.
+ * We swap in `us_get_default_ca_store()` (OS roots + baked-in Bun roots), add
+ * the user CA on top, and flip `us_ctx_user_ca_idx` so the client branch of
+ * `us_internal_ssl_attach` knows to skip its per-socket trust-store override
+ * (the CTX's own store now carries the user CAs + default roots). */
 int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
   if (ctx == NULL || pem == NULL || pem_len == 0) return 0;
   /* BoringSSL's BIO_new_mem_buf takes `ossl_ssize_t` (ptrdiff_t). Cap at
@@ -398,17 +410,20 @@ int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
 
   ERR_clear_error();
 
-  /* First call after a VERIFY_NONE build: upgrade to default_ca_store so the
-   * added CA joins (not replaces) the OS/baked-in trust anchors, and flip
-   * verify_mode so the client attach-time override preserves this store. */
-  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
-    X509_STORE *new_store = us_get_default_ca_store();
-    if (new_store != NULL) {
-      SSL_CTX_set_cert_store(ctx, new_store);
-      store = new_store;
-    }
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, us_verify_callback);
+  us_ex_idx_ensure();
+  void *marked = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_idx);
+  X509_STORE *store;
+  if (marked) {
+    /* Second+ addCACert on this CTX: reuse the store we installed last time. */
+    store = SSL_CTX_get_cert_store(ctx);
+  } else {
+    /* First call: install the default_ca_store so the added CA joins (not
+     * replaces) OS/baked-in trust anchors. The mark below is what tells the
+     * client attach path to keep this store instead of overriding it with
+     * the shared default roots. */
+    store = us_get_default_ca_store();
+    if (store == NULL) return 0;
+    SSL_CTX_set_cert_store(ctx, store);
   }
   if (store == NULL) return 0;
 
@@ -425,6 +440,13 @@ int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
     if (X509_STORE_add_cert(store, x) == 1) {
       added++;
     }
+    /* Mirror Node's `SecureContext::AddCACert` and Bun's own construction-
+     * time `add_ca_cert_to_ctx_store`: also surface the DN in the
+     * CertificateRequest's `certificate_authorities` list. Only meaningful
+     * for a server with `requestCert: true`; advisory for others. Returns 0
+     * on OOM (rare) — swallow like the rest. `add_client_CA` dups the subject
+     * name, so the `X509_free(x)` below still works. */
+    (void)SSL_CTX_add_client_CA(ctx, x);
     /* Node behavior: swallow per-cert add failures so stray errors
      * (X509_R_CERT_ALREADY_IN_HASH_TABLE for duplicates, anything else
      * per-cert) don't blow up unrelated BoringSSL calls later. */
@@ -434,7 +456,19 @@ int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
   /* PEM_read_bio_X509 sets PEM_R_NO_START_LINE on EOF — normal termination. */
   ERR_clear_error();
   BIO_free(in);
+
+  /* Mark the CTX so the client attach path preserves our trust store. */
+  if (!marked) {
+    SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
+  }
   return added;
+}
+
+/* Exposed so `us_internal_ssl_attach`'s client branch can skip the
+ * trust-store override when user CAs have been appended via addCACert. */
+static inline int us_ctx_has_user_ca(SSL_CTX *ctx) {
+  us_ex_idx_ensure();
+  return SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_idx) != NULL;
 }
 
 static int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
@@ -734,8 +768,14 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * never aborts here — JS reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      X509_STORE *roots = us_get_shared_default_ca_store();
-      if (roots) SSL_set0_verify_cert_store(ssl, roots);
+      /* ...unless `SecureContext.addCACert` already installed the default
+       * roots (and appended the user CAs) on the CTX itself. Overriding would
+       * throw away those added CAs. When the marker is set, the CTX's own
+       * store already has OS/baked-in roots + user CAs. */
+      if (!us_ctx_has_user_ca(ctx)) {
+        X509_STORE *roots = us_get_shared_default_ca_store();
+        if (roots) SSL_set0_verify_cert_store(ssl, roots);
+      }
     }
   } else {
     SSL_set_accept_state(ssl);

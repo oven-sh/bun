@@ -42,6 +42,7 @@ const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
 const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
 
 export const sslCtxLiveCount = $newZigFunction("SecureContext.zig", "jsLiveCount", 0);
+export const secureContextVerifyMode = $newZigFunction("SecureContext.zig", "jsVerifyMode", 1);
 
 export const escapeRegExp = $newZigFunction("escapeRegExp.zig", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newZigFunction(

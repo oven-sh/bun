@@ -8,6 +8,7 @@ import {
   isDebug,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -3491,10 +3492,10 @@ describe("fs/promises", () => {
       expect(entry.name).toBe("a.txt");
     });
 
-    // POSIX filesystems allow arbitrary bytes in paths — not just valid UTF-8.
-    // When the caller passes those bytes as a Buffer, `parentPath` must be
-    // emitted as a Buffer with the original bytes, regardless of encoding.
-    it.skipIf(isWindows)("Buffer path with raw non-UTF-8 bytes → parentPath preserves bytes 1:1", () => {
+    // Only Linux/BSD filesystems accept arbitrary bytes in paths. Windows
+    // paths are UTF-16 and macOS APFS/HFS+ require valid UTF-8 (the kernel
+    // rejects invalid sequences with EILSEQ), so skip on both.
+    it.skipIf(isWindows || isMacOS)("Buffer path with raw non-UTF-8 bytes → parentPath preserves bytes 1:1", () => {
       using parent = tempDir("readdir-raw-", {});
       // Create a subdirectory whose name contains a raw 0xFF byte (not valid UTF-8).
       const rawSub = Buffer.concat([Buffer.from(String(parent) + "/"), Buffer.from([0xff, 0x41, 0x42])]);

@@ -1,5 +1,6 @@
 use crate::mal_prelude::*;
 use core::mem::offset_of;
+use core::sync::atomic::AtomicUsize;
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
@@ -253,12 +254,12 @@ pub fn compute_chunks(
 
                 if !css_chunk_entry.found_existing {
                     let order_len = order.len() as usize;
-                    let mut css_files_with_parts_in_chunk: ArrayHashMap<IndexInt, usize> =
+                    let mut css_files_with_parts_in_chunk: ArrayHashMap<IndexInt, AtomicUsize> =
                         ArrayHashMap::new();
                     for entry in order.slice() {
                         if let chunk::CssImportOrderKind::SourceIndex(si) = &entry.kind {
                             css_files_with_parts_in_chunk
-                                .put(si.get(), 0)
+                                .put(si.get(), AtomicUsize::new(0))
                                 .expect("oom");
                         }
                     }
@@ -351,7 +352,7 @@ pub fn compute_chunks(
                             .get_or_put(source_index.get() as u32)
                             .expect("unreachable");
                         if !entry.found_existing {
-                            *entry.value_ptr = 0; // Initialize byte count to 0
+                            *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
                         }
                     } else {
                         // PORT NOTE: Zig used a local `Handler` struct passed to entry_bits.forEach;
@@ -374,7 +375,7 @@ pub fn compute_chunks(
                                 .get_or_put(c.source_id as u32)
                                 .expect("unreachable");
                             if !entry.found_existing {
-                                *entry.value_ptr = 0; // Initialize byte count to 0
+                                *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
                             }
                         }
                         let mut handler = Handler {

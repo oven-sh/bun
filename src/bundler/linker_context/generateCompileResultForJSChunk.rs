@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use core::mem::offset_of;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 
 use bun_threading::thread_pool as ThreadPoolLib;
 use bun_js_printer::{self as js_printer, PrintResult};
@@ -158,15 +158,15 @@ fn generate_compile_result_for_js_chunk_impl(
         _ => 0,
     };
     if code_len > 0 && !part_range.source_index.is_runtime() {
-        if let Some(bytes_ptr) = chunk
+        // CONCURRENCY: the map's key set is frozen before parallel codegen; we
+        // only need a shared `&AtomicUsize` to RMW the counter. Using `get`
+        // (not `get_ptr_mut`) avoids materializing an aliased `&mut` to a slot
+        // that other worker threads may be updating for the same source.
+        if let Some(bytes) = chunk
             .files_with_parts_in_chunk
-            .get_ptr_mut(&part_range.source_index.get())
+            .get(&part_range.source_index.get())
         {
-            // SAFETY: multiple threads update this counter; treat &mut usize as &AtomicUsize
-            // (same layout, monotonic add only).
-            let atomic: &AtomicUsize =
-                unsafe { &*std::ptr::from_mut::<usize>(bytes_ptr).cast_const().cast::<AtomicUsize>() };
-            let _ = atomic.fetch_add(code_len, Ordering::Relaxed);
+            let _ = bytes.fetch_add(code_len, Ordering::Relaxed);
         }
     }
 

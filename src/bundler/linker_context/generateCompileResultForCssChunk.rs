@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use core::mem::offset_of;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 
 use bun_collections::VecExt;
 use bun_ast::ImportRecord;
@@ -218,12 +218,11 @@ fn generate_compile_result_for_css_chunk_impl(
             // Update bytesInOutput for this source in the chunk (for metafile)
             // Use atomic operation since multiple threads may update the same counter
             if !output.is_empty() {
-                if let Some(bytes_ptr) = chunk.files_with_parts_in_chunk.get_ptr_mut(&idx.get()) {
-                    // SAFETY: multiple threads update this counter; treat *usize as AtomicUsize
-                    // (Zig: @atomicRmw(usize, bytes_ptr, .Add, output.len, .monotonic))
-                    let atomic: &AtomicUsize =
-                        unsafe { &*std::ptr::from_mut::<usize>(bytes_ptr).cast_const().cast::<AtomicUsize>() };
-                    let _ = atomic.fetch_add(output.len(), Ordering::Relaxed);
+                // CONCURRENCY: key set is frozen before parallel codegen; take a
+                // shared `&AtomicUsize` so concurrent workers updating the same
+                // source counter never alias a `&mut` (Zig: @atomicRmw .Add .monotonic).
+                if let Some(bytes) = chunk.files_with_parts_in_chunk.get(&idx.get()) {
+                    let _ = bytes.fetch_add(output.len(), Ordering::Relaxed);
                 }
             }
             CompileResult::Css {

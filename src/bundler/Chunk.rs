@@ -47,8 +47,12 @@ pub struct Chunk {
     pub unique_key: &'static [u8],
 
     /// Maps source index to bytes contributed to this chunk's output (for metafile).
-    /// The value is updated during chunk generation to track bytesInOutput.
-    pub files_with_parts_in_chunk: ArrayHashMap<IndexInt, usize>,
+    /// The value is updated during parallel chunk generation to track bytesInOutput.
+    /// CONCURRENCY: the key set is frozen before codegen starts; worker threads
+    /// only `fetch_add` the per-source counters (see
+    /// `generate_compile_result_for_{js,css}_chunk`), so the value type is
+    /// `AtomicUsize` rather than `usize` to avoid materializing aliased `&mut`.
+    pub files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
 
     /// We must not keep pointers to this type until all chunks have been allocated.
     // TODO(port): was `= undefined` in Zig (set before use)

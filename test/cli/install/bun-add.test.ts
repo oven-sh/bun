@@ -2342,7 +2342,7 @@ it("should not add duplicate package.json entries when installing the same tarba
 
   // First install — key should be the package name from the tarball ("baz").
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", tarball_url],
       cwd: package_dir,
       stdout: "pipe",
@@ -2350,7 +2350,10 @@ it("should not add duplicate package.json entries when installing the same tarba
       stderr: "pipe",
       env,
     });
-    expect(await stderr.text()).toContain("Saved lockfile");
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("installed baz@");
     expect(await exited).toBe(0);
   }
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
@@ -2363,7 +2366,7 @@ it("should not add duplicate package.json entries when installing the same tarba
 
   // Second install with the same URL — must not duplicate the "baz" key.
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", tarball_url],
       cwd: package_dir,
       stdout: "pipe",
@@ -2371,9 +2374,9 @@ it("should not add duplicate package.json entries when installing the same tarba
       stderr: "pipe",
       env,
     });
-    // No error on exit.
-    const err = await stderr.text();
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
     expect(err).not.toContain("error:");
+    expect(out).toContain("installed baz@");
     expect(await exited).toBe(0);
   }
 
@@ -2412,7 +2415,7 @@ it("should honor an explicit alias for a tarball URL already present under a dif
   );
 
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", tarball_url],
       cwd: package_dir,
       stdout: "pipe",
@@ -2420,12 +2423,15 @@ it("should honor an explicit alias for a tarball URL already present under a dif
       stderr: "pipe",
       env,
     });
-    expect(await stderr.text()).toContain("Saved lockfile");
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("installed baz@");
     expect(await exited).toBe(0);
   }
 
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", `myalias@${tarball_url}`],
       cwd: package_dir,
       stdout: "pipe",
@@ -2433,8 +2439,9 @@ it("should honor an explicit alias for a tarball URL already present under a dif
       stderr: "pipe",
       env,
     });
-    const err = await stderr.text();
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
     expect(err).not.toContain("error:");
+    expect(out).toContain("installed myalias@");
     expect(await exited).toBe(0);
   }
 

@@ -437,10 +437,9 @@ blockExoticSubdeps = true
       "bunfig.toml": `[install]
 blockExoticSubdeps = true
 `,
-      // `" file:../inner"` — one leading space, otherwise a folder spec.
-      // We can't use JSON.stringify directly on the outer package.json
-      // value because JSON preserves whitespace inside strings natively,
-      // which is exactly what a malicious publisher would exploit.
+      // One leading space before the `file:` prefix — JSON.stringify
+      // preserves whitespace inside string values verbatim, which is
+      // exactly the attacker vector this test exercises.
       "parent-pkg/package.json": JSON.stringify({
         name: "parent-pkg",
         version: "1.0.0",

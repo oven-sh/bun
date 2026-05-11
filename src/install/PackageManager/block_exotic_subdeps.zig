@@ -11,21 +11,22 @@
 //! restricted.
 //!
 //! The check is layered:
-//!   1. The child package's **Resolution.Tag** decides the easy cases. Tags
+//!   1. The child package's **Resolution.Tag** decides most cases. Tags
 //!      like `.git` / `.github` / `.local_tarball` / `.remote_tarball` /
-//!      `.symlink` / `.single_file_module` are never reachable via
-//!      `linkWorkspacePackages` redirection or any other implicit path —
-//!      they can only be there because some nested `package.json` literally
-//!      named a non-registry source. Always exotic.
-//!   2. `.workspace` and `.folder` are ambiguous because
-//!      `linkWorkspacePackages` (default true) rewrites a transitive
-//!      registry semver like `^2.0.0` to a local workspace package when the
-//!      names match. For these, we fall back to re-inferring the tag from
-//!      the **literal specifier** the parent's `package.json` actually
-//!      wrote (after mirroring the resolver's `trimLeft(" \t\n\r")` — see
-//!      `Dependency.parse` in dependency.zig; without trimming, an
-//!      attacker-controlled leading-whitespace byte like
-//!      `" git+https://evil/repo"` could smuggle an exotic spec past the
+//!      `.symlink` / `.single_file_module` / `.folder` are never reachable
+//!      via `linkWorkspacePackages` redirection or any other implicit path
+//!      (`Package.zig`'s `parseDependency` only rewrites `.npm` /
+//!      `.dist_tag` to `.workspace`, never to `.folder` or the
+//!      URL-family tags) — they're always the parent's explicit choice and
+//!      are always exotic.
+//!   2. Only `.workspace` is ambiguous: `linkWorkspacePackages` (default
+//!      true) can rewrite a transitive registry semver like `^2.0.0` to a
+//!      local workspace package when the names match. For that one case we
+//!      fall back to re-inferring the tag from the **literal specifier**
+//!      the parent's `package.json` actually wrote (after mirroring the
+//!      resolver's `trimLeft(" \t\n\r")` — see `Dependency.parse` in
+//!      dependency.zig; without trimming, an attacker-controlled
+//!      leading-whitespace byte could smuggle an exotic spec past the
 //!      check because `infer()`'s switch has no case for whitespace).
 //!
 //! When the root user has an `overrides`/`resolutions` entry for a given

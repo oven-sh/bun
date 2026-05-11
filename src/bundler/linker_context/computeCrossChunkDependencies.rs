@@ -2,9 +2,8 @@ use crate::mal_prelude::*;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_alloc::ArenaVecExt as _;
 use bun_js_parser as js_ast;
-use bun_js_parser::{Part, Symbol};
-use bun_logger as Logger;
-use bun_options_types::ImportRecord;
+use bun_ast::{Part, Symbol};
+use bun_ast::ImportRecord;
 use crate::bun_renamer as renamer;
 
 use crate::linker_context_mod::{debug, ChunkMeta, ChunkMetaMap};
@@ -126,7 +125,7 @@ pub struct CrossChunkDependencies<'a> {
     // touches disjoint per-chunk symbol slots via `Map::assign_chunk_index(&self)`
     // (raw-ptr per-slot write through Vec's `NonNull`). Holding `&mut Map`
     // here would assert whole-map exclusivity per thread = aliasing UB.
-    symbols: *const js_ast::ast::symbol::Map,
+    symbols: *const bun_ast::symbol::Map,
 }
 
 // SAFETY: `CrossChunkDependencies` is shared across worker threads via
@@ -156,7 +155,7 @@ impl<'a> CrossChunkDependencies<'a> {
         let ctx: &LinkerContext<'_> = unsafe { &*deps.ctx };
         // Shared `&Map` across threads — per-slot writes go through raw `*mut Symbol`
         // (see PORT NOTE on the `symbols` field); no `&mut Map` is materialized.
-        let symbols: &js_ast::ast::symbol::Map = unsafe { &*deps.symbols };
+        let symbols: &bun_ast::symbol::Map = unsafe { &*deps.symbols };
         let _chunks: &[Chunk] = unsafe { &*deps.chunks };
         let chunk_meta = &mut deps.chunk_meta[chunk_index];
         // PORT NOTE: reshaped for borrowck — Zig held `&chunk_meta` and `&chunk_meta.imports`
@@ -226,12 +225,12 @@ impl<'a> CrossChunkDependencies<'a> {
                         let mut symbol = symbols.get_const(ref_to_use).unwrap();
 
                         // Ignore unbound symbols
-                        if symbol.kind == js_ast::ast::symbol::Kind::Unbound {
+                        if symbol.kind == bun_ast::symbol::Kind::Unbound {
                             continue 'refs;
                         }
 
                         // Ignore symbols that are going to be replaced by undefined
-                        if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
+                        if symbol.import_item_status == bun_ast::ImportItemStatus::Missing {
                             continue 'refs;
                         }
 
@@ -446,17 +445,17 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             dynamic_chunk_indices.sort_unstable();
 
             let chunk = &mut chunks[chunk_index];
-            let new_imports = chunk
+            // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
+            // invariant), so `writable_slice` would form `&mut [T]` over
+            // invalid bit patterns. Push into reserved capacity instead.
+            chunk
                 .cross_chunk_imports
-                .writable_slice(dynamic_chunk_indices.len());
-            debug_assert_eq!(dynamic_chunk_indices.len(), new_imports.len());
-            for (&dynamic_chunk_index, item) in
-                dynamic_chunk_indices.iter().zip(new_imports.iter_mut())
-            {
-                *item = chunk::ChunkImport {
-                    import_kind: bun_options_types::ImportKind::Dynamic,
+                .reserve(dynamic_chunk_indices.len());
+            for &dynamic_chunk_index in dynamic_chunk_indices.iter() {
+                chunk.cross_chunk_imports.push(chunk::ChunkImport {
+                    import_kind: bun_ast::ImportKind::Dynamic,
                     chunk_index: dynamic_chunk_index,
-                };
+                });
             }
         }
     }
@@ -486,7 +485,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 OutputFormat::Esm => {
                     c.sorted_cross_chunk_export_items(&chunk_meta.exports, &mut stable_ref_list);
                     let mut clause_items =
-                        Vec::<js_ast::ClauseItem>::init_capacity(stable_ref_list.len());
+                        Vec::<bun_ast::ClauseItem>::init_capacity(stable_ref_list.len());
                     repr.exports_to_other_chunks
                         .reserve(stable_ref_list.len());
                     // PERF(port): was ensureUnusedCapacity — profile in Phase B
@@ -499,20 +498,20 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         // `cross_chunk_suffix_stmts`) and read later in postProcessJSChunk,
                         // so it must live in the linker arena — `r`'s internal arena is
                         // reset per chunk and dropped at the end of this block.
-                        let alias: js_ast::StoreStr = if c.options.minify_identifiers {
-                            js_ast::StoreStr::new(c.arena().alloc_slice_copy(&r.next_minified_name().expect("OOM")))
+                        let alias: bun_ast::StoreStr = if c.options.minify_identifiers {
+                            bun_ast::StoreStr::new(c.arena().alloc_slice_copy(&r.next_minified_name().expect("OOM")))
                         } else {
-                            js_ast::StoreStr::new(c.arena().alloc_slice_copy(r.next_renamed_name(original_name)))
+                            bun_ast::StoreStr::new(c.arena().alloc_slice_copy(r.next_renamed_name(original_name)))
                         };
 
-                        clause_items.push(js_ast::ClauseItem {
-                            name: js_ast::LocRef {
+                        clause_items.push(bun_ast::ClauseItem {
+                            name: bun_ast::LocRef {
                                 ref_: Some(ref_),
-                                loc: Logger::Loc::EMPTY,
+                                loc: bun_ast::Loc::EMPTY,
                             },
                             alias,
-                            alias_loc: Logger::Loc::EMPTY,
-                            original_name: js_ast::StoreStr::new(b"" as &[u8]),
+                            alias_loc: bun_ast::Loc::EMPTY,
+                            original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                         });
 
                         // `alias` points into the link-pass arena (see PORT NOTE above),
@@ -523,21 +522,21 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     }
 
                     if clause_items.len() > 0 {
-                        let mut stmts = Vec::<js_ast::Stmt>::init_capacity(1);
+                        let mut stmts = Vec::<bun_ast::Stmt>::init_capacity(1);
                         // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
                         // Vec buffer (arena-lifetime) into a raw fat ptr.
                         let items_ptr =
-                            js_ast::StoreSlice::new_mut(clause_items.slice_mut());
+                            bun_ast::StoreSlice::new_mut(clause_items.slice_mut());
                         core::mem::forget(clause_items);
                         // Zig: `c.allocator().create(S.ExportClause)` + struct literal —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
-                        let export_clause = c.arena().alloc(js_ast::S::ExportClause {
+                        let export_clause = c.arena().alloc(bun_ast::S::ExportClause {
                             items: items_ptr,
                             is_single_line: true,
                         });
-                        stmts.push(js_ast::Stmt::init(
-                            js_ast::ast::StoreRef::from_bump(export_clause),
-                            Logger::Loc::EMPTY,
+                        stmts.push(bun_ast::Stmt::init(
+                            bun_ast::StoreRef::from_bump(export_clause),
+                            bun_ast::Loc::EMPTY,
                         ));
                         // PERF(port): was appendAssumeCapacity — profile in Phase B
                         repr.cross_chunk_suffix_stmts = stmts;
@@ -574,7 +573,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             let mut cross_chunk_imports = core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
             // PORT NOTE: reshaped for borrowck — Zig copies the Vec by value, mutates,
             // then writes back; we `take` to express the same move-out/move-in.
-            let mut cross_chunk_prefix_stmts = Vec::<js_ast::Stmt>::default();
+            let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
 
             CrossChunkImport::sorted_cross_chunk_imports(
                 &mut list,
@@ -589,40 +588,40 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let import_record_index =
                             u32::try_from(cross_chunk_imports.len() as usize).expect("int cast");
 
-                        let mut clauses = bun_alloc::ArenaVec::<js_ast::ClauseItem>::with_capacity_in(
+                        let mut clauses = bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
                             cross_chunk_import.sorted_import_items.len() as usize,
                             c.arena(),
                         );
                         for item in cross_chunk_import.sorted_import_items.slice() {
-                            clauses.push(js_ast::ClauseItem {
-                                name: js_ast::LocRef {
+                            clauses.push(bun_ast::ClauseItem {
+                                name: bun_ast::LocRef {
                                     ref_: Some(item.r#ref),
-                                    loc: Logger::Loc::EMPTY,
+                                    loc: bun_ast::Loc::EMPTY,
                                 },
-                                alias: js_ast::StoreStr::new(item.export_alias.as_ref()),
-                                alias_loc: Logger::Loc::EMPTY,
-                                original_name: js_ast::StoreStr::new(b"" as &[u8]),
+                                alias: bun_ast::StoreStr::new(item.export_alias.as_ref()),
+                                alias_loc: bun_ast::Loc::EMPTY,
+                                original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                             });
                             // PERF(port): was appendAssumeCapacity — profile in Phase B
                         }
 
                         cross_chunk_imports.push(chunk::ChunkImport {
-                            import_kind: bun_options_types::ImportKind::Stmt,
+                            import_kind: bun_ast::ImportKind::Stmt,
                             chunk_index: cross_chunk_import.chunk_index,
                         });
                         let items_ptr =
-                            js_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
+                            bun_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
                         // Zig: `c.allocator().create(S.Import)` + struct literal —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
-                        let import = c.arena().alloc(js_ast::S::Import {
+                        let import = c.arena().alloc(bun_ast::S::Import {
                             items: items_ptr,
                             import_record_index,
                             namespace_ref: Ref::NONE,
                             ..Default::default()
                         });
-                        cross_chunk_prefix_stmts.push(js_ast::Stmt::init(
-                            js_ast::ast::StoreRef::from_bump(import),
-                            Logger::Loc::EMPTY,
+                        cross_chunk_prefix_stmts.push(bun_ast::Stmt::init(
+                            bun_ast::StoreRef::from_bump(import),
+                            bun_ast::Loc::EMPTY,
                         ));
                     }
                     _ => {}

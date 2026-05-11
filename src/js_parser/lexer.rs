@@ -5,15 +5,14 @@
 use core::fmt;
 
 use bun_core::{Environment, feature_flags as FeatureFlags};
-use bun_logger as logger;
-use bun_logger::{Loc, Log, Range, Source};
+use bun_ast::{Loc, Log, Range, Source};
 use bun_string::strings;
 use bun_string::strings::CodepointIterator;
-use crate as js_ast;
+use bun_ast as js_ast;
 use identifier as js_identifier;
-use crate::lexer_tables as tables;
+use bun_ast::lexer_tables as tables;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
-use crate::{Indentation, IndentationCharacter};
+use bun_ast::{Indentation, IndentationCharacter};
 // TODO(port): arena threading — js_parser is an AST crate; many `arena.*` calls below
 // should use `&'bump bumpalo::Bump`. For Phase A we keep a `&dyn Allocator`-ish slot and
 // route owned buffers through `Vec`/`Box`.
@@ -411,7 +410,7 @@ lexer_impl_header! {
 
     #[inline]
     pub fn loc(&self) -> Loc {
-        logger::usize2loc(self.start)
+        bun_ast::usize2loc(self.start)
     }
 
     #[cold]
@@ -441,7 +440,7 @@ lexer_impl_header! {
         if self.is_log_disabled {
             return;
         }
-        let __loc = logger::usize2loc(loc);
+        let __loc = bun_ast::usize2loc(loc);
         if __loc.eql(self.prev_error_loc) {
             return;
         }
@@ -480,7 +479,7 @@ lexer_impl_header! {
         &mut self,
         r: Range,
         args: fmt::Arguments<'_>,
-        notes: &[logger::Data],
+        notes: &[bun_ast::Data],
     ) -> Result<(), Error> {
         if self.is_log_disabled {
             return Ok(());
@@ -490,7 +489,7 @@ lexer_impl_header! {
         }
 
         // TODO(port): Zig dupes `notes` with `self.log.msgs.arena`.
-        let notes_owned: Box<[logger::Data]> = notes.to_vec().into_boxed_slice();
+        let notes_owned: Box<[bun_ast::Data]> = notes.to_vec().into_boxed_slice();
         self.log()
             .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args);
         self.prev_error_loc = r.loc;
@@ -1444,7 +1443,7 @@ lexer_impl_header! {
         if !is_identifier(identifier) {
             self.add_range_error(
                 Range {
-                    loc: logger::usize2loc(self.start),
+                    loc: bun_ast::usize2loc(self.start),
                     len: i32::try_from(self.end - self.start).expect("int cast"),
                 },
                 format_args!(
@@ -2417,16 +2416,16 @@ lexer_impl_header! {
 
     pub fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
         if self.prev_token_was_await_keyword {
-            let mut notes: [logger::Data; 1] = [logger::Data::default()];
+            let mut notes: [bun_ast::Data; 1] = [bun_ast::Data::default()];
             if !self.fn_or_arrow_start_loc.is_empty() {
-                notes[0] = logger::range_data(
+                notes[0] = bun_ast::range_data(
                     Some(self.source),
                     range_of_identifier(self.source, self.fn_or_arrow_start_loc),
                     b"Consider adding the \"async\" keyword here",
                 );
             }
 
-            let notes_ptr: &[logger::Data] =
+            let notes_ptr: &[bun_ast::Data] =
                 &notes[0..(!self.fn_or_arrow_start_loc.is_empty()) as usize];
 
             self.add_range_error_with_notes(
@@ -2696,7 +2695,7 @@ lexer_impl_header! {
 
     pub fn range(&self) -> Range {
         Range {
-            loc: logger::usize2loc(self.start),
+            loc: bun_ast::usize2loc(self.start),
             // TODO(port): std.math.lossyCast — saturate on overflow
             len: (self.end - self.start) as i32,
         }
@@ -4101,60 +4100,6 @@ fn float64(num: i32) -> f64 {
     num as f64
 }
 
-pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
-    // Zig `isLatin1Identifier(comptime Buffer, name)` is generic over `[]const u8`
-    // and `[]const u16`; the u16 instantiation is [`is_latin1_identifier_u16`].
-    let name = name.as_ref();
-    if name.is_empty() {
-        return false;
-    }
-
-    match name[0] {
-        b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
-        _ => return false,
-    }
-
-    if name.len() > 1 {
-        for &c in &name[1..] {
-            match c {
-                b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
-                _ => return false,
-            }
-        }
-    }
-
-    true
-}
-
-/// `JSLexer.isLatin1Identifier(comptime []const u16, name)` — UTF-16 overload
-/// of [`is_latin1_identifier`]. Walks code units exactly as the Zig generic
-/// does (no narrowing/alloc): any unit `> 0xFF` fails the predicate, otherwise
-/// the byte rules apply.
-pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-
-    match name[0] {
-        c @ 0..=0xFF => match c as u8 {
-            b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
-            _ => return false,
-        },
-        _ => return false,
-    }
-
-    for &c in &name[1..] {
-        match c {
-            c @ 0..=0xFF => match c as u8 {
-                b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
-                _ => return false,
-            },
-            _ => return false,
-        }
-    }
-
-    true
-}
 
 fn latin1_identifier_continue_length(name: &[u8]) -> usize {
     // We don't use SIMD for this because the input will be very short.

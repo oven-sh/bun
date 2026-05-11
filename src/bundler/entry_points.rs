@@ -3,7 +3,6 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::fmt as bun_fmt;
-use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES};
 use bun_string::strings;
 use bun_wyhash::{self, Wyhash11};
@@ -11,19 +10,19 @@ use bun_wyhash::{self, Wyhash11};
 use crate::Transpiler;
 use bun_js_parser as js_ast;
 
-// PORT NOTE: `Path`/`PathName` come from the lower-tier `bun_logger::fs` shim
-// (lifetime-erased `'static` slices, Phase-A) so `logger::Source` field types
+// PORT NOTE: `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
+// (lifetime-erased `'static` slices, Phase-A) so `bun_ast::Source` field types
 // line up; `FileSystem` is the real `bun_resolver::fs` singleton now that
 // `bun_resolver` is in this crate's dep set.
 pub mod Fs {
-    pub use bun_logger::fs::{Path, PathName};
+    pub use bun_paths::fs::{Path, PathName};
     pub use bun_resolver::fs::FileSystem;
 }
 
 pub struct FallbackEntryPoint {
     pub code_buffer: [u8; 8192],
     pub path_buffer: PathBuffer,
-    pub source: logger::Source,
+    pub source: bun_ast::Source,
     // Only ever assigned the literal "" (no writer anywhere in the tree); never freed.
     pub built_code: &'static [u8],
 }
@@ -33,7 +32,7 @@ impl Default for FallbackEntryPoint {
         Self {
             code_buffer: [0u8; 8192],
             path_buffer: PathBuffer::uninit(),
-            source: logger::Source::default(),
+            source: bun_ast::Source::default(),
             built_code: b"",
         }
     }
@@ -85,12 +84,12 @@ impl FallbackEntryPoint {
                 if write!(&mut cursor, $fmt, BStr::new(input_path)).is_ok() {
                     let n = cursor.position() as usize;
                     entry.source =
-                        logger::Source::init_path_string(input_path, &entry.code_buffer[..n]);
+                        bun_ast::Source::init_path_string(input_path, &entry.code_buffer[..n]);
                 } else {
                     let mut v: Vec<u8> = Vec::new();
                     write!(&mut v, $fmt, BStr::new(input_path))
                         .map_err(|_| bun_core::err!("FormatError"))?;
-                    entry.source = logger::Source::init_path_string_owned(input_path, v);
+                    entry.source = bun_ast::Source::init_path_string_owned(input_path, v);
                 }
             }};
         }
@@ -116,7 +115,7 @@ impl FallbackEntryPoint {
 pub struct ClientEntryPoint {
     pub code_buffer: [u8; 8192],
     pub path_buffer: PathBuffer,
-    pub source: logger::Source,
+    pub source: bun_ast::Source,
 }
 
 impl Default for ClientEntryPoint {
@@ -124,7 +123,7 @@ impl Default for ClientEntryPoint {
         Self {
             code_buffer: [0u8; 8192],
             path_buffer: PathBuffer::uninit(),
-            source: logger::Source::default(),
+            source: bun_ast::Source::default(),
         }
     }
 }
@@ -136,7 +135,7 @@ impl ClientEntryPoint {
 
     
     // PORT NOTE: takes the lifetime-generic `bun_paths::fs::PathName<'_>` (not the
-    // `'static`-field `bun_logger::fs::PathName`) so callers with a borrowed path
+    // `'static`-field `bun_paths::fs::PathName<'static>`) so callers with a borrowed path
     // (e.g. `bun_runtime::filesystem_router::get_script_src_string`) needn't forge
     // `'static`. The body only copies `dir`/`base`/`ext` into `outbuffer`.
     pub fn generate_entry_point_path<'a>(
@@ -246,7 +245,7 @@ impl ClientEntryPoint {
             code = &entry.code_buffer[..n];
         }
 
-        // `bun_logger::fs::PathName` → `bun_paths::fs::PathName<'static>`: field-identical
+        // `bun_paths::fs::PathName<'static>` → `bun_paths::fs::PathName<'static>`: field-identical
         // mirrors (see `#[repr(C)]` note on both); spell out the copy instead of a cast.
         let original_path_borrowed = bun_paths::fs::PathName {
             dir: original_path.dir,
@@ -254,7 +253,7 @@ impl ClientEntryPoint {
             ext: original_path.ext,
             filename: original_path.filename,
         };
-        entry.source = logger::Source::init_path_string(
+        entry.source = bun_ast::Source::init_path_string(
             Self::generate_entry_point_path(&mut entry.path_buffer.0, &original_path_borrowed),
             code,
         );
@@ -370,7 +369,7 @@ impl ServerEntryPoint {
 pub struct MacroEntryPoint {
     pub code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
     pub output_code_buffer: [u8; MAX_PATH_BYTES * 8 + 500],
-    pub source: logger::Source,
+    pub source: bun_ast::Source,
 }
 
 impl Default for MacroEntryPoint {
@@ -378,7 +377,7 @@ impl Default for MacroEntryPoint {
         Self {
             code_buffer: [0u8; MAX_PATH_BYTES * 2 + 500],
             output_code_buffer: [0u8; MAX_PATH_BYTES * 8 + 500],
-            source: logger::Source::default(),
+            source: bun_ast::Source::default(),
         }
     }
 }
@@ -417,7 +416,7 @@ impl MacroEntryPoint {
     }
 
     
-    // TODO(b2-blocked): bun_js_parser::Macro + bun_resolver::fs::PathName —
+    // TODO(b2-blocked): bun_ast::Macro + bun_resolver::fs::PathName —
     // see `generate_id`.
     pub fn generate(
         entry: &mut MacroEntryPoint,
@@ -501,7 +500,7 @@ impl MacroEntryPoint {
         // raw-ptr slice or restructure so Source owns its bytes.
         let macro_label: &[u8] = &entry.code_buffer[..label_len];
         let code: &[u8] = &entry.code_buffer[label_len..label_len + code_len];
-        entry.source = logger::Source::init_path_string(macro_label, code);
+        entry.source = bun_ast::Source::init_path_string(macro_label, code);
         // `Path::init` already set `text = macro_label`; only override namespace.
         entry.source.path.namespace = js_ast::Macro::NAMESPACE;
         Ok(())

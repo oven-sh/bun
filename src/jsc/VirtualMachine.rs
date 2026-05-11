@@ -18,7 +18,6 @@ use core::ptr::NonNull;
 
 use bun_io as Async;
 use bun_bundler::Transpiler;
-use bun_logger as logger;
 use bun_uws as uws;
 
 use crate::counters::Counters;
@@ -113,13 +112,13 @@ pub struct InitOptions {
     /// → `Transpiler::init(.., configureTransformOptionsForBunVM(args), ..)`.
     pub transform_options: bun_options_types::schema::api::TransformOptions,
     /// Spec VirtualMachine.zig:1215 `Options.debugger` —
-    /// `bun.cli.Command.Debugger` (now `bun_options_types::Context::Debugger`).
+    /// `bun.cli.Command.Debugger` (now `bun_options_types::context::Debugger`).
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
-    pub debugger: bun_options_types::Context::Debugger,
+    pub debugger: bun_options_types::context::Debugger,
     /// Spec VirtualMachine.zig:1208 `Options.log`. When `Some`, [`init`] adopts
     /// the caller's log instead of boxing a fresh one (CLI-path macros pass the
     /// transpiler's log so macro load errors land in the bundle output).
-    pub log: Option<NonNull<logger::Log>>,
+    pub log: Option<NonNull<bun_ast::Log>>,
     /// Spec VirtualMachine.zig:1210 `Options.env_loader`. Forwarded to
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
@@ -176,9 +175,9 @@ pub struct VirtualMachine {
     // TODO(b2-cycle): `bun_watcher` is `ImportWatcher` from hot_reloader.rs (gated sibling).
     pub bun_watcher: *mut c_void,
     pub console: *mut crate::console_object::ConsoleObject,
-    // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a mut logger::Log`);
+    // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a mut bun_ast::Log`);
     // raw NonNull used because VM is self-referential and cannot carry `<'a>`.
-    pub log: Option<NonNull<logger::Log>>,
+    pub log: Option<NonNull<bun_ast::Log>>,
     /// Path of the entry module. BACKREF — borrows process-argv, the resolver's
     /// process-lifetime `dirname_store`/`filename_store`, the standalone module
     /// graph, or (for workers) the owning `WebWorker.unresolved_specifier`; in
@@ -375,7 +374,7 @@ unsafe extern "C" {
 }
 
 /// `hot_reload` is stored as `u8` (TODO(b2-cycle): widen to
-/// `bun_options_types::Context::HotReload`). Mirror the Zig enum ordinals so
+/// `bun_options_types::context::HotReload`). Mirror the Zig enum ordinals so
 /// the un-gated accessors below can compare without naming the type.
 pub const HOT_RELOAD_NONE: u8 = 0;
 pub const HOT_RELOAD_HOT: u8 = 1;
@@ -812,19 +811,19 @@ impl VirtualMachine {
         n
     }
 
-    /// Safe shared accessor for the per-VM `logger::Log`. The log is
+    /// Safe shared accessor for the per-VM `bun_ast::Log`. The log is
     /// `Box::leak`ed in `init()` and outlives the VM.
     #[inline]
-    pub fn log_ref(&self) -> Option<&logger::Log> {
+    pub fn log_ref(&self) -> Option<&bun_ast::Log> {
         // SAFETY: `log` is `Box::leak`ed in `init()`; non-null `NonNull` is
         // valid for the VM lifetime.
         self.log.map(|p| unsafe { p.as_ref() })
     }
 
-    /// Safe `&mut logger::Log` accessor. See [`Self::log_ref`].
+    /// Safe `&mut bun_ast::Log` accessor. See [`Self::log_ref`].
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn log_mut(&self) -> Option<&mut logger::Log> {
+    pub fn log_mut(&self) -> Option<&mut bun_ast::Log> {
         // SAFETY: see `log_ref`; single-JS-thread invariant.
         self.as_mut().log.map(|mut p| unsafe { p.as_mut() })
     }
@@ -1032,7 +1031,7 @@ impl VirtualMachine {
             self.macro_event_loop.concurrent_tasks = Default::default();
             ensure_source_code_printer();
         }
-        self.transpiler.options.target = bun_bundler::options::Target::BunMacro;
+        self.transpiler.options.target = bun_ast::Target::BunMacro;
         self.transpiler.resolver.caches.fs.use_alternate_source_cache = true;
         self.macro_mode = true;
         self.event_loop = &raw mut self.macro_event_loop;
@@ -1041,7 +1040,7 @@ impl VirtualMachine {
     }
 
     pub fn disable_macro_mode(&mut self) {
-        self.transpiler.options.target = bun_bundler::options::Target::Bun;
+        self.transpiler.options.target = bun_ast::Target::Bun;
         self.transpiler.resolver.caches.fs.use_alternate_source_cache = false;
         self.macro_mode = false;
         self.event_loop = &raw mut self.regular_event_loop;
@@ -1196,7 +1195,7 @@ impl VirtualMachine {
                     // boxed into `macro_entry_points` and lives for the VM
                     // lifetime, and `entry_path` is only borrowed for the
                     // duration of `generate` (it copies into `code_buffer`).
-                    let entry_path_static: &'static [u8] = logger::IntoStr::into_str(entry_path);
+                    let entry_path_static: &'static [u8] = bun_ast::IntoStr::into_str(entry_path);
                     MacroEntryPoint::generate(
                         &mut *ep,
                         &mut self.transpiler,
@@ -1833,9 +1832,9 @@ impl VirtualMachine {
         jsc::mark_binding();
 
         // Spec VirtualMachine.zig:1234 — `opts.log orelse allocator.create(Log)`.
-        let log: *mut logger::Log = match opts.log {
+        let log: *mut bun_ast::Log = match opts.log {
             Some(l) => l.as_ptr(),
-            None => bun_core::heap::into_raw(Box::new(logger::Log::default())),
+            None => bun_core::heap::into_raw(Box::new(bun_ast::Log::default())),
         };
 
         // SAFETY: VM is large + self-referential; allocate zeroed and fill in
@@ -2306,7 +2305,7 @@ pub fn process_fetch_log(
     global_this: &JSGlobalObject,
     specifier: bun_string::String,
     referrer: bun_string::String,
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     ret: &mut ErrorableResolvedSource,
     err: bun_core::Error,
 ) {
@@ -2324,10 +2323,10 @@ pub fn process_fetch_log(
     match log.msgs.len() {
         0 => {
             let msg = if err == bun_core::err!("UnexpectedPendingResolution") {
-                logger::Msg {
-                    data: logger::range_data(
+                bun_ast::Msg {
+                    data: bun_ast::range_data(
                         None,
-                        logger::Range::NONE,
+                        bun_ast::Range::NONE,
                         format!(
                             "Unexpected pending import in \"{specifier}\". To automatically \
                              install npm packages with Bun, please use an import statement \
@@ -2342,10 +2341,10 @@ pub fn process_fetch_log(
                     ..Default::default()
                 }
             } else {
-                logger::Msg {
-                    data: logger::range_data(
+                bun_ast::Msg {
+                    data: bun_ast::range_data(
                         None,
-                        logger::Range::NONE,
+                        bun_ast::Range::NONE,
                         format!("{} while building {specifier}", err.name()).into_bytes(),
                     ),
                     ..Default::default()
@@ -2363,8 +2362,8 @@ pub fn process_fetch_log(
             // immediately after, so consuming the vec is sound.
             let msg = log.msgs.swap_remove(0);
             let value = match msg.metadata {
-                logger::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                logger::Metadata::Resolve(_) => {
+                bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
+                bun_ast::Metadata::Resolve(_) => {
                     take(ResolveMessage::create(global_this, &msg, referrer_utf8.slice()))
                 }
             };
@@ -2380,8 +2379,8 @@ pub fn process_fetch_log(
             let mut errors: alloc::vec::Vec<JSValue> = alloc::vec::Vec::with_capacity(len);
             for msg in log.msgs.drain(..len) {
                 let v = match msg.metadata {
-                    logger::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                    logger::Metadata::Resolve(_) => {
+                    bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
+                    bun_ast::Metadata::Resolve(_) => {
                         take(ResolveMessage::create(global_this, &msg, referrer_utf8.slice()))
                     }
                 };
@@ -2523,7 +2522,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
     fn on_source_map_chunk(
         &mut self,
         chunk: bun_sourcemap::Chunk,
-        source: &logger::Source,
+        source: &bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
         let mut temp_json_buffer = bun_string::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
@@ -2604,7 +2603,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 /// §Allocators (global mimalloc).
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
-    pub log: Option<NonNull<logger::Log>>,
+    pub log: Option<NonNull<bun_ast::Log>>,
     // TODO(port): lifetime — `&'a mut bun_dot_env::Loader`.
     pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
     pub store_fd: bool,
@@ -3660,7 +3659,7 @@ impl VirtualMachine {
         global_object: &JSGlobalObject,
         specifier: bun_string::String,
         referrer: bun_string::String,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         flags: FetchFlags,
     ) -> Result<ResolvedSource, bun_core::Error> {
         debug_assert!(VirtualMachine::is_loaded());
@@ -3678,7 +3677,7 @@ impl VirtualMachine {
         let specifier_clone = specifier.to_utf8();
         let referrer_clone = referrer.to_utf8();
 
-        let mut virtual_source_to_use: Option<logger::Source> = None;
+        let mut virtual_source_to_use: Option<bun_ast::Source> = None;
         // Spec :1676-1677 — `var blob_to_deinit: ?webcore.Blob = null;
         // defer if (blob_to_deinit) |*blob| blob.deinit();`. The blob crosses
         // the bundler↔runtime boundary as an erased `OpaqueBlob`; deinit goes
@@ -3749,9 +3748,9 @@ impl VirtualMachine {
             // `*mut c_void` — the hook never retains the borrow.
             path: unsafe { lr.path.into_static() },
             loader: lr.loader.unwrap_or(if lr.is_main {
-                bun_bundler::options::Loader::Js
+                bun_ast::Loader::Js
             } else {
-                bun_bundler::options::Loader::File
+                bun_ast::Loader::File
             }),
             module_type,
             source_code_printer: printer.as_ptr(),
@@ -3762,7 +3761,7 @@ impl VirtualMachine {
             specifier: lr.specifier,
             referrer: referrer_clone.slice(),
             input_specifier: specifier,
-            log: std::ptr::from_mut::<logger::Log>(log),
+            log: std::ptr::from_mut::<bun_ast::Log>(log),
             virtual_source: lr.virtual_source,
             global_object: std::ptr::from_ref::<JSGlobalObject>(global_object).cast_mut(),
             flags,
@@ -3833,7 +3832,7 @@ impl VirtualMachine {
         }
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
             specifier,
-            bun_options_types::Target::Bun,
+            bun_ast::Target::Bun,
             Default::default(),
         ) {
             ret.result = None;
@@ -3894,9 +3893,9 @@ impl VirtualMachine {
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
-                bun_options_types::ImportKind::Stmt
+                bun_ast::ImportKind::Stmt
             } else {
-                bun_options_types::ImportKind::Require
+                bun_ast::ImportKind::Require
             };
             let global_cache = self.transpiler.resolver.opts.global_cache;
             match self.transpiler.resolver.resolve_and_auto_install(
@@ -4020,11 +4019,11 @@ impl VirtualMachine {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
             let import_kind = if is_esm {
-                bun_options_types::ImportKind::Stmt
+                bun_ast::ImportKind::Stmt
             } else if is_user_require_resolve {
-                bun_options_types::ImportKind::RequireResolve
+                bun_ast::ImportKind::RequireResolve
             } else {
-                bun_options_types::ImportKind::Require
+                bun_ast::ImportKind::Require
             };
             let printed = crate::ResolveMessage::fmt(
                 specifier_utf8.slice(),
@@ -4032,8 +4031,8 @@ impl VirtualMachine {
                 bun_core::err!("NameTooLong"),
                 import_kind.into(),
             );
-            let msg = logger::Msg {
-                data: logger::range_data(None, logger::Range::NONE, printed),
+            let msg = bun_ast::Msg {
+                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
                 ..Default::default()
             };
             *res = ErrorableString::err(
@@ -4075,7 +4074,7 @@ impl VirtualMachine {
 
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
-            bun_options_types::Target::Bun,
+            bun_ast::Target::Bun,
             Default::default(),
         ) {
             *res = ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
@@ -4090,8 +4089,8 @@ impl VirtualMachine {
         // `vm.log` is set unconditionally in `init` and never cleared (Zig
         // stores `*logger.Log`, always non-null), so the `Option` is purely a
         // zeroed-init nicety; the `expect` is infallible.
-        let old_log: NonNull<logger::Log> = jsc_vm.log.expect("vm.log set in init");
-        let mut log = logger::Log::default();
+        let old_log: NonNull<bun_ast::Log> = jsc_vm.log.expect("vm.log set in init");
+        let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
         jsc_vm.transpiler.resolver.log = &raw mut log;
         // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
@@ -4103,7 +4102,7 @@ impl VirtualMachine {
         // below isn't kept alive across the closure.
         struct RestoreLog {
             vm: *mut VirtualMachine,
-            old_log: NonNull<logger::Log>,
+            old_log: NonNull<bun_ast::Log>,
         }
         impl Drop for RestoreLog {
             fn drop(&mut self) {
@@ -4130,18 +4129,18 @@ impl VirtualMachine {
         if let Err(err_) = resolve_result {
             let mut err = err_;
             let import_kind = if is_esm {
-                bun_options_types::ImportKind::Stmt
+                bun_ast::ImportKind::Stmt
             } else if is_user_require_resolve {
-                bun_options_types::ImportKind::RequireResolve
+                bun_ast::ImportKind::RequireResolve
             } else {
-                bun_options_types::ImportKind::Require
+                bun_ast::ImportKind::Require
             };
             // Find a `.resolve`-metadata msg if the log has one.
             let msg = log
                 .msgs
                 .iter()
                 .find_map(|m| {
-                    if let logger::Metadata::Resolve(r) = &m.metadata {
+                    if let bun_ast::Metadata::Resolve(r) = &m.metadata {
                         err = r.err;
                         Some(m.clone())
                     } else {
@@ -4155,10 +4154,10 @@ impl VirtualMachine {
                         err,
                         import_kind.into(),
                     );
-                    logger::Msg {
-                        data: logger::range_data(None, logger::Range::NONE, printed.clone()),
-                        metadata: logger::Metadata::Resolve(logger::MetadataResolve {
-                            specifier: logger::BabyString::r#in(&printed, specifier_utf8.slice()),
+                    bun_ast::Msg {
+                        data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
+                        metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
+                            specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
                             import_kind: import_kind.into(),
                             err,
                         }),
@@ -4674,7 +4673,7 @@ impl VirtualMachine {
                     build_error.logged = true;
                     let _ = writer.write_all(b"\n");
                 }
-                self.had_errors = self.had_errors || build_error.msg.kind == logger::Kind::Err;
+                self.had_errors = self.had_errors || build_error.msg.kind == bun_ast::Kind::Err;
                 if exception_list.is_some() {
                     // SAFETY: `log` is set in `init` and live for VM lifetime.
                     if let Some(log) = self.log {
@@ -4698,7 +4697,7 @@ impl VirtualMachine {
                     resolve_error.logged = true;
                     let _ = writer.write_all(b"\n");
                 }
-                self.had_errors = self.had_errors || resolve_error.msg.kind == logger::Kind::Err;
+                self.had_errors = self.had_errors || resolve_error.msg.kind == bun_ast::Kind::Err;
                 if exception_list.is_some() {
                     // SAFETY: see above.
                     if let Some(log) = self.log {
@@ -5131,7 +5130,7 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_string::ZigStringSlice::EMPTY;
                 }
-                let mut log = logger::Log::default();
+                let mut log = bun_ast::Log::default();
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
@@ -6291,7 +6290,7 @@ impl VirtualMachine {
     }
 
     /// To satisfy the interface from NewHotReloader().
-    pub fn get_loaders(&mut self) -> &mut bun_bundler::options::LoaderHashTable {
+    pub fn get_loaders(&mut self) -> &mut bun_ast::LoaderHashTable {
         &mut self.transpiler.options.loaders
     }
 

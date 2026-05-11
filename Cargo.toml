@@ -14,7 +14,7 @@ members = [
   "src/http",
   "src/install",
   "src/install/windows-shim",
-  "src/interchange",
+  "src/parsers",
   "src/io",
   "src/js",
   "src/libarchive",
@@ -55,8 +55,8 @@ members = [
   "src/libarchive_sys",
   "src/libdeflate_sys",
   "src/libuv_sys",
-  "src/logger",
-  "src/logger_jsc",
+  "src/ast",
+  "src/ast_jsc",
   "src/lolhtml_sys",
   "src/picohttp",
   "src/s3_signing",
@@ -237,7 +237,7 @@ bun_errno = { path = "src/errno" }
 bun_glob = { path = "src/glob" }
 bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
-bun_interchange = { path = "src/interchange" }
+bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
 bun_js = { path = "src/js" }
 bun_libarchive = { path = "src/libarchive" }
@@ -278,8 +278,8 @@ bun_js_printer = { path = "src/js_printer" }
 bun_libarchive_sys = { path = "src/libarchive_sys" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
-bun_logger = { path = "src/logger" }
-bun_logger_jsc = { path = "src/logger_jsc" }
+bun_ast = { path = "src/ast" }
+bun_ast_jsc = { path = "src/ast_jsc" }
 bun_lolhtml_sys = { path = "src/lolhtml_sys" }
 bun_picohttp = { path = "src/picohttp" }
 bun_s3_signing = { path = "src/s3_signing" }

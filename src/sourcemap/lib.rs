@@ -16,7 +16,6 @@
 #![warn(unreachable_pub)]
 extern crate bun_string as bun_str;
 use bun_collections::VecExt;
-use bun_logger as logger;
 
 // ── B-2 un-gated sibling modules ──────────────────────────────────────────
 #[path = "Chunk.rs"]             pub mod chunk;
@@ -197,7 +196,7 @@ pub enum ParseResult {
 }
 
 pub struct ParseResultFail {
-    pub loc: logger::Loc,
+    pub loc: bun_ast::Loc,
     pub err: bun_core::Error,
     pub value: i32,
     pub msg: &'static [u8],
@@ -206,7 +205,7 @@ pub struct ParseResultFail {
 impl Default for ParseResultFail {
     fn default() -> Self {
         Self {
-            loc: logger::Loc::default(),
+            loc: bun_ast::Loc::default(),
             err: bun_core::err!("Unknown"), // TODO(port): Zig has no default for `err`
             value: 0,
             msg: b"",
@@ -1075,13 +1074,13 @@ pub fn parse_json(
     source: &[u8],
     hint: ParseUrlResultHint,
 ) -> Result<ParseUrl, bun_core::Error> {
-    use bun_logger::js_ast::DataStoreScope;
+    use bun_ast::StoreResetGuard as DataStoreScope;
     use crate::mapping::SourceMap as SourceMapLog;
     use std::sync::Arc;
 
     // TODO(port): narrow error set
-    let json_src = logger::Source::init_path_string("sourcemap.json", source);
-    let mut log = logger::Log::init();
+    let json_src = bun_ast::Source::init_path_string("sourcemap.json", source);
+    let mut log = bun_ast::Log::init();
     // `defer log.deinit()` → Drop
 
     // the allocator given to the JS parser is not respected for all parts
@@ -1089,7 +1088,7 @@ pub fn parse_json(
     // and on every exit path.
     let _store_scope = DataStoreScope::new();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
-    let json = match bun_interchange::json::parse::<false>(&json_src, &mut log, arena) {
+    let json = match bun_parsers::json::parse::<false>(&json_src, &mut log, arena) {
         Ok(j) => j,
         Err(_) => return Err(bun_core::err!("InvalidJSON")),
     };
@@ -1389,7 +1388,7 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_str::zig_string::Sl
 
 pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
     origin: &bun_url::URL<'_>,
-    source: &logger::Source,
+    source: &bun_ast::Source,
     asset_prefix_path: &[u8],
     writer: &mut W,
 ) -> bun_io::Result<()> {

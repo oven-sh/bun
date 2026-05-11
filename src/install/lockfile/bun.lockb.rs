@@ -21,7 +21,7 @@ use super::PatchedDep;
 use bun_install::{
     PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash,
 };
-use bun_logger::Log;
+use bun_ast::Log;
 use bun_semver::{self as semver, String as SemverString};
 use bun_str::strings;
 
@@ -98,15 +98,36 @@ impl<'a> bun_io::Write for StreamType<'a> {
 fn write_array<T>(
     stream: &mut StreamType<'_>,
     array: &[T],
+    prefix: &'static str,
 ) -> Result<(), Error> {
-    buffers::write_array(
-        stream,
-        array,
-        core::any::type_name::<T>(),
-        size_of::<T>(),
-        align_of::<T>(),
-    )
+    buffers::write_array(stream, array, prefix)
 }
+
+// Section header strings, byte-for-byte as Zig's `@typeName`/`@sizeOf`/`@alignOf`
+// emit them. The reader skips these by absolute offset (see `buffers::read_array`),
+// so they are semantically inert; we match Zig's bytes only so that re-saving an
+// unchanged lockfile is a no-op across the Zig→Rust migration.
+//
+// Primitive-type tags (`u64`, `u32`, `[26]u8`) are stable. Struct-type tags have
+// already drifted across Zig versions in this repo (`src.install.lockfile.Tree`
+// → `install.lockfile.Tree`), so for `Version`/`String`/`PatchedDep` — which no
+// checked-in fixture exercises — we emit the current Zig decl path; the const
+// asserts below catch any size/align drift even if the name is later wrong.
+const PREFIX_U64: &str = "\n<u64> 8 sizeof, 8 alignof\n";
+const PREFIX_U32: &str = "\n<u32> 4 sizeof, 4 alignof\n";
+const PREFIX_DEP_EXTERNAL: &str = "\n<[26]u8> 26 sizeof, 1 alignof\n";
+const PREFIX_SEMVER_VERSION: &str = "\n<semver.Version.Version> 56 sizeof, 8 alignof\n";
+const PREFIX_SEMVER_STRING: &str = "\n<semver.String> 8 sizeof, 1 alignof\n";
+const PREFIX_PATCHED_DEP: &str = "\n<install.lockfile.PatchedDep> 24 sizeof, 8 alignof\n";
+
+const _: () = {
+    assert!(size_of::<PackageNameHash>() == 8 && align_of::<PackageNameHash>() == 8);
+    assert!(size_of::<PackageNameAndVersionHash>() == 8);
+    assert!(size_of::<dependency::External>() == 26 && align_of::<dependency::External>() == 1);
+    assert!(size_of::<semver::Version>() == 56 && align_of::<semver::Version>() == 8);
+    assert!(size_of::<SemverString>() == 8 && align_of::<SemverString>() == 1);
+    assert!(size_of::<PatchedDep>() == 24 && align_of::<PatchedDep>() == 8);
+};
 
 /// Bridges `bun_semver::string::ArrayHashContext` (inherent `hash`/`eql`) to
 /// `bun_collections::ArrayHashAdapter` so `get_or_put_adapted` can use it.
@@ -210,18 +231,18 @@ pub fn save(
 
         // We need to track the "version" field in "package.json" of workspace member packages
         // We do not necessarily have that in the Resolution struct. So we store it here.
-        write_array::<PackageNameHash>(&mut stream, this.workspace_versions.keys())?;
-        write_array::<semver::Version>(&mut stream, this.workspace_versions.values())?;
+        write_array::<PackageNameHash>(&mut stream, this.workspace_versions.keys(), PREFIX_U64)?;
+        write_array::<semver::Version>(&mut stream, this.workspace_versions.values(), PREFIX_SEMVER_VERSION)?;
 
-        write_array::<PackageNameHash>(&mut stream, this.workspace_paths.keys())?;
-        write_array::<SemverString>(&mut stream, this.workspace_paths.values())?;
+        write_array::<PackageNameHash>(&mut stream, this.workspace_paths.keys(), PREFIX_U64)?;
+        write_array::<SemverString>(&mut stream, this.workspace_paths.values(), PREFIX_SEMVER_STRING)?;
     }
 
     if let Some(trusted_dependencies) = &this.trusted_dependencies {
         if trusted_dependencies.count() > 0 {
             stream.write_all(&HAS_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
-            write_array::<u32>(&mut stream, trusted_dependencies.keys())?;
+            write_array::<u32>(&mut stream, trusted_dependencies.keys(), PREFIX_U32)?;
         } else {
             stream.write_all(&HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
         }
@@ -230,7 +251,7 @@ pub fn save(
     if this.overrides.map.count() > 0 {
         stream.write_all(&HAS_OVERRIDES_TAG.to_ne_bytes())?;
 
-        write_array::<PackageNameHash>(&mut stream, this.overrides.map.keys())?;
+        write_array::<PackageNameHash>(&mut stream, this.overrides.map.keys(), PREFIX_U64)?;
         // PERF(port): Zig uses z_allocator + initCapacity then sets items.len directly.
         let mut external_overrides: Vec<dependency::External> =
             Vec::with_capacity(this.overrides.map.count());
@@ -238,7 +259,7 @@ pub fn save(
             external_overrides.push(dependency::to_external(src));
         }
 
-        write_array::<dependency::External>(&mut stream, &external_overrides)?;
+        write_array::<dependency::External>(&mut stream, &external_overrides, PREFIX_DEP_EXTERNAL)?;
     }
 
     if this.patched_dependencies.count() > 0 {
@@ -248,15 +269,15 @@ pub fn save(
 
         stream.write_all(&HAS_PATCHED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
-        write_array::<PackageNameAndVersionHash>(&mut stream, this.patched_dependencies.keys())?;
+        write_array::<PackageNameAndVersionHash>(&mut stream, this.patched_dependencies.keys(), PREFIX_U64)?;
 
-        write_array::<PatchedDep>(&mut stream, this.patched_dependencies.values())?;
+        write_array::<PatchedDep>(&mut stream, this.patched_dependencies.values(), PREFIX_PATCHED_DEP)?;
     }
 
     if this.catalogs.has_any() {
         stream.write_all(&HAS_CATALOGS_TAG.to_ne_bytes())?;
 
-        write_array::<SemverString>(&mut stream, this.catalogs.default.keys())?;
+        write_array::<SemverString>(&mut stream, this.catalogs.default.keys(), PREFIX_SEMVER_STRING)?;
 
         // PERF(port): Zig uses z_allocator + initCapacity then sets items.len directly.
         let mut external_deps_buf: Vec<dependency::External> =
@@ -265,13 +286,13 @@ pub fn save(
             external_deps_buf.push(dependency::to_external(src));
         }
 
-        write_array::<dependency::External>(&mut stream, &external_deps_buf)?;
+        write_array::<dependency::External>(&mut stream, &external_deps_buf, PREFIX_DEP_EXTERNAL)?;
         external_deps_buf.clear();
 
-        write_array::<SemverString>(&mut stream, this.catalogs.groups.keys())?;
+        write_array::<SemverString>(&mut stream, this.catalogs.groups.keys(), PREFIX_SEMVER_STRING)?;
 
         for catalog_deps in this.catalogs.groups.values() {
-            write_array::<SemverString>(&mut stream, catalog_deps.keys())?;
+            write_array::<SemverString>(&mut stream, catalog_deps.keys(), PREFIX_SEMVER_STRING)?;
 
             external_deps_buf.reserve(catalog_deps.count().saturating_sub(external_deps_buf.len()));
             // PORT NOTE: Zig sets `items.len = count` then writes each slot via `dest.* = ...`.
@@ -280,7 +301,7 @@ pub fn save(
                 external_deps_buf.push(dependency::to_external(src));
             }
 
-            write_array::<dependency::External>(&mut stream, &external_deps_buf)?;
+            write_array::<dependency::External>(&mut stream, &external_deps_buf, PREFIX_DEP_EXTERNAL)?;
             external_deps_buf.clear();
         }
     }

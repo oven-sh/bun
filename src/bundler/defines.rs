@@ -2,10 +2,8 @@ use bun_collections::VecExt;
 use bun_collections::StringHashMap;
 use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
-use bun_js_parser::ExprData;
-use bun_js_parser::Ref;
-use bun_logger as logger;
-use bun_logger::fs;
+use bun_ast::ExprData;
+use bun_ast::Ref;
 use bun_string::strings;
 
 use crate::defines_table::{
@@ -33,19 +31,19 @@ pub use bun_js_parser::defines::{
 /// (mirrors Zig's anonymous-struct init).
 pub type DefineDataInit<'a> = Options<'a>;
 /// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
-pub use bun_js_parser::ExprData as DefineValue;
+pub(crate) use bun_ast::ExprData as DefineValue;
 
 // `Expr::Data` stores `Number`/`Undefined` inline (not via pointer), so the
 // `_PTR` indirection from Zig disappears.
 pub struct Globals;
 impl Globals {
-    pub const UNDEFINED: js_ast::E::Undefined = js_ast::E::Undefined;
-    pub const NAN: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
-    pub const INFINITY: js_ast::E::Number = js_ast::E::Number { value: f64::INFINITY };
+    pub const UNDEFINED: bun_ast::E::Undefined = bun_ast::E::Undefined;
+    pub const NAN: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
+    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number { value: f64::INFINITY };
 
     #[inline]
     pub fn undefined_data() -> ExprData {
-        ExprData::EUndefined(js_ast::E::Undefined)
+        ExprData::EUndefined(bun_ast::E::Undefined)
     }
     #[inline]
     pub fn nan_data() -> ExprData {
@@ -57,9 +55,10 @@ impl Globals {
     }
 }
 
-// `fs::Path::init` is not `const fn`; lazily build the path.
-fn defines_path() -> fs::Path {
-    let mut p = fs::Path::init(b"defines.json");
+use bun_paths::fs::Path as FsPath;
+// `Path::init` is not `const fn`; lazily build the path.
+fn defines_path() -> FsPath<'static> {
+    let mut p = FsPath::init(b"defines.json");
     p.namespace = b"internal";
     p
 }
@@ -82,13 +81,13 @@ fn env_string_store_put(store: &mut UserDefinesArray, key: &[u8], value: &[u8]) 
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Mirror with `StoreRef::from_box`
     // (process-lifetime). Value bytes alias the long-lived env-map storage.
-    let value: ExprData = ExprData::EString(js_ast::ast::StoreRef::from_box(Box::new(
-        js_ast::E::EString::init(value),
+    let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_box(Box::new(
+        bun_ast::E::EString::init(value),
     )));
     let data = DefineData::init(Options {
         value,
         can_be_removed_if_unused: true,
-        call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap::IfUnused,
+        call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnused,
         ..Default::default()
     });
     store.get_or_put_value(key, data)?;
@@ -253,7 +252,7 @@ impl DefineExt for Define {
         define.dots.reserve(124);
 
         let value_define = DefineData::init(Options {
-            value: ExprData::EUndefined(js_ast::E::Undefined),
+            value: ExprData::EUndefined(bun_ast::E::Undefined),
             valueless: true,
             can_be_removed_if_unused: true,
             ..Default::default()
@@ -264,10 +263,10 @@ impl DefineExt for Define {
         }
 
         let to_string_safe = DefineData::init(Options {
-            value: ExprData::EUndefined(js_ast::E::Undefined),
+            value: ExprData::EUndefined(bun_ast::E::Undefined),
             valueless: true,
             can_be_removed_if_unused: true,
-            call_can_be_unwrapped_if_unused: js_ast::E::CallUnwrap::IfUnusedAndToStringSafe,
+            call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnusedAndToStringSafe,
             ..Default::default()
         });
 
@@ -306,14 +305,14 @@ impl DefineExt for Define {
 }
 
 /// Extension surface for the canonical `DefineData` — `parse` / `from_input`
-/// need `bun_interchange::json_parser` / `js_lexer::Keywords`.
+/// need `bun_parsers::json_parser` / `js_lexer::Keywords`.
 pub trait DefineDataExt: Sized {
     fn parse(
         key: &[u8],
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, bun_core::Error>;
 
@@ -323,14 +322,14 @@ pub trait DefineDataExt: Sized {
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<(), bun_core::Error>;
 
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, bun_core::Error>;
 }
@@ -342,7 +341,7 @@ impl DefineDataExt for DefineData {
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<(), bun_core::Error> {
         // PERF(port): was putAssumeCapacity — profile in Phase B
@@ -365,7 +364,7 @@ impl DefineDataExt for DefineData {
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, bun_core::Error> {
         // TODO(port): narrow error set
@@ -375,7 +374,7 @@ impl DefineDataExt for DefineData {
                 if strings::eql(part, key) {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::default(),
+                        bun_ast::Loc::default(),
                         format_args!(
                             "define key \"{}\" must be a valid identifier",
                             bstr::BStr::new(key)
@@ -384,7 +383,7 @@ impl DefineDataExt for DefineData {
                 } else {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::default(),
+                        bun_ast::Loc::default(),
                         format_args!(
                             "define key \"{}\" contains invalid identifier \"{}\"",
                             bstr::BStr::new(part),
@@ -411,10 +410,10 @@ impl DefineDataExt for DefineData {
             // Special-case undefined. it's not an identifier here
             // https://github.com/evanw/esbuild/issues/1407
             let value = if value_is_undefined || value_str == b"undefined" {
-                ExprData::EUndefined(js_ast::E::Undefined)
+                ExprData::EUndefined(bun_ast::E::Undefined)
             } else {
                 ExprData::EIdentifier(
-                    js_ast::E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true),
+                    bun_ast::E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true),
                 )
             };
 
@@ -432,39 +431,40 @@ impl DefineDataExt for DefineData {
                 flags: Flags::new(
                     /* valueless: */ value_is_undefined,
                     /* can_be_removed_if_unused: */ true,
-                    /* call_can_be_unwrapped_if_unused: */ js_ast::E::CallUnwrap::Never,
+                    /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                     /* method_call_must_be_replaced_with_undefined: */
                     method_call_must_be_replaced_with_undefined_,
                 ),
             });
         }
-        // PORT NOTE: Zig parsed against a stack-local `Source` then
-        // `Expr.Data.deepClone`d into the arena to detach from `value_str`.
-        // `ExprData::deep_clone` is still gated (b2-ast-round-C), so instead
-        // dupe `value_str` into `bump` *before* parsing — every string slice
-        // the JSON lexer hands back then already points into the long-lived
-        // arena, so the resulting `ExprData` is detached by construction and
-        // no post-hoc deep clone is needed. Same arena, same lifetime
-        // contract; one extra `value_str.len()` copy vs Zig.
+        // Zig parsed against a stack-local `Source` then `Expr.Data.deepClone`d
+        // into the arena. We dupe `value_str` into `bump` first so every string
+        // slice the JSON lexer hands back already points into the long-lived
+        // arena (the `E::String.data` bytes survive without per-string dup).
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
-        let source = logger::Source {
+        let source = bun_ast::Source {
             // `Source.contents` is typed `&'static [u8]` as a Phase-A stand-in
             // (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
             // which the caller (`Define::init`) owns for the lifetime of the
             // `Define` table — i.e. as long as any `ExprData` produced here is
             // reachable. Route through `StoreStr` for the lifetime erasure.
             contents: std::borrow::Cow::Borrowed(
-                bun_js_parser::StoreStr::new(arena_value).slice(),
+                bun_ast::StoreStr::new(arena_value).slice(),
             ),
             path: defines_path(),
             ..Default::default()
         };
-        let expr = bun_interchange::json_parser::parse_env_json(&source, log, bump)?;
-        // T2 interchange `Expr` → T4 parser `ExprData` (`From` impl deep-walks
-        // and interns into the AST store). All borrowed bytes already live in
-        // `bump` (see above), so this is the final value — no `deep_clone`.
-        let data: ExprData = expr.data.into();
-        let can_be_removed_if_unused = js_ast::ast::expr::Tag::is_primitive_literal(data.tag());
+        let expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
+        // The `deep_clone` is load-bearing even though `.data` bytes already
+        // live in `bump`: `parse_env_json` → `new_expr` → `Expr::init` allocates
+        // the `E::String` *payload* (the `StoreRef` target) in the thread-local
+        // AST store, which `configure_defines` resets on return via
+        // `StoreResetGuard`. Before the `bun_ast` unification this was masked by
+        // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
+        // is identity, so without `deep_clone` the `DefineData.value` dangles
+        // into a freed slab and `process.env.NODE_ENV` reads garbage.
+        let data: ExprData = expr.data.deep_clone(bump)?;
+        let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,
             original_name: if !value_str.is_empty() {
@@ -475,7 +475,7 @@ impl DefineDataExt for DefineData {
             flags: Flags::new(
                 /* valueless: */ value_is_undefined,
                 /* can_be_removed_if_unused: */ can_be_removed_if_unused,
-                /* call_can_be_unwrapped_if_unused: */ js_ast::E::CallUnwrap::Never,
+                /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                 /* method_call_must_be_replaced_with_undefined: */
                 method_call_must_be_replaced_with_undefined_,
             ),
@@ -485,7 +485,7 @@ impl DefineDataExt for DefineData {
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, bun_core::Error> {
         let mut user_defines = UserDefines::default();
@@ -510,7 +510,7 @@ impl DefineDataExt for DefineData {
 
 // var nan_val = try arena.create(js_ast.E.Number);
 #[allow(dead_code)]
-const NAN_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
+const NAN_VAL: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
 
 // Zig `deinit` freed `dots` values, cleared maps, and destroyed `self`.
 // In Rust: `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their

@@ -12,7 +12,7 @@ use core::mem::offset_of;
 use bun_alloc::AllocError;
 use crate::bake::dev_server::{self, DevServer};
 use crate::bake::Graph as BakeGraph;
-use bun_bundler::options::Loader;
+use bun_ast::Loader;
 use bun_collections::ArrayHashMap;
 use bun_core::fmt as bun_fmt;
 use bun_paths::{self as path, path_buffer_pool};

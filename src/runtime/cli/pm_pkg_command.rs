@@ -4,10 +4,10 @@ use crate::cli::command::Context;
 use bun_collections::{VecExt, StringArrayHashMap};
 use bun_core::{err, Error, Global, OrWriteFailed as _, Output};
 use bun_install::PackageManager;
-use bun_interchange::json;
-use bun_js_parser::{self as js_ast, E, Expr, ExprData, G};
+use bun_parsers::json;
+use bun_ast::{self as js_ast, E, Expr, ExprData, G};
 use bun_js_printer as js_printer;
-use bun_logger::{self as logger, Loc, Log, Source};
+use bun_ast::{Loc, Log, Source};
 use bun_paths::{self as path, PathBuffer};
 use bun_str::strings;
 use bun_sys;
@@ -22,24 +22,7 @@ fn dummy_bump() -> &'static bun_alloc::Arena {
     crate::cli::cli_arena()
 }
 
-/// `bun_logger::js_printer::Indentation` and `bun_js_printer::Indentation` are
-/// nominally distinct (split for crate-layering) but field-identical; convert
-/// here rather than introduce an upstream `From` impl.
-fn convert_indentation(src: logger::js_printer::Indentation) -> js_printer::options::Indentation {
-    js_printer::options::Indentation {
-        scalar: src.scalar,
-        count: src.count,
-        character: match src.character {
-            logger::js_printer::IndentationCharacter::Tab => {
-                js_printer::options::IndentationCharacter::Tab
-            }
-            logger::js_printer::IndentationCharacter::Space => {
-                js_printer::options::IndentationCharacter::Space
-            }
-        },
-    }
-}
-
+// `bun_ast::Indentation` and `bun_js_printer::Indentation` are now the same
 #[derive(Copy, Clone, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 enum SubCommand {
@@ -61,7 +44,7 @@ struct PackageJson {
     root: Expr,
     contents: Box<[u8]>,
     source: Source,
-    indentation: js_printer::options::Indentation,
+    indentation: bun_ast::Indentation,
 }
 
 impl PmPkgCommand {
@@ -198,7 +181,7 @@ impl PmPkgCommand {
             root: result.root.into(),
             contents,
             source,
-            indentation: convert_indentation(result.indentation),
+            indentation: result.indentation,
         })
     }
 
@@ -473,12 +456,12 @@ impl PmPkgCommand {
                     js_printer::PrintJsonOptions {
                         mangled_props: None,
                         indent: match initial_indent {
-                            Some(indent) => js_printer::options::Indentation {
+                            Some(indent) => bun_ast::Indentation {
                                 scalar: indent,
                                 count: 0,
                                 ..Default::default()
                             },
-                            None => js_printer::options::Indentation {
+                            None => bun_ast::Indentation {
                                 scalar: 2,
                                 count: 0,
                                 ..Default::default()

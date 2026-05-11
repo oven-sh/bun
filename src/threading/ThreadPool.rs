@@ -745,7 +745,7 @@ impl ThreadPool {
                 Ok(_handle) => {
                     // Dropping JoinHandle detaches the thread (matches Zig `thread.detach()`).
                 }
-                Err(_) => return self.unregister(ptr::null_mut()),
+                Err(_) => return unsafe { Self::unregister(self, ptr::null_mut()) },
             }
             sync = new_sync;
         }
@@ -807,7 +807,7 @@ impl ThreadPool {
                             Ok(_handle) => {
                                 // detach by dropping
                             }
-                            Err(_) => return self.unregister(ptr::null_mut()),
+                            Err(_) => return unsafe { Self::unregister(self, ptr::null_mut()) },
                         }
                         // if (self.name.len > 0) thread.setName(self.name) catch {};
                         return;
@@ -941,21 +941,29 @@ impl ThreadPool {
         }
     }
 
-    fn unregister(&self, maybe_thread: *mut Thread) {
+    /// # Safety
+    /// `pool` is the worker's owning pool. After `(*pool).join_event.notify()`
+    /// the joiner may return and the pool may be **deallocated**, so this fn
+    /// takes `*const Self` (no `&self` protector) and never touches `pool`
+    /// past that point — the shutdown chain follows worker-stack `.next` links.
+    unsafe fn unregister(pool: *const Self, maybe_thread: *mut Thread) {
         // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exiting.
         let one_spawned = {
             let mut s = Sync::zero();
             s.set_spawned(1);
             s
         };
-        let sync = self.sync.fetch_sub(one_spawned, Ordering::Release);
+        // SAFETY: `pool` is live until at least the `join_event.notify()` below
+        // wakes the joiner.
+        let sync = unsafe { (*pool).sync.fetch_sub(one_spawned, Ordering::Release) };
         debug_assert!(sync.spawned() > 0);
 
         // The last thread to exit must wake up the thread pool join()er
         // who will start the chain to shutdown all the threads.
         if sync.state() == SyncState::Shutdown && sync.spawned() == 1 {
-            self.join_event.notify();
+            unsafe { (*pool).join_event.notify() };
         }
+        // ── `*pool` may be invalid past this point. ──
 
         // If this is a thread pool thread, wait for a shutdown signal by the thread pool join()er.
         if maybe_thread.is_null() {
@@ -1043,9 +1051,9 @@ impl ThreadRegistration {
 
 impl Drop for ThreadRegistration {
     fn drop(&mut self) {
-        // SAFETY: per `new()` contract — pool outlives this worker; thread is
-        // our stack-local Thread.
-        unsafe { (*self.pool).unregister(self.thread) };
+        // SAFETY: per `new()` contract. `unregister` takes `*const` because the
+        // pool may be freed by the joiner before it returns.
+        unsafe { ThreadPool::unregister(self.pool, self.thread) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }
@@ -1342,7 +1350,6 @@ impl Event {
             if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
                 has_shrunk_memory = true;
                 bun_core::Global::mimalloc_cleanup(false);
-                // MOVE_DOWN(b0): wtf::release_fast_malloc_free_memory_for_this_thread moved jsc→alloc.
                 bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread();
             }
             state = self.state.load(Ordering::Relaxed);

@@ -87,7 +87,7 @@ pub use bun_dns as dns;
 pub use bun_io as io;
 pub use bun_bake as bake;
 pub use bun_semver as Semver;
-pub use bun_options_types::import_record::{ImportRecord, ImportKind};
+use bun_ast::import_record::{ImportRecord, ImportKind};
 pub use bun_options_types::schema;
 pub use bun_sourcemap as SourceMap;
 pub use bun_standalone_graph::StandaloneModuleGraph;
@@ -107,7 +107,6 @@ pub use bun_analytics as analytics;
 pub use bun_url::URL;
 pub use bun_wyhash::Wyhash11;
 
-pub use bun_logger as logger;
 pub use bun_threading as threading;
 pub use bun_threading::{Mutex, Futex, ThreadPool, UnboundedQueue};
 pub const default_thread_stack_size: usize = bun_threading::ThreadPool::default_thread_stack_size;
@@ -139,8 +138,8 @@ pub use bun_js_parser as ast;
 pub use bun_js_printer as js_printer;
 pub use bun_js_printer::renamer;
 
-pub use bun_interchange as interchange;
-pub use bun_interchange::json;
+pub use bun_parsers as interchange;
+pub use bun_parsers::json;
 
 pub use bun_crash_handler as crash_handler;
 pub use bun_crash_handler::handle_error_return_trace as handleErrorReturnTrace;

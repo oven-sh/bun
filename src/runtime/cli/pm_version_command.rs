@@ -9,9 +9,8 @@ use bun_core::{env_var, Global, Output};
 use bun_install::PackageManager;
 use bun_install::LogLevel;
 use bun_js_printer as JSPrinter;
-use bun_interchange::json as JSON;
-use bun_logger as logger;
-use bun_logger::js_ast::ExprData;
+use bun_parsers::json as JSON;
+use bun_ast::ExprData;
 use bun_paths::{resolve_path as path, resolve_path::platform as path_platform, PathBuffer};
 use crate::api::bun::process::sync::{spawn as spawn_sync, Options as SpawnSyncOptions, SyncStdio as Stdio};
 use crate::api::bun::process::Status as ProcStatus;
@@ -105,7 +104,7 @@ impl PmVersionCommand {
         // `defer ctx.allocator.free(package_json_contents)` — handled by Drop.
 
         let package_json_source =
-            logger::Source::init_path_string(package_json_path.as_bytes(), &*package_json_contents);
+            bun_ast::Source::init_path_string(package_json_path.as_bytes(), &*package_json_contents);
         // PORT NOTE: Zig passed `ctx.allocator`; Rust ctx dropped allocator (global mimalloc),
         // so we hand the parser a local bump arena for its scratch allocations.
         let json_bump = Arena::new();
@@ -181,7 +180,7 @@ impl PmVersionCommand {
         let current_version: Option<&[u8]> = 'brk_version: {
             if let Some(v) = json.as_property(b"version") {
                 if let ExprData::EString(s) = &v.expr.data {
-                    break 'brk_version Some(s.data);
+                    break 'brk_version Some(s.data.slice());
                 }
             }
             break 'brk_version None;
@@ -214,22 +213,12 @@ impl PmVersionCommand {
                 && package_json_contents[package_json_contents.len() - 1] == b'\n';
             let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
 
-            let printer_indent = JSPrinter::Indentation {
-                scalar: json_result.indentation.scalar,
-                count: json_result.indentation.count,
-                character: match json_result.indentation.character {
-                    logger::js_printer::IndentationCharacter::Tab => {
-                        JSPrinter::IndentationCharacter::Tab
-                    }
-                    logger::js_printer::IndentationCharacter::Space => {
-                        JSPrinter::IndentationCharacter::Space
-                    }
-                },
-            };
+            // `bun_ast::Indentation` is the same type the printer consumes.
+            let printer_indent: bun_ast::Indentation = json_result.indentation;
 
             if let Err(err) = JSPrinter::print_json(
                 &mut package_json_writer,
-                bun_js_parser::Expr::from(json),
+                bun_ast::Expr::from(json),
                 &package_json_source,
                 JSPrinter::PrintJsonOptions {
                     indent: printer_indent,
@@ -389,7 +378,7 @@ impl PmVersionCommand {
         };
 
         let package_json_source =
-            logger::Source::init_path_string(package_json_path.as_bytes(), &*package_json_contents);
+            bun_ast::Source::init_path_string(package_json_path.as_bytes(), &*package_json_contents);
         let json_bump = Arena::new();
         let Ok(json) = JSON::parse_package_json_utf8(
             &package_json_source,

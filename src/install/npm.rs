@@ -8,7 +8,6 @@ use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HeaderBuilder, HTTPClient};
 use crate::bun_json as JSON;
-use bun_logger as logger;
 use bun_picohttp as picohttp;
 use crate::bun_schema::api;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
@@ -19,7 +18,6 @@ use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
 use crate::bin::{self, Bin};
-use crate::bun_json::ExprAccessors as _;
 use crate::{
     initialize_mini_store as initialize_store, Aligner, ExternalSlice, IdentityContext,
     ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash, VersionSlice,
@@ -183,8 +181,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         Output::flush();
     }
 
-    let mut log = logger::Log::init();
-    let source = logger::Source::init_path_string("???", response_buf.list.as_slice());
+    let mut log = bun_ast::Log::init();
+    let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
     let bump = bun_alloc::Arena::new();
     let json = match JSON::parse_utf8(&source, &mut log, &bump) {
         Ok(j) => j,
@@ -212,8 +210,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     response_body: &mut MutableString,
 ) -> Result<core::convert::Infallible, AllocError> {
     let message: Option<Vec<u8>> = 'message: {
-        let mut log = logger::Log::init();
-        let source = logger::Source::init_path_string("???", response_body.list.as_slice());
+        let mut log = bun_ast::Log::init();
+        let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
         let bump = bun_alloc::Arena::new();
         let json = match JSON::parse_utf8(&source, &mut log, &bump) {
             Ok(j) => j,
@@ -515,7 +513,7 @@ pub mod registry {
         scope: &Scope,
         response: picohttp::Response,
         body: &[u8],
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         package_name: &[u8],
         loaded_manifest: Option<PackageManifest>,
         package_manager: &mut PackageManager,
@@ -616,7 +614,7 @@ impl ExternVersionMap {
 // / `Libc` / `Architecture` (and their name maps) now live in
 // `bun_install_types::resolver_hooks` so `bun_resolver` and `bun_install`
 // share ONE nominal type per name. Re-export the canonical definitions; only
-// `negatable_from_json` (which depends on this crate's `JsonExprView`) stays.
+// `negatable_from_json` (which depends on `bun_ast::Expr`) stays here.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_install_types::resolver_hooks::{
@@ -625,22 +623,18 @@ pub use bun_install_types::resolver_hooks::{
 };
 
 /// Port of `Negatable(T).fromJson` (src/install/npm.zig). Lives here (not in
-/// `bun_install_types`) because it depends on [`JSON::JsonExprView`], which
-/// abstracts over `bun_logger::js_ast::Expr` and `bun_js_parser::Expr` —
-/// neither reachable from the lower-tier `install_types` crate.
-pub fn negatable_from_json<T: NegatableEnum, E: JSON::JsonExprView>(
-    expr: &E,
-) -> Result<T, AllocError> {
+/// `bun_install_types`) because `bun_ast::Expr` is not reachable from that crate.
+pub fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
     let mut this = T::NONE.negatable();
-    if let Some(items) = expr.json_array_items() {
-        for item in items {
+    if let JSON::ExprData::EArray(a) = &expr.data {
+        for item in a.items.slice() {
             // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
             // so no transcode allocator is needed (Zig: asString(allocator)).
-            if let Some(value) = item.json_utf8_string() {
+            if let Some(value) = item.as_utf8_string_literal() {
                 this.apply(value);
             }
         }
-    } else if let Some(str) = expr.json_utf8_string() {
+    } else if let Some(str) = expr.as_utf8_string_literal() {
         this.apply(str);
     }
 
@@ -1808,7 +1802,7 @@ impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
         scope: &registry::Scope,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         json_buffer: &[u8],
         expected_name: &[u8],
         last_modified: &[u8],
@@ -1817,11 +1811,11 @@ impl PackageManifest {
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
         // TODO(port): narrow error set
-        // `logger::Source::init_path_string` accepts borrowed `&[u8]` via
+        // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
         // `IntoStr`; the Source only lives for the duration of this function,
         // so pass the caller's buffers through directly without manufacturing
         // `'static` references here (PORTING.md §Forbidden lifetime extension).
-        let source = logger::Source::init_path_string(expected_name, json_buffer);
+        let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
         // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
         // pushed/popped the AST arena around the parse so the JSON AST is
@@ -1834,7 +1828,7 @@ impl PackageManifest {
             Ok(j) => j,
             Err(_) => {
                 // don't use the arena memory!
-                let mut cloned_log = logger::Log::init();
+                let mut cloned_log = bun_ast::Log::init();
                 log.clone_to_with_recycled(&mut cloned_log, true);
                 *log = cloned_log;
                 return Ok(None);
@@ -1843,7 +1837,7 @@ impl PackageManifest {
 
         if let Some(error_q) = json.as_property(b"error") {
             if let Some(err) = error_q.expr.as_string(&bump) {
-                log.add_error_fmt(Some(&source), logger::Loc::EMPTY, format_args!("npm error: {}", bstr::BStr::new(err)));
+                log.add_error_fmt(Some(&source), bun_ast::Loc::EMPTY, format_args!("npm error: {}", bstr::BStr::new(err)));
                 return Ok(None);
             }
         }
@@ -1941,7 +1935,7 @@ impl PackageManifest {
                 if let Some(dist_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"dist") {
                     if let Some(tarball_prop) = dist_q.expr.get(b"tarball") {
                         if let JSON::ExprData::EString(s) = &tarball_prop.data {
-                            let tarball = s.data;
+                            let tarball = s.data.slice();
                             string_builder.count(tarball);
                             tarball_urls_count += (!tarball.is_empty()) as usize;
                         }
@@ -2228,15 +2222,15 @@ impl PackageManifest {
                 let mut package_version: PackageVersion = empty_version;
 
                 if let Some(cpu_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"cpu") {
-                    package_version.cpu = negatable_from_json::<Architecture, _>(&cpu_q.expr)?;
+                    package_version.cpu = negatable_from_json::<Architecture>(&cpu_q.expr)?;
                 }
 
                 if let Some(os_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"os") {
-                    package_version.os = negatable_from_json::<OperatingSystem, _>(&os_q.expr)?;
+                    package_version.os = negatable_from_json::<OperatingSystem>(&os_q.expr)?;
                 }
 
                 if let Some(libc) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"libc") {
-                    package_version.libc = negatable_from_json::<Libc, _>(&libc.expr)?;
+                    package_version.libc = negatable_from_json::<Libc>(&libc.expr)?;
                 }
 
                 if let Some(has_install_script) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"hasInstallScript") {
@@ -2374,7 +2368,7 @@ impl PackageManifest {
                                         tag: bin::Tag::File,
                                         _padding_tag: [0; 3],
                                         value: bin::Value::init_file(
-                                            string_builder.append::<SemverString>(stri.data),
+                                            string_builder.append::<SemverString>(&stri.data),
                                         ),
                                     };
                                     break 'bin;
@@ -2416,7 +2410,7 @@ impl PackageManifest {
                                 if let JSON::ExprData::EString(s) = &tarball_q.expr.data {
                                     if s.len() > 0 {
                                         package_version.tarball_url =
-                                            string_builder.append::<ExternalString>(s.data);
+                                            string_builder.append::<ExternalString>(&s.data);
                                         all_tarball_url_strings[tarball_url_strings_cursor] =
                                             package_version.tarball_url;
                                         tarball_url_strings_cursor += 1;
@@ -2547,7 +2541,7 @@ impl PackageManifest {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
-                                        unreachable!()
+                                        unreachable!("non-value Expr from JSON parser")
                                     } else {
                                         continue;
                                     }
@@ -2557,7 +2551,7 @@ impl PackageManifest {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
-                                        unreachable!()
+                                        unreachable!("non-value Expr from JSON parser")
                                     } else {
                                         continue;
                                     }
@@ -2742,7 +2736,7 @@ impl PackageManifest {
                             0 => package_version.dependencies = map,
                             1 => package_version.optional_dependencies = map,
                             2 => package_version.peer_dependencies = map,
-                            _ => unreachable!(),
+                            _ => unreachable!("non-value Expr from JSON parser"),
                         }
 
                         // TODO(port): debug-assertions block (Zig lines 2478-2522) elided —

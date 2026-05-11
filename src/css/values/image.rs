@@ -1,5 +1,6 @@
 use crate as css;
-use crate::css_parser::{CssResult as Result, ImportKind};
+use bun_ast::ImportKind;
+use crate::css_parser::{CssResult as Result};
 use crate::dependencies::UrlDependency;
 use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;

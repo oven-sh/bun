@@ -20,7 +20,7 @@ use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
-use bun_options_types::BundleEnums::Loader;
+use bun_ast::Loader;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
@@ -227,7 +227,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     // Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
     // `npm run` / `npx` / `pnpx` and replace them with `bun run` / `bun x`.
     //
-    // MOVE_DOWN(b0): canonical impl lives in `bun_install` (the lower crate)
     // so lifecycle scripts can call it without a bun_runtime → bun_install
     // → bun_runtime cycle. This is a thin re-export for `bun run` /
     // filter_run / multi_run callers.
@@ -690,8 +689,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// [`boot_standalone`] (bun.js.zig:64-98 / :247-275 — the two bodies are
     /// byte-identical in Zig).
     fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
-        use bun_options_types::Context::MacroOptions;
-        use bun_options_types::OfflineMode::OfflineMode;
+        use bun_options_types::context::MacroOptions;
+        use bun_options_types::offline_mode::OfflineMode;
 
         // PORT NOTE: `BundleOptions::install` is a raw `NonNull` backref into
         // the CLI's `Box<BunInstall>` (process-lifetime — Zig stored the raw
@@ -857,8 +856,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
         bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
-        bun_js_parser::Expr::data_store_create();
-        bun_js_parser::Stmt::data_store_create();
+        bun_ast::Expr::data_store_create();
+        bun_ast::Stmt::data_store_create();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
@@ -908,7 +907,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 )
             };
             vm.module_loader.eval_source =
-                Some(Box::new(bun_logger::Source::init_path_string(entry, script)));
+                Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
@@ -947,7 +946,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let heap_entry: &'static [u8] = runner_arena().alloc_slice_copy(&eval_path);
 
             vm.module_loader.eval_source =
-                Some(Box::new(bun_logger::Source::init_path_string(heap_entry, cron_script)));
+                Some(Box::new(bun_ast::Source::init_path_string(heap_entry, cron_script)));
             // Zig: `run.entry_path = heap_entry_path` — override what
             // `Run::start` will pass to `vm.load_entry_point`.
             entry_ptr = std::ptr::from_ref::<[u8]>(heap_entry);
@@ -1052,8 +1051,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         bun_jsc::initialize(false);
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
-        bun_js_parser::Expr::data_store_create();
-        bun_js_parser::Stmt::data_store_create();
+        bun_ast::Expr::data_store_create();
+        bun_ast::Stmt::data_store_create();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.
@@ -2442,7 +2441,7 @@ impl RunCommand {
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
-                bun_options_types::ImportKind::EntryPointRun,
+                bun_ast::ImportKind::EntryPointRun,
             ) {
                 ok @ Ok(_) => ok,
                 Err(_) => {
@@ -2452,7 +2451,7 @@ impl RunCommand {
                     this_transpiler.resolver.resolve(
                         top_level_dir,
                         &prefixed,
-                        bun_options_types::ImportKind::EntryPointRun,
+                        bun_ast::ImportKind::EntryPointRun,
                     )
                 }
             };
@@ -3930,7 +3929,7 @@ impl BunXFastPath {
     #[cfg(windows)]
     fn direct_launch_callback(
         wpath: &mut [u16],
-        ctx: bun_options_types::Context::Context<'_>,
+        ctx: bun_options_types::context::Context<'_>,
     ) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         // `try_launch` (still on the call stack) holds live `&mut [u16]`

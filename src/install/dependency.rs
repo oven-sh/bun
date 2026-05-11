@@ -1,7 +1,6 @@
 use core::cmp::Ordering;
 use core::mem::ManuallyDrop;
 
-use bun_logger as logger;
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
 use bun_string::strings;
@@ -78,7 +77,7 @@ pub trait DependencyExt {
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
-        log: impl Into<Option<&'a mut logger::Log>>,
+        log: impl Into<Option<&'a mut bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
     fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool;
@@ -112,7 +111,7 @@ pub trait DependencyExt {
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
-        log: impl Into<Option<&'a mut logger::Log>>,
+        log: impl Into<Option<&'a mut bun_ast::Log>>,
         manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
 }
@@ -157,7 +156,7 @@ impl DependencyExt for Dependency {
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
-        log: impl Into<Option<&'a mut logger::Log>>,
+        log: impl Into<Option<&'a mut bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
         parse_with_optional_tag(alias, alias_hash, dependency, tag, sliced, log, package_manager)
@@ -297,7 +296,7 @@ impl DependencyExt for Dependency {
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
-        log: impl Into<Option<&'a mut logger::Log>>,
+        log: impl Into<Option<&'a mut bun_ast::Log>>,
         manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
         parse(alias, alias_hash, dependency, sliced, log, manager)
@@ -341,7 +340,7 @@ const SIZE: usize = core::mem::size_of::<VersionExternal>()
 
 pub struct Context<'a> {
     // allocator dropped (global mimalloc)
-    pub log: &'a mut logger::Log,
+    pub log: &'a mut bun_ast::Log,
     pub buffer: &'a [u8],
     pub package_manager: Option<&'a mut PackageManager>,
 }
@@ -1179,7 +1178,7 @@ pub fn parse<'a, 'b>(
     alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
     sliced: &SlicedString,
-    log: impl Into<Option<&'a mut logger::Log>>,
+    log: impl Into<Option<&'a mut bun_ast::Log>>,
     manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
     let dep = strings::trim_left(dependency, b" \t\n\r");
@@ -1202,7 +1201,7 @@ pub fn parse_with_optional_tag<'a, 'b>(
     dependency: &[u8],
     tag: Option<Tag>,
     sliced: &SlicedString,
-    log: impl Into<Option<&'a mut logger::Log>>,
+    log: impl Into<Option<&'a mut bun_ast::Log>>,
     package_manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
     let dep = strings::trim_left(dependency, b" \t\n\r");
@@ -1225,7 +1224,7 @@ pub fn parse_with_tag(
     dependency: &[u8],
     tag: Tag,
     sliced: &SlicedString,
-    log_: Option<&mut logger::Log>,
+    log_: Option<&mut bun_ast::Log>,
     package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
     match tag {
@@ -1467,7 +1466,7 @@ pub fn parse_with_tag(
                 if let Some(log) = log_ {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "invalid or unsupported dependency \"{}\"",
                             bstr::BStr::new(dependency)
@@ -1592,7 +1591,7 @@ pub fn parse_with_tag(
                 if let Some(log) = log_ {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!("Unsupported protocol {}", bstr::BStr::new(dependency)),
                     );
                 }

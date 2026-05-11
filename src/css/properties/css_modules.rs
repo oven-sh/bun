@@ -17,7 +17,7 @@ pub struct Composes {
     /// Where the class names are composed from.
     pub from: Option<Specifier>,
     /// The source location of the `composes` property.
-    pub loc: bun_logger::Loc,
+    pub loc: bun_ast::Loc,
     pub cssparser_loc: Location,
 }
 
@@ -46,7 +46,7 @@ impl Composes {
         Ok(Composes {
             names,
             from,
-            loc: bun_logger::Loc {
+            loc: bun_ast::Loc {
                 start: i32::try_from(loc).expect("int cast"),
             },
             cssparser_loc: Location::from_source_location(loc2),
@@ -161,7 +161,7 @@ impl Specifier {
             let import_record_index = input.add_import_record(
                 file,
                 start_position,
-                bun_options_types::ImportKind::Composes,
+                bun_ast::ImportKind::Composes,
             )?;
             return Ok(Specifier::ImportRecordIndex(import_record_index));
         }

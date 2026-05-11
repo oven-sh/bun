@@ -1,4 +1,6 @@
-use bun_bundler::options::{Loader, DEFAULT_LOADERS};
+use bun_ast::Loader;
+use bun_bundler::options::DEFAULT_LOADERS;
+use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 use crate::{
     self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, Strong,

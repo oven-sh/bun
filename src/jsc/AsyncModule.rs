@@ -20,7 +20,7 @@ use bun_bundler::options;
 use bun_bundler::transpiler::ParseResult;
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
-use bun_logger as logger;
+use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::package_json::PackageJSON;
@@ -43,7 +43,7 @@ pub struct InitOpts<'a> {
     pub promise_ptr: Option<*mut *mut JSInternalPromise>,
     pub fd: Option<Fd>,
     pub package_json: Option<&'a PackageJSON>,
-    pub loader: options::Loader,
+    pub loader: bun_ast::Loader,
     pub hash: u32,
     pub arena: Box<ArenaAllocator>,
 }
@@ -177,7 +177,7 @@ impl AsyncModule {
         err: Option<bun_core::Error>,
         specifier_: BunString,
         referrer_: BunString,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
         let mut specifier = specifier_;
@@ -743,7 +743,7 @@ impl AsyncModule {
         if jsc_vm.modules.scheduled == 0 {
             jsc_vm.package_manager().end_progress_bar();
         }
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
@@ -939,7 +939,7 @@ impl AsyncModule {
                 .with_encoding()
                 .to_js(global_this),
         );
-        let location = logger::range_data(
+        let location = bun_ast::range_data(
             Some(&self.parse_result.source),
             self.parse_result
                 .ast
@@ -1154,7 +1154,7 @@ impl AsyncModule {
             );
         }
 
-        let location = logger::range_data(
+        let location = bun_ast::range_data(
             Some(&self.parse_result.source),
             self.parse_result
                 .ast
@@ -1223,7 +1223,7 @@ impl AsyncModule {
 
     pub fn resume_loading_module(
         &mut self,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
     ) -> Result<ResolvedSource, bun_core::Error> {
         bun_core::scoped_log!(
             AsyncModule,
@@ -1250,7 +1250,7 @@ impl AsyncModule {
         // `*mut Log` aliased deliberately — see `Transpiler::set_log`).
         let old_log = unsafe { (*jsc_vm).log };
 
-        let log_ptr: *mut logger::Log = log;
+        let log_ptr: *mut bun_ast::Log = log;
         // SAFETY: see above — single-thread VM; raw-ptr field stores.
         unsafe {
             (*jsc_vm).transpiler.linker.log = log_ptr;
@@ -1287,7 +1287,7 @@ impl AsyncModule {
         // reads (`is_commonjs_module` / `input_fd`) above the move so we
         // can `mem::take` instead of cloning.
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
-            || self.parse_result.ast.exports_kind == bun_js_parser::ExportsKind::Cjs;
+            || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
         let input_fd = self.parse_result.input_fd;
         let parse_result = core::mem::take(&mut self.parse_result);
 
@@ -1391,7 +1391,7 @@ impl AsyncModule {
                         fd_,
                         path.text,
                         self.hash,
-                        options::Loader::from_api(self.loader),
+                        bun_ast::Loader::from_api(self.loader),
                         Fd::INVALID,
                         package_json,
                     );

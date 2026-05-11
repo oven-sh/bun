@@ -29,14 +29,14 @@ use bun_string::{self as strings, OwnedString, String as BunString};
 mod JSLexer {
     #[inline]
     pub fn is_latin1_identifier_u8(name: &[u8]) -> bool {
-        bun_js_parser::lexer::is_latin1_identifier(name)
+        bun_ast::lexer_tables::is_latin1_identifier(name)
     }
     /// Zig `isLatin1Identifier(comptime []const u16, name)` — same predicate
     /// over a UTF-16 slice. Canonical impl lives next to the u8 overload in
     /// `bun_js_parser::lexer`.
     #[inline]
     pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
-        bun_js_parser::lexer::is_latin1_identifier_u16(name)
+        bun_ast::lexer_tables::is_latin1_identifier_u16(name)
     }
 }
 mod JSPrinter {
@@ -499,7 +499,7 @@ fn message_with_type_and_level_(
 
     let mut print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default.
-    let console_depth = bun_options_types::Context::try_get()
+    let console_depth = bun_options_types::context::try_get()
         .and_then(|ctx| ctx.runtime_options.console_depth)
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
 
@@ -5645,7 +5645,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
     let mut fmt = Formatter::new(global);
-    fmt.max_depth = bun_options_types::Context::try_get()
+    fmt.max_depth = bun_options_types::context::try_get()
         .and_then(|ctx| ctx.runtime_options.console_depth)
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();

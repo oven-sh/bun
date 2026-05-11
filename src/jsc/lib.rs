@@ -1862,7 +1862,7 @@ impl SysErrorJsc for bun_sys::Error {
     }
 }
 
-/// Extension trait providing JSC-aware methods on `bun_logger::Log`.
+/// Extension trait providing JSC-aware methods on `bun_ast::Log`.
 /// Mirrors `Log.toJS` / `Log.toJSArray` in src/logger.zig.
 pub trait LogJsc {
     fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue>;
@@ -1870,13 +1870,13 @@ pub trait LogJsc {
 }
 /// Spec `msgToJS` (src/logger_jsc/logger_jsc.zig:23) — wrap a single `Msg` in
 /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
-fn msg_to_js(msg: &bun_logger::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
+fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
     match msg.metadata {
-        bun_logger::Metadata::Build => BuildMessage::create(global, msg.clone()),
-        bun_logger::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
+        bun_ast::Metadata::Build => BuildMessage::create(global, msg.clone()),
+        bun_ast::Metadata::Resolve(_) => ResolveMessage::create(global, msg, b""),
     }
 }
-impl LogJsc for bun_logger::Log {
+impl LogJsc for bun_ast::Log {
     fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue> {
         let msgs = &self.msgs;
         // Spec: `@min(msgs.len, errors_stack.len)` — errors_stack is `[256]JSValue`.
@@ -2046,7 +2046,7 @@ unsafe extern "C" {
     );
 }
 
-pub use bun_js_parser::math;
+pub(crate) use bun_ast::math;
 
 // TODO(port): generated module — re-run bindgen with .rs output. Hand-stubbed
 // in `generated.rs` until `src/codegen/generate-classes.ts` grows a `.rs`

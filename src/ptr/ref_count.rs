@@ -13,7 +13,6 @@ use core::mem::size_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-// MOVE_DOWN(b0): was bun_crash_handler::StoredTrace — type moves to bun_core.
 use bun_core::StoredTrace;
 use bun_core::ThreadLock;
 

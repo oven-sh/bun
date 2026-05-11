@@ -4024,7 +4024,9 @@ impl NodeFS {
                 if buf_to_free.try_reserve_exact(clamped_size).is_err() {
                     break 'maybe_allocate_large_temp_buf;
                 }
-                buf_to_free.expand_to_capacity();
+                // SAFETY: `u8` has no validity invariant; the buffer is handed
+                // straight to the kernel which only stores into it.
+                unsafe { buf_to_free.expand_to_capacity() };
                 buf = &mut buf_to_free[..];
             }
         }
@@ -5833,7 +5835,9 @@ impl NodeFS {
         // exactly via `VecExt::expand_to_capacity` (the tail is write-only — `Syscall::read`
         // hands it straight to the kernel, which only stores into it).
         use bun_collections::vec_ext::VecExt as _;
-        buf.expand_to_capacity();
+        // SAFETY: `u8` has no validity invariant; the buffer is handed straight
+        // to the kernel which only stores into it.
+        unsafe { buf.expand_to_capacity() };
 
         // Two-phase read: first up to `size`, then keep going until EOF.
         // PORT NOTE: Zig spelled this as `while (total < size) { ... } else { while (true) { ... } }`.
@@ -5863,7 +5867,8 @@ impl NodeFS {
                         if buf.try_reserve(8192).is_err() {
                             return Err(with_path_like(sys::Error::from_code(E::ENOMEM, sys::Tag::read), &args.path));
                         }
-                        buf.expand_to_capacity();
+                        // SAFETY: `u8` has no validity invariant; kernel only stores.
+                        unsafe { buf.expand_to_capacity() };
                         continue;
                     }
 

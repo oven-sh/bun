@@ -339,7 +339,7 @@ impl Expansion {
         has_quoted_empty: &mut bool,
         expand_tilde: bool,
         event_loop: EventLoopHandle,
-        command_ctx: *mut bun_options_types::Context::ContextData,
+        command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_str::ZigStringSlice>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;

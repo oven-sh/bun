@@ -6,13 +6,11 @@ use std::borrow::Cow;
 use bstr::BStr;
 
 use bun_core::{err, Error, Global, Output};
-// MOVE_DOWN(b0): bun_runtime::cli::ShellCompletions → install (see install/lib.rs).
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use bun_install::PackageNameHash;
 use bun_js_printer as js_printer;
 use crate::bun_json as json;
-use bun_logger as logger;
 use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File};
@@ -172,13 +170,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
-    // PORT NOTE (layering): `MapEntry.root` is the T2 `bun_logger::js_ast::Expr`
-    // (kept low-tier so `Package::parse_with_json` / pnpm migration can consume it
-    // without depending on the full parser). `PackageJSONEditor` and
-    // `js_printer::print_json` operate on the T4 `bun_js_parser::Expr`. Promote once
-    // here via the existing `From<T2> for T4` deep-rebuild and edit/print the T4
-    // local; the T2 entry is not read again — only `source.contents` is written back.
-    let mut current_package_json_root: bun_js_parser::Expr = current_package_json.root.into();
+    let mut current_package_json_root: bun_ast::Expr = current_package_json.root.into();
     let current_package_json_indent = current_package_json.indentation;
 
     // If there originally was a newline at the end of their package.json, preserve it
@@ -477,7 +469,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         if let Some(stuff) = &not_in_workspace_root {
             // PORT NOTE (layering): see `current_package_json_root` above — promote
             // T2 → T4 for `PackageJSONEditor` / `print_json`.
-            let mut root_package_json_root: bun_js_parser::Expr = root_package_json.root.into();
+            let mut root_package_json_root: bun_ast::Expr = root_package_json.root.into();
             PackageJSONEditor::edit_patched_dependencies(
                 manager,
                 &mut root_package_json_root,
@@ -536,12 +528,12 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
 
-        let source = logger::Source::init_path_string(&b"package.json"[..], &new_package_json_source[..]);
+        let source = bun_ast::Source::init_path_string(&b"package.json"[..], &new_package_json_source[..]);
 
         // Now, we _re_ parse our in-memory edited package.json
         // so we can commit the version we changed from the lockfile
         let json_arena = bun_alloc::Arena::new();
-        let mut new_package_json: bun_js_parser::Expr = match json::parse_package_json_utf8(
+        let mut new_package_json: bun_ast::Expr = match json::parse_package_json_utf8(
             &source,
             manager.log_mut(),
             &json_arena,
@@ -757,7 +749,7 @@ pub fn update_package_json_and_install_catch_error(
     // Zig: `&bun.cli.Cli.log_`. `ctx.log` *is* `&Cli.log_` — `Command.create()` writes
     // `data.log = log` where `log = &Cli.log_` (see runtime/cli/cli.zig:333). Capture the
     // pointer up-front so we don't reborrow `*ctx` after handing it to the inner call.
-    let log: *mut bun_logger::Log = ctx.log;
+    let log: *mut bun_ast::Log = ctx.log;
     match update_package_json_and_install(ctx, subcommand) {
         Ok(()) => Ok(()),
         Err(e) if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") => {

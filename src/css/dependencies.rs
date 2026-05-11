@@ -64,7 +64,7 @@ impl ImportDependency {
         rule: &crate::css_rules::import::ImportRule,
         filename: &[u8],
         local_names: Option<&crate::LocalsResultsMap>,
-        symbols: &bun_logger::symbol::Map,
+        symbols: &bun_ast::symbol::Map,
     ) -> ImportDependency {
         let supports: Option<*const [u8]> = if let Some(supports) = &rule.supports {
             let s = crate::to_css::string(
@@ -155,7 +155,7 @@ impl UrlDependency {
         bump: &'bump bun_alloc::Arena,
         url: &crate::values::url::Url,
         filename: &[u8],
-        import_records: &Vec<bun_options_types::ImportRecord>,
+        import_records: &Vec<bun_ast::ImportRecord>,
     ) -> UrlDependency {
         // TODO(port): `bun_paths::fs::Path::pretty` is currently `&'static str`;
         // should become `&[u8]` per PORTING.md §Strings. Until then, `.as_bytes()`.

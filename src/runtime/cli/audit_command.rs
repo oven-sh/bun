@@ -9,10 +9,9 @@ use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, PackageManager, Subcommand};
-use bun_interchange::json as bun_json;
+use bun_parsers::json as bun_json;
 use bun_libdeflate_sys::libdeflate;
-use bun_logger as logger;
-use bun_logger::js_ast::{Expr, ExprData};
+use bun_ast::{Expr, ExprData};
 use bun_str::{strings, MutableString};
 use bun_url::URL;
 
@@ -150,8 +149,8 @@ impl AuditCommand {
 
             if !response_text.is_empty() {
                 let source =
-                    logger::Source::init_path_string(b"audit-response.json", &response_text[..]);
-                let mut log = logger::Log::init();
+                    bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
+                let mut log = bun_ast::Log::init();
                 let bump = bun_alloc::Arena::new();
 
                 let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
@@ -555,10 +554,10 @@ fn parse_vulnerability(
         for prop in props {
             if let Some(key) = &prop.key {
                 if let ExprData::EString(key_str) = &key.data {
-                    let field_name: &[u8] = key_str.data;
+                    let field_name: &[u8] = key_str.data.slice();
                     if let Some(value) = &prop.value {
                         if let ExprData::EString(val_str) = &value.data {
-                            let field_value: &[u8] = val_str.data;
+                            let field_value: &[u8] = val_str.data.slice();
                             if field_name == b"severity" {
                                 vulnerability.severity = Box::<[u8]>::from(field_value);
                             } else if field_name == b"title" {
@@ -754,8 +753,8 @@ fn print_enhanced_audit_report(
     audit_level: Option<AuditLevel>,
     ignore_list: &[&[u8]],
 ) -> Result<u32, bun_alloc::AllocError> {
-    let source = logger::Source::init_path_string(b"audit-response.json", response_text);
-    let mut log = logger::Log::init();
+    let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
+    let mut log = bun_ast::Log::init();
     let bump = bun_alloc::Arena::new();
 
     let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
@@ -784,7 +783,7 @@ fn print_enhanced_audit_report(
         for prop in properties {
             if let Some(key) = &prop.key {
                 if let ExprData::EString(key_str) = &key.data {
-                    let package_name: &[u8] = key_str.data;
+                    let package_name: &[u8] = key_str.data.slice();
 
                     if let Some(value) = &prop.value {
                         if let ExprData::EArray(arr) = &value.data {

@@ -2,7 +2,6 @@
 //! Normalization is necessary because most fields in the API schema are optional
 
 use std::borrow::Cow;
-use bun_logger as logger;
 use bun_string::strings;
 use bun_core::{Output, Global};
 use bun_collections::VecExt;
@@ -16,7 +15,7 @@ use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_dotenv as DotEnv;
 #[allow(unused_imports)]
 use bun_url::URL;
-use bun_js_parser::runtime as Runtime;
+use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
 // TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
 // (adding it triggers upstream rebuilds with in-progress breakage). The
@@ -45,7 +44,7 @@ pub use defines::Define;
 // traits into scope so the associated-fn call syntax below resolves.
 #[allow(unused_imports)]
 use crate::defines::{DefineDataExt as _, DefineExt as _};
-pub use bun_options_types::GlobalCache::GlobalCache;
+pub use bun_options_types::global_cache::GlobalCache;
 
 // ── B-2 type aliases for incomplete lower-tier surfaces ──
 // TODO(b2-blocked): bun_resolver::package_json::ESModule::ConditionsMap — module
@@ -55,9 +54,9 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 // (matches `bun.FD.fromStdDir` pattern).
 pub type Dir = bun_sys::Fd;
 /// `Loader.HashTable` (Zig nested type alias). Unified with the canonical
-/// `bun_options_types::BundleEnums::LoaderHashTable` so the resolver and
+/// `bun_ast::LoaderHashTable` so the resolver and
 /// bundler share one nominal map type (PORTING.md crate-tier rule).
-pub use bun_options_types::BundleEnums::LoaderHashTable;
+pub(crate) use bun_ast::LoaderHashTable;
 /// `Loader.Map` (Zig nested type alias).
 pub type LoaderEnumMap = EnumMap<Loader, &'static [u8]>;
 
@@ -87,7 +86,7 @@ pub enum WriteDestination {
 }
 
 pub fn validate_path(
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     _fs: &mut Fs::Implementation,
     cwd: &[u8],
     rel_path: &[u8],
@@ -105,7 +104,7 @@ pub fn validate_path(
     if out.is_empty() {
         log.add_error_fmt(
             None,
-            logger::Loc::EMPTY,
+            bun_ast::Loc::EMPTY,
             format_args!(
                 "Invalid {}: {}",
                 bstr::BStr::new(path_kind),
@@ -141,7 +140,7 @@ pub use bun_resolver::options::{ExternalModules, WildcardPattern};
 /// method) because `ExternalModules` is now a foreign type and Rust forbids
 /// inherent impls across crates (E0116).
 pub fn is_node_builtin(str: &[u8]) -> bool {
-    bun_resolve_builtins::Alias::has(str, bun_resolve_builtins::Target::Node, Default::default())
+    bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
 const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
@@ -164,7 +163,7 @@ pub fn init_external_modules(
     fs: &mut Fs::Implementation,
     cwd: &[u8],
     externals: &[&[u8]],
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     target: Target,
 ) -> ExternalModules {
     let mut result = ExternalModules {
@@ -210,7 +209,7 @@ pub fn init_external_modules(
             if strings::index_of_char(&path[i + 1..], b'*').is_some() {
                 log.add_error_fmt(
                     None,
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                     format_args!(
                         "External path \"{}\" cannot have more than one \"*\" wildcard",
                         bstr::BStr::new(external)
@@ -399,21 +398,21 @@ pub static NODE_BUILTINS_MAP: phf::Set<&'static [u8]> = phf::phf_set! {
 
 pub use bun_options_types::BundlePackage;
 
-// Re-export of `bun_options_types::BundleEnums::ModuleType`.
+// Re-export of `bun_options_types::bundle_enums::ModuleType`.
 // Re-exported so `crate::options_impl::ModuleType` and `js_ast::parser::options::ModuleType`
 // (which also re-exports the BundleEnums def) are the *same* nominal type — kills the
 // `to_parser_module_type` shim in transpiler.rs.
-pub use bun_options_types::BundleEnums::ModuleType;
+pub use bun_options_types::bundle_enums::ModuleType;
 
 // Kept for callers that reference the module-level static name; forwards to the
 // canonical const map on the upstream enum.
 pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = ModuleType::LIST;
 
-// Re-export of `bun_options_types::BundleEnums::Target`.
+// Re-export of `bun_ast::Target`.
 // Spec options.zig:379 has exactly ONE `Target`; re-export the canonical enum so
 // `BundleOptions.target`, `js_printer::Options.target`, the resolver, and css
 // targets all share one nominal type (kills the `to_bundle_enums_target` shim).
-pub use bun_options_types::BundleEnums::Target;
+pub(crate) use bun_ast::Target;
 
 // Forwarded to the canonical assoc-const so there is exactly one phf body.
 // Kept as a module-level name for callers that pre-date `Target::MAP`.
@@ -540,11 +539,11 @@ impl TargetExt for Target {
 pub use bun_options_types::Format;
 pub use bun_options_types::WindowsOptions;
 
-// Re-export of `bun_options_types::BundleEnums::Loader`.
+// Re-export of `bun_ast::Loader`.
 // Spec options.zig:568 has exactly ONE `Loader`; re-export so the bundler's
 // `BundleOptions.loaders` and the resolver's `Path::loader()` operate on the
 // same nominal type.
-pub use bun_options_types::BundleEnums::{Loader, LoaderOptional};
+pub(crate) use bun_ast::{Loader, LoaderOptional};
 
 // PORT NOTE: hoisted from `impl Loader` — Rust forbids `static` in inherent impls.
 pub static LOADER_NAMES: phf::Map<&'static [u8], Loader> = phf::phf_map! {
@@ -645,7 +644,7 @@ pub trait LoaderExt: Copy {
     // TODO(port): move to *_jsc — bun_bundler_jsc::options_jsc::loader_from_js
 
     // PORT NOTE: `is_type_script` / `is_java_script_like*` spelling-aliases
-    // moved to inherent `impl Loader` in `bun_options_types::BundleEnums` so
+    // moved to inherent `impl Loader` in `bun_options_types::bundle_enums` so
     // cross-crate callers (bun_jsc / bun_runtime) resolve them without a trait
     // import.
 
@@ -770,7 +769,7 @@ pub enum GetLoaderAndVirtualSourceErr {
 
 pub struct LoaderResult<'a> {
     pub loader: Option<Loader>,
-    pub virtual_source: Option<&'a logger::Source>,
+    pub virtual_source: Option<&'a bun_ast::Source>,
     pub path: Fs::Path<'a>,
     pub is_main: bool,
     pub specifier: &'a [u8],
@@ -784,7 +783,7 @@ pub struct LoaderResult<'a> {
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
-    virtual_source_to_use: &'a mut Option<logger::Source>,
+    virtual_source_to_use: &'a mut Option<bun_ast::Source>,
     blob_to_deinit: &mut Option<OpaqueBlob>,
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
@@ -794,11 +793,11 @@ pub fn get_loader_and_virtual_source<'a>(
 
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
     let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
-    let mut virtual_source: Option<&'a logger::Source> = None;
+    let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
-        let eval_source: &'a logger::Source = unsafe { &*eval_source };
+        let eval_source: &'a bun_ast::Source = unsafe { &*eval_source };
         // Spec: `bun.pathLiteral("/[eval]")` — the eval/stdin entry path is built
         // via `bun.pathLiteral` (cli.zig / run_command.zig / bun.js.zig), which
         // rewrites `/` → `\` on Windows, so the suffix uses the platform separator.
@@ -836,9 +835,9 @@ pub fn get_loader_and_virtual_source<'a>(
                 // returned to the caller — matches Zig `getLoaderAndVirtualSource`
                 // where `Fs.Path` and `logger.Source.path` share one type.
                 let static_text: &'static [u8] =
-                    bun_js_parser::StoreStr::new(path.text).slice();
-                *virtual_source_to_use = Some(logger::Source {
-                    path: logger::fs::Path::init(static_text),
+                    bun_ast::StoreStr::new(path.text).slice();
+                *virtual_source_to_use = Some(bun_ast::Source {
+                    path: bun_paths::fs::Path::init(static_text),
                     contents: Cow::Borrowed(jsc_vm.blob_shared_view(blob)),
                     ..Default::default()
                 });
@@ -1057,7 +1056,7 @@ pub mod default_user_defines {
 pub use default_user_defines as DefaultUserDefines;
 
 pub fn defines_from_transform_options(
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     maybe_input_define: Option<api::StringMap>,
     target: Target,
     env_loader: Option<&mut DotEnv::Loader>,
@@ -1249,8 +1248,8 @@ impl ResolveFileExtensions {
         }
     }
 
-    pub fn kind(&self, kind_: bun_options_types::ImportKind, is_node_modules: bool) -> &[Box<[u8]>] {
-        use bun_options_types::ImportKind;
+    pub fn kind(&self, kind_: bun_ast::ImportKind, is_node_modules: bool) -> &[Box<[u8]>] {
+        use bun_ast::ImportKind;
         match kind_ {
             ImportKind::Stmt
             | ImportKind::EntryPointBuild
@@ -1293,7 +1292,7 @@ pub fn loaders_from_transform_options(
     let mut loader_values: Vec<Loader> = Vec::with_capacity(input_loaders.loaders.len());
 
     for input in &input_loaders.loaders {
-        loader_values.push(Loader::from_api(*input));
+        loader_values.push(<Loader as bun_options_types::LoaderExt>::from_api(*input));
     }
 
     let total_capacity = input_loaders.extensions.len()
@@ -1465,7 +1464,7 @@ pub struct BundleOptions<'a> {
     /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored
     /// `&'a mut` here would assert uniqueness for `'a` and make every access
     /// through those sibling raw pointers UB under stacked borrows.
-    pub log: *mut logger::Log,
+    pub log: *mut bun_ast::Log,
     pub external: ExternalModules,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
@@ -1583,7 +1582,7 @@ pub struct BundleOptions<'a> {
     pub optimize_imports: Option<&'a StringSet>,
 }
 
-// B-3 UNIFIED: was a local dup of `bun_options_types::BundleEnums::ForceNodeEnv`
+// B-3 UNIFIED: was a local dup of `bun_options_types::bundle_enums::ForceNodeEnv`
 // (resolver carried a second FORWARD_DECL copy). Canonical type now lives in
 // bun_options_types; re-exported here so `options::ForceNodeEnv` call sites in
 // bundle_v2.rs / transpiler.rs are unchanged.
@@ -1756,7 +1755,7 @@ impl<'a> BundleOptions<'a> {
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
     /// holds a live `&mut Log` from one of those aliases concurrently.
     #[inline]
-    pub fn log(&self) -> &logger::Log {
+    pub fn log(&self) -> &bun_ast::Log {
         unsafe { &*self.log }
     }
 
@@ -1769,7 +1768,7 @@ impl<'a> BundleOptions<'a> {
     /// that itself writes through the aliased `*mut Log`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn log_mut(&self) -> &mut logger::Log {
+    pub fn log_mut(&self) -> &mut bun_ast::Log {
         unsafe { &mut *self.log }
     }
 
@@ -1879,13 +1878,13 @@ impl<'a> BundleOptions<'a> {
 
     pub fn from_api(
         fs: &mut Fs::FileSystem,
-        log: *mut logger::Log,
+        log: *mut bun_ast::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, bun_core::Error> {
         
         use core::sync::atomic::Ordering;
 
-        let target = Target::from(transform.target);
+        let target = <Target as bun_options_types::TargetExt>::from_api(transform.target);
         let loaders = loaders_from_transform_options(transform.loaders.clone(), target)?;
         let bundler_feature_flags = Runtime::Features::init_bundler_feature_flags(
             &transform
@@ -2047,7 +2046,7 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(t) = transform.target {
-            opts.target = Target::from(Some(t));
+            opts.target = <Target as bun_options_types::TargetExt>::from_api(Some(t));
             opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
         }
 
@@ -2254,7 +2253,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
 /// does not surface this type yet (TODO(b2-blocked)); local mirror keeps
 /// `TransformOptions.entry_point` self-contained.
 pub struct EntryPointFile {
-    pub path: logger::fs::Path,
+    pub path: bun_paths::fs::Path<'static>,
     pub contents: Box<[u8]>,
 }
 
@@ -2285,7 +2284,7 @@ impl TransformOptions {
         debug_assert!(!entry_point_name.is_empty());
 
         let entry_point = EntryPointFile {
-            path: logger::fs::Path::init(entry_point_name),
+            path: bun_paths::fs::Path::init(entry_point_name),
             contents: Box::from(code),
         };
 
@@ -2336,8 +2335,8 @@ pub use crate::output_file::OutputFile;
 
 #[derive(Default)]
 pub struct TransformResult {
-    pub errors: Box<[logger::Msg]>,
-    pub warnings: Box<[logger::Msg]>,
+    pub errors: Box<[bun_ast::Msg]>,
+    pub warnings: Box<[bun_ast::Msg]>,
     pub output_files: Box<[OutputFile]>,
     pub outbase: Box<[u8]>,
     pub root_dir: Option<Dir>,
@@ -2347,16 +2346,16 @@ impl TransformResult {
     pub fn init(
         outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
     ) -> Result<TransformResult, bun_core::Error> {
-        let mut errors: Vec<logger::Msg> = Vec::with_capacity(log.errors as usize);
-        let mut warnings: Vec<logger::Msg> = Vec::with_capacity(log.warnings as usize);
+        let mut errors: Vec<bun_ast::Msg> = Vec::with_capacity(log.errors as usize);
+        let mut warnings: Vec<bun_ast::Msg> = Vec::with_capacity(log.warnings as usize);
         for msg in log.msgs.iter() {
             match msg.kind {
-                logger::Kind::Err => {
+                bun_ast::Kind::Err => {
                     errors.push(msg.clone());
                 }
-                logger::Kind::Warn => {
+                bun_ast::Kind::Warn => {
                     warnings.push(msg.clone());
                 }
                 _ => {}

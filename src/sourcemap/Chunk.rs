@@ -1,6 +1,6 @@
 use bun_collections::VecExt;
 use bun_str::{strings, MutableString};
-use bun_logger::{Loc, Source};
+use bun_ast::{Loc, Source};
 use bun_paths::{fs::FileSystem, PathBuffer};
 
 use crate::{

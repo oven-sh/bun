@@ -2,16 +2,16 @@ use crate::mal_prelude::*;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
-use bun_js_parser::ast as js_ast;
-use bun_js_parser::ast::{
+use bun_ast as js_ast;
+use bun_ast::{
     b, Binding, Expr, ExprNodeList, Stmt, StmtData,
-    BundledAst as JSAst,
     E, G, S,
 };
-use bun_js_parser::ArrayBinding;
-use bun_logger::Loc;
-use bun_options_types::{ImportRecordTag, Loader};
-use bun_options_types::import_record::Flags as ImportRecordFlags;
+use crate::BundledAst as JSAst;
+use bun_ast::ArrayBinding;
+use bun_ast::Loc;
+use bun_ast::{ImportRecordTag, Loader};
+use bun_ast::ImportRecordFlags as ImportRecordFlags;
 
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
@@ -48,7 +48,7 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     c: &mut LinkerContext,
     stmts: &mut StmtList,
-    part_stmts: &[js_ast::Stmt],
+    part_stmts: &[bun_ast::Stmt],
     bump: &'bump Bump,
     ast: &mut JSAst,
 ) -> Result<(), AllocError> {
@@ -187,7 +187,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         let binding =
                             Binding::alloc(bump, b::Identifier { r#ref: st.namespace_ref }, loc);
                         esm_decls.push(ArrayBinding { binding, default_value: None });
-                        let arrow_args = js_ast::StoreSlice::new(core::slice::from_ref(
+                        let arrow_args = bun_ast::StoreSlice::new(core::slice::from_ref(
                             bump.alloc(G::Arg {
                                 binding: Binding::alloc(
                                     bump,
@@ -240,7 +240,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     binding: Binding::alloc(
                         bump,
                         b::Array {
-                            items: js_ast::StoreSlice::new_mut(esm_decls.into_bump_slice_mut()),
+                            items: bun_ast::StoreSlice::new_mut(esm_decls.into_bump_slice_mut()),
                             has_spread: false,
                             is_single_line: true,
                         },

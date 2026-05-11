@@ -1,6 +1,6 @@
 use bun_core::zstr;
-use bun_options_types::import_record;
-use bun_options_types::BundleEnums::Target;
+use bun_ast::import_record;
+use bun_ast::Target;
 use bun_string::ZStr;
 
 // Zig: `const string = []const u8;` — in Rust we use `&'static [u8]` directly for keys.

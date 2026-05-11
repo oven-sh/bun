@@ -55,7 +55,6 @@ use std::io::Write as _;
 
 use bun_alloc::AllocError;
 use bun_string::StringBuilder;
-// MOVE_DOWN(b0): bun_jsc::URL → bun_url::whatwg::URL (WHATWG parser moves out of jsc).
 use bun_url::whatwg::URL as JscUrl;
 use bun_string::{strings, OwnedString};
 use bun_url::PercentEncoding;

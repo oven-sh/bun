@@ -27,7 +27,6 @@ use crate::api::{js_bundler as JSBundler, SocketAddress};
 use crate::api::js_bundler::PluginJscExt as _;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::response::HeadersRef;
-use bun_logger as logger;
 use bun_paths as paths;
 use bun_ptr::{IntrusiveRc, RefPtr};
 use bun_str::{self as bstr, strings, String as BunString, ZStr, ZigString};
@@ -426,16 +425,16 @@ pub type ServerPreparedRequest<'a, const SSL: bool, const DEBUG: bool> =
 // Spec: src/bun_core/Global.zig:195-210. `generate()` builds the struct and
 // hands it to `JSON.toAST`, which reflects over fields at comptime. Rust has no
 // `@typeInfo`, so this is the hand-expanded reflection output (cf.
-// `bun_interchange::json::ToAst` derive sketch, json.rs:808-824): an `E.Object`
+// `bun_parsers::json::ToAst` derive sketch, json.rs:808-824): an `E.Object`
 // with `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
     use bun_analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
     use bun_core::Global;
-    use bun_js_parser::ast::e::EString;
-    use bun_js_parser::{Expr, E, G};
-    use bun_logger::Loc;
+    use bun_ast::e::EString;
+    use bun_ast::{Expr, E, G};
+    use bun_ast::Loc;
 
     pub struct BunInfo {
         pub bun_version: &'static [u8],
@@ -2559,7 +2558,7 @@ where
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
-        let source = logger::Source::init_empty_file(b"info.json");
+        let source = bun_ast::Source::init_empty_file(b"info.json");
         let transpiler = &VirtualMachine::VirtualMachine::get().transpiler;
         let _ = bun_js_printer::print_json(
             &mut writer,

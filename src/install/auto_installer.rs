@@ -341,7 +341,7 @@ impl hooks::AutoInstaller for PackageManager {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &SlicedString,
-        log: *mut bun_logger::Log,
+        log: *mut bun_ast::Log,
     ) -> Option<hooks::DependencyVersion> {
         // SAFETY: resolver passes `self.log()` which is a valid `*mut Log`;
         // null is also accepted (Zig: `?*logger.Log`).
@@ -358,7 +358,7 @@ impl hooks::AutoInstaller for PackageManager {
         version: &[u8],
         tag: hooks::DependencyVersionTag,
         sliced: &SlicedString,
-        log: *mut bun_logger::Log,
+        log: *mut bun_ast::Log,
     ) -> Option<hooks::DependencyVersion> {
         // SAFETY: see `parse_dependency`.
         let log = unsafe { log.as_mut() };
@@ -392,7 +392,7 @@ impl hooks::AutoInstaller for PackageManager {
 // upcast to the `dyn AutoInstaller` trait object the resolver stores.
 //
 // SAFETY (callee contract):
-//   • `log` is the resolver's `*mut logger::Log` (Transpiler-owned,
+//   • `log` is the resolver's `*mut bun_ast::Log` (Transpiler-owned,
 //     process-lifetime; `init_with_runtime` stores it raw).
 //   • `install` is the type-erased `Option<&Api::BunInstall>` projected from
 //     `BundleOptions.install` (`*const ()` — null ⇔ None). The pointee is the
@@ -403,7 +403,7 @@ impl hooks::AutoInstaller for PackageManager {
 //     `*DotEnv.Loader`.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_resolver_init_package_manager(
-    log: *mut bun_logger::Log,
+    log: *mut bun_ast::Log,
     install: *const (),
     env: *mut core::ffi::c_void,
 ) -> core::ptr::NonNull<dyn hooks::AutoInstaller> {
@@ -416,7 +416,7 @@ pub unsafe fn __bun_resolver_init_package_manager(
         unsafe { install.cast::<crate::bun_schema::api::BunInstall>().as_ref() };
     // SAFETY: caller guarantees `log` / `env` are non-null process-lifetime
     // pointers (resolver `.expect`s `env_loader` before calling).
-    let log_ref: &mut bun_logger::Log = unsafe { &mut *log };
+    let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
     let env_ref: &mut bun_dotenv::Loader<'static> =
         unsafe { &mut *env.cast::<bun_dotenv::Loader<'static>>() };
 

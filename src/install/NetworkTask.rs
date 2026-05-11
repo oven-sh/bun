@@ -10,7 +10,6 @@ use bun_http::{
     self as http, async_http::Options as AsyncHTTPOptions, AsyncHTTP, HeaderBuilder,
     HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
 };
-use bun_logger as logger;
 use bun_str::{self, strings, MutableString, StringBuilder};
 use bun_threading::thread_pool::Batch;
 use bun_url::URL;
@@ -411,7 +410,6 @@ impl NetworkTask {
                 name
             };
 
-            // MOVE_DOWN(b0): bun_jsc::url::join → bun_url::join (WHATWG URL FFI moves out of jsc).
             // `OwnedString` derefs the WTF-backed result on scope exit (Zig:
             // `defer tmp.deref()`, NetworkTask.zig:216) — covers both the
             // success path and the InvalidURL early returns below.
@@ -424,7 +422,7 @@ impl NetworkTask {
                 if !is_optional {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
                             quote(scope.url.href()),
@@ -434,7 +432,7 @@ impl NetworkTask {
                 } else {
                     log.add_warning_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
                             quote(scope.url.href()),
@@ -449,7 +447,7 @@ impl NetworkTask {
                 if !is_optional {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
                             *tmp
@@ -458,7 +456,7 @@ impl NetworkTask {
                 } else {
                     log.add_warning_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
                             *tmp
@@ -708,7 +706,7 @@ impl NetworkTask {
             // `this.package_manager.log`.
             pm.log_mut().add_error_fmt(
                 None,
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
                 format_args!(
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
                     quote(&self.url_buf),

@@ -7,7 +7,7 @@ use crate::{PrintErr, Printer};
 
 use bun_alloc::Arena;
 use bun_collections::VecExt;
-use bun_options_types::ImportRecord;
+use bun_ast::ImportRecord;
 
 /// Named replacement for the Zig anonymous `struct { v: ?LayerName }` used in
 /// both `ImportConditions.layer` and `ImportRule.layer`. The two Zig anonymous

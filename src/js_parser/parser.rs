@@ -5,8 +5,7 @@
 
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
 use bun_core::Output;
-use bun_logger as logger;
-use bun_options_types::import_record::ImportRecord;
+use bun_ast::ImportRecord;
 // Zig `std.hash.Wyhash` (final4 variant) — used by `hash_for_runtime_transpiler`
 // (runtime.zig:272) and `ReactRefresh.HookContext` (parser.zig:1140). NOT
 // interchangeable with `bun_wyhash::Wyhash11`.
@@ -19,7 +18,6 @@ use bun_wyhash::Wyhash;
 pub mod ConvertESMExportsForHmr { pub type Ctx = (); }
 #[allow(non_snake_case)]
 pub mod ImportScanner { pub type State = (); }
-pub use crate::ast::TypeScript;
 pub use bun_paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference
@@ -29,9 +27,13 @@ pub use bun_paths::fs;
 pub mod options {
     use std::borrow::Cow;
     pub use bun_options_types::*;
+    // `Loader`/`Target`/`ImportKind`/`SideEffects` are now canonical in `bun_ast`;
+    // re-exported here so the `options::Loader`/`options::Target` spelling used
+    // throughout `P.rs`/`Parser.rs` keeps resolving without per-site churn.
+    pub(crate) use bun_ast::Loader;
     // TODO(b2-blocked): bun_options_types::{ServerComponents, OutputFormat,
     // AllowUnresolved, Format, Framework} — missing from lower-tier surface.
-    pub use bun_options_types::BundleEnums::ModuleType;
+    pub use bun_options_types::bundle_enums::ModuleType;
     // D042: canonical `JSX::{Pragma, Runtime, ImportSource, Defaults, ...}`
     // lives in `bun_options_types::jsx`. The glob above already brings in
     // `jsx`/`JSX`; explicit re-export keeps the path stable for callers.
@@ -42,7 +44,7 @@ pub mod options {
     /// `Runtime.Features.ServerComponentsMode`. Aliased so call sites that
     /// spell it as either `options::ServerComponents` (P.rs) or
     /// `RuntimeFeatures.server_components` resolve to one type.
-    pub use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
+    pub(crate) use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     #[allow(non_camel_case_types)]
     pub enum OutputFormat { #[default] Preserve, Cjs, Esm, Iife, Internal_BakeDev }
@@ -63,6 +65,13 @@ pub mod options {
     /// `Parser.Options.allow_unresolved` are the SAME nominal type and
     /// `ParseTask::run_with_source_code` can hand `&transpiler.options.allow_unresolved`
     /// straight through.
+    /// Glob matcher for the `Patterns` arm. `bun_js_parser` cannot depend on
+    /// `bun_glob` (sibling-tier per REFACTOR_BUN_AST.md); the bundler supplies
+    /// `|pattern, shape| bun_glob::r#match(pattern, shape).matches()` when
+    /// constructing `Patterns`. Function pointer (not closure) since no state
+    /// is captured.
+    pub type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
+
     #[derive(Debug, Clone)]
     pub enum AllowUnresolved {
         /// Default. Skip all checks — current behavior.
@@ -70,7 +79,7 @@ pub mod options {
         /// Always error on dynamic specifiers.
         None,
         /// Glob patterns; at least one must match the extracted shape.
-        Patterns(Box<[Box<[u8]>]>),
+        Patterns(Box<[Box<[u8]>]>, AllowUnresolvedMatcher),
     }
     impl Default for AllowUnresolved {
         fn default() -> Self { AllowUnresolved::All }
@@ -83,7 +92,11 @@ pub mod options {
 
         /// Normalize from raw CLI/JS input.
         /// [] → .none, contains "*" → .all, else → .patterns
-        pub fn from_strings(strs: Box<[Box<[u8]>]>) -> AllowUnresolved {
+        /// `matcher` supplies the glob predicate (typically `bun_glob::r#match`).
+        pub fn from_strings(
+            strs: Box<[Box<[u8]>]>,
+            matcher: AllowUnresolvedMatcher,
+        ) -> AllowUnresolved {
             if strs.is_empty() {
                 return AllowUnresolved::None;
             }
@@ -92,7 +105,7 @@ pub mod options {
                     return AllowUnresolved::All;
                 }
             }
-            AllowUnresolved::Patterns(strs)
+            AllowUnresolved::Patterns(strs, matcher)
         }
 
         /// shape is the extracted template representation (may be "").
@@ -100,9 +113,9 @@ pub mod options {
             match self {
                 AllowUnresolved::All => true,
                 AllowUnresolved::None => false,
-                AllowUnresolved::Patterns(pats) => {
+                AllowUnresolved::Patterns(pats, matcher) => {
                     for p in pats.iter() {
-                        if bun_glob::r#match(p, shape).matches() {
+                        if matcher(p, shape) {
                             return true;
                         }
                     }
@@ -158,16 +171,12 @@ pub mod options {
     pub type MacroRemap = bun_collections::StringHashMap<bun_collections::StringHashMap<Box<[u8]>>>;
 }
 pub use crate::renamer;
-pub use crate::ast::known_global::KnownGlobal;
-pub use crate::ast::parser_entry::{Parser, Options as ParserOptions};
-pub use crate::ast::side_effects::SideEffects;
-pub use crate::ast::fold_string_addition::fold_string_addition;
+pub use crate::parse::parse_entry::{Parser, Options as ParserOptions};
+pub use crate::scan::scan_side_effects::SideEffects;
 pub use bun_paths::is_package_path;
 
-pub use crate::ast::base::Ref;
-pub use crate::ast::base::{Index, RefCtx};
+pub(crate) use bun_ast::base::Ref;
 
-pub use bun_options_types::import_record as importRecord;
 
 // `runtime.rs` (full port) is path-gated in lib.rs as `runtime_full`. Until
 // its bun_core/bun_schema deps are wired, the *real* type surface — the parts
@@ -175,13 +184,13 @@ pub use bun_options_types::import_record as importRecord;
 // drop their bool-placeholder guards.
 #[allow(non_snake_case)]
 pub mod Runtime {
-    use bun_collections::{StringArrayHashMap, StringSet};
+    use bun_collections::StringSet;
     use bun_string::strings;
     use bun_wyhash::Wyhash;
 
-    use crate::ast::base::Ref;
-    use crate::ast::Expr;
-    use crate::RuntimeTranspilerCache;
+    
+    
+    use bun_ast::RuntimeTranspilerCache;
 
     // ─────────────────────────── Runtime.Features ───────────────────────────
 
@@ -406,400 +415,171 @@ pub mod Runtime {
         }
     }
 
-    /// Zig: `Runtime.Features.ReplaceableExport`
-    #[derive(Clone)]
-    pub enum ReplaceableExport {
-        Delete,
-        Replace(Expr),
-        Inject { name: Box<[u8]>, value: Expr },
-        // TODO(port): `name` was `string` (= []const u8). Ownership unclear; using Box<[u8]>.
-    }
-
-    impl ReplaceableExport {
-        #[inline]
-        pub fn is_replace(&self) -> bool {
-            matches!(self, Self::Replace(_))
-        }
-    }
-
-    /// Zig: `bun.StringArrayHashMapUnmanaged(ReplaceableExport)`.
-    ///
-    /// Newtype (not a bare alias) so we can hang `get_ptr` (Zig spelling for
-    /// `getPtr`, which borrows immutably) and expose a `.entries` accessor that
-    /// satisfies the `replace_exports.entries.len` shape `visitStmt` ported
-    /// verbatim from Zig's `ArrayHashMap.entries`.
-    #[derive(Default)]
-    pub struct ReplaceableExportMap {
-        /// Backing map. Named `entries` so `replace_exports.entries.len()` —
-        /// the literal Zig spelling — resolves (Zig's `ArrayHashMap.entries`
-        /// is a `MultiArrayList` with `.len`; here `StringArrayHashMap` derefs
-        /// to `ArrayHashMap` which has `.len()`).
-        pub entries: StringArrayHashMap<ReplaceableExport>,
-    }
-
-    impl core::ops::Deref for ReplaceableExportMap {
-        type Target = StringArrayHashMap<ReplaceableExport>;
-        #[inline]
-        fn deref(&self) -> &Self::Target {
-            &self.entries
-        }
-    }
-    impl core::ops::DerefMut for ReplaceableExportMap {
-        #[inline]
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            &mut self.entries
-        }
-    }
-
-    impl ReplaceableExportMap {
-        #[inline]
-        pub fn count(&self) -> usize {
-            self.entries.count()
-        }
-        /// Zig `getPtr` returns `?*V` from a `*const Self` — i.e. immutable
-        /// lookup yielding a (logically-mutable) pointer. Rust splits this
-        /// into `get_ptr` (`&V`) and `get_ptr_mut` (`&mut V`); call sites in
-        /// the visitor only read through it.
-        #[inline]
-        pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
-            self.entries.get(key)
-        }
-        #[inline]
-        pub fn get_ptr_mut(&mut self, key: &[u8]) -> Option<&mut ReplaceableExport> {
-            self.entries.get_ptr_mut(key)
-        }
-        #[inline]
-        pub fn contains(&self, key: &[u8]) -> bool {
-            self.entries.contains(key)
-        }
-    }
-
-    /// Zig: `Runtime.Features.ServerComponentsMode`
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub enum ServerComponentsMode {
-        /// Server components is disabled, strings "use client" and "use server" mean nothing.
-        #[default]
-        None,
-        /// This is a server-side file outside of the SSR graph, but not a "use server" file.
-        /// - Handle functions with "use server", creating secret exports for them.
-        WrapAnonServerFunctions,
-        /// This is a "use client" file on the server, and separate_ssr_graph is off.
-        /// - Wrap all exports in a call to `registerClientReference`
-        /// - Ban "use server" functions???
-        WrapExportsForClientReference,
-        /// This is a "use server" file on the server
-        /// - Wrap all exports in a call to `registerServerReference`
-        /// - Ban "use server" functions, since this directive is already applied.
-        WrapExportsForServerReference,
-        /// This is a client side file.
-        /// - Ban "use server" functions since it is on the client-side
-        ClientSide,
-    }
-
-    impl ServerComponentsMode {
-        #[inline]
-        pub fn is_server_side(self) -> bool {
-            matches!(
-                self,
-                Self::WrapExportsForServerReference | Self::WrapAnonServerFunctions
-            )
-        }
-
-        #[inline]
-        pub fn wraps_exports(self) -> bool {
-            matches!(
-                self,
-                Self::WrapExportsForClientReference | Self::WrapExportsForServerReference
-            )
-        }
-
-        #[inline]
-        pub fn is_enabled(self) -> bool {
-            !matches!(self, Self::None)
-        }
-    }
-
-    // ─────────────────────────── Runtime.Imports ───────────────────────────
-    /// Port of `runtime.zig` `Runtime.Imports` — the closed set of 25 runtime
-    /// helper symbols a parsed file may reference from `bun:wrap`.
-    ///
-    /// If you change this, remember to update "runtime.js".
-    #[allow(non_snake_case)]
-    #[derive(Default, Clone)]
-    pub struct Imports {
-        pub __name: Option<Ref>,
-        pub __require: Option<Ref>,
-        pub __export: Option<Ref>,
-        pub __reExport: Option<Ref>,
-        pub __exportValue: Option<Ref>,
-        pub __exportDefault: Option<Ref>,
-        // __refreshRuntime: ?GeneratedSymbol = null,
-        // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
-        pub __merge: Option<Ref>,
-        pub __legacyDecorateClassTS: Option<Ref>,
-        pub __legacyDecorateParamTS: Option<Ref>,
-        pub __legacyMetadataTS: Option<Ref>,
-        pub __publicField: Option<Ref>,
-        pub __privateIn: Option<Ref>,
-        pub __privateGet: Option<Ref>,
-        pub __privateAdd: Option<Ref>,
-        pub __privateSet: Option<Ref>,
-        pub __privateMethod: Option<Ref>,
-        pub __decoratorStart: Option<Ref>,
-        pub __decoratorMetadata: Option<Ref>,
-        pub __runInitializers: Option<Ref>,
-        pub __decorateElement: Option<Ref>,
-        /// Zig field name: `@"$$typeof"` (not a valid Rust identifier).
-        pub dollar_dollar_typeof: Option<Ref>,
-        pub __using: Option<Ref>,
-        pub __callDispose: Option<Ref>,
-        pub __jsonParse: Option<Ref>,
-        pub __promiseAll: Option<Ref>,
-    }
-
-    impl Imports {
-        pub const ALL: [&'static [u8]; 25] = [
-            b"__name",
-            b"__require",
-            b"__export",
-            b"__reExport",
-            b"__exportValue",
-            b"__exportDefault",
-            b"__merge",
-            b"__legacyDecorateClassTS",
-            b"__legacyDecorateParamTS",
-            b"__legacyMetadataTS",
-            b"__publicField",
-            b"__privateIn",
-            b"__privateGet",
-            b"__privateAdd",
-            b"__privateSet",
-            b"__privateMethod",
-            b"__decoratorStart",
-            b"__decoratorMetadata",
-            b"__runInitializers",
-            b"__decorateElement",
-            b"$$typeof",
-            b"__using",
-            b"__callDispose",
-            b"__jsonParse",
-            b"__promiseAll",
-        ];
-
-        /// When generating the list of runtime imports, we sort it for determinism.
-        /// This is a lookup table so we don't need to resort the strings each time.
-        ///
-        /// Zig computed this at comptime via `std.sort.pdq`. Rust stable cannot
-        /// sort in `const`; precomputed here. `ALL_SORTED_INDEX[i]` is the rank
-        /// of `ALL[i]` in byte-lexicographic order.
-        // TODO(port): add a `#[test]` that re-derives and asserts equality.
-        pub const ALL_SORTED_INDEX: [usize; 25] = [
-            13, // __name
-            22, // __require
-            5,  // __export
-            21, // __reExport
-            7,  // __exportValue
-            6,  // __exportDefault
-            12, // __merge
-            9,  // __legacyDecorateClassTS
-            10, // __legacyDecorateParamTS
-            11, // __legacyMetadataTS
-            20, // __publicField
-            16, // __privateIn
-            15, // __privateGet
-            14, // __privateAdd
-            18, // __privateSet
-            17, // __privateMethod
-            4,  // __decoratorStart
-            3,  // __decoratorMetadata
-            23, // __runInitializers
-            2,  // __decorateElement
-            0,  // $$typeof
-            24, // __using
-            1,  // __callDispose
-            8,  // __jsonParse
-            19, // __promiseAll
-        ];
-
-        pub const NAME: &'static [u8] = b"bun:wrap";
-        pub const ALT_NAME: &'static [u8] = b"bun:wrap";
-
-        /// Index → field. Expansion of Zig `@field(this, all[i])`.
-        #[inline]
-        fn field(&self, i: usize) -> Option<Ref> {
-            match i {
-                0 => self.__name,
-                1 => self.__require,
-                2 => self.__export,
-                3 => self.__reExport,
-                4 => self.__exportValue,
-                5 => self.__exportDefault,
-                6 => self.__merge,
-                7 => self.__legacyDecorateClassTS,
-                8 => self.__legacyDecorateParamTS,
-                9 => self.__legacyMetadataTS,
-                10 => self.__publicField,
-                11 => self.__privateIn,
-                12 => self.__privateGet,
-                13 => self.__privateAdd,
-                14 => self.__privateSet,
-                15 => self.__privateMethod,
-                16 => self.__decoratorStart,
-                17 => self.__decoratorMetadata,
-                18 => self.__runInitializers,
-                19 => self.__decorateElement,
-                20 => self.dollar_dollar_typeof,
-                21 => self.__using,
-                22 => self.__callDispose,
-                23 => self.__jsonParse,
-                24 => self.__promiseAll,
-                _ => None,
-            }
-        }
-
-        #[inline]
-        fn field_mut(&mut self, i: usize) -> Option<&mut Option<Ref>> {
-            match i {
-                0 => Some(&mut self.__name),
-                1 => Some(&mut self.__require),
-                2 => Some(&mut self.__export),
-                3 => Some(&mut self.__reExport),
-                4 => Some(&mut self.__exportValue),
-                5 => Some(&mut self.__exportDefault),
-                6 => Some(&mut self.__merge),
-                7 => Some(&mut self.__legacyDecorateClassTS),
-                8 => Some(&mut self.__legacyDecorateParamTS),
-                9 => Some(&mut self.__legacyMetadataTS),
-                10 => Some(&mut self.__publicField),
-                11 => Some(&mut self.__privateIn),
-                12 => Some(&mut self.__privateGet),
-                13 => Some(&mut self.__privateAdd),
-                14 => Some(&mut self.__privateSet),
-                15 => Some(&mut self.__privateMethod),
-                16 => Some(&mut self.__decoratorStart),
-                17 => Some(&mut self.__decoratorMetadata),
-                18 => Some(&mut self.__runInitializers),
-                19 => Some(&mut self.__decorateElement),
-                20 => Some(&mut self.dollar_dollar_typeof),
-                21 => Some(&mut self.__using),
-                22 => Some(&mut self.__callDispose),
-                23 => Some(&mut self.__jsonParse),
-                24 => Some(&mut self.__promiseAll),
-                _ => None,
-            }
-        }
-
-        pub fn iter(&self) -> ImportsIterator<'_> {
-            ImportsIterator { i: 0, runtime_imports: self }
-        }
-
-        /// Zig: `contains(imports, comptime key: string)`.
-        // TODO(port): comptime-string key — Rust callers should access the field directly
-        // (`imports.__foo.is_some()`). Runtime fallback provided for parity.
-        #[inline]
-        pub fn contains(&self, key: &[u8]) -> bool {
-            Self::ALL
-                .iter()
-                .position(|&k| k == key)
-                .and_then(|i| self.field(i))
-                .is_some()
-        }
-
-        pub fn has_any(&self) -> bool {
-            for i in 0..Self::ALL.len() {
-                if self.field(i).is_some() {
-                    return true;
-                }
-            }
-            false
-        }
-
-        /// Zig: `put(imports, comptime key: string, ref: Ref)`.
-        // TODO(port): comptime-string key — Rust callers should assign the field directly.
-        #[inline]
-        pub fn put(&mut self, key: &[u8], ref_: Ref) {
-            if let Some(i) = Self::ALL.iter().position(|&k| k == key) {
-                if let Some(slot) = self.field_mut(i) {
-                    *slot = Some(ref_);
-                }
-            }
-        }
-
-        /// Zig: `at(imports, comptime key: string) ?Ref`.
-        // TODO(port): comptime-string key — Rust callers should read the field directly.
-        #[inline]
-        pub fn at(&self, key: &[u8]) -> Option<Ref> {
-            Self::ALL
-                .iter()
-                .position(|&k| k == key)
-                .and_then(|i| self.field(i))
-        }
-
-        /// Zig: `get(imports, key: anytype) ?Ref` where `key` is a runtime index.
-        #[inline]
-        pub fn get(&self, key: usize) -> Option<Ref> {
-            if key < Self::ALL.len() { self.field(key) } else { None }
-        }
-
-        pub fn count(&self) -> usize {
-            let mut n: usize = 0;
-            for i in 0..Self::ALL.len() {
-                if self.field(i).is_some() {
-                    n += 1;
-                }
-            }
-            n
-        }
-    }
-
-    /// Zig: `Runtime.Imports.Iterator`
-    pub struct ImportsIterator<'a> {
-        pub i: usize,
-        pub runtime_imports: &'a Imports,
-    }
-
-    #[derive(Clone, Copy)]
-    pub struct ImportsIteratorEntry {
-        pub key: u16,
-        pub value: Ref,
-    }
-
-    impl ImportsIterator<'_> {
-        pub fn next(&mut self) -> Option<ImportsIteratorEntry> {
-            while self.i < Imports::ALL.len() {
-                let t = self.i;
-                self.i += 1; // Zig: `defer this.i += 1;`
-                if let Some(val) = self.runtime_imports.field(t) {
-                    return Some(ImportsIteratorEntry {
-                        key: u16::try_from(t).expect("int cast"),
-                        value: val,
-                    });
-                }
-            }
-            None
-        }
-    }
-    #[derive(Default, Clone, Copy)]
-    pub struct Names;
-
-    impl Names {
-        pub const ACTIVATE_FUNCTION: &'static [u8] = b"activate";
-    }
+    // Data-shaped Runtime types are canonical in `bun_ast::runtime` so the
+    // printer (and any non-parser caller) sees one definition. Re-exported
+    // here so `parser::Runtime::{Imports, ReplaceableExport, ...}` and
+    // `bun_ast::runtime::{...}` are the same nominal types.
+    pub(crate) use bun_ast::runtime::{
+        Imports, Names, ReplaceableExport,
+        ReplaceableExportMap, ServerComponentsMode,
+    };
 
     pub fn is_runtime_module(_: &[u8]) -> bool { false }
+
+    // ───────────────────────────── Runtime / Fallback ─────────────────────
+
+    
+
+    // ───────────────────────────── Fallback ───────────────────────────────
+    // REFACTOR_BUN_AST: moved here from `bun_ast::runtime` — needs
+    // `bun_options_types::schema`, `bun_io`, `bun_base64`, all of which would
+    // form a cycle inside `bun_ast`.
+
+    use core::fmt;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use bun_options_types::schema;
+    use bun_options_types::schema::api;
+
+    pub struct Fallback;
+
+    impl Fallback {
+        pub const HTML_TEMPLATE: &'static [u8] = include_bytes!("../fallback.html");
+        pub const HTML_BACKEND_TEMPLATE: &'static [u8] = include_bytes!("../fallback-backend.html");
+
+        #[inline]
+        pub fn error_js() -> &'static [u8] {
+            bun_core::runtime_embed_file!(Codegen, "bun-error/index.js").as_bytes()
+        }
+
+        #[inline]
+        pub fn error_css() -> &'static [u8] {
+            bun_core::runtime_embed_file!(Codegen, "bun-error/bun-error.css").as_bytes()
+        }
+
+        #[inline]
+        pub fn fallback_decoder_js() -> &'static [u8] {
+            bun_core::runtime_embed_file!(Codegen, "fallback-decoder.js").as_bytes()
+        }
+
+        // Zig: `@import("build_options").fallback_html_version` — wired via build.rs.
+        pub const VERSION_HASH: &'static str = bun_core::build_options::FALLBACK_HTML_VERSION;
+
+        pub fn version_hash() -> u32 {
+            static CACHED: AtomicU32 = AtomicU32::new(0);
+            let v = CACHED.load(Ordering::Relaxed);
+            if v != 0 {
+                return v;
+            }
+            let parsed =
+                u64::from_str_radix(Self::version(), 16).expect("unreachable") as u32; // @truncate
+            CACHED.store(parsed, Ordering::Relaxed);
+            parsed
+        }
+
+        pub fn version() -> &'static str {
+            Self::VERSION_HASH
+        }
+
+        pub fn render(
+            msg: &api::FallbackMessageContainer,
+            preload: &[u8],
+            entry_point: &[u8],
+            writer: &mut impl bun_io::Write,
+        ) -> core::result::Result<(), bun_core::Error> {
+            // Zig: `writer.print(HTMLTemplate, PrintArgs{...})` — Zig's std.fmt named-field
+            // substitution (`{[name]s}`). Rust has no runtime named-format, so substitute
+            // by scanning the embedded template byte-for-byte.
+            let blob = Base64FallbackMessage { msg };
+            let fallback = Self::fallback_decoder_js();
+            render_named_template(writer, Self::HTML_TEMPLATE, &mut |w, name| match name {
+                b"blob" => w.write_fmt(format_args!("{}", blob)),
+                b"preload" => w.write_all(preload),
+                b"fallback" => w.write_all(fallback),
+                b"entry_point" => w.write_all(entry_point),
+                _ => Ok(()),
+            })
+        }
+
+        pub fn render_backend(
+            msg: &api::FallbackMessageContainer,
+            writer: &mut impl bun_io::Write,
+        ) -> core::result::Result<(), bun_core::Error> {
+            let blob = Base64FallbackMessage { msg };
+            let bun_error_css = Self::error_css();
+            let bun_error = Self::error_js();
+            let bun_error_page_css: &[u8] = b"";
+            let fallback = Self::fallback_decoder_js();
+            render_named_template(writer, Self::HTML_BACKEND_TEMPLATE, &mut |w, name| match name {
+                b"blob" => w.write_fmt(format_args!("{}", blob)),
+                b"bun_error_css" => w.write_all(bun_error_css),
+                b"bun_error" => w.write_all(bun_error),
+                b"bun_error_page_css" => w.write_all(bun_error_page_css),
+                b"fallback" => w.write_all(fallback),
+                _ => Ok(()),
+            })
+        }
+    }
+
+    /// Tiny substitutor for Zig-style `{[name]s}` / `{[name]f}` named placeholders
+    /// (the only specifiers used in fallback.html / fallback-backend.html).
+    fn render_named_template<W: bun_io::Write>(
+        writer: &mut W,
+        template: &'static [u8],
+        subst: &mut dyn FnMut(&mut W, &[u8]) -> core::result::Result<(), bun_core::Error>,
+    ) -> core::result::Result<(), bun_core::Error> {
+        let mut i = 0usize;
+        let mut last = 0usize;
+        let bytes = template;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'{' && bytes[i + 1] == b'[' {
+                let mut j = i + 2;
+                while j < bytes.len() && bytes[j] != b']' {
+                    j += 1;
+                }
+                if j + 2 < bytes.len() && bytes[j] == b']' && bytes[j + 2] == b'}' {
+                    writer.write_all(&bytes[last..i])?;
+                    let name = &bytes[i + 2..j];
+                    subst(writer, name)?;
+                    i = j + 3;
+                    last = i;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        writer.write_all(&bytes[last..])
+    }
+
+    /// Zig: `Fallback.Base64FallbackMessage`
+    pub struct Base64FallbackMessage<'a> {
+        pub msg: &'a api::FallbackMessageContainer,
+    }
+
+    impl fmt::Display for Base64FallbackMessage<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut bb: Vec<u8> = Vec::new();
+            let mut encoder = schema::Writer::new(&mut bb);
+            self.msg.encode(&mut encoder); // catch {}
+            // Zig: `Fallback.Base64FallbackMessage.Base64Encoder` (standard alphabet, no '=' padding)
+            let enc = &bun_base64::zig_base64::STANDARD_NO_PAD.encoder;
+            let mut out = vec![0u8; enc.calc_size(bb.len())];
+            let s = enc.encode(&mut out, &bb); // catch {}
+            // SAFETY: STANDARD_ALPHABET_CHARS is pure ASCII; encoder output contains only those bytes.
+            f.write_str(unsafe { core::str::from_utf8_unchecked(s) })
+        }
+    }
 }
 pub type RuntimeFeatures = Runtime::Features;
 pub type RuntimeImports = Runtime::Imports;
 pub type RuntimeNames = Runtime::Names;
-pub use Runtime::ServerComponentsMode as ServerComponents;
 
-pub use crate::ast::p::{NewParser, P};
+pub use crate::p::{NewParser, P};
 
 pub use bun_collections::StringHashMap as StringHashMapRe; // TODO(port): name collision with `StringHashMap` re-export
 // NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
 
-pub use crate::ast as js_ast;
+pub use bun_ast as js_ast;
 pub use js_ast::{
     B, Binding, BindingNodeIndex, BindingNodeList, E, Expr, ExprNodeIndex, ExprNodeList, LocRef,
     S, Scope, Stmt, StmtNodeIndex, StmtNodeList, Symbol,
@@ -819,10 +599,10 @@ use crate::defines::Define;
 
 pub struct ExprListLoc {
     pub list: ExprNodeList,
-    pub loc: logger::Loc,
+    pub loc: bun_ast::Loc,
 }
 
-pub const LOC_MODULE_SCOPE: logger::Loc = logger::Loc { start: -100 };
+pub const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 
 pub struct DeferredImportNamespace {
     pub namespace: LocRef,
@@ -963,7 +743,7 @@ impl JSXImportSymbols {
 // this trait, with `Key = u8` (index into `ALL`) for `RuntimeImports` and
 // `Key = &'static [u8]` (the alias string itself) for `JSXImportSymbols`.
 
-impl crate::ast::p::GenerateImportSymbols for RuntimeImports {
+impl crate::p::GenerateImportSymbols for RuntimeImports {
     /// Index into [`RuntimeImports::ALL`].
     type Key = u8;
 
@@ -979,7 +759,7 @@ impl crate::ast::p::GenerateImportSymbols for RuntimeImports {
     }
 }
 
-impl crate::ast::p::GenerateImportSymbols for JSXImportSymbols {
+impl crate::p::GenerateImportSymbols for JSXImportSymbols {
     type Key = &'static [u8];
 
     #[inline]
@@ -1106,7 +886,7 @@ impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
     }
 }
 
-pub fn loc_after_op(e: &E::Binary) -> logger::Loc {
+pub fn loc_after_op(e: &E::Binary) -> bun_ast::Loc {
     if e.left.loc.start < e.right.loc.start {
         e.right.loc
     } else {
@@ -1120,9 +900,9 @@ pub struct TransposeState {
     pub is_await_target: bool,
     pub is_then_catch_target: bool,
     pub is_require_immediately_assigned_to_decl: bool,
-    pub loc: logger::Loc,
-    pub import_record_tag: Option<bun_options_types::ImportRecordTag>,
-    pub import_loader: Option<bun_options_types::Loader>,
+    pub loc: bun_ast::Loc,
+    pub import_record_tag: Option<bun_ast::ImportRecordTag>,
+    pub import_loader: Option<bun_ast::Loader>,
     pub import_options: Expr,
 }
 
@@ -1132,7 +912,7 @@ impl Default for TransposeState {
             is_await_target: false,
             is_then_catch_target: false,
             is_require_immediately_assigned_to_decl: false,
-            loc: logger::Loc::EMPTY,
+            loc: bun_ast::Loc::EMPTY,
             import_record_tag: None,
             import_loader: None,
             import_options: Expr::EMPTY,
@@ -1162,7 +942,7 @@ impl JSXTagData {
 
 pub struct JSXTag<'a> {
     pub data: JSXTagData,
-    pub range: logger::Range,
+    pub range: bun_ast::Range,
     /// Empty string for fragments.
     pub name: &'a [u8],
 }
@@ -1170,7 +950,7 @@ pub struct JSXTag<'a> {
 impl<'a> JSXTag<'a> {
     pub fn parse<P>(p: &mut P) -> Result<JSXTag<'a>, bun_core::Error>
     where
-        P: crate::ast::p::ParserLike<'a>,
+        P: crate::p::ParserLike<'a>,
     {
         use bun_string::strings;
 
@@ -1179,7 +959,7 @@ impl<'a> JSXTag<'a> {
         // A missing tag is a fragment
         if p.lexer().token == T::TGreaterThan {
             return Ok(JSXTag {
-                range: logger::Range { loc, len: 0 },
+                range: bun_ast::Range { loc, len: 0 },
                 data: JSXTagData::Fragment(1),
                 name: b"",
             });
@@ -1222,7 +1002,7 @@ impl<'a> JSXTag<'a> {
                 let source = p.source();
                 p.log().add_error(
                     Some(source),
-                    logger::Loc {
+                    bun_ast::Loc {
                         start: member_range.loc.start + i32::try_from(index).expect("int cast"),
                     },
                     b"Unexpected \"-\"",
@@ -1560,7 +1340,7 @@ pub fn is_eval_or_arguments(name: &[u8]) -> bool {
 
 #[derive(Clone, Copy, Default)]
 pub struct PrependTempRefsOpts {
-    pub fn_body_loc: Option<logger::Loc>,
+    pub fn_body_loc: Option<bun_ast::Loc>,
     pub kind: StmtsKind,
 }
 
@@ -1619,11 +1399,11 @@ impl Default for ThenCatchChain {
 }
 
 pub struct ParsedPath<'a> {
-    pub loc: logger::Loc,
+    pub loc: bun_ast::Loc,
     pub text: &'a [u8],
     pub is_macro: bool,
-    pub import_tag: bun_options_types::ImportRecordTag,
-    pub loader: Option<bun_options_types::Loader>,
+    pub import_tag: bun_ast::ImportRecordTag,
+    pub loader: Option<bun_ast::Loader>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1640,7 +1420,7 @@ pub enum StrictModeFeature {
 
 #[derive(Clone, Copy)]
 pub struct InvalidLoc {
-    pub loc: logger::Loc,
+    pub loc: bun_ast::Loc,
     pub kind: InvalidLocTag,
 }
 
@@ -1657,7 +1437,7 @@ pub enum InvalidLocTag {
 
 impl InvalidLoc {
     #[cold]
-    pub fn add_error(self, log: &mut logger::Log, source: &logger::Source) {
+    pub fn add_error(self, log: &mut bun_ast::Log, source: &bun_ast::Source) {
         let text: &'static [u8] = match self.kind {
             InvalidLocTag::Spread => b"Unexpected trailing comma after rest element",
             InvalidLocTag::Parentheses => b"Unexpected parentheses in binding pattern",
@@ -1732,20 +1512,20 @@ pub type RefRefMap = HashMap<Ref, Ref>; // TODO(port): RefCtx hasher + 80% load 
 // indexable + truncatable. The Scope itself is arena-owned for `'arena`.
 #[derive(Clone, Copy)]
 pub struct ScopeOrder<'arena> {
-    pub loc: logger::Loc,
+    pub loc: bun_ast::Loc,
     pub scope: *mut Scope,
     _phantom: core::marker::PhantomData<&'arena Scope>,
 }
 impl<'arena> ScopeOrder<'arena> {
     #[inline]
-    pub fn new(loc: logger::Loc, scope: *mut Scope) -> Self {
+    pub fn new(loc: bun_ast::Loc, scope: *mut Scope) -> Self {
         Self { loc, scope, _phantom: core::marker::PhantomData }
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct ParenExprOpts {
-    pub async_range: logger::Range,
+    pub async_range: bun_ast::Range,
     pub is_async: bool,
     pub force_arrow_fn: bool,
 }
@@ -1753,7 +1533,7 @@ pub struct ParenExprOpts {
 impl Default for ParenExprOpts {
     fn default() -> Self {
         Self {
-            async_range: logger::Range::NONE,
+            async_range: bun_ast::Range::NONE,
             is_async: false,
             force_arrow_fn: false,
         }
@@ -1774,8 +1554,8 @@ pub enum AwaitOrYield {
 /// arrow expressions.
 #[derive(Clone)]
 pub struct FnOrArrowDataParse {
-    pub async_range: logger::Range,
-    pub needs_async_loc: logger::Loc,
+    pub async_range: bun_ast::Range,
+    pub needs_async_loc: bun_ast::Loc,
     pub allow_await: AwaitOrYield,
     pub allow_yield: AwaitOrYield,
     pub allow_super_call: bool,
@@ -1804,8 +1584,8 @@ pub struct FnOrArrowDataParse {
 impl Default for FnOrArrowDataParse {
     fn default() -> Self {
         Self {
-            async_range: logger::Range::NONE,
-            needs_async_loc: logger::Loc::EMPTY,
+            async_range: bun_ast::Range::NONE,
+            needs_async_loc: bun_ast::Loc::EMPTY,
             allow_await: AwaitOrYield::AllowIdent,
             allow_yield: AwaitOrYield::AllowIdent,
             allow_super_call: false,
@@ -1913,9 +1693,9 @@ pub struct FnOnlyDataVisit<'a> {
 #[derive(Clone, Copy, Default)]
 pub struct DeferredErrors {
     /// These are errors for expressions
-    pub invalid_expr_default_value: Option<logger::Range>,
-    pub invalid_expr_after_question: Option<logger::Range>,
-    pub array_spread_feature: Option<logger::Range>,
+    pub invalid_expr_default_value: Option<bun_ast::Range>,
+    pub invalid_expr_after_question: Option<bun_ast::Range>,
+    pub array_spread_feature: Option<bun_ast::Range>,
 }
 
 impl DeferredErrors {
@@ -1951,8 +1731,8 @@ pub struct ImportClause<'a> {
 }
 
 pub struct PropertyOpts {
-    pub async_range: logger::Range,
-    pub declare_range: logger::Range,
+    pub async_range: bun_ast::Range,
+    pub declare_range: bun_ast::Range,
     pub is_async: bool,
     pub is_generator: bool,
 
@@ -1970,8 +1750,8 @@ pub struct PropertyOpts {
 impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
-            async_range: logger::Range::NONE,
-            declare_range: logger::Range::NONE,
+            async_range: bun_ast::Range::NONE,
+            declare_range: bun_ast::Range::NONE,
             is_async: false,
             is_generator: false,
             is_static: false,
@@ -1988,7 +1768,7 @@ impl Default for PropertyOpts {
 
 pub struct ScanPassResult {
     pub import_records: Vec<ImportRecord>,
-    pub named_imports: js_ast::ast::NamedImports,
+    pub named_imports: bun_ast::ast_result::NamedImports,
     pub used_symbols: ParsePassSymbolUsageMap,
     pub import_records_to_keep: Vec<u32>,
     pub approximate_newline_count: usize,
@@ -2040,7 +1820,7 @@ pub struct FindLabelSymbolResult {
 #[derive(Clone, Copy, Default)]
 pub struct FindSymbolResult {
     pub r#ref: Ref,
-    pub declare_loc: Option<logger::Loc>,
+    pub declare_loc: Option<bun_ast::Loc>,
     pub is_inside_with_scope: bool,
 }
 
@@ -2303,7 +2083,7 @@ impl Default for Jest {
 // pin the eight monomorphizations.
 // `NewParser!` Zig comptime-type-fn lowering: named aliases now live in
 // `ast/Parser.rs` (where the JsxT ZSTs are in scope). Re-export here.
-pub use crate::ast::parser_entry::{
+pub use crate::parse::parse_entry::{
     JSXImportScanner, JSXParser, JavaScriptImportScanner, JavaScriptParser, TSXImportScanner,
     TSXParser, TypeScriptImportScanner, TypeScriptParser,
 };
@@ -2331,15 +2111,15 @@ pub use crate::ast::parser_entry::{
 ///   function* foo() { (x = yield y) => {} }
 #[derive(Clone, Copy)]
 pub struct DeferredArrowArgErrors {
-    pub invalid_expr_await: logger::Range,
-    pub invalid_expr_yield: logger::Range,
+    pub invalid_expr_await: bun_ast::Range,
+    pub invalid_expr_yield: bun_ast::Range,
 }
 
 impl Default for DeferredArrowArgErrors {
     fn default() -> Self {
         Self {
-            invalid_expr_await: logger::Range::NONE,
-            invalid_expr_yield: logger::Range::NONE,
+            invalid_expr_await: bun_ast::Range::NONE,
+            invalid_expr_yield: bun_ast::Range::NONE,
         }
     }
 }
@@ -2348,9 +2128,9 @@ pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
     define: &mut Define,
     opts: ParserOptions,
-    log_to_copy_into: &mut logger::Log,
+    log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &logger::Source,
+    source: &bun_ast::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
     new_lazy_export_ast_impl(
@@ -2369,14 +2149,14 @@ pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_alloc::Arena,
     define: &mut Define,
     opts: ParserOptions,
-    log_to_copy_into: &mut logger::Log,
+    log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &logger::Source,
+    source: &bun_ast::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
     symbols: js_ast::symbol::List,
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
     
-    let mut temp_log = logger::Log::init();
+    let mut temp_log = bun_ast::Log::init();
     // Zig held two aliasing `*Log` (parser.log + lexer.log). Both sides store
     // `NonNull<Log>` in Rust; copy the lexer's pointer so they share one
     // provenance chain. See `Parser::init` for the same pattern.
@@ -2407,7 +2187,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
 
     let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
     match result {
-        js_ast::Result::Ast(mut ast) => {
+        crate::Result::Ast(mut ast) => {
             ast.has_lazy_export = true;
             Ok(Some(ast))
         }

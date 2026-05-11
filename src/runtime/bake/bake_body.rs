@@ -11,7 +11,6 @@ use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
-use bun_logger as logger;
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
 // {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
@@ -631,13 +630,13 @@ impl Framework {
     pub const REACT_INSTALL_COMMAND: &'static str =
         "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
-    pub fn add_react_install_command_note(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+    pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         let clone_line_text = log.clone_line_text;
-        log.add_msg(logger::Msg {
-            kind: logger::Kind::Note,
-            data: logger::range_data(
+        log.add_msg(bun_ast::Msg {
+            kind: bun_ast::Kind::Note,
+            data: bun_ast::range_data(
                 None,
-                logger::Range::NONE,
+                bun_ast::Range::NONE,
                 // `range_data` takes `impl Into<Cow<'static, [u8]>>`;
                 // `concat!` yields `&'static str` — go via `.as_bytes()`.
                 concat!(
@@ -729,7 +728,7 @@ impl Framework {
         }
 
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let mut result = match r.resolve(top_level_dir, *path, bun_options_types::ImportKind::Stmt) {
+        let mut result = match r.resolve(top_level_dir, *path, bun_ast::ImportKind::Stmt) {
             Ok(res) => res,
             Err(err) => {
                 Output::err(
@@ -1133,7 +1132,7 @@ impl Framework {
     pub fn init_transpiler<'a>(
         &mut self,
         arena: &'a Arena,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
@@ -1165,7 +1164,7 @@ impl Framework {
     pub fn init_transpiler_with_options<'a>(
         &mut self,
         arena: &'a Arena,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
@@ -1181,7 +1180,7 @@ impl Framework {
         // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
         // returning the RAII `Scope`. `defer ast_scope.exit()` is the explicit
         // exit at end-of-fn (the Scope has no Drop yet).
-        let mut ast_memory_allocator = ast::ASTMemoryAllocator::new_without_stack(arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
         let ast_scope = ast_memory_allocator.enter();
         let _guard = scopeguard::guard(ast_scope, |s| s.exit());
 
@@ -1199,8 +1198,8 @@ impl Framework {
         )?);
 
         out.options.target = match renderer {
-            Graph::Client => bun_bundler::options::Target::Browser,
-            Graph::Server | Graph::Ssr => bun_bundler::options::Target::Bun,
+            Graph::Client => bun_ast::Target::Browser,
+            Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
         };
         out.options.public_path = match renderer {
             Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
@@ -1386,7 +1385,7 @@ impl Default for ReactFastRefresh {
 #[inline]
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-    match r.resolve(top_level_dir, path, bun_options_types::ImportKind::Stmt) {
+    match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
         Ok(res) => Some(arena_erase(res.path_const().unwrap().text)),
         Err(_) => {
             unsafe { (*r.log).reset() };
@@ -1491,7 +1490,7 @@ pub fn add_import_meta_defines(
 ) -> Result<(), bun_core::Error> {
     use bun_bundler::defines::DefineData;
     use bun_bundler::DefineExt;
-    use bun_js_parser::E::EString;
+    use bun_ast::E::EString;
 
     static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
     static MODE_PRODUCTION: EString = EString::from_static(b"production");
@@ -1529,46 +1528,46 @@ pub fn add_import_meta_defines(
     Ok(())
 }
 
-// PORT NOTE: `logger::fs::Path` (the minimal type `logger::Source` actually
+// PORT NOTE: `bun_paths::fs::Path<'static>` (the minimal type `bun_ast::Source` actually
 // stores) has no `init_for_kit_built_in`; that constructor lives on the
 // richer `bun_resolver::fs::Path` (a different nominal type) and is not
 // `const fn`. Mirror what `bun_bundler::bundle_v2` does and build the
 // virtual sources lazily.
 // TODO(port): once the two `fs::Path` types are unified, restore the static
 // initializers from bake.zig:976-984.
-pub fn server_virtual_source() -> logger::Source {
-    logger::Source {
+pub fn server_virtual_source() -> bun_ast::Source {
+    bun_ast::Source {
         // = bun.fs.Path.initForKitBuiltIn("bun", "bake/server")
-        path: logger::fs::Path {
+        path: bun_paths::fs::Path {
             pretty: b"bun:bake/server",
             text: b"_bun/bake/server",
             namespace: b"bun",
-            name: logger::fs::PathName::init(b"bake/server"),
+            name: bun_paths::fs::PathName::init(b"bake/server"),
             is_symlink: true,
             is_disabled: false,
         },
         contents: bun_ptr::Cow::Borrowed(b""), // Virtual
         // = bun.ast.Index.bake_server_data (=1). bundle_v2 asserts on this; the
         // `..Default::default()` would silently zero it.
-        index: logger::Index::source(1),
+        index: bun_ast::Index::source(1),
         ..Default::default()
     }
 }
 
-pub fn client_virtual_source() -> logger::Source {
-    logger::Source {
+pub fn client_virtual_source() -> bun_ast::Source {
+    bun_ast::Source {
         // = bun.fs.Path.initForKitBuiltIn("bun", "bake/client")
-        path: logger::fs::Path {
+        path: bun_paths::fs::Path {
             pretty: b"bun:bake/client",
             text: b"_bun/bake/client",
             namespace: b"bun",
-            name: logger::fs::PathName::init(b"bake/client"),
+            name: bun_paths::fs::PathName::init(b"bake/client"),
             is_symlink: true,
             is_disabled: false,
         },
         contents: bun_ptr::Cow::Borrowed(b""), // Virtual
         // = bun.ast.Index.bake_client_data (=2).
-        index: logger::Index::source(2),
+        index: bun_ast::Index::source(2),
         ..Default::default()
     }
 }

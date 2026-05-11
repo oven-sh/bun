@@ -1,11 +1,13 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
+use bun_options_types::{LoaderExt as _, TargetExt as _};
 use bun_collections::{VecExt, ByteVecExt};
 use bun_alloc::ArenaVecExt as _;
 use std::io::Write as _;
 
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
-use bun_bundler::options::{self, Loader, PackagesOption, SourceMapOption};
+use bun_ast::Loader;
+use bun_bundler::options::{self, PackagesOption, SourceMapOption};
 use bun_bundler::{self as Transpiler};
 use bun_bundler::transpiler::{MacroJSCtx, ParseResult, ParseOptions};
 use bun_core::Error;
@@ -18,13 +20,13 @@ use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use crate::node::{Encoding, StringOrBuffer};
-use bun_js_parser::runtime::Runtime;
+use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
-use bun_js_parser::ast::{self as JSAst, Expr};
+use bun_js_parser::{self as JSAst};
+use bun_ast::Expr;
 use bun_js_parser::lexer as JSLexer;
 use bun_js_printer as JSPrinter;
-use bun_logger as logger;
-use bun_options_types::{ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
@@ -41,7 +43,7 @@ pub struct JSTranspiler {
     pub config: Config,
     pub scan_pass_result: ScanPassResult,
     pub buffer_writer: Option<JSPrinter::BufferWriter>,
-    pub log_level: logger::Level,
+    pub log_level: bun_ast::Level,
     // TODO(port): non-AST crate keeps an arena field for bulk-freeing config strings.
     // Consider replacing with per-field Box ownership in Phase B.
     // Boxed so its address is stable across the move into `Box<JSTranspiler>` —
@@ -81,7 +83,7 @@ pub struct Config {
     pub tsconfig: Option<Box<TSConfigJSON>>,
     pub tsconfig_buf: Box<[u8]>,
     pub macros_buf: Box<[u8]>,
-    pub log: logger::Log,
+    pub log: bun_ast::Log,
     pub runtime: Runtime::Features,
     pub tree_shaking: bool,
     pub trim_unused_imports: Option<bool>,
@@ -104,7 +106,7 @@ impl Default for Config {
             tsconfig: None,
             tsconfig_buf: Box::default(),
             macros_buf: Box::default(),
-            log: logger::Log::default(), // overwritten at construction
+            log: bun_ast::Log::default(), // overwritten at construction
             runtime: {
                 let mut r = Runtime::Features::default();
                 r.top_level_await = true;
@@ -141,8 +143,8 @@ fn source_map_option_from_js(
     options::SOURCE_MAP_OPTION_MAP.from_js(global, value)
 }
 
-fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<logger::Level>> {
-    logger::Level::MAP.from_js(global, value)
+fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_ast::Level>> {
+    bun_ast::Level::MAP.from_js(global, value)
 }
 
 /// Deep-clone a [`MacroMap`]. Zig's `=` on `StringArrayHashMap` is a struct copy
@@ -344,7 +346,7 @@ impl Config {
                 let vm = VirtualMachine::get().as_mut();
                 if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
                     &mut self.log,
-                    &logger::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
+                    &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
                     &mut vm.transpiler.resolver.caches.json,
                 ) {
                     self.tsconfig = Some(parsed_tsconfig);
@@ -386,7 +388,7 @@ impl Config {
                 }
                 self.macros_buf = out.to_owned_slice().into();
                 let source =
-                    logger::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
+                    bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
                 let vm = VirtualMachine::get().as_mut();
                 let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
@@ -491,7 +493,7 @@ impl Config {
                 );
             }
 
-            let mut replacements = Runtime::ReplaceableExportMap::default();
+            let mut replacements = bun_ast::runtime::ReplaceableExportMap::default();
             // errdefer replacements.clearAndFree(allocator) → Drop on error path
 
             if let Some(eliminate) = exports.get_truthy(global, "eliminate")? {
@@ -548,7 +550,7 @@ impl Config {
                                 // PERF(port): was putAssumeCapacity — profile in Phase B
                                 replacements.put_assume_capacity(
                                     name_slice,
-                                    Runtime::ReplaceableExport::Delete,
+                                    bun_ast::runtime::ReplaceableExport::Delete,
                                 );
                             }
                         }
@@ -605,7 +607,7 @@ impl Config {
                         // anyway, so this is strictly safer.
                         if let Some(expr) = export_replacement_value(value, global, arena)? {
                             replacements
-                                .put(&key, Runtime::ReplaceableExport::Replace(expr))
+                                .put(&key, bun_ast::runtime::ReplaceableExport::Replace(expr))
                                 .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
                             continue;
                         }
@@ -630,7 +632,7 @@ impl Config {
                                 replacements
                                     .put(
                                         &key,
-                                        Runtime::ReplaceableExport::Inject {
+                                        bun_ast::runtime::ReplaceableExport::Inject {
                                             name: replacement_name.into(),
                                             value: to_replace,
                                         },
@@ -688,13 +690,13 @@ pub struct TransformTask<'a> {
     // single-thread intrusive `bun.ptr.RefCount` and crosses FFI as `m_ctx`, so per
     // PORTING.md §Pointers this must be IntrusiveRc, not Arc.
     pub js_instance: bun_ptr::IntrusiveRc<JSTranspiler>,
-    pub log: logger::Log,
+    pub log: bun_ast::Log,
     pub err: Option<Error>,
     pub macro_map: MacroMap,
     pub tsconfig: Option<&'a TSConfigJSON>,
     pub loader: Loader,
     pub global: &'a JSGlobalObject,
-    pub replace_exports: Runtime::ReplaceableExportMap,
+    pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
 }
 
 pub type AsyncTransformTask<'a> =
@@ -721,7 +723,7 @@ impl<'a> TransformTask<'a> {
         global: &'a JSGlobalObject,
         loader: Loader,
     ) -> Box<AsyncTransformTask<'a>> {
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         log.level = transpiler.config.log.level;
 
         // SAFETY: bitwise struct copy mirroring Zig's by-value
@@ -747,7 +749,7 @@ impl<'a> TransformTask<'a> {
             log,
             err: None,
             loader,
-            replace_exports: Runtime::ReplaceableExportMap {
+            replace_exports: bun_ast::runtime::ReplaceableExportMap {
                 entries: transpiler
                     .config
                     .runtime
@@ -777,7 +779,7 @@ impl<'a> TransformTask<'a> {
 
     pub fn run(&mut self) {
         let name = self.loader.stdin_name();
-        let source = logger::Source::init_path_string(name, self.input_code.slice());
+        let source = bun_ast::Source::init_path_string(name, self.input_code.slice());
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B.
         let arena = Arena::new();
@@ -785,7 +787,7 @@ impl<'a> TransformTask<'a> {
 
         // TODO(port): ASTMemoryAllocator scope — typed_arena in AST crates; here we just
         // construct one and enter it. Model as RAII guard.
-        let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
@@ -877,8 +879,8 @@ impl<'a> TransformTask<'a> {
                     if !self.log.has_any() {
                         break 'brk bun_jsc::BuildMessage::create(
                             self.global,
-                            logger::Msg {
-                                data: logger::Data {
+                            bun_ast::Msg {
+                                data: bun_ast::Data {
                                     text: err.name().as_bytes().to_vec().into(),
                                     ..Default::default()
                                 },
@@ -907,7 +909,7 @@ impl<'a> TransformTask<'a> {
 }
 
 // `Drop for TransformTask` is implicit:
-//   log.deinit() → logger::Log: Drop
+//   log.deinit() → bun_ast::Log: Drop
 //   input_code → ThreadSafe<StringOrBuffer>: unprotect + Drop
 //   output_code.deref() → BunString: Drop
 //   tsconfig is owned by JSTranspiler, not by TransformTask — JSTranspiler::drop handles it.
@@ -918,36 +920,36 @@ fn export_replacement_value(
     value: JSValue,
     global: &JSGlobalObject,
     arena: &Arena,
-) -> JsResult<Option<JSAst::Expr>> {
+) -> JsResult<Option<bun_ast::Expr>> {
     if value.is_boolean() {
         return Ok(Some(Expr {
-            data: JSAst::ExprData::EBoolean(JSAst::E::Boolean {
+            data: bun_ast::ExprData::EBoolean(bun_ast::E::Boolean {
                 value: value.to_boolean(),
             }),
-            loc: logger::Loc::EMPTY,
+            loc: bun_ast::Loc::EMPTY,
         }));
     }
 
     if value.is_number() {
         return Ok(Some(Expr {
-            data: JSAst::ExprData::ENumber(JSAst::E::Number {
+            data: bun_ast::ExprData::ENumber(bun_ast::E::Number {
                 value: value.as_number(),
             }),
-            loc: logger::Loc::EMPTY,
+            loc: bun_ast::Loc::EMPTY,
         }));
     }
 
     if value.is_null() {
         return Ok(Some(Expr {
-            data: JSAst::ExprData::ENull(JSAst::E::Null {}),
-            loc: logger::Loc::EMPTY,
+            data: bun_ast::ExprData::ENull(bun_ast::E::Null {}),
+            loc: bun_ast::Loc::EMPTY,
         }));
     }
 
     if value.is_undefined() {
         return Ok(Some(Expr {
-            data: JSAst::ExprData::EUndefined(JSAst::E::Undefined {}),
-            loc: logger::Loc::EMPTY,
+            data: bun_ast::ExprData::EUndefined(bun_ast::E::Undefined {}),
+            loc: bun_ast::Loc::EMPTY,
         }));
     }
 
@@ -961,8 +963,8 @@ fn export_replacement_value(
         // `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(&buf);
         return Ok(Some(Expr::init(
-            JSAst::E::EString::init(data),
-            logger::Loc::EMPTY,
+            bun_ast::E::EString::init(data),
+            bun_ast::Loc::EMPTY,
         )));
     }
 
@@ -986,7 +988,7 @@ pub fn constructor(
     // TODO(port): in-place init — if Phase B needs the Box allocated up-front (e.g. stable
     // address for resolver backrefs), switch the field to `MaybeUninit<Transpiler>`.
     let mut config = Config {
-        log: logger::Log::init(),
+        log: bun_ast::Log::init(),
         ..Default::default()
     };
     let arena = Box::new(Arena::new());
@@ -1042,7 +1044,7 @@ pub fn constructor(
         transpiler,
         scan_pass_result: ScanPassResult::init(),
         buffer_writer: None,
-        log_level: logger::Level::Err,
+        log_level: bun_ast::Level::Err,
         ref_count: bun_ptr::RefCount::init(),
     });
     // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
@@ -1052,7 +1054,7 @@ pub fn constructor(
     // moved it into the Box, so `transpiler.log` (a `*mut Log`) still points at the moved-from
     // stack slot. Re-point it at the heap-stable field now that the Box exists.
     {
-        let config_log: *mut logger::Log = &raw mut this.config.log;
+        let config_log: *mut bun_ast::Log = &raw mut this.config.log;
         this.transpiler.set_log(config_log);
     }
 
@@ -1135,7 +1137,7 @@ impl Drop for JSTranspiler {
 struct TranspilerStateGuard {
     transpiler: *mut Transpiler::Transpiler<'static>,
     prev_arena: &'static Arena,
-    restore_log: *mut logger::Log,
+    restore_log: *mut bun_ast::Log,
     /// `Some(prev)` ⇒ also restore `macro_context` to `prev` (transformSync's
     /// by-value snapshot). `None` ⇒ leave untouched (scan / scanImports only
     /// restore log+allocator per spec).
@@ -1162,7 +1164,7 @@ impl TranspilerStateGuard {
     /// the pointee (`js_transpiler.config.log`) is never dereferenced by the
     /// guard itself.
     #[inline]
-    fn restore_log_ptr(&self) -> *mut logger::Log {
+    fn restore_log_ptr(&self) -> *mut bun_ast::Log {
         self.restore_log
     }
 }
@@ -1214,7 +1216,7 @@ impl JSTranspiler {
             code
         };
 
-        let source = logger::Source::init_path_string(name, processed_code);
+        let source = bun_ast::Source::init_path_string(name, processed_code);
 
         let jsx = match self.config.tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone().into()).into(),
@@ -1298,7 +1300,7 @@ impl JSTranspiler {
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         let arena = Arena::new();
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         // defer log.deinit() → Drop
         let prev_arena = self.transpiler.arena;
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
@@ -1314,7 +1316,7 @@ impl JSTranspiler {
             prev_macro_context: None,
         };
 
-        let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         let parse_result =
@@ -1478,14 +1480,14 @@ impl JSTranspiler {
             None
         };
 
-        let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         // PORT NOTE: spec snapshots the WHOLE `this.transpiler` by value
         // (`prev_bundler = this.transpiler`) and restores it on exit. `Transpiler` is not
         // bitwise-copyable in Rust, so explicitly snapshot the fields the body mutates
         // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         log.level = self.config.log.level;
         let prev_arena = self.transpiler.arena;
         // `take()` both reads the prior value AND nulls it (spec: `macro_context = null`).
@@ -1551,7 +1553,7 @@ impl JSTranspiler {
 
 fn named_exports_to_js(
     global: &JSGlobalObject,
-    named_exports: &mut JSAst::ast::NamedExports,
+    named_exports: &mut bun_ast::ast_result::NamedExports,
 ) -> JsResult<JSValue> {
     if named_exports.count() == 0 {
         return JSValue::create_empty_array(global, 0);
@@ -1668,7 +1670,7 @@ impl JSTranspiler {
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         let arena = Arena::new();
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         // defer log.deinit() → Drop
         let prev_arena = self.transpiler.arena;
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
@@ -1684,16 +1686,16 @@ impl JSTranspiler {
             prev_macro_context: None,
         };
 
-        let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let source = logger::Source::init_path_string(loader.stdin_name(), code);
+        let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone().into()).into(),
             None => self.transpiler.options.jsx.clone(),
         };
 
-        let mut opts = bun_js_parser::ast::ParserOptions::init(jsx.into(), loader);
+        let mut opts = bun_js_parser::ParserOptions::init(jsx.into(), loader);
         if self.transpiler.macro_context.is_none() {
             self.transpiler.macro_context =
                 Some(JSAst::Macro::MacroContext::init(&mut self.transpiler));

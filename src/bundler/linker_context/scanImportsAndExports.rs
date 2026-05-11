@@ -15,9 +15,8 @@ use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_collections::{VecExt, HashMap, MultiArrayList};
 use bun_core::FeatureFlags;
-use bun_logger as logger;
-use bun_logger::Source;
-use bun_options_types::{import_record, ImportKind, ImportRecord, ImportRecordFlags};
+use bun_ast::Source;
+use bun_ast::{import_record, ImportKind, ImportRecord, ImportRecordFlags};
 
 use crate::options::{self, Format, Loader};
 use crate::ungate_support::perf;
@@ -26,9 +25,9 @@ use crate::{
     LinkerContext, Part, RefImportData, ResolvedExports, WrapKind,
 };
 use bun_js_parser as js_ast;
-use bun_js_parser::ast::bundled_ast::{self, NamedExports, NamedImports};
-use bun_js_parser::ast::symbol::{self, Kind as SymbolKind};
-use bun_js_parser::{Dependency, ExportsKind, PartList, Ref};
+use crate::bundled_ast::{self, NamedExports, NamedImports};
+use bun_ast::symbol::{self, Kind as SymbolKind};
+use bun_ast::{Dependency, ExportsKind, PartList, Ref};
 
 use crate::linker_context_mod::LinkerCtx;
 
@@ -105,7 +104,7 @@ pub fn scan_imports_and_exports(
     // lifetime of the link step. Read-only — this function never writes to it.
     let input = this.parse_graph().input_files.split_raw();
 
-    use bun_js_parser::ast::bundled_ast::CssCol;
+    use crate::bundled_ast::CssCol;
     let import_records_list: *mut [ImportRecordList] = ast.import_records;
     let exports_kind: *mut [ExportsKind] = ast.exports_kind;
     let entry_point_kinds: *mut [EntryPoint::Kind] = files.entry_point_kind;
@@ -625,7 +624,7 @@ pub fn scan_imports_and_exports(
                     let original_name =
                         builder.fmt(format_args!("init_{}", source.fmt_identifier()));
                     unsafe { this.graph.symbol_mut(r#ref) }.original_name =
-                        js_ast::StoreStr::new(original_name);
+                        bun_ast::StoreStr::new(original_name);
                 }
             }
 
@@ -639,9 +638,9 @@ pub fn scan_imports_and_exports(
                 && output_format != Format::InternalBakeDev
             {
                 let exports_name =
-                    js_ast::StoreStr::new(builder.fmt(format_args!("exports_{}", source.fmt_identifier())));
+                    bun_ast::StoreStr::new(builder.fmt(format_args!("exports_{}", source.fmt_identifier())));
                 let module_name =
-                    js_ast::StoreStr::new(builder.fmt(format_args!("module_{}", source.fmt_identifier())));
+                    bun_ast::StoreStr::new(builder.fmt(format_args!("module_{}", source.fmt_identifier())));
 
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.
@@ -675,7 +674,7 @@ pub fn scan_imports_and_exports(
 
                 this.graph.generate_symbol_import_and_use(
                     source_index,
-                    js_ast::NAMESPACE_EXPORT_PART_INDEX,
+                    bun_ast::NAMESPACE_EXPORT_PART_INDEX,
                     runtime_export_symbol_ref,
                     1,
                     Index::RUNTIME,
@@ -725,7 +724,7 @@ pub fn scan_imports_and_exports(
                             for resolved_part_index in parts_declaring_symbol {
                                 // PERF(port): was appendAssumeCapacity
                                 part.dependencies.push(Dependency {
-                                    source_index: js_ast::Index::source(import_source_index as usize),
+                                    source_index: bun_ast::Index::source(import_source_index as usize),
                                     part_index: resolved_part_index,
                                 });
                             }
@@ -777,11 +776,11 @@ pub fn scan_imports_and_exports(
                     for part_index in top_to_parts {
                         // PERF(port): was appendAssumeCapacity
                         dependencies.push(Dependency {
-                            // PORT NOTE: `crate::Index` ↔ `js_ast::Index` are both
+                            // PORT NOTE: `crate::Index` ↔ `bun_ast::Index` are both
                             // `#[repr(transparent)] u32` newtypes ported from the
                             // same Zig `ast.Index`; bridge by `.value` until B-3
                             // collapses them to a single re-export.
-                            source_index: js_ast::Index { value: target_source_index.get() },
+                            source_index: bun_ast::Index(target_source_index.get()),
                             part_index: *part_index,
                         });
                     }
@@ -793,8 +792,8 @@ pub fn scan_imports_and_exports(
                 if force_include_exports {
                     // PERF(port): was appendAssumeCapacity
                     dependencies.push(Dependency {
-                        source_index: js_ast::Index::source(source_index as usize),
-                        part_index: js_ast::NAMESPACE_EXPORT_PART_INDEX,
+                        source_index: bun_ast::Index::source(source_index as usize),
+                        part_index: bun_ast::NAMESPACE_EXPORT_PART_INDEX,
                     });
                 }
 
@@ -802,7 +801,7 @@ pub fn scan_imports_and_exports(
                 if add_wrapper {
                     // PERF(port): was appendAssumeCapacity
                     dependencies.push(Dependency {
-                        source_index: js_ast::Index::source(source_index as usize),
+                        source_index: bun_ast::Index::source(source_index as usize),
                         part_index: col_ref!(wrapper_part_indices)[id].get(),
                     });
                 }
@@ -860,7 +859,7 @@ pub fn scan_imports_and_exports(
                             &col_ref!(import_records_list)[id].slice()[import_record_index as usize];
                         (record.kind, record.source_index, record.flags)
                     };
-                    let other_id = rec_source_index.value as usize;
+                    let other_id = rec_source_index.value() as usize;
 
                     // Don't follow external imports (this includes import() expressions)
                     // PORT NOTE: short-circuit — `is_external_dynamic_import` indexes by
@@ -1363,11 +1362,11 @@ mod __css_validation {
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
     use crate::bun_css::css_properties::css_modules::Specifier;
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
-    use bun_logger::{self as Logger, Log};
+    use bun_ast::{ Log};
 
     // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
     // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
-    use bun_js_parser::ast::bundled_ast::CssCol;
+    use crate::bundled_ast::CssCol;
 
     /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
     /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
@@ -1479,11 +1478,11 @@ mod __css_validation {
         #[derive(Default)]
         struct PropertyInFile {
             source_index: IndexInt,
-            range: Logger::Range,
+            range: bun_ast::Range,
         }
 
         struct Visitor<'a> {
-            visited: ArrayHashMap<logger::Ref, ()>,
+            visited: ArrayHashMap<bun_ast::Ref, ()>,
             properties: StringArrayHashMap<PropertyInFile>,
             all_import_records: *mut [ImportRecordList],
             all_css_asts: *mut [CssCol],
@@ -1497,10 +1496,10 @@ mod __css_validation {
         impl<'a> Visitor<'a> {
             fn add_property_or_warn(
                 &mut self,
-                local: logger::Ref,
+                local: bun_ast::Ref,
                 property_name: &[u8],
                 source_index: IndexInt,
-                range: Logger::Range,
+                range: bun_ast::Range,
             ) {
                 let entry = self.properties.get_or_put(property_name).expect("oom");
 
@@ -1519,32 +1518,32 @@ mod __css_validation {
                 let local_original_name: &[u8] =
                     unsafe { &*self.all_symbols.get(local).unwrap() }.original_name.slice();
 
-                let _ = self.log.add_msg(Logger::Msg {
-                    kind: Logger::Kind::Err,
-                    data: Logger::range_data(
+                let _ = self.log.add_msg(bun_ast::Msg {
+                    kind: bun_ast::Kind::Err,
+                    data: bun_ast::range_data(
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,
-                        Logger::alloc_print(format_args!(
+                        bun_ast::alloc_print(format_args!(
                             "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
                         )),
                     )
                     .clone_line_text(self.log.clone_line_text),
-                    notes: Box::<[Logger::Data]>::from(
+                    notes: Box::<[bun_ast::Data]>::from(
                         &[
-                            Logger::range_data(
+                            bun_ast::range_data(
                                 Some(
                                     &col_ref!(self.all_sources)
                                         [entry.value_ptr.source_index as usize],
                                 ),
                                 entry.value_ptr.range,
-                                Logger::alloc_print(format_args!(
+                                bun_ast::alloc_print(format_args!(
                                     "The first definition of {} is in this style rule:",
                                     bstr::BStr::new(property_name)
                                 )),
                             ),
-                            Logger::Data {
+                            bun_ast::Data {
                                 text: {
                                     use std::io::Write;
                                     let mut v = Vec::new();
@@ -1577,7 +1576,7 @@ mod __css_validation {
                 self.properties.clear_retaining_capacity();
             }
 
-            fn visit(&mut self, idx: IndexInt, ast: &BundlerStyleSheet, r#ref: logger::Ref) {
+            fn visit(&mut self, idx: IndexInt, ast: &BundlerStyleSheet, r#ref: bun_ast::Ref) {
                 if self.visited.contains(&r#ref) {
                     return;
                 }
@@ -1674,7 +1673,7 @@ mod __css_validation {
         // SAFETY: parse_graph backref valid for link step. Read-only.
         let input = this.parse_graph().input_files.split_raw();
         let mut visitor = Visitor {
-            visited: ArrayHashMap::<logger::Ref, ()>::default(),
+            visited: ArrayHashMap::<bun_ast::Ref, ()>::default(),
             properties: StringArrayHashMap::<PropertyInFile>::default(),
             all_import_records: import_records_list,
             all_css_asts,

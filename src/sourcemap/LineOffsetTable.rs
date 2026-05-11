@@ -1,6 +1,6 @@
 use bun_alloc::AllocError;
 use bun_collections::{VecExt, MultiArrayList};
-use bun_logger::Loc;
+use bun_ast::Loc;
 use bun_str::strings;
 
 /// The source map specification is very loose and does not specify what

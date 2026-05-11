@@ -2,7 +2,7 @@ use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
 use bun_collections::VecExt;
-use bun_options_types::ImportRecord;
+use bun_ast::ImportRecord;
 use bun_string::strings;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
@@ -19,7 +19,7 @@ impl Url {
         let loc = input.current_source_location();
         let url = input.expect_url_cloned()?;
         let import_record_idx =
-            input.add_import_record(url, start_pos, bun_options_types::ImportKind::Url)?;
+            input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
         Ok(Url {
             import_record_idx,
             loc: crate::dependencies::Location::from_source_location(loc),
@@ -101,7 +101,7 @@ impl Url {
         let import_record = dest.import_record(self.import_record_idx)?;
         let is_internal = import_record
             .flags
-            .contains(bun_options_types::import_record::Flags::IS_INTERNAL);
+            .contains(bun_ast::ImportRecordFlags::IS_INTERNAL);
         let url = dest.get_import_record_url(self.import_record_idx)?;
         // SAFETY: `url` borrows arena-backed `import_info` data valid for the
         // printer's `'a`; detach so `dest` can be re-borrowed mutably below.

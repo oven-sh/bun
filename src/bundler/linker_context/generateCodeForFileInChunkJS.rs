@@ -1,9 +1,8 @@
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_alloc::ArenaVecExt as _;
-use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
+use crate::bundled_ast::Flags as AstFlags;
 use bun_collections::{VecExt, BoundedArray};
-use bun_logger as logger;
 
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 use bun_js_printer::renamer;
@@ -15,11 +14,11 @@ use crate::ungate_support::generic_path_with_pretty_initialized;
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
 
-use bun_js_parser::ast as js_ast;
-use bun_js_parser::ast::{Binding, Expr, Ref, Stmt, B, E, G, S};
-use bun_js_parser::ast::binding::ToExprWrapper;
+use bun_ast as js_ast;
+use bun_ast::{Binding, Expr, Ref, Stmt, B, E, G, S};
+use bun_ast::binding::ToExprWrapper;
 use bun_js_parser::lexer as js_lexer;
-use bun_js_parser::ast::StoreRef;
+use bun_ast::StoreRef;
 
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
@@ -112,14 +111,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // subsequent pushes only append past this range and capacity was reserved above
             // so no reallocation occurs. Matches Zig which slices then continues appending.
             let inner =
-                js_ast::StoreSlice::new_mut(&mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len]);
+                bun_ast::StoreSlice::new_mut(&mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len]);
 
             let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::default();
             clousure_args.append_assume_capacity(G::Arg {
                 binding: Binding::alloc(
                     temp_arena,
                     B::Identifier { r#ref: hmr_api_ref },
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 ),
                 ..Default::default()
             });
@@ -129,7 +128,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     binding: Binding::alloc(
                         temp_arena,
                         B::Identifier { r#ref: ast.module_ref },
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     ),
                     ..Default::default()
                 });
@@ -137,7 +136,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     binding: Binding::alloc(
                         temp_arena,
                         B::Identifier { r#ref: ast.exports_ref },
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     ),
                     ..Default::default()
                 });
@@ -161,15 +160,15 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Expr::init(
                     E::Function {
                         func: G::Fn {
-                            args: js_ast::StoreSlice::new_mut(dup_args),
+                            args: bun_ast::StoreSlice::new_mut(dup_args),
                             body: G::FnBody {
                                 stmts: inner,
-                                loc: logger::Loc::EMPTY,
+                                loc: bun_ast::Loc::EMPTY,
                             },
                             ..Default::default()
                         },
                     },
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 ),
             ));
             // PERF(port): was appendSliceAssumeCapacity
@@ -183,11 +182,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // it does not reproduce when debugging.
             let source_ref = c.get_source(source_index as u32);
             // PORT NOTE: reshaped for borrowck — Zig copies the `Source` by value,
-            // mutates `.path`, and passes `&source`. `logger::Source` is not `Clone`
+            // mutates `.path`, and passes `&source`. `bun_ast::Source` is not `Clone`
             // (its `Cow` fields would deep-copy `Owned` data); instead, build a
             // borrowed-field shadow only when the path needs fixing.
-            let mut source_storage: logger::Source;
-            let source: &logger::Source =
+            let mut source_storage: bun_ast::Source;
+            let source: &bun_ast::Source =
                 if core::ptr::eq(source_ref.path.text.as_ptr(), source_ref.path.pretty.as_ptr()) {
                     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
                     let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
@@ -196,7 +195,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         top_level_dir,
                         arena,
                     ));
-                    source_storage = logger::Source {
+                    source_storage = bun_ast::Source {
                         path: new_path,
                         // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
                         // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
@@ -232,7 +231,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     let mut needs_wrapper = false;
 
-    let namespace_export_part_index = js_ast::NAMESPACE_EXPORT_PART_INDEX;
+    let namespace_export_part_index = bun_ast::NAMESPACE_EXPORT_PART_INDEX;
 
     stmts.reset();
 
@@ -262,9 +261,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .inside_wrapper_prefix
             .append_non_dependency(Stmt::alloc(
                 S::Directive {
-                    value: js_ast::StoreStr::new(b"use strict"),
+                    value: bun_ast::StoreStr::new(b"use strict"),
                 },
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
             ))
             .expect("unreachable");
     }
@@ -376,8 +375,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             };
 
             let mut default_expr = match &default_export.value {
-                js_ast::StmtOrExpr::Expr(e) => *e,
-                js_ast::StmtOrExpr::Stmt(_) => {
+                bun_ast::StmtOrExpr::Expr(e) => *e,
+                bun_ast::StmtOrExpr::Stmt(_) => {
                     panic!("expected Lazy default export value to be an expression")
                 }
             };
@@ -476,7 +475,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 temp_arena,
                 S::ExportDefault {
                     default_name: default_export.default_name,
-                    value: js_ast::StmtOrExpr::Expr(default_expr),
+                    value: bun_ast::StmtOrExpr::Expr(default_expr),
                 },
                 stmt.loc,
             );
@@ -520,7 +519,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
-    let mut out_stmts = js_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+    let mut out_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
     // Optionally wrap all statements in a closure
     if needs_wrapper {
@@ -543,7 +542,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         binding: Binding::alloc(
                             temp_arena,
                             B::Identifier { r#ref: ast.exports_ref },
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         ),
                         ..Default::default()
                     });
@@ -554,7 +553,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             binding: Binding::alloc(
                                 temp_arena,
                                 B::Identifier { r#ref: ast.module_ref },
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ),
                             ..Default::default()
                         });
@@ -562,17 +561,17 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 // TODO: variants of the runtime functions
-                let body_stmts = js_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+                let body_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
                 let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
                     E::Arrow {
-                        args: js_ast::StoreSlice::new(args.into_bump_slice()),
+                        args: bun_ast::StoreSlice::new(args.into_bump_slice()),
                         body: G::FnBody {
                             stmts: body_stmts,
-                            loc: logger::Loc::EMPTY,
+                            loc: bun_ast::Loc::EMPTY,
                         },
                         ..Default::default()
                     },
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 )]);
 
                 let commonjs_wrapper_definition = Expr::init(
@@ -582,12 +581,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 ref_: c.cjs_runtime_ref,
                                 ..Default::default()
                             },
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         ),
                         args: Vec::move_from_list(cjs_args),
                         ..Default::default()
                     },
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 );
 
                 // "var require_foo = __commonJS(...);"
@@ -596,7 +595,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         binding: Binding::alloc(
                             temp_arena,
                             B::Identifier { r#ref: ast.wrapper_ref },
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         ),
                         value: Some(commonjs_wrapper_definition),
                     }]);
@@ -609,7 +608,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     decls,
                                     ..Default::default()
                                 },
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ),
                         );
                 }
@@ -627,7 +626,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 impl ExportHoist {
-                    fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr {
+                    fn wrap_identifier(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Expr {
                         // SAFETY: `arena` was set from a live &Bump that outlives this struct.
                         let bump = unsafe { &*self.arena };
                         self.decls.push(G::Decl {
@@ -643,7 +642,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     }
 
                     /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
-                    fn wrap_trampoline(ctx: *mut core::ffi::c_void, loc: logger::Loc, ref_: Ref) -> Expr {
+                    fn wrap_trampoline(ctx: *mut core::ffi::c_void, loc: bun_ast::Loc, ref_: Ref) -> Expr {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
                         let this = unsafe { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
                         this.wrap_identifier(loc, ref_)
@@ -656,7 +655,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 };
                 let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 
-                let mut inner_stmts = js_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+                let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
@@ -768,7 +767,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     )),
                                     ..Default::default()
                                 },
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ),
                         );
                     hoist.decls.clear();
@@ -786,28 +785,28 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             is_async,
                             body: G::FnBody {
                                 stmts: inner_stmts,
-                                loc: logger::Loc::EMPTY,
+                                loc: bun_ast::Loc::EMPTY,
                             },
                             ..Default::default()
                         },
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     )]);
 
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(
                         E::Call {
-                            target: Expr::init_identifier(c.esm_runtime_ref, logger::Loc::EMPTY),
+                            target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
                             args: Vec::move_from_list(esm_args),
                             ..Default::default()
                         },
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     );
 
                     let decls = G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_arena,
                             B::Identifier { r#ref: ast.wrapper_ref },
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         ),
                         value: Some(value),
                     }]);
@@ -819,7 +818,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 decls,
                                 ..Default::default()
                             },
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         ),
                     );
                 } else {
@@ -846,11 +845,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 is_async,
                                 body: G::FnBody {
                                     stmts: inner_stmts,
-                                    loc: logger::Loc::EMPTY,
+                                    loc: bun_ast::Loc::EMPTY,
                                 },
                                 ..Default::default()
                             },
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         );
 
                         stmts.append(
@@ -862,14 +861,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                             binding: Binding::alloc(
                                                 temp_arena,
                                                 B::Identifier { r#ref: ast.wrapper_ref },
-                                                logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                             ),
                                             value: Some(value),
                                         },
                                     ]),
                                     ..Default::default()
                                 },
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ),
                         );
                     }
@@ -878,7 +877,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             _ => {}
         }
 
-        out_stmts = js_ast::StoreSlice::new_mut(stmts.outside_wrapper_prefix.as_mut_slice());
+        out_stmts = bun_ast::StoreSlice::new_mut(stmts.outside_wrapper_prefix.as_mut_slice());
     }
 
     // `out_stmts` aliases either `stmts.all_stmts` or `stmts.outside_wrapper_prefix`,
@@ -1087,9 +1086,9 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
 }
 
 // Type aliases / re-imports for readability of match arms (mirrors Zig naming).
-use bun_js_parser::ast::stmt::Data as StmtData;
-use bun_js_parser::ast::expr::Data as ExprData;
-use bun_js_parser::ast::binding::Data as BindingData;
-use bun_js_parser::ast::LocalKind;
+use bun_ast::stmt::Data as StmtData;
+use bun_ast::expr::Data as ExprData;
+use bun_ast::binding::Data as BindingData;
+use bun_ast::LocalKind;
 
 // ported from: src/bundler/linker_context/generateCodeForFileInChunkJS.zig

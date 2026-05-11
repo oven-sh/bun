@@ -5,7 +5,6 @@ use bun_core::fmt::PathSep;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{initialize_store, Resolution, ResolutionTag};
-use bun_logger as logger;
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_str::strings;
@@ -307,7 +306,7 @@ impl Scripts {
 
     pub fn get_list(
         &mut self,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         lockfile: &Lockfile,
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
@@ -354,7 +353,7 @@ impl Scripts {
     pub fn fill_from_package_json(
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
@@ -371,7 +370,7 @@ impl Scripts {
             let _ = save.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
-            let json_src = logger::Source::init_path_string(save.slice(), json_buf.as_slice());
+            let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
 
             initialize_store();
             bun_json::parse_package_json_utf8(&json_src, log, &bump)?
@@ -386,7 +385,7 @@ impl Scripts {
 
     pub fn create_from_package_json(
         &mut self,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         lockfile: &Lockfile,
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],

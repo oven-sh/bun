@@ -22,10 +22,9 @@ use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::{self, env_var, fmt as bun_fmt, getenv_z, Global, Output, ZBox};
 use bun_which::which;
 use bun_core::PathBuffer as CorePathBuffer;
-use bun_js_parser::Index;
+use bun_ast::Index;
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_logger as logger;
 use bun_paths::{self, resolve_path, platform, PathBuffer, SEP};
 use bun_resolver::fs::RealFS;
 use bun_str::{strings, PathString, ZStr};
@@ -128,7 +127,7 @@ pub fn filter<'a>(
     // after the call about intentionally leaving the ThreadLocalArena and
     // worker pool alive. Route through the shared CLI arena.
     let arena: &'static Arena = crate::cli::cli_arena();
-    let log: &'static mut logger::Log = arena.alloc(logger::Log::new());
+    let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
         match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
@@ -142,7 +141,7 @@ pub fn filter<'a>(
             }
         },
     );
-    scan_transpiler.options.target = bun_bundler::options::Target::Bun;
+    scan_transpiler.options.target = bun_ast::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
     scan_transpiler.options.packages = bun_bundler::options::PackagesOption::External;

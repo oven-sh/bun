@@ -4,7 +4,6 @@ use core::fmt;
 use bstr::BStr;
 
 use bun_core::{self as bun, Output};
-use bun_logger as logger;
 use bun_paths::{self as path, PathBuffer, WPathBuffer};
 use bun_semver::{self as Semver, Version};
 use bun_str::{strings, strings::StringOrTinyString, ZStr};
@@ -38,12 +37,12 @@ pub struct ExtractTarball {
 
 impl ExtractTarball {
     #[inline]
-    pub fn run(&self, log: &mut logger::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
+    pub fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
         if !self.skip_verify && self.integrity.tag.is_supported() {
             if !self.integrity.verify(bytes) {
                 log.add_error_fmt(
                     None,
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                     format_args!(
                         "Integrity check failed<r> for tarball: {}",
                         BStr::new(self.name.slice()),
@@ -228,7 +227,7 @@ impl ExtractTarball {
         (name, basename)
     }
 
-    fn extract(&self, log: &mut logger::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
+    fn extract(&self, log: &mut bun_ast::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = self.temp_dir;
@@ -250,7 +249,7 @@ impl ExtractTarball {
                 Err(err) => {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
                             err.name(),
@@ -346,7 +345,7 @@ impl ExtractTarball {
                 if let Err(err) = zlib_entry.read_all(true) {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "{} decompressing \"{}\" to \"{}\"",
                             err,
@@ -477,7 +476,7 @@ impl ExtractTarball {
     /// between the buffered and streaming extraction paths.
     pub fn move_to_cache_directory(
         &self,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         tmpname: &ZStr,
         name: &[u8],
         basename: &[u8],
@@ -553,7 +552,7 @@ impl ExtractTarball {
                             // i guess we just
                             log.add_error_fmt(
                                 None,
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                                 format_args!(
                                     "moving \"{}\" to cache dir failed\n{}\n From: {}\n   To: {}",
                                     BStr::new(name),
@@ -621,7 +620,7 @@ impl ExtractTarball {
                             let _ = sys::close(dir_to_move);
                             log.add_error_fmt(
                                 None,
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                                 format_args!(
                                     "moving \"{}\" to cache dir failed\n{}\n  From: {}\n    To: {}",
                                     BStr::new(name),
@@ -666,7 +665,7 @@ impl ExtractTarball {
                 ) {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
                             BStr::new(name),
@@ -686,7 +685,7 @@ impl ExtractTarball {
                 Err(err) => {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "failed to verify cache dir for \"{}\": {}",
                             BStr::new(name),
@@ -705,7 +704,7 @@ impl ExtractTarball {
                 Err(err) => {
                     log.add_error_fmt(
                         None,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "failed to resolve cache dir for \"{}\": {}",
                             BStr::new(name),
@@ -764,7 +763,7 @@ impl ExtractTarball {
 
                         log.add_error_fmt(
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
                                 BStr::new(name),
@@ -782,7 +781,7 @@ impl ExtractTarball {
                         let _ = json_file.close();
                         log.add_error_fmt(
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to resolve: {}",
                                 BStr::new(name),

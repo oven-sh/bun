@@ -11,7 +11,7 @@
 use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_logger as logger;
+use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
@@ -39,7 +39,7 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 #[derive(Default)]
 pub struct ModuleLoader {
     pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
-    pub eval_source: Option<Box<logger::Source>>,
+    pub eval_source: Option<Box<bun_ast::Source>>,
 }
 
 pub static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
@@ -127,8 +127,8 @@ pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
     pub input_specifier: bun_string::String,
-    pub log: *mut logger::Log,
-    pub virtual_source: Option<&'a logger::Source>,
+    pub log: *mut bun_ast::Log,
+    pub virtual_source: Option<&'a bun_ast::Source>,
     pub global_object: *mut JSGlobalObject,
     pub flags: FetchFlags,
     /// `*mut TranspileExtra` — opaque, owned by the high tier. Null when
@@ -147,7 +147,7 @@ pub struct TranspileArgs<'a> {
 #[repr(C)]
 pub struct TranspileExtra {
     pub path: bun_resolver::fs::Path<'static>,
-    pub loader: bun_bundler::options::Loader,
+    pub loader: bun_ast::Loader,
     pub module_type: bun_bundler::options::ModuleType,
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null
     /// when `extra` itself is non-null.
@@ -387,7 +387,7 @@ pub fn process_fetch_log(
     global: &JSGlobalObject,
     specifier: bun_string::String,
     referrer: bun_string::String,
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     errorable: &mut ErrorableResolvedSource,
     err: bun_core::Error,
 ) {

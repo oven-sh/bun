@@ -12,19 +12,17 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 use bun_core::{self, declare_scope, scoped_log, err, Error as AnyError, FeatureFlags};
-use bun_logger::{self as logger, Loc, Location, Log, Msg, Source};
-use bun_options_types::ImportRecord;
+use bun_ast::{Loc, Location, Log, Msg, Source};
+use bun_ast::ImportRecord;
 use bun_string::{self, strings};
 use bun_sys::Fd;
 // PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; the draft used the
 // struct alias which made `ThreadPoolLib::Task` unresolvable. Import the module.
 use bun_threading::thread_pool as ThreadPoolLib;
 
-use bun_js_parser::{
-    self as js_parser,
-    ast::{self, Expr, Part, E, G},
-};
-use bun_js_parser::Index;
+use bun_js_parser as js_parser;
+use bun_ast::{self as ast, Expr, Part, E, G};
+use bun_ast::Index;
 // PORT NOTE: `BundledAst<'arena>` — the bundler graph stores `'static`-erased
 // ASTs (arena outlives the link step). Use the crate-level alias so the
 // `Success`/helper signatures don't carry an explicit `'static` everywhere.
@@ -104,7 +102,7 @@ pub struct ParseTask {
     pub secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub contents_or_fd: ContentsOrFd,
     pub external_free_function: ExternalFreeFunction,
-    pub side_effects: _resolver::SideEffects,
+    pub side_effects: bun_ast::SideEffects,
     pub loader: Option<Loader>,
     pub jsx: options::jsx::Pragma,
     pub source_index: Index,
@@ -174,7 +172,7 @@ pub struct Success {
     pub source: Source,
     pub log: Log,
     pub use_directive: UseDirective,
-    pub side_effects: _resolver::SideEffects,
+    pub side_effects: bun_ast::SideEffects,
 
     /// Used by "file" loader files.
     pub unique_key_for_additional_file: ast::StoreStr,
@@ -311,7 +309,7 @@ impl Default for ParseTask {
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
             external_free_function: ExternalFreeFunction::NONE,
-            side_effects: _resolver::SideEffects::HasSideEffects,
+            side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
             jsx: Default::default(),
             source_index: Index::INVALID,
@@ -530,7 +528,7 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         // TODO(port): Zig used `undefined` for ctx; using null ptr.
         ctx: core::ptr::null_mut(),
         path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
-        side_effects: _resolver::SideEffects::NoSideEffectsPureData,
+        side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
         jsx: options::jsx::Pragma { parse: false, ..Default::default() },
         contents_or_fd: ContentsOrFd::Contents(runtime_code.as_bytes()),
         source_index: Index::RUNTIME,
@@ -557,21 +555,21 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         is_entry_point: false,
     };
     let source = Source {
-        // PORT NOTE: `logger::Source.path` is `bun_logger::fs::Path`, distinct
+        // PORT NOTE: `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
         // from `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
         // directly rather than `clone()` across the type boundary.
-        path: bun_logger::fs::Path {
+        path: bun_paths::fs::Path {
             text: b"runtime",
             namespace: b"bun:runtime",
-            name: bun_logger::fs::PathName::init(b"runtime"),
+            name: bun_paths::fs::PathName::init(b"runtime"),
             pretty: b"",
             is_disabled: false,
             is_symlink: false,
         },
         contents: std::borrow::Cow::Borrowed(runtime_code.as_bytes()),
-        // PORT NOTE: `Source.index` is `bun_logger::Index` (newtype `u32`),
-        // distinct from `bun_options_types::Index`. Runtime source is index 0.
-        index: bun_logger::Index(Index::RUNTIME.get()),
+        // PORT NOTE: `Source.index` is `bun_ast::Index` (newtype `u32`),
+        // distinct from `bun_ast::Index`. Runtime source is index 0.
+        index: bun_ast::Index(Index::RUNTIME.get()),
         ..Default::default()
     };
     RuntimeSource { parse_task, source }
@@ -612,13 +610,13 @@ fn get_empty_css_ast(
         js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
             .unwrap(),
     );
-    ast.css = Some(bun_js_parser::ast::bundled_ast::CssAstRef::from_bump(
+    ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(
         bump.alloc(bun_css::BundlerStyleSheet::empty()),
     ));
     Ok(ast)
 }
 
-fn get_empty_ast<RootType: Default + ast::expr::IntoExprData>(
+fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
     log: &mut Log,
     transpiler: *mut Transpiler,
     opts: ParserOptions,
@@ -644,19 +642,19 @@ pub struct FileLoaderHash {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// CSS Symbol bridge — `bun_logger::Symbol` ↔ `bun_js_parser::Symbol`
+// CSS Symbol bridge — `bun_ast::Symbol` ↔ `bun_ast::Symbol`
 //
 // Both port the same Zig `js_ast.Symbol` (Symbol.zig).
-// `StylesheetExtra.symbols` is `Vec<bun_logger::Symbol>`;
-// `new_lazy_export_ast_impl` takes `Vec<bun_js_parser::Symbol>`. Convert
+// `StylesheetExtra.symbols` is `Vec<bun_ast::Symbol>`;
+// `new_lazy_export_ast_impl` takes `Vec<bun_ast::Symbol>`. Convert
 // field-by-field so CSS-module local refs (`ref.inner_index()`) index a
 // populated symbol table (.zig:613).
 // ───────────────────────────────────────────────────────────────────────────
 
 fn css_symbols_to_parser_symbols(
-    src: Vec<bun_logger::Symbol>,
-) -> bun_js_parser::ast::symbol::List {
-    use bun_js_parser::ast::symbol::{Kind as PKind, Symbol as PSym};
+    src: Vec<bun_ast::Symbol>,
+) -> bun_ast::symbol::List {
+    use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
     let mut out = Vec::<PSym>::init_capacity(src.len() as usize);
     for s in src.slice() {
         // Both `Kind`/`ImportItemStatus` are `#[repr(u8)]` ports of the same
@@ -666,15 +664,15 @@ fn css_symbols_to_parser_symbols(
         // SAFETY: identical `#[repr(u8)]` discriminant set.
         let kind: PKind = unsafe { core::mem::transmute::<u8, PKind>(s.kind as u8) };
         let import_item_status = match s.import_item_status as u8 {
-            1 => bun_js_parser::ImportItemStatus::Generated,
-            2 => bun_js_parser::ImportItemStatus::Missing,
-            _ => bun_js_parser::ImportItemStatus::None,
+            1 => bun_ast::ImportItemStatus::Generated,
+            2 => bun_ast::ImportItemStatus::Missing,
+            _ => bun_ast::ImportItemStatus::None,
         };
-        // `bun_js_parser::ast::Ref` is a re-export of `bun_logger::Ref` (ast/base.rs:172)
+        // `bun_ast::Ref` is a re-export of `bun_ast::Ref` (ast/base.rs:172)
         // — same nominal type, no bridge needed.
-        let link: bun_js_parser::ast::Ref = s.link.get();
+        let link: bun_ast::Ref = s.link.get();
         out.append_assume_capacity(PSym {
-            original_name: bun_js_parser::StoreStr::new(s.original_name),
+            original_name: bun_ast::StoreStr::new(s.original_name.slice()),
             // CSS-module locals are never ES6 namespace-aliased (the CSS parser
             // never assigns `namespace_alias`); drop rather than bridge the
             // distinct `NamespaceAlias` mirrors.
@@ -704,7 +702,7 @@ fn css_symbols_to_parser_symbols(
 // blocked_on: per-loader branches require:
 //   - `resolver.caches.js.parse` / `resolver.caches.json.parse_json` (gated in
 //     `bun_resolver::cache_set`);
-//   - `bun_interchange::{toml,yaml,json5}` parser entry points;
+//   - `bun_parsers::{toml,yaml,json5}` parser entry points;
 //   - `bun_css::BundlerStyleSheet::parse_bundler` (gated upstream);
 //   - `crate::HTMLScanner` (gated module);
 //   - `bun_core::fmt::bytes_to_hex_lower` Display adaptor;
@@ -802,7 +800,7 @@ fn get_ast(
             // post-amble that flushes `temp_log`.
             let result = (|| -> core::result::Result<JSAst, AnyError> {
                 let root: Expr =
-                    bun_interchange::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
+                    bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
                 Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump, &mut topts.define, opts, &mut temp_log, root, source, b"",
@@ -818,7 +816,7 @@ fn get_ast(
             let mut temp_log = Log::init();
             let result = (|| -> core::result::Result<JSAst, AnyError> {
                 let root: Expr =
-                    bun_interchange::yaml::YAML::parse(source, &mut temp_log, bump)?.into();
+                    bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?.into();
                 Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump, &mut topts.define, opts, &mut temp_log, root, source, b"",
@@ -834,7 +832,7 @@ fn get_ast(
             let mut temp_log = Log::init();
             let result = (|| -> core::result::Result<JSAst, AnyError> {
                 let root: Expr =
-                    bun_interchange::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
+                    bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
                 Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump, &mut topts.define, opts, &mut temp_log, root, source, b"",
@@ -948,7 +946,7 @@ fn get_ast(
                 E::Call {
                     target: require_property,
                     // SAFETY: bump-owned slice; never grown via this Vec.
-                    args: unsafe { bun_js_parser::ExprNodeList::from_bump_slice(require_args) },
+                    args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -1012,7 +1010,7 @@ fn get_ast(
                         loc: Loc { start: 0 },
                     },
                     // SAFETY: bump-owned slice; never grown via this Vec.
-                    args: unsafe { bun_js_parser::ExprNodeList::from_bump_slice(require_args) },
+                    args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -1122,7 +1120,7 @@ fn get_ast(
                 source_code,
                 parser_options,
                 &mut import_records,
-                bun_css::SrcIndex::source(source.index.0),
+                bun_ast::Index::source(source.index.0),
             ) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1157,10 +1155,10 @@ fn get_ast(
             }
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
             let root = Expr::init(E::Object::default(), Loc { start: 0 });
-            let css_ast_heap = bun_js_parser::ast::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
+            let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
             // PORT NOTE: `StylesheetExtra.symbols` is
-            // `Vec<bun_logger::Symbol>`; `new_lazy_export_ast_impl` takes
-            // `Vec<bun_js_parser::Symbol>`. Both port the same Zig
+            // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
+            // `Vec<bun_ast::Symbol>`. Both port the same Zig
             // `js_ast.Symbol`; convert field-by-field so CSS-module local refs
             // index a populated symbol table (.zig:613).
             let symbols = css_symbols_to_parser_symbols(extra.symbols);
@@ -1538,7 +1536,7 @@ pub struct BunLogOptions {
     pub path_len: usize,
     pub source_line_text_ptr: *const u8,
     pub source_line_text_len: usize,
-    pub level: logger::Level,
+    pub level: bun_ast::Level,
     pub line: i32,
     pub column: i32,
     pub line_end: i32,
@@ -1555,7 +1553,7 @@ impl Default for BunLogOptions {
             path_len: 0,
             source_line_text_ptr: core::ptr::null(),
             source_line_text_len: 0,
-            level: logger::Level::Err,
+            level: bun_ast::Level::Err,
             line: 0,
             column: 0,
             line_end: 0,
@@ -1616,7 +1614,7 @@ impl BunLogOptions {
             line_text,
         );
         let mut msg = Msg {
-            data: logger::Data {
+            data: bun_ast::Data {
                 location: Some(location),
                 text: std::borrow::Cow::Owned(self.message().to_vec()),
                 ..Default::default()
@@ -1624,15 +1622,15 @@ impl BunLogOptions {
             ..Default::default()
         };
         match self.level {
-            logger::Level::Err => msg.kind = logger::Kind::Err,
-            logger::Level::Warn => msg.kind = logger::Kind::Warn,
-            logger::Level::Verbose => msg.kind = logger::Kind::Verbose,
-            logger::Level::Debug => msg.kind = logger::Kind::Debug,
+            bun_ast::Level::Err => msg.kind = bun_ast::Kind::Err,
+            bun_ast::Level::Warn => msg.kind = bun_ast::Kind::Warn,
+            bun_ast::Level::Verbose => msg.kind = bun_ast::Kind::Verbose,
+            bun_ast::Level::Debug => msg.kind = bun_ast::Kind::Debug,
             _ => {}
         }
-        if msg.kind == logger::Kind::Err {
+        if msg.kind == bun_ast::Kind::Err {
             log.errors += 1;
-        } else if msg.kind == logger::Kind::Warn {
+        } else if msg.kind == bun_ast::Kind::Warn {
             log.warnings += 1;
         }
         let _ = log.add_msg(msg);
@@ -1931,7 +1929,7 @@ impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
             // Otherwise this is just invalid behavior.
             if wrapper.result.user_context.is_null() && wrapper.result.free_user_context.is_some() {
                 let mut msg = Msg {
-                    data: logger::Data {
+                    data: bun_ast::Data {
                         location: None,
                         text: std::borrow::Cow::Borrowed(
                             &b"Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field."[..],
@@ -1940,7 +1938,7 @@ impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
                     },
                     ..Default::default()
                 };
-                msg.kind = logger::Kind::Err;
+                msg.kind = bun_ast::Kind::Err;
                 // `args.context == self` — use `self` directly; materializing
                 // a second `&mut` via `&mut *args.context` while `&mut self`
                 // is live would be aliased-`&mut` UB.
@@ -2197,18 +2195,18 @@ fn run_with_source_code(
     let topts = unsafe { &(*transpiler).options };
 
     let source = Source {
-        // PORT NOTE: `Source.path` is `bun_logger::fs::Path`, distinct from
+        // PORT NOTE: `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
         // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
         // field-by-field across the type boundary.
-        path: bun_logger::fs::Path {
+        path: bun_paths::fs::Path {
             text: file_path.text,
             namespace: file_path.namespace,
-            name: bun_logger::fs::PathName::init(file_path.text),
+            name: bun_paths::fs::PathName::init(file_path.text),
             pretty: file_path.pretty,
             is_disabled: file_path.is_disabled,
             is_symlink: file_path.is_symlink,
         },
-        index: bun_logger::Index(task.source_index.get()),
+        index: bun_ast::Index(task.source_index.get()),
         // PORT NOTE: `entry.contents` is owned by `task.stage` (written back by
         // the caller after parse — see `ParseTask::run`). `Source` is stored in
         // `Success` which lives no longer than the `ParseTask` itself, so this
@@ -2256,7 +2254,7 @@ fn run_with_source_code(
     // a worker-owned `Transpiler` that outlives the parse.
     // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
     opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
-    // `Transpiler.macro_context` is `Option<bun_js_parser::Macro::MacroContext>`
+    // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
     // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
     // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
     // from `topts` (which borrows `(*transpiler).options`). `.unwrap()` mirrors
@@ -2318,7 +2316,7 @@ fn run_with_source_code(
         && !source.path.is_node_module();
 
     opts.features.server_components = if topts.server_components {
-        use js_parser::options::ServerComponents as SC;
+        use bun_ast::runtime::ServerComponentsMode as SC;
         match target {
             options::Target::Browser => SC::ClientSide,
             _ => match use_directive {
@@ -2342,7 +2340,7 @@ fn run_with_source_code(
             },
         }
     } else {
-        js_parser::options::ServerComponents::None
+        bun_ast::runtime::ServerComponentsMode::None
     };
 
     // `transpiler.options.framework: Option<&bake_types::Framework>`
@@ -2466,7 +2464,7 @@ fn run_with_source_code(
         && ast.css.is_none()
         && (task.loader.is_none() || task.loader.unwrap() != Loader::Html)
     {
-        task.side_effects = _resolver::SideEffects::NoSideEffectsEmptyAst;
+        task.side_effects = bun_ast::SideEffects::NoSideEffectsEmptyAst;
     }
 
     // bun.debugAssert(ast.parts.len > 0); // when parts.len == 0, it is assumed to be pending/failed. empty ast has at least 1 part.
@@ -2677,7 +2675,7 @@ pub use parse_worker::{get_runtime_source, on_complete, FileLoaderHash, OnBefore
 // Re-exports
 // ───────────────────────────────────────────────────────────────────────────
 
-pub use bun_js_parser::ast::Ref;
+use bun_ast::Ref;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 

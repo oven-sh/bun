@@ -13,7 +13,6 @@ use bun_jsc::{
 #[allow(unused_imports)]
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
-use bun_logger as logger;
 use bun_str as strings;
 
 pub use super::bun_test;
@@ -241,7 +240,7 @@ impl<'a> TestRunner<'a> {
         let file_id = self.files.len() as FileId;
         self.files
             .append(File {
-                source: logger::Source::init_empty_file(file_path),
+                source: bun_ast::Source::init_empty_file(file_path),
                 ..Default::default()
             })
             .expect("unreachable");
@@ -277,15 +276,15 @@ pub struct GetOrPutFileResult {
 }
 
 pub struct File {
-    pub source: logger::Source,
-    pub log: logger::Log,
+    pub source: bun_ast::Source,
+    pub log: bun_ast::Log,
 }
 
 impl Default for File {
     fn default() -> Self {
         Self {
-            source: logger::Source::init_empty_file(b""),
-            log: logger::Log::init_comptime(),
+            source: bun_ast::Source::init_empty_file(b""),
+            log: bun_ast::Log::init_comptime(),
         }
     }
 }
@@ -295,8 +294,8 @@ pub type FileId = u32;
 
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
-        source: logger::Source,
-        log: logger::Log,
+        source: bun_ast::Source,
+        log: bun_ast::Log,
     }
 }
 // PORT NOTE: Zig used ArrayIdentityContext; u32 keys hash as identity in bun_collections.

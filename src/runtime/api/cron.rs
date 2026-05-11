@@ -239,7 +239,7 @@ impl CronRegisterJob {
             // SAFETY: `proc` is the intrusive-RC pointer returned by `to_process`.
             unsafe {
                 (*proc).detach();
-                (*proc).deref();
+                Process::deref(proc);
             }
         }
         if s.err_msg.is_some() {
@@ -873,7 +873,7 @@ impl Drop for CronRegisterJob {
             // SAFETY: intrusive-RC pointer; we hold a ref.
             unsafe {
                 (*proc).detach();
-                (*proc).deref();
+                Process::deref(proc);
             }
         }
         if let Some(p) = self.tmp_path.take() {
@@ -975,7 +975,7 @@ impl CronRemoveJob {
             // SAFETY: intrusive-RC pointer; we hold a ref.
             unsafe {
                 (*proc).detach();
-                (*proc).deref();
+                Process::deref(proc);
             }
         }
         if s.err_msg.is_some() {
@@ -1297,7 +1297,7 @@ impl Drop for CronRemoveJob {
             // SAFETY: intrusive-RC pointer; we hold a ref.
             unsafe {
                 (*proc).detach();
-                (*proc).deref();
+                Process::deref(proc);
             }
         }
         if let Some(p) = self.tmp_path.take() {
@@ -2174,7 +2174,7 @@ fn resolve_path(
     let mut resolved = vm
         .transpiler
         .resolver
-        .resolve(source_dir, path_, bun_options_types::ImportKind::EntryPointRun)
+        .resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun)
         .map_err(|_| bun_core::err!("ModuleNotFound"))?;
     let entry_path = resolved.path().ok_or(bun_core::err!("ModuleNotFound"))?;
     Ok(ZString::from_bytes(entry_path.text))

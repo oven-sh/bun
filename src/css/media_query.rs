@@ -1217,7 +1217,7 @@ impl MediaList {
     pub fn clone_with_import_records(
         &self,
         bump: &bun_alloc::Arena,
-        _import_records: &mut Vec<bun_options_types::ImportRecord>,
+        _import_records: &mut Vec<bun_ast::ImportRecord>,
     ) -> Self {
         self.deep_clone(bump)
     }

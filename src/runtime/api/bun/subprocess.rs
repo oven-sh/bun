@@ -1296,7 +1296,7 @@ impl Subprocess<'_> {
         // no code path reads `this.process` after this (finalize runs once).
         // SAFETY: `process` is the live Box-backed Process; deref() frees it
         // when its own ThreadSafeRefCount reaches zero.
-        unsafe { (*this.process.as_ptr()).deref() };
+        unsafe { Process::deref(this.process.as_ptr()) };
 
         if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(&raw mut this.event_loop_timer);

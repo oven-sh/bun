@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_threading::thread_pool as ThreadPoolLib;
 use bun_js_printer::{self as js_printer, PrintResult};
-use bun_js_parser::ast::Scope;
+use bun_ast::Scope;
 
 use crate::linker_context_mod::{LinkerContext, PendingPartRange};
 use crate::options::OutputFormat;
@@ -45,7 +45,6 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
         let path = &parse_graph.input_files.items_source()
             [part_range.part_range.source_index.get() as usize]
             .path;
-        // MOVE_DOWN(b0): debug_flags relocated bun_cli → bun_core; takes (pretty, text) split.
         if bun_core::debug_flags::has_print_breakpoint(&path.pretty, &path.text) {
             // TODO(port): @breakpoint() — no stable Rust equivalent; left as no-op (see resolver/lib.rs:4573)
         }

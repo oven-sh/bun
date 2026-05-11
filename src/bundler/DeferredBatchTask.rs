@@ -12,8 +12,8 @@ use crate::BundleV2;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, task_tag};
 
-pub use bun_js_parser::Ref;
-pub use bun_js_parser::Index;
+use bun_ast::Ref;
+use bun_ast::Index;
 
 /// Re-export for callers that previously named
 /// `crate::DeferredBatchTask::CompletionDispatch` — the struct now lives in

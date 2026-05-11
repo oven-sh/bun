@@ -1165,7 +1165,7 @@ fn not_implemented_yet(name: &'static str) {
         let should_warn = unsafe {
             VirtualMachine::get().as_mut()
                 .log
-                .map_or(true, |l| l.as_ref().level.at_least(bun_logger::Level::Warn))
+                .map_or(true, |l| l.as_ref().level.at_least(bun_ast::Level::Warn))
         };
         if should_warn {
             bun_core::Output::pretty_errorln(

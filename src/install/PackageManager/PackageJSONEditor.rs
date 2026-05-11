@@ -1,9 +1,8 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
 
-use bun_js_parser as js_ast;
-use bun_js_parser::{E, Expr, G};
-use bun_logger as logger;
+use bun_ast as js_ast;
+use bun_ast::{E, Expr, G};
 use bun_semver as semver;
 use bun_str::strings;
 
@@ -14,7 +13,7 @@ use bun_install::{resolution, Dependency, INVALID_PACKAGE_ID};
 use super::package_manager_options::{Do, Enable};
 use super::{PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
-type ExprDisabler = js_ast::ast::expr::Disabler;
+type ExprDisabler = bun_ast::expr::Disabler;
 
 const DEPENDENCY_GROUPS: &[(&[u8], Behavior)] = &[
     (b"optionalDependencies", Behavior::OPTIONAL),
@@ -64,7 +63,7 @@ pub fn edit_patched_dependencies(
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
-        if let js_ast::ExprData::EObject(obj) = &query.expr.data {
+        if let bun_ast::ExprData::EObject(obj) = &query.expr.data {
             // Zig dereferences `query.expr.data.e_object.*` to bit-copy the whole
             // E.Object — preserve the formatting fields so the printed
             // `patchedDependencies` keeps its original single-line / brace layout.
@@ -81,7 +80,7 @@ pub fn edit_patched_dependencies(
 
     let patchfile_expr = Expr::init(
         E::EString::init(leak_dup(patchfile_path)),
-        logger::Loc::EMPTY,
+        bun_ast::Loc::EMPTY,
     );
 
     patched_dependencies.put(&bump, leak_dup(patch_key), patchfile_expr)?;
@@ -93,7 +92,7 @@ pub fn edit_patched_dependencies(
         .put(
             &bump,
             b"patchedDependencies",
-            Expr::init(patched_dependencies, logger::Loc::EMPTY),
+            Expr::init(patched_dependencies, bun_ast::Loc::EMPTY),
         )?;
     Ok(())
 }
@@ -106,7 +105,7 @@ pub fn edit_trusted_dependencies(
 
     let original_trusted_dependencies: Vec<Expr> = 'brk: {
         if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-            if let js_ast::ExprData::EArray(arr) = &query.expr.data {
+            if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                 break 'brk arr.items.slice().to_vec();
             }
         }
@@ -116,7 +115,7 @@ pub fn edit_trusted_dependencies(
     for i in 0..names_to_add.len() {
         let name = &names_to_add[i];
         for item in original_trusted_dependencies.iter() {
-            if let js_ast::ExprData::EString(s) = &item.data {
+            if let bun_ast::ExprData::EString(s) = &item.data {
                 if s.eql_bytes(name) {
                     names_to_add.swap(i, len - 1);
                     len -= 1;
@@ -128,7 +127,7 @@ pub fn edit_trusted_dependencies(
 
     let mut trusted_dependencies: &[Expr] = &[];
     if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-        if let js_ast::ExprData::EArray(arr) = &query.expr.data {
+        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
             // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
             // this function; lifetime erased per Phase-A `Str` convention.
             trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
@@ -147,7 +146,7 @@ pub fn edit_trusted_dependencies(
             {
                 let mut has_missing = false;
                 for dep in deps.iter() {
-                    if matches!(dep.data, js_ast::ExprData::EMissing(_)) {
+                    if matches!(dep.data, bun_ast::ExprData::EMissing(_)) {
                         has_missing = true;
                     }
                 }
@@ -157,10 +156,10 @@ pub fn edit_trusted_dependencies(
             let mut i = deps.len();
             while i > 0 {
                 i -= 1;
-                if matches!(deps[i].data, js_ast::ExprData::EMissing(_)) {
+                if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
                     deps[i] = Expr::init(
                         E::EString::init(leak_dup(name)),
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     );
                     break;
                 }
@@ -169,7 +168,7 @@ pub fn edit_trusted_dependencies(
 
         #[cfg(debug_assertions)]
         for dep in deps.iter() {
-            debug_assert!(!matches!(dep.data, js_ast::ExprData::EMissing(_)));
+            debug_assert!(!matches!(dep.data, bun_ast::ExprData::EMissing(_)));
         }
 
         js_ast::ExprNodeList::from_owned_slice(deps)
@@ -178,7 +177,7 @@ pub fn edit_trusted_dependencies(
     let mut needs_new_trusted_dependencies_list = true;
     let mut trusted_dependencies_array: Expr = 'brk: {
         if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-            if matches!(query.expr.data, js_ast::ExprData::EArray(_)) {
+            if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                 needs_new_trusted_dependencies_list = false;
                 break 'brk query.expr;
             }
@@ -189,7 +188,7 @@ pub fn edit_trusted_dependencies(
                 items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
                 ..Default::default()
             },
-            logger::Loc::EMPTY,
+            bun_ast::Loc::EMPTY,
         )
     };
 
@@ -199,14 +198,14 @@ pub fn edit_trusted_dependencies(
         arr.alphabetize_strings();
     }
 
-    if !matches!(package_json.data, js_ast::ExprData::EObject(_))
+    if !matches!(package_json.data, bun_ast::ExprData::EObject(_))
         || package_json.data.e_object().expect("infallible: variant checked").properties.len_u32() == 0
     {
         let mut root_properties: Vec<G::Property> = Vec::with_capacity(1);
         root_properties.push(G::Property {
             key: Some(Expr::init(
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
@@ -217,7 +216,7 @@ pub fn edit_trusted_dependencies(
                 properties: G::PropertyList::move_from_list(root_properties),
                 ..Default::default()
             },
-            logger::Loc::EMPTY,
+            bun_ast::Loc::EMPTY,
         );
     } else if needs_new_trusted_dependencies_list {
         let obj = package_json.data.e_object().expect("infallible: variant checked");
@@ -229,7 +228,7 @@ pub fn edit_trusted_dependencies(
         root_properties.push(G::Property {
             key: Some(Expr::init(
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
@@ -239,7 +238,7 @@ pub fn edit_trusted_dependencies(
                 properties: G::PropertyList::move_from_list(root_properties),
                 ..Default::default()
             },
-            logger::Loc::EMPTY,
+            bun_ast::Loc::EMPTY,
         );
     }
     Ok(())
@@ -268,16 +267,16 @@ pub fn edit_update_no_args(
         let group_str = group.0;
 
         if let Some(mut root) = current_package_json.as_property(group_str) {
-            if matches!(root.expr.data, js_ast::ExprData::EObject(_)) {
+            if matches!(root.expr.data, bun_ast::ExprData::EObject(_)) {
                 if options.before_install {
                     // set each npm dependency to latest
                     for dep in root.expr.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut() {
                         let Some(key) = &dep.key else { continue };
-                        if !matches!(key.data, js_ast::ExprData::EString(_)) {
+                        if !matches!(key.data, bun_ast::ExprData::EString(_)) {
                             continue;
                         }
                         let Some(value) = &dep.value else { continue };
-                        if !matches!(value.data, js_ast::ExprData::EString(_)) {
+                        if !matches!(value.data, bun_ast::ExprData::EString(_)) {
                             continue;
                         }
 
@@ -357,7 +356,7 @@ pub fn edit_update_no_args(
                             dep.value = Some(Expr::allocate(
                                 arena,
                                 E::EString::init(temp_version),
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             ));
                         }
                     }
@@ -378,11 +377,11 @@ pub fn edit_update_no_args(
 
                     for dep in root.expr.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut() {
                         let Some(key) = &dep.key else { continue };
-                        if !matches!(key.data, js_ast::ExprData::EString(_)) {
+                        if !matches!(key.data, bun_ast::ExprData::EString(_)) {
                             continue;
                         }
                         let Some(value) = &dep.value else { continue };
-                        if !matches!(value.data, js_ast::ExprData::EString(_)) {
+                        if !matches!(value.data, bun_ast::ExprData::EString(_)) {
                             continue;
                         }
 
@@ -499,7 +498,7 @@ pub fn edit_update_no_args(
                                             dep.value = Some(Expr::allocate(
                                                 arena,
                                                 E::EString::init(leak_str(v)),
-                                                logger::Loc::EMPTY,
+                                                bun_ast::Loc::EMPTY,
                                             ));
                                             break 'updated;
                                         }
@@ -510,7 +509,7 @@ pub fn edit_update_no_args(
                                     dep.value = Some(Expr::allocate(
                                         arena,
                                         E::EString::init(leak_str(new_version)),
-                                        logger::Loc::EMPTY,
+                                        bun_ast::Loc::EMPTY,
                                     ));
                                     break 'updated;
                                 }
@@ -560,7 +559,7 @@ pub fn edit(
                 break 'brk Vec::new();
             }
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-                if let js_ast::ExprData::EArray(arr) = &query.expr.data {
+                if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                     // not modifying
                     break 'brk arr.items.slice().to_vec();
                 }
@@ -575,7 +574,7 @@ pub fn edit(
                 i -= 1;
                 let trusted_package_name = &manager.trusted_deps_to_add_to_package_json[i];
                 for item in original_trusted_dependencies.iter() {
-                    if let js_ast::ExprData::EString(s) = &item.data {
+                    if let bun_ast::ExprData::EString(s) = &item.data {
                         if s.eql_bytes(trusted_package_name) {
                             // PORT NOTE: reshaped for borrowck — drop return value (was allocator.free)
                             let _ = manager.trusted_deps_to_add_to_package_json.swap_remove(i);
@@ -596,11 +595,11 @@ pub fn edit(
                     b"peerDependencies".as_slice(),
                 ] {
                     if let Some(query) = current_package_json.as_property(list) {
-                        if matches!(query.expr.data, js_ast::ExprData::EObject(_)) {
+                        if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                             let name = request.get_name();
 
                             if let Some(value) = query.expr.as_property(name) {
-                                if matches!(value.expr.data, js_ast::ExprData::EString(_)) {
+                                if matches!(value.expr.data, bun_ast::ExprData::EString(_)) {
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && strings::eql_long(list, dependency_list, true)
                                     {
@@ -709,7 +708,7 @@ pub fn edit(
                                                 .version
                                                 .literal
                                                 .slice(request.version_buf());
-                                            if let js_ast::ExprData::EString(s) = &v.data {
+                                            if let bun_ast::ExprData::EString(s) = &v.data {
                                                 if s.eql_bytes(url) {
                                                     request.e_string = Some(
                                                         v.data.e_string().expect("infallible: variant checked").as_ptr(),
@@ -734,7 +733,7 @@ pub fn edit(
         let mut new_dependencies: Vec<G::Property> = {
             let mut dependencies: Vec<G::Property> = Vec::new();
             if let Some(query) = current_package_json.as_property(dependency_list) {
-                if let js_ast::ExprData::EObject(obj) = &query.expr.data {
+                if let bun_ast::ExprData::EObject(obj) = &query.expr.data {
                     for p in obj.properties.slice() {
                         dependencies.push(copy_property(p));
                     }
@@ -750,7 +749,7 @@ pub fn edit(
         let mut trusted_dependencies: &[Expr] = &[];
         if options.add_trusted_dependencies {
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-                if let js_ast::ExprData::EArray(arr) = &query.expr.data {
+                if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                     // SAFETY: arena-backed slice; see note in `edit_trusted_dependencies`.
                     trusted_dependencies =
                         unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
@@ -775,7 +774,7 @@ pub fn edit(
                 {
                     let mut has_missing = false;
                     for dep in deps.iter() {
-                        if matches!(dep.data, js_ast::ExprData::EMissing(_)) {
+                        if matches!(dep.data, bun_ast::ExprData::EMissing(_)) {
                             has_missing = true;
                         }
                     }
@@ -785,11 +784,11 @@ pub fn edit(
                 let mut i = deps.len();
                 while i > 0 {
                     i -= 1;
-                    if matches!(deps[i].data, js_ast::ExprData::EMissing(_)) {
+                    if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
                         deps[i] = Expr::allocate(
                             arena,
                             E::EString::init(leak_dup(package_name)),
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                         );
                         break;
                     }
@@ -798,7 +797,7 @@ pub fn edit(
 
             #[cfg(debug_assertions)]
             for dep in deps.iter() {
-                debug_assert!(!matches!(dep.data, js_ast::ExprData::EMissing(_)));
+                debug_assert!(!matches!(dep.data, bun_ast::ExprData::EMissing(_)));
             }
 
             js_ast::ExprNodeList::from_owned_slice(deps)
@@ -830,14 +829,14 @@ pub fn edit(
                 new_dependencies[k].key = Some(Expr::allocate(
                     arena,
                     E::EString::init(leak_dup(request.get_resolved_name(&manager.lockfile))),
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 ));
 
                 new_dependencies[k].value = Some(Expr::allocate(
                     arena,
                     // we set it later
                     E::EString::init(b""),
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 ));
 
                 request.e_string = Some(
@@ -864,7 +863,7 @@ pub fn edit(
         let mut needs_new_dependency_list = true;
         let mut dependencies_object: Expr = 'brk: {
             if let Some(query) = current_package_json.as_property(dependency_list) {
-                if matches!(query.expr.data, js_ast::ExprData::EObject(_)) {
+                if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                     needs_new_dependency_list = false;
                     break 'brk query.expr;
                 }
@@ -876,7 +875,7 @@ pub fn edit(
                     properties: bun_alloc::AstAlloc::vec(),
                     ..Default::default()
                 },
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
             )
         };
 
@@ -895,7 +894,7 @@ pub fn edit(
                 break 'brk Expr::EMPTY;
             }
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-                if matches!(query.expr.data, js_ast::ExprData::EArray(_)) {
+                if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                     needs_new_trusted_dependencies_list = false;
                     break 'brk query.expr;
                 }
@@ -907,7 +906,7 @@ pub fn edit(
                     items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
                     ..Default::default()
                 },
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
             )
         };
 
@@ -919,7 +918,7 @@ pub fn edit(
             }
         }
 
-        if !matches!(current_package_json.data, js_ast::ExprData::EObject(_))
+        if !matches!(current_package_json.data, bun_ast::ExprData::EObject(_))
             || current_package_json.data.e_object().expect("infallible: variant checked").properties.len_u32() == 0
         {
             let n = if options.add_trusted_dependencies { 2 } else { 1 };
@@ -928,7 +927,7 @@ pub fn edit(
                 key: Some(Expr::allocate(
                     arena,
                     E::EString::init(leak_dup(dependency_list)),
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 )),
                 value: Some(dependencies_object),
                 ..Default::default()
@@ -939,7 +938,7 @@ pub fn edit(
                     key: Some(Expr::allocate(
                         arena,
                         E::EString::init(TRUSTED_DEPENDENCIES_STRING),
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     )),
                     value: Some(trusted_dependencies_array),
                     ..Default::default()
@@ -952,7 +951,7 @@ pub fn edit(
                     properties: G::PropertyList::move_from_list(root_properties),
                     ..Default::default()
                 },
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
             );
         } else {
             if needs_new_dependency_list && needs_new_trusted_dependencies_list {
@@ -967,7 +966,7 @@ pub fn edit(
                     key: Some(Expr::allocate(
                         arena,
                         E::EString::init(leak_dup(dependency_list)),
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     )),
                     value: Some(dependencies_object),
                     ..Default::default()
@@ -976,7 +975,7 @@ pub fn edit(
                     key: Some(Expr::allocate(
                         arena,
                         E::EString::init(TRUSTED_DEPENDENCIES_STRING),
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     )),
                     value: Some(trusted_dependencies_array),
                     ..Default::default()
@@ -987,7 +986,7 @@ pub fn edit(
                         properties: G::PropertyList::move_from_list(root_properties),
                         ..Default::default()
                     },
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 );
             } else if needs_new_dependency_list || needs_new_trusted_dependencies_list {
                 let obj = current_package_json.data.e_object().expect("infallible: variant checked");
@@ -1005,7 +1004,7 @@ pub fn edit(
                         } else {
                             TRUSTED_DEPENDENCIES_STRING
                         }),
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     )),
                     value: Some(if needs_new_dependency_list {
                         dependencies_object
@@ -1020,7 +1019,7 @@ pub fn edit(
                         properties: G::PropertyList::move_from_list(root_properties),
                         ..Default::default()
                     },
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 );
             }
         }
@@ -1079,7 +1078,7 @@ pub fn edit(
 
                 continue;
             }
-            e_string.data = bun_js_parser::StoreStr::new(match resolutions[request.package_id as usize].tag {
+            e_string.data = bun_ast::StoreStr::new(match resolutions[request.package_id as usize].tag {
                 resolution::Tag::Npm => 'npm: {
                     if manager.subcommand == Subcommand::Update
                         && (request.version.tag == dependency::Tag::DistTag

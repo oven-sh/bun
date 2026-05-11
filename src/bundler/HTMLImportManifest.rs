@@ -40,7 +40,7 @@ use bun_collections::VecExt;
 use bun_collections::AutoBitSet;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_logger::Source;
+use bun_ast::Source;
 use bun_paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
 use bun_string::strings;

@@ -27,7 +27,7 @@ impl IniTestingAPIs {
         use bun_dotenv as dotenv;
         use bun_ini::{config_iterator, load_npmrc};
         use bun_install::npm::Registry;
-        use bun_logger::{Log, Source};
+        use bun_ast::{Log, Source};
         use bun_string::String as BunString;
 
         let arg = frame.argument(0);
@@ -114,7 +114,7 @@ impl IniTestingAPIs {
         )
         .is_err()
         {
-            return bun_logger_jsc::log_to_js(&log, global, b"error");
+            return bun_ast_jsc::log_to_js(&log, global, b"error");
         }
 
         let (
@@ -197,7 +197,7 @@ impl IniTestingAPIs {
         // env is `'static`, so erase `src` to match. SAFETY: `parser` is dropped
         // before `utf8str` (drop order is reverse of declaration); no borrow
         // escapes this function. Same pattern as `bun_ini::load_npmrc`.
-        let src: &'static [u8] = bun_logger::IntoStr::into_str(utf8str.slice());
+        let src: &'static [u8] = bun_ast::IntoStr::into_str(utf8str.slice());
         let mut parser = Parser::init(b"<src>", src, env);
 
         // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena` (Zig passed

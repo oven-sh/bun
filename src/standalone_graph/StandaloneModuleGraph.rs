@@ -14,7 +14,8 @@ use bun_core::{self as bun, Environment, Error as BunError, Output, err};
 use bun_paths::{self as path, PathBuffer, WPathBuffer, OSPathBuffer, SEP_STR};
 use bun_str::{strings, String as BunString, ZStr, StringPointer};
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
-use bun_options_types::BundleEnums::{Loader, Format, WindowsOptions};
+use bun_ast::Loader;
+use bun_options_types::bundle_enums::{Format, WindowsOptions};
 use bun_sourcemap as SourceMap;
 use bun_bundler::options::{self, OutputFile};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
@@ -1515,7 +1516,7 @@ pub fn inject(
     }
 }
 
-pub use bun_options_types::CompileTarget::CompileTarget;
+pub use bun_options_types::compile_target::CompileTarget;
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
 
 /// Port of `CompileTarget.downloadToPath` (CompileTarget.zig). Moved up from
@@ -2270,20 +2271,20 @@ pub fn serialize_json_source_map_for_standalone(
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
 ) -> Result<(), BunError> {
-    use bun_logger::js_ast::expr::Data as AstData;
+    use bun_ast::ExprData as AstData;
 
     // PERF(port): Zig threaded an arena allocator through; here we own a local
     // bump arena and drop it on return (matches `defer arena.free`).
     let arena = bun_alloc::Arena::new();
 
-    let json_src = bun_logger::Source::init_path_string("sourcemap.json", json_source);
-    let mut log = bun_logger::Log::init();
+    let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
+    let mut log = bun_ast::Log::init();
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
-    let _reset_guard = bun_logger::js_ast::DataStoreScope::new();
+    let _reset_guard = bun_ast::StoreResetGuard::new();
 
-    let json = bun_interchange::json::parse::<false>(&json_src, &mut log, &arena)
+    let json = bun_parsers::json::parse::<false>(&json_src, &mut log, &arena)
         .map_err(|_| err!("InvalidSourceMap"))?;
 
     let mappings_str = json.get(b"mappings").ok_or(err!("InvalidSourceMap"))?;

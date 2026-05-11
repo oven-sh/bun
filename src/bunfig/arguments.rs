@@ -1,6 +1,5 @@
 //! Port of `src/runtime/cli/Arguments.zig` — bunfig-loading subset.
 //!
-//! MOVE_DOWN(b0): `loadConfig` / `loadConfigPath` / `loadConfigWithCmdArgs`
 //! and their private helpers were lifted out of `bun_runtime::cli::Arguments`
 //! so that mid-tier crates (`bun_install`) can call them directly. The
 //! `bun_runtime` crate re-exports these for its own callers.
@@ -8,9 +7,8 @@
 use bstr::BStr;
 use bun_bundler::options;
 use bun_core::{self, env_var, Global, Output};
-use bun_logger as logger;
-use bun_options_types::CommandTag::{Tag as CommandTag, ALWAYS_LOADS_CONFIG};
-use bun_options_types::Context::Context;
+use bun_options_types::command_tag::{Tag as CommandTag, ALWAYS_LOADS_CONFIG};
+use bun_options_types::context::Context;
 use bun_paths::resolve_path::{self, platform};
 use bun_paths::PathBuffer;
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
@@ -44,9 +42,9 @@ fn load_bunfig(
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), bun_core::Error> {
-    let source = match logger::to_source(
+    let source = match bun_ast::to_source(
         config_path,
-        logger::ToSourceOptions { convert_bom: true },
+        bun_ast::ToSourceOptions { convert_bom: true },
     ) {
         Ok(s) => s,
         Err(err) => {
@@ -62,21 +60,21 @@ fn load_bunfig(
         }
     };
 
-    bun_js_parser::ast::stmt::data::Store::create();
-    bun_js_parser::ast::expr::data::Store::create();
-    let _store_reset = bun_js_parser::ast::StoreResetGuard::new();
+    bun_ast::stmt::data::Store::create();
+    bun_ast::expr::data::Store::create();
+    let _store_reset = bun_ast::StoreResetGuard::new();
 
     // PORT NOTE: reshaped for borrowck — `defer { ctx.log.level = original }`
     // would capture `&mut *ctx.log` past the `Bunfig::parse(.., ctx)` reborrow.
     // Route through the raw `*mut Log` (process-lifetime, set in
     // `create_context_data()`); the guard restores `level` on unwind/return.
-    let log_ptr: *mut logger::Log = ctx.log;
+    let log_ptr: *mut bun_ast::Log = ctx.log;
     debug_assert!(!log_ptr.is_null());
     // SAFETY: `ctx.log` is the process-global Log written once during
     // single-threaded CLI startup; no other `&mut` to it is live here.
     let original_level = unsafe { (*log_ptr).level };
     // SAFETY: see above.
-    unsafe { (*log_ptr).level = logger::Level::Warn };
+    unsafe { (*log_ptr).level = bun_ast::Level::Warn };
     let _guard = scopeguard::guard(original_level, move |lvl| {
         // SAFETY: same as above; runs on the same thread.
         unsafe { (*log_ptr).level = lvl };
@@ -126,7 +124,7 @@ pub fn load_config_path(
 }
 
 #[cold]
-fn report_bunfig_load_failure(log: *mut logger::Log, err: bun_core::Error) -> ! {
+fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: bun_core::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
     if log.has_any() {

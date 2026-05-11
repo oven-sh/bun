@@ -9,8 +9,7 @@ use bun_paths::PathBuffer;
 use bun_str::strings;
 use bun_semver::{self as Semver, String, ExternalString};
 use bun_semver::semver_string::{Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts};
-use bun_logger as logger;
-use bun_logger::js_ast::{Expr, expr::Data as ExprData};
+use bun_ast::{Expr, expr::Data as ExprData};
 use crate::bun_json as JSON;
 
 use crate::{
@@ -1381,8 +1380,8 @@ impl<T> PkgMap<T> {
 pub fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
-    source: &logger::Source,
-    log: &mut logger::Log,
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
     mut manager: Option<&mut PackageManager>,
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
@@ -1445,7 +1444,7 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidTrustedDependenciesSet);
             }
             let name_hash: TruncatedPackageNameHash =
-                dep.as_string_hash(StringBuilder::string_hash)?.unwrap() as TruncatedPackageNameHash;
+                dep.as_string_hash_utf8(StringBuilder::string_hash)?.unwrap() as TruncatedPackageNameHash;
             trusted_dependencies.insert(name_hash, ());
         }
 
@@ -1471,7 +1470,7 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidPatchedDependencies);
             }
 
-            let key_hash = key.as_string_hash(StringBuilder::string_hash)?.unwrap();
+            let key_hash = key.as_string_hash_utf8(StringBuilder::string_hash)?.unwrap();
             lockfile.patched_dependencies.insert(
                 key_hash,
                 PatchedDep { path: sbuf!(lockfile).append(value.as_utf8_string_literal().expect("infallible: is_string checked"))?, ..Default::default() },
@@ -1717,7 +1716,7 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
-        let Some(name_hash) = name_expr.as_string_hash(StringBuilder::string_hash)? else {
+        let Some(name_hash) = name_expr.as_string_hash_utf8(StringBuilder::string_hash)? else {
             log.add_error(Some(source), name_expr.loc, b"Expected a string name property");
             return Err(ParseError::InvalidWorkspaceObject);
         };
@@ -2125,10 +2124,10 @@ pub fn parse_into_binary_lockfile(
 
                         if res.tag != ResolutionTag::Workspace {
                             if let Some(os) = deps_os_cpu_libc_bin_bundle_obj.get(b"os") {
-                                pkg.meta.os = Npm::negatable_from_json::<Npm::OperatingSystem, _>(&os)?;
+                                pkg.meta.os = Npm::negatable_from_json::<Npm::OperatingSystem>(&os)?;
                             }
                             if let Some(arch) = deps_os_cpu_libc_bin_bundle_obj.get(b"cpu") {
-                                pkg.meta.arch = Npm::negatable_from_json::<Npm::Architecture, _>(&arch)?;
+                                pkg.meta.arch = Npm::negatable_from_json::<Npm::Architecture>(&arch)?;
                             }
                             // TODO(dylan-conway)
                             // if (os_cpu_libc_obj.get("libc")) |libc| {
@@ -2430,9 +2429,9 @@ fn dependency_resolution_failure(
     dep: &Dependency,
     pkg_path: Option<&[u8]>,
     buf: &[u8],
-    source: &logger::Source,
-    log: &mut logger::Log,
-    loc: logger::Loc,
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    loc: bun_ast::Loc,
 ) -> Result<(), bun_alloc::AllocError> {
     let behavior_str = if dep.behavior.contains(Behavior::DEV) {
         "dev"
@@ -2480,8 +2479,8 @@ fn dependency_resolution_failure(
 fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
     lockfile: &mut BinaryLockfile,
     obj: &Expr,
-    log: &mut logger::Log,
-    source: &logger::Source,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
     // Zig: `if (check_for_bundled) string else void` → carried as Option, gated by const generic
     pkg_path: Option<&[u8]>,
@@ -2499,7 +2498,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         }
 
         for item in optional_peers.data.e_array().expect("infallible: variant checked").items.slice() {
-            let Some(name_hash) = item.as_string_hash(StringBuilder::string_hash)? else {
+            let Some(name_hash) = item.as_string_hash_utf8(StringBuilder::string_hash)? else {
                 log.add_error(Some(source), item.loc, b"Expected a string");
                 return Err(ParseError::InvalidPackageInfo);
             };

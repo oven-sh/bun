@@ -437,7 +437,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering}
 
 use bun_core::{Environment, Global, Output, env_var, fmt as bun_fmt};
 use bun_collections::BoundedArray;
-use bun_base64::VLQ; // MOVE_DOWN(b0): was bun_sourcemap::VLQ
+use bun_base64::VLQ;
 use bun_core::strings;
 
 use super::{debug, Write, FmtAdapter, stderr_writer};
@@ -647,7 +647,7 @@ bun_dispatch::link_interface! {
 pub struct ResolverAction {
     pub source_dir: &'static [u8],
     pub import_path: &'static [u8],
-    pub kind: bun_options_types::ImportKind,
+    pub kind: bun_ast::ImportKind,
 }
 
 #[derive(Clone, Copy)]
@@ -744,7 +744,7 @@ pub fn scoped_action(action: Action) -> ActionGuard {
 pub fn set_current_action_resolver(
     source_dir: &[u8],
     import_path: &[u8],
-    kind: bun_options_types::ImportKind,
+    kind: bun_ast::ImportKind,
 ) -> ActionGuard {
     let prev = current_action();
     #[cfg(feature = "show_crash_trace")]
@@ -2817,7 +2817,6 @@ pub fn suppress_reporting() {
     SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
 }
 
-// StoredTrace was MOVE_DOWN(b0)'d to bun_core (see src/bun_core/Global.rs and
 // src/ptr/ref_count.rs:16). Re-export so `bun_crash_handler::StoredTrace` paths
 // keep compiling. NOTE: if `debug::return_address()` is ever wired to a real
 // `@returnAddress()` intrinsic, apply that improvement in bun_core's

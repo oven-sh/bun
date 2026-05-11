@@ -16,10 +16,9 @@ use crate::bun_css::css_parser::{
     SmallList,
 };
 use crate::bun_fs::Path;
-use bun_logger::{Loc, Range};
-use bun_options_types::{
-    import_record::Flags as ImportRecordFlags, BundleEnums::Index as AstIndex, ImportKind,
-    ImportRecord, ImportRecordTag,
+use bun_ast::{Loc, Range};
+use bun_ast::{
+    ImportRecordFlags, Index as AstIndex, ImportKind, ImportRecord, ImportRecordTag,
 };
 use bun_resolver::DataURL;
 use crate::bun_str::strings;
@@ -131,7 +130,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 // `seg` borrows arena-owned bytes that outlive this
                                 // stylesheet; route through `StoreStr` for the lifetime
                                 // erasure (see layer.rs TODO(port)).
-                                real.v.append(bun_js_parser::StoreStr::new(seg.as_ref()).slice());
+                                real.v.append(bun_ast::StoreStr::new(seg.as_ref()).slice());
                             }
                             names.append(real);
                         }
@@ -236,19 +235,19 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         )
                                     },
                                 }),
-                                // `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
-                                // `c.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s
+                                // `LocalsResultsMap` = `ArrayHashMap<bun_ast::Ref, *const [u8]>`;
+                                // `c.mangled_props` is `ArrayHashMap<bun_ast::Ref, Box<[u8]>>`. Both `Ref`s
                                 // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
                                 // pointers — same layout, used read-only by the printer.
                                 Some(unsafe {
                                     &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
                                 }),
-                                // `to_css` takes `&bun_logger::symbol::Map`; `c.graph.symbols`
-                                // is `bun_js_parser::ast::symbol::Map`. Both are
+                                // `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
+                                // is `bun_ast::symbol::Map`. Both are
                                 // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
                                 // `repr(transparent)`), so layouts match — bridge by pointer cast.
                                 unsafe {
-                                    &*(&raw const c.graph.symbols).cast::<bun_logger::symbol::Map>()
+                                    &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>()
                                 },
                             ) {
                                 Ok(v) => v,
@@ -272,7 +271,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // the chunk, so the `'bump → 'static` launder is sound — same
                             // contract as every other CSS slice in this file.
                             let encoded: &'static [u8] =
-                                bun_js_parser::StoreStr::new(bump.alloc_slice_copy(&encoded)).slice();
+                                bun_ast::StoreStr::new(bump.alloc_slice_copy(&encoded)).slice();
                             *p = Path::init(encoded);
                         }
                     }

@@ -8,7 +8,6 @@
 //! The HMR client in the browser is expected to sort the final list of errors
 //! for deterministic output; there is code in DevServer that uses `swapRemove`.
 
-use bun_logger as logger;
 
 use super::incremental_graph::{ClientFileIndex, ServerFileIndex};
 use super::route_bundle::RouteBundle;
@@ -176,7 +175,7 @@ impl SerializedFailure {
         owner: Owner,
         // for .client and .server, these are meant to be relative file paths
         owner_display_name: &[u8],
-        messages: &[logger::Msg],
+        messages: &[bun_ast::Msg],
     ) -> Result<SerializedFailure, bun_alloc::AllocError> {
         debug_assert!(messages.len() > 0);
 
@@ -218,15 +217,15 @@ fn write_i32_le(w: &mut Writer, v: i32) {
     w.extend_from_slice(&v.to_le_bytes());
 }
 
-fn write_log_msg(msg: &logger::Msg, w: &mut Writer) {
+fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
     // Zig: switch (msg.kind) { inline else => |k| @intFromEnum(@field(ErrorKind, "bundler_log_" ++ @tagName(k))) }
-    // TODO(port): comptime reflection mapping logger::Kind tag → ErrorKind by name; written out explicitly
+    // TODO(port): comptime reflection mapping bun_ast::Kind tag → ErrorKind by name; written out explicitly
     let kind_byte = match msg.kind {
-        logger::Kind::Err => ErrorKind::BundlerLogErr,
-        logger::Kind::Warn => ErrorKind::BundlerLogWarn,
-        logger::Kind::Note => ErrorKind::BundlerLogNote,
-        logger::Kind::Debug => ErrorKind::BundlerLogDebug,
-        logger::Kind::Verbose => ErrorKind::BundlerLogVerbose,
+        bun_ast::Kind::Err => ErrorKind::BundlerLogErr,
+        bun_ast::Kind::Warn => ErrorKind::BundlerLogWarn,
+        bun_ast::Kind::Note => ErrorKind::BundlerLogNote,
+        bun_ast::Kind::Debug => ErrorKind::BundlerLogDebug,
+        bun_ast::Kind::Verbose => ErrorKind::BundlerLogVerbose,
     } as u8;
     w.push(kind_byte);
     write_log_data(&msg.data, w);
@@ -237,7 +236,7 @@ fn write_log_msg(msg: &logger::Msg, w: &mut Writer) {
     }
 }
 
-fn write_log_data(data: &logger::Data, w: &mut Writer) {
+fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
     write_string32(data.text.as_ref(), w);
     if let Some(loc) = &data.location {
         if loc.line < 0 {

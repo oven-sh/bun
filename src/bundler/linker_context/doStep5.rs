@@ -12,12 +12,12 @@ use core::mem::{offset_of, MaybeUninit};
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ArrayHashMap, VecExt, HashMap};
-use bun_logger::Loc;
+use bun_ast::Loc;
 use bun_string::strings;
 
-use bun_js_parser::ast::bundled_ast::{BundledAstColumns as _, Flags as AstFlags};
-use bun_js_parser::ast::symbol::Use as SymbolUse;
-use bun_js_parser::{
+use crate::bundled_ast::{BundledAstColumns as _, Flags as AstFlags};
+use bun_ast::symbol::Use as SymbolUse;
+use bun_ast::{
     self as js_ast, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, Expr, Part,
     PartSymbolUseMap, Ref, Stmt, E, G, S,
 };
@@ -194,7 +194,7 @@ impl LinkerContext<'_> {
             // Per-row mutable SoA cells (own `id` only — disjoint across tasks).
             row_mut!(meta.flags, js_meta::Flags, id),
             row_mut!(ast.flags, AstFlags, id),
-            row_mut!(ast.parts, js_ast::PartList, id),
+            row_mut!(ast.parts, bun_ast::PartList, id),
         );
 
         // Each part tracks the other parts it depends on within this file
@@ -203,9 +203,9 @@ impl LinkerContext<'_> {
         // PORT NOTE: reshaped for borrowck — multiple `&mut` into graph SoA;
         // raw per-row pointers via `split_raw()` so concurrent tasks never
         // hold overlapping `&mut [T]`.
-        let parts_slice: *mut [Part] = row_mut!(ast.parts, js_ast::PartList, id).slice_mut();
-        let named_imports: *mut bun_js_parser::ast::bundled_ast::NamedImports =
-            (ast.named_imports as *mut bun_js_parser::ast::bundled_ast::NamedImports)
+        let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).slice_mut();
+        let named_imports: *mut crate::bundled_ast::NamedImports =
+            (ast.named_imports as *mut crate::bundled_ast::NamedImports)
                 .wrapping_add(id as usize);
         // SAFETY: `named_imports` is a stable column pointer (see above). We
         // hoist the emptiness check so the per-symbol-use inner loop skips
@@ -226,15 +226,15 @@ impl LinkerContext<'_> {
         // borrow begins after it returns) and the ast row is parser-built and
         // never reallocated during step 5. No other task touches row `id`.
         let (tlsp_overlay, tlsp_ast): (
-            &bun_js_parser::ast::ast::TopLevelSymbolToParts,
-            &bun_js_parser::ast::ast::TopLevelSymbolToParts,
+            &bun_ast::ast_result::TopLevelSymbolToParts,
+            &bun_ast::ast_result::TopLevelSymbolToParts,
         ) = unsafe {
             (
                 &*(meta.top_level_symbol_to_parts_overlay
-                    as *const bun_js_parser::ast::ast::TopLevelSymbolToParts)
+                    as *const bun_ast::ast_result::TopLevelSymbolToParts)
                     .add(id as usize),
                 &*(ast.top_level_symbols_to_parts
-                    as *const bun_js_parser::ast::ast::TopLevelSymbolToParts)
+                    as *const bun_ast::ast_result::TopLevelSymbolToParts)
                     .add(id as usize),
             )
         };
@@ -265,7 +265,7 @@ impl LinkerContext<'_> {
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {
                     let import_ref = import_data.data.import_ref;
                     if let Some(symbol) = c.graph.symbols.get_const(import_ref) {
-                        if symbol.kind == bun_js_parser::ast::symbol::Kind::TsEnum {
+                        if symbol.kind == bun_ast::symbol::Kind::TsEnum {
                             if let Some(enum_data) = c.graph.ts_enums.get(&import_ref) {
                                 let mut found_non_inlined_enum = false;
 
@@ -375,7 +375,7 @@ impl LinkerContext<'_> {
                         *local.value_ptr = part_index_u32;
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         dependencies.push(Dependency {
-                            source_index: js_ast::Index::source(source_index as usize),
+                            source_index: bun_ast::Index::source(source_index as usize),
                             part_index: other_part_index,
                         });
                     }
@@ -412,14 +412,14 @@ impl LinkerContext<'_> {
         re_exports_count: usize,
         meta_flags: &mut js_meta::Flags,
         ast_flags: &mut AstFlags,
-        ast_parts: &mut js_ast::PartList,
+        ast_parts: &mut bun_ast::PartList,
     ) {
         // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
         // re-entrancy guards around the global Store). `Disabler::scope()`
         // calls `disable()` and re-`enable()`s on drop — currently no-op stubs
         // until the thread-local toggle lands (`js_parser/ast/mod.rs`).
-        let _stmt_guard = bun_js_parser::ast::stmt::Disabler::scope();
-        let _expr_guard = bun_js_parser::ast::expr::Disabler::scope();
+        let _stmt_guard = bun_ast::stmt::Disabler::scope();
+        let _expr_guard = bun_ast::expr::Disabler::scope();
 
         // 1 property per export
         let mut properties =
@@ -460,7 +460,7 @@ impl LinkerContext<'_> {
                 // `MaybeUninit::write` returns `&mut T` to the now-initialized slot.
                 let written: &mut Stmt = cell.write($value);
                 stmts_head += 1;
-                js_ast::StoreSlice::new_mut(core::slice::from_mut(written))
+                bun_ast::StoreSlice::new_mut(core::slice::from_mut(written))
             }};
         }
         let loc = Loc::EMPTY;
@@ -552,7 +552,7 @@ impl LinkerContext<'_> {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
                 ns_export_dependencies.append_assume_capacity(Dependency {
-                    source_index: js_ast::Index::source(exp_data.source_index.get() as usize),
+                    source_index: bun_ast::Index::source(exp_data.source_index.get() as usize),
                     part_index: part_id,
                 });
             }
@@ -584,7 +584,7 @@ impl LinkerContext<'_> {
                     decls: G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             arena,
-                            bun_js_parser::ast::b::Identifier { r#ref: exports_ref },
+                            bun_ast::b::Identifier { r#ref: exports_ref },
                             loc,
                         ),
                         value: Some(Expr::allocate(arena, E::Object::default(), loc)),
@@ -614,7 +614,7 @@ impl LinkerContext<'_> {
                         arena,
                         E::Call {
                             target: Expr::init_identifier(export_ref, loc),
-                            args: js_ast::ExprNodeList::from_slice(&[
+                            args: bun_ast::ExprNodeList::from_slice(&[
                                 Expr::init_identifier(exports_ref, loc),
                                 Expr::allocate(
                                     arena,
@@ -639,7 +639,7 @@ impl LinkerContext<'_> {
                 .ensure_unused_capacity(parts.len());
             for &part_index in parts {
                 ns_export_dependencies.append_assume_capacity(Dependency {
-                    source_index: js_ast::Index::RUNTIME,
+                    source_index: bun_ast::Index::RUNTIME,
                     part_index,
                 });
             }
@@ -670,7 +670,7 @@ impl LinkerContext<'_> {
                     arena,
                     E::Call {
                         target: Expr::init_identifier(to_common_js_ref, Loc::EMPTY),
-                        args: js_ast::ExprNodeList::from_slice(&[Expr::init_identifier(
+                        args: bun_ast::ExprNodeList::from_slice(&[Expr::init_identifier(
                             exports_ref,
                             Loc::EMPTY,
                         )]),
@@ -690,19 +690,19 @@ impl LinkerContext<'_> {
 
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
-            ast_parts.slice_mut()[js_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
+            ast_parts.slice_mut()[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
                 stmts: if self.options.output_format != Format::InternalBakeDev {
                     // SAFETY: the `[all_export_stmts_base..stmts_head]` window
                     // of `stmts_slab` is fully initialized above; the worker
                     // arena outlives the link pass.
                     unsafe {
-                        js_ast::StoreSlice::new_mut(core::slice::from_raw_parts_mut(
+                        bun_ast::StoreSlice::new_mut(core::slice::from_raw_parts_mut(
                             (*stmts_slab)[all_export_stmts_base].as_mut_ptr(),
                             all_export_stmts_len,
                         ))
                     }
                 } else {
-                    js_ast::StoreSlice::EMPTY
+                    bun_ast::StoreSlice::EMPTY
                 },
                 symbol_uses: ns_export_symbol_uses,
                 dependencies: ns_export_dependencies,

@@ -6,7 +6,6 @@ use bun_core::{err, Environment, Error, Global, Output};
 use bun_core::fmt as bun_fmt;
 use bun_str::{strings, ZStr};
 use bun_paths::{self as path, PathBuffer};
-use bun_logger as logger;
 use bun_sys::{self, Fd, File, FileKind};
 use bun_http as http;
 use bun_http::HeaderBuilder;
@@ -16,10 +15,10 @@ use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIte
 use bun_resolver::fs::FileSystem;
 use bun_dotenv as dotenv;
 use bun_sha_hmac as sha;
-use bun_interchange::json as json_mod;
+use bun_parsers::json as json_mod;
 use bun_url::URL;
 use bun_string::MutableString;
-use bun_js_parser::{Expr, E, G};
+use bun_ast::{Expr, E, G};
 use crate::cli::ci_info as ci;
 use bun_simdutf_sys::simdutf as simdutf;
 use bun_sys::dir_iterator as DirIterator;
@@ -29,18 +28,18 @@ use bun_install::{AuthType, LogLevel};
 pub use bun_install::Access;
 use bun_install::dependency;
 use bun_sys::FdExt as _;
-use bun_js_parser::ast::expr::Data as ExprData;
+use bun_ast::expr::Data as ExprData;
 use bun_core::OSPathChar;
 
 use crate::api::bun_process::sync as spawn_sync;
 
-// `json_mod::parse_utf8` returns `bun_logger::js_ast::Expr` (the value-shaped
-// JSON-only `Expr`), not `bun_js_parser::Expr`, so `Expr::get_string_cloned`
+// `json_mod::parse_utf8` returns `bun_ast::Expr` (the value-shaped
+// JSON-only `Expr`), not `bun_ast::Expr`, so `Expr::get_string_cloned`
 // can't be applied. Mirror the lookup as a free fn over the JSON `Expr` using
 // its own `as_property` / `as_string_cloned` surface.
 #[inline]
 fn json_get_string_cloned<'b>(
-    expr: &json_mod::Expr,
+    expr: &bun_ast::Expr,
     bump: &'b bun_alloc::Arena,
     name: &[u8],
 ) -> Result<Option<&'b [u8]>, AllocError> {
@@ -321,7 +320,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
         let bump = bun_alloc::Arena::new();
         let (package_name, package_version, json, json_source) = {
-            let source = logger::Source::init_path_string(b"package.json", package_json_contents);
+            let source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
             let log = manager.log_mut();
             let json = match json_mod::parse_package_json_utf8(&source, log, &bump) {
                 Ok(j) => j,
@@ -403,9 +402,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         drop(sha512);
 
         // `json_mod::parse_package_json_utf8` returns the value-shaped
-        // `bun_logger::js_ast::Expr`; `normalized_package` (and `print_json`)
-        // operate on the full parser-shaped `bun_js_parser::Expr`. Lift via the
-        // documented `From<logger::js_ast::Expr>` bridge — same conversion
+        // `bun_ast::Expr`; `normalized_package` (and `print_json`)
+        // operate on the full parser-shaped `bun_ast::Expr`. Lift via the
+        // documented `From<bun_ast::Expr>` bridge — same conversion
         // `WorkspacePackageJSONCache::get_with_path` applies before stashing
         // `MapEntry.root`. The thread-local `data::Store` has already been
         // initialised by `PackageManager::init`.
@@ -465,7 +464,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
-        let log: &mut logger::Log = manager.log_mut();
+        let log: &mut bun_ast::Log = manager.log_mut();
         let load_from_disk_result =
             lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
 
@@ -801,8 +800,8 @@ impl PublishCommand {
         }
 
         // Parse the response to check if this specific version exists
-        let source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
-        let mut log = logger::Log::init();
+        let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
+        let mut log = bun_ast::Log::init();
         let bump = bun_alloc::Arena::new();
         let Ok(json) = json_mod::parse_utf8(&source, &mut log, &bump) else {
             return false;
@@ -1079,8 +1078,8 @@ impl PublishCommand {
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
         let bump = bun_alloc::Arena::new();
-        let manager_log: &mut logger::Log = ctx.manager.log_mut();
-        let res_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
+        let manager_log: &mut bun_ast::Log = ctx.manager.log_mut();
+        let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
 
         let res_json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
             Ok(j) => Some(j),
@@ -1224,7 +1223,7 @@ impl PublishCommand {
                         200 => {
                             // login successful
                             let done_bump = bun_alloc::Arena::new();
-                            let otp_done_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
+                            let otp_done_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
                             let otp_done_json = match json_mod::parse_utf8(&otp_done_source, manager_log, &done_bump) {
                                 Ok(j) => j,
                                 Err(e) => {
@@ -1282,7 +1281,7 @@ impl PublishCommand {
         package_name: &[u8],
         package_version: &[u8],
         json: &mut Expr,
-        json_source: &logger::Source,
+        json_source: &bun_ast::Source,
         shasum: SHA1Digest,
         integrity: SHA512Digest,
         readme: Option<ReadmeInfo>,
@@ -1338,17 +1337,17 @@ impl PublishCommand {
 
         let mut dist_props: Vec<G::Property> = Vec::with_capacity(3);
         dist_props.push(G::Property {
-            key: Some(Expr::init(E::String::init(b"integrity"), logger::Loc::EMPTY)),
-            value: Some(Expr::init(E::String::init(integrity_fmt), logger::Loc::EMPTY)),
+            key: Some(Expr::init(E::String::init(b"integrity"), bun_ast::Loc::EMPTY)),
+            value: Some(Expr::init(E::String::init(integrity_fmt), bun_ast::Loc::EMPTY)),
             ..Default::default()
         });
         dist_props.push(G::Property {
-            key: Some(Expr::init(E::String::init(b"shasum"), logger::Loc::EMPTY)),
-            value: Some(Expr::init(E::String::init(shasum_fmt), logger::Loc::EMPTY)),
+            key: Some(Expr::init(E::String::init(b"shasum"), bun_ast::Loc::EMPTY)),
+            value: Some(Expr::init(E::String::init(shasum_fmt), bun_ast::Loc::EMPTY)),
             ..Default::default()
         });
         dist_props.push(G::Property {
-            key: Some(Expr::init(E::String::init(b"tarball"), logger::Loc::EMPTY)),
+            key: Some(Expr::init(E::String::init(b"tarball"), bun_ast::Loc::EMPTY)),
             value: Some(Expr::init(
                 E::String::init(leak!({
                     let mut v = Vec::new();
@@ -1365,17 +1364,17 @@ impl PublishCommand {
                     ).map_err(|_| AllocError)?;
                     v
                 })),
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
             )),
             ..Default::default()
         });
 
-        Expr::set(json, &bump, b"dist", Expr::init(
+        json.set(&bump, b"dist", Expr::init(
             E::Object {
                 properties: G::PropertyList::move_from_list(dist_props),
                 ..Default::default()
             },
-            logger::Loc::EMPTY,
+            bun_ast::Loc::EMPTY,
         ))?;
 
         {
@@ -1496,8 +1495,8 @@ impl PublishCommand {
                     }
 
                     bin_props.push(G::Property {
-                        key: Some(Expr::init(E::String::init(leak!(package_name)), logger::Loc::EMPTY)),
-                        value: Some(Expr::init(E::String::init(leak!(normalized.as_bytes())), logger::Loc::EMPTY)),
+                        key: Some(Expr::init(E::String::init(leak!(package_name)), bun_ast::Loc::EMPTY)),
+                        value: Some(Expr::init(E::String::init(leak!(normalized.as_bytes())), bun_ast::Loc::EMPTY)),
                         ..Default::default()
                     });
 
@@ -1507,7 +1506,7 @@ impl PublishCommand {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
                         },
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     ));
                 }
                 ExprData::EObject(bin_obj) => {
@@ -1570,8 +1569,8 @@ impl PublishCommand {
                         }
 
                         bin_props.push(G::Property {
-                            key: Some(Expr::init(E::String::init(crate::cli::cli_dupe(&key)), logger::Loc::EMPTY)),
-                            value: Some(Expr::init(E::String::init(leak!(value.as_bytes())), logger::Loc::EMPTY)),
+                            key: Some(Expr::init(E::String::init(crate::cli::cli_dupe(&key)), bun_ast::Loc::EMPTY)),
+                            value: Some(Expr::init(E::String::init(leak!(value.as_bytes())), bun_ast::Loc::EMPTY)),
                             ..Default::default()
                         });
                     }
@@ -1582,7 +1581,7 @@ impl PublishCommand {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
                         },
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     ));
                 }
                 _ => {}
@@ -1679,9 +1678,9 @@ impl PublishCommand {
                         bin_props.push(G::Property {
                             key: Some(Expr::init(
                                 E::String::init(leak!(bun_paths::basename_posix(subpath.as_bytes()))),
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                             )),
-                            value: Some(Expr::init(E::String::init(subpath.as_bytes()), logger::Loc::EMPTY)),
+                            value: Some(Expr::init(E::String::init(subpath.as_bytes()), bun_ast::Loc::EMPTY)),
                             ..Default::default()
                         });
 
@@ -1695,12 +1694,12 @@ impl PublishCommand {
                     }
                 }
 
-                Expr::set(json, bump, b"bin", Expr::init(
+                json.set(bump, b"bin", Expr::init(
                     E::Object {
                         properties: G::PropertyList::move_from_list(bin_props),
                         ..Default::default()
                     },
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                 ))?;
             }
         }

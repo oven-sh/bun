@@ -5,14 +5,14 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
 use bun_core::{FeatureFlags, Output};
-use bun_options_types::{ImportKind, ImportRecord};
-use bun_js_parser::{Ref, Stmt};
+use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::{Ref, Stmt};
 // PORT NOTE: `bun.ast.Index` is mirrored as both `crate::Index`
-// (`bun_options_types::Index`) and `bun_js_parser::Index` via a
+// (`bun_ast::Index`) and `bun_ast::Index` via a
 // TYPE_ONLY split. `CssImportOrderKind::SourceIndex` carries the js_parser
 // flavor because its sole producer (`findImportedFilesInCSSOrder`) constructs
 // it from parser-side indices; all consumers only call `.get()`.
-use bun_js_parser::Index;
+use bun_ast::Index;
 use bun_sourcemap as source_map;
 use bun_string::{strings, string_joiner::StringJoiner};
 
@@ -1215,10 +1215,15 @@ pub struct CssImportOrder {
 
 impl Drop for CssImportOrder {
     fn drop(&mut self) {
-        // Zig `BabyList` headers — bitwise-shared across multiple order entries
-        // by `findImportedFilesInCSSOrder`; freeing here would double-free.
+        // `conditions`: bitwise-shared across multiple order entries by
+        // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
+        // freeing here would double-free. Global-backed → leaks until the
+        // aliasing is replaced (PORTING.md §CSS-import-order).
         core::mem::forget(core::mem::take(&mut self.conditions));
-        core::mem::forget(core::mem::take(&mut self.condition_import_records));
+        // `condition_import_records`: every populated value is uniquely owned
+        // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
+        // drop is a no-op). Normal drop frees the owned buffers; no
+        // double-free path exists.
     }
 }
 

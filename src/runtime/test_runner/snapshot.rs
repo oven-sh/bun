@@ -6,9 +6,8 @@ use std::io::Write as _;
 use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
 use bun_core::{self, Error};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_js_parser::{self as js_parser, ast as js_ast, lexer as js_lexer};
+use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_str::printer as js_printer;
-use bun_logger as logger;
 use bun_core::output as bun_output;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_str::{strings, ZStr};
@@ -225,12 +224,12 @@ impl<'a> Snapshots<'a> {
         let vm = VirtualMachine::get().as_mut();
         let opts = js_parser::ParserOptions::init(
             vm.transpiler.options.jsx.clone().into(),
-            js_parser::options::Loader::Js,
+            bun_ast::Loader::Js,
         );
         // PERF(port): Zig used `this.allocator` (default_allocator). Thread a per-call arena
         // since js_parser is bump-allocated in the Rust port.
         let arena = bun_alloc::Arena::new();
-        let mut temp_log = logger::Log::init();
+        let mut temp_log = bun_ast::Log::init();
 
         // PORT NOTE: do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
         // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
@@ -261,7 +260,7 @@ impl<'a> Snapshots<'a> {
         // SAFETY: buf[pos] == 0 written above
         let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-        let source = logger::Source::init_path_string(snapshot_file_path.as_bytes(), self.file_buf.as_slice());
+        let source = bun_ast::Source::init_path_string(snapshot_file_path.as_bytes(), self.file_buf.as_slice());
 
         let parser = js_parser::Parser::init(
             opts,
@@ -273,7 +272,7 @@ impl<'a> Snapshots<'a> {
 
         let parse_result = parser.parse()?;
         let mut ast = match parse_result {
-            js_ast::Result::Ast(ast) => ast,
+            bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(bun_core::err!("ParseError")),
         };
         // defer ast.deinit() → Drop
@@ -290,26 +289,26 @@ impl<'a> Snapshots<'a> {
             // loop and `ast` is owned here, so unique access is upheld.
             for stmt in part.stmts.slice_mut() {
                 match &mut stmt.data {
-                    js_ast::StmtData::SExpr(expr) => {
-                        if let js_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
+                    bun_ast::StmtData::SExpr(expr) => {
+                        if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
                             // PORT NOTE: deref `StoreRef` once to a plain `&mut E::Binary`
                             // so the borrow checker can see `.left`/`.right` as disjoint
                             // field projections (custom `DerefMut` blocks split-borrows
                             // otherwise).
                             let e_binary = &mut **e_binary;
-                            if e_binary.op == js_ast::Op::Code::BinAssign {
+                            if e_binary.op == bun_ast::Op::Code::BinAssign {
                                 let (left, right) = (&mut e_binary.left, &mut e_binary.right);
-                                if let js_ast::ExprData::EIndex(e_index) = &mut left.data {
+                                if let bun_ast::ExprData::EIndex(e_index) = &mut left.data {
                                     // PORT NOTE: split-borrow `index`/`target` so we can take
                                     // `&mut` on `index` (EString::slice needs &mut) while reading
                                     // `target` immutably.
                                     let target_is_exports = matches!(
                                         &e_index.target.data,
-                                        js_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref)
+                                        bun_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref)
                                     );
                                     if target_is_exports {
-                                        if let js_ast::ExprData::EString(index) = &mut e_index.index.data {
-                                            if let js_ast::ExprData::EString(value_string) =
+                                        if let bun_ast::ExprData::EString(index) = &mut e_index.index.data {
+                                            if let bun_ast::ExprData::EString(value_string) =
                                                 &mut right.data
                                             {
                                                 let key = index.slice(&arena);
@@ -395,7 +394,7 @@ impl<'a> Snapshots<'a> {
 
             // Zig: `defer if (log.errors > 0) { log.print(...); success = false; }`
             // Runs on every exit of the loop body (continue, fall-through, AND `?` early-return).
-            let mut log = scopeguard::guard(logger::Log::init(), |log| {
+            let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_output::error_writer()));
                     success.set(false);
@@ -435,8 +434,8 @@ impl<'a> Snapshots<'a> {
                 bun_sys::Result::Ok(r) => r,
                 bun_sys::Result::Err(e) => {
                     log.add_error_fmt(
-                        &logger::Source::init_empty_file(test_filename_z.as_bytes()),
-                        logger::Loc { start: 0 },
+                        &bun_ast::Source::init_empty_file(test_filename_z.as_bytes()),
+                        bun_ast::Loc { start: 0 },
                         format_args!(
                             "Failed to update inline snapshot: Failed to open file: {}",
                             bstr::BStr::new(e.name()),
@@ -458,7 +457,7 @@ impl<'a> Snapshots<'a> {
                 .read_to_end()
                 .map_err(|e| Error::from(e))?;
 
-            let source = logger::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
+            let source = bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
 
             let mut result_text: Vec<u8> = Vec::new();
 
@@ -474,7 +473,7 @@ impl<'a> Snapshots<'a> {
                     if !strings::eql(&ils.value, last_value) {
                         log.add_error_fmt(
                             &source,
-                            logger::Loc {
+                            bun_ast::Loc {
                                 start: i32::try_from(uncommitted_segment_end).unwrap(),
                             },
                             format_args!(
@@ -499,7 +498,7 @@ impl<'a> Snapshots<'a> {
                     ils.line,
                     ils.col
                 );
-                let Some(byte_offset_add) = logger::Source::line_col_to_byte_offset(
+                let Some(byte_offset_add) = bun_ast::Source::line_col_to_byte_offset(
                     &file_text[last_byte..],
                     u64::from(last_line),
                     u64::from(last_col),
@@ -509,7 +508,7 @@ impl<'a> Snapshots<'a> {
                     bun_core::scoped_log!(inline_snapshot, "-> Could not find byte");
                     log.add_error_fmt(
                         &source,
-                        logger::Loc {
+                        bun_ast::Loc {
                             start: i32::try_from(uncommitted_segment_end).unwrap(),
                         },
                         format_args!(
@@ -543,7 +542,7 @@ impl<'a> Snapshots<'a> {
                     if !strings::starts_with(&file_text[next_start..], fn_name) {
                         log.add_error_fmt(
                             &source,
-                            logger::Loc {
+                            bun_ast::Loc {
                                 start: i32::try_from(next_start).unwrap(),
                             },
                             format_args!(
@@ -564,7 +563,7 @@ impl<'a> Snapshots<'a> {
                     // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
                     // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
                     // discussion.
-                    let log_ptr: *mut logger::Log = &raw mut *log;
+                    let log_ptr: *mut bun_ast::Log = &raw mut *log;
                     let mut lexer = js_lexer::Lexer::init_without_reading(
                         unsafe { &mut *log_ptr },
                         &source,
@@ -580,7 +579,7 @@ impl<'a> Snapshots<'a> {
                     // (Zig passed by value-copy).
                     let opts = js_parser::ParserOptions::init(
                         vm.transpiler.options.jsx.clone().into(),
-                        js_parser::options::Loader::Js,
+                        bun_ast::Loader::Js,
                     );
                     // TODO(port): TSXParser::init takes out-param in Zig; reshaped `-> Result<Self>`.
                     let mut parser = js_parser::TSXParser::init(
@@ -639,7 +638,7 @@ impl<'a> Snapshots<'a> {
                         if ils.has_matchers {
                             break 'blk (after_expr_loc, after_comma_loc, true);
                         } else {
-                            if !matches!(expr_1.data, js_ast::ExprData::EString(_)) {
+                            if !matches!(expr_1.data, bun_ast::ExprData::EString(_)) {
                                 log.add_error_fmt(
                                     &source,
                                     expr_1.loc,
@@ -674,7 +673,7 @@ impl<'a> Snapshots<'a> {
                         );
                         continue 'ils;
                     }
-                    if !matches!(expr_2.data, js_ast::ExprData::EString(_)) {
+                    if !matches!(expr_2.data, bun_ast::ExprData::EString(_)) {
                         log.add_error_fmt(
                             &source,
                             expr_2.loc,
@@ -711,7 +710,7 @@ impl<'a> Snapshots<'a> {
                 {
                     log.add_error_fmt(
                         &source,
-                        logger::Loc { start: final_start },
+                        bun_ast::Loc { start: final_start },
                         format_args!("Failed to update inline snapshot: Did not advance."),
                     );
                     continue;
@@ -815,7 +814,7 @@ impl<'a> Snapshots<'a> {
             if let Err(e) = file.file.seek_to(0) {
                 log.add_error_fmt(
                     &source,
-                    logger::Loc { start: 0 },
+                    bun_ast::Loc { start: 0 },
                     format_args!(
                         "Failed to update inline snapshot: Seek file error: {}",
                         bstr::BStr::new(e.name()),
@@ -828,7 +827,7 @@ impl<'a> Snapshots<'a> {
             if let Err(e) = file.file.write_all(&result_text) {
                 log.add_error_fmt(
                     &source,
-                    logger::Loc { start: 0 },
+                    bun_ast::Loc { start: 0 },
                     format_args!(
                         "Failed to update inline snapshot: Write file error: {}",
                         bstr::BStr::new(e.name()),

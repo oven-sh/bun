@@ -3,7 +3,7 @@
 //!
 //! B-2 UN-GATED. The `Printer<'a, W, ...>` struct and its full method surface
 //! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …) now
-//! compile against the real `bun_js_parser::ast::{e,s,b,g,op,expr,stmt}`
+//! compile against the real `bun_ast::{e,s,b,g,op,expr,stmt}`
 //! types. The top-level `print` / `print_with_writer{,_and_platform}` /
 //! `print_common_js` / `get_source_map_builder` driver fns are live at crate
 //! root (the `__gated_entry_points` wrapper has been flattened). Remaining
@@ -26,10 +26,8 @@ use core::ptr::NonNull;
 use bun_str::strings;
 use bun_str::strings::CodepointIterator;
 use bun_str::MutableString;
-use bun_logger as logger;
-use bun_options_types::import_record::{ImportRecord, ImportKind};
-// TYPE_ONLY: bun_bundler::options::{Target, ModuleType, Format} → bun_options_types
-use bun_options_types::BundleEnums as bundle_opts;
+use bun_ast::{ImportRecord, ImportKind};
+use bun_options_types::bundle_enums as bundle_opts;
 use bun_core::Output;
 use bun_sys::Fd;
 
@@ -57,9 +55,15 @@ impl<T: bun_io::Write + ?Sized> Write for T {
     }
 }
 
-use bun_js_parser as js_ast;
+use bun_ast as js_ast;
 use js_ast::Ref;
-use bun_options_types::import_record::Flags as ImportRecordFlags;
+/// `lexer::*` — the printer only consumes the pure identifier/keyword
+/// classifiers, all of which live in `bun_ast::lexer_tables`. Aliased so the
+/// `lexer::is_identifier(...)` spelling matches the Zig path.
+mod lexer {
+    pub use bun_ast::lexer_tables::*;
+}
+use bun_ast::ImportRecordFlags as ImportRecordFlags;
 
 use bun_sourcemap as SourceMap;
 
@@ -82,18 +86,12 @@ use renamer as rename;
 
 /// Map of mangled property `Ref` → final mangled name bytes.
 /// Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)` (values borrow bundler arena).
-// MOVE_DOWN: from bun_bundler::MangledProps (src/bundler/bundle_v2.zig:47).
 // PERF(port): Zig values were arena-borrowed `[]const u8`; Box<[u8]> here owns —
 // revisit if profiling shows allocation pressure during link.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN: bun_bundler::analyze_transpiled_module (src/bundler/analyze_transpiled_module.zig)
-// Inline module — js_printer is the sole producer of ModuleInfo records; the
-// bundler/runtime only consume the serialized form. FFI exports
-// (zig__ModuleInfo__destroy, zig__ModuleInfoDeserialized__toJSModuleRecord) and
-// the JSC IdentifierArray bridge stay in tier-6 (bun_bundler_jsc) — deferred to Pass C.
-// ──────────────────────────────────────────────────────────────────────────
+/// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
+/// only consume the serialized form.
 pub mod analyze_transpiled_module {
     use bun_collections::{ArrayHashMap, HashMap, VecExt};
 
@@ -560,7 +558,7 @@ pub mod analyze_transpiled_module {
             self.strings_buf.extend_from_slice(value);
             self.strings_lens.push(u32::try_from(value.len()).unwrap());
             // PERF(port): Zig avoided this owned-key dupe via adapted hashmap over
-            // strings_buf offsets; revisit with a raw-entry API in Phase B.
+            // strings_buf offsets; revisit with a raw-entry API.
             self.strings_map.insert(value.to_vec(), idx);
             StringID(idx)
         }
@@ -658,7 +656,7 @@ pub mod analyze_transpiled_module {
 /// Cold path — called at most once per print to persist output. Dispatch lives
 /// on the parser-tier `RuntimeTranspilerCache` (`TranspilerCacheImpl`
 /// link-interface); the printer just holds the raw pointer.
-pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_js_parser::RuntimeTranspilerCache>;
+pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
 
 use bun_core::fmt::UPPER_HEX_TABLE as HEX_CHARS;
 const FIRST_ASCII: u32 = 0x20;
@@ -679,7 +677,7 @@ fn format_unsigned_integer_between<const LEN: usize>(buf: &mut [u8; LEN], val: u
         buf[i] = u8::try_from(remainder % 10).expect("int cast") + b'0';
         remainder /= 10;
     }
-    // PERF(port): was comptime `inline while` unrolling — profile in Phase B
+    // PERF(port): was comptime `inline while` unrolling — profile
 }
 
 pub fn write_module_id(writer: &mut impl core::fmt::Write, module_id: u32) {
@@ -689,7 +687,7 @@ pub fn write_module_id(writer: &mut impl core::fmt::Write, module_id: u32) {
 }
 
 // PERF(port): was comptime monomorphization (`comptime CodePointType: type`) — Zig
-// instantiated per code-unit type; Rust callers widen to i32 at the boundary. Profile in Phase B.
+// instantiated per code-unit type; Rust callers widen to i32 at the boundary. Profile.
 pub fn can_print_without_escape<const ASCII_ONLY: bool>(c: i32) -> bool {
     if c <= LAST_ASCII as i32 {
         c >= FIRST_ASCII as i32
@@ -837,7 +835,7 @@ pub fn estimate_length_for_utf8<const ASCII_ONLY: bool, const QUOTE_CHAR: u8>(in
     }
     // TODO(port): the original `while ... else { return remaining.len + 2 }` returns early when
     // index_of_needs_escape returns null at the *first* check. The current shape returns `len`
-    // (which equals 2) plus nothing for `remaining`. Match Zig precisely in Phase B.
+    // (which equals 2) plus nothing for `remaining`. Match Zig precisely.
     len + remaining.len()
 }
 
@@ -853,7 +851,7 @@ where
     debug_assert!(!(JSON && QUOTE_CHAR != b'"'), "for json, quote_char must be '\"'");
 
     // PORT NOTE: this is a large hot-path function; logic is ported 1:1 but the
-    // utf16 path needs &[u16] handling in Phase B.
+    // utf16 path needs &[u16] handling.
     let text = text_in;
     let mut i: usize = 0;
     let n: usize = match ENCODING {
@@ -1033,11 +1031,11 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(input: &[u
 // real bun_js_parser::{runtime, Ast::*} surface.
 // ───────────────────────────────────────────────────────────────────────────
 // TODO(b2-blocked): bun_sourcemap::Chunk::Builder
-// TODO(b2-blocked): bun_js_parser::runtime::Runtime::Imports
-// TODO(b2-blocked): bun_js_parser::Ast::CommonJSNamedExports
+// TODO(b2-blocked): bun_ast::runtime::Runtime::Imports
+// TODO(b2-blocked): bun_ast::Ast::CommonJSNamedExports
 pub struct SourceMapHandler<'a> {
     pub ctx: NonNull<()>,
-    pub callback: fn(*mut (), SourceMap::Chunk, &logger::Source) -> Result<(), bun_core::Error>,
+    pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> Result<(), bun_core::Error>,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -1046,11 +1044,11 @@ pub struct SourceMapHandler<'a> {
 /// into a captureless `fn(*mut (), ..)` thunk, so the handler is moved to a trait method and
 /// the thunk is monomorphized over `T: OnSourceMapChunk` instead.
 pub trait OnSourceMapChunk {
-    fn on_source_map_chunk(&mut self, chunk: SourceMap::Chunk, source: &logger::Source) -> Result<(), bun_core::Error>;
+    fn on_source_map_chunk(&mut self, chunk: SourceMap::Chunk, source: &bun_ast::Source) -> Result<(), bun_core::Error>;
 }
 
 impl<'a> SourceMapHandler<'a> {
-    pub fn on_source_map_chunk(&self, chunk: SourceMap::Chunk, source: &logger::Source) -> Result<(), bun_core::Error> {
+    pub fn on_source_map_chunk(&self, chunk: SourceMap::Chunk, source: &bun_ast::Source) -> Result<(), bun_core::Error> {
         (self.callback)(self.ctx.as_ptr(), chunk, source)
     }
 
@@ -1059,7 +1057,7 @@ impl<'a> SourceMapHandler<'a> {
         fn thunk<T: OnSourceMapChunk>(
             p: *mut (),
             chunk: SourceMap::Chunk,
-            source: &logger::Source,
+            source: &bun_ast::Source,
         ) -> Result<(), bun_core::Error> {
             // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
             // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
@@ -1078,7 +1076,7 @@ impl<'a> SourceMapHandler<'a> {
 // ───────────────────────────────────────────────────────────────────────────
 // Options
 // ───────────────────────────────────────────────────────────────────────────
-use js_ast::ast::ast::{CommonJSNamedExports, TsEnumsMap};
+use js_ast::{CommonJSNamedExports, TsEnumsMap};
 use js_ast::runtime;
 
 pub struct Options<'a> {
@@ -1099,11 +1097,11 @@ pub struct Options<'a> {
     pub source_map_builder: Option<&'a mut SourceMap::chunk::Builder>,
     // TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior — local stand-in.
     pub css_import_behavior: CssInJsBehavior,
-    pub target: bundle_opts::Target,
+    pub target: bun_ast::Target,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
-    pub input_files_for_dev_server: Option<&'a [logger::Source]>,
+    pub input_files_for_dev_server: Option<&'a [bun_ast::Source]>,
 
     /// Borrowed from `BundledAst.commonjs_named_exports`. Zig passed the
     /// unmanaged `StringArrayHashMap` header by value (shallow copy of
@@ -1175,7 +1173,7 @@ impl<'a> Default for Options<'a> {
             source_map_handler: None,
             source_map_builder: None,
             css_import_behavior: CssInJsBehavior::Facade,
-            target: bundle_opts::Target::Browser,
+            target: bun_ast::Target::Browser,
             runtime_transpiler_cache: None,
             module_info: None,
             input_files_for_dev_server: None,
@@ -1201,17 +1199,8 @@ impl<'a> Default for Options<'a> {
     }
 }
 
-// LAYERING: `Indentation` is a TYPE_ONLY MOVE_DOWN — the canonical definition
-// lives in `bun_logger::js_printer` (T2) so the JSON parser (T3) can thread it
-// through without depending on the printer crate (T4). Re-export here so
-// `bun_js_printer::Indentation` and `bun_logger::js_printer::Indentation` are
-// the *same* type, not structurally-identical duplicates.
-pub use bun_logger::js_printer::{Indentation, IndentationCharacter};
+use bun_ast::{Indentation, IndentationCharacter};
 
-/// Downstream-compat re-export: B-1 callers reference `bun_js_printer::options::Indentation`.
-pub mod options {
-    pub use super::{Indentation, IndentationCharacter};
-}
 
 /// Downstream-compat: `print_json` callers pass this. The Zig spec passes the
 /// full `Options` struct; only the fields any caller actually sets are surfaced
@@ -1436,21 +1425,21 @@ impl TopLevel {
 // `.data()` accessor, ImportRecord flag fields) does not yet match the shapes
 // the Phase-A draft assumed (~300 mismatches). Re-gated until those land.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_js_parser::ast::g::FnFlags
-// TODO(b2-blocked): bun_js_parser::ast::binding::Data
-// TODO(b2-blocked): bun_js_parser::ast::op::{TABLE::get_ptr_const, Code::is_prefix}
-// TODO(b2-blocked): bun_js_parser::ast::e::EString::data
-// TODO(b2-blocked): bun_options_types::import_record::Flags field-style accessors (contains_import_star/wrap_with_to_esm/handles_import_errors)
-// TODO(b2-blocked): bun_options_types::ImportRecord::module_id
+// TODO(b2-blocked): bun_ast::g::FnFlags
+// TODO(b2-blocked): bun_ast::binding::Data
+// TODO(b2-blocked): bun_ast::op::{TABLE::get_ptr_const, Code::is_prefix}
+// TODO(b2-blocked): bun_ast::e::EString::data
+// TODO(b2-blocked): bun_ast::ImportRecordFlags field-style accessors (contains_import_star/wrap_with_to_esm/handles_import_errors)
+// TODO(b2-blocked): bun_ast::ImportRecord::module_id
 pub mod __gated_printer {
 use super::*;
-use js_ast::ast::{e as E, s as S, b as B, g as G, op as Op};
-use js_ast::ast::op::{Op as OpInfo, Level};
-use js_ast::ast::expr::{Expr, Data as ExprData};
-use js_ast::ast::stmt::{Stmt, Data as StmtData, Tag as StmtTag};
-use js_ast::ast::binding::{Binding, Data as BindingData, Tag as BindingTag};
+use js_ast::{e as E, s as S, b as B, g as G, op as Op};
+use js_ast::op::{Op as OpInfo, Level};
+use js_ast::expr::{Expr, Data as ExprData};
+use js_ast::stmt::{Stmt, Data as StmtData, Tag as StmtTag};
+use js_ast::binding::{Binding, Data as BindingData, Tag as BindingTag};
 use js_ast::Symbol;
-use bun_options_types::import_record::Tag as ImportRecordTag;
+use bun_ast::ImportRecordTag as ImportRecordTag;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-B local helpers — bridge gaps between Phase-A draft and the real
@@ -1490,11 +1479,11 @@ pub(crate) fn contains_non_bmp_code_point_or_is_invalid_identifier(alias: &[u8])
     if !iter.next(&mut curs) {
         return true;
     }
-    if curs.c > 0xFFFF || !js_ast::lexer::is_identifier_start(curs.c) {
+    if curs.c > 0xFFFF || !lexer::is_identifier_start(curs.c) {
         return true;
     }
     while iter.next(&mut curs) {
-        if curs.c > 0xFFFF || !js_ast::lexer::is_identifier_continue(curs.c) {
+        if curs.c > 0xFFFF || !lexer::is_identifier_continue(curs.c) {
             return true;
         }
     }
@@ -1514,7 +1503,7 @@ pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
     // and the latin-1 byte sequence is an identifier". Fall back to that.
     if name.iter().any(|&c| c > 0xFF) { return false; }
     let bytes: Vec<u8> = name.iter().map(|&c| c as u8).collect();
-    js_ast::lexer::is_latin1_identifier(&bytes[..])
+    lexer::is_latin1_identifier(&bytes[..])
 }
 
 /// `fn NewPrinter(...) type` → generic struct.
@@ -1572,7 +1561,7 @@ pub struct BinaryExpressionVisitor<'ast> {
     // Inputs
     // PORT NOTE: Zig stored `*const E.Binary`; Phase A keeps the StoreRef so the
     // visitor stack can outlive the by-value `Expr` argument to `print_expr`.
-    pub e: js_ast::ast::StoreRef<E::Binary>,
+    pub e: js_ast::StoreRef<E::Binary>,
     _phantom: core::marker::PhantomData<&'ast ()>,
     pub level: Level,
     pub flags: ExprFlagSet,
@@ -1971,7 +1960,7 @@ where
     #[inline]
     pub fn print_space_before_identifier(&mut self) {
         if self.writer.written() > 0
-            && (js_ast::lexer::is_identifier_continue(self.writer.prev_char() as i32)
+            && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
                 || self.writer.written() == self.prev_reg_exp_end)
         {
             self.print(b" ");
@@ -1992,7 +1981,7 @@ where
     }
 
     #[inline]
-    pub fn print_undefined(&mut self, loc: logger::Loc, level: Level) {
+    pub fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
         if self.options.minify_syntax {
             if level.gte(Level::Prefix) {
                 self.add_source_mapping(loc);
@@ -2032,7 +2021,7 @@ where
         }
     }
 
-    pub fn print_block(&mut self, loc: logger::Loc, stmts: &[Stmt], close_brace_loc: Option<logger::Loc>, tlmtlo: TopLevel) {
+    pub fn print_block(&mut self, loc: bun_ast::Loc, stmts: &[Stmt], close_brace_loc: Option<bun_ast::Loc>, tlmtlo: TopLevel) {
         self.add_source_mapping(loc);
         self.print(b"{");
         if !stmts.is_empty() {
@@ -2052,7 +2041,7 @@ where
         self.needs_semicolon = false;
     }
 
-    pub fn print_two_blocks_in_one(&mut self, loc: logger::Loc, stmts: &[Stmt], prepend: &[Stmt]) {
+    pub fn print_two_blocks_in_one(&mut self, loc: bun_ast::Loc, stmts: &[Stmt], prepend: &[Stmt]) {
         self.add_source_mapping(loc);
         self.print(b"{");
         self.print_newline();
@@ -2127,7 +2116,7 @@ where
                     // Reset the temporary bindings array early on
                     let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
                     temp_bindings.reserve(2);
-                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                    // PERF(port): was appendAssumeCapacity — profile
                     temp_bindings.push(B::Property {
                         flags: Default::default(),
                         key: Expr::init(E::String::init(&target_e_dot.name), target_e_dot.name_loc),
@@ -2183,7 +2172,7 @@ where
                     // returns before `b_object` is dropped (same as the prior `&raw mut`).
                     let binding = Binding {
                         loc: target_e_dot.target.loc,
-                        data: BindingData::BObject(js_ast::ast::StoreRef::from_bump(&mut b_object)),
+                        data: BindingData::BObject(js_ast::StoreRef::from_bump(&mut b_object)),
                     };
                     self.print_binding(binding, tlm);
                     // Zig defer (js_printer.zig:1252): if recursion replaced
@@ -2231,13 +2220,13 @@ where
     }
 
     #[inline]
-    pub fn add_source_mapping(&mut self, location: logger::Loc) {
+    pub fn add_source_mapping(&mut self, location: bun_ast::Loc) {
         if !GENERATE_SOURCE_MAP { return; }
         self.source_map_builder.add_source_mapping(location, self.writer.slice());
     }
 
     #[inline]
-    pub fn add_source_mapping_for_name(&mut self, location: logger::Loc, _name: &[u8], _ref: Ref) {
+    pub fn add_source_mapping_for_name(&mut self, location: bun_ast::Loc, _name: &[u8], _ref: Ref) {
         if !GENERATE_SOURCE_MAP { return; }
         // TODO: esbuild does this to make the source map more accurate with E.NameOfSymbol
         self.add_source_mapping(location);
@@ -2262,7 +2251,7 @@ where
 
     pub fn print_fn_args(
         &mut self,
-        open_paren_loc: Option<logger::Loc>,
+        open_paren_loc: Option<bun_ast::Loc>,
         args: &[G::Arg],
         has_rest_arg: bool,
         // is_arrow can be used for minifying later
@@ -2474,14 +2463,14 @@ where
             ExprData::EIdentifier(ident) => {
                 if ident.ref_.is_source_contents_slice() { return false; }
                 let Some(symbol) = self.symbols().get_const(self.symbols().follow(ident.ref_)) else { return false; };
-                symbol.kind == js_ast::ast::symbol::Kind::Unbound && symbol.original_name.slice() == b"eval"
+                symbol.kind == js_ast::symbol::Kind::Unbound && symbol.original_name.slice() == b"eval"
             }
             _ => false,
         }
     }
 
     #[inline]
-    fn symbols(&self) -> &js_ast::ast::symbol::Map {
+    fn symbols(&self) -> &js_ast::symbol::Map {
         self.renamer.symbols()
     }
 
@@ -2516,7 +2505,7 @@ where
         let ExprData::EIdentifier(id) = &expr.data else { return false; };
         let ref_ = id.ref_;
         let Some(symbol) = self.symbols().get_const(self.symbols().follow(ref_)) else { return false; };
-        symbol.kind == js_ast::ast::symbol::Kind::Unbound
+        symbol.kind == js_ast::symbol::Kind::Unbound
     }
 
     pub fn print_require_or_import_expr(
@@ -2861,7 +2850,7 @@ where
         if ASCII_ONLY || ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING {
             is_latin1_identifier_u16(name)
         } else {
-            js_ast::lexer::is_identifier_utf16(name)
+            lexer::is_identifier_utf16(name)
         }
     }
 
@@ -2983,7 +2972,7 @@ where
                 }
             }
             ExprData::EImportMetaMain(data) => {
-                if self.options.module_type == bundle_opts::Format::Esm && self.options.target != bundle_opts::Target::Node {
+                if self.options.module_type == bundle_opts::Format::Esm && self.options.target != bun_ast::Target::Node {
                     // Node.js doesn't support import.meta.main
                     // Most of the time, leave it in there
                     if data.inverted {
@@ -3013,7 +3002,7 @@ where
                         self.print_whitespacer(ws!(b".main == "));
                     }
 
-                    if self.options.target == bundle_opts::Target::Node {
+                    if self.options.target == bun_ast::Target::Node {
                         // "__require.module"
                         if let Some(require) = self.options.require_ref {
                             self.print_symbol(require);
@@ -3105,7 +3094,7 @@ where
 
                         // SAFETY: `commonjs_named_exports` keys borrow `'a` (Options<'a>).
                         let key = unsafe { &*key };
-                        if js_ast::lexer::is_identifier(key) {
+                        if lexer::is_identifier(key) {
                             self.print(b".");
                             self.print(key);
                         } else {
@@ -3345,7 +3334,7 @@ where
 
                 self.print_expr(e.target, Level::Postfix, flags);
 
-                if js_ast::lexer::is_identifier(&e.name) {
+                if lexer::is_identifier(&e.name) {
                     if is_optional_chain {
                         self.print(b"?.");
                     } else {
@@ -3851,7 +3840,7 @@ where
                         self.add_source_mapping(expr.loc);
                         self.print_symbol(namespace.namespace_ref);
                         let alias = namespace.alias.slice();
-                        if js_ast::lexer::is_identifier(alias) {
+                        if lexer::is_identifier(alias) {
                             self.print(b".");
                             // TODO: addSourceMappingForName
                             self.print_identifier(alias);
@@ -4072,7 +4061,7 @@ where
         // that means the namespace alias is empty
         if namespace.alias.is_empty() { return; }
 
-        if js_ast::lexer::is_identifier(namespace.alias.slice()) {
+        if lexer::is_identifier(namespace.alias.slice()) {
             self.print(b".");
             self.print_identifier(namespace.alias.slice());
         } else {
@@ -4179,7 +4168,7 @@ where
                             js_ast::InlinedEnumValueDecoded::String(str) => {
                                 // SAFETY: arena-owned `*const EString`; cast through *mut for the
                                 // StoreRef wrapper — the printer only ever reads through it.
-                                let sref = unsafe { js_ast::ast::StoreRef::from_raw(str.cast_mut()) };
+                                let sref = unsafe { js_ast::StoreRef::from_raw(str.cast_mut()) };
                                 item.key.as_mut().unwrap().data = ExprData::EString(sref);
                                 // Problematic key names must stay computed for correctness
                                 let s = unsafe { &*str };
@@ -4282,7 +4271,7 @@ where
                     key_str.resolve_rope_if_needed(self.bump);
                     self.print_space_before_identifier();
                     let mut allow_shorthand = true;
-                    if !IS_JSON && js_ast::lexer::is_identifier(key_str.slice8()) {
+                    if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
                         self.print_identifier(key_str.slice8());
                     } else {
                         allow_shorthand = false;
@@ -4496,7 +4485,7 @@ where
 
                                     if str.is_utf8() {
                                         self.print_space_before_identifier();
-                                        if js_ast::lexer::is_identifier(str.slice8()) {
+                                        if lexer::is_identifier(str.slice8()) {
                                             self.print_identifier(str.slice8());
 
                                             // Use a shorthand property if the names are the same
@@ -4937,7 +4926,7 @@ where
                         self.prev_stmt_tag = new_tag;
                         return Ok(());
                     }
-                    // s.items = array.items; — TODO(port): write back into AST in Phase B
+                    // s.items = array.items; — TODO(port): write back into AST
                 }
 
                 self.print(b"{");
@@ -5402,7 +5391,7 @@ where
                 // backwards compatibility: previously, we always stripped type
                 if IS_BUN_PLATFORM {
                     if let Some(loader) = record.loader {
-                        use bundle_opts::Loader;
+                        use bun_ast::Loader;
                         match loader {
                             Loader::Jsx => self.print_whitespacer(ws!(b" with { type: \"jsx\" }")),
                             Loader::Js => self.print_whitespacer(ws!(b" with { type: \"js\" }")),
@@ -5440,7 +5429,7 @@ where
                         use analyze_transpiled_module::FetchParameters as FP;
                         let fetch_parameters: FP = if IS_BUN_PLATFORM {
                             if let Some(loader) = record.loader {
-                                use bundle_opts::Loader;
+                                use bun_ast::Loader;
                                 match loader {
                                     Loader::Json => FP::Json,
                                     Loader::Jsx => FP::host_defined(mi.str(b"jsx")),
@@ -5769,7 +5758,7 @@ where
         }
     }
 
-    pub fn print_if(&mut self, s: &S::If, loc: logger::Loc, tlmtlo: TopLevel) {
+    pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc, tlmtlo: TopLevel) {
         self.print_space_before_identifier();
         self.add_source_mapping(loc);
         self.print(b"if");
@@ -5857,7 +5846,7 @@ where
         if let ExprData::EImportIdentifier(id) = &target.data {
             let ref_ = self.symbols().follow(id.ref_);
             if let Some(symbol) = self.symbols().get_const(ref_) {
-                if symbol.kind == js_ast::ast::symbol::Kind::TsEnum {
+                if symbol.kind == js_ast::symbol::Kind::TsEnum {
                     if let Some(enum_value) = self.options.ts_enums.and_then(|m| m.get(&ref_)) {
                         if let Some(value) = enum_value.get(name) {
                             return Some(value.decode());
@@ -5875,7 +5864,7 @@ where
             // TODO: extract printString
             js_ast::InlinedEnumValueDecoded::String(str) => self.print_expr(
                 // SAFETY: arena-owned `*const EString`; the printer only reads through the StoreRef.
-                Expr { data: ExprData::EString(unsafe { js_ast::ast::StoreRef::from_raw(str.cast_mut()) }), loc: logger::Loc::EMPTY },
+                Expr { data: ExprData::EString(unsafe { js_ast::StoreRef::from_raw(str.cast_mut()) }), loc: bun_ast::Loc::EMPTY },
                 level,
                 ExprFlagSet::empty(),
             ),
@@ -5911,7 +5900,7 @@ where
         };
         self.print_decls(keyword, decls, ExprFlag::none(), tlm);
         self.print_semicolon_after_statement();
-        // TODO(b2-blocked): bun_js_parser::runtime::Imports::__export — the
+        // TODO(b2-blocked): bun_ast::runtime::Imports::__export — the
         // full `runtime.rs` is ``-gated upstream; the active
         // `parser.rs::Runtime::Imports` stub is a fieldless unit struct.
         
@@ -6172,7 +6161,7 @@ where
         printer
     }
 
-    pub fn print_dev_server_module(&mut self, source: &logger::Source, ast: &js_ast::Ast, part: &js_ast::Part) {
+    pub fn print_dev_server_module(&mut self, source: &bun_ast::Source, ast: &js_ast::Ast, part: &js_ast::Part) {
         self.indent();
         self.print_indent();
 
@@ -6323,7 +6312,7 @@ impl<const N: usize> PrintArg for &[u8; N] {
 pub trait HasDefaultValue {
     fn default_value(&self) -> Option<js_ast::Expr>;
 }
-impl HasDefaultValue for js_ast::ast::b::Property {
+impl HasDefaultValue for js_ast::b::Property {
     #[inline] fn default_value(&self) -> Option<js_ast::Expr> { self.default_value }
 }
 impl HasDefaultValue for js_ast::ArrayBinding {
@@ -6733,7 +6722,7 @@ use js_ast::Ast;
 pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
     opts: &mut Options,
-    source: &logger::Source,
+    source: &bun_ast::Source,
     tree: &Ast,
 ) -> SourceMap::chunk::Builder {
     if generate_source_map == GenerateSourceMap::Disable {
@@ -6785,8 +6774,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     _writer: W,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
-    symbols: js_ast::ast::symbol::Map,
-    source: &'a logger::Source,
+    symbols: js_ast::symbol::Map,
+    source: &'a bun_ast::Source,
     opts: Options<'a>,
 ) -> Result<usize, bun_core::Error> {
     let _restore = bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
@@ -6915,7 +6904,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     if !printer.options.bundling
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm
-        && printer.options.target == bundle_opts::Target::Bun
+        && printer.options.target == bun_ast::Target::Bun
     {
         // Hoist the `var {require}=import.meta;` declaration. Previously,
         // `import.meta.require` was inlined into transpiled files, which
@@ -6985,7 +6974,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 pub fn print_json<W: WriterTrait>(
     _writer: W,
     expr: js_ast::Expr,
-    source: &logger::Source,
+    source: &bun_ast::Source,
     opts: PrintJsonOptions<'_>,
 ) -> Result<usize, bun_core::Error> {
     // NewPrinter(ascii_only=false, Writer, rewrite_esm_to_cjs=false, is_bun_platform=false, is_json=true, generate_source_map=false)
@@ -6998,7 +6987,7 @@ pub fn print_json<W: WriterTrait>(
     // constructs the same empty inputs without round-tripping through `Ast`.
     let bump = bun_alloc::Arena::new();
     let mut no_op = rename::NoOpRenamer::init(
-        js_ast::ast::symbol::Map::init_list(vec![Vec::new()]),
+        js_ast::symbol::Map::init_list(vec![Vec::new()]),
         source,
     );
 
@@ -7019,7 +7008,7 @@ pub fn print_json<W: WriterTrait>(
     // PERF(port): was stack-fallback allocator
     printer.binary_expression_stack = Vec::new();
 
-    printer.print_expr(expr, js_ast::ast::op::Level::Lowest, ExprFlagSet::empty());
+    printer.print_expr(expr, js_ast::op::Level::Lowest, ExprFlagSet::empty());
     printer.writer.get_error()?;
     printer.writer.done()?;
 
@@ -7028,9 +7017,9 @@ pub fn print_json<W: WriterTrait>(
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
-    target: bundle_opts::Target,
+    target: bun_ast::Target,
     ast: &Ast,
-    source: &logger::Source,
+    source: &bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
@@ -7057,9 +7046,9 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
 pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
     bump: &'a bun_alloc::Arena,
-    target: bundle_opts::Target,
+    target: bun_ast::Target,
     ast: &Ast,
-    source: &logger::Source,
+    source: &bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
@@ -7081,7 +7070,7 @@ pub fn print_with_writer_and_platform<'a, W: WriterTrait, const IS_BUN_PLATFORM:
     writer: W,
     bump: &'a bun_alloc::Arena,
     ast: &Ast,
-    source: &logger::Source,
+    source: &bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
@@ -7170,8 +7159,8 @@ pub fn print_common_js<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERAT
     _writer: W,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
-    symbols: js_ast::ast::symbol::Map,
-    source: &'a logger::Source,
+    symbols: js_ast::symbol::Map,
+    source: &'a bun_ast::Source,
     opts: Options<'a>,
 ) -> Result<usize, bun_core::Error> {
     let _restore = bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));

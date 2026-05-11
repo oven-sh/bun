@@ -5,7 +5,7 @@ use core::ptr;
 use bstr::BStr;
 
 use bun_core::{Global, Output};
-use bun_logger::{self as logger, Loc, Log};
+use bun_ast::{Loc, Log};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;

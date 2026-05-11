@@ -1,9 +1,8 @@
 use bun_alloc::Arena;
-use bun_interchange::toml::TOML;
-use bun_js_parser::ASTMemoryAllocator;
+use bun_parsers::toml::TOML;
+use bun_ast::ASTMemoryAllocator;
 use bun_js_printer as js_printer;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, LogJsc, StringJsc};
-use bun_logger as logger;
 use bun_str::String as BunString;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
@@ -35,14 +34,14 @@ pub fn parse(
     let ast_memory_allocator = arena.alloc(ASTMemoryAllocator::default());
     let _ast_scope = ast_memory_allocator.enter();
 
-    let mut log = logger::Log::init();
+    let mut log = bun_ast::Log::init();
     let input_value = frame.argument(0);
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
     }
 
     let input_slice = input_value.to_slice(global)?;
-    let source = &logger::Source::init_path_string(b"input.toml", input_slice.slice());
+    let source = &bun_ast::Source::init_path_string(b"input.toml", input_slice.slice());
     let parse_result = match TOML::parse(source, &mut log, &arena, false) {
         Ok(v) => v,
         Err(e) if e == bun_core::err!("StackOverflow") => {

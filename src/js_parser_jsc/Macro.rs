@@ -5,12 +5,10 @@ use core::ptr::NonNull;
 
 use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::{err, Error, Output};
-use bun_js_parser::{
-    self as js_ast,
-    ast::DisableStoreReset,
-    Expr, ExprData, ExprNodeList, ToJSError, E, G, S,
-};
-use bun_logger::{self as logger, Log, Range, Source};
+use bun_js_parser as js_parser;
+use bun_ast::{self as js_ast, Expr, ExprData, ExprNodeList, ToJSError, E, G, S};
+use bun_ast::DisableStoreReset;
+use bun_ast::{Log, Range, Source};
 use bun_resolver::package_json::{
     MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
 };
@@ -135,7 +133,7 @@ impl MacroContext {
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
                 import_record_path,
-                bun_options_types::Target::Bun,
+                bun_ast::Target::Bun,
                 Default::default(),
             ) {
                 break 'brk replacement.path.as_bytes();
@@ -144,7 +142,7 @@ impl MacroContext {
             let resolve_result = match resolver.resolve(
                 source_dir,
                 import_record_path_without_macro_prefix,
-                bun_options_types::ImportKind::Stmt,
+                bun_ast::ImportKind::Stmt,
             ) {
                 Ok(r) => r,
                 Err(e) if e == err!("ModuleNotFound") => {
@@ -156,7 +154,7 @@ impl MacroContext {
                             bstr::BStr::new(import_record_path)
                         ),
                         import_record_path,
-                        bun_options_types::ImportKind::Stmt.into(),
+                        bun_ast::ImportKind::Stmt.into(),
                         e,
                     );
                     return Err(err!("MacroNotFound"));
@@ -264,7 +262,7 @@ impl MacroContext {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Lower-tier bridge (`bun_js_parser::Macro::MacroContext` ⇆ this crate)
+// Lower-tier bridge (`bun_ast::Macro::MacroContext` ⇆ this crate)
 //
 // `bun_js_parser` / `bun_bundler` cannot name `Resolver`/`DotEnv`/JSC types,
 // so the parser-visible `MacroContext` carries an opaque `data` pointer to a
@@ -276,8 +274,8 @@ impl MacroContext {
 #[unsafe(no_mangle)]
 pub fn __bun_macro_context_init(
     transpiler: *mut core::ffi::c_void,
-) -> js_ast::Macro::MacroContext {
-    // SAFETY: every caller of `js_ast::Macro::MacroContext::init<T>` passes a
+) -> js_parser::Macro::MacroContext {
+    // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state
     // is leaked for the long-lived `vm.transpiler` instance (Zig backed it
@@ -290,8 +288,8 @@ pub fn __bun_macro_context_init(
     // `mi_heap_new()`.
     let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
     let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
-    js_ast::Macro::MacroContext {
-        javascript_object: js_ast::Macro::MacroJSCtx::ZERO,
+    js_parser::Macro::MacroContext {
+        javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
         data: data.cast::<core::ffi::c_void>(),
     }
 }
@@ -310,7 +308,7 @@ pub fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
 
 #[unsafe(no_mangle)]
 pub fn __bun_macro_context_call(
-    ctx: &mut js_ast::Macro::MacroContext,
+    ctx: &mut js_parser::Macro::MacroContext,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &mut Log,
@@ -339,7 +337,7 @@ pub fn __bun_macro_context_call(
 pub fn __bun_macro_context_get_remap(
     data: *mut core::ffi::c_void,
     path: &[u8],
-) -> Option<&'static js_ast::Macro::MacroRemapEntry> {
+) -> Option<&'static js_parser::Macro::MacroRemapEntry> {
     // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
     // remap table lives in `Transpiler.options` which outlives every parse, so
     // the `'static` borrow is sound for callers that drop it before the
@@ -347,7 +345,7 @@ pub fn __bun_macro_context_get_remap(
     let inner = unsafe { &*data.cast::<MacroContext>() };
     inner
         .get_remap(path)
-        .map(|e| unsafe { &*(e as *const js_ast::Macro::MacroRemapEntry) })
+        .map(|e| unsafe { &*(e as *const js_parser::Macro::MacroRemapEntry) })
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -713,7 +711,7 @@ impl<'a> Run<'a> {
                     let (bytes, ct) = unsafe {
                         ((*blob).shared_view(), (*blob).content_type_slice())
                     };
-                    return Expr::from_blob(
+                    return expr_from_blob(
                         bytes,
                         self.bump,
                         mime_type.unwrap_or(ct),
@@ -1117,6 +1115,78 @@ impl Runner {
 
 unsafe extern "C" {
     fn Bun__startMacro(function: *const c_void, global: *mut c_void);
+}
+
+/// Zig: `Expr.fromBlob` (`src/js_parser/ast/Expr.zig`). Lives here, not on
+/// `bun_ast::Expr`, because it parses JSON via `bun_parsers` — `bun_ast` is a
+/// leaf below both. Only call site is the macro `Response`/`Blob` arm above.
+fn expr_from_blob(
+    bytes: &[u8],
+    bump: &bun_alloc::Arena,
+    mime_type: &[u8],
+    log: &mut Log,
+    loc: bun_ast::Loc,
+) -> Result<Expr, bun_core::Error> {
+    use bun_ast::{E, ExprData, StoreStr as Str};
+
+    // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
+    let is_json = mime_type == b"application/json"
+        || mime_type.ends_with(b"+json")
+        || mime_type.ends_with(b"/json");
+
+    if is_json {
+        let source = &Source::init_path_string(b"fetch.json", bytes);
+        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
+            Ok(e) => e,
+            Err(_) => return Err(bun_core::err!("MacroFailed")),
+        };
+        out_expr.loc = loc;
+        match &mut out_expr.data {
+            ExprData::EObject(obj) => obj.was_originally_macro = true,
+            ExprData::EArray(arr) => arr.was_originally_macro = true,
+            _ => {}
+        }
+        return Ok(out_expr);
+    }
+
+    // MimeType::Category::isTextLike — text/*, application/javascript-ish, xml.
+    let is_text_like = mime_type.starts_with(b"text/")
+        || mime_type == b"application/javascript"
+        || mime_type == b"application/x-javascript"
+        || mime_type == b"application/ecmascript"
+        || mime_type == b"application/xml";
+
+    if is_text_like {
+        let mut output = bun_string::MutableString::init_empty();
+        bun_string::quote_for_json(bytes, &mut output, true)?;
+        let owned = output.to_owned_slice();
+        // strip the surrounding quotes; copy into the bump arena so the
+        // `E.String` data outlives `owned`.
+        let unquoted: &[u8] = if owned.len() >= 2 {
+            &owned[1..owned.len() - 1]
+        } else {
+            &owned[..]
+        };
+        let data = Str::new(bump.alloc_slice_copy(unquoted));
+        return Ok(Expr::init(E::String { data, ..Default::default() }, loc));
+    }
+
+    // Fallback: base64 data URL.
+    let prefix = b"data:";
+    let mid = b";base64,";
+    let encoded_len = bun_base64::encode_len(bytes);
+    let total = prefix.len() + mime_type.len() + mid.len() + encoded_len;
+    let buf: &mut [u8] = bump.alloc_slice_fill_copy(total, 0u8);
+    let mut i = 0usize;
+    buf[i..i + prefix.len()].copy_from_slice(prefix);
+    i += prefix.len();
+    buf[i..i + mime_type.len()].copy_from_slice(mime_type);
+    i += mime_type.len();
+    buf[i..i + mid.len()].copy_from_slice(mid);
+    i += mid.len();
+    let n = bun_base64::encode(&mut buf[i..], bytes);
+    let data = Str::new(&buf[..i + n]);
+    Ok(Expr::init(E::String { data, ..Default::default() }, loc))
 }
 
 // ported from: src/js_parser_jsc/Macro.zig

@@ -4,7 +4,6 @@ use core::fmt::Display;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
-use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::String as SemverString;
 use bun_str::ZStr;
@@ -393,7 +392,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub dependencies: &'a [Dependency],
     pub resolution_lists: &'a [DependencyIDSlice],
     pub queue: TreeFiller,
-    pub log: &'a mut logger::Log,
+    pub log: &'a mut bun_ast::Log,
     /// PORT NOTE: Zig stores `*Lockfile` alongside `&mut buffers.resolutions`
     /// (an aliased subslice of the same struct). Hold as `*const` so the
     /// construction site (`Lockfile::hoist`) can split-borrow `resolutions`
@@ -449,8 +448,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 
     pub fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
-        // TODO(port): logger::Log::add_error_fmt signature — allocator param dropped.
-        let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, args);
+        // TODO(port): bun_ast::Log::add_error_fmt signature — allocator param dropped.
+        let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
     pub fn buf(&self) -> &[u8] {
@@ -1043,7 +1042,7 @@ impl Tree {
                 let resolutions = lockfile.packages.items_resolution();
                 let _ = builder.log.add_error_fmt(
                     None,
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                     format_args!(
                         "Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"",
                         names[package_id as usize].fmt(buf),

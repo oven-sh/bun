@@ -1342,7 +1342,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 }
 
 #[cfg(not(feature = "shim_standalone"))]
-type CommandContext<'a> = bun_options_types::Context::Context<'a>;
+type CommandContext<'a> = bun_options_types::context::Context<'a>;
 #[cfg(feature = "shim_standalone")]
 type CommandContext<'a> = core::marker::PhantomData<&'a ()>; // unused in standalone
 
@@ -1354,7 +1354,7 @@ type CommandContext<'a> = core::marker::PhantomData<&'a ()>; // unused in standa
 // the accessor would violate Stacked Borrows the moment `Run.boot` writes through
 // it.
 #[cfg(not(feature = "shim_standalone"))]
-type CommandContextPtr = *mut bun_options_types::Context::ContextData;
+type CommandContextPtr = *mut bun_options_types::context::ContextData;
 #[cfg(feature = "shim_standalone")]
 type CommandContextPtr = (); // unused in standalone
 

@@ -11,8 +11,8 @@ use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_js_parser::ast::bundled_ast as JSAst;
-use bun_options_types::{import_record, ImportKind};
+use crate::bundled_ast as JSAst;
+use bun_ast::{import_record, ImportKind};
 
 use crate::bundle_v2::BundleV2;
 use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};
@@ -41,7 +41,7 @@ impl Default for RequestedExports {
 struct BarrelExportResolution {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
-    original_alias: Option<bun_js_parser::StoreStr>,
+    original_alias: Option<bun_ast::StoreStr>,
     /// True when the underlying import is `import * as ns` — propagation
     /// through this export must treat the target as needing all exports.
     alias_is_star: bool,
@@ -94,7 +94,7 @@ fn apply_barrel_optimization_impl(
         false
     };
     let is_side_effects_false =
-        result.side_effects == bun_resolver::SideEffects::NoSideEffectsPackageJson;
+        result.side_effects == bun_ast::SideEffects::NoSideEffectsPackageJson;
     if !is_explicit && !is_side_effects_false {
         return Ok(());
     }
@@ -338,7 +338,7 @@ fn resolve_barrel_records(
 pub fn schedule_barrel_deferred_imports(
     this: &mut BundleV2,
     result_source_index: u32,
-    result_ast_target: bun_options_types::Target,
+    result_ast_target: bun_ast::Target,
 ) -> Result<i32, AllocError> {
     // PORT NOTE: Zig passed `*ParseTask.Result.Success` and read `result.ast`
     // after `graph.ast.set(idx, result.ast)` value-copied it. Rust *moves*

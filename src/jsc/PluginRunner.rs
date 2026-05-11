@@ -52,8 +52,8 @@ impl PluginResolver for PluginRunner {
         &self,
         specifier: &[u8],
         importer: &[u8],
-        log: &mut bun_logger::Log,
-        loc: bun_logger::Loc,
+        log: &mut bun_ast::Log,
+        loc: bun_ast::Loc,
         target: BunPluginTarget,
     ) -> Result<Option<FsPath<'static>>, bun_core::Error> {
         let global = self.global();

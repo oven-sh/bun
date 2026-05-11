@@ -1,6 +1,5 @@
 //! `bun_bunfig` — bunfig.toml parser and `Arguments::loadConfig` entrypoints.
 //!
-//! MOVE_DOWN(b0): extracted from `bun_runtime::cli::{bunfig, Arguments}` so
 //! that `bun_install::PackageManager::init` can call
 //! `bun.cli.Arguments.loadConfig(_, cli.config, ctx, .InstallCommand)`
 //! (PackageManager.zig:801) without a tier-6 dependency or fn-pointer hook.

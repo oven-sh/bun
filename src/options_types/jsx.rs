@@ -269,9 +269,4 @@ pub mod defaults {
     pub const JSX_STATIC_FUNCTION: &[u8] = b"jsxs";
     pub const JSX_FUNCTION_DEV: &[u8] = b"jsxDEV";
 }
-/// Alias so `JSX::Defaults::FACTORY` (parser-side spelling) and
-/// `jsx::pragma::Defaults` (Zig `Pragma.Defaults` namespacing) both resolve.
 pub use defaults as Defaults;
-pub mod pragma {
-    pub use super::defaults as Defaults;
-}

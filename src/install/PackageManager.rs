@@ -13,11 +13,9 @@ use crate::bun_fs::FileSystem;
 use bun_http as http;
 use bun_http::AsyncHTTP;
 use bun_ini as ini;
-// MOVE_DOWN(b0): bun_jsc::{AnyEventLoop, MiniEventLoop, EventLoopHandle} → bun_event_loop
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_logger as logger;
 use bun_paths::{self as path, PathBuffer, DELIMITER, SEP, SEP_STR};
 use bun_paths::resolve_path::{self, platform, PosixToWinNormalizer};
 use crate::bun_progress::{Node as ProgressNode, Progress};
@@ -70,12 +68,12 @@ use crate::RunCommand;
 
 /// `Command::Context` shim — Zig's `Command.Context` (= `*ContextData`) lives in
 /// `bun_runtime::cli::Command`; the option-carrying `ContextData` shape was lifted
-/// into `bun_options_types::Context` so install can reference it without the CLI
+/// into `bun_options_types::context` so install can reference it without the CLI
 /// tier. Re-export under the Zig path so `init()` / `install_with_manager()` /
 /// `setup_global_dir()` etc. keep their `Command::Context` signatures.
 #[allow(non_snake_case)]
 pub mod Command {
-    pub use bun_options_types::Context::{Context, ContextData};
+    pub use bun_options_types::context::{Context, ContextData};
 
     /// Hook (GENUINE b0): `bun_runtime::cli::Command::get()` returns the
     /// process-global `*ContextData`. The static itself lives in tier-6
@@ -145,7 +143,6 @@ pub mod options {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(b0): bun_runtime::cli::package_manager_command::PackageManagerCommand → install
 // Only the `printHelp` text is needed by `CommandLineArguments::parse`. The
 // `exec()` body remains in bun_cli (it depends on tier-6 ScanCommand /
 // PackCommand etc. and is the *consumer* of install, not a dependency).
@@ -360,10 +357,10 @@ pub struct PackageManager {
     // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
     // this arena has process lifetime, matching the Zig allocator's semantics.
     pub ast_arena: bun_alloc::Arena,
-    // TODO(port): lifetime — LIFETIMES.tsv classifies this BORROW_PARAM → `&'a mut logger::Log`
+    // TODO(port): lifetime — LIFETIMES.tsv classifies this BORROW_PARAM → `&'a mut bun_ast::Log`
     // (struct gets `<'a>`). Kept as raw ptr because PackageManager is a leaked singleton stored
     // in a `static`; threading `<'a>` through the global holder is deferred to Phase B.
-    pub log: *mut logger::Log,
+    pub log: *mut bun_ast::Log,
     pub resolve_tasks: ResolveTaskQueue,
     pub timestamp_for_manifest_cache_control: u32,
     pub extracted_count: u32,
@@ -679,7 +676,7 @@ impl PackageManager {
         VERBOSE_INSTALL.store(v, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Reborrow the externally-owned [`logger::Log`].
+    /// Reborrow the externally-owned [`bun_ast::Log`].
     ///
     /// `log` is `*mut Log` (not `&'a mut Log`) only because `PackageManager` is
     /// a leaked `'static` singleton stored in a global; threading the borrow
@@ -695,7 +692,7 @@ impl PackageManager {
     /// only the main install loop touches `log`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn log_mut<'a>(&self) -> &'a mut logger::Log {
+    pub fn log_mut<'a>(&self) -> &'a mut bun_ast::Log {
         let p = self.log;
         // SAFETY: `self.log` is non-null for the manager's lifetime (set in
         // `init`, never cleared) and the pointee is the CLI-scope `Log`, which
@@ -879,18 +876,18 @@ impl PackageManager {
         // so the caller's borrow stays on the Stacked-Borrows stack.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-            let log: *mut logger::Log = (*pm).log;
+            let log: *mut bun_ast::Log = (*pm).log;
             (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
         }
     }
 
     pub fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
-            // SAFETY: `self.log` points to a separate `logger::Log` allocation (borrowed from
+            // SAFETY: `self.log` points to a separate `bun_ast::Log` allocation (borrowed from
             // `ctx.log`) that outlives the singleton. `&mut self` only covers the pointer field,
-            // not the pointee. `logger::Log::print` takes `&self` (Zig spec `*const Log`,
+            // not the pointee. `bun_ast::Log::print` takes `&self` (Zig spec `*const Log`,
             // logger.zig:1204), so we only need a shared borrow here — the sole invariant is
-            // that no `&mut logger::Log` to the pointee is live, which holds on this path.
+            // that no `&mut bun_ast::Log` to the pointee is live, which holds on this path.
             // `IntoLogWrite` is impl'd for `*mut io::Writer`, not `&mut`.
             let _ = self.log_mut().print(std::ptr::from_mut(Output::error_writer()));
         }
@@ -1672,7 +1669,7 @@ pub fn init(
                         )?
                     };
                     let json_source =
-                        logger::Source::init_path_string(&*json_path, &json_buf[..json_len]);
+                        bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
                     // Zig threads `ctx.allocator`; the Rust JSON parser takes a bump arena.
                     let json_arena = bun_alloc::Arena::new();
@@ -1685,19 +1682,15 @@ pub fn init(
                         &json_arena,
                     )?;
                     if subcommand == Subcommand::Pm {
-                        use crate::bun_json::ExprAccessors;
-                        // UFCS: `Expr` has an inherent `as_string(&Bump)` that
-                        // shadows the `ExprAccessors::as_string(&self)` ext-trait
-                        // method under method resolution; call the trait directly.
                         if let Some(name) = json
                             .get(b"name")
-                            .and_then(|e| ExprAccessors::as_string(&e))
+                            .and_then(|e| if let bun_ast::ExprData::EString(s) = &e.data { Some(s.data.slice()) } else { None })
                         {
                             root_package_json_name_at_time_of_init = Box::<[u8]>::from(name);
                         }
                     }
 
-                    use crate::bun_json::{ExprAccessors, ExprData};
+                    use crate::bun_json::ExprData;
                     if let Some(prop) = json.as_property(b"workspaces") {
                         let mut json_array = match prop.expr.data {
                             ExprData::EArray(arr) => arr,
@@ -1713,7 +1706,7 @@ pub fn init(
                             }
                             _ => break,
                         };
-                        let mut log = logger::Log::init();
+                        let mut log = bun_ast::Log::init();
                         let _ = match workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
@@ -1802,7 +1795,7 @@ pub fn init(
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
     ::bun_bunfig::arguments::load_config(
-        bun_options_types::CommandTag::Tag::InstallCommand,
+        bun_options_types::command_tag::Tag::InstallCommand,
         cli.config.as_deref(),
         ctx,
     )?;
@@ -2272,7 +2265,7 @@ pub fn init(
 }
 
 pub fn init_with_runtime(
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     // Spec PackageManager.zig:983 `bun_install: ?*Api.BunInstall` — used read-only
     // (PackageManagerOptions.zig:load lines 224-380 only ever reads `config.*`).
     // Upstream storage is `Option<&api::BunInstall>` (options.rs) / `*const ()`
@@ -2289,7 +2282,7 @@ pub fn init_with_runtime(
 }
 
 pub fn init_with_runtime_once(
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
@@ -2395,7 +2388,6 @@ pub fn init_with_runtime_once(
                 // path). Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
                 // on posix `Fd(0)` is stdin, not the invalid marker.
                 root_package_json_file: bun_sys::File::from_fd(Fd::invalid()),
-                // MOVE_DOWN(b0): AnyEventLoop is now bun_event_loop. The Js variant wraps an
                 // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
                 // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
                 event_loop: AnyEventLoop::js_current(),

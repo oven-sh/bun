@@ -3,7 +3,6 @@ use core::mem;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
 use bun_core::{Global, Output};
-use bun_logger as logger;
 use bun_paths::{self as path, resolve_path, AutoAbsPath, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
@@ -18,7 +17,7 @@ use crate::{
     Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
     TruncatedPackageNameHash, UpdateRequest,
 };
-use crate::bun_json::{Expr, ExprAccessors, ExprData};
+use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
@@ -50,23 +49,15 @@ pub use workspace_map as WorkspaceMap;
 
 bun_output::declare_scope!(Lockfile, hidden);
 
-// PORT NOTE: `Expr` has an inherent `as_string(&self, &Bump)` (T2 AST) that
-// shadows the no-arg `ExprAccessors::as_string` trait method during method
-// resolution (inherent impls always win). Provide an extension method with a
-// distinct name so the ~25 call sites can stay in method-chain form instead
-// of spelling `<Expr as ExprAccessors>::as_string(&e)`.
 trait ExprStr {
     fn as_utf8(&self) -> Option<&'static [u8]>;
 }
 impl ExprStr for Expr {
     #[inline]
     fn as_utf8(&self) -> Option<&'static [u8]> {
-        ExprAccessors::as_string(self)
+        if let ExprData::EString(s) = &self.data { if s.is_utf8() { return Some(s.data.slice()); } }
+        None
     }
-}
-#[inline]
-fn expr_str(e: &Expr) -> Option<&'static [u8]> {
-    ExprAccessors::as_string(e)
 }
 
 // Zig: `pub fn Package(comptime SemverIntType: type) type { return extern struct { ... } }`
@@ -597,7 +588,7 @@ impl Package<u64> {
     pub fn from_npm(
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         manifest: &Npm::PackageManifest,
         version: SemverVersion,
         package_version_ptr: &Npm::PackageVersion,
@@ -924,7 +915,7 @@ impl Diff {
     // through `from_lockfile.packages.get(...)`.
     pub fn generate(
         pm: &mut PackageManager,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         from_lockfile: &mut Lockfile,
         to_lockfile: &mut Lockfile,
         from: &Package,
@@ -1333,7 +1324,7 @@ impl Diff {
                         let _ = package_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                         // PORT NOTE: `bun.sys.File.toSource` was removed from
-                        // T1 (`bun_sys`) because `logger::Source` lives in T2.
+                        // T1 (`bun_sys`) because `bun_ast::Source` lives in T2.
                         // Route through the workspace cache's path-based getter
                         // instead, which both reads and parses.
                         let mut workspace_pkg = Package::default();
@@ -1343,7 +1334,7 @@ impl Diff {
                         // `&mut pm` reborrow below doesn't conflict. The entry
                         // lives in a `StringHashMap` whose backing storage is
                         // not touched by `parse_with_json`.
-                        let (source_ptr, json_root): (*const logger::Source, Expr) = match pm
+                        let (source_ptr, json_root): (*const bun_ast::Source, Expr) = match pm
                             .workspace_package_json_cache
                             .get_with_path(&mut *log, package_json_path.slice(), Default::default())
                             .unwrap()
@@ -1499,8 +1490,8 @@ impl Package<u64> {
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
     ) -> Result<(), bun_core::Error> {
@@ -1535,7 +1526,7 @@ impl Package<u64> {
     pub fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
-        source: &logger::Source,
+        source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
     ) -> Result<(), bun_core::Error> {
@@ -1546,7 +1537,7 @@ impl Package<u64> {
         let (lockfile, pm, log) = unsafe {
             let m = &mut *manager;
             let lockfile: *mut Lockfile = &raw mut *m.lockfile;
-            let log: *mut logger::Log = m.log;
+            let log: *mut bun_ast::Log = m.log;
             (&mut *lockfile, &mut *manager, &mut *log)
         };
         self.parse(lockfile, pm, log, source, resolver, features)
@@ -1565,8 +1556,8 @@ impl Package<u64> {
         workspace_versions: &mut lockfile::VersionHashMap,
         duplicate_checker_map: &mut lockfile::DuplicateCheckerMap,
         pm: &mut PackageManager,
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
         group: &DependencyGroup,
         string_builder: &mut StringBuilder<'_>,
         features: Features,
@@ -1576,8 +1567,8 @@ impl Package<u64> {
         workspace_ver: Option<SemverVersion>,
         external_alias: ExternalString,
         version: &[u8],
-        key_loc: logger::Loc,
-        value_loc: logger::Loc,
+        key_loc: bun_ast::Loc,
+        value_loc: bun_ast::Loc,
     ) -> Result<Option<Dependency>, bun_core::Error> {
         // TODO(port): narrow error set
         let external_version = 'brk: {
@@ -1762,7 +1753,7 @@ impl Package<u64> {
                         // and this version doesn't match it, fail to install
                         log.add_error_fmt(
                             source,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "No matching version for workspace dependency \"{}\". Version: \"{}\"",
                                 bstr::BStr::new(external_alias.slice(buf)),
@@ -1916,7 +1907,7 @@ impl Package<u64> {
                     }
                     return Ok(None);
                 } else {
-                    let mut notes: Vec<logger::Data> = Vec::with_capacity(1);
+                    let mut notes: Vec<bun_ast::Data> = Vec::with_capacity(1);
 
                     let mut text = Vec::new();
                     {
@@ -1927,9 +1918,9 @@ impl Package<u64> {
                             bstr::BStr::new(external_alias.slice(buf))
                         );
                     }
-                    notes.push(logger::Data {
+                    notes.push(bun_ast::Data {
                         text: text.into(),
-                        location: logger::Location::init_or_null(
+                        location: bun_ast::Location::init_or_null(
                             Some(source),
                             source.range_of_string(*entry.value_ptr),
                         ),
@@ -1958,8 +1949,8 @@ impl Package<u64> {
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
         json: Expr,
         resolver: &mut R,
         features: Features,
@@ -2152,7 +2143,7 @@ impl Package<u64> {
                     match &dependencies_q.expr.data {
                         ExprData::EArray(arr) => {
                             if !group.behavior.is_workspace() {
-                                let _ = logger::add_error_pretty!(
+                                let _ = bun_ast::add_error_pretty!(
                                     log,
                                     source,
                                     dependencies_q.loc,
@@ -2217,7 +2208,7 @@ impl Package<u64> {
                             for item in obj.properties.slice() {
                                 let key = item.key.expect("infallible: prop has key").as_utf8().unwrap();
                                 let Some(value) = item.value.expect("infallible: prop has value").as_utf8() else {
-                                    let _ = logger::add_error_pretty!(
+                                    let _ = bun_ast::add_error_pretty!(
                                         log,
                                         source,
                                         item.value.expect("infallible: prop has value").loc,
@@ -2244,7 +2235,7 @@ impl Package<u64> {
                         }
                         _ => {
                             if group.behavior.is_workspace() {
-                                let _ = logger::add_error_pretty!(
+                                let _ = bun_ast::add_error_pretty!(
                                     log,
                                     source,
                                     dependencies_q.loc,
@@ -2252,7 +2243,7 @@ impl Package<u64> {
                                     "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
                                 );
                             } else {
-                                let _ = logger::add_error_pretty!(
+                                let _ = bun_ast::add_error_pretty!(
                                     log,
                                     source,
                                     dependencies_q.loc,
@@ -2509,7 +2500,7 @@ impl Package<u64> {
                             self.bin = Bin {
                                 tag: bin::Tag::File,
                                 value: bin::Value {
-                                    file: string_builder.append::<String>(stri.data),
+                                    file: string_builder.append::<String>(&stri.data),
                                 },
                                 ..Default::default()
                             };
@@ -2617,7 +2608,7 @@ impl Package<u64> {
                             break 'count i;
                         };
                         let notes = 'notes: {
-                            let mut notes: Vec<logger::Data> =
+                            let mut notes: Vec<bun_ast::Data> =
                                 Vec::with_capacity(num_notes);
                             let mut i: usize = 0;
                             for (value, note_path) in workspace_names
@@ -2639,12 +2630,12 @@ impl Package<u64> {
                                         .as_bytes(),
                                     );
 
-                                    let note_src = match logger::to_source(
+                                    let note_src = match bun_ast::to_source(
                                         &note_abs_path,
                                         Default::default(),
                                     ) {
                                         Ok(s) => s,
-                                        Err(_) => logger::Source::init_empty_file(
+                                        Err(_) => bun_ast::Source::init_empty_file(
                                             note_abs_path.as_bytes(),
                                         ),
                                     };
@@ -2655,11 +2646,11 @@ impl Package<u64> {
                                     // printed. `Location::clone` deep-copies `file`
                                     // into a `Cow::Owned`, matching the Zig
                                     // `allocator.dupeZ` lifetime.
-                                    notes.push(logger::Data {
+                                    notes.push(bun_ast::Data {
                                         text: b"Package name is also declared here"
                                             .to_vec()
                                             .into(),
-                                        location: logger::Location::init_or_null(
+                                        location: bun_ast::Location::init_or_null(
                                             Some(&note_src),
                                             note_src.range_of_string(value.name_loc),
                                         )
@@ -2682,9 +2673,9 @@ impl Package<u64> {
                             .as_bytes(),
                         );
 
-                        let src = match logger::to_source(&abs_path, Default::default()) {
+                        let src = match bun_ast::to_source(&abs_path, Default::default()) {
                             Ok(s) => s,
-                            Err(_) => logger::Source::init_empty_file(abs_path.as_bytes()),
+                            Err(_) => bun_ast::Source::init_empty_file(abs_path.as_bytes()),
                         };
 
                         let _ = log.add_range_error_fmt_with_notes(
@@ -2735,8 +2726,8 @@ impl Package<u64> {
                         workspace_version,
                         external_name,
                         path_,
-                        logger::Loc::EMPTY,
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                     )? {
                         let mut dep = dep_;
                         if group.behavior.is_peer()
@@ -2847,8 +2838,8 @@ impl Package<u64> {
                 None,
                 external_name,
                 b"*",
-                logger::Loc::EMPTY,
-                logger::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
+                bun_ast::Loc::EMPTY,
             )? {
                 let mut dep = dep_;
                 dep.behavior.insert(Behavior::OPTIONAL);

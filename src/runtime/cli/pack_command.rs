@@ -12,13 +12,13 @@ use bun_glob as glob;
 use bun_install::{Dependency, Lockfile, PackageManager};
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
-use bun_interchange::json as JSON;
+use bun_parsers::json as JSON;
 // PORT NOTE: `WorkspacePackageJSONCache` returns the T2 value-subset
-// `bun_logger::js_ast::Expr` (see `bun_install::bun_json`), not the full T4
-// `bun_js_parser::Expr`. All JSON inspection in this file uses the T2 type;
+// `bun_ast::Expr` (see `bun_install::bun_json`), not the full T4
+// `bun_ast::Expr`. All JSON inspection in this file uses the T2 type;
 // the two T4 sinks (`js_printer::print_json`, `Publish::normalized_package`)
-// lift via `bun_js_parser::Expr::from(t2_expr)` at the call site.
-use bun_logger::js_ast::{E, Expr, ExprData};
+// lift via `bun_ast::Expr::from(t2_expr)` at the call site.
+use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
@@ -67,9 +67,9 @@ fn pack_bump() -> &'static bun_alloc::Arena {
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
 /// can't depend on `bun_logger`, but `bun_runtime` already does).
-fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_logger::Source> {
+fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> {
     let bytes = File::read_from(dir.fd, path)?;
-    Ok(bun_logger::Source::init_path_string_owned(path.as_bytes(), bytes))
+    Ok(bun_ast::Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 
 /// `manager.log` deref — Zig: non-optional `*logger.Log`, set once at `init()`.
@@ -77,7 +77,7 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_logger::Sourc
 /// `&mut workspace_package_json_cache` borrow at the call site (mirrors Zig's
 /// freely-aliased `*PackageManager`).
 #[inline]
-fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_logger::Log {
+fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_ast::Log {
     // SAFETY: `m` came from `&mut PackageManager`; `log` is non-null after
     // `PackageManager::init()` (Zig: non-optional `*Log`).
     unsafe { &mut *(*m).log }
@@ -198,7 +198,7 @@ impl PackCommand {
 
         let mut lockfile = Lockfile::default();
         // `log` is non-null after `PackageManager::init()` (Zig: non-optional `*Log`).
-        let log_ptr: *mut bun_logger::Log = manager.log;
+        let log_ptr: *mut bun_ast::Log = manager.log;
         let manager_ptr: *mut PackageManager = manager;
         // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed disjointly
         // (Zig passed both via the same `*PackageManager` alias).
@@ -988,8 +988,8 @@ fn add_bundled_dep(
 
                         for dependency_group in [b"dependencies".as_slice(), b"optionalDependencies".as_slice()] {
                             let Some(dependencies_expr) = json.get(dependency_group) else { continue };
-                            let bun_logger::js_ast::ExprData::EObject(dependencies) = dependencies_expr.data else { continue };
-                            // PORT NOTE: `json` here is `bun_logger::js_ast::Expr`, not the parser AST.
+                            let bun_ast::ExprData::EObject(dependencies) = dependencies_expr.data else { continue };
+                            // PORT NOTE: `json` here is `bun_ast::Expr`, not the parser AST.
 
                             'next_dep: for dep in dependencies.properties.slice() {
                                 if dep.key.is_none() {
@@ -999,10 +999,7 @@ fn add_bundled_dep(
                                     continue;
                                 }
 
-                                // JSON parse always yields UTF-8 EString slices, so route
-                                // through the inherent `Expr::as_utf8_string_literal` instead
-                                // of the (now crate-private) `bun_install::bun_json::ExprAccessors`.
-                                let Some(dep_name) = dep.key.as_ref().expect("infallible: prop has key").as_utf8_string_literal() else { continue };
+                                                                let Some(dep_name) = dep.key.as_ref().expect("infallible: prop has key").as_utf8_string_literal() else { continue };
 
                                 // allocPrintSentinel(.., "{s}/node_modules/{s}", ..)
                                 let mut dep_subpath_buf: Vec<u8> = Vec::with_capacity(
@@ -2472,12 +2469,12 @@ pub fn pack<const FOR_PUBLISH: bool>(
     };
 
     let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
-        // `normalized_package` operates on the full T4 `bun_js_parser::Expr`
+        // `normalized_package` operates on the full T4 `bun_ast::Expr`
         // (it injects new properties before printing); lift the T2 value-subset
         // root via the `From` impl. The mutated tree is consumed inside
         // `normalized_package` (it prints the JSON itself), so the lifted copy
         // doesn't need to flow back into `json.root`.
-        let mut root_full = bun_js_parser::Expr::from(json.root);
+        let mut root_full = bun_ast::Expr::from(json.root);
         Some(Publish::PublishCommand::normalized_package(
             manager,
             &package_name,
@@ -3033,7 +3030,7 @@ fn edit_root_package_json(
         &mut package_json_writer,
         // `print_json` is monomorphized over the full T4 `Expr`; lift the T2
         // value-subset root (lossless — every T2 variant maps 1:1).
-        bun_js_parser::Expr::from(json.root),
+        bun_ast::Expr::from(json.root),
         // shouldn't be used
         &json.source,
         js_printer::PrintJsonOptions {

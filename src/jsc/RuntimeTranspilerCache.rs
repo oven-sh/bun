@@ -10,8 +10,9 @@ use bun_string::{String as BunString, PathString, ZStr};
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_paths::resolve_path::{self as path_handler, platform};
-use bun_js_parser::ast::{ExportsKind, ParserOptions};
-use bun_logger::Source;
+use bun_ast::ExportsKind;
+use bun_js_parser::ParserOptions;
+use bun_ast::Source;
 use bun_resolver::fs::{FileSystem, RealFS, Path as FsPath};
 // Zig: `std.hash.Wyhash` (final4 variant). Must match exactly so on-disk
 // `.pile` filenames/hashes are interchangeable with Zig-produced caches.
@@ -891,7 +892,7 @@ impl RuntimeTranspilerCache {
             return false;
         }
 
-        // PORT NOTE: `bun_logger::fs::Path` is the trimmed TYPE_ONLY mirror and
+        // PORT NOTE: `bun_paths::fs::Path<'static>` is the trimmed TYPE_ONLY mirror and
         // doesn't carry `is_file()` yet; inline the same check the resolver
         // `Path::is_file` performs (`namespace == "" || namespace == "file"`).
         if !(source.path.namespace.is_empty() || source.path.namespace == b"file") {
@@ -991,19 +992,19 @@ impl RuntimeTranspilerCache {
 pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
 
 // ──────────────────────────────────────────────────────────────────────────
-// VTable bridge for the canonical (lower-tier) `bun_js_parser::RuntimeTranspilerCache`.
+// VTable bridge for the canonical (lower-tier) `bun_ast::RuntimeTranspilerCache`.
 //
 // LAYERING: `ParseOptions.runtime_transpiler_cache` carries the lower-tier
 // type so the parser crate names no `bun_jsc` types. `RuntimeTranspilerStore::run`
 // constructs that lower-tier cache with this vtable so the parser's
 // `cache.get()` reaches the disk-backed `RuntimeTranspilerCache::get()` above.
 // On a hit the concrete `Entry` is boxed and stored type-erased in
-// `bun_js_parser::RuntimeTranspilerCache.entry`; the store casts it back via
+// `bun_ast::RuntimeTranspilerCache.entry`; the store casts it back via
 // `heap::take(ptr.cast::<Entry>())`.
 // ──────────────────────────────────────────────────────────────────────────
 
-bun_js_parser::link_impl_TranspilerCacheImpl! {
-    Jsc for bun_js_parser::RuntimeTranspilerCache => |this| {
+bun_ast::link_impl_TranspilerCacheImpl! {
+    Jsc for bun_ast::RuntimeTranspilerCache => |this| {
         get(source, parser_options, used_jsx) => {
             let this = &mut *this;
             let source = &*source;

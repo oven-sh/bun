@@ -1287,7 +1287,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Zig: `subprocess.process.deref()` releases the intrusive ref
             // (finalize() won't run on this error path).
             // SAFETY: this error path returns without ever reading `process` again.
-            unsafe { process_mut(subprocess.process.as_ptr()) }.deref();
+            unsafe { Process::deref(subprocess.process.as_ptr()) };
             MaxBuf::remove_from_subprocess(&mut subprocess.stdout_maxbuf);
             MaxBuf::remove_from_subprocess(&mut subprocess.stderr_maxbuf);
             subprocess.deref();

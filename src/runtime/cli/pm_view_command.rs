@@ -5,8 +5,7 @@ use bun_http as http;
 use bun_install::PackageManager;
 use bun_install::npm::{self, PackageManifest};
 use bun_install::dependency;
-use bun_interchange::json as JSON;
-use bun_logger as logger;
+use bun_parsers::json as JSON;
 use bun_paths::PathBuffer;
 use bun_semver as Semver;
 use bun_str::strings;
@@ -16,38 +15,6 @@ use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bstr::BStr;
 use bun_alloc::{Arena as Bump, AllocError}; // bumpalo::Bump re-export
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local method-shim: upstream `bun_js_parser::Expr` exposes `set` /
-// `get_string_cloned` / `get_array` / `get_number` as *associated functions*
-// (`fn set(expr: &mut Expr, ...)`) rather than `&self` methods, so dot-call
-// syntax doesn't resolve. Wrap them in a local extension trait so the call
-// sites below can keep the natural `manifest.set(...)` shape.
-// ──────────────────────────────────────────────────────────────────────────
-trait ExprViewExt {
-    fn set(&mut self, bump: &Bump, name: &[u8], value: ast::Expr) -> Result<(), AllocError>;
-    fn get_string_cloned<'b>(&self, bump: &'b Bump, name: &[u8]) -> Result<Option<&'b [u8]>, AllocError>;
-    fn get_array(&self, name: &[u8]) -> Option<ast::ast::expr::ArrayIterator<'static>>;
-    fn get_number(&self, name: &[u8]) -> Option<(f64, logger::Loc)>;
-}
-impl ExprViewExt for ast::Expr {
-    #[inline]
-    fn set(&mut self, bump: &Bump, name: &[u8], value: ast::Expr) -> Result<(), AllocError> {
-        ast::Expr::set(self, bump, name, value)
-    }
-    #[inline]
-    fn get_string_cloned<'b>(&self, bump: &'b Bump, name: &[u8]) -> Result<Option<&'b [u8]>, AllocError> {
-        ast::Expr::get_string_cloned(self, bump, name)
-    }
-    #[inline]
-    fn get_array(&self, name: &[u8]) -> Option<ast::ast::expr::ArrayIterator<'static>> {
-        ast::Expr::get_array(self, name)
-    }
-    #[inline]
-    fn get_number(&self, name: &[u8]) -> Option<(f64, logger::Loc)> {
-        ast::Expr::get_number(self, name)
-    }
-}
 
 /// Helper: write `args` into `buf` and return the written subslice.
 /// Mirrors `std.fmt.bufPrint(buf, fmt, args) catch unreachable`.
@@ -93,8 +60,8 @@ pub fn view(
                 // PORT NOTE: copy into the function-scope bump so the slice
                 // outlives this block (Zig never frees this allocation either).
                 let str: &[u8] = bump.alloc_slice_copy(&str);
-                let source = &logger::Source::init_path_string(b"package.json", str);
-                let mut pkg_log = logger::Log::init();
+                let source = &bun_ast::Source::init_path_string(b"package.json", str);
+                let mut pkg_log = bun_ast::Log::init();
                 let Ok(pkg_json) = JSON::parse::<false>(source, &mut pkg_log, &bump) else {
                     break 'from_package_json;
                 };
@@ -180,8 +147,8 @@ pub fn view(
         npm::response_error::<false>(&req, &res, Some((name, version)), &mut response_buf)?;
     }
 
-    let mut log = logger::Log::init();
-    let source = &logger::Source::init_path_string(b"view.json", response_buf.list.as_slice());
+    let mut log = bun_ast::Log::init();
+    let source = &bun_ast::Source::init_path_string(b"view.json", response_buf.list.as_slice());
     let json: ast::Expr = match JSON::parse_utf8(source, &mut log, &bump) {
         Ok(j) => j.into(),
         Err(err) => {
@@ -307,7 +274,7 @@ pub fn view(
                 items: ast::ExprNodeList::from_owned_slice(keys.into_boxed_slice()),
                 ..Default::default()
             },
-            logger::Loc { start: -1 },
+            bun_ast::Loc { start: -1 },
         );
         manifest.set(&bump, b"versions", versions_array)?;
     }
@@ -318,7 +285,7 @@ pub fn view(
         // `bun pm view react version ` => 1.2.3
         // `bun pm view react versions` => ['1.2.3', '1.2.4', '1.2.5']
         if let Some(value) = manifest.get_path_may_be_index(&bump, prop_path).or_else(|| json.get_path_may_be_index(&bump, prop_path)) {
-            if let ast::ExprData::EString(e_string) = &value.data {
+            if let bun_ast::ExprData::EString(e_string) = &value.data {
                 // JSON parse_utf8 always produces UTF-8 strings, so the raw
                 // `data` slice is the literal value.
                 let slice = e_string.data.slice();
@@ -372,7 +339,7 @@ pub fn view(
             source,
             JSPrinter::PrintJsonOptions {
                 mangled_props: None,
-                indent: JSPrinter::Indentation { count: 2, ..Default::default() },
+                indent: bun_ast::Indentation { count: 2, ..Default::default() },
                 ..Default::default()
             },
         )?;

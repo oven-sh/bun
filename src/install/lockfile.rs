@@ -14,7 +14,6 @@ use bun_collections::{
 use bun_core::{err, Error as BunError, Global, Output};
 use bun_core::fmt::PathSep;
 use bun_alloc::AllocError;
-use bun_logger as logger;
 use bun_paths::{self as Path, resolve_path, platform, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
@@ -533,7 +532,7 @@ impl Lockfile {
     pub fn load_from_cwd<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &'a mut self,
         manager: Option<&mut PackageManager>,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         self.load_from_dir::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(Fd::cwd(), manager, log)
     }
@@ -542,7 +541,7 @@ impl Lockfile {
         &'a mut self,
         dir: Fd,
         manager: Option<&mut PackageManager>,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         // Zig: `bun.assert(FileSystem.instance_loaded);`
         // SAFETY: read of a process-global flag; matches Zig's bare global read.
@@ -614,7 +613,7 @@ impl Lockfile {
         };
 
         if lockfile_format == LockfileFormat::Text {
-            let source = logger::Source::init_path_string(b"bun.lock", buf.as_slice());
+            let source = bun_ast::Source::init_path_string(b"bun.lock", buf.as_slice());
             initialize_store();
             let bump = bun_alloc::Arena::new();
             let json = match JSON::parse_package_json_utf8(&source, log, &bump) {
@@ -670,7 +669,7 @@ impl Lockfile {
         &'a mut self,
         pm: Option<&mut PackageManager>,
         buf: Vec<u8>,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         let mut stream = Stream::new(buf);
         // TODO(port): Stream{ .buffer = buf, .pos = 0 }
@@ -942,7 +941,7 @@ impl Lockfile {
     ) -> Result<Box<Lockfile>, BunError> {
         // TODO(port): narrow error set
         // This is wasteful, but we rarely log anything so it's fine.
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         // defer { for (...) item.deinit(); log.deinit(); } — handled by Drop
 
         self.clean_with_logger(manager, updates, &mut log, exact_versions, log_level)
@@ -1030,7 +1029,7 @@ impl Lockfile {
         &mut self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         exact_versions: bool,
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
@@ -1340,7 +1339,7 @@ pub struct Cloner<'a> {
     pub mapping: &'a mut [PackageID],
     pub trees: tree::List,
     pub trees_count: u32,
-    pub log: &'a mut logger::Log,
+    pub log: &'a mut bun_ast::Log,
     pub old_preinstall_state: Vec<Install::PreinstallState>,
     pub manager: &'a mut PackageManager,
 }
@@ -1388,13 +1387,13 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
-    pub fn resolve(&mut self, log: &mut logger::Log) -> Result<(), tree::SubtreeError> {
+    pub fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)
     }
 
     pub fn filter(
         &mut self,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         manager: &mut PackageManager,
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
@@ -1415,7 +1414,7 @@ impl Lockfile {
     // value-level branching can't change param types. Phase B may want two monomorphized fns.
     pub fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         // PORT NOTE: Zig used `comptime method` to make these params `void` for
         // non-`.filter` builds. `tree::Builder` stores them unconditionally
         // (Option/slice), so accept the concrete shapes for all `METHOD`s.
@@ -1643,7 +1642,7 @@ pub mod printer {
 impl<'a> Printer<'a> {
     #[cold]
     pub fn print(
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         input_lockfile_path: &[u8],
         format: PrinterFormat,
     ) -> Result<(), BunError> {
@@ -1807,7 +1806,7 @@ impl<'a> Printer<'a> {
             DotEnv::DotEnvFileSuffix::Production,
             false,
         )?;
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         options.load(&mut log, &mut env_loader, None, None, crate::Subcommand::Install)?;
 
         let mut printer = Printer {
@@ -2447,7 +2446,7 @@ pub struct Scratch {
 }
 
 pub type DuplicateCheckerMap =
-    BunHashMap<PackageNameHash, logger::Loc, IdentityContext<PackageNameHash>>;
+    BunHashMap<PackageNameHash, bun_ast::Loc, IdentityContext<PackageNameHash>>;
 pub type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
 
 impl Scratch {
@@ -2602,12 +2601,13 @@ impl<'a> StringBuilder<'a> {
 
     pub fn allocate(&mut self) -> Result<(), AllocError> {
         let string_bytes = &mut *self.string_bytes;
-        string_bytes.reserve(self.cap);
-        // PERF(port): was ensureUnusedCapacity
         let prev_len = string_bytes.len();
+        // Zero-extend rather than `set_len` over uninit: `as_slice()` callers
+        // (lockfile.rs:2624/2644/2649/2668, dependency.rs:327, CatalogMap.rs:173)
+        // read the full slice including the not-yet-appended tail. Matches the
+        // `grow_default` precedent at :1578.
+        string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
-        // SAFETY: capacity reserved above; bytes are written before being read by callers.
-        unsafe { string_bytes.set_len(prev_len + self.cap) };
         self.ptr = Some(unsafe { string_bytes.as_mut_ptr().add(prev_len) });
         self.len = 0;
         Ok(())

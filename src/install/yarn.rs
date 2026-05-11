@@ -24,7 +24,6 @@ use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue, Tag as 
 use crate::repository::Repository;
 use crate::versioned_url::VersionedURL;
 use crate::bun_json;
-use bun_logger as logger;
 use bun_paths::PathBuffer;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_str::strings;
@@ -580,7 +579,7 @@ fn process_deps(
     string_buf_: &mut Semver::string::Buf,
     deps_buf: &mut [Dependency],
     res_buf: &mut [PackageID],
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     manager: &mut PackageManager,
     yarn_entry_to_package_id: &[PackageID],
 ) -> Result<usize, Error> {
@@ -664,7 +663,7 @@ struct VersionInfo {
 pub fn migrate_yarn_lockfile<'a>(
     this: &'a mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut logger::Log,
+    log: &mut bun_ast::Log,
     data: &[u8],
     dir: Fd,
 ) -> Result<LoadResult<'a>, Error> {
@@ -726,7 +725,7 @@ pub fn migrate_yarn_lockfile<'a>(
             else {
                 return Err(bun_core::err!("InvalidPackageJSON"));
             };
-            logger::Source::init_path_string(
+            bun_ast::Source::init_path_string(
                 &*package_json_path,
                 package_json_contents.as_slice(),
             )
@@ -755,7 +754,7 @@ pub fn migrate_yarn_lockfile<'a>(
 
         let package_name: Option<Vec<u8>> = 'blk: {
             if let Some(name_prop) = package_json.as_property(b"name") {
-                if let logger::js_ast::ExprData::EString(e_string) = &name_prop.expr.data {
+                if let bun_ast::ExprData::EString(e_string) = &name_prop.expr.data {
                     let name_slice = e_string.string(&json_bump).unwrap_or(b"");
                     if !name_slice.is_empty() {
                         break 'blk Some(name_slice.to_vec());
@@ -780,19 +779,19 @@ pub fn migrate_yarn_lockfile<'a>(
             let Some(prop) = package_json.as_property(section_info.key) else {
                 continue;
             };
-            let logger::js_ast::ExprData::EObject(e_object) = &prop.expr.data else {
+            let bun_ast::ExprData::EObject(e_object) = &prop.expr.data else {
                 continue;
             };
 
             for p in e_object.properties.slice() {
                 let Some(key) = &p.key else { continue };
-                let logger::js_ast::ExprData::EString(key_str) = &key.data else {
+                let bun_ast::ExprData::EString(key_str) = &key.data else {
                     continue;
                 };
 
                 let Ok(name_slice) = key_str.string(&json_bump) else { continue };
                 let Some(value) = &p.value else { continue };
-                let logger::js_ast::ExprData::EString(value_str) = &value.data else {
+                let bun_ast::ExprData::EString(value_str) = &value.data else {
                     continue;
                 };
 
@@ -867,7 +866,7 @@ pub fn migrate_yarn_lockfile<'a>(
             let root_package = *this.packages.get(0);
             let (mut string_builder, lf) = this.string_builder_split();
 
-            if let logger::js_ast::ExprData::EObject(e_object) = &resolutions.expr.data {
+            if let bun_ast::ExprData::EObject(e_object) = &resolutions.expr.data {
                 string_builder.cap += e_object.properties.len_u32() as usize * 128;
             }
             if string_builder.cap > 0 {

@@ -478,7 +478,7 @@ impl HotReloadEvent {
                                     source_file_path.slice(),
                                 ),
                                 unsafe { &*specifier },
-                                bun_options_types::ImportKind::Stmt,
+                                bun_ast::ImportKind::Stmt,
                             )
                             .is_ok();
 
@@ -1202,9 +1202,9 @@ impl DirectoryWatchStore {
         import_source: &[u8],
         specifier: &[u8],
         renderer: Graph,
-        loader: bun_options_types::Loader,
+        loader: bun_ast::Loader,
     ) -> Result<(), bun_alloc::AllocError> {
-        use bun_options_types::Loader;
+        use bun_ast::Loader;
         // When it does not resolve to a file path, there is nothing to track.
         if specifier.is_empty() {
             return Ok(());

@@ -64,7 +64,7 @@ impl SupportsCondition {
     pub fn clone_with_import_records(
         &self,
         bump: &bun_alloc::Arena,
-        _: &mut Vec<bun_options_types::ImportRecord>,
+        _: &mut Vec<bun_ast::ImportRecord>,
     ) -> Self {
         self.deep_clone(bump)
     }

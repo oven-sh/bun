@@ -24,9 +24,8 @@ use crate::package_manager_real::options::{LogLevel, PatchFeatures};
 use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
-use bun_logger as logger;
 use crate::bun_fs::FileSystem;
-use crate::bun_json::{self as JSON, ExprAccessors};
+use crate::bun_json as JSON;
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
@@ -145,7 +144,7 @@ pub fn do_patch_commit(
     let (cache_dir, cache_dir_subpath, changes_dir, pkg): (Dir, &ZStr, Vec<u8>, Package) = match arg_kind {
         PatchArgKind::Path => 'result: {
             let package_json_path = resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
-            let package_json_source: logger::Source = match logger::to_source(package_json_path, Default::default()) {
+            let package_json_source: bun_ast::Source = match bun_ast::to_source(package_json_path, Default::default()) {
                 Ok(s) => s,
                 Err(e) => {
                     Output::err(e, "failed to read {f}", (bun_fmt::quote(package_json_path.as_bytes()),));
@@ -172,7 +171,7 @@ pub fn do_patch_commit(
 
             let version: &[u8] = 'version: {
                 if let Some(v) = json.get(b"version") {
-                    if let Some(s) = ExprAccessors::as_string(&v) {
+                    if let bun_ast::ExprData::EString(s) = &v.data { let s = s.data.slice();
                         break 'version s;
                     }
                 }
@@ -533,7 +532,6 @@ pub fn do_patch_commit(
         patch_filename,
     ]);
 
-    // MOVE_DOWN(b0): `bun.jsc.Node.fs.NodeFS{}.mkdirRecursive(args)` — only the
     // mkdir-p syscall is used here, no JS surface; route directly through
     // `bun_sys::mkdir_recursive` to avoid the `bun_runtime` dep cycle.
     if let Err(e) = sys::mkdir_recursive(patches_dir) {
@@ -685,7 +683,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Dir, &[u8], Vec<u8>, Vec<u8>) = match arg_kind {
         PatchArgKind::Path => 'brk: {
             let package_json_path = resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
-            let package_json_source: logger::Source = match logger::to_source(package_json_path, Default::default()) {
+            let package_json_source: bun_ast::Source = match bun_ast::to_source(package_json_path, Default::default()) {
                 Ok(s) => s,
                 Err(e) => {
                     Output::err(e, "failed to read {f}", (bun_fmt::quote(package_json_path.as_bytes()),));
@@ -712,7 +710,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
             let version: &[u8] = 'version: {
                 if let Some(v) = json.get(b"version") {
-                    if let Some(s) = ExprAccessors::as_string(&v) {
+                    if let bun_ast::ExprData::EString(s) = &v.data { let s = s.data.slice();
                         break 'version s;
                     }
                 }

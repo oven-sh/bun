@@ -4,35 +4,26 @@
 // AUTOGEN: mod declarations only — real exports added in B-1.
 #![warn(unreachable_pub)]
 pub mod schema;
-pub mod OfflineMode;
-pub mod CodeCoverageOptions;
-pub mod GlobalCache;
-pub mod CommandTag;
-
-// ─── B-2 un-gated ─────────────────────────────────────────────────────────
-// Phase-A draft bodies now compile. Remaining `` gates are
-// fn-body re-gates blocked on lower-tier symbols (see TODO(b2-blocked)).
-
-#[path = "BundleEnums.rs"]
-pub mod BundleEnums;
-
-#[path = "import_record.rs"]
-pub mod import_record;
-
-#[path = "Context.rs"]
-pub mod Context;
-
-#[path = "CompileTarget.rs"]
-pub mod CompileTarget;
-
+pub mod offline_mode;
+pub mod code_coverage_options;
+pub mod global_cache;
+pub mod command_tag;
+pub mod bundle_enums;
+pub mod context;
+pub mod compile_target;
 pub mod jsx;
+
 pub use jsx as JSX;
 
 // ─── B-2 Track A: crate-root re-exports for dependents ───────────────────
-// Dependents (bundler/css/js_parser/http_types/watcher) import these by bare
-// name from the crate root rather than reaching into the defining module.
-pub use import_record::{ImportRecord, ImportKind, Index as ImportRecordIndex, Flags as ImportRecordFlags, Tag as ImportRecordTag};
-pub use BundleEnums::{Loader, LoaderOptional, LoaderHashTable, Format, Target, ModuleType, SideEffects, BundlePackage, BuiltInModule, WindowsOptions, ForceNodeEnv, Index, IndexInt};
+// `ImportKind` / `ImportRecord` / `Loader` / `Target` / `Index` / `SideEffects`
+// are now canonical in `bun_ast` — callers import from there directly.
+// Only the `schema::api`-coupled extension traits and option-only types
+// (`Format`, `ModuleType`, …) are surfaced from this crate.
+pub use bundle_enums::{
+    Format, ModuleType, BundlePackage, BuiltInModule, WindowsOptions, ForceNodeEnv,
+    LoaderExt, LoaderOptionalExt, TargetExt, ImportKindExt, LOADER_API_NAMES,
+};
 
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.
 ///

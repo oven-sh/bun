@@ -16,7 +16,6 @@ use bun_install::{
     self as install, DependencyID, LifecycleScriptSubprocess, PackageID, PackageManager,
     Resolution, DEFAULT_TRUSTED_DEPENDENCIES_LIST,
 };
-use bun_logger as logger;
 use bun_paths::AutoAbsPath;
 use bun_str::strings;
 
@@ -75,7 +74,7 @@ impl UntrustedCommand {
         // SAFETY: `load_lockfile` dropped above; `pm_raw` is the only path to
         // the singleton for the rest of this fn (same as the original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
-        let log: &mut logger::Log = pm.log_mut();
+        let log: &mut bun_ast::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
 
         let packages = lockfile.packages.slice();
@@ -296,7 +295,7 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.
         // Read-only `lockfile` borrow for the discovery phase.
-        let log: *mut logger::Log = unsafe { (*pm_raw).log };
+        let log: *mut bun_ast::Log = unsafe { (*pm_raw).log };
         let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
 
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -551,7 +550,7 @@ impl TrustCommand {
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
-        let package_json_source = logger::Source::init_path_string(
+        let package_json_source = bun_ast::Source::init_path_string(
             unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
             package_json_contents.as_slice(),
         );
@@ -559,12 +558,12 @@ impl TrustCommand {
         let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
         // PORT NOTE (layering): `parse_utf8` returns the T2
-        // `bun_logger::js_ast::Expr`; `PackageJSONEditor` and
-        // `js_printer::print_json` consume the T4 `bun_js_parser::Expr`. Lift
+        // `bun_ast::Expr`; `PackageJSONEditor` and
+        // `js_printer::print_json` consume the T4 `bun_ast::Expr`. Lift
         // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
         // `pack_command`).
-        let mut package_json: bun_js_parser::Expr =
-            match bun_interchange::json::parse_utf8(&package_json_source, unsafe { ctx.log_mut() }, &bump) {
+        let mut package_json: bun_ast::Expr =
+            match bun_parsers::json::parse_utf8(&package_json_source, unsafe { ctx.log_mut() }, &bump) {
                 Ok(v) => v.into(),
                 Err(err) => {
                     let _ = ctx.log_ref().print(std::ptr::from_mut(Output::error_writer()));

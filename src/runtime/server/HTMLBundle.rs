@@ -11,8 +11,8 @@ use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_bundler::output_file::Value as OutputFileValue;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
-use bun_logger::Log;
-use bun_options_types::Loader;
+use bun_ast::Log;
+use bun_ast::Loader;
 use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
 use bun_string::strings;
 use bun_uws::{AnyRequest, AnyResponse};
@@ -447,7 +447,7 @@ impl Route {
             config.code_splitting = xform.serve_splitting;
         }
 
-        config.target = bundler_options::Target::Browser;
+        config.target = bun_ast::Target::Browser;
         let is_development = development.is_development();
 
         let cli = crate::cli::Command::get();

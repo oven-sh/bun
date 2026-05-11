@@ -59,8 +59,8 @@ impl ReplCommand {
         // Initialize JSC
         jsc::initialize(true); // true for eval mode
 
-        js_ast::ast::expr::data::Store::create();
-        js_ast::ast::stmt::data::Store::create();
+        bun_ast::expr::data::Store::create();
+        bun_ast::stmt::data::Store::create();
         // TODO(port): arena is threaded into VirtualMachine (vm.arena / vm.allocator). Non-AST
         // crate would normally drop MimallocArena, but VM init protocol requires it. Note
         // `bun_alloc::Arena` is bumpalo-backed and NOT semantically `bun.allocators.MimallocArena`
@@ -299,6 +299,6 @@ unsafe extern "C" {
 }
 
 use bun_bundler::options::EnvBehavior;
-use bun_options_types::OfflineMode::OfflineMode;
+use bun_options_types::offline_mode::OfflineMode;
 
 // ported from: src/cli/repl_command.zig

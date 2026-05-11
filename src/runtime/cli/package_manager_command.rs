@@ -115,7 +115,7 @@ impl PackageManagerCommand {
         // only and never re-projects `manager.lockfile`.
         let load_lockfile = unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-            let log: *mut bun_logger::Log = (*pm_raw).log;
+            let log: *mut bun_ast::Log = (*pm_raw).log;
             (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
         };
 
@@ -638,7 +638,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // `manager.lockfile`.
             let mut load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-                let log: *mut bun_logger::Log = (*pm_raw).log;
+                let log: *mut bun_ast::Log = (*pm_raw).log;
                 migration::detect_and_load_other_lockfile(
                     &mut *lockfile,
                     Fd::cwd(),

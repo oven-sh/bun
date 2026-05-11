@@ -1,7 +1,6 @@
 use bstr::BStr;
 
 use bun_core::{err, Global, Output};
-use bun_logger as logger;
 use bun_paths::{platform, resolve_path, AbsPath, PathBuffer};
 use bun_string::strings;
 use bun_sys::{self as sys, Dir, Fd, FdDirExt};
@@ -59,7 +58,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
 
         // Step 1. parse the nearest package.json file
         {
-            let package_json_source = match logger::to_source(
+            let package_json_source = match bun_ast::to_source(
                 manager.original_package_json_path.as_zstr(),
                 Default::default(),
             ) {

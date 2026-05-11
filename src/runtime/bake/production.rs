@@ -30,8 +30,8 @@ use bun_resolver as resolver;
 use bun_string::{strings, String as BunString};
 
 use crate::cli::command::{Context, HotReload};
-use bun_options_types::Context::MacroOptions;
-use bun_options_types::OfflineMode::OfflineMode;
+use bun_options_types::context::MacroOptions;
+use bun_options_types::offline_mode::OfflineMode;
 
 use bun_bundler::options::OutputKind;
 
@@ -103,8 +103,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
     jsc::initialize(false);
-    bun_js_parser::Expr::data_store_create();
-    bun_js_parser::Stmt::data_store_create();
+    bun_ast::Expr::data_store_create();
+    bun_ast::Stmt::data_store_create();
 
     // PERF(port): was MimallocArena bulk-free — VM allocator now global mimalloc.
     let mut arena = Arena::new();
@@ -326,7 +326,7 @@ pub fn build_with_vm(
     let config_entry_point = match vm.transpiler.resolver.resolve(
         cwd,
         &unresolved_config_entry_point,
-        bun_options_types::ImportKind::EntryPointBuild,
+        bun_ast::ImportKind::EntryPointBuild,
     ) {
         Ok(r) => r,
         Err(err) => {
@@ -1329,7 +1329,7 @@ pub extern "C" fn BakeProdResolve(
 
     if let Some(alias) = bun_resolve_builtins::Alias::get(
         specifier.slice(),
-        bun_resolve_builtins::Target::Bun,
+        bun_ast::Target::Bun,
         bun_resolve_builtins::Cfg::default(),
     ) {
         return BunString::static_(alias.path.as_bytes());

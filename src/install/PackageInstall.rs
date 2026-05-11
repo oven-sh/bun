@@ -4,7 +4,6 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::{Global, Output};
 use bun_core::Progress::Progress;
-use bun_logger as logger;
 use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_str::{strings, MutableString, ZStr};
@@ -900,7 +899,7 @@ impl<'a> PackageInstall<'a> {
         root_node_modules_dir: Dir,
         mutable: &mut MutableString,
         resolution_tag: resolution::Tag,
-    ) -> Option<logger::Source> {
+    ) -> Option<bun_ast::Source> {
         let mut total: usize = 0;
         let mut read: usize;
         mutable.reset();
@@ -972,7 +971,7 @@ impl<'a> PackageInstall<'a> {
             return None;
         }
 
-        Some(logger::Source::init_path_string(
+        Some(bun_ast::Source::init_path_string(
             package_json_path.as_bytes(),
             &mutable.list[0..total],
         ))
@@ -1002,7 +1001,7 @@ impl<'a> PackageInstall<'a> {
         };
         let source = &source;
 
-        let mut log = logger::Log::init();
+        let mut log = bun_ast::Log::init();
         // log dropped at scope exit
 
         initialize_store();

@@ -576,7 +576,7 @@ pub mod fs {
     /// filename) view over a borrowed path slice. All four fields point into the
     /// same backing allocation.
     ///
-    /// CANONICAL: `bun_logger::fs::PathName` / `bun_resolver::fs::PathName` are
+    /// CANONICAL: `bun_paths::fs::PathName<'static>` / `bun_resolver::fs::PathName` are
     /// re-exports of this type (D090).
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
@@ -725,7 +725,7 @@ pub mod fs {
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
     ///
-    /// CANONICAL: `bun_logger::fs::Path` / `bun_resolver::fs::Path` are re-exports
+    /// CANONICAL: `bun_paths::fs::Path<'static>` / `bun_resolver::fs::Path` are re-exports
     /// of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
     /// …) live on `bun_resolver::fs::PathResolverExt`.
     #[repr(C)]

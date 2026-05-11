@@ -104,7 +104,7 @@ impl OutdatedCommand {
         // `manager.lockfile` through the `pm` argument.
         let pm_ptr: *mut PackageManager = manager;
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        let log_ptr: *mut bun_logger::Log = manager.log;
+        let log_ptr: *mut bun_ast::Log = manager.log;
 
         // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
         // no other live `&mut Lockfile` exists at this point.

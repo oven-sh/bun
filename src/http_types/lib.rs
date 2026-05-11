@@ -16,5 +16,5 @@ pub use ETag::wtf;
 // hand-generated `&'static str` newtype (PERF(port) stand-in for the Zig
 // packed-u14 table), so `Table`/`Compact`/`EXTENSIONS`/`sniff`/`from_table`/
 // `create_hash_table`/`ALL` all compile. Only `by_loader` remains gated
-// (same-tier `bun_options_types::Loader`, intra-tier edge avoided).
+// (same-tier `bun_ast::Loader`, intra-tier edge avoided).
 pub mod MimeType;

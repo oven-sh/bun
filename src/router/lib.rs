@@ -23,16 +23,12 @@ use bun_http_types::URLPath::URLPath;
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-crate name aliases. These are pure re-exports of real lower-tier types
 // (no shadow structs); kept as a private module so Zig-shaped paths
-// (`logger::Log`, `Fs::Entry`, `api::LoadedRouteConfig`) read naturally.
+// (`bun_ast::Log`, `Fs::Entry`, `api::LoadedRouteConfig`) read naturally.
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.hash(bytes)` — std.hash.Wyhash seed 0. NOT Wyhash11 (different algo).
 #[inline]
 fn wyhash(input: &[u8]) -> u64 {
     bun_wyhash::hash(input)
-}
-
-mod logger {
-    pub(crate) use bun_logger::{Loc, Log, Source};
 }
 
 // `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
@@ -74,15 +70,14 @@ unsafe fn arena_slice(ps: PathString) -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
 }
 
-// `load_routes` takes the real `bun_logger::Log`. Kept as a re-export so
+// `load_routes` takes the real `bun_ast::Log`. Kept as a re-export so
 // out-of-crate callers don't need a direct `bun_logger` import for the type.
-pub use bun_logger::Log as RouteLoaderLog;
+use bun_ast::Log as RouteLoaderLog;
 
 // ──────────────────────────────────────────────────────────────────────────
 // cross-tier decoupling
 // ──────────────────────────────────────────────────────────────────────────
 
-// MOVE_DOWN(b0): RouteConfig (was bun_bundler::options::RouteConfig).
 // Ground truth: src/bundler/options.zig `pub const RouteConfig = struct { ... }`.
 // Defined here so T4 router is self-contained; `bun_bundler::options` re-exports
 // this (`pub use bun_router::RouteConfig`) so the original path keeps resolving.
@@ -286,7 +281,7 @@ impl<'a> Router<'a> {
     // it does not currently handle duplicate exact route matches. that's undefined behavior, for now.
     pub fn load_routes<R: ResolverLike>(
         &mut self,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         root_dir_info: &DirInfo,
         resolver: &mut R,
         base_dir: &[u8],
@@ -604,7 +599,7 @@ struct RouteLoader<'a> {
     route_dirname_len: u16,
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
-    log: &'a mut logger::Log,
+    log: &'a mut bun_ast::Log,
     // PORT NOTE: raw NonNull (not &'a Route) because it points into self.all_routes
     // (self-referential); `Routes` co-owns it with `list`.
     index: Option<NonNull<Route>>,
@@ -629,11 +624,11 @@ impl<'a> RouteLoader<'a> {
         if route.param_count == 0 {
             // PORT NOTE: Zig getOrPut → std Entry API (StringHashMap = std HashMap).
             if let Some(existing) = self.static_list.get(route.match_name.slice()) {
-                let source = logger::Source::init_empty_file(route.abs_path.slice());
+                let source = bun_ast::Source::init_empty_file(route.abs_path.slice());
                 self.log
                     .add_error_fmt(
                         Some(&source),
-                        logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         format_args!(
                             "Route \"{}\" is already defined by {}",
                             bstr::BStr::new(route.name),
@@ -656,11 +651,11 @@ impl<'a> RouteLoader<'a> {
             // It will cause unexpected behavior.
             if new_route.has_uppercase {
                 if let Some(existing) = self.static_list.get(&new_route.name[1..]) {
-                    let source = logger::Source::init_empty_file(new_route.abs_path.slice());
+                    let source = bun_ast::Source::init_empty_file(new_route.abs_path.slice());
                     self.log
                         .add_error_fmt(
                             Some(&source),
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Route \"{}\" is already defined by {}",
                                 bstr::BStr::new(new_route.name),
@@ -684,11 +679,11 @@ impl<'a> RouteLoader<'a> {
         {
             match self.dedupe_dynamic.entry(route.full_hash) {
                 Entry::Occupied(e) => {
-                    let source = logger::Source::init_empty_file(route.abs_path.slice());
+                    let source = bun_ast::Source::init_empty_file(route.abs_path.slice());
                     self.log
                         .add_error_fmt(
                             Some(&source),
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Route \"{}\" is already defined by {}",
                                 bstr::BStr::new(route.name),
@@ -712,7 +707,7 @@ impl<'a> RouteLoader<'a> {
 
     pub(crate) fn load_all<R: ResolverLike>(
         config: RouteConfig,
-        log: &'a mut logger::Log,
+        log: &'a mut bun_ast::Log,
         resolver: &mut R,
         root_dir_info: &DirInfo,
         base_dir: &[u8],
@@ -1020,7 +1015,7 @@ impl Route {
         base_: &[u8],
         extname: &[u8],
         entry: *mut Fs::Entry,
-        log: &mut logger::Log,
+        log: &mut bun_ast::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
@@ -1194,7 +1189,7 @@ impl Route {
                             needs_close.set(false);
                             log.add_error_fmt(
                                 None,
-                                logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                                 format_args!(
                                     "{} opening route: {}",
                                     bstr::BStr::new(err.name()),
@@ -1213,7 +1208,7 @@ impl Route {
                     Err(err) => {
                         log.add_error_fmt(
                             None,
-                            logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
                                 "{} resolving route: {}",
                                 bstr::BStr::new(err.name()),
@@ -1655,12 +1650,12 @@ pub mod pattern {
         /// Validate a Route pattern, returning the number of route parameters.
         /// `None` means invalid. Error messages are logged.
         /// That way, we can provide a list of all invalid routes rather than failing the first time.
-        pub fn validate(input: &[u8], log: &mut logger::Log) -> Option<ValidationResult> {
+        pub fn validate(input: &[u8], log: &mut bun_ast::Log) -> Option<ValidationResult> {
             if strings::CodepointIterator::needs_utf8_decoding(input) {
-                let source = logger::Source::init_empty_file(input);
+                let source = bun_ast::Source::init_empty_file(input);
                 log.add_error_fmt(
                     Some(&source),
-                    logger::Loc::EMPTY,
+                    bun_ast::Loc::EMPTY,
                     format_args!("Route name must be plaintext"),
                 );
                 return None;
@@ -1675,12 +1670,12 @@ pub mod pattern {
                 let pattern: Pattern = match Pattern::init_unhashed(input, offset) {
                     Ok(p) => p,
                     Err(err) => {
-                        let source = logger::Source::init_empty_file(input);
+                        let source = bun_ast::Source::init_empty_file(input);
                         match err {
                             PatternParseError::CatchAllMustBeAtTheEnd => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!(
                                         "Catch-all route must be at the end of the path"
                                     ),
@@ -1689,7 +1684,7 @@ pub mod pattern {
                             PatternParseError::InvalidCatchAllRoute => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!(
                                         "Invalid catch-all route, e.g. should be [...param]"
                                     ),
@@ -1698,7 +1693,7 @@ pub mod pattern {
                             PatternParseError::InvalidOptionalCatchAllRoute => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!(
                                         "Invalid optional catch-all route, e.g. should be [[...param]]"
                                     ),
@@ -1707,14 +1702,14 @@ pub mod pattern {
                             PatternParseError::InvalidRoutePattern => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!("Invalid dynamic route"),
                                 );
                             }
                             PatternParseError::MissingParamName => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!(
                                         "Route is missing a parameter name, e.g. [param]"
                                     ),
@@ -1723,7 +1718,7 @@ pub mod pattern {
                             PatternParseError::PatternMissingClosingBracket => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    logger::Loc::EMPTY,
+                                    bun_ast::Loc::EMPTY,
                                     format_args!("Route is missing a closing bracket]"),
                                 );
                             }
@@ -2134,8 +2129,8 @@ mod tests {
             Output::init_test();
             make_test(test_name.as_bytes(), data)?;
             // JSAst.Expr.Data.Store.create / Stmt.Data.Store.create
-            bun_js_parser::ast::expr::Expr::data_store_create();
-            bun_js_parser::ast::stmt::Stmt::data_store_create();
+            bun_ast::expr::Expr::data_store_create();
+            bun_ast::stmt::Stmt::data_store_create();
             // const fs = try FileSystem.init(null);
             let _ = bun_resolver::fs::FileSystem::init(None)?;
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -2160,7 +2155,7 @@ mod tests {
                 },
             )?;
 
-            let mut log = bun_logger::Log::init();
+            let mut log = bun_ast::Log::init();
             // PORT NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
             // no errdefer; the test harness panics on error anyway, but the guard
             // still flushes diagnostics on early-return for parity.
@@ -2176,7 +2171,7 @@ mod tests {
             // `transform_options` — none are read by `Resolver::init1` or the
             // dir-info walk, so `Default` + `target` is the faithful projection.
             let opts = bun_resolver::options::BundleOptions {
-                target: bun_resolver::options::Target::Browser,
+                target: bun_ast::Target::Browser,
                 external: bun_resolver::options::ExternalModules::default(),
                 ..Default::default()
             };
@@ -2210,8 +2205,8 @@ mod tests {
         ) -> Result<Router<'static>, bun_core::Error> {
             make_test(test_name.as_bytes(), data)?;
             // JSAst.Expr.Data.Store.create / Stmt.Data.Store.create
-            bun_js_parser::ast::expr::Expr::data_store_create();
-            bun_js_parser::ast::stmt::Stmt::data_store_create();
+            bun_ast::expr::Expr::data_store_create();
+            bun_ast::stmt::Stmt::data_store_create();
             // const fs = try FileSystem.initWithForce(null, true);
             let _ = bun_resolver::fs::FileSystem::init_with_force::<true>(None)?;
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -2234,7 +2229,7 @@ mod tests {
                 },
             )?;
 
-            let mut log = bun_logger::Log::init();
+            let mut log = bun_ast::Log::init();
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
                 let _ = unsafe { &*log }
@@ -2242,7 +2237,7 @@ mod tests {
             });
 
             let opts = bun_resolver::options::BundleOptions {
-                target: bun_resolver::options::Target::Browser,
+                target: bun_ast::Target::Browser,
                 external: bun_resolver::options::ExternalModules::default(),
                 ..Default::default()
             };

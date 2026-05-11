@@ -2,10 +2,10 @@ use crate::mal_prelude::*;
 use bun_collections::VecExt;
 use core::cmp::Ordering;
 
-use bun_js_parser::ast::bundled_ast::{Flags as AstFlags};
-use bun_js_parser::ast::symbol;
-use bun_js_parser::ast::StmtData;
-use bun_js_parser::{Part, SlotCounts};
+use crate::bundled_ast::{Flags as AstFlags};
+use bun_ast::symbol;
+use bun_ast::StmtData;
+use bun_ast::{Part, SlotCounts};
 
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
@@ -187,7 +187,7 @@ pub unsafe fn rename_symbols_in_chunk(
         let mut top_level_symbols_all: Vec<StableSymbolCount> = Vec::new();
 
         let stable_source_indices = c.graph.stable_source_indices.slice();
-        let mut freq = bun_js_parser::ast::CharFreq { freqs: [0i32; 64] };
+        let mut freq = bun_ast::CharFreq { freqs: [0i32; 64] };
 
         let mut capacity = sorted_imports_from_other_chunks.len();
         for &source_index in files_in_order {

@@ -1,7 +1,6 @@
 use bstr::BStr;
 
 use bun_core::{err, Global, Output};
-use bun_logger as logger;
 use bun_paths::{AbsPath, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_string::strings;
@@ -58,7 +57,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
         // Step 1. parse the nearest package.json file
         {
-            let package_json_source = match logger::to_source(
+            let package_json_source = match bun_ast::to_source(
                 manager.original_package_json_path.as_zstr(),
                 Default::default(),
             ) {

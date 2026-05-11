@@ -17,8 +17,8 @@ use bun_core::{self, Global, Output};
 use bun_resolver::fs::RealFS;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_install::dependency::VersionTag;
-use bun_interchange::json;
-use bun_logger::js_ast::expr::Data as ExprData;
+use bun_parsers::json;
+use bun_ast::ExprData as ExprData;
 use bun_paths::{self, PathBuffer, DELIMITER};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, O};
@@ -267,10 +267,10 @@ impl BunxCommand {
         // TODO: make this better
         let package_json_bytes = target_package_json.read_to_end()?;
         let package_json_contents = package_json_bytes.as_slice();
-        let source = bun_logger::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
+        let source = bun_ast::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
-        bun_js_parser::ast::expr::data::Store::create();
-        bun_js_parser::ast::stmt::data::Store::create();
+        bun_ast::expr::data::Store::create();
+        bun_ast::stmt::data::Store::create();
 
         let log = transpiler.log_mut();
         // PORT NOTE: Zig passed `transpiler.allocator` (global mimalloc). The

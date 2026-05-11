@@ -1,7 +1,6 @@
 use bstr::BStr;
 use core::fmt;
 
-use bun_logger as logger;
 
 use crate::{Location, SourceLocation, Token};
 
@@ -71,17 +70,17 @@ impl Err<ParserError> {
 impl<T: fmt::Display> Err<T> {
     pub fn add_to_logger(
         &self,
-        log: &mut logger::Log,
-        source: &logger::Source,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
         use bun_core::OrWriteFailed as _;
         use std::io::Write as _;
         let mut text: Vec<u8> = Vec::new();
         write!(&mut text, "{}", self.kind).or_write_failed()?;
 
-        log.add_msg(logger::Msg {
-            kind: logger::Kind::Err,
-            data: logger::Data {
+        log.add_msg(bun_ast::Msg {
+            kind: bun_ast::Kind::Err,
+            data: bun_ast::Data {
                 location: match &self.loc {
                     Some(loc) => Some(loc.to_location(source)?),
                     None => None,
@@ -192,15 +191,15 @@ impl ErrorLocation {
         }
     }
 
-    pub fn to_location(&self, source: &logger::Source) -> Result<logger::Location, bun_core::Error> {
+    pub fn to_location(&self, source: &bun_ast::Source) -> Result<bun_ast::Location, bun_core::Error> {
         // TODO(port): narrow error set (Zig narrowed to alloc-only).
-        // SAFETY: `'bump`-erasure — `logger::Location.line_text` is `Option<&'static [u8]>`
+        // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
         // (`Str` placeholder per src/logger/lib.rs); the slice borrows
         // `source.contents` which outlives the diagnostic. Re-thread once
-        // `logger::Location` grows a real lifetime.
+        // `bun_ast::Location` grows a real lifetime.
         let line_text = bun_string::strings::get_lines_in_text::<1>(&source.contents, self.line)
             .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
-        Ok(logger::Location {
+        Ok(bun_ast::Location {
             file: std::borrow::Cow::Borrowed(source.path.text),
             namespace: source.path.namespace,
             line: i32::try_from(self.line + 1).expect("int cast"),

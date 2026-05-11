@@ -8,9 +8,8 @@ use bun_bundler::defines as define_mod;
 use bun_bundler::options as options_mod;
 use bun_core::Output;
 use bun_js_parser as js_parser;
-use bun_js_parser::ast as js_ast;
+use bun_ast as js_ast;
 use bun_js_parser::printer as js_printer;
-use bun_logger as logger;
 use bun_schema::api;
 use bun_schema::Reader as ApiReader;
 use bun_schema::Writer as ApiWriter;
@@ -251,8 +250,8 @@ pub extern "C" fn init(heapsize: u32) {
             mimalloc::mi_option_set(mimalloc::Option::LimitOsAlloc, 1);
             let _ = mimalloc::mi_reserve_os_memory(heapsize as usize, false, true);
 
-            js_ast::Stmt::Data::Store::create();
-            js_ast::Expr::Data::Store::create();
+            bun_ast::Stmt::Data::Store::create();
+            bun_ast::Expr::Data::Store::create();
             let mut bw = js_printer::BufferWriter::init();
             bw.buffer.grow_by(1024).expect("unreachable");
             BUFFER_WRITER.write(bw);
@@ -272,7 +271,7 @@ pub extern "C" fn init(heapsize: u32) {
     }
 }
 
-static mut LOG: MaybeUninit<logger::Log> = MaybeUninit::uninit();
+static mut LOG: MaybeUninit<bun_ast::Log> = MaybeUninit::uninit();
 
 struct TestAnalyzer {
     string_buffer: Vec<u8>,
@@ -283,19 +282,19 @@ impl TestAnalyzer {
     pub fn visit_expr(
         &mut self,
         parser: &mut js_parser::TSXParser,
-        expr: js_ast::Expr,
+        expr: bun_ast::Expr,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         match expr.data {
-            js_ast::ExprData::ECall(call) => {
+            bun_ast::ExprData::ECall(call) => {
                 if call.target.is_ref(parser.jest.test)
                     || call.target.is_ref(parser.jest.it)
                     || call.target.is_ref(parser.jest.describe)
                 {
                     if call.args.len() > 0 {
-                        let label_expr: js_ast::Expr = call.args.slice()[0];
+                        let label_expr: bun_ast::Expr = call.args.slice()[0];
                         match label_expr.data {
-                            js_ast::ExprData::EString(str_) => {
+                            bun_ast::ExprData::EString(str_) => {
                                 str_.to_utf8()?;
                                 let ptr = api::StringPointer {
                                     offset: u32::try_from(self.string_buffer.len()).expect("int cast"),
@@ -312,28 +311,28 @@ impl TestAnalyzer {
                                     label: ptr,
                                 });
                             }
-                            js_ast::ExprData::EDot(_) => {}
+                            bun_ast::ExprData::EDot(_) => {}
                             _ => {}
                         }
 
                         return Ok(());
                     }
-                } else if matches!(call.target.data, js_ast::ExprData::EDot(_))
+                } else if matches!(call.target.data, bun_ast::ExprData::EDot(_))
                     && {
-                        let js_ast::ExprData::EDot(dot) = &call.target.data else { unreachable!() };
+                        let bun_ast::ExprData::EDot(dot) = &call.target.data else { unreachable!() };
                         dot.name == b"only"
                     }
                 {
-                    let js_ast::ExprData::EDot(dot) = &call.target.data else { unreachable!() };
+                    let bun_ast::ExprData::EDot(dot) = &call.target.data else { unreachable!() };
                     let target = dot.target;
                     if target.is_ref(parser.jest.test)
                         || target.is_ref(parser.jest.it)
                         || target.is_ref(parser.jest.describe)
                     {
                         if call.args.len() > 0 {
-                            let label_expr: js_ast::Expr = call.args.slice()[0];
+                            let label_expr: bun_ast::Expr = call.args.slice()[0];
                             match label_expr.data {
-                                js_ast::ExprData::EString(str_) => {
+                                bun_ast::ExprData::EString(str_) => {
                                     str_.to_utf8()?;
                                     let ptr = api::StringPointer {
                                         offset: u32::try_from(self.string_buffer.len()).expect("int cast"),
@@ -350,7 +349,7 @@ impl TestAnalyzer {
                                         label: ptr,
                                     });
                                 }
-                                js_ast::ExprData::EDot(_) => {}
+                                bun_ast::ExprData::EDot(_) => {}
                                 _ => {}
                             }
 
@@ -364,36 +363,36 @@ impl TestAnalyzer {
                     self.visit_expr(parser, *arg)?;
                 }
             }
-            js_ast::ExprData::EBinary(bin) => {
+            bun_ast::ExprData::EBinary(bin) => {
                 self.visit_expr(parser, bin.left)?;
                 self.visit_expr(parser, bin.right)?;
             }
-            js_ast::ExprData::ENew(new) => {
+            bun_ast::ExprData::ENew(new) => {
                 self.visit_expr(parser, new.target)?;
                 for arg in new.args.slice() {
                     self.visit_expr(parser, *arg)?;
                 }
             }
 
-            js_ast::ExprData::EArray(arr) => {
+            bun_ast::ExprData::EArray(arr) => {
                 for item in arr.items.slice() {
                     self.visit_expr(parser, *item)?;
                 }
             }
 
-            js_ast::ExprData::EIf(if_) => {
+            bun_ast::ExprData::EIf(if_) => {
                 self.visit_expr(parser, if_.no)?;
                 self.visit_expr(parser, if_.test_)?;
                 self.visit_expr(parser, if_.yes)?;
             }
 
-            js_ast::ExprData::EFunction(func) => {
+            bun_ast::ExprData::EFunction(func) => {
                 for stmt in func.func.body.stmts {
                     self.visit_stmt(parser, *stmt)?;
                 }
             }
 
-            js_ast::ExprData::EArrow(arrow) => {
+            bun_ast::ExprData::EArrow(arrow) => {
                 for stmt in arrow.body.stmts {
                     self.visit_stmt(parser, *stmt)?;
                 }
@@ -406,32 +405,32 @@ impl TestAnalyzer {
     pub fn visit_stmt(
         &mut self,
         parser: &mut js_parser::TSXParser,
-        stmt: js_ast::Stmt,
+        stmt: bun_ast::Stmt,
     ) -> Result<(), bun_core::Error> {
         match stmt.data {
-            js_ast::StmtData::SBlock(s) => {
+            bun_ast::StmtData::SBlock(s) => {
                 for s2 in s.stmts {
                     self.visit_stmt(parser, *s2)?;
                 }
             }
-            js_ast::StmtData::SDoWhile(s) => {
+            bun_ast::StmtData::SDoWhile(s) => {
                 self.visit_stmt(parser, s.body)?;
                 self.visit_expr(parser, s.test_)?;
             }
-            js_ast::StmtData::SExpr(s) => {
+            bun_ast::StmtData::SExpr(s) => {
                 self.visit_expr(parser, s.value)?;
             }
-            js_ast::StmtData::SForIn(s) => {
+            bun_ast::StmtData::SForIn(s) => {
                 self.visit_stmt(parser, s.init)?;
                 self.visit_stmt(parser, s.body)?;
                 self.visit_expr(parser, s.value)?;
             }
-            js_ast::StmtData::SForOf(s) => {
+            bun_ast::StmtData::SForOf(s) => {
                 self.visit_stmt(parser, s.init)?;
                 self.visit_stmt(parser, s.body)?;
                 self.visit_expr(parser, s.value)?;
             }
-            js_ast::StmtData::SFor(s) => {
+            bun_ast::StmtData::SFor(s) => {
                 if let Some(i) = s.init {
                     self.visit_stmt(parser, i)?;
                 }
@@ -444,7 +443,7 @@ impl TestAnalyzer {
 
                 self.visit_stmt(parser, s.body)?;
             }
-            js_ast::StmtData::SFunction(s) => {
+            bun_ast::StmtData::SFunction(s) => {
                 for arg in s.func.args {
                     if let Some(def) = arg.default {
                         self.visit_expr(parser, def)?;
@@ -455,21 +454,21 @@ impl TestAnalyzer {
                     self.visit_stmt(parser, *s2)?;
                 }
             }
-            js_ast::StmtData::SIf(s) => {
+            bun_ast::StmtData::SIf(s) => {
                 self.visit_expr(parser, s.test_)?;
                 self.visit_stmt(parser, s.yes)?;
                 if let Some(no) = s.no {
                     self.visit_stmt(parser, no)?;
                 }
             }
-            js_ast::StmtData::SLocal(s) => {
+            bun_ast::StmtData::SLocal(s) => {
                 for decl in s.decls.slice() {
                     if let Some(val) = decl.value {
                         self.visit_expr(parser, val)?;
                     }
                 }
             }
-            js_ast::StmtData::SSwitch(s) => {
+            bun_ast::StmtData::SSwitch(s) => {
                 self.visit_expr(parser, s.test_)?;
                 for c in s.cases {
                     for t in c.body {
@@ -480,10 +479,10 @@ impl TestAnalyzer {
                     }
                 }
             }
-            js_ast::StmtData::SThrow(s) => {
+            bun_ast::StmtData::SThrow(s) => {
                 self.visit_expr(parser, s.value)?;
             }
-            js_ast::StmtData::STry(s) => {
+            bun_ast::StmtData::STry(s) => {
                 for s2 in s.body {
                     self.visit_stmt(parser, *s2)?;
                 }
@@ -498,12 +497,12 @@ impl TestAnalyzer {
                     }
                 }
             }
-            js_ast::StmtData::SWhile(s) => {
+            bun_ast::StmtData::SWhile(s) => {
                 self.visit_expr(parser, s.test_)?;
                 self.visit_stmt(parser, s.body)?;
             }
 
-            js_ast::StmtData::SImport(import) => {
+            bun_ast::StmtData::SImport(import) => {
                 if parser.import_records.as_slice()[import.import_record_index as usize]
                     .path
                     .text
@@ -529,7 +528,7 @@ impl TestAnalyzer {
     pub fn visit_parts(
         &mut self,
         parser: &mut js_parser::TSXParser,
-        parts: &[js_ast::Part],
+        parts: &[bun_ast::Part],
     ) -> Result<(), bun_core::Error> {
         let it = parser.jest.it;
         let test = parser.jest.test;
@@ -556,10 +555,10 @@ impl TestAnalyzer {
 pub extern "C" fn getTests(opts_array: u64) -> u64 {
     // PERF(port): was arena bulk-free — profile in Phase B
     let arena = Arena::new();
-    let mut log_ = logger::Log::init(&arena);
+    let mut log_ = bun_ast::Log::init(&arena);
     let mut reader = ApiReader::init(Uint8Array::from_js(opts_array), &arena);
     let opts = api::GetTestsRequest::decode(&mut reader).expect("oom");
-    let mut code = logger::Source::init_path_string(
+    let mut code = bun_ast::Source::init_path_string(
         if !opts.path.is_empty() { &opts.path } else { b"my-test-file.test.tsx" },
         &opts.contents,
     );
@@ -626,7 +625,7 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
     // PERF(port): was arena bulk-free — profile in Phase B
     let arena = Arena::new();
     // SAFETY: wasm32 single-threaded; exclusive access to LOG.
-    unsafe { LOG.write(logger::Log::init(&arena)) };
+    unsafe { LOG.write(bun_ast::Log::init(&arena)) };
     let log = unsafe { LOG.assume_init_mut() };
 
     let mut reader = ApiReader::init(Uint8Array::from_js(opts_array), &arena);
@@ -642,7 +641,7 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
         _ => options_mod::Loader::File,
     };
     let path = opts.path.unwrap_or_else(|| loader.stdin_name());
-    let mut code = logger::Source::init_path_string(path, &opts.contents);
+    let mut code = bun_ast::Source::init_path_string(path, &opts.contents);
     code.contents_is_recycled = true;
 
     // DEFINE initialized in `init()`; wasm32 single-threaded so this is the
@@ -668,12 +667,12 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
         if matches!(result, js_parser::ParseResult::Ast(_)) && log.errors == 0 {
             let js_parser::ParseResult::Ast(ast) = &result else { unreachable!() };
             let symbols =
-                js_ast::Symbol::NestedList::init(core::slice::from_ref(&ast.symbols));
+                bun_ast::Symbol::NestedList::init(core::slice::from_ref(&ast.symbols));
 
             let _ = js_printer::print_ast(
                 writer,
                 ast,
-                js_ast::Symbol::Map::init_list(symbols),
+                bun_ast::Symbol::Map::init_list(symbols),
                 &code,
                 false,
                 Default::default(),
@@ -725,7 +724,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
     // PERF(port): was arena bulk-free — profile in Phase B
     let arena = Arena::new();
     // SAFETY: wasm32 single-threaded; exclusive access to LOG.
-    unsafe { LOG.write(logger::Log::init(&arena)) };
+    unsafe { LOG.write(bun_ast::Log::init(&arena)) };
     let log = unsafe { LOG.assume_init_mut() };
 
     let mut reader = ApiReader::init(Uint8Array::from_js(opts_array), &arena);
@@ -741,7 +740,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         _ => options_mod::Loader::File,
     };
     let path = opts.path.unwrap_or_else(|| loader.stdin_name());
-    let mut code = logger::Source::init_path_string(path, &opts.contents);
+    let mut code = bun_ast::Source::init_path_string(path, &opts.contents);
     code.contents_is_recycled = true;
 
     // DEFINE initialized in `init()`; wasm32 single-threaded so this is the
@@ -769,7 +768,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         if let js_parser::ParseResult::Ast(ast) = &result {
             scanned_imports.reserve_exact(ast.import_records.len());
             for import_record in ast.import_records.slice() {
-                if import_record.kind == bun_options_types::ImportKind::Internal {
+                if import_record.kind == bun_ast::ImportKind::Internal {
                     continue;
                 }
                 scanned_imports.push(api::ScannedImport {

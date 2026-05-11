@@ -1,7 +1,6 @@
 use bun_sys::{Stat, Timespec, S};
 // Zig: `std.hash.XxHash64` (streaming init/update/digest).
 use bun_hash::XxHash64Streaming as XxHash64;
-// MOVE_DOWN(b0): wtf::write_http_date relocated from bun_jsc → bun_http_types::ETag (T3)
 use bun_http_types::ETag::wtf;
 
 pub struct StatHash {

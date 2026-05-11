@@ -11,7 +11,6 @@ use bun_collections::StringArrayHashMap;
 // PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; `Batch`/`Task`
 // are free types in that module, not associated types on the struct.
 use bun_threading::thread_pool as ThreadPoolLib;
-use bun_logger as Logger;
 use bun_string::strings;
 use bun_string::String as BunString;
 use bun_paths as path;
@@ -399,13 +398,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     }
 
                     let source_index = chunk.entry_point.source_index();
-                    let file: &Logger::Source =
+                    let file: &bun_ast::Source =
                         &c.parse_graph().input_files.items_source()[source_index as usize];
                     write!(&mut msg, "    from input {}\n", bstr::BStr::new(&file.path.pretty))?;
                 }
             }
 
-            c.log.add_error(None, Logger::Loc::EMPTY, msg);
+            c.log.add_error(None, bun_ast::Loc::EMPTY, msg);
 
             // PORT NOTE: Zig `inline for` over a homogeneous tuple → const array + plain for.
             for (name, template) in [
@@ -422,9 +421,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     name,
                     bstr::BStr::new(template),
                 )?;
-                c.log.add_msg(Logger::Msg {
-                    kind: Logger::Kind::Note,
-                    data: Logger::Data {
+                c.log.add_msg(bun_ast::Msg {
+                    kind: bun_ast::Kind::Note,
+                    data: bun_ast::Data {
                         text: Cow::Owned(text),
                         ..Default::default()
                     },
@@ -540,7 +539,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     if !c.resolver().opts.compile && more_than_one_output && !c.resolver().opts.supports_multiple_outputs {
         c.log.add_error(
             None,
-            Logger::Loc::EMPTY,
+            bun_ast::Loc::EMPTY,
             b"cannot write multiple output files without an output directory",
         );
         return Err(bun_core::err!("MultipleOutputFilesWithoutOutputDir"));
@@ -888,7 +887,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // logger OOM-only (Zig: catch unreachable)
                             let _ = c.log.add_error_fmt(
                                 None,
-                                Logger::Loc::EMPTY,
+                                bun_ast::Loc::EMPTY,
                                 format_args!(
                                     "Failed to generate bytecode for {}",
                                     bstr::BStr::new(&chunk.final_rel_path)

@@ -8,14 +8,15 @@ use std::fmt::Write as _;
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 
-use bun_logger::{Loc, Log, Source};
+use bun_ast::{Loc, Log, Source};
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
-use bun_js_parser::ast::{
-    self as js_ast, ast::NamedExports, symbol, Binding, Expr, Stmt, B, E, G, S,
+use bun_ast::{
+    self as js_ast, symbol, Binding, Expr, Stmt, B, E, G, S,
 };
-use bun_js_parser::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
-use bun_options_types::{ImportKind, ImportRecordFlags};
+use bun_ast::ast_result::NamedExports;
+use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
+use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_resolver as _resolver;
 
 use crate::bundle_v2::BundleV2;
@@ -30,10 +31,7 @@ pub use crate::ThreadPool;
 
 pub use crate::parse_task::ParseTask;
 pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use bun_js_parser::ast::{Index, Ref};
-// TODO(port): the Zig re-exports `DeferredBatchTask`, `ThreadPool`, `ParseTask`, `Ref`, `Index`
-// publicly from this module; verify whether downstream callers depend on these being re-exported
-// here vs. importing from bundle_v2 directly. Phase B may delete the re-exports.
+use bun_ast::{Index, Ref};
 
 pub struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
@@ -178,10 +176,10 @@ fn task_callback(
         loader: Loader::Js,
         log: core::mem::take(log),
         use_directive: UseDirective::None,
-        side_effects: _resolver::SideEffects::NoSideEffectsPureData,
-        unique_key_for_additional_file: js_ast::StoreStr::EMPTY,
+        side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
+        unique_key_for_additional_file: bun_ast::StoreStr::EMPTY,
         content_hash_for_additional_file: 0,
-        package_name: js_ast::StoreStr::EMPTY,
+        package_name: bun_ast::StoreStr::EMPTY,
     })
 }
 
@@ -215,7 +213,7 @@ fn generate_client_entry_wrapper(
     // `add_import_record` stores the slice raw in the `ImportRecord`; `data.path`
     // outlives the bundle pass (owned by the heap-allocated task). Route through
     // `StoreStr` so the lifetime erasure goes through one audited unsafe.
-    let path = js_ast::StoreStr::new(&data.path[..]);
+    let path = bun_ast::StoreStr::new(&data.path[..]);
     let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
@@ -249,9 +247,9 @@ fn generate_client_reference_proxy(
     // `add_import_stmt` stores the slices raw in `ImportRecord`/`ClauseItem`s;
     // the framework config outlives the bundle pass. Route through `StoreStr`
     // so the lifetime erasure goes through one audited unsafe.
-    let runtime_import = js_ast::StoreStr::new(&server_components.server_runtime_import[..]);
+    let runtime_import = bun_ast::StoreStr::new(&server_components.server_runtime_import[..]);
     let register_ref =
-        js_ast::StoreStr::new(&server_components.server_register_client_reference[..]);
+        bun_ast::StoreStr::new(&server_components.server_register_client_reference[..]);
     let register_client_reference =
         b.add_import_stmt(runtime_import.slice(), [register_ref.slice()])?[0];
 
@@ -325,7 +323,7 @@ fn generate_client_reference_proxy(
                 ref_: error_ref,
                 ..Default::default()
             }),
-            args: js_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
+            args: bun_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
             close_parens_loc: Loc::EMPTY,
             ..Default::default()
         });
@@ -342,7 +340,7 @@ fn generate_client_reference_proxy(
             args: ExprNodeList::from_slice(&[
                 b.new_expr(E::Arrow {
                     body: G::FnBody {
-                        stmts: js_ast::StoreSlice::new_mut(arrow_body_stmts),
+                        stmts: bun_ast::StoreSlice::new_mut(arrow_body_stmts),
                         loc: Loc::EMPTY,
                     },
                     ..Default::default()

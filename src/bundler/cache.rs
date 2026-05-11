@@ -2,9 +2,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena as Bump;
 use bun_core::{self, feature_flags, Global, Output, ZStr};
-use bun_interchange::json_parser;
-use bun_js_parser::{self as js_parser, ast as js_ast};
-use bun_logger as logger;
+use bun_parsers::json_parser;
+use bun_js_parser as js_parser;
+use bun_ast as js_ast;
 use bun_resolver::fs as fs_mod;
 use bun_string::{strings, MutableString};
 use bun_sys::{self, Fd};
@@ -24,7 +24,7 @@ use js_parser::defines::Define;
 // the canonical
 // struct stores them type-erased as `*mut ()`.
 // ══════════════════════════════════════════════════════════════════════════
-pub use bun_js_parser::RuntimeTranspilerCache;
+use bun_ast::RuntimeTranspilerCache;
 
 /// Bump when the cache wire format or parser output changes. Mirrors
 /// `expected_version` in src/jsc/RuntimeTranspilerCache.zig.
@@ -522,14 +522,14 @@ pub struct CssResult {
 }
 
 impl Css {
-    pub fn parse(&mut self, _log: &mut logger::Log, _source: logger::Source) -> Result<CssResult, bun_core::Error> {
+    pub fn parse(&mut self, _log: &mut bun_ast::Log, _source: bun_ast::Source) -> Result<CssResult, bun_core::Error> {
         Global::notimpl();
     }
 }
 
 pub struct JavaScript {}
 
-pub type JavaScriptResult = js_ast::Result;
+pub type JavaScriptResult = js_parser::Result;
 
 impl JavaScript {
     pub fn init() -> JavaScript {
@@ -545,10 +545,10 @@ impl JavaScript {
         bump: &'a Bump,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
-        log: &mut logger::Log,
-        source: &'a logger::Source,
-    ) -> Result<Option<js_ast::Result>, bun_core::Error> {
-        let mut temp_log = logger::Log::init();
+        log: &mut bun_ast::Log,
+        source: &'a bun_ast::Source,
+    ) -> Result<Option<js_parser::Result>, bun_core::Error> {
+        let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
@@ -570,7 +570,7 @@ impl JavaScript {
                 // TODO(port): thread the failing token range through the
                 // `Err` payload once `_parse` returns a `(Error, Range)` pair.
                 if temp_log.errors == 0 {
-                    log.add_range_error(Some(source), logger::Range::None, err.name().as_bytes());
+                    log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Ok(None);
@@ -587,14 +587,14 @@ impl JavaScript {
         scan_pass_result: &mut js_parser::ScanPassResult,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
-        log: &mut logger::Log,
-        source: &'a logger::Source,
+        log: &mut bun_ast::Log,
+        source: &'a bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
         if strings::trim(source.contents(), b"\n\t\r ").is_empty() {
             return Ok(());
         }
 
-        let mut temp_log = logger::Log::init();
+        let mut temp_log = bun_ast::Log::init();
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source)`;
         // scopeguard cannot capture &mut temp_log while it's used below. Explicit calls at each exit.
 
@@ -614,7 +614,7 @@ impl JavaScript {
 }
 
 // `cache::Json` moved down into `bun_resolver::tsconfig_json::JsonCache` —
-// the resolver already depends on `bun_interchange::json_parser`, so the
+// the resolver already depends on `bun_parsers::json_parser`, so the
 // vtable seam was redundant.
 pub use bun_resolver::tsconfig_json::{JsonCache as Json, JsonMode};
 

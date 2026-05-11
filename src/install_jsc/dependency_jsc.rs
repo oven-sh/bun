@@ -111,13 +111,13 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 /// Local helper for `log.toJS(global, msg)` — thin re-export now that
 /// `bun_logger_jsc` is typed against the real `bun_jsc` surface.
 #[inline]
-pub(crate) fn log_to_js(log: &bun_logger::Log, global: &JSGlobalObject, msg: &[u8]) -> JsResult<JSValue> {
-    bun_logger_jsc::log_to_js(log, global, msg)
+pub(crate) fn log_to_js(log: &bun_ast::Log, global: &JSGlobalObject, msg: &[u8]) -> JsResult<JSValue> {
+    bun_ast_jsc::log_to_js(log, global, msg)
 }
 
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_logger::Log;
+    use bun_ast::Log;
     use bun_semver::SlicedString;
     use bun_install::dependency;
 

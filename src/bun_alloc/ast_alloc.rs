@@ -24,7 +24,7 @@
 //! (both live in arena slots), but if one *did*, the no-op `deallocate` keeps
 //! the bitwise copy sound.
 //!
-//! Placed in `bun_alloc` (not `js_parser`) so that `bun_logger::js_ast::
+//! Placed in `bun_alloc` (not `js_parser`) so that `bun_ast::
 //! ExprNodeList` and `bun_collections::VecExt` — both below `js_parser` in the
 //! crate graph — can name `Vec<T, AstAlloc>`.
 
@@ -37,10 +37,10 @@ use crate::mimalloc;
 thread_local! {
     /// Raw `mi_heap_t*` of the active `ASTMemoryAllocator`'s `MimallocArena`,
     /// or null when no AST scope is entered. Set/cleared by
-    /// `js_parser::ast::ASTMemoryAllocator::{push,pop}` and
+    /// `bun_ast::ASTMemoryAllocator::{push,pop}` and
     /// `ASTMemoryAllocator::Scope::{enter,exit}` (alongside the existing
     /// `Stmt/Expr.Data.Store.MEMORY_ALLOCATOR` and
-    /// `bun_logger::js_ast::data_store_override` thread-locals).
+    /// `bun_ast::data_store_override` thread-locals).
     static AST_HEAP: Cell<*mut mimalloc::Heap> = const { Cell::new(core::ptr::null_mut()) };
 }
 
@@ -58,25 +58,16 @@ pub fn thread_heap() -> *mut mimalloc::Heap {
     AST_HEAP.with(|c| c.get())
 }
 
-/// RAII guard that forces enclosed [`AstAlloc`] allocations onto the **global**
-/// mimalloc heap (process-lifetime) regardless of any active AST arena.
+/// RAII guard: for its lifetime, [`AstAlloc`] allocates on **global** mimalloc
+/// instead of the per-parse [`thread_heap`]. Use when constructing
+/// `AstVec`/`StoreRef` data that must outlive the current parse arena
+/// (e.g. `Expr::deep_clone` for `WorkspacePackageJSONCache`). Without this,
+/// the next `ASTMemoryAllocator::reset()` frees buffers the cache still holds.
 ///
-/// `new()` saves [`thread_heap`] and nulls it; `Drop` restores. Use when
-/// constructing `AstVec`s that must outlive every `MimallocArena::reset()` /
-/// `store_ast_alloc_heap::reset()` — e.g. the `--define` JSON
-/// `From<logger::js_ast::expr::Data>` deep-walk and
-/// `WorkspacePackageJSONCache`'s `Expr::deep_clone`, both of which build
-/// process-lifetime `E::Object`/`E::Array` whose embedded `Vec<Property,
-/// AstAlloc>` would otherwise land in an active side-arena and be
-/// `mi_heap_destroy`d on the next reset (the cross-reset UAF documented in
-/// `js_parser::ast::store_ast_alloc_heap`).
-///
-/// Nests trivially (inner guard saves null, restores null), so it is safe to
-/// hold one inside a recursive walk.
-#[must_use = "AST_HEAP is restored on drop; bind to a named local"]
-pub struct GlobalHeapScope(*mut mimalloc::Heap);
-
-impl GlobalHeapScope {
+/// Restores the prior heap on drop, so it nests correctly inside an
+/// `ASTMemoryAllocator` scope.
+pub struct DetachAstHeap(*mut mimalloc::Heap);
+impl DetachAstHeap {
     #[inline]
     pub fn new() -> Self {
         let prev = thread_heap();
@@ -84,15 +75,7 @@ impl GlobalHeapScope {
         Self(prev)
     }
 }
-
-impl Default for GlobalHeapScope {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Drop for GlobalHeapScope {
+impl Drop for DetachAstHeap {
     #[inline]
     fn drop(&mut self) {
         set_thread_heap(self.0);

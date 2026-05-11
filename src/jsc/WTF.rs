@@ -21,7 +21,6 @@ pub fn number_of_processor_cores() -> u32 {
     u32::try_from(n.max(1)).expect("int cast")
 }
 
-// MOVE_DOWN(b0): canonical lives in bun_alloc so bun_threading (T2) can call it
 // without a T6 dep. Re-exported here to keep the original Zig namespace shape.
 pub use bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread;
 
@@ -52,7 +51,6 @@ pub use bun_core::wtf::{parse_es5_date, parse_es5_date_raw, InvalidDate};
 /// Back-compat alias for the Zig namespace shape.
 pub type ParseDateError = bun_core::wtf::InvalidDate;
 
-// MOVE_DOWN(b0): canonical lives in bun_http_types (T3) so bun_resolver can call
 // it without a bun_jsc dep. Re-exported here to keep the Zig namespace shape
 // (src/jsc/WTF.zig:52).
 pub use bun_http_types::ETag::wtf::write_http_date;

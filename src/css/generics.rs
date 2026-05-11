@@ -185,7 +185,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Box<T> {
     }
 }
 
-impl<'bump> DeepClone<'bump> for bun_logger::Loc {
+impl<'bump> DeepClone<'bump> for bun_ast::Loc {
     #[inline]
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
         *self
@@ -349,7 +349,7 @@ impl CssEql for VendorPrefix {
     }
 }
 
-impl CssEql for bun_logger::Loc {
+impl CssEql for bun_ast::Loc {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
         self.start == other.start
@@ -906,7 +906,7 @@ impl CssHash for VendorPrefix {
     }
 }
 
-impl CssHash for bun_logger::Loc {
+impl CssHash for bun_ast::Loc {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
         // Zig `implementHash` doesn't reach `Loc` (callers skip it), but

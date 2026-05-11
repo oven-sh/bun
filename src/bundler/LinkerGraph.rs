@@ -2,24 +2,24 @@ use crate::mal_prelude::*;
 use bun_alloc::Arena;
 use bun_collections::{AutoBitSet, VecExt, DynamicBitSetUnmanaged as BitSet, MultiArrayList};
 use bun_js_parser as js_ast;
-use bun_js_parser::ast::base::RefTag;
-use bun_js_parser::ast::bundled_ast;
-use bun_js_parser::ast::server_component_boundary;
-use bun_js_parser::ast::symbol;
-use bun_js_parser::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
-use bun_options_types::{ImportKind, ImportRecord};
+use bun_ast::base::RefTag;
+use crate::bundled_ast;
+use bun_ast::server_component_boundary;
+use bun_ast::symbol;
+use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
+use bun_ast::{ImportKind, ImportRecord};
 use bun_string::PathString;
 
 use crate::IndexStringMap::IndexStringMap;
 use crate::entry_point::EntryPointColumns as _;
 use crate::{
     entry_point, import_record, index, js_meta, part, EntryPoint, ImportTracker, Index, JSAst,
-    JSMeta, Logger, Part, Ref, ResolvedExports, TopLevelSymbolToParts, UseDirective,
+    JSMeta, Part, Ref, ResolvedExports, TopLevelSymbolToParts, UseDirective,
 };
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
 // PORT NOTE: `BundledAstColumns` is emitted by ``
 // on `BundledAst`; un-gating here is paired with that derive landing in
-// `bun_js_parser::ast::bundled_ast` (same dependency `scanImportsAndExports.rs`
+// `crate::bundled_ast` (same dependency `scanImportsAndExports.rs`
 // already imports as `BundledAstField`).
 bun_core::declare_scope!(LinkerGraph, visible);
 
@@ -65,9 +65,9 @@ pub struct LinkerGraph {
     pub is_scb_bitset: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
-    // const_values: js_ast::Ast::ConstValuesMap,
+    // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
-    pub ts_enums: js_ast::ast::ast::TsEnumsMap,
+    pub ts_enums: bun_ast::ast_result::TsEnumsMap,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -103,7 +103,7 @@ impl LinkerGraph {
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
-            ts_enums: js_ast::ast::ast::TsEnumsMap::default(),
+            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
         })
     }
 }
@@ -124,7 +124,7 @@ impl Default for LinkerGraph {
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
-            ts_enums: js_ast::ast::ast::TsEnumsMap::default(),
+            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
         }
     }
 }
@@ -149,7 +149,7 @@ pub fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]
 
 pub fn generate_new_symbol(
     symbols: &mut symbol::Map,
-    module_scopes: &mut [js_ast::ast::Scope],
+    module_scopes: &mut [bun_ast::Scope],
     source_index: u32,
     kind: symbol::Kind,
     original_name: &[u8],
@@ -171,7 +171,7 @@ pub fn generate_new_symbol(
         // PORT NOTE: `Symbol.original_name` is a `StoreStr` —
         // arena-owned slice whose lifetime is erased (matches the Zig
         // `[]const u8`); caller guarantees it outlives the symbol table.
-        original_name: js_ast::StoreStr::new(original_name),
+        original_name: bun_ast::StoreStr::new(original_name),
         ..Default::default()
     });
 
@@ -265,7 +265,7 @@ pub fn generate_symbol_import_and_use(
     ref_: Ref,
     use_count: u32,
     // PORT NOTE: callers are split between `crate::Index` (options_types)
-    // and the structurally identical `js_ast::Index` until the two newtypes
+    // and the structurally identical `bun_ast::Index` until the two newtypes
     // unify (Phase B-3). Accept either via `Into` and normalize once.
     source_index_to_import_from: impl Into<Index>,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -323,14 +323,16 @@ pub fn generate_symbol_import_and_use(
         ref_,
     );
     let dependencies = &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
-    let new_dependencies = dependencies.writable_slice(part_ids.len());
+    // SAFETY: every element of `new_dependencies` is overwritten in the
+    // zip-loop immediately below before any read/drop.
+    let new_dependencies = unsafe { dependencies.writable_slice(part_ids.len()) };
     debug_assert_eq!(part_ids.len(), new_dependencies.len());
     for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
         *dependency = Dependency {
             // PORT NOTE: `Dependency.source_index` is the structurally
-            // identical `bun_js_parser::Index`; convert by value until the
+            // identical `bun_ast::Index`; convert by value until the
             // two `Index` newtypes unify (Phase B-3).
-            source_index: js_ast::Index::init(source_index_to_import_from.get()),
+            source_index: bun_ast::Index::init(source_index_to_import_from.get()),
             part_index: *part_id, // @truncate (already u32)
         };
     }
@@ -467,7 +469,7 @@ impl LinkerGraph {
     pub fn load(
         &mut self,
         entry_points: &[Index],
-        sources: &[Logger::Source],
+        sources: &[bun_ast::Source],
         server_component_boundaries: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,

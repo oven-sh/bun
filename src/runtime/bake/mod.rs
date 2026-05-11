@@ -207,7 +207,7 @@ impl Framework {
     pub fn init_transpiler<'a>(
         &mut self,
         arena: &'a bun_alloc::Arena,
-        log: &mut bun_logger::Log,
+        log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
@@ -216,7 +216,7 @@ impl Framework {
         use bun_options_types::schema as bun_schema;
 
         let mut ast_memory_allocator =
-            bun_js_parser::ASTMemoryAllocator::new_without_stack(arena);
+            bun_ast::ASTMemoryAllocator::new_without_stack(arena);
         let ast_scope = ast_memory_allocator.enter();
         let _guard = scopeguard::guard(ast_scope, |s| s.exit());
 
@@ -228,8 +228,8 @@ impl Framework {
         )?);
 
         out.options.target = match renderer {
-            Graph::Client => bun_bundler::options::Target::Browser,
-            Graph::Server | Graph::Ssr => bun_bundler::options::Target::Bun,
+            Graph::Client => bun_ast::Target::Browser,
+            Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
         };
         out.options.public_path = match renderer {
             Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
@@ -437,7 +437,7 @@ impl Framework {
             return;
         }
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        match r.resolve(top_level_dir, path, bun_options_types::ImportKind::Stmt) {
+        match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
             Ok(mut result) => {
                 let p = result.path().expect("just resolved");
                 *path = Cow::Owned(p.text.to_vec());
@@ -462,12 +462,12 @@ impl Framework {
         "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     /// `bake.Framework.addReactInstallCommandNote` (bake.zig:375).
-    pub fn add_react_install_command_note(log: &mut bun_logger::Log) {
-        log.add_msg(bun_logger::Msg {
-            kind: bun_logger::Kind::Note,
-            data: bun_logger::range_data(
+    pub fn add_react_install_command_note(log: &mut bun_ast::Log) {
+        log.add_msg(bun_ast::Msg {
+            kind: bun_ast::Kind::Note,
+            data: bun_ast::range_data(
                 None,
-                bun_logger::Range::NONE,
+                bun_ast::Range::NONE,
                 concat!(
                     "Install the built in react integration with \"",
                     "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental",

@@ -486,7 +486,7 @@ impl WebWorker {
         // SAFETY: `parent` is the calling thread's live VM (BACKREF).
         let parent_ref = unsafe { &mut *parent };
         let prev_log = parent_ref.transpiler.log;
-        let mut temp_log = bun_logger::Log::default();
+        let mut temp_log = bun_ast::Log::default();
         parent_ref.transpiler.set_log(&raw mut temp_log);
         // RAII: Zig's `defer parent.transpiler.setLog(prev_log)` +
         // `defer temp_log.deinit()` — restored on every return path.
@@ -1048,7 +1048,7 @@ impl WebWorker {
                     // to `err`, which is dropped immediately after).
                     vm_log.add_error(
                         None,
-                        bun_logger::Loc::EMPTY,
+                        bun_ast::Loc::EMPTY,
                         err.slice().to_vec(),
                     );
                 }
@@ -1485,7 +1485,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
     error_message: &mut BunString,
-    log: &mut bun_logger::Log,
+    log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
     // SAFETY: per fn contract; read-only field.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph } {

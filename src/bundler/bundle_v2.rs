@@ -11,7 +11,6 @@ use core::ptr::NonNull;
 
 use bun_collections::{ArrayHashMap, VecExt, StringHashMap};
 use bun_core::ThreadLock;
-use bun_logger as Logger;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
 // (the full versions); re-exported here so the crate-root `lib.rs` modules and
@@ -46,12 +45,13 @@ use crate::parse_task::{self, ResultValue as ParseResultValue};
 use crate::transpiler::Transpiler;
 use crate::ungate_support::{EventLoop, UseDirective};
 pub use crate::DeferredBatchTask::DeferredBatchTask;
-use crate::Graph::{Graph, InputFileColumns, SideEffects};
+use crate::Graph::{Graph, InputFileColumns};
+use bun_ast::SideEffects;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::{Index, IndexInt, LinkerContext};
 
 // ── re-exports for the B-1 inline `pub mod bundle_v2 { … }` shim surface ──
-pub use crate::options::Loader;
+pub(crate) use bun_ast::Loader;
 pub use crate::ParseTask;
 /// `BundleThread` (BundleThread.zig) — owns the worker pool + completion
 /// queue for `BundleV2`. Re-exported so callers reference `bundle_v2::BundleThread`.
@@ -308,13 +308,12 @@ use crate::transpiler::Transpiler;
 use crate::ungate_support::bun_str::strings;
 use bun_alloc::{Arena as ThreadLocalArena, AllocError};
 use bun_collections::{VecExt, MultiArrayList, ArrayHashMap, StringHashMap, StringArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged};
-use bun_logger as Logger;
-use bun_js_parser::{self as js_ast, Ref, Symbol, Stmt, Expr, E, S, G, B, Binding, Scope, Part, Dependency};
+use bun_ast::{self as js_ast, Ref, Symbol, Stmt, Expr, E, S, G, B, Binding, Scope, Part, Dependency};
 use crate::Index;
 use crate::ungate_support::JSAst;
-use bun_js_parser::ServerComponentBoundary;
-use bun_js_parser::ast::server_component_boundary;
-use bun_options_types::{ImportRecord, ImportKind};
+use bun_ast::ServerComponentBoundary;
+use bun_ast::server_component_boundary;
+use bun_ast::{ImportRecord, ImportKind};
 use crate::ungate_support::bun_fs as Fs;
 use crate::ungate_support::{bun_fs, bun_css, import_record};
 use bun_resolver::fs::PathResolverExt as _;
@@ -513,37 +512,37 @@ pub mod bake_types {
     }
 
     /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.
-    /// `Logger::Source` is not `const`-constructible (owns a `fs::Path`), so these
+    /// `bun_ast::Source` is not `const`-constructible (owns a `fs::Path`), so these
     /// are lazy statics. PERF(port): was `pub const` — verify in Phase B.
-    pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source> =
+    pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
         std::sync::LazyLock::new(|| {
-            let mut s = bun_logger::Source::default();
+            let mut s = bun_ast::Source::default();
             // Port of `Fs.Path.initForKitBuiltIn("bun", "bake/server")` (fs.zig:1992) —
-            // inlined because `bun_logger::fs::Path` is the local TYPE_ONLY stub and
+            // inlined because `bun_paths::fs::Path<'static>` is the local TYPE_ONLY stub and
             // does not yet expose that constructor.
-            s.path = bun_logger::fs::Path {
+            s.path = bun_paths::fs::Path {
                 pretty: b"bun:bake/server",
                 text: b"_bun/bake/server",
                 namespace: b"bun",
-                name: bun_logger::fs::PathName::init(b"bake/server"),
+                name: bun_paths::fs::PathName::init(b"bake/server"),
                 is_disabled: false,
                 is_symlink: true,
             };
-            s.index = bun_logger::Index(crate::Index::BAKE_SERVER_DATA.get());
+            s.index = bun_ast::Index(crate::Index::BAKE_SERVER_DATA.get());
             s
         });
-    pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source> =
+    pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
         std::sync::LazyLock::new(|| {
-            let mut s = bun_logger::Source::default();
-            s.path = bun_logger::fs::Path {
+            let mut s = bun_ast::Source::default();
+            s.path = bun_paths::fs::Path {
                 pretty: b"bun:bake/client",
                 text: b"_bun/bake/client",
                 namespace: b"bun",
-                name: bun_logger::fs::PathName::init(b"bake/client"),
+                name: bun_paths::fs::PathName::init(b"bake/client"),
                 is_disabled: false,
                 is_symlink: true,
             };
-            s.index = bun_logger::Index(crate::Index::BAKE_CLIENT_DATA.get());
+            s.index = bun_ast::Index(crate::Index::BAKE_CLIENT_DATA.get());
             s
         });
     /// Alias kept for callers that referenced the DevServer constant name directly.
@@ -672,7 +671,7 @@ pub mod api {
     /// `api::JSBundler::Load` / `api::JSBundler::Resolve::MiniImportRecord`.
     #[allow(non_snake_case)]
     pub mod JSBundler {
-        use bun_options_types::ImportKind;
+        use bun_ast::ImportKind;
         use bun_resolver::fs::PathResolverExt as _;
         use bun_string::String as BunString;
         use crate::options::{Loader, Target};
@@ -1039,7 +1038,7 @@ pub mod api {
             pub specifier: Box<[u8]>,
             pub importer_source_index: u32,
             pub import_record_index: u32,
-            pub range: bun_logger::Range,
+            pub range: bun_ast::Range,
             pub original_target: Target,
         }
 
@@ -1053,7 +1052,7 @@ pub mod api {
         /// Mirrors `JSBundler.Resolve.Value` (`union(enum)`).
         #[derive(Default)]
         pub enum ResolveValue {
-            Err(bun_logger::Msg),
+            Err(bun_ast::Msg),
             Success(ResolveSuccess),
             NoMatch,
             #[default]
@@ -1149,7 +1148,7 @@ pub mod api {
         /// Mirrors `JSBundler.Load.Value` (`union(enum)`).
         #[derive(Default)]
         pub enum LoadValue {
-            Err(bun_logger::Msg),
+            Err(bun_ast::Msg),
             Success(LoadSuccess),
             #[default]
             Pending,
@@ -1166,7 +1165,7 @@ pub mod api {
         /// Mirrors `JSBundler.Load` (zig:1369).
         pub struct Load {
             pub bv2: *mut BundleV2<'static>,
-            pub source_index: bun_js_parser::Index,
+            pub source_index: bun_ast::Index,
             pub default_loader: Loader,
             pub path: Box<[u8]>,
             pub namespace: Box<[u8]>,
@@ -1291,7 +1290,7 @@ pub mod saved_file {
 }
 
 // ── crate-root re-exports for forward-refs left by move-out ───────────────
-pub use crate::cache::RuntimeTranspilerCache;
+pub(crate) use bun_ast::RuntimeTranspilerCache;
 pub use self::bake_types::{get_hmr_runtime, HmrRuntimeSide};
 /// `crate::bundle_v2::JSBundlerPlugin` — see BundleThread.rs.
 pub type JSBundlerPlugin = self::api::JSBundler::Plugin;
@@ -1454,7 +1453,7 @@ pub use crate::ungate_support::EventLoop;
 bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
 
 // DEDUP(D059): `generic_path_with_pretty_initialized` is canonically defined in
-// `crate::ungate_support`. After D090 the `Fs::Path` / `Logger::fs::Path`
+// `crate::ungate_support`. After D090 the `Fs::Path` / `bun_paths::fs::Path<'static>`
 // distinction is purely a `'static` alias, so the in-module caller passes
 // through directly.
 
@@ -1476,23 +1475,13 @@ pub(crate) unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
     // SAFETY: upheld by caller per fn contract.
     unsafe { bun_ptr::detach_lifetime(s) }
 }
-// D090: `Fs::Path` / `Logger::fs::Path` / `bun_paths::fs::Path` are now the
-// same nominal type. These shims remain only as named lifetime-erasure /
-// clone helpers so call sites read unchanged; the ones that previously
-// performed `'a → 'static` erasure delegate to `Path::into_static`.
+/// Erase a resolver-borrowed `Path<'_>` to `'static`. Safe only because every
+/// caller passes paths whose backing bytes are arena-interned for the bundle's
+/// lifetime (see `interned_slice` / `dupe_alloc`).
 #[inline]
-pub(crate) fn fs_path_to_logger(p: Fs::Path<'_>) -> Logger::fs::Path {
-    // SAFETY: callers pass resolver/arena-interned paths (see `interned_slice`).
+pub(crate) fn path_as_static(p: Fs::Path<'_>) -> Fs::Path<'static> {
+    // SAFETY: caller contract above.
     unsafe { p.into_static() }
-}
-#[inline]
-#[allow(dead_code)]
-pub(crate) fn logger_path_to_paths(p: &Logger::fs::Path) -> bun_paths::fs::Path<'static> {
-    p.clone()
-}
-#[inline]
-pub(crate) fn fs_path_from_logger(p: &Logger::fs::Path) -> Fs::Path<'static> {
-    p.clone()
 }
 
 // Unified with the canonical definitions at the parent module level (this
@@ -1634,7 +1623,7 @@ impl<'a> BundleV2<'a> {
     /// By calling this function, it implies that the returned log *will* be
     /// written to. For DevServer, this allocates a per-file log for the sources
     /// it is called on. Function must be called on the bundle thread.
-    pub fn log_for_resolution_failures(&mut self, abs_path: &[u8], bake_graph: bake::Graph) -> &mut Logger::Log {
+    pub fn log_for_resolution_failures(&mut self, abs_path: &[u8], bake_graph: bake::Graph) -> &mut bun_ast::Log {
         if let Some(dev) = self.dev_server_handle() {
             // CYCLEBREAK GENUINE: DevServer → vtable. PERF(port): was inline switch.
             // SAFETY: owner is a live *mut DevServer per handle invariant.
@@ -2002,7 +1991,7 @@ impl<'a> BundleV2<'a> {
                     let Some(secondary_source_index) = path_to_source_index_map.get(secondary_path) else { continue };
                     import_record.source_index = Index::init(secondary_source_index);
                     // Keep path in sync for determinism, diagnostics, and dev tooling.
-                    import_record.path = logger_path_to_paths(&sources[secondary_source_index as usize].path);
+                    import_record.path = sources[secondary_source_index as usize].path.clone();
                 }
             }
         }
@@ -2046,8 +2035,8 @@ impl<'a> BundleV2<'a> {
                     };
                     // For virtual files, use the path text as-is (no relative path computation needed).
                     path_primary.pretty = self.arena().alloc_slice_copy(&path_primary.text);
-                    let mut tmp_source = Logger::Source {
-                        path: fs_path_to_logger(path_primary),
+                    let mut tmp_source = bun_ast::Source {
+                        path: path_as_static(path_primary),
                         contents: std::borrow::Cow::Borrowed(&b""[..]),
                         ..Default::default()
                     };
@@ -2102,19 +2091,19 @@ impl<'a> BundleV2<'a> {
                     }
 
                     let handles_import_errors;
-                    let source: Option<&Logger::Source>;
+                    let source: Option<&bun_ast::Source>;
                     // PORT NOTE: reshaped for borrowck — `log_for_resolution_failures` borrows
                     // `&mut self`; the returned log is backed by either a DevServer-owned slot or
                     // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
                     // so `self.graph.*` / `self.transpiler.*` reads below type-check.
                     // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
-                    let log: &mut Logger::Log = unsafe {
+                    let log: &mut bun_ast::Log = unsafe {
                         bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(&import_record.source_file, target.bake_graph()))
                     };
 
                     {
                         let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
-                        handles_import_errors = record.flags.contains(bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS);
+                        handles_import_errors = record.flags.contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
 
                         // Disable failing packages from being printed.
                         // This may cause broken code to write.
@@ -2125,7 +2114,7 @@ impl<'a> BundleV2<'a> {
                     source = Some(&self.graph.input_files.items_source()[import_record.importer_source_index as usize]);
 
                     if err == bun_core::err!("ModuleNotFound") {
-                        let add_error = Logger::Log::add_resolve_error_with_text_dupe;
+                        let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
                         let path_to_use = &import_record.specifier;
 
                         if !handles_import_errors && !self.transpiler.options.ignore_module_resolution_errors {
@@ -2219,8 +2208,8 @@ impl<'a> BundleV2<'a> {
                 break 'brk path.loader(unsafe { &(*transpiler).options.loaders }).unwrap_or(Loader::File);
                 // HTML is only allowed at the entry point.
             };
-            let mut tmp_source = Logger::Source {
-                path: fs_path_to_logger(path.dupe_alloc().expect("oom")),
+            let mut tmp_source = bun_ast::Source {
+                path: path_as_static(path.dupe_alloc().expect("oom")),
                 contents: std::borrow::Cow::Borrowed(&b""[..]),
                 ..Default::default()
             };
@@ -2301,10 +2290,10 @@ impl<'a> BundleV2<'a> {
         let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         self.graph.input_files.append(crate::Graph::InputFile {
-            source: Logger::Source {
-                path: fs_path_to_logger(path),
+            source: bun_ast::Source {
+                path: path_as_static(path),
                 contents: std::borrow::Cow::Borrowed(&b""[..]),
-                index: bun_logger::Index(source_index.get()),
+                index: bun_ast::Index(source_index.get()),
                 ..Default::default()
             },
             loader,
@@ -2333,7 +2322,7 @@ impl<'a> BundleV2<'a> {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
                 additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
+                self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = bun_ast::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
 
@@ -2402,10 +2391,10 @@ impl<'a> BundleV2<'a> {
 
         let side_effects = result.primary_side_effects_data;
         self.graph.input_files.append(crate::Graph::InputFile {
-            source: Logger::Source {
-                path: fs_path_to_logger(path.clone()),
+            source: bun_ast::Source {
+                path: path_as_static(path.clone()),
                 contents: std::borrow::Cow::Borrowed(&b""[..]),
-                index: bun_logger::Index(source_index.get()),
+                index: bun_ast::Index(source_index.get()),
                 ..Default::default()
             },
             loader,
@@ -2435,14 +2424,14 @@ impl<'a> BundleV2<'a> {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
                 additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
+                self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = bun_ast::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
 
             self.graph.pool().schedule(task);
         }
 
-        self.graph.entry_points.push(js_ast::Index::init(source_index.get()));
+        self.graph.entry_points.push(bun_ast::Index::init(source_index.get()));
 
         Ok(Some(source_index.get()))
     }
@@ -2812,7 +2801,7 @@ impl<'a> BundleV2<'a> {
         self.graph.input_files.append(crate::Graph::InputFile {
             source: rt.source,
             loader: Loader::Js,
-            side_effects: _resolver::SideEffects::NoSideEffectsPureData,
+            side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
             ..Default::default()
         })?;
 
@@ -2898,7 +2887,7 @@ impl<'a> BundleV2<'a> {
             .zip(scbs.items_source_index().iter())
             .zip(scbs.items_ssr_source_index().iter())
         {
-            if *r#use == js_ast::UseDirective::Client {
+            if *r#use == bun_ast::UseDirective::Client {
                 // TODO(@paperclover/bake): this file is being generated far too
                 // early. we don't know which exports are dead and which exports
                 // are live. Tree-shaking figures that out. However,
@@ -2947,7 +2936,7 @@ impl<'a> BundleV2<'a> {
                     server_manifest_props.push(G::Property {
                         key: Some(server.new_expr(E::EString { data: server_key_string.into(), ..Default::default() })),
                         value: Some(server.new_expr(E::Object {
-                            properties: js_ast::ast::g::PropertyList::from_owned_slice(Box::new([
+                            properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
                                 G::Property { key: Some(id_string), value: Some(client_path), ..Default::default() },
                                 G::Property { key: Some(name_string), value: Some(export_name), ..Default::default() },
                                 G::Property { key: Some(chunks_string), value: Some(empty_array), ..Default::default() },
@@ -2959,7 +2948,7 @@ impl<'a> BundleV2<'a> {
                     *client_item = G::Property {
                         key: Some(export_name),
                         value: Some(server.new_expr(E::Object {
-                            properties: js_ast::ast::g::PropertyList::from_owned_slice(Box::new([
+                            properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
                                 G::Property { key: Some(name_string), value: Some(export_name), ..Default::default() },
                                 G::Property { key: Some(specifier_string), value: Some(ssr_path), ..Default::default() },
                             ])),
@@ -2972,7 +2961,7 @@ impl<'a> BundleV2<'a> {
                 client_manifest_props.push(G::Property {
                     key: Some(client_path),
                     value: Some(server.new_expr(E::Object {
-                        properties: js_ast::ast::g::PropertyList::from_owned_slice(client_manifest_items),
+                        properties: bun_ast::g::PropertyList::from_owned_slice(client_manifest_items),
                         ..Default::default()
                     })),
                     ..Default::default()
@@ -2982,29 +2971,29 @@ impl<'a> BundleV2<'a> {
             }
         }
 
-        let server_manifest_ref = server.new_symbol(js_ast::ast::symbol::Kind::Other, b"serverManifest")?;
+        let server_manifest_ref = server.new_symbol(bun_ast::symbol::Kind::Other, b"serverManifest")?;
         let server_manifest_value = server.new_expr(E::Object {
-            properties: js_ast::ast::g::PropertyList::move_from_list(server_manifest_props),
+            properties: bun_ast::g::PropertyList::move_from_list(server_manifest_props),
             ..Default::default()
         });
         server.append_stmt(S::Local {
-            kind: js_ast::ast::s::Kind::KConst,
-            decls: js_ast::ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
-                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: server_manifest_ref }, Logger::Loc::EMPTY),
+            kind: bun_ast::s::Kind::KConst,
+            decls: bun_ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
+                binding: Binding::alloc(alloc, bun_ast::b::Identifier { r#ref: server_manifest_ref }, bun_ast::Loc::EMPTY),
                 value: Some(server_manifest_value),
             }])),
             is_export: true,
             ..Default::default()
         })?;
-        let ssr_manifest_ref = server.new_symbol(js_ast::ast::symbol::Kind::Other, b"ssrManifest")?;
+        let ssr_manifest_ref = server.new_symbol(bun_ast::symbol::Kind::Other, b"ssrManifest")?;
         let ssr_manifest_value = server.new_expr(E::Object {
-            properties: js_ast::ast::g::PropertyList::move_from_list(client_manifest_props),
+            properties: bun_ast::g::PropertyList::move_from_list(client_manifest_props),
             ..Default::default()
         });
         server.append_stmt(S::Local {
-            kind: js_ast::ast::s::Kind::KConst,
-            decls: js_ast::ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
-                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: ssr_manifest_ref }, Logger::Loc::EMPTY),
+            kind: bun_ast::s::Kind::KConst,
+            decls: bun_ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
+                binding: Binding::alloc(alloc, bun_ast::b::Identifier { r#ref: ssr_manifest_ref }, bun_ast::Loc::EMPTY),
                 value: Some(ssr_manifest_value),
             }])),
             is_export: true,
@@ -3021,7 +3010,7 @@ impl<'a> BundleV2<'a> {
     pub fn enqueue_parse_task(
         &mut self,
         resolve_result: &_resolver::Result,
-        source: &mut Logger::Source,
+        source: &mut bun_ast::Source,
         loader: Loader,
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
@@ -3034,10 +3023,10 @@ impl<'a> BundleV2<'a> {
             side_effects: loader.side_effects(),
             ..Default::default()
         })?;
-        // PORT NOTE: `ParseTask::init` takes `bun_js_parser::Index`; both Index newtypes
+        // PORT NOTE: `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
         // are `repr(transparent)` u32 so reconstruct via `.get()`.
         // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
-        let task_val = ParseTask::init(resolve_result, js_ast::Index::init(source_index.get()), self);
+        let task_val = ParseTask::init(resolve_result, bun_ast::Index::init(source_index.get()), self);
         // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
         let task: &mut ParseTask = self.arena_create(task_val);
         task.loader = Some(loader);
@@ -3054,7 +3043,7 @@ impl<'a> BundleV2<'a> {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
                 additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
+                self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = bun_ast::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
 
@@ -3066,7 +3055,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn enqueue_parse_task2(
         &mut self,
-        source: &mut Logger::Source,
+        source: &mut bun_ast::Source,
         loader: Loader,
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
@@ -3087,14 +3076,14 @@ impl<'a> BundleV2<'a> {
         // still-intact original.
         let stored = &self.graph.input_files.items_source()[source_index.get() as usize];
         // PORT NOTE: Zig had a single `fs.Path`; Rust split it into
-        // `bun_logger::fs::Path` (on `Source`) and `bun_resolver::fs::Path`
+        // `bun_paths::fs::Path<'static>` (on `Source`) and `bun_resolver::fs::Path`
         // (on `ParseTask`). Convert field-by-field — `pretty`/`namespace` MUST
         // be preserved here (the SCB `separate_ssr_graph=false` caller passes a
         // source whose path went through `path_with_pretty_initialized`, and
         // `ParseTask::run` builds the `Source` from `task.path` then swaps it
         // back into `input_files`, so dropping `pretty` would surface the
         // absolute path as the dev-server module key).
-        let task_path: Fs::Path<'static> = fs_path_from_logger(&stored.path);
+        let task_path: Fs::Path<'static> = stored.path.clone();
         // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
         // pass (arena lifetime); erase the borrow to `'static` to fit
         // `ContentsOrFd::Contents`. See `interned_slice` contract.
@@ -3115,12 +3104,12 @@ impl<'a> BundleV2<'a> {
         let task: *mut ParseTask = self.arena().alloc(ParseTask {
             path: task_path,
             contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
-            side_effects: _resolver::SideEffects::HasSideEffects,
+            side_effects: bun_ast::SideEffects::HasSideEffects,
             jsx,
-            source_index: js_ast::Index::init(source_index.get()),
+            source_index: bun_ast::Index::init(source_index.get()),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false, // TODO
-            package_version: js_ast::StoreStr::EMPTY,
+            package_version: bun_ast::StoreStr::EMPTY,
             loader: Some(loader),
             tree_shaking,
             known_target,
@@ -3140,7 +3129,7 @@ impl<'a> BundleV2<'a> {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
                 additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
+                self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = bun_ast::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }
 
@@ -3154,13 +3143,13 @@ impl<'a> BundleV2<'a> {
     pub fn enqueue_server_component_generated_file(
         &mut self,
         data: crate::ServerComponentParseTask::Data,
-        source_without_index: Logger::Source,
+        source_without_index: bun_ast::Source,
     ) -> Result<IndexInt, AllocError> {
         let mut new_source = source_without_index;
         let source_index = self.graph.input_files.len();
-        new_source.index = bun_logger::Index(source_index as u32);
-        // PORT NOTE: `Logger::Source: !Clone` — manually dup the (all-Clone) fields.
-        let task_source = Logger::Source {
+        new_source.index = bun_ast::Index(source_index as u32);
+        // PORT NOTE: `bun_ast::Source: !Clone` — manually dup the (all-Clone) fields.
+        let task_source = bun_ast::Source {
             path: new_source.path.clone(),
             contents: new_source.contents.clone(),
             contents_is_recycled: new_source.contents_is_recycled,
@@ -3170,7 +3159,7 @@ impl<'a> BundleV2<'a> {
         self.graph.input_files.append(crate::Graph::InputFile {
             source: new_source,
             loader: Loader::Js,
-            side_effects: _resolver::SideEffects::HasSideEffects,
+            side_effects: bun_ast::SideEffects::HasSideEffects,
             ..Default::default()
         })?;
         let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
@@ -3218,7 +3207,7 @@ impl<'a> BundleV2<'a> {
         for source_index in reachable_files {
             let records: &[ImportRecord] = import_records[source_index.get() as usize].slice();
             for record in records {
-                if !record.source_index.is_valid() && record.tag == bun_options_types::import_record::Tag::None {
+                if !record.source_index.is_valid() && record.tag == bun_ast::ImportRecordTag::None {
                     let path = &record.path.text;
                     // External dependency
                     if !path.is_empty()
@@ -3309,7 +3298,7 @@ impl<'a> BundleV2<'a> {
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &raw mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
-            // `Graph::entry_points` is `Vec<bun_js_parser::Index>`; `link()` takes
+            // `Graph::entry_points` is `Vec<bun_ast::Index>`; `link()` takes
             // `&[crate::Index]` (= bun_options_types). Both are `#[repr(transparent)]`
             // `u32` newtypes (see ast/base.rs:52 / BundleEnums.rs:659), so a ptr cast
             // is layout-identical.
@@ -3513,7 +3502,7 @@ impl<'a> BundleV2<'a> {
             debug_assert_eq!(scbs.list.items_source_index().len(), scbs.list.items_ssr_source_index().len());
             for (original_index, ssr_index) in scbs.list.items_source_index().iter().zip(scbs.list.items_ssr_source_index().iter()) {
                 for idx in [*original_index, *ssr_index] {
-                    self.graph.entry_points.push(bun_js_parser::Index::init(idx)); // PERF(port): was assume_capacity
+                    self.graph.entry_points.push(bun_ast::Index::init(idx)); // PERF(port): was assume_capacity
                 }
             }
         }
@@ -3733,7 +3722,7 @@ impl<'a> BundleV2<'a> {
 
                 // When it's not a file, this is a build error and we should report it.
                 // we have no way of loading non-files.
-                let _ = log.add_error_fmt(Some(source), Logger::Loc::EMPTY, format_args!(
+                let _ = log.add_error_fmt(Some(source), bun_ast::Loc::EMPTY, format_args!(
                     "Module not found {} in namespace {}",
                     bun_core::fmt::quote(&source.path.pretty),
                     bun_core::fmt::quote(&source.path.namespace),
@@ -3750,7 +3739,7 @@ impl<'a> BundleV2<'a> {
                     let source_index = load.source_index;
                     let additional_files: &mut Vec<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
                     let _ = additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                    this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
+                    this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = bun_ast::SideEffects::NoSideEffectsPureData;
                     this.graph.estimated_file_loader_count += 1;
                 }
                 this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] = code.loader;
@@ -3833,10 +3822,10 @@ impl<'a> BundleV2<'a> {
                     let source = &this.graph.input_files.items_source()[load.source_index.get() as usize];
                     // A stack-allocated Log object containing the singular message
                     let kind = msg.kind;
-                    let temp_log = Logger::Log {
+                    let temp_log = bun_ast::Log {
                         clone_line_text: false,
-                        errors: (kind == Logger::Kind::Err) as u32,
-                        warnings: (kind == Logger::Kind::Warn) as u32,
+                        errors: (kind == bun_ast::Kind::Err) as u32,
+                        warnings: (kind == bun_ast::Kind::Warn) as u32,
                         msgs: vec![msg],
                         ..Default::default()
                     };
@@ -3850,8 +3839,8 @@ impl<'a> BundleV2<'a> {
                 } else {
                     let kind = msg.kind;
                     log.msgs.push(msg);
-                    log.errors += (kind == Logger::Kind::Err) as u32;
-                    log.warnings += (kind == Logger::Kind::Warn) as u32;
+                    log.errors += (kind == bun_ast::Kind::Err) as u32;
+                    log.warnings += (kind == bun_ast::Kind::Warn) as u32;
                 }
 
                 // An error occurred, prevent spinning the event loop forever
@@ -3916,11 +3905,11 @@ impl<'a> BundleV2<'a> {
                 }
 
                 // SAFETY: Zig's `logForResolutionFailures` returns `*Log` (raw ptr).
-                // Holding the `&mut Logger::Log` borrow would alias `&this.graph`
+                // Holding the `&mut bun_ast::Log` borrow would alias `&this.graph`
                 // below; detach the lifetime so borrowck releases `this`. The log
                 // lives in `this.transpiler`/`this.framework`, disjoint from
                 // `graph.input_files`.
-                let log: &mut Logger::Log = unsafe {
+                let log: &mut bun_ast::Log = unsafe {
                     bun_ptr::detach_lifetime_mut(this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph()))
                 };
 
@@ -3928,7 +3917,7 @@ impl<'a> BundleV2<'a> {
                 //
                 // We have no way of loading non-files.
                 if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                    let _ = log.add_error_fmt(None, Logger::Loc::EMPTY, format_args!(
+                    let _ = log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!(
                         "Module not found {} in namespace {}",
                         bun_core::fmt::quote(&resolve.import_record.specifier),
                         bun_core::fmt::quote(&resolve.import_record.namespace),
@@ -3998,16 +3987,16 @@ impl<'a> BundleV2<'a> {
                         let loader = path.loader(&this.transpiler.options.loaders).unwrap_or(Loader::File);
 
                         this.graph.input_files.append(crate::Graph::InputFile {
-                            source: Logger::Source {
+                            source: bun_ast::Source {
                                 // PORT NOTE: Zig assigned `path` (Fs.Path) directly;
-                                // shim to the field-identical `logger::fs::Path`.
-                                path: logger_path_from_fs(&path),
+                                // shim to the field-identical `bun_paths::fs::Path<'static>`.
+                                path: path_as_static(path.clone()),
                                 contents: std::borrow::Cow::Borrowed(&b""[..]),
-                                index: bun_logger::Index(source_index.get()),
+                                index: bun_ast::Index(source_index.get()),
                                 ..Default::default()
                             },
                             loader,
-                            side_effects: _resolver::SideEffects::HasSideEffects,
+                            side_effects: bun_ast::SideEffects::HasSideEffects,
                             ..Default::default()
                         }).expect("unreachable");
                         let task_val = ParseTask {
@@ -4018,9 +4007,9 @@ impl<'a> BundleV2<'a> {
                                 dir: bun_sys::Fd::INVALID,
                                 file: bun_sys::Fd::INVALID,
                             },
-                            side_effects: _resolver::SideEffects::HasSideEffects,
+                            side_effects: bun_ast::SideEffects::HasSideEffects,
                             jsx: this.transpiler_for_target(resolve.import_record.original_target).options.jsx.clone(),
-                            source_index: bun_js_parser::Index::init(source_index.get()),
+                            source_index: bun_ast::Index::init(source_index.get()),
                             module_type: options::ModuleType::Unknown,
                             loader: Some(loader),
                             tree_shaking: this.linker.options.tree_shaking,
@@ -4038,7 +4027,7 @@ impl<'a> BundleV2<'a> {
                             if loader.should_copy_for_bundling() {
                                 let additional_files: &mut Vec<crate::AdditionalFile> = &mut this.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
                                 additional_files.push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                                this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
+                                this.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = bun_ast::SideEffects::NoSideEffectsPureData;
                                 this.graph.estimated_file_loader_count += 1;
                             }
 
@@ -4057,7 +4046,7 @@ impl<'a> BundleV2<'a> {
 
                 if let Some(source_index) = out_source_index {
                     if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                        this.graph.entry_points.push(bun_js_parser::Index::init(source_index.get()));
+                        this.graph.entry_points.push(bun_ast::Index::init(source_index.get()));
 
                         // Store the original entry point name for virtual entries
                         // This preserves the original name for output file naming
@@ -4086,8 +4075,8 @@ impl<'a> BundleV2<'a> {
                 let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
                 let kind = err.kind;
                 log.msgs.push(err.clone());
-                log.errors += (kind == Logger::Kind::Err) as u32;
-                log.warnings += (kind == Logger::Kind::Warn) as u32;
+                log.errors += (kind == bun_ast::Kind::Err) as u32;
+                log.warnings += (kind == bun_ast::Kind::Warn) as u32;
             }
             jsc_api::JSBundler::ResolveValue::Pending | jsc_api::JSBundler::ResolveValue::Consumed => unreachable!(),
         }
@@ -4480,7 +4469,7 @@ impl<'a> BundleV2<'a> {
             // `find_reachable_files` (~L1457). The slab does not resize for the
             // duration of this loop and no other `&mut` to these columns exists.
             let ast_raw = asts.split_raw();
-            let parts_col: *mut js_ast::PartList = ast_raw.parts as *mut js_ast::PartList;
+            let parts_col: *mut bun_ast::PartList = ast_raw.parts as *mut bun_ast::PartList;
             let import_records_col: *mut import_record::List =
                 ast_raw.import_records as *mut import_record::List;
 
@@ -4504,7 +4493,7 @@ impl<'a> BundleV2<'a> {
                         // This means the file can become an error after
                         // resolution, which is not usually the case.
                         css_total_files.push(Index::init(u32::try_from(index).expect("int cast"))); // PERF(port): was assume_capacity
-                        let mut log = Logger::Log::init();
+                        let mut log = bun_ast::Log::init();
                         if LinkerContext::scan_css_imports(
                             u32::try_from(index).expect("int cast"),
                             import_records.slice(),
@@ -4804,7 +4793,7 @@ impl<'a> BundleV2<'a> {
                     specifier: entry_point.into(),
                     importer_source_index: u32::MAX, // Sentinel value for entry points
                     import_record_index: 0,
-                    range: Logger::Range::NONE,
+                    range: bun_ast::Range::NONE,
                     original_target: target,
                 });
 
@@ -4877,14 +4866,14 @@ impl<'a> BundleV2<'a> {
         // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
         let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
         // DEDUP(D059): route through the canonical body in `ungate_support`;
-        // D090 unified `Fs::Path` and `Logger::fs::Path` so the shims are identity.
+        // D090 unified `Fs::Path` and `bun_paths::fs::Path<'static>` so the shims are identity.
         let out = crate::ungate_support::generic_path_with_pretty_initialized(
-            fs_path_to_logger(path),
+            path_as_static(path),
             target,
             self.transpiler.fs().top_level_dir,
             bump,
         )?;
-        Ok(fs_path_from_logger(&out))
+        Ok(out.clone())
     }
 
     fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
@@ -4903,12 +4892,12 @@ impl<'a> BundleV2<'a> {
         // PORT NOTE: Zig copied `bake.server_virtual_source` by value. The Rust
         // statics are `LazyLock<Source>` and `Source` is not `Clone`, so rebuild
         // an owned `Source` from the static's clonable fields (`path`, `index`).
-        let server_source = bun_logger::Source {
+        let server_source = bun_ast::Source {
             path: bake::SERVER_VIRTUAL_SOURCE.path.clone(),
             index: bake::SERVER_VIRTUAL_SOURCE.index,
             ..Default::default()
         };
-        let client_source = bun_logger::Source {
+        let client_source = bun_ast::Source {
             path: bake::CLIENT_VIRTUAL_SOURCE.path.clone(),
             index: bake::CLIENT_VIRTUAL_SOURCE.index,
             ..Default::default()
@@ -4918,14 +4907,14 @@ impl<'a> BundleV2<'a> {
         let _ = self.graph.input_files.append(crate::Graph::InputFile {
             source: server_source,
             loader: Loader::Js,
-            side_effects: _resolver::SideEffects::NoSideEffectsPureData,
+            side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
             ..Default::default()
         }); // PERF(port): was assume_capacity
         // OOM/capacity: Zig aborts; port keeps fire-and-forget
         let _ = self.graph.input_files.append(crate::Graph::InputFile {
             source: client_source,
             loader: Loader::Js,
-            side_effects: _resolver::SideEffects::NoSideEffectsPureData,
+            side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
             ..Default::default()
         }); // PERF(port): was assume_capacity
 
@@ -4990,8 +4979,8 @@ impl<'a> BundleV2<'a> {
             parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                 err,
                 step: crate::parse_task::Step::Resolve,
-                log: Logger::Log::init(),
-                source_index: js_ast::Index { value: source_index.0 },
+                log: bun_ast::Log::init(),
+                source_index: bun_ast::Index(source_index.0),
                 target,
             });
         }
@@ -5002,7 +4991,7 @@ impl<'a> BundleV2<'a> {
 
 pub struct ResolveImportRecordCtx<'a> {
     pub import_records: &'a mut import_record::List,
-    pub source: &'a Logger::Source,
+    pub source: &'a bun_ast::Source,
     pub loader: Loader,
     pub target: options::Target,
 }
@@ -5010,30 +4999,6 @@ pub struct ResolveImportRecordCtx<'a> {
 pub struct ResolveImportRecordResult {
     pub resolve_queue: ResolveQueue,
     pub last_error: Option<Error>,
-}
-
-// D090: `Fs::Path` / `Logger::fs::Path` / `bun_paths::fs::Path` are now the
-// same nominal type. Kept as named helpers so call sites read unchanged.
-#[inline]
-pub(crate) fn fs_path_from_ir(p: &bun_paths::fs::Path<'static>) -> Fs::Path<'static> {
-    p.clone()
-}
-
-#[inline]
-pub(crate) fn ir_path_from_fs(p: &Fs::Path<'_>) -> bun_paths::fs::Path<'static> {
-    // SAFETY: callers pass resolver/arena-interned paths (see `interned_slice`).
-    unsafe { p.clone().into_static() }
-}
-
-#[inline]
-pub(crate) fn ir_path_from_logger(p: &bun_logger::fs::Path) -> bun_paths::fs::Path<'static> {
-    p.clone()
-}
-
-#[inline]
-pub(crate) fn logger_path_from_fs(p: &Fs::Path<'_>) -> bun_logger::fs::Path {
-    // SAFETY: callers pass resolver/arena-interned paths (see `interned_slice`).
-    unsafe { p.clone().into_static() }
 }
 
 impl<'a> BundleV2<'a> {
@@ -5047,8 +5012,8 @@ impl<'a> BundleV2<'a> {
         let source_dir = source.path.source_dir();
         let mut estimated_resolve_queue_count: usize = 0;
         for import_record in ctx.import_records.slice_mut() {
-            if import_record.flags.contains(bun_options_types::import_record::Flags::IS_INTERNAL) {
-                import_record.tag = bun_options_types::import_record::Tag::Runtime;
+            if import_record.flags.contains(bun_ast::ImportRecordFlags::IS_INTERNAL) {
+                import_record.tag = bun_ast::ImportRecordTag::Runtime;
                 import_record.source_index = Index::RUNTIME;
             }
 
@@ -5057,11 +5022,11 @@ impl<'a> BundleV2<'a> {
             // skip this — is_unused is also set by ConvertESMExportsForHmr
             // deduplication, and clearing those source_indices breaks module
             // identity (e.g., __esModule on ESM namespace objects).
-            if import_record.flags.contains(bun_options_types::import_record::Flags::IS_UNUSED) && self.dev_server.is_none() {
+            if import_record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) && self.dev_server.is_none() {
                 import_record.source_index = Index::INVALID;
             }
 
-            estimated_resolve_queue_count += (!(import_record.flags.contains(bun_options_types::import_record::Flags::IS_INTERNAL) || import_record.flags.contains(bun_options_types::import_record::Flags::IS_UNUSED) || import_record.source_index.is_valid())) as usize;
+            estimated_resolve_queue_count += (!(import_record.flags.contains(bun_ast::ImportRecordFlags::IS_INTERNAL) || import_record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) || import_record.source_index.is_valid())) as usize;
         }
         let mut resolve_queue = ResolveQueue::default();
         resolve_queue.reserve(estimated_resolve_queue_count);
@@ -5076,9 +5041,9 @@ impl<'a> BundleV2<'a> {
 
             if
             // Don't resolve TypeScript types
-            import_record.flags.contains(bun_options_types::import_record::Flags::IS_UNUSED)
+            import_record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
                 // Don't resolve the runtime
-                || import_record.flags.contains(bun_options_types::import_record::Flags::IS_INTERNAL)
+                || import_record.flags.contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
                 // Don't resolve pre-resolved imports
                 || import_record.source_index.is_valid()
             {
@@ -5092,7 +5057,7 @@ impl<'a> BundleV2<'a> {
                     let src = if is_server { &bake::SERVER_VIRTUAL_SOURCE } else { &bake::CLIENT_VIRTUAL_SOURCE };
                     if import_record.path.text == src.path.pretty {
                         if self.dev_server.is_some() {
-                            import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                            import_record.flags.insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                             import_record.source_index = Index::INVALID;
                         } else {
                             if is_server {
@@ -5110,7 +5075,7 @@ impl<'a> BundleV2<'a> {
 
             if import_record.path.text == b"bun:wrap" {
                 import_record.path.namespace = b"bun";
-                import_record.tag = bun_options_types::import_record::Tag::Runtime;
+                import_record.tag = bun_ast::ImportRecordTag::Runtime;
                 import_record.path.text = b"wrap";
                 import_record.source_index = Index::RUNTIME;
                 continue;
@@ -5133,7 +5098,7 @@ impl<'a> BundleV2<'a> {
                     };
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index::INVALID;
-                    import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    import_record.flags.insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                     continue;
                 }
 
@@ -5142,7 +5107,7 @@ impl<'a> BundleV2<'a> {
                     import_record.path = bun_paths::fs::Path::init(new_text);
                     import_record.path.namespace = b"bun";
                     import_record.source_index = Index::INVALID;
-                    import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    import_record.flags.insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
 
                     // don't link bun
                     continue;
@@ -5151,12 +5116,12 @@ impl<'a> BundleV2<'a> {
 
             // By default, we treat .sqlite files as external.
             if import_record.loader == Some(Loader::Sqlite) {
-                import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                import_record.flags.insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 continue;
             }
 
             if import_record.loader == Some(Loader::SqliteEmbedded) {
-                import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                import_record.flags.insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
             }
 
             if self.enqueue_on_resolve_plugin_if_needed(source.index.0, import_record, &source.path.text, i as u32, ctx.target) {
@@ -5169,7 +5134,7 @@ impl<'a> BundleV2<'a> {
             // deref once, so the `&mut self` borrow doesn't span the rest of the loop
             // body (Zig held all of these as raw ptrs and aliased freely).
             let (transpiler_ptr, bake_graph, target): (*mut Transpiler<'a>, bake::Graph, options::Target) =
-                if import_record.tag == bun_options_types::import_record::Tag::BakeResolveToSsrGraph {
+                if import_record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
                         self.log_for_resolution_failures(&source.path.text, bake::Graph::Ssr).add_error_fmt(
                             Some(source),
@@ -5214,7 +5179,7 @@ impl<'a> BundleV2<'a> {
 
                     let resolve_entry = resolve_queue.get_or_put(&path_primary.text).expect("oom");
                     if resolve_entry.found_existing {
-                        import_record.path = ir_path_from_fs(&unsafe { &**resolve_entry.value_ptr }.path);
+                        import_record.path = path_as_static(unsafe { &**resolve_entry.value_ptr }.path.clone());
                         continue;
                     }
 
@@ -5224,12 +5189,12 @@ impl<'a> BundleV2<'a> {
                     // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
                     // cascading borrow conflicts into every `&mut self` call below).
                     path_primary.pretty = unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(&path_primary.text)) };
-                    import_record.path = ir_path_from_fs(&path_primary);
+                    import_record.path = path_as_static(path_primary.clone());
                     let _ = path_primary.text; // key already interned by get_or_put
                     bun_core::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));
                     file_map_result.path_pair.primary = path_primary;
                     // Arena-owned (Zig: `arena.create(ParseTask)`).
-                    let resolve_task_val = ParseTask::init(&file_map_result, js_ast::Index::INVALID, self);
+                    let resolve_task_val = ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
                     // SAFETY: arena outlives the bundle pass.
                     let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
                     resolve_task.known_target = target;
@@ -5242,7 +5207,7 @@ impl<'a> BundleV2<'a> {
                     };
                     resolve_task.loader = Some(import_record_loader);
                     resolve_task.tree_shaking = transpiler.options.tree_shaking;
-                    resolve_task.side_effects = _resolver::SideEffects::HasSideEffects;
+                    resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                     *resolve_entry.value_ptr = resolve_task;
                     continue;
                 }
@@ -5261,8 +5226,8 @@ impl<'a> BundleV2<'a> {
                         // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
                         // deref (DevServer vtable or `transpiler.log`). Detach via
                         // `*mut` so later `self.*` reads don't conflict.
-                        let log: &mut Logger::Log = unsafe {
-                            &mut *std::ptr::from_mut::<Logger::Log>(self.log_for_resolution_failures(&source.path.text, bake_graph))
+                        let log: &mut bun_ast::Log = unsafe {
+                            &mut *std::ptr::from_mut::<bun_ast::Log>(self.log_for_resolution_failures(&source.path.text, bake_graph))
                         };
 
                         // Only perform directory busting when hot-reloading is enabled
@@ -5299,9 +5264,9 @@ impl<'a> BundleV2<'a> {
                         import_record.path.is_disabled = true;
 
                         if err == bun_core::err!("ModuleNotFound") {
-                            let add_error = Logger::Log::add_resolve_error_with_text_dupe;
+                            let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
 
-                            if !import_record.flags.contains(bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS) && !self.transpiler.options.ignore_module_resolution_errors {
+                            if !import_record.flags.contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS) && !self.transpiler.options.ignore_module_resolution_errors {
                                 last_error = Some(err);
                                 if is_package_path(&import_record.path.text) {
                                     if ctx.target == Target::Browser && options::is_node_builtin(&import_record.path.text) {
@@ -5409,11 +5374,11 @@ impl<'a> BundleV2<'a> {
                 if resolve_result.flags.is_external_and_rewrite_import_path()
                     && !strings::eql_long(&resolve_result.path_pair.primary.text, &import_record.path.text, true)
                 {
-                    import_record.path = ir_path_from_fs(&resolve_result.path_pair.primary);
+                    import_record.path = path_as_static(resolve_result.path_pair.primary.clone());
                 }
                 import_record.flags.set(
-                    bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
-                    resolve_result.primary_side_effects_data != _resolver::SideEffects::HasSideEffects,
+                    bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                    resolve_result.primary_side_effects_data != bun_ast::SideEffects::HasSideEffects,
                 );
                 continue;
             }
@@ -5469,7 +5434,7 @@ impl<'a> BundleV2<'a> {
                         } else {
                             import_record.path.text = path.text;
                             import_record.path.pretty = rel.into();
-                            import_record.path = ir_path_from_fs(&self.path_with_pretty_initialized(path.clone(), target).expect("oom"));
+                            import_record.path = path_as_static(self.path_with_pretty_initialized(path.clone(), target).expect("oom"));
                             if loader == Loader::Html || entry.kind == bake_types::CacheKind::Css {
                                 import_record.path.is_disabled = true;
                             }
@@ -5504,7 +5469,7 @@ impl<'a> BundleV2<'a> {
 
             if let Some(id) = self.path_to_source_index_map(target).get(&path.text) {
                 if self.dev_server.is_some() && loader != Loader::Html {
-                    import_record.path = ir_path_from_logger(&self.graph.input_files.items_source()[id as usize].path);
+                    import_record.path = self.graph.input_files.items_source()[id as usize].path.clone();
                 } else {
                     import_record.source_index = Index::init(id);
                 }
@@ -5517,17 +5482,17 @@ impl<'a> BundleV2<'a> {
 
             let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
             if resolve_entry.found_existing {
-                import_record.path = ir_path_from_fs(&unsafe { &**resolve_entry.value_ptr }.path);
+                import_record.path = path_as_static(unsafe { &**resolve_entry.value_ptr }.path.clone());
                 continue;
             }
 
             *path = self.path_with_pretty_initialized(core::mem::take(path), target).expect("oom");
 
-            import_record.path = ir_path_from_fs(path);
+            import_record.path = path_as_static(path.clone());
             // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
             bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
             // Arena-owned (Zig: `arena.create(ParseTask)`).
-            let resolve_task_val = ParseTask::init(&resolve_result, js_ast::Index::INVALID, self);
+            let resolve_task_val = ParseTask::init(&resolve_result, bun_ast::Index::INVALID, self);
             // SAFETY: arena outlives the bundle pass.
             let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
 
@@ -5596,7 +5561,7 @@ impl<'a> BundleV2<'a> {
             if !found_existing {
                 let new_task: &mut ParseTask = value;
                 let mut new_input_file = crate::Graph::InputFile {
-                    source: Logger::Source::init_empty_file(&new_task.path.text[..]),
+                    source: bun_ast::Source::init_empty_file(&new_task.path.text[..]),
                     side_effects: new_task.side_effects,
                     secondary_path: if let Some(secondary_path) = &new_task.secondary_path_for_commonjs_interop {
                         secondary_path.text.into()
@@ -5608,11 +5573,11 @@ impl<'a> BundleV2<'a> {
 
                 self.graph.has_any_secondary_paths = self.graph.has_any_secondary_paths || !new_input_file.secondary_path.is_empty();
 
-                new_input_file.source.index = bun_logger::Index(self.graph.input_files.len() as u32);
-                new_input_file.source.path = logger_path_from_fs(&new_task.path);
+                new_input_file.source.index = bun_ast::Index(self.graph.input_files.len() as u32);
+                new_input_file.source.path = path_as_static(new_task.path.clone());
                 new_input_file.loader = loader;
                 let new_source_index: u32 = new_input_file.source.index.0;
-                new_task.source_index = js_ast::Index { value: new_source_index };
+                new_task.source_index = bun_ast::Index(new_source_index);
                 new_task.ctx = self_ptr;
                 // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
                 // intervening insert into that map has occurred since get_or_put.
@@ -5625,7 +5590,7 @@ impl<'a> BundleV2<'a> {
 
                 if is_html_entrypoint {
                     self.ensure_client_transpiler();
-                    self.graph.entry_points.push(js_ast::Index { value: new_source_index });
+                    self.graph.entry_points.push(bun_ast::Index(new_source_index));
                 }
 
                 if self.enqueue_on_load_plugin_if_needed(new_task) {
@@ -5635,7 +5600,7 @@ impl<'a> BundleV2<'a> {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut Vec<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[importer_source_index as usize];
                     additional_files.push(crate::AdditionalFile::SourceIndex(new_task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[new_task.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
+                    self.graph.input_files.items_side_effects_mut()[new_task.source_index.get() as usize] = bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
                 }
 
@@ -5720,7 +5685,7 @@ impl<'a> BundleV2<'a> {
         for (i, record) in import_records.slice_mut().iter_mut().enumerate() {
             if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                 if save_import_record_source_index || input_file_loaders[source_index as usize].is_css() {
-                    record.source_index.value = source_index;
+                    record.source_index.0 = source_index;
                 }
 
                 if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
@@ -5738,13 +5703,13 @@ impl<'a> BundleV2<'a> {
         // 3. Add it to the graph
         // PORT NOTE: Zig aliased `graph = &this.graph;` — re-borrow `self.graph`
         // at each use so the `self.*` method calls below don't conflict.
-        let empty_html_file_source = Logger::Source {
-            path: logger_path_from_fs(path),
-            index: bun_logger::Index(self.graph.input_files.len() as u32),
+        let empty_html_file_source = bun_ast::Source {
+            path: path_as_static(path.clone()),
+            index: bun_ast::Index(self.graph.input_files.len() as u32),
             contents: std::borrow::Cow::Borrowed(&b""[..]),
             ..Default::default()
         };
-        let mut js_parser_options = bun_js_parser::ast::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone().into(), Loader::Html);
+        let mut js_parser_options = bun_js_parser::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone().into(), Loader::Html);
         js_parser_options.bundle = true;
 
         // SAFETY: `alloc_str` returns a `&mut str` into the bundler arena, which
@@ -5769,7 +5734,7 @@ impl<'a> BundleV2<'a> {
         // `transpiler_for_target` doesn't overlap `self.arena()` below.
         // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler /
         // BACKREF set in `BundleV2::init`).
-        let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_logger::Log) = {
+        let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_ast::Log) = {
             let transpiler = self.transpiler_for_target(target);
             (&raw mut *transpiler.options.define, transpiler.log)
         };
@@ -5779,7 +5744,7 @@ impl<'a> BundleV2<'a> {
             unsafe { &mut *define_ptr },
             js_parser_options,
             unsafe { &mut *log_ptr },
-            Expr::init(E::EString { data: unique_key.into(), ..Default::default() }, Logger::Loc::EMPTY),
+            Expr::init(E::EString { data: unique_key.into(), ..Default::default() }, bun_ast::Loc::EMPTY),
             &empty_html_file_source,
             // We replace this runtime API call's ref later via .link on the Symbol.
             b"__jsonParse",
@@ -5787,7 +5752,7 @@ impl<'a> BundleV2<'a> {
 
         let fake_input_file = crate::Graph::InputFile {
             source: empty_html_file_source,
-            side_effects: _resolver::SideEffects::NoSideEffectsPureData,
+            side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
             ..Default::default()
         };
 
@@ -5885,7 +5850,7 @@ impl<'a> BundleV2<'a> {
         match &mut parse_result.value {
             parse_task::ResultValue::Empty { source_index: empty_source_index } => {
                 let empty_idx = (*empty_source_index).get() as usize;
-                this.graph.input_files.items_side_effects_mut()[empty_idx] = _resolver::SideEffects::NoSideEffectsEmptyAst;
+                this.graph.input_files.items_side_effects_mut()[empty_idx] = bun_ast::SideEffects::NoSideEffectsEmptyAst;
                 if cfg!(debug_assertions) {
                     bun_core::scoped_log!(Bundle, "onParse({}, {}) = empty",
                         empty_idx,
@@ -6065,9 +6030,9 @@ impl<'a> BundleV2<'a> {
                         // `fs_path_from_logger`/`fs_path_to_logger` until the
                         // three `Path` mirrors unify.
                         ssr_source.path.pretty = ssr_source.path.text;
-                        ssr_source.path = fs_path_to_logger(
+                        ssr_source.path = path_as_static(
                             this.path_with_pretty_initialized(
-                                fs_path_from_logger(&ssr_source.path),
+                                ssr_source.path.clone(),
                                 Target::BakeServerComponentsSsr,
                             )
                             .expect("oom"),
@@ -6087,9 +6052,9 @@ impl<'a> BundleV2<'a> {
                             this.graph.input_files.items_source()[result_source_index].clone();
                         server_source.path.pretty = server_source.path.text;
                         let server_target = this.transpiler.options.target;
-                        server_source.path = fs_path_to_logger(
+                        server_source.path = path_as_static(
                             this.path_with_pretty_initialized(
-                                fs_path_from_logger(&server_source.path),
+                                server_source.path.clone(),
                                 server_target,
                             )
                             .expect("oom"),
@@ -6150,7 +6115,7 @@ impl<'a> BundleV2<'a> {
                         // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                         this.transpiler.log_mut().add_error_fmt(
                             None,
-                            Logger::Loc::EMPTY,
+                            bun_ast::Loc::EMPTY,
                             format_args!("{} while {}", bstr::BStr::new(err.err.name()), step_name),
                         );
                     }
@@ -6448,7 +6413,7 @@ pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, sin
 pub use crate::HTMLScanner::HTMLScanner;
 pub use crate::IndexStringMap::IndexStringMap;
 pub type BitSet = DynamicBitSetUnmanaged;
-pub use Logger::Loc;
+pub use bun_ast::Loc;
 
 // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
 // Uses jsc.conv (SYSV_ABI on Windows x64) for proper calling convention

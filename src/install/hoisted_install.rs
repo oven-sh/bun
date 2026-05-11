@@ -92,7 +92,7 @@ pub fn install_hoisted_packages(
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
         // and `&mut PackageManager` simultaneously through `mgr_ptr`'s
         // provenance root.
-        let log: *mut bun_logger::Log = this.log;
+        let log: *mut bun_ast::Log = this.log;
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
         // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
         let lockfile_ptr: *mut crate::lockfile::Lockfile =

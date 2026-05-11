@@ -7,9 +7,9 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_collections::BoundedArray;
-use bun_logger::Log;
+use bun_ast::Log;
 use bun_lolhtml_sys::lol_html as lol;
-use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_string::strings;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 

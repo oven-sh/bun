@@ -4,17 +4,17 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 
-// TYPE_ONLY: bun_bundler::options::Format → bun_options_types::Format
 use bun_options_types::Format;
 use bun_collections::hive_array::Fallback as HiveArrayFallback;
 use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
-use bun_js_parser as js_ast;
-use bun_js_parser::ast::symbol;
-use bun_js_parser::ast::symbol::{SlotNamespace, INVALID_NESTED_SCOPE_SLOT};
-use bun_js_parser::lexer as js_lexer;
-use bun_js_parser::{Ref, Symbol};
-use bun_logger as logger;
+use bun_ast as js_ast;
+use bun_ast::symbol;
+use bun_ast::symbol::{SlotNamespace, INVALID_NESTED_SCOPE_SLOT};
+use bun_ast::lexer_tables::{
+    self as js_lexer, KEYWORDS as Keywords, STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords,
+};
+use bun_ast::{Ref, Symbol};
 use bun_str::{strings, MutableString};
 use enum_map::EnumMap;
 
@@ -52,11 +52,11 @@ pub struct NoOpRenamer<'a> {
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
     pub symbols: symbol::Map,
-    pub source: &'a logger::Source,
+    pub source: &'a bun_ast::Source,
 }
 
 impl<'a> NoOpRenamer<'a> {
-    pub fn init(symbols: symbol::Map, source: &'a logger::Source) -> NoOpRenamer<'a> {
+    pub fn init(symbols: symbol::Map, source: &'a bun_ast::Source) -> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 
@@ -77,7 +77,7 @@ impl<'a> NoOpRenamer<'a> {
             // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
             symbol.original_name.slice()
         } else {
-            // TODO(port): include `self.source.path.text` once `bun_logger::fs::Path`
+            // TODO(port): include `self.source.path.text` once `bun_paths::fs::Path<'static>`
             // exposes the text accessor.
             Output::panic(format_args!("Invalid symbol {}", ref_));
         }
@@ -378,7 +378,7 @@ impl MinifyRenamer {
 
         let mut sorted: Vec<SlotAndCount> = Vec::new();
 
-        // PERF(port): was `inline for` over enum values — profile in Phase B
+        // PERF(port): was `inline for` over enum values — profile
         for &ns in SLOT_NAMESPACES.iter() {
             let slots = &mut self.slots[ns];
             sorted.clear();
@@ -605,7 +605,7 @@ pub struct NumberRenamer {
     pub root: NumberScope,
     /// Backs renamed-name slices written into `names` (Zig: `r.allocator`).
     pub arena: Bump,
-    // PERF(port): was StackFallbackAllocator(512) — profile in Phase B
+    // PERF(port): was StackFallbackAllocator(512) — profile
 }
 
 impl NumberRenamer {
@@ -915,7 +915,7 @@ impl NumberScope {
         // would apply.
         let owned_name;
         let mut name: &[u8] = if is_simple_ascii_identifier(input_name)
-            && !bun_js_parser::lexer_tables::is_strict_mode_reserved_word(input_name)
+            && !bun_ast::lexer_tables::is_strict_mode_reserved_word(input_name)
         {
             input_name
         } else {
@@ -1113,18 +1113,18 @@ pub fn compute_initial_reserved_names(
 
     names.ensure_total_capacity(
         cjs_names_len as usize
-            + (js_lexer::Keywords.len()
-                + js_lexer::StrictModeReservedWords.len()
+            + (Keywords.len()
+                + StrictModeReservedWords.len()
                 + 1
                 + EXTRAS.len()),
     )?;
 
-    for keyword in js_lexer::Keywords.keys() {
+    for keyword in Keywords.keys() {
         // PERF(port): was assume_capacity
         names.put_assume_capacity(keyword, 1);
     }
 
-    for keyword in js_lexer::StrictModeReservedWords.iter() {
+    for keyword in StrictModeReservedWords.iter() {
         // PERF(port): was assume_capacity
         names.put_assume_capacity(keyword, 1);
     }

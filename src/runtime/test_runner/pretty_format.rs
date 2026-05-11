@@ -1181,7 +1181,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         if !is_symbol {
             // TODO: make this one pass?
-            if !key.is_16_bit() && JSLexer::is_latin1_identifier(key.slice()) {
+            if !key.is_16_bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()) {
                 this.add_for_new_line(key.len + 2);
 
                 writer.print(format_args!(

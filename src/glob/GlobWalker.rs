@@ -29,7 +29,6 @@ use bun_core::env::IS_WINDOWS;
 use bun_core::Error;
 use bun_core::{declare_scope, scoped_log};
 use bun_paths::{resolve_path, PathBuffer, MAX_PATH_BYTES};
-// MOVE_DOWN(b0): dir_iterator relocated from runtime/node → bun_sys (move-in pass adds it there).
 use bun_sys::dir_iterator as DirIterator;
 use bun_string::strings::{self, UnsignedCodepointIterator as CodepointIterator};
 use bun_string::{String as BunString, ZStr};
@@ -1450,7 +1449,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         only_files: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
-        // MOVE_DOWN(b0): `bun.fs.FileSystem.instance.top_level_dir` was sunk into
         // `bun_paths::fs::FileSystem` (singleton holds only the cwd string; the
         // DirEntry cache stays in `bun_resolver`).
         Self::init_with_cwd(
@@ -2416,7 +2414,6 @@ fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
     }
 }
 
-// MOVE_DOWN(b0): DirIterator::IteratorResult now lives in bun_sys::dir_iterator.
 impl AccessorDirEntry for DirIterator::IteratorResult {
     fn name_slice(&self) -> &[u8] {
         // Zig `entry.name.slice()` is always `[]const u8`: on Windows the `.u8`

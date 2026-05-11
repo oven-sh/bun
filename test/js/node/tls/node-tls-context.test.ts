@@ -752,4 +752,29 @@ describe("tls.createSecureContext().context.addCACert", () => {
     // @ts-expect-error — intentionally calling with no args
     expect(() => ctx.context.addCACert()).toThrow();
   });
+
+  // SecureContext is mode-neutral — the same object may back both a client
+  // AND a server. `addCACert` must NOT flip CTX-level verify_mode; if it did,
+  // a server built from this context would start sending `CertificateRequest`
+  // in every handshake (e.g. browsers would prompt for a client certificate).
+  // Node's `SecureContext::AddCACert` never touches verify_mode for exactly
+  // this reason.
+  it("does not flip CTX verify_mode (would leak as server requestCert)", async () => {
+    // @ts-expect-error — debug-only export
+    const { secureContextVerifyMode } = await import("bun:internal-for-testing");
+
+    // Baseline: a fresh SecureContext has SSL_VERIFY_NONE (= 0).
+    const ctx = tls.createSecureContext({ cert: agent1Cert, key: agent1Key });
+    expect(secureContextVerifyMode(ctx.context)).toBe(0);
+
+    // After addCACert, verify_mode must STILL be SSL_VERIFY_NONE. If it
+    // wasn't, a server built from this context would start sending
+    // CertificateRequest even when the user never set `requestCert`.
+    ctx.context.addCACert(ca1);
+    expect(secureContextVerifyMode(ctx.context)).toBe(0);
+
+    // For completeness: the `options.ca` construction path still flips
+    // verify_mode (pre-existing quirk we're not changing), so this is the
+    // strict stronger guarantee for the post-construction API only.
+  });
 });

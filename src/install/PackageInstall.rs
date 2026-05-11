@@ -553,24 +553,39 @@ static HARDLINK_QUEUE: bun_core::RacyCell<core::mem::MaybeUninit<HardLinkQueue>>
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
     pub fn init_queue() -> &'static HardLinkQueue {
-        // SAFETY: called once per install batch on the main thread before any push().
-        // Returns a shared ref so worker threads in run_from_thread_pool() may safely
-        // alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take &self.
+        // SAFETY: called once per install batch on the install main thread before any
+        // push(). Returns a shared ref so worker threads in run_from_thread_pool() may
+        // safely alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take
+        // &self.
+        //
+        // `INITIALIZED` is *not* the cross-thread publication edge — it is read and
+        // written only here, on the main thread, so `Relaxed` is sufficient. Workers
+        // never observe HARDLINK_QUEUE until after `push()` → `ThreadPool::schedule()`,
+        // whose internal Release/Acquire on the task queue is what publishes the
+        // first-call `MaybeUninit::write` below.
         //
         // PORT NOTE: Zig re-assigns the whole struct each call (`queue = Queue{...}`).
-        // `MaybeUninit::write` would leak the previous `WaitGroup` (Mutex+Condvar) and
-        // any unconsumed `errored_task` Box on every call after the first, so on
-        // subsequent calls we reset fields in place instead. `copy()` always reaches
-        // `queue.wait()` before returning (even on error — see the loop_err handling
-        // there), so no worker can still be inside `complete_one()` when we get here.
+        // We must NOT do that: even though `copy()` always reaches `queue.wait()`
+        // before returning (see the loop_err handling there), `WaitGroup::wait()` can
+        // return while the last worker is still inside `WaitGroup::finish()` *after*
+        // its `fetch_sub` — touching `mutex`/`cond` for the lock-unlock-signal dance.
+        // Overwriting `wait_group` (or forming `&mut HardLinkQueue` at all) would race
+        // with that trailing access. Instead, on re-init we only drain `errored_task`
+        // through its own mutex; `wait_group`'s counter is already 0 and its
+        // Mutex/Condvar are `Sync`, so a stale `finish()` tail concurrently
+        // locking/signalling them is well-defined. `thread_pool` points at the
+        // process-wide `PackageManager` singleton and never changes.
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
         unsafe {
             if INITIALIZED.swap(true, Ordering::Relaxed) {
-                let q = (*HARDLINK_QUEUE.get()).assume_init_mut();
-                *q.errored_task.get_mut() = None;
-                q.wait_group = WaitGroup::init();
-                q.thread_pool = &PackageManager::get().thread_pool;
+                let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
+                *q.errored_task.lock() = None;
+                debug_assert_eq!(
+                    q.thread_pool as *const ThreadPool,
+                    core::ptr::from_ref(&PackageManager::get().thread_pool),
+                    "PackageManager singleton changed between install batches",
+                );
             } else {
                 (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
                     thread_pool: &PackageManager::get().thread_pool,

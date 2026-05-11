@@ -287,19 +287,6 @@ impl Request {
     /// (the hive slot is heap-allocated; not covered by `&self`'s `noalias`).
     /// Single-JS-thread invariant — keep the borrow short.
     #[inline]
-<<<<<<< ours
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn body_value_mut(&self) -> &mut BodyValue {
-        // SAFETY: see `body_value`. The aliasing `RequestContext.request_body`
-        // pointer is only dereferenced while no `&mut BodyValue` derived here
-        // is live (single-threaded event-loop sequencing).
-||||||| base
-    pub(crate) fn body_value_mut(&mut self) -> &mut BodyValue {
-        // SAFETY: see `body_value`. `&mut self` guarantees exclusive access on
-        // the Rust side; the aliasing `RequestContext.request_body` pointer is
-        // only dereferenced while no `&mut Request` is live (single-threaded
-        // event-loop sequencing).
-=======
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn body_value_mut(&self) -> &mut BodyValue {
         // SAFETY: see `body_value`. `body` points into a separate hive-slot
@@ -307,7 +294,6 @@ impl Request {
         // `&Request`. R-2: the aliasing `RequestContext.request_body` pointer
         // is only dereferenced while no other `&mut BodyValue` is live
         // (single-threaded event-loop sequencing).
->>>>>>> theirs
         unsafe { &mut (*self.body.as_ptr()).value }
     }
 
@@ -446,19 +432,8 @@ impl Request {
             }
         }
 
-<<<<<<< ours
-        if let Some(headers) = self.headers.as_ref() {
-            // SAFETY: `HeadersRef` wraps a live C++ `FetchHeaders` handle;
-            // `fast_get` only writes a stack out-param via FFI. R-2: route via
-            // raw `*mut` from `as_ptr()` rather than `&mut self.headers`.
-            if let Some(value) = unsafe { (*headers.as_ptr()).fast_get(HTTPHeaderName::ContentType) } {
-||||||| base
-        if let Some(headers) = self.headers.as_mut() {
-            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-=======
         if let Some(headers) = self.headers_mut().as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
->>>>>>> theirs
                 return Ok(Some(value.to_slice()));
             }
         }

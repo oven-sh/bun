@@ -32,7 +32,6 @@
 
 use bun_collections::{VecExt, ByteVecExt};
 use crate::bun_str::WTFStringImplExt as _;
-use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_sys::{self, Fd};
@@ -74,34 +73,7 @@ pub(crate) use shell_log as log;
 // NodeId arena
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Index into `Interpreter::nodes`. Replaces every `*Parent` / `*Child`
-/// back-pointer in the Zig state-machine tree.
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct NodeId(pub u32);
-
-impl NodeId {
-    /// Sentinel: "the parent is the Interpreter itself". The root `Script`
-    /// node uses this. `Interpreter::child_done` special-cases it.
-    pub const INTERPRETER: NodeId = NodeId(u32::MAX);
-    /// Sentinel for "no node" (e.g. an `Option<NodeId>` packed as a plain id).
-    pub const NONE: NodeId = NodeId(u32::MAX - 1);
-
-    #[inline]
-    pub fn idx(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl fmt::Display for NodeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if *self == NodeId::INTERPRETER {
-            write!(f, "Node(interp)")
-        } else {
-            write!(f, "Node#{}", self.0)
-        }
-    }
-}
+pub use bun_runtime_types::shell::NodeId;
 
 /// One slot in the interpreter's state arena. The Zig version heap-allocated
 /// each state struct individually via `parent.create(T)`; in Rust they all

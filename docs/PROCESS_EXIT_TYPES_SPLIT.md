@@ -209,8 +209,10 @@ Process-exit production shape
   │     ├─> RuntimeProcessExitTarget
   │     │     ├─> ChromeProcess / HostProcess
   │     │     └─> FilterRunHandle / MultiRunHandle / TestParallelWorker slot indices
-  │     └─> RuntimeProcessExitAction
-  │           └─> carries process identity + status + target data
+  │     ├─> RuntimeProcessExitAction
+  │     │     └─> carries process identity + status + target data
+  │     └─> shell::NodeId
+  │           └─> sidecar-owned command identity for the shell arena
   └─> owning crates
         ├─> bun_spawn observes waitpid / platform wait completion
         ├─> bun_install applies lifecycle/security package-manager effects

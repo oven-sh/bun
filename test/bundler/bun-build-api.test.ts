@@ -70,6 +70,18 @@ describe("Bun.build", () => {
     throw new Error("should have thrown");
   });
 
+  test("many conditions does not crash", async () => {
+    const dir = tempDirWithFiles("bun-build-api-many-conditions", {
+      "index.js": `export default 1;`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      conditions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
+    });
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1);
+  });
+
   // https://github.com/oven-sh/bun/issues/12818
   test("sourcemap + build error crash case", async () => {
     const dir = tempDirWithFiles("build", {

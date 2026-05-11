@@ -36,6 +36,7 @@ use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{env_var, ZStr};
+use bun_io_types::watchdog::ParentDeathWatchdogHandle;
 use bun_sys::{self, Fd, O};
 
 use crate::posix_event_loop::{EventLoopCtx, FilePoll, Owner};
@@ -288,7 +289,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             handle,
             Fd::from_native(original_ppid),
             Default::default(),
-            Owner::typed::<bun_io_types::file_poll::ParentDeathWatchdog>(instance_ptr.cast()),
+            Owner::parent_death_watchdog(instance_ptr.cast()),
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.
@@ -316,6 +317,16 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
     // Global.exit → Bun__onExit → on_process_exit → kill_descendants.
     bun_core::exit(EXIT_CODE as u32);
+}
+
+#[inline]
+pub fn with_parent_death_watchdog_handle<R>(
+    handle: ParentDeathWatchdogHandle,
+    f: impl FnOnce(&mut ParentDeathWatchdog) -> R,
+) -> R {
+    // SAFETY: the macOS parent-death FilePoll owner is recorded from the static
+    // INSTANCE in this module. Keep the singleton recovery next to that storage.
+    unsafe { f(&mut *handle.as_ptr::<ParentDeathWatchdog>()) }
 }
 
 /// Registered with `Global.addExitCallback` so it runs from `Bun__onExit`

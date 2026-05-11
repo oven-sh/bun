@@ -999,15 +999,20 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             }
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
-            let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
+            let watchdog = owner
+                .parent_death_watchdog_handle()
+                .expect("PARENT_DEATH_WATCHDOG FilePoll owner carries a ParentDeathWatchdogHandle");
             // Zig gates this `comptime !Environment.isMac => unreachable`;
             // mirror with a debug-assert (Linux uses prctl(PR_SET_PDEATHSIG)).
             #[cfg(target_os = "macos")]
-            bun_io::parent_death_watchdog::on_parent_exit(wd);
+            bun_io::parent_death_watchdog::with_parent_death_watchdog_handle(
+                watchdog,
+                bun_io::parent_death_watchdog::on_parent_exit,
+            );
             #[cfg(not(target_os = "macos"))]
             {
                 debug_assert!(false, "ParentDeathWatchdog poll on non-mac");
-                let _ = wd;
+                let _ = watchdog;
             }
         }
 

@@ -1,6 +1,6 @@
 use crate::dns::{DnsRequestHandle, DnsResolverHandle, GetAddrInfoRequestHandle};
-use crate::owner::OwnerToken;
 use crate::reader::BufferedReaderHandle;
+use crate::watchdog::ParentDeathWatchdogHandle;
 use crate::writer::PipeWriterHandle;
 use bun_spawn_types::ProcessHandle;
 
@@ -48,45 +48,13 @@ pub enum FileSink {}
 pub enum StaticPipeWriter {}
 pub enum ShellStaticPipeWriter {}
 pub enum SecurityScanStaticPipeWriter {}
-pub enum BufferedReader {}
-pub enum DnsResolver {}
-pub enum GetAddrInfoRequest {}
-pub enum Request {}
-pub enum Process {}
 pub enum ShellBufferedWriter {}
 pub enum TerminalPoll {}
-pub enum ParentDeathWatchdog {}
-pub enum LifecycleScriptSubprocessOutputReader {}
-
-pub trait Variant: Sized {
-    const KIND: Kind;
-
-    fn owner(token: OwnerToken<Self>) -> Owner;
-}
 
 pub trait PipeWriterVariant: Sized {
     const KIND: Kind;
 
     fn writer_owner(handle: PipeWriterHandle) -> Owner;
-}
-
-macro_rules! variants {
-    ($( $marker:ident => $kind:ident ),* $(,)?) => {
-        $(
-            impl Variant for $marker {
-                const KIND: Kind = Kind::$kind;
-
-                #[inline]
-                fn owner(token: OwnerToken<Self>) -> Owner {
-                    Owner::$kind(token)
-                }
-            }
-        )*
-    };
-}
-
-variants! {
-    ParentDeathWatchdog => ParentDeathWatchdog,
 }
 
 macro_rules! writer_variants {
@@ -113,15 +81,6 @@ writer_variants! {
     TerminalPoll => TerminalPoll,
 }
 
-impl Variant for Null {
-    const KIND: Kind = Kind::Null;
-
-    #[inline]
-    fn owner(_: OwnerToken<Self>) -> Owner {
-        Owner::Null
-    }
-}
-
 impl PipeWriterVariant for Null {
     const KIND: Kind = Kind::Null;
 
@@ -146,20 +105,12 @@ pub enum Owner {
     Process(ProcessHandle),
     ShellBufferedWriter(PipeWriterHandle),
     TerminalPoll(PipeWriterHandle),
-    ParentDeathWatchdog(OwnerToken<ParentDeathWatchdog>),
+    ParentDeathWatchdog(ParentDeathWatchdogHandle),
     LifecycleScriptSubprocessOutputReader(BufferedReaderHandle),
 }
 
 impl Owner {
     pub const NULL: Self = Self::Null;
-
-    #[inline]
-    pub fn typed<T: Variant>(ptr: *mut ()) -> Self {
-        let Some(token) = OwnerToken::<T>::from_usize(ptr as usize) else {
-            return Self::NULL;
-        };
-        T::owner(token)
-    }
 
     #[inline]
     pub fn pipe_writer<T: PipeWriterVariant>(ptr: *mut ()) -> Self {
@@ -190,6 +141,13 @@ impl Owner {
             .unwrap_or(Self::NULL)
     }
 
+    #[inline]
+    pub fn parent_death_watchdog(ptr: *mut ()) -> Self {
+        ParentDeathWatchdogHandle::from_ptr(ptr)
+            .map(Self::ParentDeathWatchdog)
+            .unwrap_or(Self::NULL)
+    }
+
     /// # Safety
     /// If `ptr` is non-null, it must point to a live owner of the concrete
     /// type represented by `kind`.
@@ -212,7 +170,7 @@ impl Owner {
                 .unwrap_or(Self::NULL),
             Kind::ShellBufferedWriter => Self::pipe_writer::<ShellBufferedWriter>(ptr),
             Kind::TerminalPoll => Self::pipe_writer::<TerminalPoll>(ptr),
-            Kind::ParentDeathWatchdog => Self::typed::<ParentDeathWatchdog>(ptr),
+            Kind::ParentDeathWatchdog => Self::parent_death_watchdog(ptr),
             Kind::LifecycleScriptSubprocessOutputReader => {
                 BufferedReaderHandle::from_usize(ptr as usize)
                     .map(Self::LifecycleScriptSubprocessOutputReader)
@@ -268,7 +226,7 @@ impl Owner {
             Self::Process(handle) => handle.get(),
             Self::ShellBufferedWriter(handle) => handle.get(),
             Self::TerminalPoll(handle) => handle.get(),
-            Self::ParentDeathWatchdog(token) => token.get(),
+            Self::ParentDeathWatchdog(handle) => handle.get(),
             Self::LifecycleScriptSubprocessOutputReader(handle) => handle.get(),
         }
     }
@@ -333,9 +291,13 @@ impl Owner {
     }
 
     #[inline]
-    pub const fn token<T>(self) -> Option<OwnerToken<T>> {
-        OwnerToken::from_usize(self.addr())
+    pub const fn parent_death_watchdog_handle(self) -> Option<ParentDeathWatchdogHandle> {
+        match self {
+            Self::ParentDeathWatchdog(handle) => Some(handle),
+            _ => None,
+        }
     }
+
 }
 
 #[cfg(test)]
@@ -412,6 +374,17 @@ mod tests {
         assert_eq!(resolver.ptr(), resolver_ptr);
         assert_eq!(get_addr_info.ptr(), get_addr_info_ptr);
         assert_eq!(request.ptr(), request_ptr);
+    }
+
+    #[test]
+    fn raw_parts_preserve_parent_death_watchdog_handle() {
+        let ptr = 0xa000usize as *mut ();
+        let owner = unsafe { Owner::from_raw_parts(Kind::ParentDeathWatchdog, ptr) };
+        let handle = ParentDeathWatchdogHandle::from_usize(ptr as usize).unwrap();
+
+        assert_eq!(owner.parent_death_watchdog_handle(), Some(handle));
+        assert_eq!(owner.kind(), Kind::ParentDeathWatchdog);
+        assert_eq!(owner.ptr(), ptr);
     }
 
     #[test]

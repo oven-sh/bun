@@ -4670,13 +4670,13 @@ pub const NodeFS = struct {
                         dirent_path.ref();
                         // On Windows, filesystem names are UTF-16. For encoding=buffer,
                         // transcode to UTF-8 (libuv's POSIX behavior) and store as
-                        // Latin-1 so the bytes round-trip 1:1 to a Buffer.
-                        const name_str = if (args.encoding == .buffer) brk: {
-                            const utf8_buf = bun.path_buffer_pool.get();
-                            defer bun.path_buffer_pool.put(utf8_buf);
-                            const utf8_slice = bun.strings.fromWPath(utf8_buf, utf16_name);
-                            break :brk bun.String.cloneLatin1(utf8_slice);
-                        } else bun.String.cloneUTF16(utf16_name);
+                        // Latin-1 so the bytes round-trip 1:1 to a Buffer. The outer
+                        // `re_encoding_buffer` is already allocated for this case
+                        // (`is_u16 and encoding != .utf8`) — reuse it.
+                        const name_str = if (args.encoding == .buffer)
+                            bun.String.cloneLatin1(bun.strings.fromWPath(re_encoding_buffer.?, utf16_name))
+                        else
+                            bun.String.cloneUTF16(utf16_name);
                         entries.append(.{
                             .name = name_str,
                             .path = dirent_path,

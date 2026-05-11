@@ -768,6 +768,13 @@ pub struct NpmPackage {
     /// "modified" in the JSON
     pub modified: SemverString,
     pub public_max_age: u32,
+    // Explicit padding so this struct has no implicit (uninitialized) padding
+    // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
+    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
+    // fields, `Default` zero-fills them and every byte of the struct is
+    // initialized. Layout (size=120, align=8) is unchanged; see the
+    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    pub _padding_after_max_age: [u8; 4],
 
     pub name: ExternalString,
 
@@ -780,7 +787,31 @@ pub struct NpmPackage {
 
     // Flag to indicate if we have timestamp data from extended manifest
     pub has_extended_manifest: bool,
+    pub _padding_tail: [u8; 7],
 }
+
+// Compile-time proof that the explicit `_padding_*` fields above leave no
+// implicit padding gaps in `NpmPackage` (so `&NpmPackage as &[u8]` reads only
+// initialized bytes). Mirrors the per-field-gap check documented in
+// `padding_checker.rs`.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    // gap between `public_max_age` (u32, ends at 28) and `name` (align 8 → 32)
+    assert!(
+        offset_of!(NpmPackage, _padding_after_max_age)
+            == offset_of!(NpmPackage, public_max_age) + size_of::<u32>()
+    );
+    assert!(
+        offset_of!(NpmPackage, name)
+            == offset_of!(NpmPackage, _padding_after_max_age) + 4
+    );
+    // tail gap after `has_extended_manifest` (bool, at 112) → struct end (120)
+    assert!(
+        offset_of!(NpmPackage, _padding_tail)
+            == offset_of!(NpmPackage, has_extended_manifest) + size_of::<bool>()
+    );
+    assert!(offset_of!(NpmPackage, _padding_tail) + 7 == size_of::<NpmPackage>());
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -923,7 +954,13 @@ pub mod package_manifest {
             // order matches Zig comptime sort (descending alignment).
             {
                 // "pkg"
-                // SAFETY: NpmPackage is #[repr(C)] POD
+                // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
+                // implicit padding** — the two layout gaps are filled by
+                // explicit `_padding_*: [u8; N]` fields (zero-initialized via
+                // `Default`), and the `const _ = { offset_of!… }` block at the
+                // struct definition statically asserts no gap remains. Every
+                // byte of `this.pkg` is therefore initialized, so viewing it
+                // as `&[u8]` is sound.
                 let bytes = unsafe {
                     bun_core::ffi::slice(
                         (&raw const this.pkg).cast::<u8>(),

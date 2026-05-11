@@ -404,7 +404,7 @@ impl ShellSubprocess {
         // SAFETY: `process` was produced by `to_process` (heap::alloc) and is
         // live until the deref below drops the last strong ref.
         unsafe {
-            (*process).set_exit_handler_default();
+            (*process).set_exit_target_default();
             (*process).close();
             // Spec: `this.process.deref()` — release the intrusive ref taken
             // by `spawn_result.toProcess`. `*mut Process` has no Drop, so this
@@ -511,7 +511,7 @@ impl ShellSubprocess {
     }
 
     /// Tear down a subprocess whose stdio start() failed. Marks pending pipe readers as
-    /// errored so PipeReader.deinit's done-assert passes, drops the exit handler so a
+    /// errored so PipeReader.deinit's done-assert passes, drops the exit target so a
     /// later onProcessExit doesn't touch the freed Subprocess, then deinits.
     ///
     /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
@@ -544,7 +544,7 @@ impl ShellSubprocess {
                     }
                 }
             }
-            subproc.proc().set_exit_handler_default();
+            subproc.proc().set_exit_target_default();
             // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
         }
     }

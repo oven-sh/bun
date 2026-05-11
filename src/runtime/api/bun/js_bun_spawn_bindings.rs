@@ -16,6 +16,7 @@ use bun_jsc::ipc as IPC;
 use bun_paths::PathBuffer;
 use bun_str::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
 use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
+use bun_runtime_types::process_exit::RuntimeProcessExitTarget;
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::{
@@ -1347,9 +1348,19 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         bun_spawn_types::ProcessHandle::from_ptr(subprocess.process.as_ptr())
             .expect("subprocess Process pointer is non-null"),
     );
-    unsafe { process_mut(subprocess.process.as_ptr()) }.set_exit_handler(unsafe {
-        bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
-    });
+    // SAFETY: `subprocess_ptr` is the live heap allocation; `exit_state` is an
+    // embedded field and remains live until `Subprocess::finalize` detaches the
+    // process target.
+    let exit_state = unsafe {
+        bun_runtime_types::subprocess::SubprocessExitStateHandle::from_live_state(
+            &mut subprocess.exit_state,
+        )
+    };
+    unsafe { process_mut(subprocess.process.as_ptr()) }.set_exit_target(
+        bun_spawn::ProcessExitTarget::Runtime(RuntimeProcessExitTarget::Subprocess {
+            state: exit_state,
+        }),
+    );
 
     promise_for_stream.ensure_still_alive();
     subprocess.flags.set(

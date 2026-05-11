@@ -82,29 +82,13 @@ pub use bun_spawn_sys::uv_getrusage;
 #[cfg(unix)]
 const PROCESS_POLL_ONE_SHOT: bool = !cfg!(target_os = "linux");
 
-pub use crate::{
-    ProcessExit, ProcessExitDelivery, ProcessExitHandler, ProcessExitKind, ProcessExitTarget,
-};
+pub use crate::{ProcessExitDelivery, ProcessExitTarget};
 
 unsafe extern "Rust" {
     fn __bun_dispatch_process_exit_delivery(
         delivery: ProcessExitDelivery,
         context: *mut c_void,
     );
-}
-
-#[inline]
-pub(crate) fn call_exit_handler(
-    h: &ProcessExitHandler,
-    process: &mut Process,
-    status: Status,
-    rusage: &Rusage,
-) {
-    let Some(h) = h else { return };
-    if h.owner.is_null() {
-        return;
-    }
-    h.on_process_exit(process, status, rusage);
 }
 
 #[derive(Debug)]
@@ -145,7 +129,6 @@ pub struct Process {
     pub status: Status,
     pub poller: Poller,
     pub ref_count: bun_ptr::ThreadSafeRefCount<Process>,
-    pub exit_handler: ProcessExitHandler,
     pub exit_target: Option<ProcessExitTarget>,
     pub sync: bool,
     pub event_loop: EventLoopHandle,
@@ -163,14 +146,6 @@ impl Drop for Process {
 impl Process {
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<Self>()
-    }
-
-    pub fn set_exit_handler(&mut self, h: ProcessExit) {
-        self.exit_handler = Some(h);
-    }
-
-    pub fn set_exit_handler_default(&mut self) {
-        self.exit_handler = None;
     }
 
     pub fn set_exit_target(&mut self, target: ProcessExitTarget) {
@@ -290,7 +265,6 @@ impl Process {
             sync: sync_,
             poller: Poller::Detached,
             status,
-            exit_handler: ProcessExitHandler::default(),
             exit_target: None,
         }))
     }
@@ -298,8 +272,6 @@ impl Process {
     // has_exited / has_killed / signal_code live in the always-on impl above.
 
     pub fn on_exit(&mut self, status: Status, rusage: &Rusage) -> Option<ProcessExitDelivery> {
-        // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
-        let exit_handler = self.exit_handler;
         let exit_target = self.exit_target.take();
         self.status = status.clone();
         if self.has_exited() {
@@ -308,7 +280,6 @@ impl Process {
         if let Some(exit_target) = exit_target {
             return exit_target.on_process_exit(std::ptr::from_mut(self), status, rusage);
         }
-        call_exit_handler(&exit_handler, self, status, rusage);
         None
     }
 
@@ -670,7 +641,6 @@ impl Process {
 
     pub fn detach(&mut self) {
         self.close();
-        self.exit_handler = ProcessExitHandler::default();
         self.exit_target = None;
     }
 
@@ -1973,7 +1943,6 @@ pub fn spawn_process_windows(
         pidfd: (),
         status: Status::Running,
         poller: Poller::Detached,
-        exit_handler: ProcessExitHandler::default(),
         exit_target: None,
         sync: false,
     }));
@@ -2467,9 +2436,10 @@ pub mod sync {
                 (*this).status = Some(status);
                 (*this).waiting_count -= 1;
             }
-            // SAFETY: `process` carries the provenance of the `&mut Process`
-            // already live in `ProcessExitHandler::call`; mutating through it
-            // re-uses that tag instead of conflicting with it.
+            // SAFETY: `process` is the same pointer passed through
+            // `ProcessExitTarget::on_process_exit`; mutating through it re-uses
+            // the already-live process access instead of going through
+            // `self.process`.
             unsafe {
                 (*process).detach();
                 (*process).deref();

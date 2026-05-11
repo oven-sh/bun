@@ -16,7 +16,9 @@ use bun_jsc::{
 use bun_jsc::{JsClass, SysErrorJsc};
 use bun_sys::{self, Fd, FdExt, SignalCode};
 use enumset::{EnumSet, EnumSetType};
-use bun_runtime_types::subprocess::SubprocessExitState;
+use bun_runtime_types::subprocess::{
+    SubprocessExitAction, SubprocessExitState,
+};
 use bun_spawn_types::ProcessHandle;
 
 // Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
@@ -370,16 +372,6 @@ pub extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
     // SAFETY: ctx was registered as `*mut Subprocess` when the listener was
     // attached; AbortSignal guarantees it is live for the callback.
     unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
-}
-
-bun_spawn::link_impl_ProcessExit! {
-    Subprocess for Subprocess => |this| {
-        // `process` forwarded raw (not reborrowed) so `on_process_exit` can
-        // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
-        // provenance cast.
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, status, &*rusage),
-    }
 }
 
 impl Subprocess<'_> {
@@ -943,20 +935,38 @@ impl Subprocess<'_> {
         None
     }
 
-    pub fn on_process_exit(&mut self, process: *mut Process, status: Status, rusage: &Rusage) {
-        bun_output::scoped_log!(Subprocess, "onProcessExit()");
-        let Some(process_handle) = ProcessHandle::from_ptr(process) else {
-            Output::debug_warn(format_args!(
-                "<d>[Subprocess]<r> onProcessExit called with null process"
-            ));
-            return;
-        };
-        if !self.exit_state.record_process_exit_rusage(process_handle, *rusage) {
-            Output::debug_warn(format_args!(
-                "<d>[Subprocess]<r> onProcessExit called with wrong process"
-            ));
-            return;
+    pub fn dispatch_process_exit(action: SubprocessExitAction) {
+        match action {
+            SubprocessExitAction::WrongProcess => {
+                Output::debug_warn(format_args!(
+                    "<d>[Subprocess]<r> onProcessExit called with wrong process"
+                ));
+            }
+            SubprocessExitAction::ProcessExited {
+                state,
+                process,
+                status,
+            } => {
+                // SAFETY: `state` is the embedded `exit_state` field of a live
+                // `Subprocess`; construction is centralized in
+                // `spawn_maybe_sync`, and `Subprocess::finalize` clears the
+                // process target before releasing the subprocess/process pair.
+                let subprocess: &mut Subprocess<'static> = unsafe {
+                    &mut *bun_core::from_field_ptr!(
+                        Subprocess<'static>,
+                        exit_state,
+                        state.as_ptr()
+                    )
+                };
+                subprocess.on_process_exit_recorded(process, status);
+            }
         }
+    }
+
+    pub fn on_process_exit_recorded(&mut self, process: ProcessHandle, status: Status) {
+        bun_output::scoped_log!(Subprocess, "onProcessExit()");
+        debug_assert!(self.exit_state.matches_process_handle(process));
+        let process = process.as_ptr::<Process>();
         let this_jsvalue = self.this_value.try_get().unwrap_or(JSValue::ZERO);
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).
@@ -979,9 +989,7 @@ impl Subprocess<'_> {
         self.set_event_loop_timer_refd(false);
 
         // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread
-        // only. `process` is the raw `*mut Process` threaded from the vtable
-        // thunk so the auto-killer's `(*process).deref()` keeps mutable
-        // provenance (no `&Process → *mut` round-trip).
+        // only. `process` is the typed lower-process handle recorded at spawn.
         unsafe { (*jsc_vm).on_subprocess_exit(process) };
 
         #[cfg(windows)]

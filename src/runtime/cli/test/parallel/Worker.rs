@@ -105,7 +105,7 @@ impl Worker {
                 // SAFETY: `p` is a live intrusive-refcounted *mut Process
                 // produced by `to_process` below; sole owner until reaped.
                 unsafe {
-                    (*p).exit_handler = Default::default();
+                    (*p).set_exit_target_default();
                     if !(*p).has_exited() {
                         let _ = (*p).kill(9);
                     }

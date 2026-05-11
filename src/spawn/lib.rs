@@ -156,18 +156,6 @@ impl ProcessExitTarget {
     }
 }
 
-// Legacy owner-pointer handlers that have not yet moved to ProcessExitTarget.
-bun_dispatch::link_interface! {
-    pub ProcessExit[
-        Subprocess,
-    ] {
-        fn on_process_exit(process: *mut Process, status: Status, rusage: *const Rusage);
-    }
-}
-
-/// `None` = no handler set (the default for `Process::exit_handler`).
-pub type ProcessExitHandler = Option<ProcessExit>;
-
 /// Compat re-export: the `process::spawn_sys` shim module was dissolved into
 /// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on
 /// `bun_spawn`). Downstream `runtime/api/bun/*` still spells the old path.

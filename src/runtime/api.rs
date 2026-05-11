@@ -93,8 +93,8 @@ pub mod crash_handler_jsc;
 // inline `mod bun { }` below is a re-export façade only — module bodies are
 // declared flat to avoid the non-mod-rs nested-path resolution rules.
 
-// process.rs — Process struct + posix_spawn/uv_spawn machinery. §Dispatch
-// vtable applied for ProcessExitHandler; structs + non-JSC methods un-gated.
+// process.rs — Process struct + posix_spawn/uv_spawn machinery. Typed
+// ProcessExitTarget dispatch; structs + non-JSC methods un-gated.
 // spawn_process_{posix,windows} bodies + waiter-thread dispatch loop + sync
 // mod remain re-gated inside the file (depend on sibling `spawn` posix_spawn
 // wrappers and bun_io FilePoll method surface).
@@ -144,8 +144,8 @@ pub mod bun {
     pub use spawn::posix_spawn;
     pub use process::{
         Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
-        PosixStdio, Process, ProcessExit, ProcessExitHandler, ProcessExitKind, Rusage,
-        SpawnOptions, SpawnProcessResult, Status, StdioKind, WaiterThread,
+        PosixStdio, Process, Rusage, SpawnOptions, SpawnProcessResult, Status, StdioKind,
+        WaiterThread,
     };
     pub use process::StdioKind as SubprocessStdioKind;
 

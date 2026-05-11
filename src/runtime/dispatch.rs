@@ -246,6 +246,9 @@ pub fn __bun_dispatch_process_exit_delivery(
               RuntimeProcessExitAction::CronRemove { state, action } => {
                   crate::api::cron::on_remove_process_exit(state, action);
               }
+              RuntimeProcessExitAction::Subprocess { action } => {
+                  Subprocess::dispatch_process_exit(action);
+              }
           },
       }
   }

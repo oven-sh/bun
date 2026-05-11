@@ -2196,7 +2196,6 @@ dependencies = [
  "bun_analytics",
  "bun_core",
  "bun_crash_handler",
- "bun_dispatch",
  "bun_event_loop",
  "bun_install_types",
  "bun_io",

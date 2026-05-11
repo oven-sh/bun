@@ -1,5 +1,6 @@
 use crate::cron::{CronRegisterJobStateHandle, CronRemoveJobStateHandle};
 use crate::shell::{InterpreterHandle, NodeId};
+use crate::subprocess::{SubprocessExitAction, SubprocessExitStateHandle};
 use bun_spawn_types::process_exit::ProcessExitReadinessAction;
 use bun_spawn_types::{ProcessExitContext, ProcessIdentity, Status};
 
@@ -25,6 +26,9 @@ pub enum RuntimeProcessExitTarget {
     },
     CronRemove {
         state: CronRemoveJobStateHandle,
+    },
+    Subprocess {
+        state: SubprocessExitStateHandle,
     },
 }
 
@@ -66,6 +70,9 @@ pub enum RuntimeProcessExitAction {
     CronRemove {
         state: CronRemoveJobStateHandle,
         action: ProcessExitReadinessAction,
+    },
+    Subprocess {
+        action: SubprocessExitAction,
     },
 }
 
@@ -111,6 +118,9 @@ impl RuntimeProcessExitTarget {
             },
             Self::CronRemove { state } => RuntimeProcessExitAction::CronRemove {
                 state,
+                action: state.on_process_exit(ctx),
+            },
+            Self::Subprocess { state } => RuntimeProcessExitAction::Subprocess {
                 action: state.on_process_exit(ctx),
             },
         }

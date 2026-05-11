@@ -1,5 +1,61 @@
+use core::ptr::NonNull;
+
 use bun_io_types::reader::BufferedReaderHandle;
-use bun_spawn_types::{ProcessHandle, Rusage};
+use bun_spawn_types::{ProcessExitContext, ProcessHandle, Rusage, Status};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubprocessExitStateHandle(NonNull<SubprocessExitState>);
+
+impl SubprocessExitStateHandle {
+    /// # Safety
+    /// `state` must remain live until the process target using this handle has
+    /// stopped firing. Runtime dispatch additionally requires handles stored in
+    /// `ProcessExitTarget` to point at the `exit_state` field of a live
+    /// `Subprocess`.
+    #[inline]
+    pub unsafe fn from_live_state(state: &mut SubprocessExitState) -> Self {
+        Self(NonNull::from(state))
+    }
+
+    #[inline]
+    pub fn as_ptr(self) -> *mut SubprocessExitState {
+        self.0.as_ptr()
+    }
+
+    #[inline]
+    fn with_state<R>(self, f: impl FnOnce(&mut SubprocessExitState) -> R) -> R {
+        let mut state = self.0;
+        // SAFETY: upheld by `from_live_state`'s construction contract.
+        f(unsafe { state.as_mut() })
+    }
+
+    #[inline]
+    pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) -> SubprocessExitAction {
+        let Some(process) = ctx.process_handle() else {
+            return SubprocessExitAction::WrongProcess;
+        };
+        self.with_state(|state| {
+            if !state.record_process_exit_rusage(process, *ctx.rusage) {
+                return SubprocessExitAction::WrongProcess;
+            }
+            SubprocessExitAction::ProcessExited {
+                state: self,
+                process,
+                status: ctx.status.clone(),
+            }
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum SubprocessExitAction {
+    WrongProcess,
+    ProcessExited {
+        state: SubprocessExitStateHandle,
+        process: ProcessHandle,
+        status: Status,
+    },
+}
 
 #[derive(Clone, Default)]
 pub struct SubprocessExitState {
@@ -103,6 +159,37 @@ mod tests {
         assert!(state.rusage().is_none());
 
         assert!(state.record_process_exit_rusage(process, rusage));
+        assert!(state.rusage().is_some());
+    }
+
+    #[test]
+    fn subprocess_exit_handle_records_exit_fact_without_owner_pointer() {
+        let mut process = 0u8;
+        let process = ProcessHandle::from_ptr(core::ptr::from_mut(&mut process)).unwrap();
+        let rusage = bun_spawn_types::rusage_zeroed();
+
+        let mut state = SubprocessExitState::new();
+        state.record_process_handle(process);
+        // SAFETY: the state lives for the whole test and no other handle mutates it.
+        let handle = unsafe { SubprocessExitStateHandle::from_live_state(&mut state) };
+
+        match handle.on_process_exit(&ProcessExitContext::from_handle(
+            process,
+            Status::Exited(bun_spawn_types::Exited { code: 0, signal: 0 }),
+            &rusage,
+        )) {
+            SubprocessExitAction::ProcessExited {
+                state: actual_state,
+                process: actual_process,
+                status,
+            } => {
+                assert_eq!(actual_state, handle);
+                assert_eq!(actual_process, process);
+                assert_eq!(status.exit_code(), Some(0));
+            }
+            SubprocessExitAction::WrongProcess => panic!("wrong action"),
+        }
+
         assert!(state.rusage().is_some());
     }
 }

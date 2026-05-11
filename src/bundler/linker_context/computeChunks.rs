@@ -669,7 +669,8 @@ pub fn compute_chunks(
                 match bun_sys::get_fd_path(*dir_fd, &mut real_path_buf) {
                     Ok(p) => break 'dir &*p,
                     Err(err) => {
-                        this.log.add_error_fmt(
+                        // SAFETY: split-borrow — see `LinkerContext::log_mut`.
+                        unsafe { &mut *this.log }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(

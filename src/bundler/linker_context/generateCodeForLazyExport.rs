@@ -344,7 +344,8 @@ pub fn generate_code_for_lazy_export(
                     all_import_records,
                     all_css_asts,
                     loc: stmt.loc,
-                    log: this.log,
+                    // SAFETY: split-borrow — see `LinkerContext::log_mut`.
+                    log: unsafe { &mut *this.log },
                     all_sources,
                     arena,
                     all_symbols,

@@ -87,7 +87,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 
 fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-    // across `&mut *c.log` below (split borrow).
+    // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };
     let asts = c.graph.ast.items_css();
 
@@ -252,7 +252,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             ) {
                                 Ok(v) => v,
                                 Err(e) => {
-                                    c.log.add_error_fmt(
+                                    // SAFETY: split-borrow — `parse_graph`/`asts` hold
+                                    // borrows derived from `c`; raw-deref the `*mut Log`
+                                    // backref. See `LinkerContext::log_mut`.
+                                    unsafe { &mut *c.log }.add_error_fmt(
                                         None,
                                         Loc::EMPTY,
                                         format_args!("Error generating CSS for import: {}", e),

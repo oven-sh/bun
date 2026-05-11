@@ -2820,7 +2820,7 @@ function generateRust(
     structuredClone = false,
     getInternalProperties = false,
     rustPath,
-    sharedThis = false,
+    sharedThis = true,
   } = {} as ClassDefinition,
 ) {
   proto = {
@@ -2863,10 +2863,12 @@ function generateRust(
     );
   }
   const T = typeName;
-  // R-2 noalias re-entrancy: opt-in per-type `&self` receiver. Default
-  // (`sharedThis: false`) keeps the legacy `&mut ${T}` so this whole block
-  // is byte-identical for every type that hasn't opted in yet. `_shared`
-  // helpers live in `src/jsc/host_fn.rs` alongside the `&mut` originals.
+  // R-2 Phase 3: default flipped to `sharedThis: true`. Every JS-exposed
+  // host-fn now receives `&${T}` (no `noalias` on the LLVM arg, so re-entrant
+  // JS that re-derives `&Self` from the wrapper's `m_ctx` cannot miscompile).
+  // `sharedThis: false` remains an explicit opt-out for types that have not
+  // yet migrated their fields to `Cell`/`JsCell`. `_shared` helpers live in
+  // `src/jsc/host_fn.rs` alongside the legacy `&mut` originals.
   const recv = sharedThis ? `&${T}` : `&mut ${T}`;
   const helper = (base: string) => (sharedThis ? `host_fn::${base}_shared` : `host_fn::${base}`);
 

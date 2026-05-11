@@ -422,13 +422,14 @@ impl PostgresSQLQuery {
     // borrow-scoped provenance that is invalidated once codegen reuses m_ctx after this
     // call returns (Stacked Borrows). Passing the raw payload pointer through preserves
     // the allocation's root provenance for the queued entry.
-    pub fn do_run(this_ptr: *mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        // SAFETY: `this_ptr` is the live m_ctx payload for `callframe.this()`; the JS
-        // wrapper is on-stack so GC cannot finalize it, and the mutator thread has
-        // exclusive access. R-2: deref as shared (`&*`) — every mutated field is
-        // `Cell`/`JsCell`-backed. The pointer pushed into `connection.requests` is
-        // `this_ptr` itself, never a coercion of this reborrow.
-        let this = unsafe { &*this_ptr };
+    pub fn do_run(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
+        // wrapper is on-stack so GC cannot finalize it. Every mutated field is
+        // `Cell`/`JsCell`-backed, so `&Self` suffices. The pointer pushed into
+        // `connection.requests` is derived via `core::ptr::from_ref(this).cast_mut()`
+        // (write provenance is recovered from the JsCell-backed queue, never from
+        // this shared borrow).
+        let this_ptr: *mut Self = core::ptr::from_ref(this).cast_mut();
         let arguments = callframe.arguments();
         let Some(connection_ptr) = postgres_sql_connection::js::from_js(arguments[0]) else {
             return Err(global_object.throw(format_args!("connection must be a PostgresSQLConnection")));

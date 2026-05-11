@@ -166,27 +166,27 @@ impl TimeoutObject {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn to_primitive(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn to_primitive(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.to_primitive()
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_ref(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_ref(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.do_ref(global, frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_unref(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_unref(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.do_unref(global, frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_refresh(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_refresh(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.do_refresh(global, frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn has_ref(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn has_ref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.has_ref()
     }
 
@@ -205,7 +205,7 @@ impl TimeoutObject {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn close(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.cancel(global.bun_vm_ptr());
         Ok(frame.this())
     }
@@ -219,7 +219,7 @@ impl TimeoutObject {
         js::callback_get_cached(this_value).unwrap()
     }
 
-    pub fn set_on_timeout(_this: &mut Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub fn set_on_timeout(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         js::callback_set_cached(this_value, global, value);
     }
 
@@ -227,7 +227,7 @@ impl TimeoutObject {
         js::idle_timeout_get_cached(this_value).unwrap()
     }
 
-    pub fn set_idle_timeout(_this: &mut Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub fn set_idle_timeout(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         js::idle_timeout_set_cached(this_value, global, value);
     }
 
@@ -235,7 +235,7 @@ impl TimeoutObject {
         js::repeat_get_cached(this_value).unwrap()
     }
 
-    pub fn set_repeat(_this: &mut Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub fn set_repeat(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         js::repeat_set_cached(this_value, global, value);
     }
 
@@ -243,12 +243,12 @@ impl TimeoutObject {
         js::idle_start_get_cached(this_value).unwrap()
     }
 
-    pub fn set_idle_start(_this: &mut Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub fn set_idle_start(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         js::idle_start_set_cached(this_value, global, value);
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn dispose(this: &mut Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn dispose(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.cancel(global.bun_vm_ptr());
         Ok(JSValue::UNDEFINED)
     }

@@ -47,8 +47,6 @@ pub mod timeout_object;
 #[path = "ImmediateObject.rs"]
 pub mod immediate_object;
 
-#[path = "TimerObjectInternals.rs"]
-mod timer_object_internals_draft;
 
 #[path = "DateHeaderTimer.rs"]
 mod date_header_timer_draft;
@@ -574,11 +572,11 @@ impl All {
         let flags_slot: Option<*mut TimerFlags> = match timer_ref.tag {
             EventLoopTimerTag::TimeoutObject => unsafe {
                 let parent = bun_core::from_field_ptr!(TimeoutObject, event_loop_timer, timer);
-                Some(core::ptr::addr_of_mut!((*parent).internals.flags))
+                Some(core::ptr::addr_of_mut!((*parent).internals.flags).cast::<TimerFlags>())
             },
             EventLoopTimerTag::ImmediateObject => unsafe {
                 let parent = bun_core::from_field_ptr!(ImmediateObject, event_loop_timer, timer);
-                Some(core::ptr::addr_of_mut!((*parent).internals.flags))
+                Some(core::ptr::addr_of_mut!((*parent).internals.flags).cast::<TimerFlags>())
             },
             // Spec EventLoopTimer.zig:157-160 — `AbortSignal.Timeout` stores
             // `flags` directly (not under `.internals`).

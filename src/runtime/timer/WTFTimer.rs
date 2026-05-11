@@ -253,7 +253,7 @@ impl WTFTimer {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
-    if IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.with(Cell::get) {
+    if IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.get() {
         return ptr::null_mut();
     }
 

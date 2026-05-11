@@ -165,22 +165,22 @@ impl ImmediateObject {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn to_primitive(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn to_primitive(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.to_primitive()
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_ref(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_ref(this: &Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.do_ref(global_this, call_frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_unref(this: &mut Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_unref(this: &Self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.do_unref(global_this, call_frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn has_ref(this: &mut Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn has_ref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.has_ref()
     }
 
@@ -199,7 +199,7 @@ impl ImmediateObject {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn dispose(this: &mut Self, global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn dispose(this: &Self, global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.internals.cancel(global_this.bun_vm_ptr());
         Ok(JSValue::UNDEFINED)
     }

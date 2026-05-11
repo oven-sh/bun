@@ -823,6 +823,13 @@ pub const Loader = struct {
             .err => |err| return bun.errnoToZigErr(err.errno),
         };
 
+        // open() on POSIX succeeds for directories in read-only mode, so a
+        // directory can reach us here. Short-circuit to an empty source to
+        // match the pre-PR silent-skip behavior (issue #3670) — otherwise
+        // the read loop below would hit `EISDIR` and print a noisy error
+        // under `--loglevel=info`.
+        if (bun.S.ISDIR(@intCast(stat.mode))) return null;
+
         // Non-regular files (FIFOs, sockets, character devices) report
         // `stat.size == 0` regardless of how much data they will actually
         // produce. Read until EOF instead of preallocating from `stat.size`.

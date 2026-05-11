@@ -136,7 +136,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // RAII: `MutexGuard` holds the mutex by raw pointer (no borrow of `this`)
     // and unlocks on Drop — Zig: `this.mutex.lock(); defer this.mutex.unlock();`.
     let _guard = this.mutex.lock_guard();
-    if this.running {
+    if this.running.load() {
         // PORT NOTE: reshaped for borrowck — copy the (small, ≤128) deduped slice
         // into a local so `this` is no longer mutably borrowed via `watch_events`
         // when calling `write_trace_events(&self, …)`.

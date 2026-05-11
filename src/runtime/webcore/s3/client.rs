@@ -367,7 +367,7 @@ pub fn list_objects(
     let mut batch = bun_threading::thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
-    bun_http::http_thread().schedule(batch);
+    bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
 
@@ -1052,7 +1052,7 @@ pub fn download_stream(
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
-    bun_http::http_thread().schedule(batch);
+    bun_http::HTTPThread::schedule(batch);
 }
 
 /// returns a readable stream that reads from the s3 path

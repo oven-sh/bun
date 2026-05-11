@@ -6,6 +6,8 @@ pub mod result;
 pub mod tty;
 pub mod util;
 pub mod Global;
+pub mod atomic_cell;
+pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`. Mirrors the identical

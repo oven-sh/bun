@@ -278,12 +278,10 @@ static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 pub static bun_stdio_tty: crate::RacyCell<[i32; 3]> = crate::RacyCell::new([0, 0, 0]);
 
 // TYPE_ONLY: bun_sys::Winsize → bun_core (move-in pass).
-pub static TERMINAL_SIZE: crate::RacyCell<crate::Winsize> = crate::RacyCell::new(crate::Winsize {
-    row: 0,
-    col: 0,
-    xpixel: 0,
-    ypixel: 0,
-});
+// `AtomicCell` because the SIGWINCH handler writes this from signal context
+// while any thread may read it. `Winsize` is 4×u16 = 8 bytes, padding-free.
+pub static TERMINAL_SIZE: crate::AtomicCell<crate::Winsize> =
+    crate::AtomicCell::new(crate::Winsize { row: 0, col: 0, xpixel: 0, ypixel: 0 });
 
 // ──────────────────────────────────────────────────────────────────────────
 // Source

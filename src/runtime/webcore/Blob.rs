@@ -6554,7 +6554,7 @@ pub trait FileCloser: Sized {
                 // fence (Rust has no `AtomicFnPtr`).
                 io_request.store_callback_seq_cst(Self::schedule_close);
                 if !io_request.scheduled {
-                    bun_io::IoRequestLoop::get().schedule(io_request);
+                    bun_io::IoRequestLoop::schedule(io_request);
                 }
                 return true;
             }

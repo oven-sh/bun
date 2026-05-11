@@ -3163,7 +3163,7 @@ impl RunCommand {
         if downloads.is_empty() {
             return;
         }
-        bun_http::http_thread().schedule(batch);
+        bun_http::HTTPThread::schedule(batch);
 
         // Block the main thread on the channel until every scheduled
         // download has reported back. readItem() uses a mutex+condvar,

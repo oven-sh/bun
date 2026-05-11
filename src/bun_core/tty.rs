@@ -13,6 +13,8 @@ pub struct Winsize {
 }
 // SAFETY: four `u16` fields; all-zero is a valid `Winsize`.
 unsafe impl crate::ffi::Zeroable for Winsize {}
+// SAFETY: `#[repr(C)]` over four `u16` — exactly 8 bytes, no padding.
+crate::unsafe_impl_atom!(Winsize);
 
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]

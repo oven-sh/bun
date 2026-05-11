@@ -115,11 +115,18 @@ pub struct Watcher {
     // `fs.top_level_dir`. Storing the slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
-    pub watchloop_handle: Option<std::thread::ThreadId>,
+    /// Whether `thread_main` is running. Written by the watcher thread, read
+    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
+    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
+    pub watchloop_handle: bun_core::AtomicCell<bool>,
     pub cwd: &'static [u8],
     pub thread: Option<std::thread::JoinHandle<()>>,
-    pub running: bool,
-    pub close_descriptors: bool,
+    /// Main thread clears this in `shutdown`; watcher thread polls it in
+    /// `watch_loop` and the platform `watch_loop_cycle`.
+    pub running: bun_core::AtomicCell<bool>,
+    /// Set by `shutdown` (main thread), read by `thread_main` (watcher
+    /// thread) after the loop exits.
+    pub close_descriptors: bun_core::AtomicCell<bool>,
 
     pub evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
     pub evict_list_i: WatchItemIndex,
@@ -194,10 +201,10 @@ impl Watcher {
             platform: Platform::default(),
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
-            watchloop_handle: None,
+            watchloop_handle: bun_core::AtomicCell::new(false),
             thread: None,
-            running: true,
-            close_descriptors: false,
+            running: bun_core::AtomicCell::new(true),
+            close_descriptors: bun_core::AtomicCell::new(false),
             evict_list: [0; MAX_EVICTION_COUNT],
             evict_list_i: 0,
             thread_lock: ThreadLock::init_unlocked(),
@@ -218,7 +225,7 @@ impl Watcher {
     }
 
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
-        debug_assert!(self.watchloop_handle.is_none());
+        debug_assert!(!self.watchloop_handle.load());
         // TODO(port): thread spawn — Watcher must be Send across the spawned
         // thread boundary; Zig passed *Watcher. Using raw ptr + manual safety.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
@@ -241,13 +248,13 @@ impl Watcher {
     pub fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
-        if me.watchloop_handle.is_some() {
+        if me.watchloop_handle.load() {
             me.mutex.lock();
-            me.close_descriptors = close_descriptors;
-            me.running = false;
+            me.close_descriptors.store(close_descriptors);
+            me.running.store(false);
             me.mutex.unlock();
         } else {
-            if close_descriptors && me.running {
+            if close_descriptors && me.running.load() {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
                     let _ = bun_sys::close(fd);
@@ -264,7 +271,7 @@ impl Watcher {
     }
 
     fn thread_main(&mut self) -> Result<(), bun_core::Error> {
-        self.watchloop_handle = Some(std::thread::current().id());
+        self.watchloop_handle.store(true);
         self.thread_lock.lock();
         Output::Source::configure_named_thread(zstr!("File Watcher"));
 
@@ -273,9 +280,9 @@ impl Watcher {
 
         match self.watch_loop() {
             Err(err) => {
-                self.watchloop_handle = None;
+                self.watchloop_handle.store(false);
                 self.platform.stop();
-                if self.running {
+                if self.running.load() {
                     (self.on_error)(self.ctx, err);
                 }
             }
@@ -283,7 +290,7 @@ impl Watcher {
         }
 
         // deinit and close descriptors if needed
-        if self.close_descriptors {
+        if self.close_descriptors.load() {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
                 let _ = bun_sys::close(fd);
@@ -388,7 +395,7 @@ impl Watcher {
     }
 
     fn watch_loop(&mut self) -> sys::Result<()> {
-        while self.running {
+        while self.running.load() {
             // individual platform implementation will call onFileUpdate
             platform::watch_loop_cycle(self)?;
         }

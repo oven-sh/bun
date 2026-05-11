@@ -526,7 +526,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     // Intentionally diverges from Zig spec (`WindowsWatcher.zig` does not
     // lock here); same EBADF race exists there.
     let _guard = this.mutex.lock_guard();
-    if !this.running {
+    if !this.running.load() {
         return Ok(());
     }
     let changed = &this.changed_filepaths[0..last_event_index + 1];

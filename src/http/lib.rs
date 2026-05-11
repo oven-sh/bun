@@ -657,8 +657,14 @@ impl Drop for HTTPClient<'_> {
 // lands in `.bss`. `Option<HTTPThread>::None` has a non-zero niche value, which
 // forced the entire ~27 KB struct into `.data` and thus into startup RSS for
 // every process — Zig's `var http_thread: HTTPThread = undefined` is pure BSS.
-pub static HTTP_THREAD: bun_core::RacyCell<core::mem::MaybeUninit<HTTPThread>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+//
+// `ThreadCell` (not `RacyCell`) to encode "HTTP-thread-only after init" in the
+// type. `claim()` is invoked from `HTTPThread::on_start`. JS-side callers that
+// only touch the lock-free `queued_tasks` + `wakeup` (e.g. `schedule()`) go
+// through [`http_thread_shared`] / `get_unchecked` until those fields are
+// hoisted out of the thread-confined struct.
+pub static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPThread>> =
+    bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 pub(crate) static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 

@@ -409,7 +409,7 @@ impl ReadFile {
         // Zig: @atomicStore on the callback fn-pointer field.
         self.io_request.store_callback_seq_cst(Self::on_request_readable);
         if !self.io_request.scheduled {
-            io::IoRequestLoop::get().schedule(&mut self.io_request);
+            io::IoRequestLoop::schedule(&mut self.io_request);
         }
     }
 

@@ -1682,7 +1682,7 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
     manager
         .network_resolve_batch
         .push(core::mem::take(&mut manager.network_tarball_batch));
-    http::http_thread().schedule(core::mem::take(&mut manager.network_resolve_batch));
+    http::HTTPThread::schedule(core::mem::take(&mut manager.network_resolve_batch));
     // Zig resets these to `.{}` after passing by-value; `mem::take` above already did that.
     count
 }

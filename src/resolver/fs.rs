@@ -279,14 +279,16 @@ pub enum FileSystemError {
 
 static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-// PORTING.md §Global mutable state: highest-fd watermark, mutated only on the
-// resolver thread. POSIX-only fd ceiling tracking (Windows handles aren't
-// ordered ints) — `set_max_fd` early-returns on Windows; the static is still
-// declared so the cross-platform `MAX_FD` symbol resolves.
+// PORTING.md §Global mutable state: highest-fd watermark, written from
+// resolver pool / bundler / router and read from the file-limit check below.
+// `AtomicCell` (not `RacyCell`) because those callers run on different
+// threads. POSIX-only fd ceiling tracking (Windows handles aren't ordered
+// ints) — `set_max_fd` early-returns on Windows; the static is still declared
+// so the cross-platform `MAX_FD` symbol resolves.
 #[cfg(not(windows))]
-pub(crate) static MAX_FD: bun_core::RacyCell<bun_sys::RawFd> = bun_core::RacyCell::new(0);
+pub(crate) static MAX_FD: bun_core::AtomicCell<bun_sys::RawFd> = bun_core::AtomicCell::new(0);
 #[cfg(windows)]
-pub(crate) static MAX_FD: bun_core::RacyCell<i32> = bun_core::RacyCell::new(0);
+pub(crate) static MAX_FD: bun_core::AtomicCell<i32> = bun_core::AtomicCell::new(0);
 pub(crate) static INSTANCE_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 // TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
@@ -360,10 +362,7 @@ impl FileSystem {
                 return;
             }
 
-            // SAFETY: single-threaded mutation in resolver context (matches Zig global)
-            unsafe {
-                *MAX_FD.get() = fd.max(*MAX_FD.get());
-            }
+            let _ = MAX_FD.fetch_update(|cur| (fd > cur).then_some(fd));
         }
     }
 
@@ -1338,8 +1337,7 @@ impl RealFS {
         #[cfg(not(windows))]
         {
             // If we're not near the max amount of open files, don't worry about it.
-            // SAFETY: MAX_FD is a global mutated only on the resolver thread
-            !(self.file_limit > 254 && self.file_limit > (unsafe { MAX_FD.read() } as usize + 1) * 2)
+            !(self.file_limit > 254 && self.file_limit > (MAX_FD.load() as usize + 1) * 2)
         }
     }
 

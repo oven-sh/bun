@@ -384,11 +384,8 @@ pub fn init_watch_trigger() {
         // Written once on the main thread before the watcher thread starts;
         // after that only the watcher thread touches these. See doc on
         // `hot_reloader::WATCH_CHANGED_PATHS`.
-        // SAFETY: single-threaded init; trigger-file slot has no concurrent reader yet.
-        unsafe {
-            jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE
-                .write(Some(arena.alloc(path).as_zstr()));
-        }
+        let _ = jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE
+            .set(arena.alloc(path).as_zstr());
         let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
             .set(jsc::hot_reloader::WatchChangedPaths::new(set));
     }

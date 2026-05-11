@@ -374,17 +374,22 @@ pub struct IoRequestLoop {
 // the IO thread mutates fields concurrently with `schedule()` callers (which only
 // touch the lock-free `pending` queue + `waker`), so wrapping the whole struct in a
 // `Mutex` would be wrong. Matches Zig `var loop: Loop = undefined;` + `std.once(load)`.
-// PORTING.md §Global mutable state: RacyCell — `ONCE` provides the
-// happens-before for init; afterwards only the IO thread mutates non-atomic
-// fields and other threads only touch the lock-free `pending` + `waker`.
-static LOOP: bun_core::RacyCell<core::mem::MaybeUninit<IoRequestLoop>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+//
+// `ThreadCell` (not `RacyCell`) to encode "IO-thread-only after init" in the
+// type. `claim()` is invoked from `on_spawn_io_thread`. Cross-thread
+// `schedule()` callers go through `get_unchecked` and touch only the
+// lock-free `pending` + `waker` (see `schedule`); `ONCE` provides the
+// happens-before for init.
+static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
+    bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 impl IoRequestLoop {
     fn load() {
-        // SAFETY: called exactly once via `ONCE.get_or_init`; no other access until this returns.
-        let loop_ = unsafe { (*LOOP.get()).assume_init_mut() };
+        // SAFETY: called exactly once via `ONCE.get_or_init`; no other access
+        // until this returns. `get_unchecked` because this runs on the
+        // *spawning* thread, before the IO thread `claim()`s the cell.
+        let loop_ = unsafe { (*LOOP.get_unchecked()).assume_init_mut() };
         *loop_ = IoRequestLoop {
             pending: RequestQueue::default(),
             waker: Waker::init().unwrap_or_else(|_| panic!("failed to initialize waker")),
@@ -477,7 +482,7 @@ impl IoRequestLoop {
         // Zig: thread.detach() — Rust JoinHandle detaches on drop.
     }
 
-    pub fn get() -> &'static mut IoRequestLoop {
+    fn ensure_init() {
         #[cfg(windows)]
         {
             panic!("Do not use this API on windows");
@@ -485,24 +490,36 @@ impl IoRequestLoop {
         #[cfg(not(windows))]
         {
             ONCE.get_or_init(|| { Self::load(); });
-
-            // SAFETY: LOOP initialized by `load()` exactly once above; callers uphold the
-            // Zig invariant that only the IO thread mutates non-atomic fields and other
-            // threads only call `schedule()` (lock-free queue + waker).
-            unsafe { (*LOOP.get()).assume_init_mut() }
         }
     }
 
     pub fn on_spawn_io_thread() {
+        // From here on, only this thread may take `&mut IoRequestLoop`;
+        // `ThreadCell` enforces that in debug builds.
+        LOOP.claim();
         // SAFETY: ONCE guarantees LOOP is initialized before this thread is spawned.
         unsafe { (*LOOP.get()).assume_init_mut() }.tick();
     }
 
-    pub fn schedule(&mut self, request: &mut Request) {
+    /// Enqueue `request` for the IO thread to pick up. Safe to call from any
+    /// thread: only touches the lock-free `pending` queue and the
+    /// async-signal-safe `waker`. This is the *only* cross-thread entry
+    /// point — every other `IoRequestLoop` method is IO-thread-only.
+    pub fn schedule(request: &mut Request) {
+        Self::ensure_init();
         debug_assert!(!request.scheduled);
         request.scheduled = true;
-        self.pending.push(request);
-        self.waker.wake();
+        // SAFETY: `ONCE` above established happens-before for `load()`'s
+        // init of `pending`/`waker`. We use `get_unchecked` (no owner assert)
+        // and stay in raw-ptr land via `addr_of_mut!` so we never materialize
+        // a `&mut IoRequestLoop` that would alias the IO thread's `tick()`
+        // borrow. `pending.push` takes `&self` (lock-free MPSC); `waker.wake`
+        // is async-signal-safe by design.
+        unsafe {
+            let loop_p = (*LOOP.get_unchecked()).as_mut_ptr();
+            (*core::ptr::addr_of!((*loop_p).pending)).push(request);
+            (*core::ptr::addr_of_mut!((*loop_p).waker)).wake();
+        }
     }
 
     pub fn tick(&mut self) {

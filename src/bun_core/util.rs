@@ -1767,6 +1767,14 @@ impl Drop for ThreadLockGuard {
     }
 }
 
+/// OS thread id for debug-only ownership assertions (`ThreadLock`,
+/// `ThreadCell`). `pub(crate)` so `atomic_cell` can reuse it; `#[doc(hidden)]`
+/// because it is not part of `bun_core`'s public surface.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+#[inline]
+pub(crate) fn debug_thread_id() -> u64 { thread_id() }
+
 #[cfg(debug_assertions)]
 #[inline]
 fn thread_id() -> u64 {

@@ -1987,16 +1987,15 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     }
 
     if let Some(log_level) = opts.log_level {
-        // SAFETY: single-threaded startup; mirrors Zig `Log.default_log_level = …`
-        unsafe {
-            bun_ast::DEFAULT_LOG_LEVEL.write(match log_level {
-                api::MessageLevel::Debug => bun_ast::Level::Debug,
-                api::MessageLevel::Err => bun_ast::Level::Err,
-                api::MessageLevel::Warn => bun_ast::Level::Warn,
-                _ => bun_ast::Level::Err,
-            });
-            (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.read();
-        }
+        bun_ast::DEFAULT_LOG_LEVEL.store(match log_level {
+            api::MessageLevel::Debug => bun_ast::Level::Debug,
+            api::MessageLevel::Err => bun_ast::Level::Err,
+            api::MessageLevel::Warn => bun_ast::Level::Warn,
+            _ => bun_ast::Level::Err,
+        });
+        // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
+        // shared with another thread.
+        unsafe { (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load(); }
     }
 
     if args.flag(b"--no-macros") {

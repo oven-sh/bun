@@ -553,7 +553,7 @@ fn process_inotify_event_batch(
     let _ = watch_events;
 
     let _guard = this.mutex.lock_guard();
-    if this.running {
+    if this.running.load() {
         // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
         // PORT NOTE: reshaped for borrowck — split disjoint field borrows so we can
         // pass `&mut watch_events[..]` in place (matching Zig's `all_events[0..]`)

@@ -443,7 +443,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         ));
         async_http.client.flags.is_preconnect_only = true;
 
-        crate::http_thread().schedule(Batch::from(core::ptr::addr_of_mut!(async_http.task)));
+        crate::HTTPThread::schedule(Batch::from(core::ptr::addr_of_mut!(async_http.task)));
     }
 }
 
@@ -721,7 +721,7 @@ impl<'a> AsyncHTTP<'a> {
 
         let mut batch = Batch::default();
         self.schedule(&mut batch);
-        crate::http_thread().schedule(batch);
+        crate::HTTPThread::schedule(batch);
 
         // SAFETY: `ctx` is a live heap allocation we own; the HTTP thread only
         // touches it inside `send_sync_callback`, whose final action is

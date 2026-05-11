@@ -612,7 +612,7 @@ pub fn execute_simple_s3_request(
     let mut batch = thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
-    bun_http::http_thread().schedule(batch);
+    bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
 

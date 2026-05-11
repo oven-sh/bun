@@ -801,8 +801,7 @@ impl<'a> Repl<'a> {
         self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
 
         // Get terminal size
-        // SAFETY: TERMINAL_SIZE is a process-global populated once during Output init.
-        let ts = unsafe { Output::TERMINAL_SIZE.read() };
+        let ts = Output::TERMINAL_SIZE.load();
         if ts.col > 0 {
             self.terminal_width = ts.col;
             self.terminal_height = ts.row;

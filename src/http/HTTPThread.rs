@@ -835,7 +835,11 @@ impl HttpThread {
     }
 
     pub fn wakeup(&self) {
-        if self.has_awoken.load(Ordering::Relaxed) {
+        // Acquire (not Relaxed): pairs with the Release store in `on_start`
+        // so the read of `self.uws_loop` (a non-atomic field set there)
+        // observes the published value. This is the canonical "Relaxed gives
+        // no happens-before for the init it guards" case.
+        if self.has_awoken.load(Ordering::Acquire) {
             // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
             // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
             // cross-thread while the HTTP thread owns the loop, so forming
@@ -844,11 +848,22 @@ impl HttpThread {
         }
     }
 
-    pub fn schedule(&mut self, batch: bun_threading::thread_pool::Batch) {
+    /// Enqueue a batch of `AsyncHttp` tasks for the HTTP thread. Safe to
+    /// call from any thread: only touches the lock-free `queued_tasks` MPSC
+    /// queue and `wakeup()` (atomic load + raw FFI call). This is the
+    /// **only** cross-thread entry point — every other `HttpThread` method
+    /// is HTTP-thread-only via [`http_thread()`](crate::http_thread).
+    pub fn schedule(batch: bun_threading::thread_pool::Batch) {
         if batch.len == 0 {
             return;
         }
-
+        // SAFETY: `init()` ran (every caller goes through `AsyncHttp::start`
+        // → `HTTPThread::init`), so `HTTP_THREAD` is initialized.
+        // `get_unchecked` (no owner assert) + raw-ptr field access so we
+        // never materialize a `&mut HttpThread` that would alias the HTTP
+        // thread's borrow. `queued_tasks.push` takes `&self` (lock-free
+        // MPSC); `wakeup` takes `&self` and only reads atomics / a raw ptr.
+        let this_p = unsafe { (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr() };
         {
             let mut batch_ = batch;
             while let Some(task) = batch_.pop() {
@@ -856,11 +871,12 @@ impl HttpThread {
                 let http: *mut AsyncHttp = unsafe {
                     bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr())
                 };
-                self.queued_tasks.push(http);
+                // SAFETY: see block comment above.
+                unsafe { (*core::ptr::addr_of!((*this_p).queued_tasks)).push(http); }
             }
         }
-
-        self.wakeup();
+        // SAFETY: see block comment above.
+        unsafe { (*this_p).wakeup(); }
     }
 }
 
@@ -1006,7 +1022,9 @@ mod _event_loop_draft {
         if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
             (opts.on_init_error)(err, &opts);
         }
-        thread.has_awoken.store(true, Ordering::Relaxed);
+        // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
+        // readers (which Acquire-load `has_awoken`).
+        thread.has_awoken.store(true, Ordering::Release);
         thread.process_events();
     }
 

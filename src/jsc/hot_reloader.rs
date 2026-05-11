@@ -398,8 +398,12 @@ unsafe impl Sync for WatchChangedPaths {}
 /// `BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE` env var so the restarted
 /// process can find it. Set alongside `WATCH_CHANGED_PATHS` by
 /// `test_command.zig`; the string must outlive the process.
-pub static WATCH_CHANGED_TRIGGER_FILE: bun_core::RacyCell<Option<&'static ZStr>> =
-    bun_core::RacyCell::new(None);
+///
+/// Init-once-then-read-only (main thread sets, watcher thread reads), so
+/// `OnceLock` per PORTING.md §Global mutable state. `&ZStr` is a fat pointer
+/// (`ZStr` is `[u8]`-backed), so `AtomicCell` would not fit anyway.
+pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
+    std::sync::OnceLock::new();
 
 fn record_changed_path(path: &[u8]) {
     let Some(set) = WATCH_CHANGED_PATHS.get() else {
@@ -429,8 +433,7 @@ fn flush_changed_paths_for_reload() {
         let Some(set) = WATCH_CHANGED_PATHS.get() else {
             return;
         };
-        // SAFETY: see doc on WATCH_CHANGED_TRIGGER_FILE — single-writer after init.
-        let Some(dest) = (unsafe { WATCH_CHANGED_TRIGGER_FILE.read() }) else {
+        let Some(&dest) = WATCH_CHANGED_TRIGGER_FILE.get() else {
             return;
         };
         // SAFETY: same single-writer invariant as above.

@@ -207,7 +207,7 @@ impl WriteFile {
         // Zig: `@atomicStore(?*const fn, &self.io_request.callback, &onRequestWritable, .seq_cst)`.
         self.io_request.store_callback_seq_cst(Self::on_request_writable);
         if !self.io_request.scheduled {
-            io::IoRequestLoop::get().schedule(&mut self.io_request);
+            io::IoRequestLoop::schedule(&mut self.io_request);
         }
     }
 

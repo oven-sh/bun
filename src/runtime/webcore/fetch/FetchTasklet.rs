@@ -354,10 +354,16 @@ impl FetchTasklet {
 
     pub fn deref(this: *mut FetchTasklet) {
         // SAFETY: caller holds a ref; ref_count > 0
-        let count = unsafe { (*this).ref_count.fetch_sub(1, Ordering::Relaxed) };
+        // Release on decrement + Acquire fence on the 1→0 transition is the
+        // standard `Arc` pattern: Release publishes this thread's prior writes
+        // to the object; the Acquire fence on the dropping thread observes
+        // them before `deinit` reads/ frees. `Relaxed` here was a data-race
+        // hazard — refs cross JS↔HTTP threads.
+        let count = unsafe { (*this).ref_count.fetch_sub(1, Ordering::Release) };
         debug_assert!(count > 0);
 
         if count == 1 {
+            core::sync::atomic::fence(Ordering::Acquire);
             // SAFETY: last ref; exclusive access
             unsafe { FetchTasklet::deinit(this) };
         }
@@ -365,10 +371,11 @@ impl FetchTasklet {
 
     pub fn deref_from_thread(this: *mut FetchTasklet) {
         let self_ = Self::from_raw_ref(this);
-        let count = self_.ref_count.fetch_sub(1, Ordering::Relaxed);
+        let count = self_.ref_count.fetch_sub(1, Ordering::Release);
         debug_assert!(count > 0);
 
         if count == 1 {
+            core::sync::atomic::fence(Ordering::Acquire);
             if self_.javascript_vm.is_shutting_down() {
                 // SAFETY: last ref; exclusive access
                 unsafe { FetchTasklet::deinit(this) };
@@ -1809,7 +1816,7 @@ impl FetchTasklet {
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();
-        http::http_thread().schedule(batch);
+        http::HTTPThread::schedule(batch);
 
         Ok(node)
     }

@@ -1559,6 +1559,8 @@ pub enum Level {
     Warn,    // 3
     Err,     // 4
 }
+// SAFETY: `#[repr(i8)]`, five variants, no payload — 1 byte, no padding.
+bun_core::unsafe_impl_atom!(Level);
 
 impl Level {
     pub fn at_least(self, other: Level) -> bool {
@@ -1592,10 +1594,11 @@ impl Level {
 }
 
 // Zig: `pub var default_log_level = Level.warn;`
-// PORTING.md §Global mutable state: written once during single-threaded CLI
-// startup, read thereafter. RacyCell over the `Copy` enum (no `Atomic<Level>`).
-pub static DEFAULT_LOG_LEVEL: bun_core::RacyCell<Level> =
-    bun_core::RacyCell::new(Level::Warn);
+// PORTING.md §Global mutable state: written by CLI startup, read by every
+// `Log::init()` (including from bundler worker threads). `AtomicCell<Level>`
+// — Acquire/Release, no `unsafe` at call sites.
+pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> =
+    bun_core::AtomicCell::new(Level::Warn);
 
 impl Log {
     pub fn memory_cost(&self) -> usize {
@@ -1637,8 +1640,7 @@ impl Log {
     }
 
     pub fn init() -> Log {
-        // SAFETY: single-threaded init-time read; see note on DEFAULT_LOG_LEVEL.
-        let level = unsafe { DEFAULT_LOG_LEVEL.read() };
+        let level = DEFAULT_LOG_LEVEL.load();
         Log {
             msgs: Vec::new(),
             level,

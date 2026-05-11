@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsClass, JsResult, SysErrorJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass, JsResult, SysErrorJsc as _};
 
 use crate::node::fs::{
     self, args, async_, ret, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn,
@@ -12,7 +12,7 @@ use crate::node::fs::{
 
 /// Signature of every generated NodeFS host function.
 pub type NodeFSFunction =
-    fn(this: &mut Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
+    fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
 // Zig: `const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);`
 // PORT NOTE: Rust has no `DeclEnum`/`@field`/`@typeInfo` reflection. The
@@ -30,7 +30,7 @@ pub type NodeFSFunction =
 
 /// `Bindings(FunctionEnum).runSync`.
 fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
-    this: &mut Binding,
+    this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue>
@@ -52,7 +52,11 @@ where
         return Ok(JSValue::ZERO);
     }
 
-    let mut result = NodeFS::dispatch::<R, A, F>(&mut this.node_fs, &args, Flavor::Sync);
+    // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
+    // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
+    // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
+    let mut result =
+        this.node_fs.with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
     match result {
         Err(ref err) => Err(global.throw_value(err.to_js(global))),
         Ok(ref mut res) => res.fs_to_js(global),
@@ -67,10 +71,10 @@ where
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
-    this: &mut Binding,
+    this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &mut Binding, A, &mut VirtualMachine) -> JSValue,
+    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
     // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
@@ -131,10 +135,16 @@ where
     run_sync::<R, A, F>
 }
 
+// R-2 (host-fn re-entrancy): every JS-exposed binding takes `&self`; the
+// single mutable field `node_fs` is wrapped in `JsCell` so the
+// `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
+// projected through interior mutability instead of `&mut Binding`. The
+// codegen shim still emits `this: &mut NodeJSFS` until Phase 1 lands —
+// `&mut T` auto-coerces to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
 pub struct Binding {
-    pub node_fs: NodeFS,
+    pub node_fs: JsCell<NodeFS>,
 }
 
 impl Binding {
@@ -147,11 +157,13 @@ impl Binding {
     }
 
     pub fn finalize(self: Box<Self>) {
-        if self.node_fs.vm.is_some() {
+        if self.node_fs.get().vm.is_some() {
             // `node_fs.vm` is always the per-thread VM when set; route the
             // read through the safe singleton accessor.
             let vm_node_fs = VirtualMachine::get().node_fs;
-            if vm_node_fs == Some((&raw const self.node_fs).cast_mut().cast()) {
+            // `JsCell` is `repr(transparent)` over `UnsafeCell<NodeFS>`, so
+            // `as_ptr()` yields the same address the VM stored at init time.
+            if vm_node_fs == Some(self.node_fs.as_ptr().cast()) {
                 // VM-owned singleton — keep alive.
                 let _ = bun_core::heap::release(self);
                 return;
@@ -175,7 +187,7 @@ impl Binding {
     /// `callAsync(.cp)` — `.cp`'s `Task.create` (Zig) takes the parser arena as
     /// a 5th arg. The Rust `AsyncCpTask::create` copies its paths via
     /// `to_thread_safe()` instead, so the arena is dropped with `slice`.
-    pub fn cp(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -203,7 +215,7 @@ impl Binding {
     }
 
     /// `callSync(.cp)`.
-    pub fn cp_sync(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn cp_sync(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -215,7 +227,8 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        match this.node_fs.cp(&cp_args, Flavor::Sync) {
+        // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
+        match this.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
         }
@@ -223,7 +236,7 @@ impl Binding {
 
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
-    pub fn readdir(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn readdir(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -255,7 +268,7 @@ impl Binding {
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
     /// through `FsArgument`/`dispatch`; call the inherent method directly.
-    pub fn watch(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn watch(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -266,7 +279,9 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        match this.node_fs.watch(watch_args, Flavor::Sync) {
+        // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
+        // scoped via `with_mut` so the borrow cannot outlive the call.
+        match this.node_fs.with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
         }
@@ -274,7 +289,7 @@ impl Binding {
 
     /// `callSync(.watchFile)`.
     pub fn watch_file(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -288,7 +303,7 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        match this.node_fs.watch_file(wf_args, Flavor::Sync) {
+        match this.node_fs.with_mut(|nfs| nfs.watch_file(wf_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
         }
@@ -296,7 +311,7 @@ impl Binding {
 
     /// `callSync(.unwatchFile)` — `Arguments == void`.
     pub fn unwatch_file(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -308,7 +323,7 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        match this.node_fs.unwatch_file(&(), Flavor::Sync) {
+        match this.node_fs.with_mut(|nfs| nfs.unwatch_file(&(), Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
         }
@@ -325,7 +340,7 @@ macro_rules! node_fs_bindings {
                 pub const $sync: NodeFSFunction =
                     call_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>();
                 pub fn $async_(
-                    this: &mut Self,
+                    this: &Self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
@@ -390,10 +405,12 @@ impl Binding {
 }
 
 pub fn create_binding(global: &JSGlobalObject) -> JSValue {
-    let mut module = Binding::new(Binding::default());
+    let module = Binding::new(Binding::default());
 
     let vm = global.bun_vm_ptr();
-    module.node_fs.vm = NonNull::new(vm);
+    // R-2: init-time write before the JS wrapper exists; `with_mut` here is
+    // trivially un-aliased (sole owner of the fresh `Box`).
+    module.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
 
     // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.

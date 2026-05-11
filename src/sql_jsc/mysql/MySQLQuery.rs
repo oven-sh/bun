@@ -306,7 +306,7 @@ impl MySQLQuery {
         Ok(())
     }
 
-    fn run_simple_query(&mut self, connection: &mut MySQLConnection) -> Result<(), bun_core::Error> {
+    fn run_simple_query(&mut self, connection: &MySQLConnection) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         if self.status != Status::Pending || !connection.can_execute_query() {
             debug!("cannot execute query");
@@ -333,7 +333,7 @@ impl MySQLQuery {
 
     fn run_prepared_query(
         &mut self,
-        connection: &mut MySQLConnection,
+        connection: &MySQLConnection,
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
@@ -470,7 +470,7 @@ impl MySQLQuery {
 
     pub fn run_query(
         &mut self,
-        connection: &mut MySQLConnection,
+        connection: &MySQLConnection,
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,

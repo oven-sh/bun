@@ -8,14 +8,14 @@ use super::get_signature;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_less_than(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // `defer this.postMatch(globalThis)` — side effect on every exit path.
         // PORT NOTE: move `this` into the scopeguard so the body uses it via DerefMut and
         // `post_match` runs on drop without an overlapping borrow.
-        let mut this = scopeguard::guard(this, |this| this.post_match(global));
+        let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
@@ -42,7 +42,7 @@ impl Expect {
             )));
         }
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = false;
 
         if !value.is_big_int() && !other_value.is_big_int() {

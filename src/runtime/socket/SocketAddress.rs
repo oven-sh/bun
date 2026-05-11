@@ -5,6 +5,7 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 
+use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
 
@@ -15,6 +16,10 @@ use bun_cares_sys::c_ares as ares;
 
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
 // → handled by the JsClass derive; codegen wires toJS/fromJS/fromJSDirect.
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the one
+// field written from a host_fn-reachable path (`_presentation`, lazily filled
+// by `address()`) is `Cell`-wrapped (`BunString` is `Copy`). `_addr` is
+// read-only after construction and stays bare.
 #[bun_jsc::JsClass]
 pub struct SocketAddress {
     // NOTE: not std.net.Address b/c .un is huge and we don't use it.
@@ -29,12 +34,12 @@ pub struct SocketAddress {
     /// - `.Empty` is used for default ipv4 and ipv6 addresses (`127.0.0.1` and `::`, respectively).
     ///
     /// @internal
-    _presentation: BunString,
+    _presentation: Cell<BunString>,
 }
 
 impl Default for SocketAddress {
     fn default() -> Self {
-        Self { _addr: sockaddr::LOOPBACK_V4, _presentation: BunString::dead() }
+        Self { _addr: sockaddr::LOOPBACK_V4, _presentation: Cell::new(BunString::dead()) }
     }
 }
 
@@ -233,7 +238,7 @@ impl SocketAddress {
             if !pton_noerr(inet::AF_INET6, inner, (&raw mut sin6.addr).cast::<c_void>()) {
                 return Ok(JSValue::UNDEFINED);
             }
-            SocketAddress { _addr: sockaddr { sin6 }, _presentation: BunString::dead() }
+            SocketAddress { _addr: sockaddr { sin6 }, _presentation: Cell::new(BunString::dead()) }
         } else {
             let mut sin = inet::sockaddr_in {
                 family: AF::INET.int(),
@@ -244,7 +249,7 @@ impl SocketAddress {
             if !pton_noerr(inet::AF_INET, paddr, (&raw mut sin.addr).cast::<c_void>()) {
                 return Ok(JSValue::UNDEFINED);
             }
-            SocketAddress { _addr: sockaddr { sin }, _presentation: BunString::dead() }
+            SocketAddress { _addr: sockaddr { sin }, _presentation: Cell::new(BunString::dead()) }
         };
 
         Ok(SocketAddress::new(addr).to_js(global))
@@ -279,7 +284,7 @@ impl SocketAddress {
         if options_obj.is_undefined() {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
-                _presentation: BunString::empty(),
+                _presentation: Cell::new(BunString::empty()),
                 // ._presentation = WellKnownAddress::loopback_v4(),
                 // ._presentation = BunString::from_js(global.common_strings().loopback_v4()) catch unreachable,
             }));
@@ -292,7 +297,7 @@ impl SocketAddress {
         if options.family == AF::INET6 && options.address.is_none() && options.flowlabel.is_none() && options.port == 0 {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::ANY_V6,
-                _presentation: BunString::empty(),
+                _presentation: Cell::new(BunString::empty()),
                 // ._presentation = WellKnownAddress::any_v6(),
             }));
         }
@@ -374,7 +379,7 @@ impl SocketAddress {
 
         Ok(SocketAddress {
             _addr: addr,
-            _presentation: presentation,
+            _presentation: Cell::new(presentation),
         })
     }
 }
@@ -408,7 +413,7 @@ impl SocketAddress {
         // TODO: make sure casting doesn't swap byte order on us.
         SocketAddress {
             _addr: sockaddr::v4(port_.to_be(), u32::from_ne_bytes(addr)),
-            _presentation: BunString::dead(),
+            _presentation: Cell::new(BunString::dead()),
         }
     }
 
@@ -420,7 +425,7 @@ impl SocketAddress {
     pub fn init_ipv6(addr: [u8; 16], port_: u16, flowinfo: u32, scope_id: u32) -> SocketAddress {
         SocketAddress {
             _addr: sockaddr::v6(port_.to_be(), addr, flowinfo, scope_id),
-            _presentation: BunString::dead(),
+            _presentation: Cell::new(BunString::dead()),
         }
     }
 }
@@ -435,7 +440,7 @@ impl Drop for SocketAddress {
         // `bun_str::String` is `Copy` (no Drop), so the +1 on the cached
         // presentation must be released explicitly here. `deref()` on a `.Dead`
         // string is a no-op, matching the Zig spec.
-        self._presentation.deref();
+        self._presentation.get().deref();
     }
 }
 
@@ -462,13 +467,12 @@ impl SocketAddress {
     /// This method is slightly faster if you are creating a lot of socket addresses
     /// that will not be around for very long. `createDTO` is even faster, but
     /// requires callers to already have a presentation-formatted address.
-    pub fn into_dto(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn into_dto(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let mut addr_str = self.address();
         let port = self.port();
         let is_v6 = self.family() == AF::INET6;
         // `defer this._presentation = .dead;`
-        let guard = scopeguard::guard(&mut self._presentation, |p| *p = BunString::dead());
-        let _ = &*guard;
+        let _guard = scopeguard::guard(&self._presentation, |p| p.set(BunString::dead()));
         Ok(JSSocketAddressDTO__create(global, addr_str.transfer_to_js(global)?, port, is_v6))
     }
 
@@ -495,10 +499,8 @@ unsafe extern "C" {
 // =============================================================================
 
 impl SocketAddress {
-    // PORT NOTE: `host_fn(getter)` shim passes `&Self`, but this getter mutates
-    // `_presentation` via `address()`; until the macro grows a `getter_mut`
-    // variant the shim is omitted (codegen owns the actual link name).
-    pub fn get_address(this: &mut Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_address(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // toJS increments ref count
         let addr_ = this.address();
         Ok(match addr_.tag() {
@@ -519,15 +521,16 @@ impl SocketAddress {
     /// ### TODO
     /// - replace `addressToString` in `dns.zig` w this
     /// - use this impl in server.zig
-    pub fn address(&mut self) -> BunString {
-        if self._presentation.tag() != bun_str::Tag::Dead {
-            return self._presentation;
+    pub fn address(&self) -> BunString {
+        let cached = self._presentation.get();
+        if cached.tag() != bun_str::Tag::Dead {
+            return cached;
         }
         let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
         let formatted = self._addr.fmt(&mut buf);
         let presentation = crate::webcore::encoding::to_bun_string(formatted.as_bytes(), crate::node::types::Encoding::Latin1);
         debug_assert!(presentation.tag() != bun_str::Tag::Dead);
-        self._presentation = presentation;
+        self._presentation.set(presentation);
         presentation
     }
 
@@ -597,11 +600,11 @@ impl SocketAddress {
     }
 
     pub fn estimated_size(&self) -> usize {
-        mem::size_of::<SocketAddress>() + self._presentation.estimated_size()
+        mem::size_of::<SocketAddress>() + self._presentation.get().estimated_size()
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn to_json(this: &mut Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         // PORT NOTE: Zig used an anon struct with `jsc.JSObject.create`; Rust
         // requires a `PojoFields` impl, so use a local struct.
         struct ToJson {

@@ -9,7 +9,7 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_last_returned_with(
-    this: &mut Expect,
+    this: &Expect,
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -19,8 +19,8 @@ pub fn to_have_last_returned_with(
     // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard and re-borrow through
     // the guard's DerefMut so post_match runs at every exit without a raw-pointer alias.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
-    let this: &mut Expect = &mut *this;
+    let this = scopeguard::guard(this, |t| t.post_match(global_this));
+    let this: &Expect = *this;
 
     let value: JSValue =
         this.get_value(global_this, this_value, "toHaveBeenLastReturnedWith", "<green>expected<r>")?;
@@ -67,7 +67,7 @@ pub fn to_have_last_returned_with(
         }
     }
 
-    if pass != this.flags.not() {
+    if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -76,7 +76,7 @@ pub fn to_have_last_returned_with(
 
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
-    if this.flags.not() {
+    if this.flags.get().not() {
         return this.throw(
             global_this,
             Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),

@@ -8,13 +8,14 @@
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
 
+use core::cell::Cell;
 use core::mem;
 
 use bun_core::base64;
 use bun_core::zstr;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
-    Strong, JsClass as _, StringJsc as _, SysErrorJsc as _,
+    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef,
+    JsResult, Strong, JsClass as _, StringJsc as _, SysErrorJsc as _,
 };
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use crate::generated_classes::PropertyName;
@@ -55,10 +56,15 @@ fn format_name(f: codecs::Format) -> &'static str {
 // did via `js.sourceJSSetCached`.
 pub use crate::generated_classes::js_Image as js;
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
+// shim still emits `this: &mut Image` until Phase 1 lands — `&mut T`
+// auto-derefs to `&T` so the impls below compile against either. `max_pixels`
+// / `auto_orient` are read-only after construction so stay bare.
 #[bun_jsc::JsClass]
 pub struct Image {
-    source: Source,
-    pipeline: Pipeline,
+    source: JsCell<Source>,
+    pipeline: Cell<Pipeline>,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
     max_pixels: u64,
@@ -67,27 +73,27 @@ pub struct Image {
     auto_orient: bool,
     /// Populated after a pipeline has run once; lets `.width`/`.height` answer
     /// synchronously after the first await.
-    last_width: i32,
-    last_height: i32,
+    last_width: Cell<i32>,
+    last_height: Cell<i32>,
     /// Strong while at least one PipelineTask is in flight, weak otherwise. The
     /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer
     /// alive across the WorkPool roundtrip; switching to weak when idle lets GC
     /// collect the wrapper without polling `hasPendingActivity` every cycle.
-    this_ref: JsRef,
-    pending_tasks: u32,
+    this_ref: JsCell<JsRef>,
+    pending_tasks: Cell<u32>,
 }
 
 impl Default for Image {
     fn default() -> Self {
         Self {
-            source: Source::JsBuffer,
-            pipeline: Pipeline::default(),
+            source: JsCell::new(Source::JsBuffer),
+            pipeline: Cell::new(Pipeline::default()),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
             auto_orient: true,
-            last_width: -1,
-            last_height: -1,
-            this_ref: JsRef::empty(),
-            pending_tasks: 0,
+            last_width: Cell::new(-1),
+            last_height: Cell::new(-1),
+            this_ref: JsCell::new(JsRef::empty()),
+            pending_tasks: Cell::new(0),
         }
     }
 }
@@ -277,7 +283,7 @@ impl Image {
         blob_value: JSValue,
         options: JSValue,
     ) -> JsResult<JSValue> {
-        let mut img = Box::new(Image { source: Source::JsBuffer, ..Default::default() });
+        let mut img = Box::<Image>::default();
         // errdefer img.finalize() — `Box` drops on `?` automatically.
         apply_options(&mut img, global, options)?;
         // For Blob receivers `source_from_js` either dupes (in-memory blob) or
@@ -285,13 +291,13 @@ impl Image {
         // for the `.js_buffer` path, which a Blob never produces. The only
         // reason `source_from_js` takes `this_value` at all is to set that slot
         // for ArrayBuffer inputs — pass `.zero` and assert below.
-        img.source = source_from_js(global, blob_value, JSValue::ZERO)?;
-        debug_assert!(!matches!(img.source, Source::JsBuffer));
+        img.source.set(source_from_js(global, blob_value, JSValue::ZERO)?);
+        debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
         Ok(img.to_js(global))
     }
 
-    pub fn finalize(mut self: Box<Self>) {
-        self.this_ref.finalize();
+    pub fn finalize(self: Box<Self>) {
+        self.this_ref.with_mut(|r| r.finalize());
         // `source` is dropped by Box drop.
     }
 
@@ -300,7 +306,7 @@ impl Image {
         // counted via the cached value slot); the worker's RGBA scratch is
         // task-scoped and freed before any GC could observe it.
         mem::size_of::<Image>()
-            + match &self.source {
+            + match self.source.get() {
                 Source::JsBuffer | Source::Blob(_) => 0,
                 Source::Owned(b) => b.len(),
                 Source::Path(p) => p.len(),
@@ -314,10 +320,10 @@ fn from_input_js(
     options: JSValue,
     this_value: JSValue,
 ) -> JsResult<Box<Image>> {
-    let mut img = Box::new(Image { source: Source::JsBuffer, ..Default::default() });
+    let mut img = Box::<Image>::default();
     // `opt.get` can throw (Proxy/getter); without this the heap-allocated
     // *Image and the duplicated source bytes leak. (Handled by `Box` Drop on `?`.)
-    img.source = source_from_js(global, input, this_value)?;
+    img.source.set(source_from_js(global, input, this_value)?);
     apply_options(&mut img, global, options)?;
     Ok(img)
 }
@@ -411,9 +417,18 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
 // ───────────────────────────── chainable ops ────────────────────────────────
 
 impl Image {
+    /// R-2 helper: read-modify-write the `Cell<Pipeline>` in one shot so each
+    /// chainable setter stays a single field-write under `&self`.
+    #[inline]
+    fn update_pipeline(&self, f: impl FnOnce(&mut Pipeline)) {
+        let mut p = self.pipeline.get();
+        f(&mut p);
+        self.pipeline.set(p);
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn do_resize(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -446,13 +461,13 @@ impl Image {
                 r.without_enlargement = v.to_boolean();
             }
         }
-        self.pipeline.resize = Some(r);
+        self.update_pipeline(|p| p.resize = Some(r));
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_rotate(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -468,30 +483,30 @@ impl Image {
             return Err(global
                 .throw_invalid_arguments(format_args!("rotate: only multiples of 90 are supported")));
         }
-        self.pipeline.rotate = u16::try_from(deg).expect("int cast");
+        self.update_pipeline(|p| p.rotate = u16::try_from(deg).expect("int cast"));
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_flip(&mut self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        self.pipeline.flip = true;
+    pub fn do_flip(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.update_pipeline(|p| p.flip = true);
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_flop(&mut self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        self.pipeline.flop = true;
+    pub fn do_flop(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.update_pipeline(|p| p.flop = true);
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_modulate(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let args = callframe.arguments();
-        let mut m: Modulate = self.pipeline.modulate.unwrap_or_default();
+        let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
         if args.len() > 0 && args[0].is_object() {
             let opt = args[0];
             // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
@@ -511,18 +526,18 @@ impl Image {
                 }
             }
         }
-        self.pipeline.modulate = Some(m);
+        self.update_pipeline(|p| p.modulate = Some(m));
         Ok(callframe.this())
     }
 
     fn set_format(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
         fmt: codecs::Format,
     ) -> JsResult<JSValue> {
         let mut enc: codecs::EncodeOptions =
-            self.pipeline.output.unwrap_or(codecs::EncodeOptions { format: fmt, ..Default::default() });
+            self.pipeline.get().output.unwrap_or(codecs::EncodeOptions { format: fmt, ..Default::default() });
         enc.format = fmt;
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
@@ -555,28 +570,28 @@ impl Image {
                 enc.progressive = p.to_boolean();
             }
         }
-        self.pipeline.output = Some(enc);
+        self.update_pipeline(|p| p.output = Some(enc));
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_jpeg(&mut self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_format_jpeg(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Jpeg)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_png(&mut self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_format_png(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Png)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_webp(&mut self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_format_webp(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Webp)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_heic(&mut self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_format_heic(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Heic)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_avif(&mut self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_format_avif(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Avif)
     }
 }
@@ -640,7 +655,7 @@ impl Image {
     fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
         // TODO(port): lifetime — JsBuffer arm returns a borrow into the JS heap,
         // not into `self`. Phase B may need a different return type.
-        match &self.source {
+        match self.source.get() {
             Source::JsBuffer => js::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
                 .map(|ab| {
@@ -671,7 +686,7 @@ impl Image {
         this_value: JSValue,
         _global: &JSGlobalObject,
     ) -> Result<Input, PinError> {
-        match &self.source {
+        match self.source.get() {
             Source::JsBuffer => {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
@@ -799,7 +814,7 @@ impl Image {
                 // BackendUnavailable (and any other backend error) ⇔ no image present.
                 Err(_) => return Ok(JSValue::NULL),
             };
-            let img = Box::new(Image { source: Source::Owned(bytes), ..Default::default() });
+            let img = Box::new(Image { source: JsCell::new(Source::Owned(bytes)), ..Default::default() });
             return Ok(img.to_js(global));
         }
         #[cfg(not(any(target_os = "macos", windows)))]
@@ -838,12 +853,12 @@ impl Image {
 impl Image {
     #[bun_jsc::host_fn(getter)]
     pub fn get_width(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self.last_width))
+        JSValue::js_number(f64::from(self.last_width.get()))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_height(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self.last_height))
+        JSValue::js_number(f64::from(self.last_height.get()))
     }
 }
 
@@ -852,7 +867,7 @@ impl Image {
 impl Image {
     #[bun_jsc::host_fn(method)]
     pub fn do_metadata(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -870,8 +885,8 @@ impl Image {
                             mem::swap(&mut w, &mut h);
                         }
                     }
-                    self.last_width = i32::try_from(w).expect("int cast");
-                    self.last_height = i32::try_from(h).expect("int cast");
+                    self.last_width.set(i32::try_from(w).expect("int cast"));
+                    self.last_height.set(i32::try_from(h).expect("int cast"));
                     let obj = JSValue::create_empty_object(global, 3);
                     obj.put(global, b"width", JSValue::js_number(f64::from(w)));
                     obj.put(global, b"height", JSValue::js_number(f64::from(h)));
@@ -897,30 +912,30 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_bytes(&mut self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.output), Deliver::Uint8Array)
+    pub fn do_bytes(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.get().output), Deliver::Uint8Array)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_buffer(&mut self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.output), Deliver::Buffer)
+    pub fn do_buffer(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.get().output), Deliver::Buffer)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_blob(&mut self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.output), Deliver::Blob)
+    pub fn do_blob(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.get().output), Deliver::Blob)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_to_base64(&mut self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.output), Deliver::Base64)
+    pub fn do_to_base64(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.get().output), Deliver::Base64)
     }
 
     /// `data:image/{format};base64,{…}`. Same encode as `.toBase64()` plus the
     /// MIME prefix, so it drops straight into `<img src>`.
     #[bun_jsc::host_fn(method)]
-    pub fn do_data_url(&mut self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.output), Deliver::DataUrl)
+    pub fn do_data_url(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        self.schedule(global, cf.this(), Kind::Encode(self.pipeline.get().output), Deliver::DataUrl)
     }
 
     /// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
@@ -930,7 +945,7 @@ impl Image {
     /// source, not of the output.
     #[bun_jsc::host_fn(method)]
     pub fn do_placeholder(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -956,7 +971,7 @@ impl Image {
     /// string, the encode format is inferred from its extension, falling back to
     /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
     #[bun_jsc::host_fn(method)]
-    pub fn do_write(&mut self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -964,7 +979,7 @@ impl Image {
             )));
         }
 
-        let mut output = self.pipeline.output;
+        let mut output = self.pipeline.get().output;
         // Extension inference only when dest is a plain string. BunFile/S3 dests
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
@@ -997,13 +1012,13 @@ impl Image {
 
 impl Image {
     fn schedule(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
-        if matches!(self.source, Source::Blob(_)) {
+        if matches!(self.source.get(), Source::Blob(_)) {
             return BlobReadChain::start(self, global, this_value, kind, deliver);
         }
         let input = match self.pin_for_task(this_value, global) {
@@ -1027,11 +1042,11 @@ impl Image {
             }
         };
         let job = Box::new(PipelineTask {
-            image: std::ptr::from_mut::<Image>(self),
+            image: std::ptr::from_ref::<Image>(self),
             global,
             // Struct copy — the worker reads its own snapshot so further chained
             // calls on the JS side between schedule and completion don't race.
-            pipeline: self.pipeline,
+            pipeline: self.pipeline.get(),
             input,
             kind,
             deliver,
@@ -1042,10 +1057,10 @@ impl Image {
         // First in-flight task ⇒ hold a Strong ref to the wrapper so GC can't
         // collect it (and its sourceJS slot, and the pinned ArrayBuffer) until
         // `then()` drops the count back to 0.
-        if self.pending_tasks == 0 {
-            self.this_ref.set_strong(this_value, global);
+        if self.pending_tasks.get() == 0 {
+            self.this_ref.with_mut(|r| r.set_strong(this_value, global));
         }
-        self.pending_tasks += 1;
+        self.pending_tasks.set(self.pending_tasks.get() + 1);
         let task = ConcurrentPromiseTask::<PipelineTask<'_>>::create_on_js_thread(global, job);
         let promise_value = task.promise.value();
         // Ownership transfers to the WorkPool / event-loop dispatch
@@ -1067,7 +1082,7 @@ impl Image {
     /// A later refinement is to return a `.Locked` body and resolve it from the
     /// worker pool; this is the simple, correct first cut.
     pub fn encode_for_body(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
@@ -1076,7 +1091,7 @@ impl Image {
         // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
         // BunFiles would block or need network; refuse with a clear message until
         // the body path is made `.Locked`.
-        if let Source::Blob(strong) = &self.source {
+        if let Source::Blob(strong) = self.source.get() {
             const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
             let blob_js = strong.get();
             let Some(blob) = blob_js.as_class_ref::<Blob>() else {
@@ -1091,7 +1106,7 @@ impl Image {
                     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
                         let p = ZBox::from_bytes(path.slice());
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
-                        self.source = Source::Path(p);
+                        self.source.set(Source::Path(p));
                     } else {
                         return Err(global.throw(format_args!("{REFUSE}")));
                     }
@@ -1118,11 +1133,11 @@ impl Image {
         // temporary (only `then()` does — Image.zig:1092). `Drop` here would
         // underflow `pending_tasks` and downgrade `this_ref`, so suppress it.
         let mut task = mem::ManuallyDrop::new(PipelineTask {
-            image: std::ptr::from_mut::<Image>(self),
+            image: std::ptr::from_ref::<Image>(self),
             global,
-            pipeline: self.pipeline,
+            pipeline: self.pipeline.get(),
             input,
-            kind: Kind::Encode(self.pipeline.output),
+            kind: Kind::Encode(self.pipeline.get().output),
             deliver: Deliver::Uint8Array,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
@@ -1136,8 +1151,8 @@ impl Image {
         mem::take(&mut task.input).release();
         match result {
             TaskResult::Encoded { out, format, w, h } => {
-                self.last_width = i32::try_from(w).expect("int cast");
-                self.last_height = i32::try_from(h).expect("int cast");
+                self.last_width.set(i32::try_from(w).expect("int cast"));
+                self.last_height.set(i32::try_from(h).expect("int cast"));
                 Ok((out, format.mime()))
             }
             TaskResult::Err(e) => {
@@ -1160,7 +1175,7 @@ impl Image {
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
 struct BlobReadChain<'a> {
-    image: *mut Image,
+    image: *const Image,
     global: &'a JSGlobalObject,
     kind: Kind,
     deliver: Deliver,
@@ -1169,7 +1184,7 @@ struct BlobReadChain<'a> {
 
 impl<'a> BlobReadChain<'a> {
     fn start(
-        image: &mut Image,
+        image: &Image,
         global: &'a JSGlobalObject,
         this_value: JSValue,
         kind: Kind,
@@ -1178,7 +1193,7 @@ impl<'a> BlobReadChain<'a> {
         // `deliver` may carry a `.write_dest` Strong; on these defensive
         // early-returns the chain is never created so its Drop can't free it.
         // (Same contract as schedule()'s detached-buffer branch.)
-        let Source::Blob(strong) = &image.source else { unreachable!() };
+        let Source::Blob(strong) = image.source.get() else { unreachable!() };
         let blob_js = strong.get();
         let Some(blob) = blob_js.as_::<Blob>() else {
             drop(deliver);
@@ -1189,13 +1204,13 @@ impl<'a> BlobReadChain<'a> {
 
         // Same Strong-ref contract as the regular pending_tasks bump — keeps
         // the wrapper (and its sourceJS slot) alive until the read settles.
-        if image.pending_tasks == 0 {
-            image.this_ref.set_strong(this_value, global);
+        if image.pending_tasks.get() == 0 {
+            image.this_ref.with_mut(|r| r.set_strong(this_value, global));
         }
-        image.pending_tasks += 1;
+        image.pending_tasks.set(image.pending_tasks.get() + 1);
 
         let chain = Box::new(BlobReadChain {
-            image: std::ptr::from_mut::<Image>(image),
+            image: std::ptr::from_ref::<Image>(image),
             global,
             kind,
             deliver,
@@ -1218,16 +1233,17 @@ impl<'a> BlobReadChain<'a> {
     fn on_read_bytes_impl(self: Box<Self>, r: ReadBytesResult) {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
-        // bump in `start()`; we are on the JS thread.
-        let image = unsafe { &mut *self.image };
+        // bump in `start()`; we are on the JS thread. R-2: shared deref —
+        // mutation goes through `Cell`/`JsCell`.
+        let image = unsafe { &*self.image };
         let mut outer = self.outer;
         let kind = self.kind;
         let deliver = self.deliver;
         // `bun.destroy(self)` — Box drops at end of scope.
 
-        image.pending_tasks -= 1;
-        if image.pending_tasks == 0 {
-            image.this_ref.downgrade();
+        image.pending_tasks.set(image.pending_tasks.get() - 1);
+        if image.pending_tasks.get() == 0 {
+            image.this_ref.with_mut(|r| r.downgrade());
         }
         // `defer outer.deinit()` — `JSPromiseStrong` Drop handles this.
 
@@ -1241,12 +1257,12 @@ impl<'a> BlobReadChain<'a> {
                 // drop the source (it would free what the worker is reading)
                 // — drop the redundant read instead and re-enter `schedule()`
                 // on the already-swapped source.
-                if matches!(image.source, Source::Blob(_)) {
-                    image.source = Source::Owned(bytes);
+                if matches!(image.source.get(), Source::Blob(_)) {
+                    image.source.set(Source::Owned(bytes));
                 } else {
                     drop(bytes);
                 }
-                let Some(this_value) = image.this_ref.try_get() else {
+                let Some(this_value) = image.this_ref.get().try_get() else {
                     let _ = outer.reject(
                         global,
                         Ok(global.create_error_instance(format_args!(
@@ -1309,7 +1325,7 @@ impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
 }
 
 pub struct PipelineTask<'a> {
-    image: *mut Image,
+    image: *const Image,
     global: &'a JSGlobalObject,
     pipeline: Pipeline,
     input: Input,
@@ -1612,13 +1628,14 @@ impl<'a> PipelineTask<'a> {
         mem::take(&mut self.input).release();
         let global = self.global;
         // SAFETY: BACKREF; JS thread; wrapper kept alive by `this_ref` Strong.
-        let image = unsafe { &mut *self.image };
+        // R-2: shared deref — mutation goes through `Cell`.
+        let image = unsafe { &*self.image };
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `self.image.*` there would race the synchronous getters.
         match &self.result {
             TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
-                image.last_width = i32::try_from(*w).expect("int cast");
-                image.last_height = i32::try_from(*h).expect("int cast");
+                image.last_width.set(i32::try_from(*w).expect("int cast"));
+                image.last_height.set(i32::try_from(*h).expect("int cast"));
             }
             _ => {}
         }
@@ -1907,11 +1924,11 @@ impl<'a> Drop for PipelineTask<'a> {
         // `self.deliver.deinit()` — `Strong` Drop on the `WriteDest` arm.
         // SAFETY: `image` is a BACKREF kept alive by the wrapper's Strong
         // `this_ref` while pending_tasks > 0; we are on the JS thread.
-        unsafe {
-            (*self.image).pending_tasks -= 1;
-            if (*self.image).pending_tasks == 0 {
-                (*self.image).this_ref.downgrade();
-            }
+        // R-2: shared deref — mutation goes through `Cell`/`JsCell`.
+        let image = unsafe { &*self.image };
+        image.pending_tasks.set(image.pending_tasks.get() - 1);
+        if image.pending_tasks.get() == 0 {
+            image.this_ref.with_mut(|r| r.downgrade());
         }
         // `bun.destroy(this)` — `Box<PipelineTask>` drop is the caller.
     }

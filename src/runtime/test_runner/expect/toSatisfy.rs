@@ -7,14 +7,10 @@ use super::Expect;
 use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(globalThis)` — scopeguard capturing `&mut *this`
-    // conflicts with later `this` uses under borrowck; Phase B reshape (e.g. RAII guard
-    // on Expect or raw-ptr scopeguard).
-    let _post_match = scopeguard::guard((std::ptr::from_mut::<Expect>(this), global), |(t, g)| {
-        // SAFETY: `this` outlives this guard (fn scope); no other &mut alias live at drop.
-        unsafe { (*t).post_match(g) };
-    });
+pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // Zig: `defer this.postMatch(globalThis)` — `&Expect` is `Copy`, so a plain
+    // scopeguard can hold a second shared borrow without conflicting with the body.
+    let _post_match = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
@@ -49,7 +45,7 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
         }
     };
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let pass = (result.is_boolean() && result.to_boolean()) != not;
 
     if pass {

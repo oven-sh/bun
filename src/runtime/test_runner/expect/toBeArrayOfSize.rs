@@ -6,7 +6,7 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_array_of_size(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -33,7 +33,7 @@ pub fn to_be_array_of_size(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = value.js_type().is_array()
         && i32::try_from(value.get_length(global)?).unwrap() == size.to_int32();
 

@@ -281,12 +281,12 @@ impl FileExt for File {
                 };
                 // Zig passes `undefined` for the `*Binding` arg (it is unused in
                 // `AsyncFSTask::create`).
-                let mut binding = node_fs::Binding::default();
+                let binding = node_fs::Binding::default();
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
                 Ok(node_fs::async_::Unlink::create(
                     global_this,
-                    &mut binding,
+                    &binding,
                     node_fs::args::Unlink {
                         path: PathLike::EncodedSlice(encoded_slice),
                     },

@@ -6,7 +6,7 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called_once(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -15,7 +15,7 @@ pub fn to_have_been_called_once(
     let this_value = frame.this();
     // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` becomes a scopeguard
     // that owns the &mut Expect for the rest of the body.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
     let value: JSValue =
         this.get_value(global, this_value, "toHaveBeenCalledOnce", "<green>expected<r>")?;
 
@@ -34,7 +34,7 @@ pub fn to_have_been_called_once(
     let calls_length = calls.get_length(global)?;
     let mut pass = calls_length == 1;
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         pass = !pass;
     }

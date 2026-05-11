@@ -2,6 +2,7 @@ use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSUint8Array, 
 use crate::webcore::EncodingLabel;
 use bun_core::AllocError;
 use bun_str::{strings, OwnedString};
+use core::cell::Cell;
 
 use jsc::text_codec::TextCodec;
 use jsc::zig_string::ZigString;
@@ -11,7 +12,7 @@ use jsc::ZigStringJsc as _;
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Buffered {
     pub buf: [u8; 3],
     pub len: u8, // Zig: u2
@@ -23,15 +24,21 @@ impl Buffered {
     }
 }
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (all written fields are `Copy`). The codegen
+// shim still emits `this: &mut TextDecoder` until Phase 1 `sharedThis` lands —
+// `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
 pub struct TextDecoder {
     // used for utf8 decoding
-    pub buffered: Buffered,
+    pub buffered: Cell<Buffered>,
 
     // used for utf16 decoding
-    pub lead_byte: Option<u8>,
-    pub lead_surrogate: Option<u16>,
+    pub lead_byte: Cell<Option<u8>>,
+    pub lead_surrogate: Cell<Option<u16>>,
 
+    // Read-only after construction (set in `constructor` before the JS wrapper
+    // exists) — left bare.
     pub ignore_bom: bool,
     pub fatal: bool,
     pub encoding: EncodingLabel,
@@ -40,9 +47,9 @@ pub struct TextDecoder {
 impl Default for TextDecoder {
     fn default() -> Self {
         Self {
-            buffered: Buffered::default(),
-            lead_byte: None,
-            lead_surrogate: None,
+            buffered: Cell::new(Buffered::default()),
+            lead_byte: Cell::new(None),
+            lead_surrogate: Cell::new(None),
             ignore_bom: false,
             fatal: false,
             encoding: EncodingLabel::Utf8,
@@ -105,13 +112,13 @@ impl TextDecoder {
 
     #[inline(always)]
     fn process_code_unit_utf16(
-        &mut self,
+        &self,
         output: &mut Vec<u16>,
         saw_error: &mut bool,
         code_unit: u16,
     ) -> Result<(), AllocError> {
-        if let Some(lead_surrogate) = self.lead_surrogate {
-            self.lead_surrogate = None;
+        if let Some(lead_surrogate) = self.lead_surrogate.get() {
+            self.lead_surrogate.set(None);
 
             if u16_is_trail(code_unit) {
                 // TODO: why is this here?
@@ -124,7 +131,7 @@ impl TextDecoder {
         }
 
         if u16_is_lead(code_unit) {
-            self.lead_surrogate = Some(code_unit);
+            self.lead_surrogate.set(Some(code_unit));
             return Ok(());
         }
 
@@ -148,7 +155,7 @@ impl TextDecoder {
     }
 
     pub fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
-        &mut self,
+        &self,
         bytes: &[u8],
     ) -> Result<(Vec<u16>, bool), AllocError> {
         let mut output: Vec<u16> = Vec::new();
@@ -157,9 +164,9 @@ impl TextDecoder {
         let mut remain = bytes;
         let mut saw_error = false;
 
-        if let Some(lead_byte) = self.lead_byte {
+        if let Some(lead_byte) = self.lead_byte.get() {
             if !remain.is_empty() {
-                self.lead_byte = None;
+                self.lead_byte.set(None);
 
                 self.process_code_unit_utf16(
                     &mut output,
@@ -188,15 +195,15 @@ impl TextDecoder {
         }
 
         if !remain.is_empty() && i == remain.len() - 1 {
-            self.lead_byte = Some(remain[i]);
+            self.lead_byte.set(Some(remain[i]));
         } else {
             bun_core::assert_with_location(i == remain.len(), core::panic::Location::caller());
         }
 
         if FLUSH {
-            if self.lead_byte.is_some() || self.lead_surrogate.is_some() {
-                self.lead_byte = None;
-                self.lead_surrogate = None;
+            if self.lead_byte.get().is_some() || self.lead_surrogate.get().is_some() {
+                self.lead_byte.set(None);
+                self.lead_surrogate.set(None);
                 output.push(UNICODE_REPLACEMENT_U16);
                 saw_error = true;
                 return Ok((output, saw_error));
@@ -208,7 +215,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(method)]
     pub fn decode(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -257,7 +264,7 @@ impl TextDecoder {
     }
 
     pub fn decode_without_type_checks(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         uint8array: &mut JSUint8Array,
     ) -> JsResult<JSValue> {
@@ -265,7 +272,7 @@ impl TextDecoder {
     }
 
     fn decode_slice<const FLUSH: bool>(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         buffer_slice: &[u8],
     ) -> JsResult<JSValue> {
@@ -302,12 +309,13 @@ impl TextDecoder {
 
                 let (input, deinit): (&[u8], bool);
                 let joined_owned: Box<[u8]>;
-                if self.buffered.len > 0 {
-                    let buffered_len = self.buffered.len as usize;
+                let buffered = self.buffered.get();
+                if buffered.len > 0 {
+                    let buffered_len = buffered.len as usize;
                     let mut joined = vec![0u8; maybe_without_bom.len() + buffered_len].into_boxed_slice();
-                    joined[0..buffered_len].copy_from_slice(self.buffered.slice());
+                    joined[0..buffered_len].copy_from_slice(buffered.slice());
                     joined[buffered_len..][0..maybe_without_bom.len()].copy_from_slice(maybe_without_bom);
-                    self.buffered.len = 0;
+                    self.buffered.set(Buffered::default());
                     joined_owned = joined;
                     input = &joined_owned;
                     deinit = true;
@@ -344,11 +352,10 @@ impl TextDecoder {
 
                 if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
                     // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
-                    debug_assert!(self.buffered.len == 0);
+                    debug_assert!(self.buffered.get().len == 0);
                     if !FLUSH {
                         if leftover_len != 0 {
-                            self.buffered.buf = leftover;
-                            self.buffered.len = leftover_len;
+                            self.buffered.set(Buffered { buf: leftover, len: leftover_len });
                         }
                     }
                     let len = decoded.len();

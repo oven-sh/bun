@@ -6,13 +6,13 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_positive(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
     // ScopeGuard derefs to `&mut Expect`, so all `this.*` calls below go through it.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = call_frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBePositive", "")?;
@@ -25,7 +25,7 @@ pub fn to_be_positive(
         pass = num.round() > 0.0 && !num.is_infinite() && !num.is_nan();
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         pass = !pass;
     }

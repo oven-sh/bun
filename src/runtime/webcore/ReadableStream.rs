@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -178,12 +179,12 @@ impl ReadableStream {
             Source::File(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
-                if let webcore::file_reader::Lazy::Blob(store) = &blobby.lazy {
+                if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
                     // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
                     // provided after the raw-pointer copy in `initWithStore`.
                     let blob = Blob::init_with_store(store.clone(), global_this);
                     // it should be lazy, file shouldn't have opened yet.
-                    debug_assert!(!blobby.started);
+                    debug_assert!(!blobby.started.get());
                     self.done(global_this);
                     return Some(webcore::blob::Any::Blob(blob));
                 }
@@ -345,9 +346,9 @@ impl ReadableStream {
                     context: FileReader {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
                         // returns a non-null *mut EventLoop. Both outlive this call.
-                        event_loop: jsc::EventLoopHandle::init(
+                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
-                        ),
+                        )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
                             Some(blob.size.get() as usize)
@@ -356,7 +357,7 @@ impl ReadableStream {
                         },
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`
                         // after the raw `.lazy = .{ .blob = store }` assignment.
-                        lazy: webcore::file_reader::Lazy::Blob(store.clone()),
+                        lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -406,12 +407,12 @@ impl ReadableStream {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                        event_loop: jsc::EventLoopHandle::init(
+                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
-                        ),
+                        )),
                         start_offset: Some(offset),
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`.
-                        lazy: webcore::file_reader::Lazy::Blob(store.clone()),
+                        lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -435,9 +436,9 @@ impl ReadableStream {
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                event_loop: jsc::EventLoopHandle::init(
+                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     global_this.bun_vm().as_mut().event_loop().cast(),
-                ),
+                )),
                 ..Default::default()
             },
             ..Default::default()
@@ -619,8 +620,10 @@ pub struct NewSource<C: SourceContext> {
     // TODO(port): lifetime — TSV class UNKNOWN
     pub close_ctx: Option<NonNull<c_void>>,
     pub close_jsvalue: bun_jsc::strong::Optional,
-    pub cancel_handler: Option<fn(Option<*mut c_void>)>,
-    pub cancel_ctx: Option<*mut c_void>,
+    /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
+    /// (through `ByteStream::parent_const`), so interior-mutable.
+    pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
+    pub cancel_ctx: Cell<Option<*mut c_void>>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
@@ -628,7 +631,9 @@ pub struct NewSource<C: SourceContext> {
     // SAFETY: this is the self-wrapper JSValue (points at the JSCell that owns this m_ctx).
     // Kept alive by the wrapper itself; zeroed in finalize() before sweep.
     pub this_jsvalue: JSValue,
-    pub is_closed: bool,
+    /// R-2: written by `&self` context methods (`ByteStream::to_any_blob`,
+    /// `ByteBlobLoader::to_any_blob`) via `parent_const()`, so interior-mutable.
+    pub is_closed: Cell<bool>,
 }
 
 impl<C: SourceContext + Default> Default for NewSource<C> {
@@ -641,11 +646,11 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             close_handler: None,
             close_ctx: None,
             close_jsvalue: bun_jsc::strong::Optional::empty(),
-            cancel_handler: None,
-            cancel_ctx: None,
+            cancel_handler: Cell::new(None),
+            cancel_ctx: Cell::new(None),
             global_this: None,
             this_jsvalue: JSValue::ZERO,
-            is_closed: false,
+            is_closed: Cell::new(false),
         }
     }
 }
@@ -796,7 +801,7 @@ impl<C: SourceContext> NewSource<C> {
         self.cancelled = true;
         self.context.on_cancel();
         if let Some(handler) = self.cancel_handler.take() {
-            handler(self.cancel_ctx);
+            handler(self.cancel_ctx.get());
         }
     }
 
@@ -950,7 +955,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn get_is_closed_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.is_closed)
+        JSValue::from(self.is_closed.get())
     }
 
     fn process_result(

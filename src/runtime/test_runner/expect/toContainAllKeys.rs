@@ -6,14 +6,14 @@ use super::{Expect, get_signature};
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_contain_all_keys(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalObject);`
     // PORT NOTE: reshaped for borrowck — scopeguard owns the `&mut Expect` borrow so `post_match`
     // runs on every exit path; method calls go through DerefMut on the guard.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
@@ -36,7 +36,7 @@ pub fn to_contain_all_keys(
         return Err(global.throw_invalid_argument_type("toContainAllKeys", "expected", "array"));
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
 
     let count = expected.get_length(global)?;

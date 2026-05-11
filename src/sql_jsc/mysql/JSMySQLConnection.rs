@@ -6,8 +6,8 @@ use bun_core::{err, fmt as bun_fmt, timespec, TimespecMockMode};
 use crate::jsc::{
     api::server_config::SSLConfig, codegen::js_mysql_connection as js, webcore::AutoFlusher,
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsRef, JsResult, KeepAlive, VirtualMachine,
-    VirtualMachineSqlExt as _,
+    GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
+    VirtualMachine, VirtualMachineSqlExt as _,
 };
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
@@ -40,24 +40,32 @@ use bun_core::time::NS_PER_MS;
 // `impl crate::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
 // `bun_jsc::{JSGlobalObject, CallFrame, JSValue}`, so the types are identical;
 // switching to the derive is a mechanical follow-up, not a layering blocker.
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
+// shim still emits `this: &mut JSMySQLConnection` until Phase 1 lands —
+// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// `JsCell` is `#[repr(transparent)]`, so `from_field_ptr!` recovery
+// (`from_timer_ptr` / `MySQLConnection::get_js_connection`) sees identical
+// offsets.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLConnection {
     // intrusive refcount (bun.ptr.RefCount mixin); destroy callback = `deinit`
     ref_count: Cell<u32>,
-    js_value: JsRef,
+    js_value: JsCell<JsRef>,
     // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
     global_object: GlobalRef,
     // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton
     vm: *mut VirtualMachine,
-    poll_ref: KeepAlive,
+    poll_ref: JsCell<KeepAlive>,
 
     // pub(crate): MySQLRequestQueue::advance projects `connection.queue` via
-    // `addr_of_mut!` from a `*mut JSMySQLConnection` so that the queue pointer
-    // and the connection pointer share one Stacked Borrows provenance tag.
-    pub(crate) connection: my_sql_connection::MySQLConnection,
+    // `JsCell::as_ptr()` from a `*mut JSMySQLConnection`; the inner protocol
+    // struct's `get_js_connection()` recovers the embedding via
+    // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
+    pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
-    pub auto_flusher: AutoFlusher,
+    pub auto_flusher: JsCell<AutoFlusher>,
 
     pub idle_timeout_interval_ms: u32,
     pub connection_timeout_ms: u32,
@@ -65,14 +73,14 @@ pub struct JSMySQLConnection {
     /// After being connected, this is an idle timeout timer.
     // Private — intrusive heap node; cross-crate `container_of` goes through
     // [`Self::from_timer_ptr`] instead of `offset_of!` on the field.
-    timer: EventLoopTimer,
+    timer: JsCell<EventLoopTimer>,
 
     /// This timer controls the maximum lifetime of a connection.
     /// It starts when the connection successfully starts (i.e. after handshake is complete).
     /// It stops when the connection is closed.
     pub max_lifetime_interval_ms: u32,
     // Private — see `timer`; recovered via [`Self::from_max_lifetime_timer_ptr`].
-    max_lifetime_timer: EventLoopTimer,
+    max_lifetime_timer: JsCell<EventLoopTimer>,
 }
 
 impl JSMySQLConnection {
@@ -185,17 +193,48 @@ impl JSMySQLConnection {
 impl HasAutoFlush for JSMySQLConnection {
     fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: `this` is the live `*mut JSMySQLConnection` registered with
-        // the deferred-task queue; the queue runs on the JS thread with
-        // exclusive access.
-        unsafe { (*this).on_auto_flush() }
+        // the deferred-task queue; the queue runs on the JS thread. R-2: deref
+        // as shared (`&*const`) — `on_auto_flush` body takes `&self`.
+        unsafe { (*this.cast_const()).on_auto_flush() }
     }
 }
 
 impl JSMySQLConnection {
-    pub fn on_auto_flush(&mut self) -> bool {
+    // ─── R-2 interior-mutability helpers ────────────────────────────────────
+
+    /// Mutable projection of the inner protocol connection through `&self`.
+    ///
+    /// `my_sql_connection::MySQLConnection` is the protocol state machine (not
+    /// itself JS-exposed); every method on it still takes `&mut self`. This is
+    /// the single audited escape hatch — callers must keep the returned borrow
+    /// short and not hold it across a call that re-enters JS and re-derives
+    /// the same connection.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
+        // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
+        // `&mut` is fresh per call site; reentrancy through
+        // `MySQLConnection::get_js_connection()` forms a shared
+        // `&JSMySQLConnection` only.
+        unsafe { self.connection.get_mut() }
+    }
+
+    /// `self`'s address as `*mut Self` for deferred-task / scopeguard ctx
+    /// slots and `ref_guard`. The closures/trampolines deref it as shared
+    /// (`&*p`) — every method they reach is `&self` post-R-2, so no write
+    /// provenance is required; the `*mut` spelling is purely to match the
+    /// existing `DerefOnDrop` / `HasAutoFlush` ABI.
+    #[inline]
+    fn as_ctx_ptr(&self) -> *mut Self {
+        (self as *const Self).cast_mut()
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+
+    pub fn on_auto_flush(&self) -> bool {
         bun_core::scoped_log!(MySQLConnection, "onAutoFlush");
-        if self.connection.has_backpressure() {
-            self.auto_flusher.registered = false;
+        if self.connection.get().has_backpressure() {
+            self.auto_flusher.with_mut(|a| a.registered = false);
             // if we have backpressure, wait for onWritable
             return false;
         }
@@ -204,41 +243,41 @@ impl JSMySQLConnection {
         self.drain_internal();
 
         // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
-        let keep_flusher_registered = self.connection.can_flush();
-        self.auto_flusher.registered = keep_flusher_registered;
+        let keep_flusher_registered = self.connection.get().can_flush();
+        self.auto_flusher.with_mut(|a| a.registered = keep_flusher_registered);
         keep_flusher_registered
     }
 
-    fn register_auto_flusher(&mut self) {
-        if !self.auto_flusher.registered // should not be registered
-            && self.connection.can_flush()
+    fn register_auto_flusher(&self) {
+        if !self.auto_flusher.get().registered // should not be registered
+            && self.connection.get().can_flush()
         {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked(self, self.vm());
-            self.auto_flusher.registered = true;
+            AutoFlusher::register_deferred_microtask_with_type_unchecked(self.as_ctx_ptr(), self.vm());
+            self.auto_flusher.with_mut(|a| a.registered = true);
         }
     }
 
-    fn unregister_auto_flusher(&mut self) {
-        if self.auto_flusher.registered {
-            AutoFlusher::unregister_deferred_microtask_with_type(self, self.vm());
-            self.auto_flusher.registered = false;
+    fn unregister_auto_flusher(&self) {
+        if self.auto_flusher.get().registered {
+            AutoFlusher::unregister_deferred_microtask_with_type(self.as_ctx_ptr(), self.vm());
+            self.auto_flusher.with_mut(|a| a.registered = false);
         }
     }
 
-    fn stop_timers(&mut self) {
+    fn stop_timers(&self) {
         bun_core::scoped_log!(MySQLConnection, "stopTimers");
-        if self.timer.state == EventLoopTimerState::ACTIVE {
-            self.vm_mut().timer().remove(&mut self.timer);
+        if self.timer.get().state == EventLoopTimerState::ACTIVE {
+            self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
         }
-        if self.max_lifetime_timer.state == EventLoopTimerState::ACTIVE {
-            self.vm_mut().timer().remove(&mut self.max_lifetime_timer);
+        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
+            self.max_lifetime_timer.with_mut(|t| self.vm_mut().timer().remove(t));
         }
     }
 
     fn get_timeout_interval(&self) -> u32 {
-        match self.connection.status {
+        match self.connection.get().status {
             my_sql_connection::Status::Connected => {
-                if self.connection.is_idle() {
+                if self.connection.get().is_idle() {
                     return self.idle_timeout_interval_ms;
                 }
                 0
@@ -248,32 +287,33 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn reset_connection_timeout(&mut self) {
+    pub fn reset_connection_timeout(&self) {
         let interval = self.get_timeout_interval();
         bun_core::scoped_log!(MySQLConnection, "resetConnectionTimeout {}", interval);
-        if self.timer.state == EventLoopTimerState::ACTIVE {
-            self.vm_mut().timer().remove(&mut self.timer);
+        if self.timer.get().state == EventLoopTimerState::ACTIVE {
+            self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
         }
-        if self.connection.status == my_sql_connection::Status::Failed
-            || self.connection.is_processing_data()
+        if self.connection.get().status == my_sql_connection::Status::Failed
+            || self.connection.get().is_processing_data()
             || interval == 0
         {
             return;
         }
 
-        self.timer.next =
-            timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
-        self.vm_mut().timer().insert(&mut self.timer);
+        self.timer.with_mut(|t| {
+            t.next = timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
+            self.vm_mut().timer().insert(t);
+        });
     }
 
-    pub fn on_connection_timeout(&mut self) {
-        self.timer.state = EventLoopTimerState::FIRED;
+    pub fn on_connection_timeout(&self) {
+        self.timer.with_mut(|t| t.state = EventLoopTimerState::FIRED);
 
-        if self.connection.is_processing_data() {
+        if self.connection.get().is_processing_data() {
             return;
         }
 
-        if self.connection.status == my_sql_connection::Status::Failed {
+        if self.connection.get().status == my_sql_connection::Status::Failed {
             return;
         }
 
@@ -282,7 +322,7 @@ impl JSMySQLConnection {
             return;
         }
 
-        match self.connection.status {
+        match self.connection.get().status {
             my_sql_connection::Status::Connected => {
                 self.fail_fmt(
                     AnyMySQLErrorT::IdleTimeout,
@@ -322,9 +362,9 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn on_max_lifetime_timeout(&mut self) {
-        self.max_lifetime_timer.state = EventLoopTimerState::FIRED;
-        if self.connection.status == my_sql_connection::Status::Failed {
+    pub fn on_max_lifetime_timeout(&self) {
+        self.max_lifetime_timer.with_mut(|t| t.state = EventLoopTimerState::FIRED);
+        if self.connection.get().status == my_sql_connection::Status::Failed {
             return;
         }
         self.fail_fmt(
@@ -338,19 +378,21 @@ impl JSMySQLConnection {
         );
     }
 
-    fn setup_max_lifetime_timer_if_necessary(&mut self) {
+    fn setup_max_lifetime_timer_if_necessary(&self) {
         if self.max_lifetime_interval_ms == 0 {
             return;
         }
-        if self.max_lifetime_timer.state == EventLoopTimerState::ACTIVE {
+        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
             return;
         }
 
-        self.max_lifetime_timer.next = timespec::ms_from_now(
-            TimespecMockMode::AllowMockedTime,
-            self.max_lifetime_interval_ms.into(),
-        );
-        self.vm_mut().timer().insert(&mut self.max_lifetime_timer);
+        self.max_lifetime_timer.with_mut(|t| {
+            t.next = timespec::ms_from_now(
+                TimespecMockMode::AllowMockedTime,
+                self.max_lifetime_interval_ms.into(),
+            );
+            self.vm_mut().timer().insert(t);
+        });
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn] — free-fn shim emitted inside an
@@ -363,20 +405,20 @@ impl JSMySQLConnection {
         Err(global_object.throw(format_args!("MySQLConnection cannot be constructed directly")))
     }
 
-    pub fn enqueue_request(&mut self, item: *mut JSMySQLQuery) {
+    pub fn enqueue_request(&self, item: *mut JSMySQLQuery) {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
-        self.connection.enqueue_request(item);
+        self.connection_mut().enqueue_request(item);
         self.reset_connection_timeout();
         self.register_auto_flusher();
     }
 
-    pub fn close(&mut self) {
+    pub fn close(&self) {
         // Zig `this.ref(); defer { updateReferenceType(); deref(); }`. Re-enter
-        // through a raw pointer so no `&mut Self` is live across the potential
+        // through a raw pointer so no reference is live across the potential
         // free in `deref()`. Guard drop order is LIFO: `_ref` (deref) drops
         // last, after `update_reference_type()` has run.
-        let p: *mut Self = self;
-        // SAFETY: `p` is derived from a live `&mut self`.
+        let p: *mut Self = self.as_ctx_ptr();
+        // SAFETY: `p` is derived from a live `&self`.
         let _ref = unsafe { Self::ref_guard(p) };
         scopeguard::defer! {
             // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
@@ -385,26 +427,25 @@ impl JSMySQLConnection {
         self.stop_timers();
         self.unregister_auto_flusher();
         if self.vm().is_shutting_down() {
-            self.connection.close();
+            self.connection_mut().close();
         } else {
-            self.connection
-                .clean_queue_and_close(None, self.get_queries_array());
+            let queries = self.get_queries_array();
+            self.connection_mut().clean_queue_and_close(None, queries);
         }
     }
 
-    fn drain_internal(&mut self) {
+    fn drain_internal(&self) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
         if self.vm().is_shutting_down() {
             return self.close();
         }
         // Zig `this.ref(); defer this.deref();` — raw-pointer RAII guard so no
-        // `&mut` alias is captured and no reference is live across the
-        // potential free.
-        // SAFETY: `&mut self` is live.
-        let _ref = unsafe { Self::ref_guard(self) };
+        // reference is live across the potential free.
+        // SAFETY: `&self` is live.
+        let _ref = unsafe { Self::ref_guard(self.as_ctx_ptr()) };
         let _loop_guard = unsafe { self.vm().event_loop_mut() }.entered();
         self.ensure_js_value_is_alive();
-        if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) = self.connection.flush_queue() {
+        if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) = self.connection_mut().flush_queue() {
             self.fail(b"Authentication failed", AnyMySQLErrorT::AuthenticationFailed);
             return;
         }
@@ -423,18 +464,21 @@ impl JSMySQLConnection {
         // SAFETY: see fn-level contract — `this` is a live `heap::alloc` ptr;
         // unique owner; no `&`/`&mut Self` outlives the `heap::take` below.
         unsafe {
-            (*this).stop_timers();
-            (*this).poll_ref.unref((*this).vm_ctx());
-            (*this).unregister_auto_flusher();
-
-            (*this).connection.cleanup();
+            {
+                let r = &*this;
+                r.stop_timers();
+                let ctx = r.vm_ctx();
+                r.poll_ref.with_mut(|p| p.unref(ctx));
+                r.unregister_auto_flusher();
+                r.connection_mut().cleanup();
+            }
             // bun.destroy(this): reclaim the `heap::alloc` from `create_instance`.
             drop(bun_core::heap::take(this));
         }
     }
 
     fn ensure_js_value_is_alive(&self) {
-        if let Some(value) = self.js_value.try_get() {
+        if let Some(value) = self.js_value.get().try_get() {
             value.ensure_still_alive();
         }
     }
@@ -445,31 +489,33 @@ impl JSMySQLConnection {
         // call if other refs remain, so hand ownership back to the raw refcount
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
         let this = bun_core::heap::release(self);
-        this.js_value.finalize();
+        this.js_value.with_mut(|r| r.finalize());
         // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
         unsafe { Self::deref(this) };
     }
 
-    fn update_reference_type(&mut self) {
-        if self.connection.is_active() {
+    fn update_reference_type(&self) {
+        if self.connection.get().is_active() {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
-            if self.js_value.is_not_empty() && !self.js_value.is_strong() {
+            if self.js_value.get().is_not_empty() && !self.js_value.get().is_strong() {
                 bun_core::scoped_log!(MySQLConnection, "strong ref until connection is closed");
-                self.js_value.upgrade(&self.global_object);
+                self.js_value.with_mut(|r| r.upgrade(&self.global_object));
             }
-            if self.connection.status == my_sql_connection::Status::Connected
-                && self.connection.is_idle()
+            let ctx = self.vm_ctx();
+            if self.connection.get().status == my_sql_connection::Status::Connected
+                && self.connection.get().is_idle()
             {
-                self.poll_ref.unref(self.vm_ctx());
+                self.poll_ref.with_mut(|p| p.unref(ctx));
             } else {
-                self.poll_ref.r#ref(self.vm_ctx());
+                self.poll_ref.with_mut(|p| p.r#ref(ctx));
             }
             return;
         }
-        if self.js_value.is_not_empty() && self.js_value.is_strong() {
-            self.js_value.downgrade();
+        if self.js_value.get().is_not_empty() && self.js_value.get().is_strong() {
+            self.js_value.with_mut(|r| r.downgrade());
         }
-        self.poll_ref.unref(self.vm_ctx());
+        let ctx = self.vm_ctx();
+        self.poll_ref.with_mut(|p| p.unref(ctx));
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLConnection__createInstance")]
@@ -594,11 +640,11 @@ impl JSMySQLConnection {
 
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
-            js_value: JsRef::empty(),
+            js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
             vm,
-            poll_ref: KeepAlive::default(),
-            connection: my_sql_connection::MySQLConnection::init(
+            poll_ref: JsCell::new(KeepAlive::default()),
+            connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,
                 username,
                 password,
@@ -607,18 +653,18 @@ impl JSMySQLConnection {
                 tls_config,
                 secure,
                 ssl_mode,
-            ),
-            auto_flusher: AutoFlusher::default(),
+            )),
+            auto_flusher: JsCell::new(AutoFlusher::default()),
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
             connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
             max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
-            timer: EventLoopTimer::init_paused(EventLoopTimerTag::MySQLConnectionTimeout),
-            max_lifetime_timer: EventLoopTimer::init_paused(
+            timer: JsCell::new(EventLoopTimer::init_paused(EventLoopTimerTag::MySQLConnectionTimeout)),
+            max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::MySQLConnectionMaxLifetime,
-            ),
+            )),
         }));
         // SAFETY: ptr was just allocated and is non-null; we hold the only reference.
-        let this = unsafe { &mut *ptr };
+        let this = unsafe { &*ptr };
 
         {
             let hostname = hostname_str.to_utf8();
@@ -648,21 +694,21 @@ impl JSMySQLConnection {
                 Ok(s) => s,
                 Err(e) => {
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
-                    // Drop the `&mut` borrow (`this`) before freeing so no
+                    // Drop the `&` borrow (`this`) before freeing so no
                     // reference outlives the `heap::take` inside `deinit`.
                     let _ = this;
                     unsafe { Self::deref(ptr) };
                     return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
                 }
             };
-            this.connection.set_socket(AnySocket::SocketTcp(socket));
+            this.connection_mut().set_socket(AnySocket::SocketTcp(socket));
         }
-        this.connection.status = my_sql_connection::Status::Connecting;
+        this.connection_mut().status = my_sql_connection::Status::Connecting;
         this.reset_connection_timeout();
-        this.poll_ref.r#ref(vm.vm_ctx());
+        this.poll_ref.with_mut(|p| p.r#ref(vm.vm_ctx()));
         let js_value = js::to_js(ptr, global_object);
         js_value.ensure_still_alive();
-        this.js_value.set_strong(js_value, global_object);
+        this.js_value.with_mut(|r| r.set_strong(js_value, global_object));
         js::onconnect_set_cached(js_value, global_object, on_connect);
         js::onclose_set_cached(js_value, global_object, on_close);
 
@@ -687,7 +733,7 @@ impl JSMySQLConnection {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.connection.status == my_sql_connection::Status::Connected)
+        JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
@@ -700,7 +746,7 @@ impl JSMySQLConnection {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(setter)] — see JsClass note above.
     pub fn set_on_connect(
-        _this: &mut Self,
+        _this: &Self,
         this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -718,7 +764,7 @@ impl JSMySQLConnection {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(setter)] — see JsClass note above.
     pub fn set_on_close(
-        _this: &mut Self,
+        _this: &Self,
         this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -727,40 +773,41 @@ impl JSMySQLConnection {
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
-    pub fn do_ref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.r#ref(this.vm_ctx());
+    pub fn do_ref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        let ctx = this.vm_ctx();
+        this.poll_ref.with_mut(|p| p.r#ref(ctx));
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
-    pub fn do_unref(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.unref(this.vm_ctx());
+    pub fn do_unref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        let ctx = this.vm_ctx();
+        this.poll_ref.with_mut(|p| p.unref(ctx));
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
-    pub fn do_flush(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_close(
-        this: &mut Self,
+        this: &Self,
         _global_object: &JSGlobalObject,
         _: &CallFrame,
     ) -> JsResult<JSValue> {
         this.stop_timers();
 
-        // Zig `defer this.updateReferenceType();` — re-enter via raw pointer so
-        // the closure does not hold a second `&mut` alias of `this`.
-        let p: *mut Self = this;
+        // Zig `defer this.updateReferenceType();` — R-2: `&Self` is `Copy`, so
+        // the scopeguard closure captures a shared reborrow and the body's
+        // `connection_mut()` borrow is non-overlapping.
         scopeguard::defer! {
-            // SAFETY: `p` from live `&mut this`; `*p` outlives the guard (no deref()).
-            unsafe { (*p).update_reference_type() };
+            this.update_reference_type();
         }
-        this.connection
-            .clean_queue_and_close(None, this.get_queries_array());
+        let queries = this.get_queries_array();
+        this.connection_mut().clean_queue_and_close(None, queries);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -768,7 +815,7 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.js_value.try_get() {
+        if let Some(value) = self.js_value.get().try_get() {
             let on_connect = js::onconnect_get_cached(value)?;
             js::onconnect_set_cached(value, global_object, JSValue::ZERO);
             return Some(on_connect);
@@ -780,7 +827,7 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.js_value.try_get() {
+        if let Some(value) = self.js_value.get().try_get() {
             let on_close = js::onclose_get_cached(value)?;
             js::onclose_set_cached(value, global_object, JSValue::ZERO);
             return Some(on_close);
@@ -792,7 +839,7 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return JSValue::UNDEFINED;
         }
-        if let Some(value) = self.js_value.try_get() {
+        if let Some(value) = self.js_value.get().try_get() {
             return js::queries_get_cached(value).unwrap_or(JSValue::UNDEFINED);
         }
         JSValue::UNDEFINED
@@ -800,30 +847,30 @@ impl JSMySQLConnection {
 
     #[inline]
     pub fn is_able_to_write(&self) -> bool {
-        self.connection.is_able_to_write()
+        self.connection.get().is_able_to_write()
     }
     #[inline]
     pub fn is_connected(&self) -> bool {
-        self.connection.status == my_sql_connection::Status::Connected
+        self.connection.get().status == my_sql_connection::Status::Connected
     }
     #[inline]
-    pub fn can_pipeline(&mut self) -> bool {
-        self.connection.can_pipeline()
+    pub fn can_pipeline(&self) -> bool {
+        self.connection_mut().can_pipeline()
     }
     #[inline]
-    pub fn can_prepare_query(&mut self) -> bool {
-        self.connection.can_prepare_query()
+    pub fn can_prepare_query(&self) -> bool {
+        self.connection_mut().can_prepare_query()
     }
     #[inline]
-    pub fn can_execute_query(&mut self) -> bool {
-        self.connection.can_execute_query()
+    pub fn can_execute_query(&self) -> bool {
+        self.connection_mut().can_execute_query()
     }
     #[inline]
-    pub fn get_writer(&mut self) -> NewWriter<my_sql_connection::Writer> {
-        self.connection.writer()
+    pub fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {
+        self.connection_mut().writer()
     }
 
-    fn fail_fmt(&mut self, error_code: AnyMySQLErrorT, args: core::fmt::Arguments<'_>) {
+    fn fail_fmt(&self, error_code: AnyMySQLErrorT, args: core::fmt::Arguments<'_>) {
         // bun.handleOom(std.fmt.allocPrint(...)) → write into Vec<u8>
         let mut message: Vec<u8> = Vec::new();
         {
@@ -835,34 +882,34 @@ impl JSMySQLConnection {
         self.fail_with_js_value(err);
     }
 
-    fn fail_with_js_value(&mut self, value: JSValue) {
+    fn fail_with_js_value(&self, value: JSValue) {
         // Zig `this.ref(); defer { ...; updateReferenceType(); deref(); }` —
-        // runs on every exit path. Re-enter through a raw pointer so no `&mut`
-        // alias is captured and no reference is live across the potential free
-        // in `deref()`. LIFO drop order: the `defer!` body runs first, then
-        // `_ref` releases the count — matches Zig.
-        let p: *mut Self = self;
-        // SAFETY: `p` is derived from a live `&mut self`.
+        // runs on every exit path. Re-enter through a raw pointer so no
+        // reference is live across the potential free in `deref()`. LIFO drop
+        // order: the `defer!` body runs first, then `_ref` releases the count
+        // — matches Zig.
+        let p: *mut Self = self.as_ctx_ptr();
+        // SAFETY: `p` is derived from a live `&self`.
         let _ref = unsafe { Self::ref_guard(p) };
         scopeguard::defer! {
             // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
             unsafe {
                 if (*p).vm().is_shutting_down() {
-                    (*p).connection.close();
+                    (*p).connection_mut().close();
                 } else {
                     let queries = (*p).get_queries_array();
-                    (*p).connection.clean_queue_and_close(Some(value), queries);
+                    (*p).connection_mut().clean_queue_and_close(Some(value), queries);
                 }
                 (*p).update_reference_type();
             }
         }
         self.stop_timers();
 
-        if self.connection.status == my_sql_connection::Status::Failed {
+        if self.connection.get().status == my_sql_connection::Status::Failed {
             return;
         }
 
-        self.connection.status = my_sql_connection::Status::Failed;
+        self.connection_mut().status = my_sql_connection::Status::Failed;
         if self.vm().is_shutting_down() {
             return;
         }
@@ -896,12 +943,12 @@ impl JSMySQLConnection {
         );
     }
 
-    fn fail(&mut self, message: &[u8], err: AnyMySQLErrorT) {
+    fn fail(&self, message: &[u8], err: AnyMySQLErrorT) {
         let instance = mysql_error_to_js(&self.global_object, message, err);
         self.fail_with_js_value(instance);
     }
 
-    pub fn on_connection_estabilished(&mut self) {
+    pub fn on_connection_estabilished(&self) {
         if self.vm().is_shutting_down() {
             return;
         }
@@ -909,19 +956,19 @@ impl JSMySQLConnection {
             return;
         };
         on_connect.ensure_still_alive();
-        let js_value = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
+        let js_value = self.js_value.get().try_get().unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
         self.global_object
             .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
     }
 
-    pub fn on_query_result(&mut self, request: &mut JSMySQLQuery, result: MySQLQueryResult) {
+    pub fn on_query_result(&self, request: &JSMySQLQuery, result: MySQLQueryResult) {
         request.resolve(self.get_queries_array(), result);
     }
 
     pub fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
-        &mut self,
-        request: &mut JSMySQLQuery,
+        &self,
+        request: &JSMySQLQuery,
         statement: &mut MySQLStatement,
         reader: NewReader<C>,
     ) -> Result<(), OnResultRowError> {
@@ -933,7 +980,7 @@ impl JSMySQLConnection {
         // below. Stash a raw ptr (Zig holds it by value) and re-borrow at the
         // `to_js` call site.
         let cached_structure_ptr: Option<*const CachedStructure> = match result_mode {
-            ResultMode::Objects => self.js_value.try_get().map(|value| {
+            ResultMode::Objects => self.js_value.get().try_get().map(|value| {
                 let cs = statement.structure(value, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                 std::ptr::from_ref::<CachedStructure>(cs)
@@ -956,7 +1003,7 @@ impl JSMySQLConnection {
             if e == AnyMySQLErrorT::ShortRead {
                 return Err(OnResultRowError::ShortRead);
             }
-            self.connection.queue.mark_current_request_as_finished(request);
+            self.connection_mut().queue.mark_current_request_as_finished(request);
             request.reject(self.get_queries_array(), e);
             return Ok(());
         }
@@ -979,7 +1026,7 @@ impl JSMySQLConnection {
         // end-of-scope; drop it now so `statement.result_count += 1` may take `&mut`.
         drop(row);
         if let Some(err) = self.global_object.try_take_exception() {
-            self.connection.queue.mark_current_request_as_finished(request);
+            self.connection_mut().queue.mark_current_request_as_finished(request);
             request.reject_with_js_value(self.get_queries_array(), err);
             return Ok(());
         }
@@ -991,7 +1038,7 @@ impl JSMySQLConnection {
         Ok(())
     }
 
-    pub fn on_error(&mut self, request: Option<&mut JSMySQLQuery>, err: AnyMySQLErrorT) {
+    pub fn on_error(&self, request: Option<&JSMySQLQuery>, err: AnyMySQLErrorT) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();
@@ -1015,7 +1062,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn on_error_packet(&mut self, request: Option<&mut JSMySQLQuery>, err: ErrorPacket) {
+    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: ErrorPacket) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();
@@ -1041,11 +1088,11 @@ impl JSMySQLConnection {
     }
 
     pub fn get_statement_from_signature_hash(
-        &mut self,
+        &self,
         signature_hash: u64,
     ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::Error> {
         // TODO(port): narrow error set — `get_or_put` currently yields `AllocError`.
-        self.connection
+        self.connection_mut()
             .statements
             .get_or_put(signature_hash)
             .map_err(|_| bun_core::err!("OutOfMemory"))
@@ -1067,15 +1114,15 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_open(this: &mut JSMySQLConnection, s: NewSocketHandler<SSL>) {
+    pub fn on_open(this: &JSMySQLConnection, s: NewSocketHandler<SSL>) {
         let socket = Self::_socket(s);
         let is_tcp = matches!(socket, AnySocket::SocketTcp(_));
-        this.connection.set_socket(socket);
+        this.connection_mut().set_socket(socket);
 
         if is_tcp {
             // This handshake is not TLS handleshake is actually the MySQL handshake
             // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
-            this.connection.status = my_sql_connection::Status::Handshaking;
+            this.connection_mut().status = my_sql_connection::Status::Handshaking;
             this.ref_(); // keep a ref for the socket
         }
         // Only set up the timers after all status changes are complete — the timers rely on the status to determine timeouts.
@@ -1085,12 +1132,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     fn on_handshake_(
-        this: &mut JSMySQLConnection,
+        this: &JSMySQLConnection,
         _: NewSocketHandler<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) {
-        let handshake_was_successful = match this.connection.do_handshake(success, ssl_error) {
+        let handshake_was_successful = match this.connection_mut().do_handshake(success, ssl_error) {
             Ok(v) => v,
             Err(e) => {
                 return this.fail_fmt(e, format_args!("Failed to send handshake response"));
@@ -1107,38 +1154,38 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     // pub const onHandshake = if (ssl) onHandshake_ else null;
     pub const ON_HANDSHAKE: Option<
-        fn(&mut JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
+        fn(&JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
     > = if SSL { Some(Self::on_handshake_) } else { None };
 
-    pub fn on_close(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32, _: Option<*mut c_void>) {
+    pub fn on_close(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32, _: Option<*mut c_void>) {
         // Zig `defer this.deref();` — releases the socket ref taken in on_open.
         // RAII guard adopts that existing ref (no `ref_()` here); raw-pointer
-        // shaped so no `&mut` alias outlives the potential free.
-        let _ref = DerefOnDrop(this);
+        // shaped so no reference outlives the potential free.
+        let _ref = DerefOnDrop(this.as_ctx_ptr());
         this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
     }
 
-    pub fn on_end(_: &mut JSMySQLConnection, socket: NewSocketHandler<SSL>) {
+    pub fn on_end(_: &JSMySQLConnection, socket: NewSocketHandler<SSL>) {
         // no half closed sockets
         socket.close(uws::CloseKind::Normal);
     }
 
-    pub fn on_connect_error(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
+    pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
         // TODO: proper propagation of the error
         this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
     }
 
-    pub fn on_timeout(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>) {
+    pub fn on_timeout(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
         this.fail(b"Connection timeout", AnyMySQLErrorT::ConnectionTimedOut);
     }
 
-    pub fn on_data(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
+    pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
         // Zig `this.ref(); defer this.deref();` + `defer { resetConnectionTimeout(); ... }`.
-        // Both guards re-enter via raw pointer so neither captures a `&mut`
-        // alias and no reference is live across the potential free. Guard drop
-        // order is LIFO, so `_ref` (deref) runs last — matches Zig.
-        let p: *mut JSMySQLConnection = this;
-        // SAFETY: `p` from live `&mut this`.
+        // Both guards re-enter via raw pointer so no reference is live across
+        // the potential free. Guard drop order is LIFO, so `_ref` (deref) runs
+        // last — matches Zig.
+        let p: *mut JSMySQLConnection = this.as_ctx_ptr();
+        // SAFETY: `p` from live `&this`.
         let _ref = unsafe { JSMySQLConnection::ref_guard(p) };
         let vm = this.vm();
 
@@ -1159,13 +1206,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _loop_guard = unsafe { vm.event_loop_mut() }.entered();
         this.ensure_js_value_is_alive();
 
-        if let Err(e) = this.connection.read_and_process_data(data) {
+        if let Err(e) = this.connection_mut().read_and_process_data(data) {
             this.on_error(None, e);
         }
     }
 
-    pub fn on_writable(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>) {
-        this.connection.reset_backpressure();
+    pub fn on_writable(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
+        this.connection_mut().reset_backpressure();
         this.drain_internal();
     }
 }

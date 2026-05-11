@@ -7,20 +7,20 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_undefined(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // PORT NOTE: `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns
         // the &mut Expect and calls post_match on drop, so the body can still use `this` mutably.
-        let mut this = scopeguard::guard(this, |t| t.post_match(global));
+        let this = scopeguard::guard(self, |t| t.post_match(global));
 
         let this_value = frame.this();
         let value: JSValue = this.get_value(global, this_value, "toBeUndefined", "")?;
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = false;
         if value.is_undefined() {
             pass = true;

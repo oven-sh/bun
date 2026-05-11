@@ -7,13 +7,13 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_contain_key(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(global)` becomes a
         // scopeguard that owns the &mut and DerefMut's it for the body.
-        let mut this = scopeguard::guard(this, |this| this.post_match(global));
+        let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<1>();
@@ -32,7 +32,7 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         if !value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected value must be an object\nReceived: {}",

@@ -1814,8 +1814,9 @@ impl<'a> Formatter<'a> {
                         }
                         return Ok(());
                     } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
-                        // SAFETY: see Response branch above.
-                        let build = unsafe { &mut *build };
+                        // SAFETY: see Response branch above. `write_format` is
+                        // `&self` post-R-2, so a shared borrow is sufficient.
+                        let build = unsafe { &*build };
                         let mut bridge = IoFmt(&mut *writer.ctx);
                         if build
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -3070,7 +3071,7 @@ impl JestPrettyFormat {
         // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.
 
         if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAnything".len());
@@ -3085,7 +3086,7 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAny<".len());
@@ -3119,7 +3120,7 @@ impl JestPrettyFormat {
             let number = number_value.to_int32();
             let digits = digits_value.to_int32();
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NumberNotCloseTo".len());
@@ -3141,7 +3142,7 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"ObjectNotContaining ".len());
@@ -3160,7 +3161,7 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotContaining ".len());
@@ -3178,7 +3179,7 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            let flags = matcher.flags;
+            let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotMatching ".len());

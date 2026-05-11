@@ -5,11 +5,11 @@ use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_odd(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn to_be_odd(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
     // scopeguard owns the `&mut Expect` borrow and DerefMut's back to it, so post_match runs on
     // every exit path while the body still has mutable access via `*this`.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
 
@@ -17,7 +17,7 @@ pub fn to_be_odd(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) 
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
 
     if value.is_big_int32() {

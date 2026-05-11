@@ -7,14 +7,14 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_equal(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
         // scopeguard owning the `&mut Expect` borrow so post_match runs on every exit path;
         // method calls below go through DerefMut.
-        let mut this = scopeguard::guard(this, |this| this.post_match(global));
+        let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();
@@ -29,7 +29,7 @@ impl Expect {
         let expected = arguments[0];
         let value: JSValue = this.get_value(global, this_value, "toEqual", "<green>expected<r>")?;
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = value.jest_deep_equals(expected, global)?;
 
         if not {

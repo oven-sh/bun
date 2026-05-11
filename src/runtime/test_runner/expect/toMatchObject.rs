@@ -5,7 +5,7 @@ use super::{get_signature, Expect};
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_match_object(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -14,7 +14,7 @@ pub fn to_match_object(
     // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
     // scopeguard wrapping `this`; the guard DerefMut's to `&mut Expect` for the body and
     // calls `post_match` on scope exit (success or error).
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let args_buf = frame.arguments_old::<1>();
@@ -22,7 +22,7 @@ pub fn to_match_object(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
 
     let received_object: JSValue =
         this.get_value(global, this_value, "toMatchObject", "<green>expected<r>")?;

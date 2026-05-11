@@ -193,7 +193,7 @@ impl ByteBlobLoader {
             self.content_type_allocated = false;
         }
 
-        self.parent().is_closed = true;
+        self.parent().is_closed.set(true);
         Some(blob::Any::Blob(blob))
     }
 

@@ -6,7 +6,7 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_even(
-    this: &mut Expect,
+    this: &Expect,
     global_this: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -21,7 +21,7 @@ pub fn to_be_even(
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = false;
 
         if value.is_any_int() {

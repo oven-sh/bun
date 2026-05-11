@@ -16,7 +16,7 @@ pub struct Stmt {
 
 impl Stmt {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: *const ast::Stmt,
         parent: NodeId,
@@ -28,7 +28,7 @@ impl Stmt {
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&mut Interpreter` reborrow.
+            // borrowck across the `&Interpreter` reborrow.
             node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Stmt) },
             idx: 0,
             last_exit_code: None,
@@ -39,7 +39,7 @@ impl Stmt {
         id
     }
 
-    pub fn start(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, this: NodeId) -> Yield {
         let me = interp.as_stmt(this);
         debug_assert!(me.idx == 0);
         debug_assert!(me.last_exit_code.is_none());
@@ -47,7 +47,7 @@ impl Stmt {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (idx, len, parent, last, shell) = {
             let me = interp.as_stmt(this);
             (me.idx, Self::expr_count(me), me.base.parent, me.last_exit_code, me.base.shell)
@@ -63,7 +63,7 @@ impl Stmt {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -84,7 +84,7 @@ impl Stmt {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         let exec = interp.as_stmt_mut(this).currently_executing.take();
         if let Some(exec) = exec {
             interp.deinit_node(exec);

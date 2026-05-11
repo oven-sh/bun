@@ -8,7 +8,7 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_returned_with(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -18,7 +18,7 @@ pub fn to_have_returned_with(
     // defer this.postMatch(globalThis)
     // PORT NOTE: reshaped for borrowck — scopeguard owns the `&mut Expect` and DerefMut's back to
     // it, so post_match runs on every exit while the body re-borrows `this` through the guard.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let value: JSValue = this.get_value(global, this_value, "toHaveReturnedWith", "<green>expected<r>")?;
 
@@ -72,7 +72,7 @@ pub fn to_have_returned_with(
         }
     }
 
-    if pass != this.flags.not() {
+    if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -81,7 +81,7 @@ pub fn to_have_returned_with(
 
     let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
 
-    if this.flags.not() {
+    if this.flags.get().not() {
         let not_signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
         return this.throw(
             global,

@@ -6,13 +6,13 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_throw_error_matching_inline_snapshot(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: reshaped for borrowck — guard owns the &mut and Derefs to it.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
@@ -20,7 +20,7 @@ pub fn to_throw_error_matching_inline_snapshot(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", true);
         return this.throw(
@@ -79,7 +79,7 @@ pub fn to_throw_error_matching_inline_snapshot(
     };
 
     Expect::inline_snapshot(
-        &mut **this,
+        &**this,
         global,
         frame,
         value,

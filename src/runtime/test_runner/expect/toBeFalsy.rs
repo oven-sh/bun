@@ -7,10 +7,11 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_falsy(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        let this = self;
         // PORT NOTE: reshaped for borrowck — was `defer this.postMatch(globalThis)`. A scopeguard
         // would hold `&mut self` across the whole body, conflicting with get_value/throw below, so
         // post_match() is called explicitly on every return path instead.
@@ -27,7 +28,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = false;
 
         let truthy = value.to_boolean();

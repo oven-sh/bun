@@ -32,7 +32,7 @@ pub enum State {
 }
 
 impl Which {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
@@ -88,7 +88,7 @@ impl Which {
         Self::next(interp, cmd)
     }
 
-    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let (arg_idx, had_not_found) = match &Self::state_mut(interp, cmd).state {
             State::MultiArgs { arg_idx, had_not_found, .. } => (*arg_idx, *had_not_found),
@@ -156,7 +156,7 @@ impl Which {
         }
     }
 
-    fn arg_complete(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    fn arg_complete(interp: &Interpreter, cmd: NodeId) -> Yield {
         if let State::MultiArgs { arg_idx, waiting_write, .. } =
             &mut Self::state_mut(interp, cmd).state
         {
@@ -167,7 +167,7 @@ impl Which {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -206,7 +206,7 @@ impl Which {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Which {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Which {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Which(w) => &mut **w,
             _ => unreachable!(),

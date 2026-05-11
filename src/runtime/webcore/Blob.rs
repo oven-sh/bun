@@ -2060,7 +2060,7 @@ impl BlobExt for Blob {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe { &mut *vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                        let binding = unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
                             binding,
@@ -2082,7 +2082,7 @@ impl BlobExt for Blob {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe { &mut *vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                        let binding = unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
                         Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
                             binding,

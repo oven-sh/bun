@@ -8,13 +8,13 @@ use super::{Expect, get_signature};
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_include_repeated(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // PORT NOTE: `defer this.postMatch(global)` — reshaped as a scopeguard owning the
         // `&mut Expect` so post_match runs on every exit; the body re-borrows `this` via DerefMut.
-        let mut this = scopeguard::guard(this, |t| t.post_match(global));
+        let this = scopeguard::guard(self, |t| t.post_match(global));
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<2>();
@@ -60,7 +60,7 @@ impl Expect {
             )));
         }
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = false;
 
         let expect_string_as_str_owned = expect_string.to_slice_or_null(global)?;

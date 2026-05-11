@@ -2006,7 +2006,7 @@ impl JSFrameworkRouter {
 
     #[bun_jsc::host_fn(method)]
     pub fn r#match(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -2043,7 +2043,7 @@ impl JSFrameworkRouter {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn to_json(&mut self, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn to_json(&self, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         // PERF(port): was stack-fallback allocator
         self.route_to_json(global, RouteIndex::init(0))
     }

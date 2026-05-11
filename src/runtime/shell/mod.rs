@@ -12,10 +12,10 @@
 //! - Dispatch: `interp.child_done(parent_id, child_id, exit)` looks up
 //!   `interp.nodes[parent_id]` and matches on its tag
 //! - Every method that previously took `*Parent` now takes
-//!   `&mut Interpreter` + the relevant `NodeId`s
+//!   `&Interpreter` + the relevant `NodeId`s
 //!
 //! This avoids self-referential `&mut` graphs entirely: all inter-node edges
-//! are integer indices, and the only `&mut` is the single `&mut Interpreter`
+//! are integer indices, and the only `&mut` is the single `&Interpreter`
 //! threaded through the trampoline.
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────

@@ -202,17 +202,19 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
         if let crate::webcore::readable_stream::Source::Bytes(byte_stream_ptr) = stream.ptr {
             // SAFETY: ReadableStream.ptr.Bytes is a live *ByteStream owned by the stream.
-            let byte_stream: &mut ByteStream = unsafe { &mut *byte_stream_ptr };
+            // R-2: `&` (not `&mut`) — all touched ByteStream methods/fields are
+            // `&self`/interior-mutable.
+            let byte_stream: &ByteStream = unsafe { &*byte_stream_ptr };
             // if pipe is empty, we can pipe
-            if byte_stream.pipe.is_empty() {
+            if byte_stream.pipe.get().is_empty() {
                 // equivalent to onStart to get the highWaterMark
                 this_ref.high_water_mark =
                     byte_stream.high_water_mark.min(i64::MAX as u64) as i64;
 
-                if byte_stream.has_received_last_chunk {
+                if byte_stream.has_received_last_chunk.get() {
                     this_ref.status = Status::Done;
                     let err: Option<JSValue> = 'brk_err: {
-                        let pending = &byte_stream.pending.result;
+                        let pending = &byte_stream.pending.get().result;
                         if let StreamResult::Err(e) = pending {
                             let (js_err, was_strong) = e.to_js_weak(global_this);
                             js_err.ensure_still_alive();
@@ -249,7 +251,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 // Zig comptime fn-ptr param is reshaped as a `PipeHandler` impl on `Self`
                 // (see `impl PipeHandler` below); `Wrap::<Self>::init` erases `this` into
                 // the Pipe's ctx ptr.
-                byte_stream.pipe = Wrap::<Self>::init(this_ref);
+                byte_stream.pipe.set(Wrap::<Self>::init(this_ref));
                 this_ref.ref_(); // one ref for the pipe
 
                 // we only need the stream, we dont need to touch JS side yet
@@ -522,7 +524,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         if let Some(stream_) = self.stream.get(global_object) {
             if let crate::webcore::readable_stream::Source::Bytes(bytes_ptr) = stream_.ptr {
                 // SAFETY: ByteStream is live while the ReadableStream.Strong holds it.
-                unsafe { (*bytes_ptr).pipe = Pipe::default() };
+                // R-2: `pipe` is `JsCell<Pipe>`; deref shared and `.set()`.
+                unsafe { (*bytes_ptr).pipe.set(Pipe::default()) };
             }
             if err.is_some() {
                 stream_.cancel(global_object);

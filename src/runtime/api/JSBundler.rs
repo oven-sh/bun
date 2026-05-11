@@ -1796,7 +1796,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_text(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1806,7 +1806,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_json(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1815,7 +1815,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_array_buffer(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1824,7 +1824,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_slice(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1838,7 +1838,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_stream(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1869,10 +1869,9 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_size(this: &mut Self, global_object: &JSGlobalObject) -> JSValue {
-        // `Blob::get_size` mutates lazy size caches; the `host_fn(getter)`
-        // shim already receives `*mut Self`, so take `&mut` directly instead
-        // of casting through a shared-ref-derived raw (UB under SB/TB).
+    pub fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
+        // `Blob::get_size` is `&self` post-R-2 (lazy size caches are
+        // Cell-backed inside `Blob`), so a shared borrow is sound here.
         this.blob.get_size(global_object)
     }
 
@@ -1899,7 +1898,7 @@ impl BuildArtifact {
     }
 
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
+        &self,
         formatter: &mut F,
         writer: &mut W,
     ) -> core::fmt::Result
@@ -2017,8 +2016,10 @@ impl BuildArtifact {
                     .get()
                     .and_then(|v| v.as_::<BuildArtifact>())
                 {
-                    // SAFETY: `as_` returned a non-null wrapper-owned pointer.
-                    unsafe { &mut *sourcemap }
+                    // SAFETY: `as_` returned a non-null wrapper-owned pointer;
+                    // `write_format` is `&self` so a shared borrow is sound
+                    // even if `sourcemap` aliases `self`.
+                    unsafe { &*sourcemap }
                         .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
                 } else {
                     write!(

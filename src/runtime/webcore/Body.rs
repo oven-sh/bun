@@ -285,7 +285,7 @@ impl PendingValue {
             if let webcore::readable_stream::Source::Bytes(bytes) = readable.ptr {
                 // SAFETY: `Source::Bytes` holds a live `*mut ByteStream` for the
                 // lifetime of the ReadableStream JS wrapper (rooted via `self.readable`).
-                return unsafe { (*bytes).size_hint };
+                return unsafe { (*bytes).size_hint.get() };
             }
         }
         self.size_hint
@@ -898,8 +898,8 @@ impl Value {
 
                 if let Some(on_cancelled) = locked.on_stream_cancelled {
                     if let Some(task) = locked.task {
-                        reader.cancel_handler = Some(on_cancelled);
-                        reader.cancel_ctx = Some(task);
+                        reader.cancel_handler.set(Some(on_cancelled));
+                        reader.cancel_ctx.set(Some(task));
                     }
                 }
 
@@ -908,11 +908,11 @@ impl Value {
                 match drain_result {
                     DrainResult::EstimatedSize(estimated_size) => {
                         reader.context.high_water_mark = estimated_size as blob::SizeType;
-                        reader.context.size_hint = estimated_size as blob::SizeType;
+                        reader.context.size_hint.set(estimated_size as blob::SizeType);
                     }
                     DrainResult::Owned { list, size_hint } => {
-                        reader.context.buffer = list;
-                        reader.context.size_hint = size_hint as blob::SizeType;
+                        reader.context.buffer.set(list);
+                        reader.context.size_hint.set(size_hint as blob::SizeType);
                     }
                     _ => {}
                 }
@@ -1557,11 +1557,11 @@ impl Value {
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
                 reader.context.high_water_mark = estimated_size as blob::SizeType;
-                reader.context.size_hint = estimated_size as blob::SizeType;
+                reader.context.size_hint.set(estimated_size as blob::SizeType);
             }
             DrainResult::Owned { list, size_hint } => {
-                reader.context.buffer = list;
-                reader.context.size_hint = size_hint as blob::SizeType;
+                reader.context.buffer.set(list);
+                reader.context.size_hint.set(size_hint as blob::SizeType);
             }
             _ => {}
         }
@@ -2145,9 +2145,10 @@ pub struct ValueBufferer<'a> {
 impl<'a> Drop for ValueBufferer<'a> {
     fn drop(&mut self) {
         // stream_buffer dropped automatically
-        if let Some(mut byte_stream) = self.byte_stream {
-            // SAFETY: kept alive by readable_stream_ref while set
-            unsafe { byte_stream.as_mut() }.unpipe_without_deref();
+        if let Some(byte_stream) = self.byte_stream {
+            // SAFETY: kept alive by readable_stream_ref while set.
+            // R-2: `unpipe_without_deref` takes `&self` (interior-mutable).
+            unsafe { byte_stream.as_ref() }.unpipe_without_deref();
         }
         self.readable_stream_ref.deinit();
 
@@ -2491,14 +2492,15 @@ impl<'a> ValueBufferer<'a> {
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
                     // SAFETY: `Source::Bytes` holds a live `*mut ByteStream` owned by the
                     // readable stream; kept alive via `self.readable_stream_ref` above.
-                    let byte_stream = unsafe { &mut *byte_stream_ptr };
-                    debug_assert!(byte_stream.pipe.ctx.is_none());
+                    // R-2: `&` — all touched fields are interior-mutable.
+                    let byte_stream = unsafe { &*byte_stream_ptr };
+                    debug_assert!(byte_stream.pipe.get().ctx.is_none());
                     debug_assert!(self.byte_stream.is_none());
 
-                    let bytes = byte_stream.buffer.as_slice();
+                    let bytes = byte_stream.buffer.get().as_slice();
                     // If we've received the complete body by the time this function is called
                     // we can avoid streaming it and just send it all at once.
-                    if byte_stream.has_received_last_chunk {
+                    if byte_stream.has_received_last_chunk.get() {
                         bun_core::scoped_log!(
                             BodyValueBufferer,
                             "byte stream has_received_last_chunk {}",
@@ -2510,7 +2512,7 @@ impl<'a> ValueBufferer<'a> {
                         return Ok(());
                     }
 
-                    byte_stream.pipe = crate::webcore::Wrap::<Self>::init(self);
+                    byte_stream.pipe.set(crate::webcore::Wrap::<Self>::init(self));
                     self.byte_stream = NonNull::new(byte_stream_ptr);
                     bun_core::scoped_log!(
                         BodyValueBufferer,

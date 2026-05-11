@@ -6,10 +6,11 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_false(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        let this = self;
         // Zig: `defer this.postMatch(globalThis);`
         // PORT NOTE: reshaped for borrowck (was `defer this.postMatch`) — scopeguard would hold
         // a borrow of `this` for the whole body, so run the match in an inner closure and call
@@ -20,7 +21,7 @@ impl Expect {
 
             this.increment_expect_call_counter();
 
-            let not = this.flags.not();
+            let not = this.flags.get().not();
             let pass = (value.is_boolean() && !value.to_boolean()) != not;
 
             if pass {

@@ -2,7 +2,7 @@
 //!
 //! See the doc comment on `Yield` for the design. The Rust port carries
 //! `NodeId`s (indices into `Interpreter::nodes`) instead of `&mut State`
-//! borrows — the only `&mut` is the `&mut Interpreter` threaded through
+//! borrows — the only `&mut` is the `&Interpreter` threaded through
 //! `run`.
 
 use core::cell::Cell;
@@ -11,7 +11,7 @@ use crate::shell::interpreter::{log, Interpreter, NodeId, StateKind};
 use crate::shell::states::pipeline::Pipeline;
 
 /// A "continuation" of the shell interpreter. Shell state-machine functions
-/// return a `Yield`; `Yield::run(&mut Interpreter)` is the trampoline that
+/// return a `Yield`; `Yield::run(&Interpreter)` is the trampoline that
 /// drives execution without blowing up the call stack.
 ///
 /// Variants name the *next state to step* by `NodeId`. The trampoline looks
@@ -89,7 +89,7 @@ impl Drop for DbgDepthGuard {
 
 impl Yield {
     /// Trampoline: drive the interpreter until it suspends/finishes.
-    pub fn run(self, interp: &mut Interpreter) {
+    pub fn run(self, interp: &Interpreter) {
         let tag: &'static str = (&self).into();
         let _depth = DbgDepthGuard::enter(tag);
 
@@ -137,7 +137,7 @@ impl Yield {
     }
 
     fn drain_pipelines(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         pipeline_stack: &mut Vec<NodeId>,
     ) -> Option<Yield> {
         while let Some(&id) = pipeline_stack.last() {

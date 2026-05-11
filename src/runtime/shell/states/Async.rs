@@ -31,13 +31,13 @@ impl Default for AsyncState {
 
 impl Async {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Expr,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
-        interp.async_commands_executing += 1;
+        interp.async_commands_executing.set(interp.async_commands_executing.get() + 1);
         let evtloop = interp.event_loop;
         interp.alloc_node(Node::Async(Async {
             base: Base::new(StateKind::Async, parent, shell),
@@ -48,7 +48,7 @@ impl Async {
         }))
     }
 
-    pub fn start(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, this: NodeId) -> Yield {
         log!("Async {} start", this);
         Self::enqueue_self(interp, this);
         let parent = interp.as_async(this).base.parent;
@@ -57,7 +57,7 @@ impl Async {
         interp.child_done(parent, this, 0)
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         log!("Async {} next {}", this, <&'static str>::from(&interp.as_async(this).state));
         let action = {
             let me = interp.as_async_mut(this);
@@ -119,7 +119,7 @@ impl Async {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -131,7 +131,7 @@ impl Async {
         Yield::suspended()
     }
 
-    fn enqueue_self(_interp: &mut Interpreter, _this: NodeId) {
+    fn enqueue_self(_interp: &Interpreter, _this: NodeId) {
         // TODO(b2-blocked): bun_jsc::EventLoopHandle/EventLoopTask — schedule
         // `run_from_main_thread` on the JS or mini event loop.
     }
@@ -139,12 +139,12 @@ impl Async {
     /// `deinit` is purposefully empty: an `Async` appears "done" to its parent
     /// immediately (see `start`), so the parent must not free it. Real cleanup
     /// happens in `actually_deinit` once the background body finishes.
-    pub fn actually_deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn actually_deinit(interp: &Interpreter, this: NodeId) {
         let me = interp.as_async_mut(this);
         me.base.end_scope();
     }
 
-    pub fn run_from_main_thread(interp: &mut Interpreter, this: NodeId) {
+    pub fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
         Self::next(interp, this).run(interp);
     }
 }

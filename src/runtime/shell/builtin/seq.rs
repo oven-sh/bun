@@ -43,7 +43,7 @@ impl Default for Seq {
 }
 
 impl Seq {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             return Self::fail(interp, cmd, Kind::Seq.usage_string());
@@ -150,7 +150,7 @@ impl Seq {
         Self::do_(interp, cmd)
     }
 
-    fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
+    fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             Self::state_mut(interp, cmd).state = State::Err;
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -162,7 +162,7 @@ impl Seq {
         Builtin::done(interp, cmd, 1)
     }
 
-    fn do_(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
         let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         // PORT NOTE: reshaped for borrowck — render entirely into a local
         // Vec, then either enqueue it or write_no_io it. Zig wrote each
@@ -198,7 +198,7 @@ impl Seq {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -215,7 +215,7 @@ impl Seq {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Seq {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Seq {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Seq(s) => &mut **s,
             _ => unreachable!(),

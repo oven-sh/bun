@@ -925,7 +925,7 @@ impl MySQLConnection {
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
                     // SAFETY: request is live (ref'd above).
-                    self.queue.mark_current_request_as_finished(unsafe { &mut *request });
+                    self.queue.mark_current_request_as_finished(unsafe { &*request });
                     let connection = self.get_js_connection();
                     // TODO(b2-blocked): ErrorPacket is not Clone in bun_sql; the
                     // Zig passes statement.error_response by value (struct copy).
@@ -934,7 +934,7 @@ impl MySQLConnection {
                     // SAFETY: connection/request are live.
                     unsafe {
                         (*connection)
-                            .on_error_packet(Some(&mut *request), ErrorPacket::default())
+                            .on_error_packet(Some(&*request), ErrorPacket::default())
                     };
                     let _ = self.flush_queue();
                 }
@@ -1190,11 +1190,11 @@ impl MySQLConnection {
                 };
                 self.queue.mark_as_ready_for_query();
                 // SAFETY: request is live (ref'd above).
-                self.queue.mark_current_request_as_finished(unsafe { &mut *request });
+                self.queue.mark_current_request_as_finished(unsafe { &*request });
 
                 let connection = self.get_js_connection();
                 // SAFETY: connection/request are live.
-                unsafe { (*connection).on_error_packet(Some(&mut *request), err) };
+                unsafe { (*connection).on_error_packet(Some(&*request), err) };
                 self.advance();
             }
 
@@ -1231,7 +1231,7 @@ impl MySQLConnection {
         if is_last_result {
             self.queue.mark_as_ready_for_query();
             // SAFETY: request is live (caller holds a ref).
-            self.queue.mark_current_request_as_finished(unsafe { &mut *request });
+            self.queue.mark_current_request_as_finished(unsafe { &*request });
         }
 
         // SAFETY: statement is live (owned by request).
@@ -1240,7 +1240,7 @@ impl MySQLConnection {
         // SAFETY: connection/request are live.
         unsafe {
             (*connection).on_query_result(
-                &mut *request,
+                &*request,
                 MySQLQueryResult { result_count, last_insert_id, affected_rows, is_last_result },
             )
         };
@@ -1309,11 +1309,11 @@ impl MySQLConnection {
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
                 // SAFETY: request is live.
-                self.queue.mark_current_request_as_finished(unsafe { &mut *request });
+                self.queue.mark_current_request_as_finished(unsafe { &*request });
 
                 let connection = self.get_js_connection();
                 // SAFETY: connection/request are live.
-                unsafe { (*connection).on_error_packet(Some(&mut *request), err) };
+                unsafe { (*connection).on_error_packet(Some(&*request), err) };
                 let _ = self.flush_queue();
             }
 
@@ -1443,7 +1443,7 @@ impl MySQLConnection {
 
                     // SAFETY: connection is the parent JSMySQLConnection containing
                     // self; request is live (ref'd above).
-                    unsafe { (*connection).on_result_row(&mut *request, statement, reader)? };
+                    unsafe { (*connection).on_result_row(&*request, statement, reader)? };
                 }
             }
         }

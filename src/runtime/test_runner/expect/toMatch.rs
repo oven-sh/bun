@@ -6,7 +6,7 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_match(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -15,7 +15,7 @@ pub fn to_match(
     // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: borrowck — wrap `this` in a scopeguard that owns the &mut Expect
     // and runs post_match on drop; the body accesses `this` via the guard's DerefMut.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
@@ -48,7 +48,7 @@ pub fn to_match(
         )));
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass: bool = 'brk: {
         if expected_value.is_string() {
             break 'brk value.string_includes(global, expected_value)?;

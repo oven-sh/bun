@@ -7,10 +7,11 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_object(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        let this = self;
         // Zig: `defer this.postMatch(globalThis);`
         // PORT NOTE: reshaped for borrowck (was `defer this.postMatch`) — wrap the
         // body in an inner closure and call `post_match` after it returns, so every
@@ -21,7 +22,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let pass = value.is_object() != not;
 
         if pass {

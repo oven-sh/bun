@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::io::Write as _;
 
 use bun_ast::ImportKind;
@@ -6,6 +7,10 @@ use bun_string::strings;
 use crate::zig_string::ZigString;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _};
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
+// `referrer` are read-only after construction; only `logged` is mutated
+// post-wrap (by `VirtualMachine::print_error_like_object` via the JSCell ptr),
+// so it gets `Cell<bool>`.
 #[crate::JsClass]
 pub struct ResolveMessage {
     pub msg: bun_ast::Msg,
@@ -16,12 +21,12 @@ pub struct ResolveMessage {
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
     pub referrer: Option<Box<[u8]>>,
-    pub logged: bool,
+    pub logged: Cell<bool>,
 }
 
 impl Default for ResolveMessage {
     fn default() -> Self {
-        Self { msg: bun_ast::Msg::default(), referrer: None, logged: false }
+        Self { msg: bun_ast::Msg::default(), referrer: None, logged: Cell::new(false) }
     }
 }
 
@@ -223,7 +228,7 @@ impl ResolveMessage {
     #[crate::host_fn(method)]
     pub fn to_string(
         // this
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -232,7 +237,7 @@ impl ResolveMessage {
 
     #[crate::host_fn(method)]
     pub fn to_primitive(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -254,7 +259,7 @@ impl ResolveMessage {
 
     #[crate::host_fn(method)]
     pub fn to_json(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -282,7 +287,7 @@ impl ResolveMessage {
         let resolve_error = ResolveMessage {
             msg: msg.clone(),
             referrer: Some(Box::<[u8]>::from(referrer)),
-            logged: false,
+            logged: Cell::new(false),
         };
         Ok(resolve_error.to_js(global))
     }

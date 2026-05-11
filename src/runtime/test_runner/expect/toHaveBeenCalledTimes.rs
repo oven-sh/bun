@@ -6,7 +6,7 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called_times(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -14,7 +14,7 @@ pub fn to_have_been_called_times(
 
     // `defer this.postMatch(globalThis)` — RAII guard owns the `&mut Expect` borrow and
     // runs post_match on drop for every exit path.
-    let mut this = this.post_match_guard(global);
+    let this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
@@ -44,7 +44,7 @@ pub fn to_have_been_called_times(
 
     let mut pass = i32::try_from(calls.get_length(global)?).unwrap() == times;
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         pass = !pass;
     }

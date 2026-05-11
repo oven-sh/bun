@@ -1,8 +1,9 @@
 use core::any::Any;
+use core::cell::Cell;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
-use bun_jsc::{ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_jsc::{ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _, JsError, JsResult};
 use bun_str::ZigString;
 
 use crate::crypto::{create_crypto_error, evp, HMAC};
@@ -51,13 +52,20 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
 /// `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
 /// `extern "C" fn(..., *mut CryptoHasher)` shims — C++ never reads this layout
 /// (it round-trips `m_ctx` as `void*`).
+///
+/// R-2 (`sharedThis`): every JS-facing host-fn takes `&CryptoHasher` (not
+/// `&mut`). The discriminant is fixed at construction; only the payload mutates,
+/// so each variant payload is wrapped in [`JsCell`] (UnsafeCell projector,
+/// single-JS-thread). The codegen shim still emits `this: &mut CryptoHasher`
+/// until Phase 1 lands — `&mut T` auto-derefs to `&T` so the impls below
+/// compile against either.
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub enum CryptoHasher {
     // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
-    Hmac(Option<Box<HMAC>>),
-    Evp(EVP),
-    Zig(CryptoHasherZig),
+    Hmac(JsCell<Option<Box<HMAC>>>),
+    Evp(JsCell<EVP>),
+    Zig(JsCell<CryptoHasherZig>),
 }
 
 impl CryptoHasher {
@@ -80,7 +88,7 @@ impl CryptoHasher {
         let name = unsafe { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
 
         if let Some(inner) = CryptoHasherZig::init(name) {
-            return Some(CryptoHasher::new(CryptoHasher::Zig(inner)));
+            return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
         }
 
         let Some(algorithm) = evp::lookup(name) else {
@@ -96,11 +104,11 @@ impl CryptoHasher {
                     // `Algorithm::md()` lives in `bun_sha_hmac` and
                     // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
                     // opaque (same underlying C `struct env_md_st`).
-                    return Some(CryptoHasher::new(CryptoHasher::Evp(EVP::init(
+                    return Some(CryptoHasher::new(CryptoHasher::Evp(JsCell::new(EVP::init(
                         algorithm,
                         md.cast::<boring_ssl::EVP_MD>(),
                         boring_engine(global),
-                    ))));
+                    )))));
                 }
             }
             _ => {
@@ -118,15 +126,15 @@ impl CryptoHasher {
     ) -> Option<Box<CryptoHasher>> {
         match other_handle {
             CryptoHasher::Zig(other) => {
-                let hasher = CryptoHasher::new(CryptoHasher::Zig(other.copy()));
+                let hasher = CryptoHasher::new(CryptoHasher::Zig(JsCell::new(other.get().copy())));
                 Some(hasher)
             }
             CryptoHasher::Evp(other) => {
-                let evp = match other.copy(boring_engine(global)) {
+                let evp = match other.get().copy(boring_engine(global)) {
                     Ok(e) => e,
                     Err(_) => return None,
                 };
-                Some(CryptoHasher::new(CryptoHasher::Evp(evp)))
+                Some(CryptoHasher::new(CryptoHasher::Evp(JsCell::new(evp))))
             }
             _ => None,
         }
@@ -140,14 +148,14 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
-    pub fn extern_update(&mut self, input: &[u8]) -> bool {
+    pub fn extern_update(&self, input: &[u8]) -> bool {
         match self {
             CryptoHasher::Zig(zig) => {
-                zig.update(input);
+                zig.with_mut(|z| z.update(input));
                 true
             }
             CryptoHasher::Evp(evp) => {
-                evp.update(input);
+                evp.with_mut(|e| e.update(input));
                 true
             }
             _ => false,
@@ -155,15 +163,16 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__digest")]
-    pub fn extern_digest(&mut self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
+    pub fn extern_digest(&self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
         let buf_len = digest_buf.len();
         match self {
             CryptoHasher::Zig(zig) => {
-                let res = zig.final_with_len(digest_buf, buf_len);
+                let res = zig.with_mut(move |z| z.final_with_len(digest_buf, buf_len));
                 u32::try_from(res.len()).expect("int cast")
             }
             CryptoHasher::Evp(evp) => {
-                let res = evp.r#final(boring_engine(global), digest_buf);
+                let engine = boring_engine(global);
+                let res = evp.with_mut(move |e| e.r#final(engine, digest_buf));
                 u32::try_from(res.len()).expect("int cast")
             }
             _ => 0,
@@ -173,8 +182,8 @@ impl CryptoHasher {
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
     pub fn extern_digest_size(&self) -> u32 {
         match self {
-            CryptoHasher::Zig(inner) => inner.digest_length as u32,
-            CryptoHasher::Evp(inner) => inner.size() as u32,
+            CryptoHasher::Zig(inner) => inner.get().digest_length as u32,
+            CryptoHasher::Evp(inner) => inner.get().size() as u32,
             _ => 0,
         }
     }
@@ -186,7 +195,7 @@ impl CryptoHasher {
     /// Hand-expanded `wrapInstanceMethod` decode for the parameter list
     /// `(*CryptoHasher, *JSGlobalObject, ?Node.StringOrBuffer)`.
     pub fn digest(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -284,12 +293,12 @@ impl CryptoHasher {
     #[bun_jsc::host_fn(getter)]
     pub fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::js_number(match this {
-            CryptoHasher::Evp(inner) => inner.size() as f64,
-            CryptoHasher::Hmac(inner) => match inner {
+            CryptoHasher::Evp(inner) => inner.get().size() as f64,
+            CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.size() as f64,
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
-            CryptoHasher::Zig(inner) => inner.digest_length as f64,
+            CryptoHasher::Zig(inner) => inner.get().digest_length as f64,
         }))
     }
 
@@ -297,9 +306,9 @@ impl CryptoHasher {
     pub fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // Zig: `@tagName(inner.algorithm)` → `AlgorithmExt::tag_cstr` (ASCII).
         let tag: &'static [u8] = match this {
-            CryptoHasher::Evp(inner) => inner.algorithm.tag_cstr().to_bytes(),
-            CryptoHasher::Zig(inner) => inner.algorithm.tag_cstr().to_bytes(),
-            CryptoHasher::Hmac(inner) => match inner {
+            CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
+            CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
+            CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
@@ -506,7 +515,7 @@ impl CryptoHasher {
                     }
                 };
 
-                break 'brk CryptoHasher::Hmac(Some(match HMAC::init(chosen_algorithm, key.slice()) {
+                break 'brk CryptoHasher::Hmac(JsCell::new(Some(match HMAC::init(chosen_algorithm, key.slice()) {
                     Some(h) => h,
                     None => {
                         if !global.has_exception() {
@@ -522,10 +531,10 @@ impl CryptoHasher {
                         }
                         return Err(JsError::Thrown);
                     }
-                }));
+                })));
             }
 
-            break 'brk CryptoHasher::Evp(match EVP::by_name(&algorithm, global) {
+            break 'brk CryptoHasher::Evp(JsCell::new(match EVP::by_name(&algorithm, global) {
                 Some(e) => e,
                 None => match CryptoHasherZig::constructor(&algorithm) {
                     Some(h) => return Ok(h),
@@ -535,7 +544,7 @@ impl CryptoHasher {
                         ));
                     }
                 },
-            });
+            }));
         };
         Ok(CryptoHasher::new(init))
     }
@@ -546,7 +555,7 @@ impl CryptoHasher {
 
     #[bun_jsc::host_fn(method)]
     pub fn update(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -581,7 +590,7 @@ impl CryptoHasher {
 
         match this {
             CryptoHasher::Evp(inner) => {
-                inner.update(buffer.slice());
+                inner.with_mut(|e| e.update(buffer.slice()));
                 let err = boring_ssl::ERR_get_error();
                 if err != 0 {
                     let instance = create_crypto_error(global, err);
@@ -590,11 +599,13 @@ impl CryptoHasher {
                 }
             }
             CryptoHasher::Hmac(inner) => {
-                let Some(hmac) = inner else {
+                // R-2: check None first via shared `.get()`, then mutate via
+                // `with_mut`. No JS re-entry between the check and the write
+                // (HMAC_Update is a pure FFI call), so the `unwrap` is sound.
+                if inner.get().is_none() {
                     return Err(Self::throw_hmac_consumed(global));
-                };
-
-                hmac.update(buffer.slice());
+                }
+                inner.with_mut(|opt| opt.as_mut().unwrap().update(buffer.slice()));
                 let err = boring_ssl::ERR_get_error();
                 if err != 0 {
                     let instance = create_crypto_error(global, err);
@@ -603,7 +614,7 @@ impl CryptoHasher {
                 }
             }
             CryptoHasher::Zig(inner) => {
-                inner.update(buffer.slice());
+                inner.with_mut(|z| z.update(buffer.slice()));
                 return Ok(this_value);
             }
         }
@@ -613,22 +624,27 @@ impl CryptoHasher {
 
     #[bun_jsc::host_fn(method)]
     pub fn copy(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         _: &CallFrame,
     ) -> JsResult<JSValue> {
         let copied: CryptoHasher = match this {
-            CryptoHasher::Evp(inner) => CryptoHasher::Evp(
+            CryptoHasher::Evp(inner) => CryptoHasher::Evp(JsCell::new(
                 inner
+                    .get()
                     .copy(boring_engine(global))
                     // bun.handleOom → unwrap (abort on OOM)
                     .expect("OOM"),
-            ),
+            )),
             CryptoHasher::Hmac(inner) => 'brk: {
-                let Some(hmac) = inner else {
+                // R-2: `HMAC::copy` takes `&mut self` (writes nothing — Zig
+                // legacy signature). Project a short `&mut` via `with_mut`;
+                // no JS re-entry inside (HMAC_CTX_copy is a pure FFI call).
+                let copy_result = inner.with_mut(|opt| opt.as_mut().map(|h| h.copy()));
+                let Some(result) = copy_result else {
                     return Err(Self::throw_hmac_consumed(global));
                 };
-                break 'brk CryptoHasher::Hmac(Some(match hmac.copy() {
+                break 'brk CryptoHasher::Hmac(JsCell::new(Some(match result {
                     Ok(h) => h,
                     Err(_) => {
                         let code = boring_ssl::ERR_get_error();
@@ -636,15 +652,15 @@ impl CryptoHasher {
                         boring_ssl::ERR_clear_error();
                         return Err(global.throw_value(err));
                     }
-                }));
+                })));
             }
-            CryptoHasher::Zig(inner) => CryptoHasher::Zig(inner.copy()),
+            CryptoHasher::Zig(inner) => CryptoHasher::Zig(JsCell::new(inner.get().copy())),
         };
         Ok(copied.to_js(global))
     }
 
     pub fn digest_(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
@@ -673,7 +689,7 @@ impl CryptoHasher {
     }
 
     fn digest_to_bytes(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
@@ -718,7 +734,7 @@ impl CryptoHasher {
     }
 
     fn digest_to_encoding(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
@@ -735,26 +751,31 @@ impl CryptoHasher {
     }
 
     fn final_<'a>(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         output_digest_slice: &'a mut [u8],
     ) -> JsResult<&'a mut [u8]> {
         match self {
             CryptoHasher::Hmac(inner) => 'brk: {
-                let Some(mut hmac) = inner.take() else {
+                let Some(mut hmac) = inner.replace(None) else {
                     return Err(Self::throw_hmac_consumed(global));
                 };
-                // `this.hmac = null; defer hmac.deinit();` — `take()` + Drop on `hmac`.
+                // `this.hmac = null; defer hmac.deinit();` — `replace(None)` + Drop on `hmac`.
                 // PORT NOTE: `HMAC::r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8]`
                 // returns a subslice of `out`, not `self`, so dropping `hmac` at scope end
                 // does not invalidate the returned borrow.
                 break 'brk Ok(hmac.r#final(output_digest_slice));
             }
-            CryptoHasher::Evp(inner) => Ok(inner.r#final(
-                boring_engine(global),
-                output_digest_slice,
-            )),
-            CryptoHasher::Zig(inner) => Ok(inner.final_(output_digest_slice)),
+            CryptoHasher::Evp(inner) => {
+                // R-2: `with_mut` scopes the `&mut EVP` to the FFI call; the
+                // returned `&'a mut [u8]` borrows `output_digest_slice` (not
+                // `self`), so it escapes the closure cleanly.
+                let engine = boring_engine(global);
+                Ok(inner.with_mut(move |e| e.r#final(engine, output_digest_slice)))
+            }
+            CryptoHasher::Zig(inner) => {
+                Ok(inner.with_mut(move |z| z.final_(output_digest_slice)))
+            }
         }
     }
 
@@ -1005,11 +1026,11 @@ impl CryptoHasherZig {
         macro_rules! arm {
             ($name:literal, $ty:ty, $alg:expr) => {
                 if $alg.slice() == $name {
-                    return Some(CryptoHasher::new(CryptoHasher::Zig(CryptoHasherZig {
+                    return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(CryptoHasherZig {
                         algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
                         state: Box::new(<$ty as ZigHashAlgo>::init()),
                         digest_length: <$ty as ZigHashAlgo>::DIGEST_LENGTH,
-                    })));
+                    }))));
                 }
             };
         }
@@ -1165,17 +1186,20 @@ impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 // The per-monomorphization `JsClass` impl + extern shims live in
 // `build/*/codegen/generated_classes.rs` (one block per `pub type` alias below);
 // `#[repr(C)]` here only silences the `improper_ctypes` lint on those externs.
+// R-2 (`sharedThis`): every JS-facing host-fn takes `&StaticCryptoHasher<H>`.
+// `hashing` is mutated by `update`/`final_` → `JsCell<H>`; `digested` is a
+// Copy flag → `Cell<bool>`.
 #[repr(C)]
 pub struct StaticCryptoHasher<H: StaticHasher> {
-    pub hashing: H,
-    pub digested: bool,
+    pub hashing: JsCell<H>,
+    pub digested: Cell<bool>,
 }
 
 impl<H: StaticHasher> Default for StaticCryptoHasher<H> {
     fn default() -> Self {
         Self {
-            hashing: H::init(),
-            digested: false,
+            hashing: JsCell::new(H::init()),
+            digested: Cell::new(false),
         }
     }
 }
@@ -1186,7 +1210,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     /// Hand-expanded `wrapInstanceMethod` decode for the parameter list
     /// `(*ThisHasher, *JSGlobalObject, ?Node.StringOrBuffer)`.
     pub fn digest(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1375,8 +1399,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     // constructor shim is wired by per-monomorphization `#[bun_jsc::JsClass]` codegen.
     pub fn constructor(_: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<Self>> {
         Ok(Box::new(Self {
-            hashing: H::init(),
-            digested: false,
+            hashing: JsCell::new(H::init()),
+            digested: Cell::new(false),
         }))
     }
 
@@ -1386,11 +1410,11 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
     #[bun_jsc::host_fn(method)]
     pub fn update(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.digested {
+        if this.digested.get() {
             return Err(global
                 .err(
                     ErrorCode::INVALID_STATE,
@@ -1418,16 +1442,16 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
         }
-        this.hashing.update(buffer.slice());
+        this.hashing.with_mut(|h| h.update(buffer.slice()));
         Ok(this_value)
     }
 
     pub fn digest_(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
-        if this.digested {
+        if this.digested.get() {
             return Err(global
                 .err(
                     ErrorCode::INVALID_STATE,
@@ -1462,7 +1486,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     }
 
     fn digest_to_bytes(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
@@ -1485,8 +1509,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             output_digest_slice = &mut output_digest_buf;
         }
 
-        self.hashing.final_(output_digest_slice);
-        self.digested = true;
+        self.hashing.with_mut(|h| h.final_(output_digest_slice));
+        self.digested.set(true);
 
         if let Some(output_buf) = output {
             Ok(output_buf.value)
@@ -1496,7 +1520,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     }
 
     fn digest_to_encoding(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
@@ -1505,8 +1529,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
         let output_digest_slice: &mut H::Digest = &mut output_digest_buf;
 
-        self.hashing.final_(output_digest_slice);
-        self.digested = true;
+        self.hashing.with_mut(|h| h.final_(output_digest_slice));
+        self.digested.set(true);
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_slice.as_ref())
     }

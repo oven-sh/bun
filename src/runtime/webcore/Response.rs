@@ -557,7 +557,7 @@ impl Response {
                     // TODO(port): lifetime — readable.ptr.Bytes is a back-pointer; verify mutability
                     // SAFETY: `bytes` is a live `*mut ByteStream` back-pointer owned by the
                     // ReadableStream; mutating its `size_hint` is the Zig contract.
-                    unsafe { (**bytes).size_hint = size_hint; }
+                    unsafe { (**bytes).size_hint.set(size_hint); }
                 }
             }
         }

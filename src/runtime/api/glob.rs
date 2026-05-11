@@ -274,7 +274,7 @@ impl Glob {
     /// by `GlobWalker.init`/`GlobWalker.initWithCwd` if all allocations work and no
     /// errors occur
     fn make_glob_walker(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
         fn_name: &'static str, // PERF(port): was comptime monomorphization — profile in Phase B
@@ -380,8 +380,13 @@ fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
 }
 
 impl Glob {
+    // R-2 (host-fn re-entrancy): all JS-exposed methods take `&self`. `Glob`'s
+    // fields are read-only after construction (`pattern`) or already atomic
+    // (`has_pending_activity`), so no `Cell`/`JsCell` wrapping is needed — the
+    // `&mut self` receivers were vestigial. The codegen shim still emits
+    // `this: &mut Glob` until Phase 1 lands; `&mut T` auto-derefs to `&T`.
     #[bun_jsc::host_fn(method)]
-    pub fn __scan(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
@@ -420,7 +425,7 @@ impl Glob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn __scan_sync(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn __scan_sync(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
@@ -453,7 +458,7 @@ impl Glob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn r#match(&mut self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn r#match(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         // PERF(port): was arena bulk-free — Zig used a local ArenaAllocator for the
         // toSlice() temp allocation. Dropped here; to_slice() owns its buffer.
 

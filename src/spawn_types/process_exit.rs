@@ -52,6 +52,12 @@ impl ProcessHandle {
     }
 
     #[inline]
+    pub fn from_ref<T>(value: &T) -> Self {
+        Self::from_usize(core::ptr::from_ref(value).cast::<()>() as usize)
+            .expect("reference pointer is non-null")
+    }
+
+    #[inline]
     pub const fn identity(self) -> ProcessIdentity {
         ProcessIdentity(self.0.get())
     }
@@ -207,6 +213,7 @@ mod tests {
         let handle = ctx.process_handle().unwrap();
         assert_eq!(ctx.process_identity(), handle.identity());
         assert_eq!(handle.as_ptr::<u8>(), process);
+        assert_eq!(ProcessHandle::from_ref(&raw_process), handle);
     }
 
     #[test]

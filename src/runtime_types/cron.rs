@@ -1,5 +1,7 @@
+use bun_io_types::reader::BufferedReaderHandle;
 use bun_spawn_types::process_exit::{
-    ProcessExitContext, ProcessExitReadiness, ProcessExitReadinessAction, ProcessIdentity,
+    ProcessExitContext, ProcessExitReadiness, ProcessExitReadinessAction, ProcessHandle,
+    ProcessIdentity,
 };
 use bun_spawn_types::Status;
 
@@ -28,6 +30,9 @@ pub enum CronRemoveState {
 #[derive(Debug)]
 pub struct ProcessState {
     pub pending_output_fds: i8,
+    pub process_handle: Option<ProcessHandle>,
+    pub stdout_reader: Option<BufferedReaderHandle>,
+    pub stderr_reader: Option<BufferedReaderHandle>,
     pub exit_state: Option<ProcessExitReadiness>,
     pub err_msg: Option<Vec<u8>>,
 }
@@ -37,6 +42,9 @@ impl ProcessState {
     pub const fn new() -> Self {
         Self {
             pending_output_fds: 0,
+            process_handle: None,
+            stdout_reader: None,
+            stderr_reader: None,
             exit_state: None,
             err_msg: None,
         }
@@ -46,6 +54,9 @@ impl ProcessState {
     pub fn reset_for_spawn(&mut self) {
         self.exit_state = None;
         self.pending_output_fds = 0;
+        self.process_handle = None;
+        self.stdout_reader = None;
+        self.stderr_reader = None;
     }
 
     #[inline]
@@ -54,6 +65,27 @@ impl ProcessState {
             process,
             self.pending_output_fds,
         ));
+    }
+
+    #[inline]
+    pub fn initialize_exit_state_from_handle(&mut self, process: ProcessHandle) {
+        self.process_handle = Some(process);
+        self.initialize_exit_state(process.identity());
+    }
+
+    #[inline]
+    pub fn matches_process_handle(&self, process: ProcessHandle) -> bool {
+        self.process_handle == Some(process)
+    }
+
+    #[inline]
+    pub fn record_stdout_reader(&mut self, reader: BufferedReaderHandle) {
+        self.stdout_reader = Some(reader);
+    }
+
+    #[inline]
+    pub fn record_stderr_reader(&mut self, reader: BufferedReaderHandle) {
+        self.stderr_reader = Some(reader);
     }
 
     #[inline]
@@ -123,10 +155,13 @@ mod tests {
     #[test]
     fn process_state_accepts_reader_before_process_exit() {
         let process = ProcessIdentity::from_usize(10).unwrap();
+        let process_handle = ProcessHandle::from_usize(process.get()).unwrap();
         let rusage = rusage_zeroed();
         let mut state = ProcessState::new();
 
         state.pending_output_fds = 1;
+        state.initialize_exit_state_from_handle(process_handle);
+        assert!(state.matches_process_handle(process_handle));
         assert_eq!(
             state.record_reader_done(),
             ProcessExitReadinessAction::Pending
@@ -144,5 +179,32 @@ mod tests {
             state.take_exit_status().and_then(|status| status.exit_code()),
             Some(0)
         );
+    }
+
+    #[test]
+    fn process_state_records_lower_handles_and_resets_them() {
+        let mut process = 0u8;
+        let mut stdout = 0u8;
+        let mut stderr = 0u8;
+
+        let process = ProcessHandle::from_ptr(core::ptr::from_mut(&mut process)).unwrap();
+        let stdout = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut stdout)).unwrap();
+        let stderr = BufferedReaderHandle::from_ptr(core::ptr::from_mut(&mut stderr)).unwrap();
+
+        let mut state = ProcessState::new();
+        state.initialize_exit_state_from_handle(process);
+        state.record_stdout_reader(stdout);
+        state.record_stderr_reader(stderr);
+
+        assert_eq!(state.process_handle, Some(process));
+        assert_eq!(state.stdout_reader, Some(stdout));
+        assert_eq!(state.stderr_reader, Some(stderr));
+        assert!(state.matches_process_handle(process));
+
+        state.reset_for_spawn();
+
+        assert_eq!(state.process_handle, None);
+        assert_eq!(state.stdout_reader, None);
+        assert_eq!(state.stderr_reader, None);
     }
 }

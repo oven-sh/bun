@@ -18,6 +18,7 @@ use std::cell::Cell;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
+use bun_io_types::reader::BufferedReaderHandle;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSPromise, JSValue, JsRef, JsResult,
@@ -33,7 +34,7 @@ use bun_resolver::fs::{FileSystem, RealFS};
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_spawn_types::process_exit::{
-    ProcessExitContext, ProcessExitReadinessAction, ProcessIdentity,
+    ProcessExitContext, ProcessExitReadinessAction, ProcessHandle,
 };
 use bun_runtime_types::cron::{
     CronRegisterState as RegisterState, CronRemoveState as RemoveState,
@@ -139,9 +140,12 @@ trait CronJobBase: Sized {
     unsafe fn on_process_exit(this: *mut Self, proc: &Process, status: Status, rusage: &Rusage) {
         // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
         let s = unsafe { &mut *this };
-        let process_identity = ProcessIdentity::from_ref(proc);
+        let process_handle = ProcessHandle::from_ref(proc);
+        if !s.process_state_mut().matches_process_handle(process_handle) {
+            return;
+        }
         let action = s.process_state_mut().on_process_exit(&ProcessExitContext::new(
-            process_identity,
+            process_handle.identity(),
             status,
             rusage,
         ));
@@ -2048,6 +2052,9 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                     s.set_err(format_args!("Failed to start reading stdout"));
                     return unsafe { T::finish(this) };
                 }
+                let stdout_reader = BufferedReaderHandle::from_ptr(s.stdout_reader())
+                    .expect("stdout reader pointer is non-null");
+                s.process_state_mut().record_stdout_reader(stdout_reader);
                 if let Some(p) = s.stdout_reader().handle.get_poll() {
                     p.set_flag(bun_io::FilePollFlag::Socket);
                 }
@@ -2076,6 +2083,9 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 s.set_err(format_args!("Failed to start reading stderr"));
                 return unsafe { T::finish(this) };
             }
+            let stderr_reader = BufferedReaderHandle::from_ptr(s.stderr_reader())
+                .expect("stderr reader pointer is non-null");
+            s.process_state_mut().record_stderr_reader(stderr_reader);
         }
     }
 
@@ -2083,9 +2093,9 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle, false);
     *s.process_slot() = Some(process);
-    let process_identity =
-        ProcessIdentity::from_ptr(process).expect("spawned Process pointer must not be null");
-    s.process_state_mut().initialize_exit_state(process_identity);
+    let process_handle =
+        ProcessHandle::from_ptr(process).expect("spawned Process pointer must not be null");
+    s.process_state_mut().initialize_exit_state_from_handle(process_handle);
     // SAFETY: `process` was just allocated by `to_process`; we hold the only
     // ref. `this` is the owning `Box<T>` (only freed in `T::finish`, gated on
     // the type-owned exit state), so it outlives `process`.

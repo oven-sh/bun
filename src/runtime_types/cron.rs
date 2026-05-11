@@ -1,4 +1,5 @@
 use std::io::Write as _;
+use std::ptr::NonNull;
 
 use crate::cron_parser::CronExpression;
 use bun_core::{ZBox as ZString, ZStr};
@@ -40,8 +41,107 @@ pub enum CronProcessCompletion {
     Advance,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegisterAdvanceAction {
+    ProcessCrontab,
+    SpawnBootout,
+    SpawnBootstrap,
+    Finish,
+    UnexpectedState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoveAdvanceAction {
+    RemoveCrontab,
+    UnlinkPlist,
+    Finish,
+    UnexpectedState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CronRegisterJobStateHandle(NonNull<CronRegisterJobState>);
+
+impl CronRegisterJobStateHandle {
+    /// # Safety
+    /// `state` must remain live until the process and output-reader targets
+    /// using this handle have stopped firing.
+    #[inline]
+    pub unsafe fn from_live_state(state: &mut CronRegisterJobState) -> Self {
+        Self(NonNull::from(state))
+    }
+
+    #[inline]
+    pub fn as_ptr(self) -> *mut CronRegisterJobState {
+        self.0.as_ptr()
+    }
+
+    #[inline]
+    fn with_state<R>(self, f: impl FnOnce(&mut CronRegisterJobState) -> R) -> R {
+        let mut state = self.0;
+        // SAFETY: upheld by `from_live_state`'s construction contract.
+        f(unsafe { state.as_mut() })
+    }
+
+    #[inline]
+    pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) -> ProcessExitReadinessAction {
+        self.with_state(|state| state.process.on_process_exit(ctx))
+    }
+
+    #[inline]
+    pub fn record_reader_done(self) -> ProcessExitReadinessAction {
+        self.with_state(|state| state.process.record_reader_done())
+    }
+
+    #[inline]
+    pub fn record_reader_error(self, name: &'static str) -> ProcessExitReadinessAction {
+        self.with_state(|state| state.process.record_reader_error(name))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CronRemoveJobStateHandle(NonNull<CronRemoveJobState>);
+
+impl CronRemoveJobStateHandle {
+    /// # Safety
+    /// `state` must remain live until the process and output-reader targets
+    /// using this handle have stopped firing.
+    #[inline]
+    pub unsafe fn from_live_state(state: &mut CronRemoveJobState) -> Self {
+        Self(NonNull::from(state))
+    }
+
+    #[inline]
+    pub fn as_ptr(self) -> *mut CronRemoveJobState {
+        self.0.as_ptr()
+    }
+
+    #[inline]
+    fn with_state<R>(self, f: impl FnOnce(&mut CronRemoveJobState) -> R) -> R {
+        let mut state = self.0;
+        // SAFETY: upheld by `from_live_state`'s construction contract.
+        f(unsafe { state.as_mut() })
+    }
+
+    #[inline]
+    pub fn on_process_exit(self, ctx: &ProcessExitContext<'_>) -> ProcessExitReadinessAction {
+        self.with_state(|state| state.process.on_process_exit(ctx))
+    }
+
+    #[inline]
+    pub fn record_reader_done(self) -> ProcessExitReadinessAction {
+        self.with_state(|state| state.process.record_reader_done())
+    }
+
+    #[inline]
+    pub fn record_reader_error(self, name: &'static str) -> ProcessExitReadinessAction {
+        self.with_state(|state| state.process.record_reader_error(name))
+    }
+}
+
 pub struct CronRegisterJobState {
     pub keep_alive: Option<KeepAliveHandle>,
+    pub stdout_reader: Option<BufferedReaderHandle>,
+    pub stderr_reader: Option<BufferedReaderHandle>,
     pub global: GlobalRef,
     pub promise: JSPromiseStrongHandle,
     pub bun_exe: &'static ZStr,
@@ -67,6 +167,8 @@ impl CronRegisterJobState {
     ) -> Self {
         Self {
             keep_alive: None,
+            stdout_reader: None,
+            stderr_reader: None,
             global,
             promise,
             bun_exe,
@@ -93,6 +195,45 @@ impl CronRegisterJobState {
     #[inline]
     pub fn take_keep_alive(&mut self) -> Option<KeepAliveHandle> {
         self.keep_alive.take()
+    }
+
+    #[inline]
+    pub fn record_output_readers(
+        &mut self,
+        stdout_reader: BufferedReaderHandle,
+        stderr_reader: BufferedReaderHandle,
+    ) {
+        self.stdout_reader = Some(stdout_reader);
+        self.stderr_reader = Some(stderr_reader);
+    }
+
+    #[inline]
+    pub fn take_stdout_reader(&mut self) -> Option<BufferedReaderHandle> {
+        self.stdout_reader.take()
+    }
+
+    #[inline]
+    pub fn take_stderr_reader(&mut self) -> Option<BufferedReaderHandle> {
+        self.stderr_reader.take()
+    }
+
+    #[inline]
+    pub fn macos_advance_action(&self) -> RegisterAdvanceAction {
+        match self.phase {
+            CronRegisterState::WritingPlist => RegisterAdvanceAction::SpawnBootout,
+            CronRegisterState::BootingOut => RegisterAdvanceAction::SpawnBootstrap,
+            CronRegisterState::Bootstrapping => RegisterAdvanceAction::Finish,
+            _ => RegisterAdvanceAction::UnexpectedState,
+        }
+    }
+
+    #[inline]
+    pub fn crontab_advance_action(&self) -> RegisterAdvanceAction {
+        match self.phase {
+            CronRegisterState::ReadingCrontab => RegisterAdvanceAction::ProcessCrontab,
+            CronRegisterState::InstallingCrontab => RegisterAdvanceAction::Finish,
+            _ => RegisterAdvanceAction::UnexpectedState,
+        }
     }
 
     #[inline]
@@ -159,6 +300,8 @@ impl CronRegisterJobState {
 
 pub struct CronRemoveJobState {
     pub keep_alive: Option<KeepAliveHandle>,
+    pub stdout_reader: Option<BufferedReaderHandle>,
+    pub stderr_reader: Option<BufferedReaderHandle>,
     pub global: GlobalRef,
     pub promise: JSPromiseStrongHandle,
     pub title: ZString,
@@ -172,6 +315,8 @@ impl CronRemoveJobState {
     pub fn new(global: GlobalRef, promise: JSPromiseStrongHandle, title: ZString) -> Self {
         Self {
             keep_alive: None,
+            stdout_reader: None,
+            stderr_reader: None,
             global,
             promise,
             title,
@@ -194,6 +339,43 @@ impl CronRemoveJobState {
     #[inline]
     pub fn take_keep_alive(&mut self) -> Option<KeepAliveHandle> {
         self.keep_alive.take()
+    }
+
+    #[inline]
+    pub fn record_output_readers(
+        &mut self,
+        stdout_reader: BufferedReaderHandle,
+        stderr_reader: BufferedReaderHandle,
+    ) {
+        self.stdout_reader = Some(stdout_reader);
+        self.stderr_reader = Some(stderr_reader);
+    }
+
+    #[inline]
+    pub fn take_stdout_reader(&mut self) -> Option<BufferedReaderHandle> {
+        self.stdout_reader.take()
+    }
+
+    #[inline]
+    pub fn take_stderr_reader(&mut self) -> Option<BufferedReaderHandle> {
+        self.stderr_reader.take()
+    }
+
+    #[inline]
+    pub fn macos_advance_action(&self) -> RemoveAdvanceAction {
+        match self.phase {
+            CronRemoveState::BootingOut => RemoveAdvanceAction::UnlinkPlist,
+            _ => RemoveAdvanceAction::UnexpectedState,
+        }
+    }
+
+    #[inline]
+    pub fn crontab_advance_action(&self) -> RemoveAdvanceAction {
+        match self.phase {
+            CronRemoveState::ReadingCrontab => RemoveAdvanceAction::RemoveCrontab,
+            CronRemoveState::InstallingCrontab => RemoveAdvanceAction::Finish,
+            _ => RemoveAdvanceAction::UnexpectedState,
+        }
     }
 
     #[inline]

@@ -1,3 +1,5 @@
+use crate::cron::{CronRegisterJobStateHandle, CronRemoveJobStateHandle};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimePipeKind {
     Stdout,
@@ -14,6 +16,12 @@ pub enum RuntimeBufferedReaderTarget {
     TestParallelWorkerPipe {
         index: usize,
         pipe: RuntimePipeKind,
+    },
+    CronRegisterOutput {
+        state: CronRegisterJobStateHandle,
+    },
+    CronRemoveOutput {
+        state: CronRemoveJobStateHandle,
     },
 }
 
@@ -37,6 +45,20 @@ pub enum RuntimeBufferedReaderDelivery<'a> {
         index: usize,
         pipe: RuntimePipeKind,
     },
+    CronRegisterOutputDone {
+        state: CronRegisterJobStateHandle,
+    },
+    CronRegisterOutputError {
+        state: CronRegisterJobStateHandle,
+        name: &'static str,
+    },
+    CronRemoveOutputDone {
+        state: CronRemoveJobStateHandle,
+    },
+    CronRemoveOutputError {
+        state: CronRemoveJobStateHandle,
+        name: &'static str,
+    },
 }
 
 impl RuntimeBufferedReaderTarget {
@@ -46,6 +68,7 @@ impl RuntimeBufferedReaderTarget {
             Self::FilterRunHandle { .. }
             | Self::MultiRunPipeReader { .. }
             | Self::TestParallelWorkerPipe { .. } => true,
+            Self::CronRegisterOutput { .. } | Self::CronRemoveOutput { .. } => false,
         }
     }
 
@@ -70,6 +93,9 @@ impl RuntimeBufferedReaderTarget {
                     chunk,
                 }
             }
+            Self::CronRegisterOutput { .. } | Self::CronRemoveOutput { .. } => {
+                unreachable!("cron output readers do not consume chunks")
+            }
         }
     }
 
@@ -82,13 +108,30 @@ impl RuntimeBufferedReaderTarget {
                     pipe,
                 })
             }
+            Self::CronRegisterOutput { state } => {
+                Some(RuntimeBufferedReaderDelivery::CronRegisterOutputDone { state })
+            }
+            Self::CronRemoveOutput { state } => {
+                Some(RuntimeBufferedReaderDelivery::CronRemoveOutputDone { state })
+            }
             Self::FilterRunHandle { .. } | Self::MultiRunPipeReader { .. } => None,
         }
     }
 
     #[inline]
-    pub const fn on_reader_error(self) -> Option<RuntimeBufferedReaderDelivery<'static>> {
-        self.on_reader_done()
+    pub const fn on_reader_error(
+        self,
+        name: &'static str,
+    ) -> Option<RuntimeBufferedReaderDelivery<'static>> {
+        match self {
+            Self::CronRegisterOutput { state } => {
+                Some(RuntimeBufferedReaderDelivery::CronRegisterOutputError { state, name })
+            }
+            Self::CronRemoveOutput { state } => {
+                Some(RuntimeBufferedReaderDelivery::CronRemoveOutputError { state, name })
+            }
+            _ => self.on_reader_done(),
+        }
     }
 }
 

@@ -193,10 +193,11 @@ impl BufferedReaderTarget {
                         );
                     }
                 }
-            }
-            Self::Runtime { target, event_loop } => {
-                let _ = err;
-                if let Some(delivery) = target.on_reader_error() {
+              }
+              Self::Runtime { target, event_loop } => {
+                  if let Some(delivery) =
+                      target.on_reader_error(<&'static str>::from(err.get_errno()))
+                  {
                     // SAFETY: error delivery carries no borrowed bytes and is
                     // consumed synchronously by the high-tier dispatcher.
                     unsafe {

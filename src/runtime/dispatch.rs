@@ -219,11 +219,11 @@ pub fn __bun_dispatch_process_exit_delivery(
                     )
                 };
             }
-            RuntimeProcessExitAction::ShellCommand {
-                command,
-                interpreter,
-                process: _,
-                status,
+              RuntimeProcessExitAction::ShellCommand {
+                  command,
+                  interpreter,
+                  process: _,
+                  status,
             } => {
                 let context = interpreter
                     .map(|interpreter| {
@@ -237,12 +237,18 @@ pub fn __bun_dispatch_process_exit_delivery(
                         context,
                         command,
                         status,
-                    )
-                };
-            }
-        },
-    }
-}
+                      )
+                  };
+              }
+              RuntimeProcessExitAction::CronRegister { state, action } => {
+                  crate::api::cron::on_register_process_exit(state, action);
+              }
+              RuntimeProcessExitAction::CronRemove { state, action } => {
+                  crate::api::cron::on_remove_process_exit(state, action);
+              }
+          },
+      }
+  }
 
 fn dispatch_process_exit_delivery(delivery: bun_spawn::ProcessExitDelivery) {
     __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
@@ -308,15 +314,31 @@ pub fn __bun_dispatch_runtime_buffered_reader_delivery(
                 chunk,
             )
         },
-        RuntimeBufferedReaderDelivery::TestParallelWorkerPipeDone { index, pipe } => unsafe {
-            crate::cli::test::parallel::worker::on_reader_done_from_event_loop_context(
-                context,
-                index,
-                pipe,
-            )
-        },
-    }
-}
+          RuntimeBufferedReaderDelivery::TestParallelWorkerPipeDone { index, pipe } => unsafe {
+              crate::cli::test::parallel::worker::on_reader_done_from_event_loop_context(
+                  context,
+                  index,
+                  pipe,
+              )
+          },
+          RuntimeBufferedReaderDelivery::CronRegisterOutputDone { state } => {
+              crate::api::cron::on_register_reader_done(state);
+              true
+          }
+          RuntimeBufferedReaderDelivery::CronRegisterOutputError { state, name } => {
+              crate::api::cron::on_register_reader_error(state, name);
+              true
+          }
+          RuntimeBufferedReaderDelivery::CronRemoveOutputDone { state } => {
+              crate::api::cron::on_remove_reader_done(state);
+              true
+          }
+          RuntimeBufferedReaderDelivery::CronRemoveOutputError { state, name } => {
+              crate::api::cron::on_remove_reader_error(state, name);
+              true
+          }
+      }
+  }
 
 fn process_exit_context(
     event_loop: bun_event_loop::EventLoopHandle,

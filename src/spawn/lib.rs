@@ -160,8 +160,6 @@ impl ProcessExitTarget {
 bun_dispatch::link_interface! {
     pub ProcessExit[
         Subprocess,
-        CronRegister,
-        CronRemove,
     ] {
         fn on_process_exit(process: *mut Process, status: Status, rusage: *const Rusage);
     }

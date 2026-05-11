@@ -2,6 +2,7 @@
 // selects the most recently added SecureContext that matches the servername.
 
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 import { readFileSync } from "node:fs";
 import { AddressInfo } from "node:net";
@@ -688,29 +689,66 @@ describe("tls.createSecureContext().context.addCACert", () => {
     expect(await promise).toBe(true);
   });
 
-  it("preserves OS/default trust anchors", async () => {
-    // After addCACert, connecting to a host signed by a public CA must still
-    // work — we should ADD to the default trust store, not REPLACE it.
-    const ctx = tls.createSecureContext();
-    ctx.context.addCACert(ca2); // unrelated private CA
-
-    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
-    const client = tls.connect(
-      {
-        port: 443,
-        host: "bun.sh",
-        secureContext: ctx,
-        rejectUnauthorized: true,
-        servername: "bun.sh",
-      },
-      () => {
-        resolve(client.authorized);
-        client.end();
-      },
-    );
-    client.on("error", reject);
-
-    expect(await promise).toBe(true);
+  it("preserves default trust anchors (addCACert adds, not replaces)", async () => {
+    // Deterministic version of "trust the internet after addCACert": run a
+    // child bun with NODE_EXTRA_CA_CERTS=ca1 so ca1 is baked into the default
+    // trust store, then call addCACert(ca2) on a fresh SecureContext. If the
+    // first call REPLACED the store with a fresh one, ca1 would be gone and
+    // the agent1 handshake would fail; the assertion is that it still
+    // succeeds. Uses a child process so the env var is read at startup.
+    const dir = tempDirWithFiles("tls-addcacert-preserve", {
+      "ca1.pem": ca1,
+      "ca2.pem": ca2,
+      "agent1-cert.pem": agent1Cert,
+      "agent1-key.pem": agent1Key,
+      "check.js": /* js */ `
+        const tls = require("node:tls");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const server = tls.createServer(
+          {
+            cert: fs.readFileSync(path.join(__dirname, "agent1-cert.pem")),
+            key: fs.readFileSync(path.join(__dirname, "agent1-key.pem")),
+          },
+          s => s.end(),
+        );
+        server.listen(0, () => {
+          const port = server.address().port;
+          const ctx = tls.createSecureContext();
+          // Mutating: if we replaced the default store, NODE_EXTRA_CA_CERTS's
+          // ca1 contribution disappears and the handshake below fails.
+          ctx.context.addCACert(fs.readFileSync(path.join(__dirname, "ca2.pem")));
+          const client = tls.connect(
+            { port, host: "127.0.0.1", secureContext: ctx, servername: "agent1", rejectUnauthorized: false },
+            () => {
+              console.log(JSON.stringify({ authorized: client.authorized, error: client.authorizationError ?? null }));
+              client.end();
+              server.close();
+            },
+          );
+          client.on("error", e => {
+            console.log(JSON.stringify({ authorized: false, error: String(e) }));
+            server.close();
+          });
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.js"],
+      env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(dir, "ca1.pem") },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(stdout.trim());
+    expect(result.authorized).toBe(true);
   });
 
   it("requires at least one argument", () => {

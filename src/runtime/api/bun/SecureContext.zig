@@ -137,17 +137,26 @@ pub fn borrow(this: *SecureContext) *BoringSSL.SSL_CTX {
 /// Shared-CTX caveat: `SecureContext.intern()` memoises both the JS cell
 /// (per-global `Bun__SecureContextCache`) and the native `SSL_CTX*` (per-VM
 /// `SSLContextCache`) by config digest. Before mutating we drop ourselves
-/// from both caches so a subsequent `createSecureContext(sameOptions)` builds
-/// a FRESH context instead of handing back the now-mutated one. This
-/// preserves Bun's existing "one config, one SSL_CTX" hot-path behavior for
-/// the pure `createSecureContext({ca, cert, key})` pattern (no mutation ever
-/// happens there) while making `addCACert` match Node's "each SecureContext
-/// is independent" intuition for JS cells acquired AFTER the mutation.
+/// from both caches so a subsequent `createSecureContext(sameOptions)` from
+/// the SAME global builds a FRESH context instead of handing back the
+/// now-mutated one. This preserves Bun's existing "one config, one SSL_CTX"
+/// hot-path behavior for the pure `createSecureContext({ca, cert, key})`
+/// pattern (no mutation ever happens there) while making `addCACert` match
+/// Node's "each SecureContext is independent" intuition for JS cells
+/// acquired AFTER the mutation on the same global.
 ///
-/// Not matched exactly: two JS cells obtained via the same digest BEFORE the
-/// first `addCACert` call still share the underlying SSL_CTX, so a mutation
-/// through one leaks into the other. BoringSSL has no public SSL_CTX_dup and
-/// rebuilding from the digest isn't reversible — punting on that edge.
+/// Not matched exactly:
+///   - Two JS cells obtained via the same digest BEFORE the first
+///     `addCACert` call still share the underlying SSL_CTX, so a mutation
+///     through one leaks into the other. BoringSSL has no public
+///     SSL_CTX_dup and rebuilding from the digest isn't reversible.
+///   - Cross-global (node:vm / vm.runInNewContext on the same JSC VM): only
+///     the caller's global's JS cache is flushed, so a sibling global that
+///     had already cached the same digest keeps its stale cell pointing at
+///     the now-mutated SSL_CTX. Bun is effectively one-global-per-VM in all
+///     production paths (Worker = new VM); the sibling-global case is
+///     sandbox-only and uncommon for TLS config sharing — not worth the
+///     iteration machinery across globals at this point.
 pub fn addCACert(this: *SecureContext, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments();
     if (args.len < 1) {

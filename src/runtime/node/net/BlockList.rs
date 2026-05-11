@@ -46,7 +46,7 @@ fn read_int_le_usize(buf: &[u8], pos: &mut usize) -> Option<usize> {
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_str::{String as BunString, ZStr};
 use bun_threading::Mutex;
 
@@ -78,7 +78,11 @@ pub struct BlockList {
     // TODO(port): lifetime — field is write-only (assigned in constructor,
     // never read; `deinit` ignores it).
     global_this: *const JSGlobalObject,
-    da_rules: Vec<Rule>,
+    // R-2: interior mutability so every host_fn takes `&self`. All access is
+    // serialized by `mutex` (held across every read and every `with_mut`), so
+    // the `JsCell` single-thread invariant is upheld even though `BlockList`
+    // can be touched from multiple JS realms via structured clone.
+    da_rules: JsCell<Vec<Rule>>,
     mutex: Mutex,
 
     /// We cannot lock/unlock a mutex
@@ -106,7 +110,7 @@ impl BlockList {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
             ref_count: AtomicU32::new(1),
             global_this: std::ptr::from_ref(global),
-            da_rules: Vec::new(),
+            da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
             estimated_size: AtomicU32::new(0),
         }));
@@ -143,7 +147,7 @@ impl BlockList {
 
     #[bun_jsc::host_fn(method)]
     pub fn add_address(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -160,7 +164,7 @@ impl BlockList {
         };
 
         let _guard = this.mutex.lock_guard();
-        this.da_rules.insert(0, Rule::Addr(address));
+        this.da_rules.with_mut(|r| r.insert(0, Rule::Addr(address)));
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -170,7 +174,7 @@ impl BlockList {
 
     #[bun_jsc::host_fn(method)]
     pub fn add_range(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -202,7 +206,7 @@ impl BlockList {
             }
         }
         let _guard = this.mutex.lock_guard();
-        this.da_rules.insert(0, Rule::Range { start, end });
+        this.da_rules.with_mut(|r| r.insert(0, Rule::Range { start, end }));
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -212,7 +216,7 @@ impl BlockList {
 
     #[bun_jsc::host_fn(method)]
     pub fn add_subnet(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -241,7 +245,7 @@ impl BlockList {
             .unwrap();
         }
         let _guard = this.mutex.lock_guard();
-        this.da_rules.insert(0, Rule::Subnet { network, prefix });
+        this.da_rules.with_mut(|r| r.insert(0, Rule::Subnet { network, prefix }));
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -251,7 +255,7 @@ impl BlockList {
 
     #[bun_jsc::host_fn(method)]
     pub fn check(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -278,7 +282,7 @@ impl BlockList {
             }
         };
         let _guard = this.mutex.lock_guard();
-        for item in this.da_rules.iter() {
+        for item in this.da_rules.get().iter() {
             match item {
                 Rule::Addr(a) => {
                     let Some(order) = _compare(address, a) else { continue };
@@ -341,10 +345,11 @@ impl BlockList {
     #[bun_jsc::host_fn(getter)]
     pub fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let _guard = this.mutex.lock_guard();
+        let rules = this.da_rules.get();
         // GC must be able to visit
-        let array = JSValue::create_empty_array(global, this.da_rules.len())?;
+        let array = JSValue::create_empty_array(global, rules.len())?;
 
-        for (i, rule) in this.da_rules.iter().enumerate() {
+        for (i, rule) in rules.iter().enumerate() {
             let mut s = match rule {
                 Rule::Addr(a) => {
                     let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
@@ -380,7 +385,7 @@ impl BlockList {
     }
 
     pub fn on_structured_clone_serialize(
-        this: &mut Self,
+        this: &Self,
         _global: &JSGlobalObject,
         ctx: *mut c_void,
         // codegen `WriteBytesFn` typedef (jsc.conv).
@@ -390,7 +395,10 @@ impl BlockList {
         this.ref_();
         let writer = StructuredCloneWriter { ctx, impl_: write_bytes };
         // Error = `!` (Zig: `error{}`), so no `?` needed.
-        writer.write_int_le(std::ptr::from_mut::<Self>(this) as usize);
+        // Only the address is serialized; deserialize re-derives `*mut Self`
+        // via int→ptr cast and never forms `&mut Self` (only `ref_()` +
+        // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
+        writer.write_int_le(std::ptr::from_ref::<Self>(this) as usize);
     }
 
     pub fn on_structured_clone_deserialize(

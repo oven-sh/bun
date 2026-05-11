@@ -1015,3 +1015,64 @@ describe("spyOn", () => {
 
   // spyOn does not work with getters/setters yet.
 });
+
+describe("construct", () => {
+  test("Reflect.construct on empty mock returns an object", () => {
+    const fn = jest.fn();
+    const result = Reflect.construct(fn, []);
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+  });
+
+  test("Reflect.construct on mockReturnValue with primitive returns an object", () => {
+    const fn = jest.fn().mockReturnValue(42);
+    const result = Reflect.construct(fn, []);
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+    expect(fn()).toBe(42);
+  });
+
+  test("Reflect.construct with implementation returning primitive returns an object", () => {
+    const fn = jest.fn(() => 99);
+    const result = Reflect.construct(fn, []);
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+  });
+
+  test("Reflect.construct with implementation returning object preserves the object", () => {
+    const obj = { marker: true };
+    const fn = jest.fn(() => obj);
+    const result = Reflect.construct(fn, []);
+    expect(result).toBe(obj);
+  });
+
+  test("Reflect.construct on mockReturnThis does not crash", () => {
+    const fn = jest.fn().mockReturnThis();
+    const result = Reflect.construct(fn, []);
+    expect(result == null).toBe(false);
+    expect(typeof result === "object" || typeof result === "function").toBe(true);
+  });
+
+  test("Reflect.construct on spyOn of non-function value does not crash", () => {
+    const arr = [-62400, 1355854322, -7];
+    const spy = spyOn(arr, 1);
+    const result = Reflect.construct(spy, []);
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+    spy.mockRestore();
+  });
+
+  test("Reflect.construct respects newTarget prototype", () => {
+    const fn = jest.fn();
+    class Target {}
+    const result = Reflect.construct(fn, [], Target);
+    expect(Object.getPrototypeOf(result)).toBe(Target.prototype);
+  });
+
+  test("new on empty mock returns an object", () => {
+    const fn = jest.fn();
+    const result = new fn();
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+  });
+});

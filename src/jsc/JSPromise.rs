@@ -457,7 +457,7 @@ impl JSPromise {
             loop_.debug.js_call_count_outside_tick_queue +=
                 (!loop_.debug.is_inside_tick_queue) as usize;
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
-                loop_.debug.last_fn_name = BunString::static_(b"resolve");
+                loop_.debug.last_fn_name = BunString::static_(b"resolve").into();
             }
         }
 
@@ -475,7 +475,7 @@ impl JSPromise {
             loop_.debug.js_call_count_outside_tick_queue +=
                 (!loop_.debug.is_inside_tick_queue) as usize;
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
-                loop_.debug.last_fn_name = BunString::static_(b"reject");
+                loop_.debug.last_fn_name = BunString::static_(b"reject").into();
             }
         }
 

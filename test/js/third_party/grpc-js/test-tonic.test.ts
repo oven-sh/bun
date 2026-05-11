@@ -70,22 +70,23 @@ async function startServer(): Promise<Server> {
         rmSync(tmpDir, { recursive: true, force: true });
       } catch {}
     }
+    // Accumulate stdout until "Listening on" appears — `cargo run` may emit
+    // compile-progress lines on cold cache before the server's own output, and
+    // the previous first-chunk-or-reject logic killed the server on the first
+    // such line.
+    let acc = "";
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
+        await killServer();
+        reject(new Error("Server exited before printing 'Listening on'"));
         break;
       }
-      const text = decoder.decode(value);
-      if (text.includes("Listening on")) {
-        const [_, address] = text.split("Listening on ");
-        resolve({
-          address: address?.trim(),
-          kill: killServer,
-        });
-        break;
-      } else {
-        await killServer();
-        reject(new Error("Server not started"));
+      acc += decoder.decode(value);
+      const i = acc.indexOf("Listening on ");
+      if (i !== -1) {
+        const address = acc.slice(i + "Listening on ".length).split(/\s/)[0];
+        resolve({ address, kill: killServer });
         break;
       }
     }

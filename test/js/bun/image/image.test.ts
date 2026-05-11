@@ -803,7 +803,8 @@ describe("Bun.Image", () => {
       const total = stripOff + strip.length;
       const buf = new Uint8Array(total);
       const dv = new DataView(buf.buffer);
-      buf[0] = 0x49; buf[1] = 0x49; // 'II'
+      buf[0] = 0x49;
+      buf[1] = 0x49; // 'II'
       dv.setUint16(2, 42, true);
       dv.setUint32(4, 8, true);
       dv.setUint16(8, 9, true); // IFD entry count

@@ -86,7 +86,13 @@ pub fn ppid_to_watch() -> Option<libc::pid_t> {
 /// reaches grandchildren that the libproc/procfs walk would miss once the
 /// script itself has exited. Stack-disciplined for nested `spawnSync` (e.g.
 /// `pre`/`post` lifecycle scripts) — though in practice depth is 1.
-static SYNC_PGIDS_BUF: bun_core::RacyCell<[libc::pid_t; 4]> = bun_core::RacyCell::new([0; 4]);
+///
+/// `[AtomicI32; 4]` instead of `RacyCell<[pid_t; 4]>`: `pid_t` is `i32` on
+/// every Unix target, and per-slot atomics let push/read use safe
+/// `.store()/.load()` instead of an `unsafe` raw-pointer deref. Ordering stays
+/// Relaxed — `SYNC_PGIDS_LEN` is the publish point.
+static SYNC_PGIDS_BUF: [core::sync::atomic::AtomicI32; 4] =
+    [const { core::sync::atomic::AtomicI32::new(0) }; 4];
 static SYNC_PGIDS_LEN: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// Returns true if the push was recorded; caller must pop iff true. Depth >4
@@ -103,9 +109,7 @@ pub fn push_sync_pgid(pgid: libc::pid_t) -> bool {
         if len >= 4 {
             return false;
         }
-        // SAFETY: single-threaded spawnSync stack discipline; only this thread
-        // touches the buffer between push/pop.
-        unsafe { (*SYNC_PGIDS_BUF.get())[len] = pgid };
+        SYNC_PGIDS_BUF[len].store(pgid, Ordering::Relaxed);
         SYNC_PGIDS_LEN.store(len + 1, Ordering::Relaxed);
         true
     }
@@ -130,10 +134,8 @@ pub fn kill_sync_script_tree() {
     #[cfg(unix)]
     {
         let len = SYNC_PGIDS_LEN.load(Ordering::Relaxed);
-        // SAFETY: read-only iteration of startup-populated globals; single-threaded
-        // spawnSync stack discipline guarantees no concurrent writer.
-        let pgids = unsafe { &(&*SYNC_PGIDS_BUF.get())[..len] };
-        for &pgid in pgids {
+        for slot in &SYNC_PGIDS_BUF[..len] {
+            let pgid = slot.load(Ordering::Relaxed);
             if pgid > 1 {
                 // SAFETY: FFI call; kill(2) is async-signal-safe.
                 unsafe {

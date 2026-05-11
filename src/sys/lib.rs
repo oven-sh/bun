@@ -813,19 +813,18 @@ pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_c
     // the NUL ourselves.
     let name = <&'static str>::from(e).as_bytes();
     thread_local! {
-        static BUF: core::cell::UnsafeCell<[u8; 32]> = const { core::cell::UnsafeCell::new([0; 32]) };
+        // `Cell<[u8; 32]>`: `[u8; 32]` is `Copy`, so we read-modify-write the
+        // whole array via safe `.get()/.set()` and hand back a stable raw
+        // pointer via `Cell::as_ptr()` — no `unsafe` `&mut *p` reborrow.
+        static BUF: core::cell::Cell<[u8; 32]> = const { core::cell::Cell::new([0; 32]) };
     }
     BUF.with(|buf| {
-        let ptr = buf.get();
         let len = name.len().min(31);
-        // SAFETY: `ptr` is this thread's private 32-byte buffer; no other
-        // reference to it exists while we write `len + 1 <= 32` bytes.
-        unsafe {
-            let buf = &mut *ptr;
-            buf[..len].copy_from_slice(&name[..len]);
-            buf[len] = 0;
-        }
-        ptr.cast::<core::ffi::c_char>()
+        let mut arr = buf.get();
+        arr[..len].copy_from_slice(&name[..len]);
+        arr[len] = 0;
+        buf.set(arr);
+        buf.as_ptr().cast::<core::ffi::c_char>()
     })
 }
 

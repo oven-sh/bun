@@ -4,8 +4,12 @@
 
 #![warn(unreachable_pub)]
 pub mod NodeLinker;
+pub mod process_exit;
 pub mod resolver_hooks;
 
+pub use process_exit::{
+    LifecycleScriptExit, LifecycleScriptExitAction, SecurityScanExit, SecurityScanExitAction,
+};
 pub use resolver_hooks::{
     Architecture, AutoInstaller, Behavior, Dependency, DependencyGroup, DependencyID,
     DependencySlice, DependencyVersion, DependencyVersionTag, DependencyVersionValue,

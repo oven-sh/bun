@@ -1072,6 +1072,7 @@ dependencies = [
  "bun_core",
  "bun_logger",
  "bun_semver",
+ "bun_spawn_types",
  "bun_string",
  "bun_wyhash",
  "const_format",
@@ -1938,6 +1939,7 @@ dependencies = [
 name = "bun_runtime_types"
 version = "0.0.0"
 dependencies = [
+ "bun_install_types",
  "bun_spawn_types",
 ]
 

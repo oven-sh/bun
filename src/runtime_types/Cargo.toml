@@ -7,4 +7,5 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
+bun_install_types.workspace = true
 bun_spawn_types.workspace = true

@@ -3955,6 +3955,7 @@ pub const Resolver = struct {
 
     fn loadExtension(r: *ThisResolver, base: string, path: string, ext: string, entries: *Fs.FileSystem.DirEntry) ?LoadResult {
         const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        if (path.len + ext.len > bufs(.load_as_file).len) return null;
         const buffer = bufs(.load_as_file)[0 .. path.len + ext.len];
         bun.copy(u8, buffer[path.len..], ext);
         const file_name = buffer[path.len - base.len .. buffer.len];

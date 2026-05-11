@@ -187,7 +187,7 @@ describe.concurrent("long import path overflow", () => {
   // the entry-point cache-bust retry in Transpiler.resolveEntryPoint.
   const huge = `Buffer.alloc(${len * 2}, "a").toString()`;
 
-  it("Bun.resolveSync with specifier longer than PATH_MAX", async () => {
+  it("dynamic import with specifier longer than PATH_MAX", async () => {
     using dir = makeDir();
     await run(String(dir), huge);
   });
@@ -211,7 +211,7 @@ describe.concurrent("long import path overflow", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("panic");
+      expect(stderr).toBe("");
       expect(stdout.trim()).toBe("ok");
       expect(exitCode).toBe(0);
     });

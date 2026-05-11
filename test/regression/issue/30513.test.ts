@@ -57,6 +57,10 @@ function makeTarball(): Buffer {
 }
 const TARBALL = makeTarball();
 
+// base64("user:TOKEN") — used by the auth-mode test to verify Basic
+// auth works when a later `_auth` overrides an earlier `_authToken`.
+const BASIC_AUTH_B64 = Buffer.from(`user:${TOKEN}`).toString("base64");
+
 const tarballHits: TarballHit[] = [];
 let server: ReturnType<typeof Bun.serve>;
 
@@ -92,14 +96,13 @@ beforeAll(() => {
       // client sent so the assertions below can verify that the token
       // keyed to this path actually travelled on the request.
       if (path === `${TARBALL_PATH}/${PKG_NAME}/-/${PKG_NAME}-${PKG_VERSION}.tgz`) {
-        tarballHits.push({
-          url: req.url,
-          authorization: req.headers.get("authorization"),
-        });
+        const authHeader = req.headers.get("authorization");
+        tarballHits.push({ url: req.url, authorization: authHeader });
         // Mirror GitLab: 404 on unauthenticated package-registry
         // requests. With the fix, the token reaches us and we hand
-        // back the tarball.
-        if (req.headers.get("authorization") !== `Bearer ${TOKEN}`) {
+        // back the tarball. Accept either the correct Bearer or the
+        // matching Basic (used by the `_auth` mode-switch test).
+        if (authHeader !== `Bearer ${TOKEN}` && authHeader !== `Basic ${BASIC_AUTH_B64}`) {
           return new Response("not found", { status: 404 });
         }
         return new Response(TARBALL, {
@@ -302,6 +305,97 @@ test("auth token matches case-insensitively on hostname", async () => {
     exitCode: 0,
     hasError: false,
     tarballAuthHeaders: [`Bearer ${TOKEN}`],
+  });
+});
+
+test("case-insensitive host dedup lets later entries override earlier ones for the same dart", async () => {
+  // If two nerf-darts differ only in host casing they refer to the same
+  // logical dart (DNS hosts are case-insensitive). The later entry must
+  // win; pre-fix, the raw-cased hash key let both builders co-exist and
+  // the "winner" was whichever came first in iteration order.
+  tarballHits.length = 0;
+  using cacheDir = tempDir("issue-30513-case-dedup-cache", {});
+  using dir = tempDir("issue-30513-case-dedup", {
+    "package.json": JSON.stringify({
+      name: "issue-30513-case-dedup-consumer",
+      version: "0.0.0",
+      dependencies: { [PKG_NAME]: PKG_VERSION },
+    }),
+    ".npmrc": [
+      `@altpay:registry=http://localhost:${server.port}${METADATA_PATH}/`,
+      // First entry in the file — wrong value, mixed case.
+      `//Localhost:${server.port}${TARBALL_PATH}/:_authToken=case-dedup-wrong-token`,
+      // Second entry — correct value, lowercase. Must override.
+      `//localhost:${server.port}${TARBALL_PATH}/:_authToken=${TOKEN}`,
+      `always-auth=true`,
+    ].join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(cacheDir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect({
+    exitCode,
+    hasError: stderr.includes("error:"),
+    tarballAuthHeaders: tarballHits.map(h => h.authorization),
+  }).toEqual({
+    exitCode: 0,
+    hasError: false,
+    tarballAuthHeaders: [`Bearer ${TOKEN}`],
+  });
+});
+
+test("later auth mode clears earlier one on the same dart", async () => {
+  // `_authToken` / `_auth` / `username`+`_password` are mutually
+  // exclusive. When a later `.npmrc` entry switches modes on the same
+  // dart, the earlier mode must be dropped. Scenario: the user
+  // initially configured a Bearer token, then switched to Basic
+  // auth by setting `_auth` on the same dart. Pre-fix, both fields
+  // stayed set on the builder; `appendAuth` prefers `Bearer` over
+  // `Basic`, so the stale Bearer from the first entry was sent and
+  // the server 404'd. With the fix, the later `_auth` clears the
+  // stale token and the correct Basic header goes out.
+  tarballHits.length = 0;
+  using cacheDir = tempDir("issue-30513-auth-mode-cache", {});
+  using dir = tempDir("issue-30513-auth-mode", {
+    "package.json": JSON.stringify({
+      name: "issue-30513-auth-mode-consumer",
+      version: "0.0.0",
+      dependencies: { [PKG_NAME]: PKG_VERSION },
+    }),
+    ".npmrc": [
+      `@altpay:registry=http://localhost:${server.port}${METADATA_PATH}/`,
+      // First entry: a Bearer token that the server will reject.
+      `//${server.hostname}:${server.port}${TARBALL_PATH}/:_authToken=stale-bearer-must-be-cleared`,
+      // Second entry: the correct Basic auth on the same dart.
+      `//${server.hostname}:${server.port}${TARBALL_PATH}/:_auth=${BASIC_AUTH_B64}`,
+      `always-auth=true`,
+    ].join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(cacheDir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect({
+    exitCode,
+    hasError: stderr.includes("error:"),
+    tarballAuthHeaders: tarballHits.map(h => h.authorization),
+  }).toEqual({
+    exitCode: 0,
+    hasError: false,
+    tarballAuthHeaders: [`Basic ${BASIC_AUTH_B64}`],
   });
 });
 

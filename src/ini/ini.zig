@@ -1226,13 +1226,22 @@ pub fn loadNpmrc(
             // aren't credentials, so they don't contribute darts.
             switch (conf_item.optname) {
                 ._authToken, ._auth, .username, ._password => {
-                    const dart_host = bun.strings.withoutTrailingSlash(conf_item_url.host);
+                    const dart_host_raw = bun.strings.withoutTrailingSlash(conf_item_url.host);
                     const dart_path = bun.strings.withoutTrailingSlash(conf_item_url.pathname);
                     // Normalize an empty/root path to "" so hash lookups are stable.
                     const dart_path_norm = if (dart_path.len == 0 or std.mem.eql(u8, dart_path, "/"))
                         ""
                     else
                         dart_path;
+                    // Hostnames are case-insensitive (DNS); `matches()` uses
+                    // a case-insensitive compare at request time. Lowercase
+                    // the host before building the hash key and storing it
+                    // on the entry, so `//Git.Example.com/` and
+                    // `//git.example.com/` collapse into a single dart and
+                    // later overrides can replace earlier entries reliably.
+                    const dart_host = try allocator.alloc(u8, dart_host_raw.len);
+                    _ = std.ascii.lowerString(dart_host, dart_host_raw);
+
                     // Host+path concatenated is the nerf-dart key. Using
                     // "\x00" as a separator keeps it unambiguous without
                     // extra state.
@@ -1244,22 +1253,40 @@ pub fn loadNpmrc(
                     const gop = try auth_by_dart.getOrPut(key_buf);
                     if (!gop.found_existing) {
                         gop.value_ptr.* = .{
-                            .host = try allocator.dupe(u8, dart_host),
+                            .host = dart_host,
                             .path = try allocator.dupe(u8, dart_path_norm),
                         };
                     } else {
                         allocator.free(key_buf);
+                        allocator.free(dart_host);
                     }
 
                     // Repeated entries for the same nerf-dart (common when
                     // `~/.npmrc` and the project `.npmrc` both set the
-                    // same key) replace the previous value; free the
-                    // prior slice so we don't leak across overrides.
+                    // same key) replace the previous value. Auth modes
+                    // `_authToken` / `_auth` / `username`+`_password` are
+                    // mutually exclusive, and `finalize()` prefers
+                    // `auth_b64` whenever it's non-empty — so when a later
+                    // entry switches modes, clear the previous mode's
+                    // fields so they don't linger on the finalised entry.
                     switch (conf_item.optname) {
                         ._authToken => {
                             if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
                                 if (gop.value_ptr.token.len > 0) allocator.free(gop.value_ptr.token);
                                 gop.value_ptr.token = x;
+                                // `_authToken` wins over Basic / user+pass halves.
+                                if (gop.value_ptr.auth_b64.len > 0) {
+                                    allocator.free(gop.value_ptr.auth_b64);
+                                    gop.value_ptr.auth_b64 = "";
+                                }
+                                if (gop.value_ptr.username.len > 0) {
+                                    allocator.free(gop.value_ptr.username);
+                                    gop.value_ptr.username = "";
+                                }
+                                if (gop.value_ptr.password.len > 0) {
+                                    allocator.free(gop.value_ptr.password);
+                                    gop.value_ptr.password = "";
+                                }
                             }
                         },
                         ._auth => {
@@ -1268,17 +1295,48 @@ pub fn loadNpmrc(
                             const new_auth = try allocator.dupe(u8, conf_item.value);
                             if (gop.value_ptr.auth_b64.len > 0) allocator.free(gop.value_ptr.auth_b64);
                             gop.value_ptr.auth_b64 = new_auth;
+                            // `_auth` wins over Bearer / user+pass halves.
+                            if (gop.value_ptr.token.len > 0) {
+                                allocator.free(gop.value_ptr.token);
+                                gop.value_ptr.token = "";
+                            }
+                            if (gop.value_ptr.username.len > 0) {
+                                allocator.free(gop.value_ptr.username);
+                                gop.value_ptr.username = "";
+                            }
+                            if (gop.value_ptr.password.len > 0) {
+                                allocator.free(gop.value_ptr.password);
+                                gop.value_ptr.password = "";
+                            }
                         },
                         .username => {
                             if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
                                 if (gop.value_ptr.username.len > 0) allocator.free(gop.value_ptr.username);
                                 gop.value_ptr.username = x;
+                                // `username`+`_password` win over Bearer / pre-encoded `_auth`.
+                                if (gop.value_ptr.token.len > 0) {
+                                    allocator.free(gop.value_ptr.token);
+                                    gop.value_ptr.token = "";
+                                }
+                                if (gop.value_ptr.auth_b64.len > 0) {
+                                    allocator.free(gop.value_ptr.auth_b64);
+                                    gop.value_ptr.auth_b64 = "";
+                                }
                             }
                         },
                         ._password => {
                             if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
                                 if (gop.value_ptr.password.len > 0) allocator.free(gop.value_ptr.password);
                                 gop.value_ptr.password = x;
+                                // `username`+`_password` win over Bearer / pre-encoded `_auth`.
+                                if (gop.value_ptr.token.len > 0) {
+                                    allocator.free(gop.value_ptr.token);
+                                    gop.value_ptr.token = "";
+                                }
+                                if (gop.value_ptr.auth_b64.len > 0) {
+                                    allocator.free(gop.value_ptr.auth_b64);
+                                    gop.value_ptr.auth_b64 = "";
+                                }
                             }
                         },
                         else => unreachable,

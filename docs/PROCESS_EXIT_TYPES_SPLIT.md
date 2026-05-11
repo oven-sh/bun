@@ -215,12 +215,14 @@ package name, current script index, output-fd readiness, and the
 `LifecycleScriptExit` reducer. Their `ProcessExit` owner re-entry remains a
 separate type-movement problem: when process exit is the last event, the current
 callback synchronously resumes the owning lifecycle state and may free or
-restart that owner. Cron register/remove have the same shape at the readiness
-level: typed reducers exist, but the exact job/effect owner still needs to move
-before `ProcessExitKind::{CronRegister,CronRemove}` can disappear. The JS shell
-path has the same owner-movement requirement: a JS event loop can have multiple
-live shell interpreters, so a single loop `current_context` is not an identity
-for the interpreter.
+restart that owner. Cron register/remove now keep their child-process
+readiness/error state in `bun_runtime_types::cron::ProcessState`: pending
+output-fd count, initialized `ProcessExitReadiness`, and the first process-output
+error. Their exact job/effect owner still needs to move before
+`ProcessExitKind::{CronRegister,CronRemove}` can disappear. The JS shell path has
+the same owner-movement requirement: a JS event loop can have multiple live shell
+interpreters, so a single loop `current_context` is not an identity for the
+interpreter.
 
 ```
 Process-exit production shape
@@ -249,8 +251,10 @@ Process-exit production shape
   │           └─> sidecar-owned command identity for the shell arena
   ├─> bun_runtime_types::cron
   │     ├─> CronRegisterState
-  │     └─> CronRemoveState
-  │           └─> sidecar-owned cron state-machine discriminants; JSC promise effects stay in bun_runtime
+  │     ├─> CronRemoveState
+  │     │     └─> sidecar-owned cron state-machine discriminants; JSC promise effects stay in bun_runtime
+  │     └─> ProcessState
+  │           └─> child-process readiness/error state shared below bun_runtime
   └─> owning crates
         ├─> bun_spawn observes waitpid / platform wait completion
         ├─> bun_install applies lifecycle/security package-manager effects
@@ -371,10 +375,10 @@ Reducer prework that still needs owner type movement
   │     └─> MaybeFinished applies handle_exit() in bun_install
   └─> runtime/api/cron.rs
         ├─> generic SpawnCmdTarget counts stdout/stderr readers before identity exists
-        ├─> initializes ProcessExitReadiness once spawned Process exists
-        ├─> CronRegisterJob and CronRemoveJob store the reducer directly
-        ├─> reader callbacks call record_reader_done()
-        ├─> process-exit callback calls on_process_exit(ProcessExitContext)
+        ├─> initializes bun_runtime_types::cron::ProcessState once spawned Process exists
+        ├─> CronRegisterJob and CronRemoveJob store the sidecar ProcessState directly
+        ├─> reader callbacks call ProcessState::record_reader_done()
+        ├─> process-exit callback calls ProcessState::on_process_exit(ProcessExitContext)
         └─> Ready lets bun_runtime consume status and continue cron-specific state transitions
 ```
 
@@ -399,7 +403,7 @@ Remaining owner movement
   ├─> CronRegisterJob / CronRemoveJob
   │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
   │     │     - own promise/global/KeepAlive, process ref, stdout/stderr readers, tmp path, error state, and state-machine enum
-  │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after ProcessExitReadiness exists
+  │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after sidecar ProcessState exists
   │     │     - spawn_cmd_generic also still wires stdout/stderr through BufferedReaderParentLink, so reader-last completion can re-enter maybe_finished(this)
   │     ├─> current event-loop context
   │     │     - cron jobs run on the normal JS event loop; there is no per-cron current_context analogous to the Mini CLI State or test Coordinator context
@@ -445,7 +449,7 @@ What a real next split must change
   │     ├─> missing typed consumer: exact lifecycle owner/effect state, not PackageManager as a broad context
   │     └─> valid shape: move the lifecycle completion state that owns "spawn next / finish / destroy" decisions into an install sidecar type, then let bun_install apply only the package-manager effects
   ├─> cron
-  │     ├─> current typed reducer: ProcessExitReadiness in bun_spawn_types
+  │     ├─> current typed process state: ProcessState in bun_runtime_types::cron
   │     ├─> missing typed consumer: exact cron job state-machine owner
   │     └─> valid shape: split register/remove into shared cron job state plus runtime effect applier; bun_spawn records exit into the shared state and bun_runtime advances/resolves without recovering CronRegisterJob*
   ├─> Bun.spawn
@@ -476,7 +480,7 @@ Required deeper type movement
   │     └─> otherwise the code must recover LifecycleScriptSubprocess from a state field, heap node, ProcessIdentity scan, or parent pointer, which is the callback architecture again
   ├─> cron cannot finish with ProcessExitReadiness alone
   │     ├─> the reducer knows "ready", but maybe_finished owns the cron state machine, process cleanup, stderr inspection, promise resolution, follow-up spawns, and self-free
-  │     ├─> CronRegisterState / CronRemoveState now live in bun_runtime_types::cron
+  │     ├─> CronRegisterState / CronRemoveState / ProcessState now live in bun_runtime_types::cron
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
   │     ├─> the JSC promise/global side needs its own inert handle split before a complete cron job state can live below bun_runtime
   │     └─> if the promise/global owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback

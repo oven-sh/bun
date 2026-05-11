@@ -33,10 +33,11 @@ use bun_resolver::fs::{FileSystem, RealFS};
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_spawn_types::process_exit::{
-    ProcessExitContext, ProcessExitReadiness, ProcessExitReadinessAction, ProcessIdentity,
+    ProcessExitContext, ProcessExitReadinessAction, ProcessIdentity,
 };
 use bun_runtime_types::cron::{
     CronRegisterState as RegisterState, CronRemoveState as RemoveState,
+    ProcessState as CronProcessState,
 };
 use bun_jsc::JsClass as _;
 use bun_io::pipe_reader::BufferedReaderParent;
@@ -87,9 +88,7 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
 // has no protector and ends at last use under NLL, so field access via `s`
 // followed by `Self::finish(this)` is sound.
 trait CronJobBase: Sized {
-    fn pending_output_fds_mut(&mut self) -> &mut i8;
-    fn exit_state_mut(&mut self) -> &mut Option<ProcessExitReadiness>;
-    fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>>;
+    fn process_state_mut(&mut self) -> &mut CronProcessState;
     /// May free `this`. Caller must not touch `this` afterward.
     unsafe fn maybe_finished(this: *mut Self);
 
@@ -114,13 +113,7 @@ trait CronJobBase: Sized {
     unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
         let s = unsafe { &mut *this };
-        if let Some(exit_state) = s.exit_state_mut().as_mut() {
-            let _ = exit_state.record_reader_done();
-        } else {
-            let remaining = s.pending_output_fds_mut();
-            debug_assert!(*remaining > 0);
-            *remaining = (*remaining).saturating_sub(1);
-        }
+        let _ = s.process_state_mut().record_reader_done();
         unsafe { Self::maybe_finished(this) };
     }
 
@@ -128,21 +121,16 @@ trait CronJobBase: Sized {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
         // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
         let s = unsafe { &mut *this };
-        if let Some(exit_state) = s.exit_state_mut().as_mut() {
-            let _ = exit_state.record_reader_done();
-        } else {
-            let remaining = s.pending_output_fds_mut();
-            debug_assert!(*remaining > 0);
-            *remaining = (*remaining).saturating_sub(1);
-        }
-        if s.err_msg_mut().is_none() {
+        let _ = s.process_state_mut().record_reader_done();
+        let state = s.process_state_mut();
+        if state.err_msg.is_none() {
             let mut msg = Vec::new();
             let _ = write!(
                 &mut msg,
                 "Failed to read process output: {}",
                 <&'static str>::from(err.get_errno())
             );
-            *s.err_msg_mut() = Some(msg);
+            state.err_msg = Some(msg);
         }
         unsafe { Self::maybe_finished(this) };
     }
@@ -152,18 +140,11 @@ trait CronJobBase: Sized {
         // SAFETY: local reborrow, no protector; ends before `maybe_finished`.
         let s = unsafe { &mut *this };
         let process_identity = ProcessIdentity::from_ref(proc);
-        if s.exit_state_mut().is_none() {
-            let pending_output_fds = *s.pending_output_fds_mut();
-            *s.exit_state_mut() = Some(ProcessExitReadiness::new(
-                process_identity,
-                pending_output_fds,
-            ));
-        }
-        let action = s
-            .exit_state_mut()
-            .as_mut()
-            .expect("exit state initialized above")
-            .on_process_exit(&ProcessExitContext::new(process_identity, status, rusage));
+        let action = s.process_state_mut().on_process_exit(&ProcessExitContext::new(
+            process_identity,
+            status,
+            rusage,
+        ));
         if matches!(action, ProcessExitReadinessAction::WrongProcess) {
             return;
         }
@@ -189,13 +170,11 @@ pub struct CronRegisterJob {
     parsed_cron: CronExpression,
 
     state: RegisterState,
+    process_state: CronProcessState,
     // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
     process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
-    pending_output_fds: i8,
-    exit_state: Option<ProcessExitReadiness>,
-    err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
@@ -227,18 +206,16 @@ impl BufferedReaderParent for CronRegisterJob {
 }
 
 impl CronJobBase for CronRegisterJob {
-    fn pending_output_fds_mut(&mut self) -> &mut i8 { &mut self.pending_output_fds }
-    fn exit_state_mut(&mut self) -> &mut Option<ProcessExitReadiness> { &mut self.exit_state }
-    fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }
+    fn process_state_mut(&mut self) -> &mut CronProcessState { &mut self.process_state }
     unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRegisterJob::maybe_finished(this) } }
 }
 
 impl CronRegisterJob {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
-        if self.err_msg.is_none() {
+        if self.process_state.err_msg.is_none() {
             let mut msg = Vec::new();
             let _ = msg.write_fmt(args);
-            self.err_msg = Some(msg);
+            self.process_state.err_msg = Some(msg);
         }
     }
 
@@ -247,11 +224,7 @@ impl CronRegisterJob {
         // SAFETY: local reborrow (no FnEntry protector); not used after any
         // call below that may free `this`.
         let s = unsafe { &mut *this };
-        if !s
-            .exit_state
-            .as_ref()
-            .is_some_and(ProcessExitReadiness::is_ready)
-        {
+        if !s.process_state.is_ready() {
             return;
         }
         if let Some(proc) = s.process.take() {
@@ -261,14 +234,10 @@ impl CronRegisterJob {
                 (*proc).deref();
             }
         }
-        if s.err_msg.is_some() {
+        if s.process_state.err_msg.is_some() {
             return unsafe { Self::finish(this) };
         }
-        let Some(status) = s
-            .exit_state
-            .as_mut()
-            .and_then(|exit_state| exit_state.exit_status.take())
-        else { return };
+        let Some(status) = s.process_state.take_exit_status() else { return };
         match status {
             Status::Exited(exited) => {
                 if exited.code != 0
@@ -370,7 +339,7 @@ impl CronRegisterJob {
         // SAFETY: caller holds the unique Box<Self>; consumed below. Local
         // reborrow has no FnEntry protector and is not used after the drop.
         let this_ref = unsafe { &mut *this };
-        this_ref.state = if this_ref.err_msg.is_some() {
+        this_ref.state = if this_ref.process_state.err_msg.is_some() {
             RegisterState::Failed
         } else {
             RegisterState::Done
@@ -378,7 +347,7 @@ impl CronRegisterJob {
         this_ref.poll.unref(vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
-        if let Some(msg) = &this_ref.err_msg {
+        if let Some(msg) = &this_ref.process_state.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
                 &this_ref.global,
                 Ok(this_ref
@@ -773,12 +742,10 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             title: ZString::from_bytes(title_slice.slice()),
             parsed_cron: parsed,
             state: RegisterState::ReadingCrontab,
+            process_state: CronProcessState::new(),
             process: None,
             stdout_reader: OutputReader::init::<CronRegisterJob>(),
             stderr_reader: OutputReader::init::<CronRegisterJob>(),
-            pending_output_fds: 0,
-            exit_state: None,
-            err_msg: None,
             tmp_path: None,
             // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
             event_loop_handle: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
@@ -901,7 +868,7 @@ impl Drop for CronRegisterJob {
         if let Some(p) = self.tmp_path.take() {
             let _ = sys::unlink(&p);
         }
-        // err_msg, abs_path, schedule, title freed via field Drop.
+        // process_state, abs_path, schedule, title freed via field Drop.
     }
 }
 
@@ -920,13 +887,11 @@ pub struct CronRemoveJob {
     title: ZString,
 
     state: RemoveState,
+    process_state: CronProcessState,
     // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
     process: Option<*mut Process>,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
-    pending_output_fds: i8,
-    exit_state: Option<ProcessExitReadiness>,
-    err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
     /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
@@ -958,18 +923,16 @@ impl BufferedReaderParent for CronRemoveJob {
 }
 
 impl CronJobBase for CronRemoveJob {
-    fn pending_output_fds_mut(&mut self) -> &mut i8 { &mut self.pending_output_fds }
-    fn exit_state_mut(&mut self) -> &mut Option<ProcessExitReadiness> { &mut self.exit_state }
-    fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }
+    fn process_state_mut(&mut self) -> &mut CronProcessState { &mut self.process_state }
     unsafe fn maybe_finished(this: *mut Self) { unsafe { CronRemoveJob::maybe_finished(this) } }
 }
 
 impl CronRemoveJob {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
-        if self.err_msg.is_none() {
+        if self.process_state.err_msg.is_none() {
             let mut msg = Vec::new();
             let _ = msg.write_fmt(args);
-            self.err_msg = Some(msg);
+            self.process_state.err_msg = Some(msg);
         }
     }
 
@@ -978,11 +941,7 @@ impl CronRemoveJob {
         // SAFETY: local reborrow (no FnEntry protector); not used after any
         // call below that may free `this`.
         let s = unsafe { &mut *this };
-        if !s
-            .exit_state
-            .as_ref()
-            .is_some_and(ProcessExitReadiness::is_ready)
-        {
+        if !s.process_state.is_ready() {
             return;
         }
         if let Some(proc) = s.process.take() {
@@ -992,14 +951,10 @@ impl CronRemoveJob {
                 (*proc).deref();
             }
         }
-        if s.err_msg.is_some() {
+        if s.process_state.err_msg.is_some() {
             return unsafe { Self::finish(this) };
         }
-        let Some(status) = s
-            .exit_state
-            .as_mut()
-            .and_then(|exit_state| exit_state.exit_status.take())
-        else { return };
+        let Some(status) = s.process_state.take_exit_status() else { return };
         match status {
             Status::Exited(exited) => {
                 let is_acceptable_nonzero = (s.state == RemoveState::ReadingCrontab
@@ -1095,7 +1050,7 @@ impl CronRemoveJob {
         // SAFETY: caller holds the unique Box<Self>; consumed below. Local
         // reborrow has no FnEntry protector and is not used after the drop.
         let this_ref = unsafe { &mut *this };
-        this_ref.state = if this_ref.err_msg.is_some() {
+        this_ref.state = if this_ref.process_state.err_msg.is_some() {
             RemoveState::Failed
         } else {
             RemoveState::Done
@@ -1103,7 +1058,7 @@ impl CronRemoveJob {
         this_ref.poll.unref(vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
-        if let Some(msg) = &this_ref.err_msg {
+        if let Some(msg) = &this_ref.process_state.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
                 &this_ref.global,
                 Ok(this_ref
@@ -1251,12 +1206,10 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             poll: KeepAlive::default(),
             title: ZString::from_bytes(title_slice.slice()),
             state: RemoveState::ReadingCrontab,
+            process_state: CronProcessState::new(),
             process: None,
             stdout_reader: OutputReader::init::<CronRemoveJob>(),
             stderr_reader: OutputReader::init::<CronRemoveJob>(),
-            pending_output_fds: 0,
-            exit_state: None,
-            err_msg: None,
             tmp_path: None,
             // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
             event_loop_handle: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
@@ -1917,8 +1870,6 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     fn process_slot(&mut self) -> &mut Option<*mut Process>;
     fn stdout_reader(&mut self) -> &mut OutputReader;
     fn stderr_reader(&mut self) -> &mut OutputReader;
-    fn pending_output_fds(&mut self) -> &mut i8;
-    fn exit_state(&mut self) -> &mut Option<ProcessExitReadiness>;
 }
 
 bun_spawn::link_impl_ProcessExit! {
@@ -1942,8 +1893,6 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
-    fn pending_output_fds(&mut self) -> &mut i8 { &mut self.pending_output_fds }
-    fn exit_state(&mut self) -> &mut Option<ProcessExitReadiness> { &mut self.exit_state }
 }
 impl SpawnCmdTarget for CronRemoveJob {
     const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
@@ -1952,8 +1901,6 @@ impl SpawnCmdTarget for CronRemoveJob {
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
-    fn pending_output_fds(&mut self) -> &mut i8 { &mut self.pending_output_fds }
-    fn exit_state(&mut self) -> &mut Option<ProcessExitReadiness> { &mut self.exit_state }
 }
 
 /// Generic spawn used by both CronRegisterJob and CronRemoveJob.
@@ -1971,8 +1918,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // SAFETY: local reborrow (no FnEntry protector). Re-derived after each
     // section so no `&mut T` outlives a potentially-freeing call.
     let s = unsafe { &mut *this };
-    *s.exit_state() = None;
-    *s.pending_output_fds() = 0;
+    s.process_state_mut().reset_for_spawn();
 
     #[allow(unused_mut)]
     let mut resolved_argv0: Option<*const c_char> = None;
@@ -2087,7 +2033,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             if !spawned.memfds[1] {
                 s.stdout_reader().set_parent(this_ptr);
                 let _ = sys::set_nonblocking(stdout);
-                *s.pending_output_fds() += 1;
+                s.process_state_mut().pending_output_fds += 1;
                 {
                     use bun_io::pipe_reader::PosixFlags;
                     let flags = &mut s.stdout_reader().flags;
@@ -2125,7 +2071,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             core::mem::forget(dup);
             s.stderr_reader()
                 .set_parent(this.cast::<core::ffi::c_void>());
-            *s.pending_output_fds() += 1;
+            s.process_state_mut().pending_output_fds += 1;
             if s.stderr_reader().start_with_current_pipe().is_err() {
                 s.set_err(format_args!("Failed to start reading stderr"));
                 return unsafe { T::finish(this) };
@@ -2139,11 +2085,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     *s.process_slot() = Some(process);
     let process_identity =
         ProcessIdentity::from_ptr(process).expect("spawned Process pointer must not be null");
-    let pending_output_fds = *s.pending_output_fds();
-    *s.exit_state() = Some(ProcessExitReadiness::new(
-        process_identity,
-        pending_output_fds,
-    ));
+    s.process_state_mut().initialize_exit_state(process_identity);
     // SAFETY: `process` was just allocated by `to_process`; we hold the only
     // ref. `this` is the owning `Box<T>` (only freed in `T::finish`, gated on
     // the type-owned exit state), so it outlives `process`.

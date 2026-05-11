@@ -5,7 +5,7 @@ use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
-    package::scripts::{List as ScriptsList, PrintFormat, Scripts},
+    package::scripts::{List as ScriptsList, ListExt as _, PrintFormat, Scripts},
     package::{PackageColumns as _, PackageColumns as _},
     tree, LoadResult, Lockfile,
 };

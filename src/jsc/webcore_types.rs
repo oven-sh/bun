@@ -84,7 +84,7 @@ pub struct Blob {
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
-    pub name: Cell<bun_string::String>,
+    pub name: bun_string::OwnedStringCell,
 }
 
 // SAFETY: `Blob` holds raw pointers (`content_type`, `global_this`) which
@@ -110,7 +110,7 @@ impl Default for Blob {
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
-            name: Cell::new(bun_string::String::dead()),
+            name: bun_string::OwnedStringCell::new(bun_string::String::dead()),
         }
     }
 }
@@ -325,7 +325,7 @@ impl Blob {
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
-            name: Cell::new(self.name.get()), // borrowed; no `dupe_ref()`
+            name: bun_string::OwnedStringCell::new(self.name.get()), // borrowed; no dupe_ref
         }
     }
 
@@ -350,7 +350,7 @@ impl Blob {
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
-            name: Cell::new(self.name.get().dupe_ref()),
+            name: self.name.clone(),
         };
         // If the source's content_type is heap-allocated, the bitwise copy
         // above aliases the same allocation. Take our own copy so freeing one
@@ -439,7 +439,6 @@ impl Blob {
     /// and many call sites tear down stack copies explicitly.
     pub fn deinit(&mut self) {
         self.detach();
-        self.name.get().deref();
         self.name.set(bun_string::String::dead());
 
         self.free_content_type();

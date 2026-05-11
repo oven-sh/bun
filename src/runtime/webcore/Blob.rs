@@ -1961,18 +1961,17 @@ impl BlobExt for Blob {
     ) -> JsResult<()> {
         // by default we don't have a name so lets allow it to be set undefined
         if value.is_empty_or_undefined_or_null() {
-            self.name.get().deref();
             self.name.set(BunString::dead());
             bun_jsc::generated::JSBlob::name_set_cached(js_this, global_this, value);
             return Ok(());
         }
         if value.is_string() {
-            let old_name = self.name.replace(BunString::empty());
+            let _old_name = self.name.replace(BunString::empty());
             // errdefer this.name = bun.String.empty — handled by the replace above.
             self.name.set(BunString::from_js(value, global_this)?);
             // We don't need to increment the reference count since try_from_js already did it.
             bun_jsc::generated::JSBlob::name_set_cached(js_this, global_this, value);
-            old_name.deref();
+            drop(_old_name); // OwnedString — Drop derefs
         }
         Ok(())
     }
@@ -3026,7 +3025,7 @@ impl BlobExt for Blob {
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
-                                    name: Cell::new(blob.name.get().dupe_ref()),
+                                    name: blob.name.clone(),
                                 };
                                 return Ok(_blob);
                             } else {

@@ -83,7 +83,7 @@ const _: () = {
 /// `finalize`, so stay plain.
 #[repr(C)]
 pub struct Request {
-    pub url: Cell<BunString>,
+    pub url: bun_string::OwnedStringCell,
 
     headers: JsCell<Option<HeadersRef>>,
     // PORT NOTE: Zig `?*AbortSignal` with manual `ref()`/`unref()`. AbortSignal
@@ -911,7 +911,6 @@ impl Request {
         // headers.deref() → HeadersRef::Drop when set to None
         self.headers.set(None);
 
-        self.url.get().deref();
         self.url.set(BunString::empty());
 
         // Zig: `signal.unref()` — AbortSignalRef::Drop unrefs the C++ handle.
@@ -1103,7 +1102,6 @@ impl Request {
                     let href = bun_url::href_from_string(&self.url.get());
                     // TODO: what is the right thing to do for invalid URLS?
                     if !href.is_empty() {
-                        self.url.get().deref();
                         self.url.set(href);
                     }
 
@@ -1596,7 +1594,6 @@ impl Request {
         //
         // we increment the reference count on usage above, so we must
         // decrement it to be perfectly balanced.
-        req.url.get().deref();
 
         req.url.set(href);
 

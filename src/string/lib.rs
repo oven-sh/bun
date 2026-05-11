@@ -2506,3 +2506,41 @@ pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [
 
 // Re-export `wtf::parse_double` at crate root (callers spell it `bun_str::parse_double`).
 pub use wtf::parse_double;
+
+/// [`Cell`]-shaped interior-mutable owned `BunString` slot. Layout-identical
+/// to `Cell<String>` (`#[repr(transparent)]`) so it's a drop-in field
+/// replacement in `#[repr(C)]` FFI structs (`Blob.name`, `Request.url`).
+///
+/// Unlike `Cell<String>`, [`set`] derefs the previous value and [`replace`]
+/// returns an [`OwnedString`] — so the only way to leak a refcount is to
+/// `mem::forget` the cell or its `replace` result. The R-2 `&self` migrations
+/// introduced `Cell<String>::set(..)` calls that silently leaked the old +1.
+///
+/// [`get`] returns a bitwise `String` copy with **borrow** semantics (no ref
+/// bump). Do NOT `.deref()` the returned value.
+#[repr(transparent)]
+#[derive(Default)]
+pub struct OwnedStringCell(core::cell::Cell<String>);
+
+impl OwnedStringCell {
+    #[inline]
+    pub const fn new(s: String) -> Self { Self(core::cell::Cell::new(s)) }
+    #[inline]
+    pub fn get(&self) -> String { self.0.get() }
+    #[inline]
+    pub fn set(&self, new: String) { self.0.replace(new).deref(); }
+    #[inline]
+    pub fn replace(&self, new: String) -> OwnedString { OwnedString(self.0.replace(new)) }
+    #[inline]
+    pub fn take(&self) -> OwnedString { OwnedString(self.0.replace(String::dead())) }
+}
+
+impl Drop for OwnedStringCell {
+    #[inline]
+    fn drop(&mut self) { self.0.get_mut().deref(); }
+}
+
+impl Clone for OwnedStringCell {
+    #[inline]
+    fn clone(&self) -> Self { Self::new(self.0.get().dupe_ref()) }
+}

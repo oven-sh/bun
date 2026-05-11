@@ -40,6 +40,9 @@ use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
     JSModuleLoader, JSValue, JsResult, ResolvedSource,
 };
+use bun_jsc::resolved_source::OwnedResolvedSource;
+use bun_jsc::{
+};
 use bun_jsc::js_promise::Status as PromiseStatus;
 
 use bun_bundler::entry_points::ServerEntryPoint;
@@ -1834,7 +1837,7 @@ unsafe fn transpile_source_code(
     match transpile_source_code_inner(jsc_vm, args, extra) {
         Ok(resolved) => {
             // SAFETY: per fn contract.
-            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+            unsafe { *ret = ErrorableResolvedSource::ok(resolved.into_ffi()) };
             // PORT NOTE: spec calls `resetArena` only on the `Bun__transpileFile`
             // path, never inside `transpileSourceCode` itself — the
             // `transpile_file` hook owns that. Do NOT reset here.
@@ -1865,7 +1868,7 @@ fn transpile_source_code_inner(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
     extra: *mut TranspileExtra,
-) -> Result<ResolvedSource, bun_core::Error> {
+) -> Result<OwnedResolvedSource, bun_core::Error> {
     use Loader as L;
 
     // SAFETY: per fn contract — `extra` is a live `TranspileExtra` for the call.
@@ -1890,12 +1893,12 @@ fn transpile_source_code_inner(
                 L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc
             ))
     {
-        return Ok(ResolvedSource {
+        return Ok(OwnedResolvedSource::new(ResolvedSource {
             source_code: bun_string::String::empty(),
             specifier: input_specifier.dupe_ref(),
             source_url: create_if_different(input_specifier, path.text),
             ..Default::default()
-        });
+        }));
     }
 
     match loader {
@@ -2397,13 +2400,13 @@ fn transpile_source_code_inner(
 
                 // Spec :343-351 — raw JSON: hand the source bytes straight to JSC.
                 if loader == L::Json {
-                    return Ok(ResolvedSource {
+                    return Ok(OwnedResolvedSource::new(ResolvedSource {
                         source_code: bun_string::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         tag: ResolvedSourceTag::JsonForObjectLoader,
                         ..Default::default()
-                    });
+                    }));
                 }
 
                 // Spec :353-364 — disable_transpiling: return raw source.
@@ -2426,12 +2429,12 @@ fn transpile_source_code_inner(
                         }
                         FetchFlags::Transpile => unreachable!(),
                     };
-                    return Ok(ResolvedSource {
+                    return Ok(OwnedResolvedSource::new(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         ..Default::default()
-                    });
+                    }));
                 }
 
                 // Spec :366-384 — JSON/TOML/YAML/JSON5: export as a JS object.
@@ -2472,13 +2475,13 @@ fn transpile_source_code_inner(
                             },
                         )
                     };
-                    return Ok(ResolvedSource {
+                    return Ok(OwnedResolvedSource::new(ResolvedSource {
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         jsvalue_for_export,
                         tag: ResolvedSourceTag::ExportsObject,
                         ..Default::default()
-                    });
+                    }));
                 }
 
                 // Spec :386-398 — already-bundled (bytecode cache hit).
@@ -2507,7 +2510,7 @@ fn transpile_source_code_inner(
                         }
                         _ => (core::ptr::null_mut(), 0),
                     };
-                    return Ok(ResolvedSource {
+                    return Ok(OwnedResolvedSource::new(ResolvedSource {
                         source_code: bun_string::String::clone_latin1(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
@@ -2516,21 +2519,21 @@ fn transpile_source_code_inner(
                         bytecode_cache_size,
                         is_commonjs_module,
                         ..Default::default()
-                    });
+                    }));
                 }
 
                 // Spec :400-415 — empty .cjs/.cts: synthetic `(function(){})`.
                 if parse_result.empty && matches!(loader, L::Js | L::Ts) {
                     let ext = bun_paths::extension(source.path.text);
                     if ext == b".cjs" || ext == b".cts" {
-                        return Ok(ResolvedSource {
+                        return Ok(OwnedResolvedSource::new(ResolvedSource {
                             source_code: bun_string::String::static_(b"(function(){})"),
                             specifier: input_specifier.dupe_ref(),
                             source_url: create_if_different(input_specifier, path.text),
                             is_commonjs_module: true,
                             tag: ResolvedSourceTag::Javascript,
                             ..Default::default()
-                        });
+                        }));
                     }
                 }
 
@@ -2598,7 +2601,7 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
-                    return Ok(ResolvedSource {
+                    return Ok(OwnedResolvedSource::new(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
@@ -2606,7 +2609,7 @@ fn transpile_source_code_inner(
                         // TODO(b2-blocked): `module_info` (:423-428).
                         tag,
                         ..Default::default()
-                    });
+                    }));
                 }
 
                 // Spec :468-479 — link import records.
@@ -2850,7 +2853,7 @@ fn transpile_source_code_inner(
                 // (fd close handled by `_fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
-                return Ok(ResolvedSource {
+                return Ok(OwnedResolvedSource::new(ResolvedSource {
                     source_code,
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
@@ -2859,7 +2862,7 @@ fn transpile_source_code_inner(
                     module_info: core::ptr::null_mut(),
                     tag,
                     ..Default::default()
-                });
+                }));
             }
             // (parse→link→print arm always `return`s; no fallthrough.)
             #[allow(unreachable_code)]
@@ -2882,7 +2885,7 @@ fn transpile_source_code_inner(
                 
                 {
                     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                    return Ok(ResolvedSource {
+                    return Ok(OwnedResolvedSource::new(ResolvedSource {
                         source_code: bun_string::String::static_(include_bytes!(
                             "../js/wasi-runner.js"
                         )),
@@ -2890,7 +2893,7 @@ fn transpile_source_code_inner(
                         source_url: create_if_different(input_specifier, path.text),
                         tag: ResolvedSourceTag::Esm,
                         ..Default::default()
-                    });
+                    }));
                 }
                 // Spec :637-659 RETURNS the wasi-runner source here; it must
                 // NOT fall through to the `.file` recursion below. Fail closed
@@ -2926,7 +2929,7 @@ fn transpile_source_code_inner(
                 SQLITE_MODULE_SOURCE
             };
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-            Ok(ResolvedSource {
+            Ok(OwnedResolvedSource::new(ResolvedSource {
                 source_code: bun_string::String::clone_utf8(
                     sqlite_module_source_code_string,
                 ),
@@ -2934,7 +2937,7 @@ fn transpile_source_code_inner(
                 source_url: create_if_different(input_specifier, path.text),
                 tag: ResolvedSourceTag::Esm,
                 ..Default::default()
-            })
+            }))
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -2943,13 +2946,13 @@ fn transpile_source_code_inner(
         L::Html => {
             if disable_transpilying {
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                return Ok(ResolvedSource {
+                return Ok(OwnedResolvedSource::new(ResolvedSource {
                     source_code: bun_string::String::empty(),
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
                     tag: ResolvedSourceTag::Esm,
                     ..Default::default()
-                });
+                }));
             }
             if global_object.is_null() {
                 return Err(bun_core::err!("NotSupported"));
@@ -2958,13 +2961,13 @@ fn transpile_source_code_inner(
             let global = unsafe { &*global_object };
             let html_bundle = crate::api::HTMLBundle::init(global, path.text);
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-            Ok(ResolvedSource {
+            Ok(OwnedResolvedSource::new(ResolvedSource {
                 jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle.into_raw(), global),
                 specifier: input_specifier.dupe_ref(),
                 source_url: create_if_different(input_specifier, path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()
-            })
+            }))
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -2973,13 +2976,13 @@ fn transpile_source_code_inner(
         _ => {
             if disable_transpilying {
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                return Ok(ResolvedSource {
+                return Ok(OwnedResolvedSource::new(ResolvedSource {
                     source_code: bun_string::String::empty(),
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
                     tag: ResolvedSourceTag::Esm,
                     ..Default::default()
-                });
+                }));
             }
 
             // Spec :756-803 — auto-watch for non-virtual absolute paths.
@@ -3078,13 +3081,13 @@ fn transpile_source_code_inner(
                 bun_jsc::bun_string_jsc::create_utf8_for_js(global, path.text)
                     .map_err(|_| bun_core::err!("JSError"))?
             };
-            Ok(ResolvedSource {
+            Ok(OwnedResolvedSource::new(ResolvedSource {
                 jsvalue_for_export: value,
                 specifier: input_specifier.dupe_ref(),
                 source_url: create_if_different(input_specifier, path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()
-            })
+            }))
         }
     }
 }
@@ -3170,16 +3173,16 @@ export default db;
 /// Rust side carries the string and resolves to the numeric tag via
 /// `Tag::from_name` (PHF over the codegen table in `bun_jsc::resolved_source_tag`).
 #[inline]
-fn js_synthetic_module(name: &'static [u8], specifier: &bun_string::String) -> ResolvedSource {
+fn js_synthetic_module(name: &'static [u8], specifier: &bun_string::String) -> OwnedResolvedSource {
     use bun_jsc::resolved_source::Tag;
-    ResolvedSource {
+    OwnedResolvedSource::new(ResolvedSource {
         source_code: bun_string::String::empty(),
         specifier: *specifier,
         source_url: bun_string::String::static_(name),
         tag: Tag::from_name(name),
         source_code_needs_deref: false,
         ..ResolvedSource::default()
-    }
+    })
 }
 
 /// `ModuleLoader.zig` `getHardcodedModule(jsc_vm, specifier, hardcoded)` —
@@ -3212,14 +3215,14 @@ fn get_hardcoded_module(
                 return None;
             }
             use bun_jsc::resolved_source::Tag;
-            Some(ResolvedSource {
+            Some(OwnedResolvedSource::new(ResolvedSource {
                 source_code: bun_string::String::clone_utf8(&ep.contents),
                 specifier: *specifier,
                 source_url: *specifier,
                 tag: Tag::Esm,
                 source_code_needs_deref: true,
                 ..ResolvedSource::default()
-            })
+            }))
         }
         HardcodedModule::BunInternalForTesting => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
@@ -3239,14 +3242,14 @@ fn get_hardcoded_module(
             // TODO(b2-cycle): `Runtime::source_code()` — `bun_ast::runtime`
             // is a stub re-export until `runtime.rs` un-gates there.
             {
-                return Some(ResolvedSource {
+                return Some(OwnedResolvedSource::new(ResolvedSource {
                     source_code: bun_string::String::init(
                         bun_ast::runtime::Runtime::source_code(),
                     ),
                     specifier: *specifier,
                     source_url: *specifier,
                     ..ResolvedSource::default()
-                });
+                }));
             }
             // Fail closed: until `Runtime::source_code()` un-gates, returning
             // a default-zeroed `ResolvedSource` here would hand C++ a garbage
@@ -4055,7 +4058,7 @@ unsafe fn transpile_file(
     match transpile_source_code_inner(jsc_vm, &args, &raw mut extra) {
         Ok(resolved) => {
             // SAFETY: per fn contract — `ret` is a valid out-param.
-            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+            unsafe { *ret = ErrorableResolvedSource::ok(resolved.into_ffi()) };
             promise.cast::<c_void>()
         }
         Err(err) => {
@@ -4226,7 +4229,7 @@ unsafe fn transpile_virtual_module(
     match transpile_source_code_inner(jsc_vm, &args, &raw mut extra) {
         Ok(resolved) => {
             // SAFETY: per fn contract — `ret` is a valid out-param.
-            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+            unsafe { *ret = ErrorableResolvedSource::ok(resolved.into_ffi()) };
             bun_analytics::features::virtual_modules
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             true

@@ -68,14 +68,17 @@ pub const UserOptions = struct {
         }
 
         if (try config.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
+            if (!js_options.isObject()) {
+                return global.throwInvalidArgumentTypeValue("bundlerOptions", "object", js_options);
+            }
             if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
-                bundler_options.server = try BuildConfigSubset.fromJS(global, server_options);
+                bundler_options.server = try BuildConfigSubset.fromJS(global, "bundlerOptions.server", server_options);
             }
             if (try js_options.getOptional(global, "client", JSValue)) |client_options| {
-                bundler_options.client = try BuildConfigSubset.fromJS(global, client_options);
+                bundler_options.client = try BuildConfigSubset.fromJS(global, "bundlerOptions.client", client_options);
             }
             if (try js_options.getOptional(global, "ssr", JSValue)) |ssr_options| {
-                bundler_options.ssr = try BuildConfigSubset.fromJS(global, ssr_options);
+                bundler_options.ssr = try BuildConfigSubset.fromJS(global, "bundlerOptions.ssr", ssr_options);
             }
         }
 
@@ -202,8 +205,12 @@ const BuildConfigSubset = struct {
     minify_identifiers: ?bool = null,
     minify_whitespace: ?bool = null,
 
-    pub fn fromJS(global: *jsc.JSGlobalObject, js_options: JSValue) bun.JSError!BuildConfigSubset {
+    pub fn fromJS(global: *jsc.JSGlobalObject, comptime name: []const u8, js_options: JSValue) bun.JSError!BuildConfigSubset {
         var options = BuildConfigSubset{};
+
+        if (!js_options.isObject()) {
+            return global.throwInvalidArgumentTypeValue(name, "object", js_options);
+        }
 
         if (try js_options.getOptional(global, "sourcemap", JSValue)) |val| brk: {
             if (try bun.schema.api.SourceMapMode.fromJS(global, val)) |sourcemap| {
@@ -215,11 +222,16 @@ const BuildConfigSubset = struct {
         }
 
         if (try js_options.getOptional(global, "minify", JSValue)) |minify_options| brk: {
-            if (minify_options.isBoolean() and minify_options.asBoolean()) {
-                options.minify_syntax = minify_options.asBoolean();
-                options.minify_identifiers = minify_options.asBoolean();
-                options.minify_whitespace = minify_options.asBoolean();
+            if (minify_options.isBoolean()) {
+                const value = minify_options.asBoolean();
+                options.minify_syntax = value;
+                options.minify_identifiers = value;
+                options.minify_whitespace = value;
                 break :brk;
+            }
+
+            if (!minify_options.isObject()) {
+                return global.throwInvalidArgumentTypeValue(name ++ ".minify", "boolean or object", minify_options);
             }
 
             if (try minify_options.getBooleanLoose(global, "whitespace")) |value| {

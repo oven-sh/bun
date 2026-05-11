@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::HiveArray;
 use bun_core::Output;
+use bun_io_types::keep_alive::KeepAliveState;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_uws_sys::Loop as UwsLoop;
 
@@ -108,44 +109,36 @@ pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
 /// This is not reference counted. It only tracks active or inactive.
 #[derive(Default)]
 pub struct KeepAlive {
-    status: KeepAliveStatus,
-}
-
-#[derive(Default, Copy, Clone, PartialEq, Eq)]
-enum KeepAliveStatus {
-    Active,
-    #[default]
-    Inactive,
-    Done,
+    status: KeepAliveState,
 }
 
 impl KeepAlive {
     #[inline]
     pub fn is_active(&self) -> bool {
-        self.status == KeepAliveStatus::Active
+        self.status.is_active()
     }
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(&mut self) {
         self.unref(get_vm_ctx(AllocatorType::Js));
-        self.status = KeepAliveStatus::Done;
+        self.status = KeepAliveState::Done;
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(&mut self, loop_: &mut Loop) {
-        if self.status != KeepAliveStatus::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = KeepAliveStatus::Inactive;
+        self.status = KeepAliveState::Inactive;
         loop_sub_active(loop_, 1);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(&mut self, loop_: &mut Loop) {
-        if self.status != KeepAliveStatus::Inactive {
+        if !self.status.is_inactive() {
             return;
         }
-        self.status = KeepAliveStatus::Active;
+        self.status = KeepAliveState::Active;
         loop_add_active(loop_, 1);
     }
 
@@ -155,49 +148,49 @@ impl KeepAlive {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = KeepAliveStatus::Inactive;
+        self.status = KeepAliveState::Inactive;
         // SAFETY: sole `&mut Loop` borrow in this scope.
         unsafe { event_loop_ctx.platform_event_loop() }.unref();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
     pub fn unref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = KeepAliveStatus::Inactive;
+        self.status = KeepAliveState::Inactive;
         vm.unref_concurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unref_on_next_tick(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = KeepAliveStatus::Inactive;
+        self.status = KeepAliveState::Inactive;
         // vm.pending_unref_counter +|= 1;
         event_loop_ctx.increment_pending_unref_counter();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
     pub fn unref_on_next_tick_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = KeepAliveStatus::Inactive;
+        self.status = KeepAliveState::Inactive;
         // TODO(port): vm.pending_unref_counter must be an Atomic; Zig uses @atomicRmw .Add .monotonic
         vm.increment_pending_unref_counter();
     }
 
     /// Allow a poll to keep the process alive.
     pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Inactive {
+        if !self.status.is_inactive() {
             return;
         }
-        self.status = KeepAliveStatus::Active;
+        self.status = KeepAliveState::Active;
         // SAFETY: sole `&mut Loop` borrow in this scope.
         unsafe { event_loop_ctx.platform_event_loop() }.ref_();
     }
@@ -214,10 +207,10 @@ impl KeepAlive {
 
     /// Allow a poll to keep the process alive.
     pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != KeepAliveStatus::Inactive {
+        if !self.status.is_inactive() {
             return;
         }
-        self.status = KeepAliveStatus::Active;
+        self.status = KeepAliveState::Active;
         vm.ref_concurrently();
     }
 

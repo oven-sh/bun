@@ -73,6 +73,8 @@ Natural sibling crates
   ├─> bun_io_types
   │     ├─> heap
   │     │     - allocation-free intrusive heap metadata shared by IO, timers, and lifecycle-type state
+  │     ├─> keep_alive::KeepAliveState
+  │     │     - pure active/inactive/done status; platform loop ref/unref effects stay in bun_io
   │     ├─> owner::OwnerToken<T>
   │     │     - non-zero typed pointer identity
   │     ├─> reader::BufferedReaderHandle
@@ -587,6 +589,7 @@ Required deeper type movement
   │     ├─> ProcessState now also stores ProcessHandle and output-reader handles from the production spawn path
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert GlobalRef<()> VM pointer through bun_jsc_types::GlobalRef
   │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert JSPromiseStrongHandle promise-root slot through bun_jsc_types
+  │     ├─> bun_io_types now owns KeepAliveState, but the cron owner still owns the KeepAlive effect wrapper and event-loop ref/unref calls
   │     ├─> CronRegisterJobState / CronRemoveJobState now own ready-status policy and return CronProcessCompletion
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
   │     ├─> JSPromiseStrongHandle and JsRefState have moved below bun_jsc, but promise resolution/rejection, strong-slot creation/destruction, and wrapper effects still stay in the bun_runtime/bun_jsc effect layer

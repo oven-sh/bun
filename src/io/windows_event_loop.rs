@@ -3,6 +3,7 @@ use core::ptr;
 
 use bun_collections::HiveArray;
 use bun_core::Output;
+use bun_io_types::keep_alive::KeepAliveState;
 use bun_sys::Fd;
 use bun_sys::windows::libuv as uv;
 use bun_uws_sys::WindowsLoop;
@@ -26,49 +27,41 @@ pub type Loop = uv::Loop;
 
 #[derive(Default)]
 pub struct KeepAlive {
-    status: Status,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
-enum Status {
-    Active,
-    #[default]
-    Inactive,
-    Done,
+    status: KeepAliveState,
 }
 
 impl KeepAlive {
     #[inline]
     pub fn is_active(&self) -> bool {
-        self.status == Status::Active
+        self.status.is_active()
     }
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(&mut self) {
-        if self.status == Status::Active {
+        if self.status.is_active() {
             self.unref(get_vm_ctx(AllocatorType::Js));
         }
 
-        self.status = Status::Done;
+        self.status = KeepAliveState::Done;
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(&mut self, loop_: &mut Loop) {
-        if self.status != Status::Active {
+        if !self.status.is_active() {
             return;
         }
 
-        self.status = Status::Inactive;
+        self.status = KeepAliveState::Inactive;
         loop_.dec();
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(&mut self, loop_: &mut Loop) {
-        if self.status != Status::Active {
+        if !self.status.is_active() {
             return;
         }
 
-        self.status = Status::Active;
+        self.status = KeepAliveState::Active;
         loop_.inc();
     }
 
@@ -78,47 +71,47 @@ impl KeepAlive {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != Status::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = Status::Inactive;
+        self.status = KeepAliveState::Inactive;
         unsafe { event_loop_ctx.platform_event_loop() }.sub_active(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
     pub fn unref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = Status::Inactive;
+        self.status = KeepAliveState::Inactive;
         vm.unref_concurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unref_on_next_tick(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = Status::Inactive;
+        self.status = KeepAliveState::Inactive;
         unsafe { vm.platform_event_loop() }.dec();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
     pub fn unref_on_next_tick_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
+        if !self.status.is_active() {
             return;
         }
-        self.status = Status::Inactive;
+        self.status = KeepAliveState::Inactive;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
         unsafe { vm.platform_event_loop() }.dec();
     }
 
     /// Allow a poll to keep the process alive.
     pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != Status::Inactive {
+        if !self.status.is_inactive() {
             return;
         }
-        self.status = Status::Active;
+        self.status = KeepAliveState::Active;
         unsafe { event_loop_ctx.platform_event_loop() }.ref_();
     }
 
@@ -134,10 +127,10 @@ impl KeepAlive {
 
     /// Allow a poll to keep the process alive.
     pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Inactive {
+        if !self.status.is_inactive() {
             return;
         }
-        self.status = Status::Active;
+        self.status = KeepAliveState::Active;
         vm.ref_concurrently();
     }
 

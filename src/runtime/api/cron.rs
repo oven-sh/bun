@@ -199,8 +199,6 @@ trait CronJobBase: Sized {
 
 pub struct CronRegisterJob {
     promise: jsc::JSPromiseStrong,
-    // LIFETIMES.tsv: JSC_BORROW → GlobalRef
-    global: GlobalRef,
     poll: KeepAlive,
 
     state: CronRegisterJobState,
@@ -328,15 +326,14 @@ impl CronRegisterJob {
         this_ref.poll.unref(vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
+        let global = this_ref.state.global.cast::<JSGlobalObject>();
         if let Some(msg) = &this_ref.state.process.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
-                &this_ref.global,
-                Ok(this_ref
-                    .global
-                    .create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
+                &global,
+                Ok(global.create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
-            let _ = this_ref.promise.resolve(&this_ref.global, JSValue::UNDEFINED);
+            let _ = this_ref.promise.resolve(&global, JSValue::UNDEFINED);
         }
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
@@ -715,9 +712,9 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
         let job = bun_core::heap::into_raw(Box::new(CronRegisterJob {
             promise: jsc::JSPromiseStrong::init(global),
-            global: GlobalRef::from(global),
             poll: KeepAlive::default(),
             state: CronRegisterJobState::new(
+                GlobalRef::from(global).cast::<()>(),
                 bun_exe,
                 abs_path,
                 ZString::from_bytes(normalized_schedule),
@@ -861,8 +858,6 @@ const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 
 pub struct CronRemoveJob {
     promise: jsc::JSPromiseStrong,
-    // LIFETIMES.tsv: JSC_BORROW → GlobalRef
-    global: GlobalRef,
     poll: KeepAlive,
 
     state: CronRemoveJobState,
@@ -1004,15 +999,14 @@ impl CronRemoveJob {
         this_ref.poll.unref(vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
+        let global = this_ref.state.global.cast::<JSGlobalObject>();
         if let Some(msg) = &this_ref.state.process.err_msg {
             let _ = this_ref.promise.reject_with_async_stack(
-                &this_ref.global,
-                Ok(this_ref
-                    .global
-                    .create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
+                &global,
+                Ok(global.create_error_instance(format_args!("{}", bstr::BStr::new(msg)))),
             );
         } else {
-            let _ = this_ref.promise.resolve(&this_ref.global, JSValue::UNDEFINED);
+            let _ = this_ref.promise.resolve(&global, JSValue::UNDEFINED);
         }
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
@@ -1148,9 +1142,11 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
         let job = bun_core::heap::into_raw(Box::new(CronRemoveJob {
             promise: jsc::JSPromiseStrong::init(global),
-            global: GlobalRef::from(global),
             poll: KeepAlive::default(),
-            state: CronRemoveJobState::new(ZString::from_bytes(title_slice.slice())),
+            state: CronRemoveJobState::new(
+                GlobalRef::from(global).cast::<()>(),
+                ZString::from_bytes(title_slice.slice()),
+            ),
             process: None,
             stdout_reader: OutputReader::init::<CronRemoveJob>(),
             stderr_reader: OutputReader::init::<CronRemoveJob>(),

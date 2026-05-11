@@ -34,8 +34,8 @@ Dependency DAG
   │     │     ├─> depends on bun_spawn_types
   │     │     └─> owns lifecycle/security process-output state and action enums
   │     ├─> bun_runtime_types
-  │     │     ├─> depends on bun_spawn_types
-  │     │     └─> owns runtime-domain process/task state, not JSC effects
+  │     │     ├─> depends on bun_spawn_types, plus bun_jsc_types for inert JSC pointer handles
+  │     │     └─> owns runtime-domain process/task state, not JSC effects or drop-owning handles
   │     ├─> bun_jsc_types
   │     │     ├─> depends on no higher crates
   │     │     └─> owns inert JSC handle shapes that can be named below bun_jsc
@@ -110,7 +110,7 @@ Natural sibling crates
   │     ├─> cron_parser::CronExpression / CronError
   │     │     └─> pure cron expression parse/state; JSC date conversion stays in bun_runtime
   │     └─> cron / subprocess / shell / reader state
-  │           └─> runtime-domain process/task/readiness shape that can be named below bun_runtime
+  │           └─> runtime-domain process/task/readiness shape, including inert GlobalRef<()> where a job only needs VM pointer identity below bun_runtime
   └─> owning crates
         ├─> bun_io stores IO owner/token values and owns kernel registration
         ├─> bun_spawn owns process wait state and process lifetime
@@ -256,8 +256,9 @@ errors still print the same script/package/errno message from `bun_install`,
 with the lower IO crate passing only typed error data. The install context
 stores the entry id plus a typed installer handle; the concrete `Installer<'_>`
 pointer is recovered only at the `bun_install` effect sites. Cron
-register/remove now keep their child-process
-readiness/error state in `bun_runtime_types::cron::ProcessState`: pending
+register/remove now keep their OS-cron job state in `bun_runtime_types::cron`:
+phase, title/path/schedule/tmp-path data, parsed expression, the inert
+`GlobalRef<()>` VM pointer, child-process readiness/error state, pending
 output-fd count, lower `ProcessHandle`, stdout/stderr `BufferedReaderHandle`s,
 initialized `ProcessExitReadiness`, and the first process-output error. The
 production cron spawn path records those handles, and the current owner
@@ -267,9 +268,10 @@ ready, `CronRegisterJobState::on_ready_process_status` /
 `CronRemoveJobState::on_ready_process_status` decide whether the owner should
 finish or advance and record the same first error bytes/messages as the old
 runtime match. `bun_runtime` still performs the effects: detach/deref the
-process, inspect/drain the runtime readers, resolve/reject the promise, spawn
-the next OS command, unlink temp paths, and free the job. Their exact
-job/effect owner still needs to move before
+process, inspect/drain the runtime readers, cast the inert global pointer back
+at the effect site, resolve/reject the promise, spawn the next OS command,
+unlink temp paths, and free the job. Their exact job/effect owner still needs
+to move before
 `ProcessExitKind::{CronRegister,CronRemove}` can disappear.
 
 `Bun.spawn` subprocesses now also carry their lower child-process identities in
@@ -295,7 +297,7 @@ clearing, and destruction of those slots.
 semantics. Moving the full `Subprocess`/cron job owner below `bun_runtime`
 is therefore not a matter of copying a few pointer-sized fields into
 `bun_runtime_types`; the drop-owning JSC handles still need a real lower
-handle/sys split, with effectful promise/global operations applied by
+handle/sys split, with effectful promise operations applied by
 `bun_runtime`. The JS shell path has the same interpreter-identity issue that
 Mini avoids with tick context: a JS event loop can have multiple live shell
 interpreters, so it carries an explicit sidecar-owned `InterpreterHandle`
@@ -505,20 +507,20 @@ Typed reducer paths that feed existing owner/effect contexts
 Remaining owner movement
   ├─> CronRegisterJob / CronRemoveJob
   │     ├─> current owners: runtime/api/cron.rs::CronRegisterJob and CronRemoveJob
-  │     │     - still own promise/global/KeepAlive, process ref, and stdout/stderr reader resources
-  │     │     - the non-JSC OS-cron data now lives in CronRegisterJobState / CronRemoveJobState: phase, title/path/schedule/tmp path, parsed expression, process reducer, status-policy reducer, and error buffer
+  │     │     - still own promise/KeepAlive, process ref, and stdout/stderr reader resources
+  │     │     - the sidecar OS-cron state now lives in CronRegisterJobState / CronRemoveJobState: phase, title/path/schedule/tmp path, parsed expression, inert GlobalRef<()>, process reducer, status-policy reducer, and error buffer
   │     │     - spawn_cmd_generic still installs ProcessExit::{CronRegister,CronRemove} after sidecar job state records the lower process/reader handles
   │     │     - spawn_cmd_generic also still wires stdout/stderr through BufferedReaderParentLink, so reader-last completion can re-enter maybe_finished(this)
   │     │     - JSPromiseStrong is drop-owning JSC state; KeepAlive/BufferedReader/Process are runtime/IO/process resources, not inert type-crate data
   │     ├─> current event-loop context
   │     │     - cron jobs run on the normal JS event loop; there is no per-cron current_context analogous to the Mini CLI State or test Coordinator context
-  │     │     - bun_runtime_types currently depends only on bun_spawn_types; bun_jsc_types now covers inert global pointer and strong slot-handle shapes but not drop-owning promise/strong handles
+  │     │     - bun_runtime_types now depends on bun_spawn_types and bun_jsc_types; bun_jsc_types covers inert global pointer and strong slot-handle shapes but not drop-owning promise/strong handles
   │     ├─> current re-entry: CronJobBase::on_process_exit
   │     │     - updates ProcessExitReadiness and immediately calls maybe_finished(this)
   │     ├─> synchronous effect: maybe_finished / advance_state / finish
   │     │     - may resolve/reject promises, spawn the next cron command, free the job, or continue cron-specific cleanup
   │     └─> honest next move
-  │           - split the cron job state/effect boundary into a runtime sidecar shape that both bun_spawn and bun_runtime can name, and introduce/move any inert JSC handle types before putting promise/global-like fields in that shape
+  │           - split the cron job state/effect boundary into a runtime sidecar shape that both bun_spawn and bun_runtime can name, and introduce/move any lower JSC handle types before putting promise/strong-like fields in that shape
   │           - a ProcessExitTarget that stores only ProcessState preserves the reducer but loses process-exit-last synchronous owner re-entry
   │           - a ProcessExitTarget that stores CronRegisterJob*/CronRemoveJob* is the old callback owner pointer under a typed spelling
   │           - a ProcessIdentity lookup through PackageManager/runtime state would add a registry path that this branch is deliberately avoiding
@@ -568,10 +570,11 @@ Required deeper type movement
   │     ├─> CronRegisterState / CronRemoveState / ProcessState now live in bun_runtime_types::cron
   │     ├─> CronExpression / CronError now live in bun_runtime_types::cron_parser; only JSC date arithmetic remains in bun_runtime
   │     ├─> ProcessState now also stores ProcessHandle and output-reader handles from the production spawn path
+  │     ├─> CronRegisterJobState / CronRemoveJobState now also store the inert GlobalRef<()> VM pointer through bun_jsc_types::GlobalRef
   │     ├─> CronRegisterJobState / CronRemoveJobState now own ready-status policy and return CronProcessCompletion
   │     ├─> the honest shape is still a runtime sidecar state that can own the remaining non-JSC cron transition data and expose typed actions to bun_runtime
-  │     ├─> the JSC promise/global side needs its own inert handle split before a complete cron job state can live below bun_runtime
-  │     └─> if the promise/global owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
+  │     ├─> the JSC promise/strong side needs its own lower handle split before a complete cron job state can live below bun_runtime
+  │     └─> if the promise/effect owner stays only in CronRegisterJob/CronRemoveJob, any process-exit target that resumes it is still an owner callback
   └─> Bun.spawn needs a separable subprocess exit state
         ├─> the current JS wrapper owns every edge the exit path mutates: JSC refs, stdio wrappers, IPC, abort/timer state, terminal state, VM auto-killer cleanup, and self deref
         ├─> SubprocessExitState now stores the lower ProcessHandle, stdout/stderr BufferedReaderHandle, and cached Rusage from the production spawn path

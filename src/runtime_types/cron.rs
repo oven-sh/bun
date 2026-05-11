@@ -3,6 +3,7 @@ use std::io::Write as _;
 use crate::cron_parser::CronExpression;
 use bun_core::{ZBox as ZString, ZStr};
 use bun_io_types::reader::BufferedReaderHandle;
+use bun_jsc_types::GlobalRef;
 use bun_spawn_types::process_exit::{
     ProcessExitContext, ProcessExitReadiness, ProcessExitReadinessAction, ProcessHandle,
     ProcessIdentity,
@@ -39,6 +40,7 @@ pub enum CronProcessCompletion {
 }
 
 pub struct CronRegisterJobState {
+    pub global: GlobalRef,
     pub bun_exe: &'static ZStr,
     pub abs_path: ZString,
     pub schedule: ZString,
@@ -52,6 +54,7 @@ pub struct CronRegisterJobState {
 impl CronRegisterJobState {
     #[inline]
     pub fn new(
+        global: GlobalRef,
         bun_exe: &'static ZStr,
         abs_path: ZString,
         schedule: ZString,
@@ -59,6 +62,7 @@ impl CronRegisterJobState {
         parsed_cron: CronExpression,
     ) -> Self {
         Self {
+            global,
             bun_exe,
             abs_path,
             schedule,
@@ -138,6 +142,7 @@ impl CronRegisterJobState {
 }
 
 pub struct CronRemoveJobState {
+    pub global: GlobalRef,
     pub title: ZString,
     pub phase: CronRemoveState,
     pub process: ProcessState,
@@ -146,8 +151,9 @@ pub struct CronRemoveJobState {
 
 impl CronRemoveJobState {
     #[inline]
-    pub fn new(title: ZString) -> Self {
+    pub fn new(global: GlobalRef, title: ZString) -> Self {
         Self {
+            global,
             title,
             phase: CronRemoveState::ReadingCrontab,
             process: ProcessState::new(),
@@ -351,6 +357,12 @@ mod tests {
     use super::*;
     use bun_spawn_types::{Exited, rusage_zeroed};
 
+    static TEST_GLOBAL: () = ();
+
+    fn test_global() -> GlobalRef {
+        GlobalRef::new(&TEST_GLOBAL)
+    }
+
     #[test]
     fn cron_states_keep_zig_tag_shape() {
         assert_eq!(core::mem::size_of::<CronRegisterState>(), 1);
@@ -377,6 +389,7 @@ mod tests {
             weekdays_is_wildcard: false,
         };
         let mut register = CronRegisterJobState::new(
+            test_global(),
             ZStr::from_static(b"bun\0"),
             ZString::from_bytes(b"/tmp/job.js"),
             ZString::from_bytes(b"* * * * *"),
@@ -391,7 +404,7 @@ mod tests {
             Some("Failed to read process output: EIO".as_bytes())
         );
 
-        let remove = CronRemoveJobState::new(ZString::from_bytes(b"title"));
+        let remove = CronRemoveJobState::new(test_global(), ZString::from_bytes(b"title"));
         assert_eq!(remove.phase, CronRemoveState::ReadingCrontab);
         assert_eq!(remove.title.as_bytes(), b"title");
     }
@@ -415,6 +428,7 @@ mod tests {
         // should finish or advance to the next spawn. Promise resolution and
         // spawning remain runtime effects.
         let mut register = CronRegisterJobState::new(
+            test_global(),
             ZStr::from_static(b"bun\0"),
             ZString::from_bytes(b"/tmp/job.js"),
             ZString::from_bytes(b"* * * * *"),
@@ -447,7 +461,7 @@ mod tests {
         // Removal treats missing jobs as success in the same phases as the
         // runtime owner code did. The type crate owns that decision now; the
         // caller still performs the actual promise/global effects.
-        let mut remove = CronRemoveJobState::new(ZString::from_bytes(b"title"));
+        let mut remove = CronRemoveJobState::new(test_global(), ZString::from_bytes(b"title"));
         assert_eq!(
             remove.on_ready_process_status(
                 Status::Exited(Exited { code: 1, signal: 0 }),

@@ -7,13 +7,13 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_contain_values(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // defer this.postMatch(globalThis);
         // PORT NOTE: reshaped for borrowck — move `this` into the guard and access via DerefMut.
-        let mut this = scopeguard::guard(this, |t| t.post_match(global));
+        let this = scopeguard::guard(self, |t| t.post_match(global));
 
         let this_value = frame.this();
         // TODO(port): arguments_old(1) API shape — confirm slice accessor on the Rust side.
@@ -33,7 +33,7 @@ impl Expect {
         expected.ensure_still_alive();
         let value: JSValue = this.get_value(global, this_value, "toContainValues", "<green>expected<r>")?;
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         let mut pass = true;
 
         if !value.is_undefined_or_null() {

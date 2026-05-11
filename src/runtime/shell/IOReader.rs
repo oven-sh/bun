@@ -363,7 +363,7 @@ impl IOReader {
             return;
         }
         // SAFETY: interp outlives every IOReader. Single-threaded.
-        y.run(unsafe { &mut *interp });
+        y.run(unsafe { &*interp });
     }
 }
 
@@ -465,7 +465,7 @@ fn dispatch_read_chunk(
         return Yield::suspended();
     }
     // SAFETY: interp outlives the reader.
-    let interp = unsafe { &mut *interp };
+    let interp = unsafe { &*interp };
     match child.tag {
         ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
             interp, child.node, chunk, remove,
@@ -482,7 +482,7 @@ fn dispatch_reader_done(
         return Yield::suspended();
     }
     // SAFETY: interp outlives the reader.
-    let interp = unsafe { &mut *interp };
+    let interp = unsafe { &*interp };
     match child.tag {
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)
@@ -491,7 +491,7 @@ fn dispatch_reader_done(
 }
 
 /// Public hoisted dispatch (kept for parity with `io_writer::on_io_writer_chunk`).
-pub fn on_read_chunk(interp: &mut Interpreter, child: ChildPtr, chunk: &[u8]) -> Yield {
+pub fn on_read_chunk(interp: &Interpreter, child: ChildPtr, chunk: &[u8]) -> Yield {
     let mut remove = false;
     match child.tag {
         ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
@@ -501,7 +501,7 @@ pub fn on_read_chunk(interp: &mut Interpreter, child: ChildPtr, chunk: &[u8]) ->
 }
 
 pub fn on_reader_done(
-    interp: &mut Interpreter,
+    interp: &Interpreter,
     child: ChildPtr,
     err: Option<sys::SystemError>,
 ) -> Yield {

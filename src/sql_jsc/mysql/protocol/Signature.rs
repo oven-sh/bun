@@ -23,22 +23,28 @@ impl Signature {
     // `deinit` deleted — body only freed owned slices; `Box<[T]>` fields drop automatically.
 
     pub fn hash(&self) -> u64 {
-        // SAFETY: reinterpreting `[Param]` as raw bytes for hashing, matching Zig
-        // `std.mem.sliceAsBytes`. `Param` is a POD value; any padding bytes are
-        // hashed identically on both sides.
-        let fields_bytes = unsafe {
-            core::slice::from_raw_parts(
-                self.fields.as_ptr().cast::<u8>(),
-                core::mem::size_of_val::<[Param]>(&self.fields),
-            )
-        };
+        // Hash `name` followed by each param's `(type, flags)` field-by-field.
+        //
+        // This intentionally does NOT reinterpret `&[Param]` as `&[u8]` (the Zig
+        // port originally mirrored `std.mem.sliceAsBytes`): `Param` has default
+        // `repr(Rust)` with a `u8` enum + `u16` bitflags, leaving one padding
+        // byte. Exposing padding through `&[u8]` reads uninitialized memory and
+        // is UB. The hash is a process-local prepared-statement cache key, so it
+        // only needs to be self-consistent — byte-for-byte layout parity with Zig
+        // is not required.
+        //
         // PERF(port): Zig fed two slices into a streaming Wyhash; bun_wyhash
         // currently lacks the std-compatible streaming `Wyhash` type. Concatenate
         // into a temp Vec until that lands.
         // TODO(b2-blocked): bun_wyhash::Wyhash (streaming std-compatible API)
-        let mut buf: Vec<u8> = Vec::with_capacity(self.name.len() + fields_bytes.len());
+        const BYTES_PER_PARAM: usize = 1 /* FieldType */ + 2 /* ColumnFlags */;
+        let mut buf: Vec<u8> =
+            Vec::with_capacity(self.name.len() + self.fields.len() * BYTES_PER_PARAM);
         buf.extend_from_slice(&self.name);
-        buf.extend_from_slice(fields_bytes);
+        for p in self.fields.iter() {
+            buf.push(p.r#type as u8);
+            buf.extend_from_slice(&p.flags.to_int().to_ne_bytes());
+        }
         bun_wyhash::hash(&buf)
     }
 

@@ -7,7 +7,7 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_instance_of(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -41,7 +41,7 @@ pub fn to_be_instance_of(
     let value: JSValue =
         this.get_value(global, this_value, "toBeInstanceOf", "<green>expected<r>")?;
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = value.is_instance_of(global, expected_value)?;
     if not {
         pass = !pass;

@@ -25,7 +25,7 @@ impl Mode {
 // runtime value here — the body branches on it only on cold/error paths.
 #[inline]
 fn to_have_returned_times_fn(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     callframe: &CallFrame,
     mode: Mode,
@@ -37,7 +37,7 @@ fn to_have_returned_times_fn(
     // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: reshaped for borrowck — the guard owns the &mut Expect and runs post_match on
     // every exit path; access goes through DerefMut so the unique borrow is never aliased.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let value: JSValue =
         this.get_value(global, this_value, mode.tag_name(), "<green>expected<r>")?;
@@ -83,7 +83,7 @@ fn to_have_returned_times_fn(
         Mode::ToHaveReturnedTimes => actual_success_count == expected_success_count,
     };
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         pass = !pass;
     }
@@ -122,20 +122,20 @@ fn to_have_returned_times_fn(
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_have_returned(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        to_have_returned_times_fn(this, global, callframe, Mode::ToHaveReturned)
+        to_have_returned_times_fn(self, global, callframe, Mode::ToHaveReturned)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn to_have_returned_times(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        to_have_returned_times_fn(this, global, callframe, Mode::ToHaveReturnedTimes)
+        to_have_returned_times_fn(self, global, callframe, Mode::ToHaveReturnedTimes)
     }
 }
 

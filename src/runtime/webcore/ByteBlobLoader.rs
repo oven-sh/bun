@@ -193,7 +193,7 @@ impl ByteBlobLoader {
             self.content_type_allocated = false;
         }
 
-        self.parent().is_closed = true;
+        self.parent().is_closed.set(true);
         Some(blob::Any::Blob(blob))
     }
 
@@ -209,14 +209,12 @@ impl ByteBlobLoader {
         self.clear_data();
     }
 
-    // TODO(port): kept as inherent method (not `Drop`) — this is passed as a callback to
-    // `NewSource(...)` and calls `self.parent().deinit()` which destroys the enclosing Source
-    // allocation. Converting to `Drop` would double-free the parent.
+    // Kept as inherent method (not `Drop`) — invoked via `SourceContext::deinit_fn`.
+    // Only side-effect teardown lives here; the enclosing `Box<Source>` is freed by
+    // the caller (`NewSource::decrement_count`) *after* this returns. Freeing the
+    // parent here would deallocate the storage backing `&mut self` (dangling UAF).
     pub fn deinit(&mut self) {
         self.clear_data();
-        // SAFETY: `self` is the `context` field of a `Box<Source>` allocated via
-        // `Source::new`; this is the terminal call in the JS finalizer path.
-        unsafe { self.parent().deinit() };
     }
 
     fn clear_data(&mut self) {

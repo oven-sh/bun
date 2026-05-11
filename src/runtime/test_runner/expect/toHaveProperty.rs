@@ -8,12 +8,12 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_property(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
@@ -45,7 +45,7 @@ pub fn to_have_property(
         return Err(global.throw(format_args!("Expected path must be a string or an array")));
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut path_string = ZigString::EMPTY;
     expected_property_path.to_zig_string(&mut path_string, global)?;
 

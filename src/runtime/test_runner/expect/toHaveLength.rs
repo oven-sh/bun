@@ -7,14 +7,14 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_length(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // PORT NOTE: Zig `defer this.postMatch(globalThis)` — scopeguard owns the `&mut Expect`
     // borrow and DerefMut's back to it, so post_match runs on every exit path without an
     // overlapping borrow.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
@@ -58,7 +58,7 @@ pub fn to_have_length(
         )));
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
 
     let actual_length = value.get_length_if_property_exists_internal(global)?;

@@ -58,7 +58,7 @@ pub enum ExecBranch {
 
 impl If {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::If,
         parent: NodeId,
@@ -72,11 +72,11 @@ impl If {
         }))
     }
 
-    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let parent = interp.as_if(this).base.parent;
         loop {
             // PORT NOTE: reshaped for borrowck — we read/mutate `state` via a
@@ -181,7 +181,7 @@ impl If {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -195,7 +195,7 @@ impl If {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         log!("If {} deinit", this);
         interp.as_if_mut(this).base.end_scope();
     }

@@ -1,12 +1,10 @@
-use core::cell::RefCell;
-
 use bun_string::strings;
 use bun_url::PercentEncoding;
 
 // TODO(port): lifetime — every `&'static [u8]` field below actually borrows from
-// either the `parse()` input slice or from the threadlocal scratch buffers. Zig
-// has no lifetimes so this is implicit there. Phase B should either add a
-// lifetime param to `URLPath` or restructure `parse()` to own the decoded buffer.
+// either the `parse()` input slice or, when the input was percent-encoded, from
+// `_decoded_storage`. Zig has no lifetimes so this is implicit there. Phase B
+// should add a lifetime param to `URLPath` so the input-borrow case is checked.
 #[derive(Default)]
 pub struct URLPath {
     pub extname: &'static [u8],
@@ -18,6 +16,16 @@ pub struct URLPath {
     /// Treat URLs as non-sourcemap URLS
     /// Then at the very end, we check.
     pub is_source_map: bool,
+    /// Owned backing storage for the slice fields when `parse()` had to
+    /// percent-decode. Heap-stable: the slice fields above point into this
+    /// allocation, which is never resized and lives exactly as long as `self`.
+    /// Replaces the Zig threadlocal scratch buffers — owning the decode buffer
+    /// per-URLPath removes the use-after-free that a shared growable buffer
+    /// would introduce on the next `parse()` call.
+    ///
+    /// `URLPath` must not be `Clone`: copying the slice fields without this
+    /// owner would re-introduce the dangling hazard.
+    _decoded_storage: Option<Box<[u8]>>,
 }
 
 impl URLPath {
@@ -52,50 +60,44 @@ impl URLPath {
     }
 }
 
-// optimization: very few long strings will be URL-encoded
-// we're allocating virtual memory here, so if we never use it, it won't be allocated
-// and even when they're, they're probably rarely going to be > 1024 chars long
-// so we can have a big and little one and almost always use the little one
-//
 // PORT NOTE: Zig uses two threadlocal fixed `[1024]u8`/`[16384]u8` buffers and
-// decodes in-place via `fixedBufferStream`. `bun_url::PercentEncoding` only
-// exposes a `Write`-bounded decoder whose trait is crate-private; the sole
-// externally-usable impl is `Vec<u8>`. Use a threadlocal `Vec<u8>` as the
-// scratch decode target instead — same lifetime contract (slices into it are
-// valid until the next `parse()` on this thread), one buffer instead of two.
+// decodes in-place via `fixedBufferStream`, then returns slices into that
+// threadlocal storage. A growable shared buffer cannot uphold that contract in
+// Rust (the next `parse()` may reallocate it and dangle every prior URLPath),
+// so instead each URLPath that needs decoding owns its decode buffer in
+// `_decoded_storage`. This costs one small allocation only on the
+// percent-encoded path, which is the rare case.
 // PERF(port): was zero-alloc fixed buffers — profile in Phase B.
-thread_local! {
-    static DECODE_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-}
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Error> {
     // TODO(port): narrow error set
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
+    let mut decoded_storage: Option<Box<[u8]>> = None;
     let mut needs_redirect = false;
 
     if strings::index_of_char(decoded_pathname, b'%').is_some() {
         // Zig caps the in-place buffer at 16384; preserve that bound on input.
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
 
-        // TODO(port): lifetime — Zig returns slices into threadlocal storage from
-        // this function. Rust `thread_local!` cannot hand out borrows past
-        // `with_borrow_mut()`. We launder the Vec's data pointer into a raw slice
-        // with the same single-threaded scratch invariant as Zig: the returned
-        // URLPath must not outlive the next call to `parse()` on this thread.
-        let (ptr, n) = DECODE_BUF.with_borrow_mut(|buf| -> Result<(*const u8, usize), bun_core::Error> {
-            buf.clear();
-            buf.reserve(capped.len());
-            let n = PercentEncoding::decode_fault_tolerant::<_, true>(
-                buf,
-                capped,
-                Some(&mut needs_redirect),
-            )?;
-            Ok((buf.as_ptr(), n as usize))
-        })?;
-        // SAFETY: `ptr` points into the threadlocal `DECODE_BUF` which lives for
-        // the thread lifetime; `n <= buf.len()`; not reallocated until next
-        // `parse()` call. Same invariant the Zig threadlocal buffers carry.
-        decoded_pathname = unsafe { core::slice::from_raw_parts(ptr, n) };
+        let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
+        let n = PercentEncoding::decode_fault_tolerant::<_, true>(
+            &mut buf,
+            capped,
+            Some(&mut needs_redirect),
+        )?;
+        debug_assert!(n as usize <= buf.len());
+        buf.truncate(n as usize);
+        // Freeze into a heap-stable Box before taking the address: the slice
+        // fields in the returned URLPath borrow from this allocation, and the
+        // Box is moved into that same URLPath, so the borrow is valid for the
+        // struct's whole lifetime (Box heap address is stable across moves).
+        let boxed: Box<[u8]> = buf.into_boxed_slice();
+        // SAFETY: `boxed` is a single heap allocation that is never resized and
+        // is moved into `decoded_storage` (and from there into the returned
+        // URLPath) below. Every slice derived from `decoded_pathname` therefore
+        // remains valid for as long as the returned URLPath exists.
+        decoded_pathname = unsafe { core::slice::from_raw_parts(boxed.as_ptr(), boxed.len()) };
+        decoded_storage = Some(boxed);
     }
 
     let mut question_mark_i: i16 = -1;
@@ -178,17 +180,17 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
 
     // TODO(port): lifetime — see struct-level note. `extend` launders the borrow
     // to `'static` to match the Phase-A field type; remove once URLPath gains a
-    // proper lifetime or owned storage.
+    // proper lifetime parameter for the input-borrow case.
     #[inline(always)]
     unsafe fn extend(s: &[u8]) -> &'static [u8] {
         // SAFETY: caller upholds that `s` outlives all uses of the returned URLPath
-        // (points into threadlocal scratch or the caller's input slice).
+        // (points into the URLPath's own `_decoded_storage` or the caller's input slice).
         unsafe { bun_collections::detach_lifetime(s) }
     }
 
     // SAFETY: every slice passed to `extend` below borrows either the caller's
-    // input or the threadlocal scratch buffer; see TODO(port) above. Laundering
-    // to 'static is a Phase-A placeholder until URLPath grows a real lifetime.
+    // input or `decoded_storage`, which is moved into the same struct and thus
+    // outlives every read of these fields.
     Ok(unsafe {
         URLPath {
             extname: extend(if !is_source_map { extname } else { backup_extname }),
@@ -206,6 +208,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
                 b""
             }),
             needs_redirect,
+            _decoded_storage: decoded_storage,
         }
     })
 }

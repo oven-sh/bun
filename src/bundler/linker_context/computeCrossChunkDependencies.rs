@@ -121,10 +121,10 @@ pub struct CrossChunkDependencies<'a> {
     // outer `CrossChunkDependencies<'_>` borrow is not tied to the LinkerContext's
     // own invariant lifetime parameter.
     ctx: *const LinkerContext<'static>,
-    // PORT NOTE: `*const` — `walk` runs concurrently across worker threads; each
-    // touches disjoint per-chunk symbol slots via `Map::assign_chunk_index(&self)`
-    // (raw-ptr per-slot write through Vec's `NonNull`). Holding `&mut Map`
-    // here would assert whole-map exclusivity per thread = aliasing UB.
+    // `*const` — `walk` runs concurrently across worker threads; each touches
+    // disjoint per-chunk symbol slots via `Map::assign_chunk_index(&self)`,
+    // which is a Relaxed store to `Symbol.chunk_index: AtomicU32`. Holding
+    // `&mut Map` here would assert whole-map exclusivity per thread = aliasing UB.
     symbols: *const bun_ast::symbol::Map,
 }
 
@@ -139,8 +139,9 @@ impl<'a> CrossChunkDependencies<'a> {
     // `chunk_index`. Writes: `self.chunk_meta[chunk_index]` (per-chunk
     // disjoint), `self.import_records[source_index][rec].{path,source_index}`
     // (per-chunk disjoint via `chunk.files_with_parts_in_chunk`),
-    // `symbols.assign_chunk_index(ref)` (per-symbol-ref disjoint by chunk
-    // membership; raw `*mut Symbol` write through `Map::assign_chunk_index`).
+    // `symbols.assign_chunk_index(ref)` (Relaxed atomic store to
+    // `Symbol.chunk_index: AtomicU32`; per-symbol-ref disjoint by chunk
+    // membership — debug-asserted in `assign_chunk_index`).
     // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
     // LinkerContext` (`ctx` is `*const`, deref'd to `&`); `&mut self` is
     // recovered from a raw pointer per task, so no two tasks hold a live
@@ -153,8 +154,8 @@ impl<'a> CrossChunkDependencies<'a> {
         // pass; `walk` runs under `each_ptr` with per-chunk partitioning (see PORT NOTE on
         // the struct fields). `chunks` aliases the `each_ptr` slice but is only read here.
         let ctx: &LinkerContext<'_> = unsafe { &*deps.ctx };
-        // Shared `&Map` across threads — per-slot writes go through raw `*mut Symbol`
-        // (see PORT NOTE on the `symbols` field); no `&mut Map` is materialized.
+        // Shared `&Map` across threads — per-slot writes go through
+        // `Symbol.chunk_index: AtomicU32`; no `&mut Map` is materialized.
         let symbols: &bun_ast::symbol::Map = unsafe { &*deps.symbols };
         let _chunks: &[Chunk] = unsafe { &*deps.chunks };
         let chunk_meta = &mut deps.chunk_meta[chunk_index];

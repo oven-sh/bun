@@ -1457,12 +1457,16 @@ impl BlobExt for Blob {
         signal.with_mut(|s| s.clear());
         debug_assert!(signal.get().is_dead());
 
-        // SAFETY: `JsCell<Signal>` is `#[repr(transparent)]` over
-        // `UnsafeCell<Signal>` and `Signal` is `#[repr(C)]` with `ptr` as its
-        // first field, so the cell's address is the address of `ptr`. C++
-        // (`JSSink::assignToStream`) writes through this as `void**`.
-        let signal_ptr: *mut *mut c_void =
-            unsafe { (&raw const (*file_sink).signal).cast::<*mut c_void>().cast_mut() };
+        // SAFETY: `file_sink` is a live +1 `*mut FileSink`; `JsCell::as_ptr`
+        // yields the stable `*mut Signal` inside the `UnsafeCell`, and
+        // `&raw mut (*_).ptr` projects to the `Option<NonNull<c_void>>` field
+        // without forming an intermediate reference. `Option<NonNull<_>>` is
+        // guaranteed ABI-identical to `*mut c_void` (see const-asserts on
+        // `Signal` in streams.rs), so C++ (`JSSink::assignToStream`) may write
+        // the controller cell through this as `void**`.
+        let signal_ptr: *mut *mut c_void = unsafe {
+            (&raw mut (*(*file_sink).signal.as_ptr()).ptr).cast::<*mut c_void>()
+        };
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
@@ -2060,7 +2064,7 @@ impl BlobExt for Blob {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe { &mut *vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                        let binding = unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
                             binding,
@@ -2082,7 +2086,7 @@ impl BlobExt for Blob {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe { &mut *vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                        let binding = unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
                         Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
                             binding,

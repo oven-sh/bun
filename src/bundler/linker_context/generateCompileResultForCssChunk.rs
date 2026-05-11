@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use core::mem::offset_of;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 
 use bun_collections::VecExt;
 use bun_ast::ImportRecord;
@@ -37,13 +37,21 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     };
 
     // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
-    // contract is documented on `pending_part_range_prologue`. No other live
-    // `&`/`&mut` to these allocations exists in this frame at this point.
-    let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-    let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+    // contract is documented on `pending_part_range_prologue`. The `&mut`
+    // borrows below are scoped to the impl call so they do not overlap the
+    // raw slot write that follows. (Peer tasks still hold their own `&mut`
+    // views into the same `LinkerContext`/`Chunk` for read-only printer use —
+    // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
+    let result = {
+        let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+        generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i)
+    };
 
-    chunk_mut.compile_results_for_chunk[part_range.i as usize] =
-        generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i);
+    // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
+    // The slot write is routed through raw `addr_of_mut!` + `UnsafeCell` so it
+    // never materializes `&mut Chunk` / `&mut [CompileResult]`.
+    unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
 }
 
 fn generate_compile_result_for_css_chunk_impl(
@@ -85,13 +93,9 @@ fn generate_compile_result_for_css_chunk_impl(
     let symbols: &bun_ast::symbol::Map = unsafe {
         &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>()
     };
-    // `LocalsResultsMap` = `ArrayHashMap<bun_ast::Ref, *const [u8]>`;
-    // `c.mangled_props` is `ArrayHashMap<bun_ast::Ref, Box<[u8]>>`. Both `Ref`s are
-    // newtype-`u64` and `Box<[u8]>`/`*const [u8]` are both `(ptr, len)` fat ptrs — same
-    // layout, used read-only by the printer.
-    let local_names: &LocalsResultsMap = unsafe {
-        &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
-    };
+    // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
+    // `bun_js_printer::MangledProps`; no cast needed.
+    let local_names: &LocalsResultsMap = &c.mangled_props;
     let parse_graph = c.parse_graph();
     // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
     // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
@@ -214,12 +218,11 @@ fn generate_compile_result_for_css_chunk_impl(
             // Update bytesInOutput for this source in the chunk (for metafile)
             // Use atomic operation since multiple threads may update the same counter
             if !output.is_empty() {
-                if let Some(bytes_ptr) = chunk.files_with_parts_in_chunk.get_ptr_mut(&idx.get()) {
-                    // SAFETY: multiple threads update this counter; treat *usize as AtomicUsize
-                    // (Zig: @atomicRmw(usize, bytes_ptr, .Add, output.len, .monotonic))
-                    let atomic: &AtomicUsize =
-                        unsafe { &*std::ptr::from_mut::<usize>(bytes_ptr).cast_const().cast::<AtomicUsize>() };
-                    let _ = atomic.fetch_add(output.len(), Ordering::Relaxed);
+                // CONCURRENCY: key set is frozen before parallel codegen; take a
+                // shared `&AtomicUsize` so concurrent workers updating the same
+                // source counter never alias a `&mut` (Zig: @atomicRmw .Add .monotonic).
+                if let Some(bytes) = chunk.files_with_parts_in_chunk.get(&idx.get()) {
+                    let _ = bytes.fetch_add(output.len(), Ordering::Relaxed);
                 }
             }
             CompileResult::Css {

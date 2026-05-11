@@ -1,13 +1,19 @@
+use core::cell::Cell;
+
 use bun_jsc::{CallFrame, JSGlobalObject, JSString, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
 use bun_str::strings;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the single
+// mutable field is `Cell<Option<u16>>` (Copy). The codegen shim still emits
+// `this: &mut TextEncoderStreamEncoder` until Phase 1 lands — `&mut T`
+// auto-derefs to `&T` so the impls below compile against either.
 #[derive(Default)]
 #[bun_jsc::JsClass]
 pub struct TextEncoderStreamEncoder {
-    pending_lead_surrogate: Option<u16>,
+    pending_lead_surrogate: Cell<Option<u16>>,
 }
 
 impl TextEncoderStreamEncoder {
@@ -26,11 +32,7 @@ impl TextEncoderStreamEncoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn encode(
-        this: &mut Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<1>();
         let arguments = arguments.slice();
         if arguments.is_empty() {
@@ -44,27 +46,23 @@ impl TextEncoderStreamEncoder {
         let str = arguments[0].get_zig_string(global)?;
 
         if str.is_16bit() {
-            return Ok(this.encode_utf16(global, str.utf16_slice_aligned()));
+            return Ok(self.encode_utf16(global, str.utf16_slice_aligned()));
         }
 
-        Ok(this.encode_latin1(global, str.slice()))
+        Ok(self.encode_latin1(global, str.slice()))
     }
 
-    pub fn encode_without_type_checks(
-        this: &mut Self,
-        global: &JSGlobalObject,
-        input: &JSString,
-    ) -> JSValue {
+    pub fn encode_without_type_checks(&self, global: &JSGlobalObject, input: &JSString) -> JSValue {
         let str = input.get_zig_string(global);
 
         if str.is_16bit() {
-            return this.encode_utf16(global, str.utf16_slice_aligned());
+            return self.encode_utf16(global, str.utf16_slice_aligned());
         }
 
-        this.encode_latin1(global, str.slice())
+        self.encode_latin1(global, str.slice())
     }
 
-    fn encode_latin1(&mut self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
+    fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeLatin1: \"{}\"",
@@ -76,8 +74,7 @@ impl TextEncoderStreamEncoder {
         }
 
         let prepend_replacement_len: usize = 'prepend_replacement: {
-            if self.pending_lead_surrogate.is_some() {
-                self.pending_lead_surrogate = None;
+            if self.pending_lead_surrogate.take().is_some() {
                 // no latin1 surrogate pairs
                 break 'prepend_replacement 3;
             }
@@ -134,7 +131,7 @@ impl TextEncoderStreamEncoder {
         JSUint8Array::from_bytes(global, buffer.into())
     }
 
-    fn encode_utf16(&mut self, global: &JSGlobalObject, input: &[u16]) -> JSValue {
+    fn encode_utf16(&self, global: &JSGlobalObject, input: &[u16]) -> JSValue {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeUTF16: \"{}\"",
@@ -168,8 +165,7 @@ impl TextEncoderStreamEncoder {
         let mut remain = input;
 
         let prepend: Option<Prepend> = 'prepend: {
-            if let Some(lead) = self.pending_lead_surrogate {
-                self.pending_lead_surrogate = None;
+            if let Some(lead) = self.pending_lead_surrogate.take() {
                 let maybe_trail = remain[0];
                 if strings::u16_is_trail(maybe_trail) {
                     let converted = strings::utf16_codepoint_with_fffd(&[lead, maybe_trail]);
@@ -231,7 +227,7 @@ impl TextEncoderStreamEncoder {
             };
 
             if let Some(pending_lead) = lead_surrogate {
-                self.pending_lead_surrogate = Some(pending_lead);
+                self.pending_lead_surrogate.set(Some(pending_lead));
                 if buf.is_empty() {
                     return JSUint8Array::create_empty(global);
                 }
@@ -242,20 +238,16 @@ impl TextEncoderStreamEncoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn flush(
-        this: &mut Self,
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(Self::flush_body(this, global))
+    pub fn flush(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        Ok(self.flush_body(global))
     }
 
-    pub fn flush_without_type_checks(this: &mut Self, global: &JSGlobalObject) -> JSValue {
-        Self::flush_body(this, global)
+    pub fn flush_without_type_checks(&self, global: &JSGlobalObject) -> JSValue {
+        self.flush_body(global)
     }
 
-    fn flush_body(this: &mut Self, global: &JSGlobalObject) -> JSValue {
-        if this.pending_lead_surrogate.is_none() {
+    fn flush_body(&self, global: &JSGlobalObject) -> JSValue {
+        if self.pending_lead_surrogate.get().is_none() {
             JSUint8Array::create_empty(global)
         } else {
             JSUint8Array::from_bytes_copy(global, &[0xef, 0xbf, 0xbd])

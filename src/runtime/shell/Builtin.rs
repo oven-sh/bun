@@ -1,7 +1,7 @@
 //! A builtin command runs inside a `Cmd` state node. In Zig the builtin
 //! recovered its parent `*Cmd` via `container_of`; in the NodeId port the
 //! builtin stores the `NodeId` of its owning Cmd and every method takes
-//! `&mut Interpreter`.
+//! `&Interpreter`.
 
 use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_char;
@@ -424,7 +424,7 @@ impl Builtin {
     /// the caller should propagate that yield instead.
     ///
     /// Spec: Builtin.zig `init()`.
-    pub fn init(interp: &mut Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    pub fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         use crate::shell::builtins;
         use crate::shell::states::cmd::Exec;
 
@@ -487,7 +487,7 @@ impl Builtin {
 
     /// Spec: Builtin.zig `initRedirections` (lines 413-627). Opens redirect
     /// files / wires ArrayBuffer & Blob targets / handles `2>&1` (`duplicate_out`).
-    fn init_redirections(interp: &mut Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         // SAFETY: `node` points into the AST arena which outlives every state
         // node (see Cmd::next).
         let node: &ast::Cmd = unsafe { &*interp.as_cmd(cmd).node };
@@ -607,7 +607,7 @@ impl Builtin {
                     }
                 };
 
-                let interp_ptr: *mut Interpreter = interp;
+                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
                     let r = IOReader::init(redirfd, evtloop);
                     r.set_interp(interp_ptr);
@@ -656,7 +656,7 @@ impl Builtin {
             Some(ast::Redirect::JsBuf(jsbuf)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
                 let idx = jsbuf.idx as usize;
-                let global = interp.global_this;
+                let global = interp.global_this.get();
                 if global.is_null() || idx >= interp.jsobjs.len() {
                     interp.throw(crate::shell::ShellErr::Custom(
                         b"Invalid JS object reference in shell"
@@ -764,7 +764,7 @@ impl Builtin {
     /// because `init_redirections` and `Cmd::transition_to_exec` (the
     /// "command not found" / spawn-error paths) are the only callers.
     pub(crate) fn cmd_write_failing_error(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
@@ -796,7 +796,7 @@ impl Builtin {
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
     /// Spec: Builtin.zig `done`.
-    pub fn done(interp: &mut Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
+    pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         Self::of_mut(interp, cmd).exit_code = Some(exit_code);
         // PORT NOTE: Zig `done` flushes `.buf` into `shell.buffered_stdout()`
         // here. The NodeId port writes through immediately in `write_no_io`,
@@ -805,7 +805,7 @@ impl Builtin {
     }
 
     /// Hoisted dispatch: start the builtin's state machine.
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         use crate::shell::builtins::*;
         // PORT NOTE: reshaped for borrowck — match on a copied Kind, then
         // call the per-builtin `start(interp, cmd)`. Each builtin reaches its
@@ -836,7 +836,7 @@ impl Builtin {
 
     /// Hoisted dispatch for the `onIOWriterChunk` callback.
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         written: usize,
         err: Option<bun_sys::SystemError>,
@@ -878,7 +878,7 @@ impl Builtin {
 
     #[inline]
     #[track_caller]
-    pub fn of_mut<'a>(interp: &'a mut Interpreter, cmd: NodeId) -> &'a mut Builtin {
+    pub fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
         match &mut interp.as_cmd_mut(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
@@ -908,7 +908,7 @@ impl Builtin {
     /// ArrayBuffer target is already full (Zig: `Maybe(usize).initErr`).
     /// **WARNING**: caller must have checked `needs_io() == None` first.
     pub fn write_no_io(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         io_kind: IoKind,
         buf: &[u8],
@@ -946,7 +946,7 @@ impl Builtin {
     }
 
     #[inline]
-    pub fn parent_cmd_mut<'a>(interp: &'a mut Interpreter, cmd: NodeId) -> &'a mut Cmd {
+    pub fn parent_cmd_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Cmd {
         interp.as_cmd_mut(cmd)
     }
 
@@ -960,7 +960,7 @@ impl Builtin {
     /// Spec: Builtin.zig `throw` → `parentCmd().base.throw(err)`. In the
     /// NodeId port the interpreter owns the throw path directly.
     #[inline]
-    pub fn throw(interp: &mut Interpreter, _cmd: NodeId, err: crate::shell::ShellErr) {
+    pub fn throw(interp: &Interpreter, _cmd: NodeId, err: crate::shell::ShellErr) {
         interp.throw(err);
     }
 
@@ -979,7 +979,7 @@ impl Builtin {
     /// across the immediate `write_no_io` / `enqueue` call (matches the Zig
     /// arena lifetime).
     pub fn fmt_error_arena<'a>(
-        interp: &'a mut Interpreter,
+        interp: &'a Interpreter,
         cmd: NodeId,
         kind: Option<Kind>,
         args: core::fmt::Arguments<'_>,
@@ -999,7 +999,7 @@ impl Builtin {
     /// `taskErrorToString` (the `bun.shell.ShellErr` arm — dispatches on the
     /// variant; `.sys` recurses into the `jsc.SystemError` formatter).
     pub fn shell_err_to_string<'a>(
-        interp: &'a mut Interpreter,
+        interp: &'a Interpreter,
         cmd: NodeId,
         kind: Kind,
         err: &crate::shell::ShellErr,
@@ -1047,7 +1047,7 @@ impl Builtin {
     /// (e.g. `ENOENT` → "No such file or directory"); falls back to
     /// `"unknown error {errno}"` when unmapped.
     pub fn task_error_to_string<'a>(
-        interp: &'a mut Interpreter,
+        interp: &'a Interpreter,
         cmd: NodeId,
         kind: Kind,
         err: &bun_sys::Error,
@@ -1087,7 +1087,7 @@ impl Builtin {
     /// (`on_io_writer_chunk`) can finish with it; callers that need to mark a
     /// per-builtin `state = WaitingWriteErr` must still do so before calling.
     pub fn write_failing_error(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
         exit_code: crate::shell::ExitCode,

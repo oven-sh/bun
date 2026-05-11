@@ -43,7 +43,7 @@ impl Default for PipelineState {
 
 impl Pipeline {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Pipeline,
         parent: NodeId,
@@ -60,7 +60,7 @@ impl Pipeline {
         }))
     }
 
-    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
@@ -78,7 +78,7 @@ impl Pipeline {
         )
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         match interp.as_pipeline(this).state {
             PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx),
             PipelineState::Pending | PipelineState::WaitingWriteErr => Yield::suspended(),
@@ -98,7 +98,7 @@ impl Pipeline {
     /// `drain_pipelines` (Yield.rs) re-enters `Pipeline::next` to spawn the
     /// next child once the current one suspends — so every child's start-yield
     /// is driven, never dropped.
-    fn next_starting(interp: &mut Interpreter, this: NodeId, idx: u32) -> Yield {
+    fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
         let (node, parent_shell, evtloop) = {
             let me = interp.as_pipeline(this);
             (me.node, me.base.shell, interp.event_loop)
@@ -180,7 +180,7 @@ impl Pipeline {
         // Build per-child IO: stdin from prev pipe read end (or parent
         // stdin for first), stdout to this pipe write end (or parent stdout
         // for last), stderr inherited. Spec: Pipeline.zig readPipe/writePipe.
-        let interp_ptr: *mut Interpreter = interp;
+        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let child_io = {
             let me = interp.as_pipeline(this);
             let pipes = me.pipes.as_ref().expect("pipes set above");
@@ -268,7 +268,7 @@ impl Pipeline {
 
     /// Spec: Pipeline.zig `onIOWriterChunk` (lines 206-217).
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         _written: usize,
         err: Option<bun_sys::SystemError>,
@@ -286,7 +286,7 @@ impl Pipeline {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -339,7 +339,7 @@ impl Pipeline {
 
     /// Free the per-child env duped in `next_starting` for child kinds that
     /// don't free `base.shell` themselves (spec: Pipeline.zig childDone()).
-    fn deinit_child_duped_env(interp: &mut Interpreter, child: NodeId) {
+    fn deinit_child_duped_env(interp: &Interpreter, child: NodeId) {
         let kind = interp.node(child).kind();
         if matches!(kind, StateKind::Cmd | StateKind::IfClause | StateKind::Condexpr) {
             if let Some(base) = interp.node_mut(child).base_mut() {
@@ -351,7 +351,7 @@ impl Pipeline {
         }
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Pipeline {} deinit", this);
         // Deinit any still-live children (and their duped envs).
         let cmds = interp.as_pipeline_mut(this).cmds.take();

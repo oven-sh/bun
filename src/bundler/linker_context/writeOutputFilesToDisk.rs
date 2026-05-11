@@ -46,7 +46,7 @@ pub fn write_output_files_to_disk(
         Ok(dir) => dir,
         Err(e) => {
             if e == err!("NotDir") {
-                c.log
+                c.log_mut()
                     .add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -57,7 +57,7 @@ pub fn write_output_files_to_disk(
                         ),
                     );
             } else {
-                c.log
+                c.log_mut()
                     .add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -135,7 +135,7 @@ pub fn write_output_files_to_disk(
             paths::resolve_path::dirname::<paths::platform::Posix>(&chunk.final_rel_path);
         if !rel_parent.is_empty() {
             if let Err(e) = root_dir.make_path(rel_parent) {
-                c.log
+                c.log_mut()
                     .add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -267,7 +267,7 @@ pub fn write_output_files_to_disk(
                     },
                 ) {
                     Err(e) => {
-                        c.log.add_sys_error(
+                        c.log_mut().add_sys_error(
                             &e,
                             format_args!(
                                 "writing sourcemap for chunk {}",
@@ -386,7 +386,7 @@ pub fn write_output_files_to_disk(
                         ) {
                             Ok(_) => {}
                             Err(e) => {
-                                c.log
+                                c.log_mut()
                                     .add_error_fmt(
                                         None,
                                         Loc::EMPTY,
@@ -451,7 +451,7 @@ pub fn write_output_files_to_disk(
             },
         ) {
             Err(e) => {
-                c.log.add_sys_error(
+                c.log_mut().add_sys_error(
                     &e,
                     format_args!("writing chunk {}", quote(&chunk.final_rel_path)),
                 );
@@ -556,7 +556,7 @@ pub fn write_output_files_to_disk(
         let additional_output_files =
             &mut output_files.output_files[additional_start..];
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `&mut *c.log` below (split borrow).
+        // across `c.log_mut()` below (split borrow).
         let parse_graph = unsafe { &mut *c.parse_graph };
         debug_assert_eq!(
             parse_graph.additional_output_files.len(),
@@ -579,7 +579,7 @@ pub fn write_output_files_to_disk(
                 paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
             if !rel_parent.is_empty() {
                 if let Err(e) = root_dir.make_path(rel_parent) {
-                    c.log
+                    c.log_mut()
                         .add_error_fmt(
                             None,
                             Loc::EMPTY,
@@ -605,7 +605,7 @@ pub fn write_output_files_to_disk(
                 },
             ) {
                 Err(e) => {
-                    c.log
+                    c.log_mut()
                         .add_sys_error(
                             &e,
                             format_args!("writing file {}", quote(src.src_path.text)),

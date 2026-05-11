@@ -233,7 +233,7 @@ impl Watcher {
         // via `running`/`close_descriptors` and the thread frees the Box.
         self.thread = Some(std::thread::spawn(move || unsafe {
             // TODO(port): narrow error set
-            let _ = (*(this as *mut Watcher)).thread_main();
+            let _ = Watcher::thread_main(this as *mut Watcher);
         }));
         Ok(())
     }
@@ -270,42 +270,60 @@ impl Watcher {
         bun_wyhash::hash(filepath) as HashType
     }
 
-    fn thread_main(&mut self) -> Result<(), bun_core::Error> {
-        self.watchloop_handle.store(true);
-        self.thread_lock.lock();
-        Output::Source::configure_named_thread(zstr!("File Watcher"));
+    /// # Safety
+    /// `this` must be the unique heap pointer returned from [`init`]. The
+    /// watcher thread takes ownership: after `watch_loop` exits, this function
+    /// reconstitutes the `Box<Watcher>` and drops it. Callers must not hold a
+    /// live `&`/`&mut` borrow of `*this` across the call (Stacked Borrows
+    /// forbids deallocating through a pointer while a reference to the same
+    /// allocation is protected — which is why this takes `*mut Self`, not
+    /// `&mut self`).
+    unsafe fn thread_main(this: *mut Self) -> Result<(), bun_core::Error> {
+        // Scope all `&mut *this` access so the borrow ends *before* we
+        // reclaim the Box. Deallocating while a `&mut self` argument is still
+        // protected is UB under Stacked Borrows / Tree Borrows.
+        {
+            // SAFETY: caller contract — `this` is a valid, exclusively-accessed
+            // heap allocation for the duration of this scope.
+            let me = unsafe { &mut *this };
+            me.watchloop_handle.store(true);
+            me.thread_lock.lock();
+            Output::Source::configure_named_thread(zstr!("File Watcher"));
 
-        // defer Output.flush() — handled at end
-        log!("Watcher started");
+            // defer Output.flush() — handled at end
+            log!("Watcher started");
 
-        match self.watch_loop() {
-            Err(err) => {
-                self.watchloop_handle.store(false);
-                self.platform.stop();
-                if self.running.load() {
-                    (self.on_error)(self.ctx, err);
+            match me.watch_loop() {
+                Err(err) => {
+                    me.watchloop_handle.store(false);
+                    me.platform.stop();
+                    if me.running.load() {
+                        (me.on_error)(me.ctx, err);
+                    }
+                }
+                Ok(()) => {}
+            }
+
+            // deinit and close descriptors if needed
+            if me.close_descriptors.load() {
+                let fds = me.watchlist.items_fd();
+                for &fd in fds {
+                    let _ = bun_sys::close(fd);
                 }
             }
-            Ok(()) => {}
+            // watchlist freed by Drop below
         }
-
-        // deinit and close descriptors if needed
-        if self.close_descriptors.load() {
-            let fds = self.watchlist.items_fd();
-            for &fd in fds {
-                let _ = bun_sys::close(fd);
-            }
-        }
-        // watchlist freed by Drop below
 
         // Close trace file if open
         WatcherTrace::deinit();
 
         Output::flush();
 
-        // SAFETY: self is the heap allocation from init(); thread owns it now.
+        // SAFETY: `this` is the heap allocation from init(); the watcher thread
+        // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
+        // `me` above has ended). Matches Zig's `allocator.destroy(this)`.
         // TODO(port): ownership model — see shutdown()
-        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
+        drop(unsafe { bun_core::heap::take(this) });
         Ok(())
     }
 

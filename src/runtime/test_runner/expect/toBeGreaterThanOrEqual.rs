@@ -7,14 +7,14 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_greater_than_or_equal(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);` — side-effect on all exit paths.
     // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard so `post_match` runs on
     // every exit path while the body still has `&mut Expect` access via DerefMut.
-    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
@@ -41,7 +41,7 @@ pub fn to_be_greater_than_or_equal(
         )));
     }
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
 
     if !value.is_big_int() && !other_value.is_big_int() {

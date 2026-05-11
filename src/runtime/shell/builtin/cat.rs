@@ -54,7 +54,7 @@ enum Step {
 }
 
 impl Cat {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let filepath_start = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -92,7 +92,7 @@ impl Cat {
         Self::next(interp, cmd)
     }
 
-    fn fail_parse(interp: &mut Interpreter, cmd: NodeId, e: ParseError) -> Yield {
+    fn fail_parse(interp: &Interpreter, cmd: NodeId, e: ParseError) -> Yield {
         let buf: Vec<u8> = match e {
             ParseError::IllegalOption(s) => Builtin::fmt_error_arena(
                 interp,
@@ -120,7 +120,7 @@ impl Cat {
 
     /// Spec: cat.zig `writeFailingError`.
     fn write_failing_error(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
         exit_code: ExitCode,
@@ -137,7 +137,7 @@ impl Cat {
     }
 
     /// Spec: cat.zig `next`.
-    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // PORT NOTE: reshaped for borrowck — read scalars, drop borrow, act.
         enum Branch {
             Stdin,
@@ -182,7 +182,7 @@ impl Cat {
                 // PORT NOTE: reshaped for borrowck — clone the `Arc<IOReader>`
                 // out of `stdin` so we hold no borrow of `interp` across
                 // `start()` (which may re-enter via the raw interp backref).
-                let interp_ptr: *mut Interpreter = interp;
+                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = match &Builtin::of(interp, cmd).stdin {
                     BuiltinInput::Fd(r) => r.clone(),
                     _ => unreachable!("needs_io() returned true"),
@@ -231,7 +231,7 @@ impl Cat {
                 };
 
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp;
+                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = IOReader::init(fd, evtloop);
                 reader.set_interp(interp_ptr);
                 if let CatState::ExecFilepathArgs {
@@ -259,7 +259,7 @@ impl Cat {
 
     /// Spec: cat.zig `onIOWriterChunk`.
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,
@@ -329,7 +329,7 @@ impl Cat {
 
     /// Spec: cat.zig `onIOReaderChunk`.
     pub fn on_io_reader_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         chunk: &[u8],
         remove: &mut bool,
@@ -355,7 +355,7 @@ impl Cat {
 
     /// Spec: cat.zig `onIOReaderDone`.
     pub fn on_io_reader_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
@@ -422,7 +422,7 @@ impl Cat {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Cat {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Cat {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Cat(c) => &mut **c,
             _ => unreachable!(),

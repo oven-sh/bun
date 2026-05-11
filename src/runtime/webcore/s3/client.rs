@@ -755,20 +755,23 @@ pub fn upload_stream(
         // types per arm. Manual unroll once both have a `.pending` accessor.
         ReadableStreamPtr::Bytes(stream) => {
             // SAFETY: stream is a live `*mut ByteStream` from a JS-owned readable stream.
-            let stream = unsafe { &mut **stream };
-            if matches!(stream.pending.result, crate::webcore::streams::StreamResult::Err(_)) {
+            // R-2: `&` — `pending` is `JsCell`-wrapped.
+            let stream = unsafe { &**stream };
+            if matches!(stream.pending.get().result, crate::webcore::streams::StreamResult::Err(_)) {
                 // we got an error, fail early
-                let err = match core::mem::replace(
-                    &mut stream.pending.result,
-                    crate::webcore::streams::StreamResult::Done,
-                ) {
+                let err = match stream.pending.with_mut(|p| {
+                    core::mem::replace(
+                        &mut p.result,
+                        crate::webcore::streams::StreamResult::Done,
+                    )
+                }) {
                     crate::webcore::streams::StreamResult::Err(err) => err,
                     _ => unreachable!(),
                 };
-                stream.pending = crate::webcore::streams::Pending {
+                stream.pending.set(crate::webcore::streams::Pending {
                     result: crate::webcore::streams::StreamResult::Done,
                     ..Default::default()
-                };
+                });
                 let (js_err, was_strong) = err.to_js_weak(global_this);
                 if was_strong == crate::webcore::streams::WasStrong::Strong {
                     js_err.unprotect();
@@ -781,19 +784,21 @@ pub fn upload_stream(
         ReadableStreamPtr::File(stream) => {
             // SAFETY: stream is a live `*mut FileReader` from a JS-owned readable stream.
             let stream = unsafe { &mut **stream };
-            if matches!(stream.pending.result, crate::webcore::streams::StreamResult::Err(_)) {
+            if matches!(stream.pending.get().result, crate::webcore::streams::StreamResult::Err(_)) {
                 // we got an error, fail early
-                let err = match core::mem::replace(
-                    &mut stream.pending.result,
-                    crate::webcore::streams::StreamResult::Done,
-                ) {
+                let err = match stream.pending.with_mut(|p| {
+                    core::mem::replace(
+                        &mut p.result,
+                        crate::webcore::streams::StreamResult::Done,
+                    )
+                }) {
                     crate::webcore::streams::StreamResult::Err(err) => err,
                     _ => unreachable!(),
                 };
-                stream.pending = crate::webcore::streams::Pending {
+                stream.pending.set(crate::webcore::streams::Pending {
                     result: crate::webcore::streams::StreamResult::Done,
                     ..Default::default()
-                };
+                });
                 let (js_err, was_strong) = err.to_js_weak(global_this);
                 if was_strong == crate::webcore::streams::WasStrong::Strong {
                     js_err.unprotect();
@@ -1093,7 +1098,8 @@ pub fn readable_stream(
             if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
                 if let ReadableStreamPtr::Bytes(bytes) = readable.ptr {
                     // SAFETY: `bytes` is a live `*mut ByteStream` owned by the readable stream.
-                    let bytes = unsafe { &mut *bytes };
+                    // R-2: `&` (not `&mut`) — `on_data` re-enters JS.
+                    let bytes = unsafe { &*bytes };
                     if let Some(err) = request_err {
                         bytes.on_data(crate::webcore::streams::StreamResult::Err(
                             crate::webcore::streams::StreamError::JSValue(
@@ -1126,9 +1132,10 @@ pub fn readable_stream(
             if let Some(readable) = self.readable_stream_ref.get(&self.global) {
                 if let ReadableStreamPtr::Bytes(bytes) = readable.ptr {
                     // SAFETY: `bytes` is a live `*mut ByteStream` owned by the readable stream.
-                    let source = unsafe { (*bytes).parent() };
-                    source.cancel_handler = None;
-                    source.cancel_ctx = None;
+                    // R-2: shared deref + `Cell::set`.
+                    let source = unsafe { (*bytes).parent_const() };
+                    source.cancel_handler.set(None);
+                    source.cancel_ctx.set(None);
                 }
             }
         }
@@ -1195,8 +1202,8 @@ pub fn readable_stream(
         global: global_static,
     });
 
-    reader_mut.cancel_handler = Some(S3DownloadStreamWrapper::on_stream_cancelled);
-    reader_mut.cancel_ctx = Some(wrapper.cast::<c_void>());
+    reader_mut.cancel_handler.set(Some(S3DownloadStreamWrapper::on_stream_cancelled));
+    reader_mut.cancel_ctx.set(Some(wrapper.cast::<c_void>()));
 
     download_stream(
         this,

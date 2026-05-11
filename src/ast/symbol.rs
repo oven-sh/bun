@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_collections::VecExt;
 
@@ -46,7 +47,18 @@ pub struct Symbol {
     /// This is for generating cross-chunk imports and exports for code splitting.
     ///
     /// Do not use this directly. Use `chunkIndex()` instead.
-    pub chunk_index: u32,
+    ///
+    /// `AtomicU32` (not plain `u32`) because [`Map::assign_chunk_index`] is
+    /// invoked from worker threads in
+    /// `compute_cross_chunk_dependencies::walk()` while other threads hold a
+    /// shared `&LinkerGraph` (and thus `&Symbol`). The linker invariant is
+    /// that all declarations of a given top-level symbol are placed in a
+    /// single chunk, so cross-thread writes target disjoint slots — but the
+    /// invariant is data-dependent, not type-checked, and a plain `u32` write
+    /// through a slot reachable from `&` is UB regardless. Relaxed ordering
+    /// is sufficient: the worker-pool join supplies the happens-before edge
+    /// to the post-pass reader (`compute_cross_chunk_dependencies_with_chunk_metas`).
+    pub chunk_index: AtomicU32,
 
     /// This is used for minification. Symbols that are declared in sibling scopes
     /// can share a name. A good heuristic (from Google Closure Compiler) is to
@@ -172,7 +184,7 @@ impl Default for Symbol {
             namespace_alias: None,
             link: Cell::new(Ref::NONE),
             use_count_estimate: 0,
-            chunk_index: INVALID_CHUNK_INDEX,
+            chunk_index: AtomicU32::new(INVALID_CHUNK_INDEX),
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
             did_keep_name: true,
             must_start_with_capital_letter_for_jsx: false,
@@ -203,7 +215,7 @@ impl Symbol {
     /// This is for generating cross-chunk imports and exports for code splitting.
     #[inline]
     pub fn chunk_index(&self) -> Option<u32> {
-        let i = self.chunk_index;
+        let i = self.chunk_index.load(Ordering::Relaxed);
         if i == INVALID_CHUNK_INDEX { None } else { Some(i) }
     }
 
@@ -421,12 +433,15 @@ impl Map {
         bun_core::output::flush();
     }
 
-    // PORT NOTE: takes `&self` (not `&mut self`) — the only caller
+    // Takes `&self` (not `&mut self`) — the only caller
     // (`computeCrossChunkDependencies::walk`) runs concurrently across worker
-    // threads with each touching disjoint per-chunk symbol slots. The write
-    // goes through the raw `*mut Symbol` returned by `get()` (provenance from
-    // Vec's raw `NonNull`, independent of the `&self` borrow), so no
-    // whole-map `&mut` is asserted. See `get()` SOUNDNESS note.
+    // threads. `Symbol.chunk_index` is `AtomicU32`, so the per-slot write is a
+    // sound interior mutation through `&Symbol`; no raw-pointer or `&mut Map`
+    // escape is needed. Relaxed ordering: see the field doc — the worker-pool
+    // join is the only required happens-before edge, and the linker invariant
+    // places all declarations of a given symbol in a single chunk (same
+    // worker), so cross-thread writes target disjoint slots. A
+    // `debug_assert!` documents that invariant.
     pub fn assign_chunk_index(&self, decls_: &crate::DeclaredSymbolList, chunk_index: u32) {
         use crate::DeclaredSymbol;
         struct Iterator<'a> {
@@ -436,12 +451,20 @@ impl Map {
 
         impl Iterator<'_> {
             pub(crate) fn next(&mut self, ref_: Ref) {
-                // SAFETY: ref_ is a valid top-level symbol ref produced by the parser; Map
-                // contains an entry for it. `get()` derives *mut from Vec's raw NonNull
-                // (write provenance preserved); storage is not reallocated during iteration.
-                // Raw-ptr write — no `&mut` materialized.
-                let symbol = self.map.get(ref_).unwrap();
-                unsafe { (*symbol).chunk_index = self.chunk_index };
+                let symbol = self.map.get_const(ref_).unwrap();
+                // Thread-confinement invariant: a top-level symbol's
+                // declarations are all assigned to one chunk, so any prior
+                // value is either INVALID or this same chunk (overwrite from a
+                // sibling `var` decl in the same chunk — see esbuild comment in
+                // `walk`). If this fires, two chunks raced on one symbol.
+                debug_assert!(
+                    {
+                        let prev = symbol.chunk_index.load(Ordering::Relaxed);
+                        prev == INVALID_CHUNK_INDEX || prev == self.chunk_index
+                    },
+                    "Symbol.chunk_index reassigned across chunks (linker partition invariant broken)",
+                );
+                symbol.chunk_index.store(self.chunk_index, Ordering::Relaxed);
             }
         }
         DeclaredSymbol::for_each_top_level_symbol(

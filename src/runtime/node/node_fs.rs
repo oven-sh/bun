@@ -640,7 +640,7 @@ where
 
     pub fn create(
         global_object: &JSGlobalObject,
-        binding: &mut Binding,
+        binding: &Binding,
         task_args: A,
         vm: &mut VirtualMachine,
     ) -> JSValue {
@@ -691,7 +691,11 @@ where
                 let path = if strings::eql_comptime(args.path.slice(), b"/dev/null") {
                     ZStr::from_static(b"\\\\.\\NUL\0")
                 } else {
-                    args.path.slice_z(&mut binding.node_fs.sync_error_buf)
+                    // SAFETY (R-2): single-JS-thread `JsCell` projection of the
+                    // scratch path buffer; the borrow is held only across the
+                    // libuv enqueue below (which copies `path` internally) and
+                    // never across a JS re-entry point.
+                    args.path.slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                 };
                 let mut flags: c_int = args.flags.as_int();
                 flags = uv::O::from_bun_o(flags);
@@ -778,7 +782,9 @@ where
             }
             NodeFSFunctionEnum::Statfs => {
                 let args: &args::StatFS = args_as!(args::StatFS);
-                let path = args.path.slice_z(&mut binding.node_fs.sync_error_buf);
+                // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
+                // across the libuv enqueue (copies `path` internally).
+                let path = args.path.slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf });
                 // SAFETY: libuv copies `path` internally before return.
                 let rc = unsafe { uv::uv_fs_statfs(loop_, &mut task.req, path.as_ptr(), Some(Self::uv_callbackreq)) };
                 debug_assert!(rc == uv::ReturnCode::ZERO);
@@ -1098,7 +1104,7 @@ where
 
     pub fn create(
         global_object: &JSGlobalObject,
-        _binding: &mut Binding,
+        _binding: &Binding,
         args: A,
         vm: &mut VirtualMachine,
     ) -> JSValue {
@@ -1363,7 +1369,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
     pub fn create(
         global_object: &JSGlobalObject,
-        _binding: &mut Binding,
+        _binding: &Binding,
         cp_args: args::Cp,
         vm: &mut VirtualMachine,
     ) -> JSValue {

@@ -438,7 +438,14 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     // symbols to handle declaring a hoisted "var" symbol in a nested scope and
     // binding a name to it in a parent or sibling scope.
     pub scopes_in_order: ScopeOrderList<'a>,
-    pub scope_order_to_visit: &'a mut [ScopeOrder<'a>],
+    // Shared slice: the visit pass only ever *reads* `ScopeOrder` (which is
+    // `Copy`) and advances/reslices the cursor. A `&'a mut [_]` here forced
+    // raw-ptr round-trips at the enum-preprocess save/restore sites and
+    // produced overlapping `&mut` under Stacked Borrows when the inner
+    // `visit_stmts` re-looked-up the same arena slice from
+    // `scopes_in_order_for_enum`. A `&'a [_]` is `Copy`, so save/restore is a
+    // plain value copy and the map can hand out the same slice freely.
+    pub scope_order_to_visit: &'a [ScopeOrder<'a>],
 
     // These properties are for the visit pass, which runs after the parse pass.
     // The visit pass binds identifiers to declared symbols, does constant
@@ -580,12 +587,12 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     pub ts_namespace: RecentlyVisitedTSNamespace,
     pub top_level_enums: List<'a, Ref>,
 
-    // Value is a raw `NonNull<[ScopeOrder<'a>]>` (Zig: `[]ScopeOrder` slice
-    // value) rather than `&'a mut [_]` so that `scope_order_to_visit` can hold
-    // the unique `&'a mut` to the same arena slice without two live `&mut`
-    // aliasing under Stacked Borrows (see Parser.rs `_parse`).
+    // Value is a shared `&'a [ScopeOrder<'a>]` (Zig: `[]ScopeOrder` slice
+    // value). The visit pass never writes through these slices — it only reads
+    // `Copy` elements and advances a cursor — so the map and
+    // `scope_order_to_visit` may safely alias the same arena allocation.
     pub scopes_in_order_for_enum:
-        ArrayHashMap<bun_ast::Loc, core::ptr::NonNull<[ScopeOrder<'a>]>>,
+        ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
 
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub will_wrap_module_in_try_catch_for_using: bool,
@@ -2693,10 +2700,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     buf.push(*item_);
                 }
             }
-            // `into_bump_slice_mut()` leaks the BumpVec into the arena and
-            // returns the unique `&'a mut [T]` for that allocation — keeps
-            // mutable provenance intact (Zig: `p.arena.alloc(ScopeOrder, n)`).
-            self.scope_order_to_visit = buf.into_bump_slice_mut();
+            // `into_bump_slice()` leaks the BumpVec into the arena and returns
+            // a `&'a [T]` for that allocation (Zig: `p.arena.alloc(ScopeOrder, n)`).
+            self.scope_order_to_visit = buf.into_bump_slice();
         }
 
         self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
@@ -3111,12 +3117,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     #[inline]
     fn next_scope_in_order_for_visit_pass(&mut self) -> ScopeOrder<'a> {
-        // PORT NOTE: reshaped for borrowck — Zig sliced [1..len]
-        let taken = core::mem::take(&mut self.scope_order_to_visit);
-        let (head, rest) = taken.split_first_mut().expect("scope_order_to_visit empty");
-        let head = *head;
+        // Zig: `const order = scope_order_to_visit[0]; scope_order_to_visit = scope_order_to_visit[1..]`
+        let (head, rest) = self
+            .scope_order_to_visit
+            .split_first()
+            .expect("scope_order_to_visit empty");
         self.scope_order_to_visit = rest;
-        head
+        *head
     }
 
     pub fn push_scope_for_visit_pass(
@@ -7912,7 +7919,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
             import_namespace_cc_map: Default::default(),
-            scope_order_to_visit: arena.alloc_slice_copy(&[]),
+            scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
             is_revisit_for_substitution: false,

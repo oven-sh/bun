@@ -31,7 +31,9 @@
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
 use bun_collections::{VecExt, ByteVecExt};
+use bun_jsc::JsCell;
 use crate::bun_str::WTFStringImplExt as _;
+use core::cell::Cell;
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -187,7 +189,7 @@ macro_rules! node_accessors {
                 #[inline]
                 #[track_caller]
                 pub fn $get(&self, id: NodeId) -> &$ty {
-                    match &self.nodes[id.idx()] {
+                    match &self.nodes.get()[id.idx()] {
                         Node::$variant(v) => v,
                         other => panic!(
                             concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
@@ -197,8 +199,10 @@ macro_rules! node_accessors {
                 }
                 #[inline]
                 #[track_caller]
-                pub fn $get_mut(&mut self, id: NodeId) -> &mut $ty {
-                    match &mut self.nodes[id.idx()] {
+                #[allow(clippy::mut_from_ref)]
+                pub fn $get_mut(&self, id: NodeId) -> &mut $ty {
+                    // SAFETY: R-2 single-JS-thread invariant — see `nodes_mut`.
+                    match unsafe { &mut self.nodes.get_mut()[id.idx()] } {
                         Node::$variant(v) => v,
                         other => panic!(
                             concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
@@ -284,15 +288,27 @@ pub const STDERR_NO: usize = 2;
 
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
+// R-2 (host-fn re-entrancy): every JS-exposed method — and the entire
+// state-machine dispatch reachable from `run_from_js` — takes `&self`.
+// Per-field interior mutability via `Cell` (Copy) / `JsCell` (non-Copy) makes
+// the noalias-based `&mut self` caching miscompile structurally impossible:
+// `finish()` calls `resolve.call(...)` which can synchronously re-enter
+// another `ShellInterpreter` host fn (or, via `Yield::run`, another
+// interpreter entirely — see `DbgDepthGuard::MAX_DEPTH`). With every field
+// behind `UnsafeCell`, an overlapping `&Interpreter` is sound.
+//
+// The codegen shim still emits `this: &mut Interpreter` until R-2 Phase 1
+// lands; `&mut T` auto-derefs to `&T` so the impls below compile against
+// either.
 pub struct Interpreter {
     /// Flat arena of state-machine nodes. Indices are `NodeId`s; freed slots
     /// are recycled via `free_list`.
-    pub nodes: Vec<Node>,
-    free_list: Vec<u32>,
+    pub nodes: JsCell<Vec<Node>>,
+    free_list: JsCell<Vec<u32>>,
 
     pub event_loop: EventLoopHandle,
 
-    pub args: Box<ShellArgs>,
+    pub args: JsCell<Box<ShellArgs>>,
 
     /// JS objects used as input for the shell script. Owned storage (the Zig
     /// `ArrayList(JSValue).items` borrow becomes `Vec` ownership in the port —
@@ -302,32 +318,32 @@ pub struct Interpreter {
     // via wrapper visitChildren.
     pub jsobjs: Vec<crate::jsc::JSValue>,
 
-    pub root_shell: ShellExecEnv,
-    pub root_io: IO,
+    pub root_shell: JsCell<ShellExecEnv>,
+    pub root_io: JsCell<IO>,
 
     pub has_pending_activity: AtomicU32,
     pub started: AtomicBool,
-    pub keep_alive: bun_io::KeepAlive,
+    pub keep_alive: JsCell<bun_io::KeepAlive>,
 
-    pub async_commands_executing: u32,
+    pub async_commands_executing: Cell<u32>,
 
     // JSC_BORROW: always borrowed, never owned. Stored raw because the struct
     // is heap-allocated and outlives any single &JSGlobalObject borrow scope.
-    pub global_this: *mut crate::jsc::JSGlobalObject,
+    pub global_this: Cell<*mut crate::jsc::JSGlobalObject>,
 
-    pub flags: InterpreterFlags,
-    pub exit_code: Option<ExitCode>,
-    pub this_jsvalue: crate::jsc::JSValue,
-    pub cleanup_state: CleanupState,
-    pub estimated_size_for_gc: usize,
+    pub flags: Cell<InterpreterFlags>,
+    pub exit_code: Cell<Option<ExitCode>>,
+    pub this_jsvalue: Cell<crate::jsc::JSValue>,
+    pub cleanup_state: Cell<CleanupState>,
+    pub estimated_size_for_gc: Cell<usize>,
 
     /// Side-channel for `try_()`: lets init/setup paths use `?`-style cleanup
     /// while still surfacing the rich syscall error at the boundary.
-    pub last_err: Option<bun_sys::Error>,
+    pub last_err: JsCell<Option<bun_sys::Error>>,
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
     /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
-    pub vm_args_utf8: Vec<bun_str::ZigStringSlice>,
+    pub vm_args_utf8: JsCell<Vec<bun_str::ZigStringSlice>>,
 
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// Null when constructed from JS (no `ContextData` is reachable).
@@ -563,13 +579,13 @@ impl Interpreter {
         let stdin_reader = IOReader::init(stdin_fd, event_loop);
 
         // ── assemble ───────────────────────────────────────────────────────
-        let mut interpreter = Box::new(Interpreter {
-            nodes: Vec::new(),
-            free_list: Vec::new(),
+        let interpreter = Box::new(Interpreter {
+            nodes: JsCell::new(Vec::new()),
+            free_list: JsCell::new(Vec::new()),
             event_loop,
-            args: shargs,
+            args: JsCell::new(shargs),
             jsobjs,
-            root_shell: ShellExecEnv {
+            root_shell: JsCell::new(ShellExecEnv {
                 kind: ShellExecEnvKind::Normal,
                 _buffered_stdout: Bufio::default(),
                 _buffered_stderr: Bufio::default(),
@@ -580,8 +596,8 @@ impl Interpreter {
                 __cwd: cwd_arr,
                 cwd_fd,
                 async_pids: SmolList::default(),
-            },
-            root_io: IO {
+            }),
+            root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
                 // By default stdout/stderr should be IOWriters on dup'd
                 // stdout/stderr, but if the user later calls `.setQuiet(true)`
@@ -589,13 +605,13 @@ impl Interpreter {
                 // upgrades them via `setup_io_before_run()` if `!quiet`.
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
-            },
+            }),
             has_pending_activity: AtomicU32::new(0),
             started: AtomicBool::new(false),
-            keep_alive: bun_io::KeepAlive::default(),
-            async_commands_executing: 0,
-            global_this: core::ptr::null_mut(),
-            flags: InterpreterFlags::default(),
+            keep_alive: JsCell::new(bun_io::KeepAlive::default()),
+            async_commands_executing: Cell::new(0),
+            global_this: Cell::new(core::ptr::null_mut()),
+            flags: Cell::new(InterpreterFlags::default()),
             // PORT NOTE — intentional spec-bug fix: Zig declares
             // `exit_code: ?ExitCode = 0` (the *non-null* value 0), so its
             // `asyncCmdDone`'s `exit_code != null` check is always true and
@@ -603,18 +619,18 @@ impl Interpreter {
             // returned. Rust starts at `None` so `async_cmd_done` only
             // finishes once `on_root_child_done` has recorded the real exit
             // code. The matching Zig fix is tracked upstream.
-            exit_code: None,
-            this_jsvalue: crate::jsc::JSValue::ZERO,
-            cleanup_state: CleanupState::NeedsFullCleanup,
-            estimated_size_for_gc: 0,
-            last_err: None,
-            vm_args_utf8: Vec::new(),
+            exit_code: Cell::new(None),
+            this_jsvalue: Cell::new(crate::jsc::JSValue::ZERO),
+            cleanup_state: Cell::new(CleanupState::NeedsFullCleanup),
+            estimated_size_for_gc: Cell::new(0),
+            last_err: JsCell::new(None),
+            vm_args_utf8: JsCell::new(Vec::new()),
             command_ctx: ctx,
         });
         // Wire the interpreter backref into root stdin so async poll
         // callbacks can drive `Yield::run`.
-        let interp_ptr: *mut Interpreter = &mut *interpreter;
-        if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.stdin {
+        let interp_ptr: *mut Interpreter = interpreter.as_ctx_ptr();
+        if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.get().stdin {
             r.set_interp(interp_ptr);
         }
 
@@ -624,7 +640,7 @@ impl Interpreter {
             // c, true)`; on failure, deref root_io + deinit root_shell + free.
             // The interpreter parameter is unused (`_` in spec) so we don't
             // pass it (avoids the obvious self-borrow).
-            if let Err(e) = interpreter.root_shell.change_cwd_impl(c, true) {
+            if let Err(e) = interpreter.root_shell.with_mut(|rs| rs.change_cwd_impl(c, true)) {
                 // Spec: `root_io.deref(); root_shell.deinitImpl(false, true);
                 // allocator.destroy(interpreter)`. `deinit_from_exec` performs
                 // exactly that teardown (drops `root_io` Arcs, frees env maps,
@@ -640,15 +656,15 @@ impl Interpreter {
     /// Spec: interpreter.zig `#deinitFromExec` — full teardown for the
     /// standalone (`MiniEventLoop`) path. Drops root IO refcounts, frees the
     /// root shell env, and consumes the box.
-    fn deinit_from_exec(mut self: Box<Self>) {
+    fn deinit_from_exec(self: Box<Self>) {
         log!("deinit interpreter");
-        self.this_jsvalue = crate::jsc::JSValue::ZERO;
+        self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
         // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
         // default drops the refs (Zig: `root_io.deref()`).
-        self.root_io = IO::default();
+        self.root_io.set(IO::default());
         // Spec: `root_shell.deinitImpl(false, true)` — free buffered IO, env
         // maps, cwd fd; do NOT free the struct itself (it's embedded).
-        self.root_shell.deinit_embedded(true);
+        self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
         // `vm_args_utf8` slices Drop themselves (ZigStringSlice has a Drop
         // impl that derefs the WTF backing); the Vec frees on box drop.
     }
@@ -751,7 +767,7 @@ impl Interpreter {
 
         // ── init ───────────────────────────────────────────────────────────
         let evtloop = EventLoopHandle::init_mini(std::ptr::from_mut(mini));
-        let mut interp = match Self::init(
+        let interp = match Self::init(
             std::ptr::from_mut(ctx),
             evtloop,
             shargs,
@@ -764,7 +780,7 @@ impl Interpreter {
         };
 
         // ── run ────────────────────────────────────────────────────────────
-        interp.exit_code = Some(1);
+        interp.exit_code.set(Some(1));
         if let Err(e) = interp.run() {
             let name = e.name();
             interp.deinit_from_exec();
@@ -783,38 +799,74 @@ impl Interpreter {
         let interp_ptr: *const Interpreter = &raw const *interp;
         mini.tick(core::ptr::null_mut(), |_ctx| {
             // SAFETY: `interp` lives in this stack frame for the whole tick
-            // loop; `flags` is plain data (no interior mutation contention on
-            // the mini path — all mutation happens inside tasks `tick` drains
-            // synchronously).
-            unsafe { (*interp_ptr).flags.done() }
+            // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
+            // the read is sound even while tasks `tick` drains mutate it.
+            unsafe { (*interp_ptr).flags.get().done() }
         });
 
-        let code = interp.exit_code.expect("exit_code set by finish()");
+        let code = interp.exit_code.get().expect("exit_code set by finish()");
         interp.deinit_from_exec();
         Ok(code)
     }
 }
 
 impl Interpreter {
+    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+
+    /// `self`'s address as `*mut Self` for IOReader/IOWriter/ShellTask ctx
+    /// slots. Consumers deref it as `&*const` (shared) — `Yield::run` and the
+    /// dispatch trampolines take `&Interpreter` — so no write provenance is
+    /// required; the `*mut` spelling is purely to match existing field types.
+    #[inline]
+    pub fn as_ctx_ptr(&self) -> *mut Self {
+        (self as *const Self).cast_mut()
+    }
+
+    /// Read-modify-write the packed `Cell<InterpreterFlags>` through `&self`.
+    #[inline]
+    fn update_flags(&self, f: impl FnOnce(&mut InterpreterFlags)) {
+        let mut v = self.flags.get();
+        f(&mut v);
+        self.flags.set(v);
+    }
+
+    /// Mutable projection of the node arena from `&self`.
+    ///
+    /// # Safety
+    /// R-2 single-JS-thread invariant: the state machine never holds two
+    /// `&mut` into `nodes` simultaneously (borrowck previously enforced this
+    /// via `&mut Interpreter`; that discipline is preserved at every call
+    /// site). Do **not** hold the returned borrow across any call that may
+    /// reach `finish()`/`throw()` (the only paths that re-enter JS).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    unsafe fn nodes_mut(&self) -> &mut Vec<Node> {
+        // SAFETY: forwarded to caller — see fn-level contract.
+        unsafe { self.nodes.get_mut() }
+    }
+
     // ── arena management ───────────────────────────────────────────────────
 
     /// Allocate a fresh slot in the node arena and return its id. Replaces
     /// Zig's `parent.create(T)` (which heap-allocated via the parent's
     /// allocator). Reuses freed slots when available.
-    pub fn alloc_node(&mut self, node: Node) -> NodeId {
-        if let Some(slot) = self.free_list.pop() {
-            self.nodes[slot as usize] = node;
+    pub fn alloc_node(&self, node: Node) -> NodeId {
+        if let Some(slot) = self.free_list.with_mut(|f| f.pop()) {
+            // SAFETY: no other borrow of `nodes` is live across this store.
+            unsafe { self.nodes_mut()[slot as usize] = node };
             return NodeId(slot);
         }
-        let id = NodeId(self.nodes.len() as u32);
-        self.nodes.push(node);
-        id
+        self.nodes.with_mut(|n| {
+            let id = NodeId(n.len() as u32);
+            n.push(node);
+            id
+        })
     }
 
     /// Free a slot. Replaces Zig's `parent.destroy(this)`. The node's own
     /// `deinit` (which closes IO, derefs the shell env, etc.) must run first;
     /// this only recycles the storage.
-    pub fn free_node(&mut self, id: NodeId) {
+    pub fn free_node(&self, id: NodeId) {
         // Guard: callers may have stored `NodeId::NONE` in `currently_executing`
         // when `spawn_expr` failed (Subshell init error path). Spec never
         // touches `currently_executing` on that path, so the later
@@ -822,30 +874,30 @@ impl Interpreter {
         if id == NodeId::NONE || id == NodeId::INTERPRETER {
             return;
         }
-        debug_assert!(
-            !matches!(self.nodes[id.idx()], Node::Free),
-            "double-free of {}",
-            id
-        );
-        self.nodes[id.idx()] = Node::Free;
-        self.free_list.push(id.0);
+        self.nodes.with_mut(|n| {
+            debug_assert!(!matches!(n[id.idx()], Node::Free), "double-free of {}", id);
+            n[id.idx()] = Node::Free;
+        });
+        self.free_list.with_mut(|f| f.push(id.0));
     }
 
     #[inline]
     pub fn node(&self, id: NodeId) -> &Node {
-        &self.nodes[id.idx()]
+        &self.nodes.get()[id.idx()]
     }
 
     #[inline]
-    pub fn node_mut(&mut self, id: NodeId) -> &mut Node {
-        &mut self.nodes[id.idx()]
+    #[allow(clippy::mut_from_ref)]
+    pub fn node_mut(&self, id: NodeId) -> &mut Node {
+        // SAFETY: see `nodes_mut` — single-JS-thread, no overlapping borrow.
+        unsafe { &mut self.nodes_mut()[id.idx()] }
     }
 
     /// Look up the `parent` field of any state node. (Replaces
     /// `StatePtrUnion.ptr.is::<T>()` checks.)
     #[inline]
     pub fn parent_of(&self, id: NodeId) -> NodeId {
-        self.nodes[id.idx()]
+        self.nodes.get()[id.idx()]
             .base()
             .map(|b| b.parent)
             .unwrap_or(NodeId::INTERPRETER)
@@ -860,20 +912,20 @@ impl Interpreter {
             // own variant in callers' matches.
             return StateKind::Script; // unused — callers test the sentinel first
         }
-        self.nodes[id.idx()].kind()
+        self.nodes.get()[id.idx()].kind()
     }
 
     /// Shell exec env for the node at `id` (or the root env if `id` is the
     /// interpreter sentinel).
     #[inline]
-    pub fn shell_env(&mut self, id: NodeId) -> *mut ShellExecEnv {
+    pub fn shell_env(&self, id: NodeId) -> *mut ShellExecEnv {
         if id == NodeId::INTERPRETER {
-            return &raw mut self.root_shell;
+            return self.root_shell.as_ptr();
         }
-        self.nodes[id.idx()]
+        self.nodes.get()[id.idx()]
             .base()
             .map(|b| b.shell)
-            .unwrap_or(&raw mut self.root_shell)
+            .unwrap_or(self.root_shell.as_ptr())
     }
 
     // ── hoisted dispatch (PORTING.md §Dispatch hot-path) ───────────────────
@@ -884,11 +936,11 @@ impl Interpreter {
     ///
     /// PERF(port): was `inline else` switch — direct calls per arm so LLVM
     /// inlines the hot states (Stmt/Pipeline/Cmd) the same way Zig did.
-    pub fn child_done(&mut self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
+    pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
         if parent == NodeId::INTERPRETER {
             return self.on_root_child_done(child, exit_code);
         }
-        match self.nodes[parent.idx()].kind() {
+        match self.nodes.get()[parent.idx()].kind() {
             StateKind::Script => Script::child_done(self, parent, child, exit_code),
             StateKind::Stmt => Stmt::child_done(self, parent, child, exit_code),
             StateKind::Binary => Binary::child_done(self, parent, child, exit_code),
@@ -906,8 +958,8 @@ impl Interpreter {
 
     /// Advance node `id` by one step. The trampoline (`Yield::run`) calls
     /// this; replaces the per-variant `&mut State` dispatch in Yield.
-    pub fn next_node(&mut self, id: NodeId) -> Yield {
-        match self.nodes[id.idx()].kind() {
+    pub fn next_node(&self, id: NodeId) -> Yield {
+        match self.nodes.get()[id.idx()].kind() {
             StateKind::Script => Script::next(self, id),
             StateKind::Stmt => Stmt::next(self, id),
             StateKind::Binary => Binary::next(self, id),
@@ -925,8 +977,8 @@ impl Interpreter {
 
     /// Start node `id`. Most states return `Yield::<Kind>(id)` immediately;
     /// the trampoline then calls `next_node`.
-    pub fn start_node(&mut self, id: NodeId) -> Yield {
-        match self.nodes[id.idx()].kind() {
+    pub fn start_node(&self, id: NodeId) -> Yield {
+        match self.nodes.get()[id.idx()].kind() {
             StateKind::Script => Script::start(self, id),
             StateKind::Stmt => Stmt::start(self, id),
             StateKind::Binary => Binary::start(self, id),
@@ -950,7 +1002,7 @@ impl Interpreter {
     /// Note: `Async` must NOT call this — Async.zig restricts its child to
     /// pipeline/cmd/if/condexpr and inits without starting (see `Async::next`).
     pub fn spawn_expr(
-        &mut self,
+        &self,
         shell: *mut ShellExecEnv,
         expr: &ast::Expr,
         parent: NodeId,
@@ -993,14 +1045,14 @@ impl Interpreter {
 
     /// Run the per-state cleanup, then recycle the slot. Replaces every
     /// `child.deinit()` + `parent.destroy(child)` pair in Zig.
-    pub fn deinit_node(&mut self, id: NodeId) {
+    pub fn deinit_node(&self, id: NodeId) {
         // Guard the `NodeId::NONE` sentinel: `spawn_expr` returns it on
         // Subshell init failure, and Stmt/Binary `currently_executing` may
         // hold it. Indexing `nodes[u32::MAX-1]` would be OOB.
         if id == NodeId::NONE || id == NodeId::INTERPRETER {
             return;
         }
-        match self.nodes[id.idx()].kind() {
+        match self.nodes.get()[id.idx()].kind() {
             StateKind::Script => Script::deinit(self, id),
             StateKind::Stmt => Stmt::deinit(self, id),
             StateKind::Binary => Binary::deinit(self, id),
@@ -1019,25 +1071,25 @@ impl Interpreter {
 
     // ── root (Interpreter-as-parent) ───────────────────────────────────────
 
-    fn on_root_child_done(&mut self, child: NodeId, exit_code: ExitCode) -> Yield {
+    fn on_root_child_done(&self, child: NodeId, exit_code: ExitCode) -> Yield {
         // Only `Script` can be a direct child of the interpreter.
-        debug_assert!(matches!(self.nodes[child.idx()], Node::Script(_)));
+        debug_assert!(matches!(self.nodes.get()[child.idx()], Node::Script(_)));
         log!("Interpreter script finish {}", exit_code);
         Script::deinit_from_interpreter(self, child);
         self.free_node(child);
-        self.exit_code = Some(exit_code);
-        if self.async_commands_executing == 0 {
+        self.exit_code.set(Some(exit_code));
+        if self.async_commands_executing.get() == 0 {
             return self.finish(exit_code);
         }
         Yield::suspended()
     }
 
-    pub fn async_cmd_done(&mut self, async_id: NodeId) {
+    pub fn async_cmd_done(&self, async_id: NodeId) {
         Async::actually_deinit(self, async_id);
         self.free_node(async_id);
-        self.async_commands_executing -= 1;
-        if self.async_commands_executing == 0 {
-            if let Some(exit) = self.exit_code {
+        self.async_commands_executing.set(self.async_commands_executing.get() - 1);
+        if self.async_commands_executing.get() == 0 {
+            if let Some(exit) = self.exit_code.get() {
                 self.finish(exit).run(self);
             }
         }
@@ -1048,39 +1100,40 @@ impl Interpreter {
     /// Unwrap a `Maybe(T)` into `Result<T, TryError>`, stashing the rich
     /// syscall error on the interpreter for later retrieval.
     #[inline]
-    pub fn try_<T>(&mut self, m: bun_sys::Result<T>) -> Result<T, crate::shell::states::base::TryError> {
+    pub fn try_<T>(&self, m: bun_sys::Result<T>) -> Result<T, crate::shell::states::base::TryError> {
         match m {
             Ok(v) => Ok(v),
             Err(e) => {
-                self.last_err = Some(e);
+                self.last_err.set(Some(e));
                 Err(crate::shell::states::base::TryError::Sys)
             }
         }
     }
 
     #[inline]
-    pub fn take_err(&mut self) -> bun_sys::Error {
+    pub fn take_err(&self) -> bun_sys::Error {
         self.last_err
-            .take()
+            .with_mut(|e| e.take())
             .expect("take_err() with no stashed error")
     }
 
     #[inline]
     pub fn root_io(&self) -> &IO {
-        &self.root_io
+        self.root_io.get()
     }
 
     /// Spec: interpreter.zig `#computeEstimatedSizeForGC` (interpreter.zig:752).
     pub fn compute_estimated_size_for_gc(&self) -> usize {
         let mut size = core::mem::size_of::<Interpreter>();
-        size += self.args.memory_cost();
-        size += self.root_shell.memory_cost();
-        size += self.root_io.memory_cost();
+        size += self.args.get().memory_cost();
+        size += self.root_shell.get().memory_cost();
+        size += self.root_io.get().memory_cost();
         size += self.jsobjs.len() * core::mem::size_of::<crate::jsc::JSValue>();
-        for arg in &self.vm_args_utf8 {
+        let vm_args = self.vm_args_utf8.get();
+        for arg in vm_args {
             size += arg.slice().len();
         }
-        size += self.vm_args_utf8.capacity() * core::mem::size_of::<bun_str::ZigStringSlice>();
+        size += vm_args.capacity() * core::mem::size_of::<bun_str::ZigStringSlice>();
         size
     }
 
@@ -1091,20 +1144,21 @@ impl Interpreter {
 
     /// Spec: interpreter.zig `estimatedSize`. Codegen-called accessor.
     pub fn estimated_size(&self) -> usize {
-        self.estimated_size_for_gc
+        self.estimated_size_for_gc.get()
     }
 
     /// Spec: interpreter.zig `throwShellErr(err, event_loop)` — `mini` prints
     /// and exits(1); `js` raises a JS exception. Dispatch on `global_this`
     /// (set only on the JS event-loop path by `create_shell_interpreter`).
-    pub fn throw(&mut self, err: ShellErr) {
-        if self.global_this.is_null() {
+    pub fn throw(&self, err: ShellErr) {
+        let global = self.global_this.get();
+        if global.is_null() {
             // Mini event loop — diverges (exit 1).
             err.throw_mini();
         }
         // SAFETY: `global_this` was set by `create_shell_interpreter`; the
         // global outlives the interpreter (held by the JS wrapper).
-        let _ = err.throw_js(unsafe { &*self.global_this });
+        let _ = err.throw_js(unsafe { &*global });
     }
 
     // ── run loop ───────────────────────────────────────────────────────────
@@ -1116,8 +1170,8 @@ impl Interpreter {
     /// so command output reaches the terminal. On the JS event loop the
     /// `captured` slot is also wired to `_buffered_stdout/err` so
     /// `Bun.$` callers can read it back.
-    fn setup_io_before_run(&mut self) -> bun_sys::Result<()> {
-        if self.flags.quiet() {
+    fn setup_io_before_run(&self) -> bun_sys::Result<()> {
+        if self.flags.get().quiet() {
             return Ok(());
         }
         let event_loop = self.event_loop;
@@ -1145,7 +1199,7 @@ impl Interpreter {
             }
         };
 
-        let interp_ptr: *mut Interpreter = self;
+        let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
         let stdout_writer = IOWriter::init(
             stdout_fd,
             crate::shell::io_writer::Flags {
@@ -1169,44 +1223,43 @@ impl Interpreter {
         // `Bun.$` API can read stdout/stderr after completion. The mini path
         // does not capture (it writes straight to the dup'd fd).
         let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. }) {
-            (
-                Some(self.root_shell.buffered_stdout()),
-                Some(self.root_shell.buffered_stderr()),
-            )
+            self.root_shell.with_mut(|rs| {
+                (Some(rs.buffered_stdout()), Some(rs.buffered_stderr()))
+            })
         } else {
             (None, None)
         };
 
-        self.root_io.stdout = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
-            writer: stdout_writer,
-            captured: cap_out,
-        });
-        self.root_io.stderr = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
-            writer: stderr_writer,
-            captured: cap_err,
+        self.root_io.with_mut(|io| {
+            io.stdout = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
+                writer: stdout_writer,
+                captured: cap_out,
+            });
+            io.stderr = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
+                writer: stderr_writer,
+                captured: cap_err,
+            });
         });
 
         Ok(())
     }
 
-    pub fn run(&mut self) -> bun_sys::Result<()> {
+    pub fn run(&self) -> bun_sys::Result<()> {
         log!("Interpreter(0x{:x}) run", std::ptr::from_ref(self) as usize);
         if let Err(e) = self.setup_io_before_run() {
             return Err(e);
         }
 
-        // PORT NOTE: reshaped for borrowck — capture raw ptrs/clones before
-        // taking `&mut self` for `Script::init`.
-        let shell = &raw mut self.root_shell;
-        let ast = &raw const self.args.script_ast;
-        let io = self.root_io.clone();
+        let shell = self.root_shell.as_ptr();
+        let ast = &raw const self.args.get().script_ast;
+        let io = self.root_io.get().clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
         Ok(())
     }
 
-    pub fn finish(&mut self, exit_code: ExitCode) -> Yield {
+    pub fn finish(&self, exit_code: ExitCode) -> Yield {
         use crate::jsc::generated::JSShellInterpreter;
         use crate::jsc::JSValue;
 
@@ -1215,30 +1268,28 @@ impl Interpreter {
         // unconditionally. Paired with the increment in `run_from_js`; harmless
         // wrap on the mini path (flag is only read from the JS GC
         // `hasPendingActivity()` hook).
-        // PORT NOTE: reshaped for borrowck — guard holds a raw ptr so the
-        // `AtomicU32` borrow doesn't conflict with `&mut self` below; the
-        // counter is `Sync` and the interpreter outlives this stack frame.
-        struct DecrOnDrop(*const AtomicU32);
-        impl Drop for DecrOnDrop {
+        // R-2: `&self` lets the guard borrow the atomic directly — no raw-ptr
+        // dance needed (the previous reshape existed only for `&mut self`).
+        struct DecrOnDrop<'a>(&'a AtomicU32);
+        impl Drop for DecrOnDrop<'_> {
             fn drop(&mut self) {
-                // SAFETY: points into the live `Interpreter` for this frame.
-                Interpreter::decr_pending_activity_flag(unsafe { &*self.0 });
+                Interpreter::decr_pending_activity_flag(self.0);
             }
         }
-        let _decr = DecrOnDrop(&raw const self.has_pending_activity);
+        let _decr = DecrOnDrop(&self.has_pending_activity);
 
         if matches!(self.event_loop, EventLoopHandle::Js { .. }) {
-            self.exit_code = Some(exit_code);
-            let this_jsvalue = self.this_jsvalue;
+            self.exit_code.set(Some(exit_code));
+            let this_jsvalue = self.this_jsvalue.get();
             if this_jsvalue != JSValue::ZERO {
                 if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
                     let loop_ = self.event_loop;
                     // SAFETY: `global_this` was set by `create_shell_interpreter`;
                     // the global outlives the interpreter (held by the JS wrapper).
-                    let global_this = unsafe { &*self.global_this };
+                    let global_this = unsafe { &*self.global_this.get() };
                     let buffered_stdout = self.get_buffered_stdout(global_this);
                     let buffered_stderr = self.get_buffered_stderr(global_this);
-                    self.keep_alive.disable();
+                    self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
                     if let Err(err) = resolve.call(
@@ -1257,8 +1308,8 @@ impl Interpreter {
                 }
             }
         } else {
-            self.flags.set_done(true);
-            self.exit_code = Some(exit_code);
+            self.update_flags(|f| f.set_done(true));
+            self.exit_code.set(Some(exit_code));
         }
 
         Yield::done()
@@ -1267,7 +1318,7 @@ impl Interpreter {
     /// Spec: interpreter.zig `runFromJS`. JS-host entrypoint — sets up root IO
     /// (unless quiet), spawns the root `Script` node, and starts ticking.
     pub fn run_from_js(
-        &mut self,
+        &self,
         global_this: &crate::jsc::JSGlobalObject,
         _callframe: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
@@ -1280,11 +1331,9 @@ impl Interpreter {
         }
         Self::incr_pending_activity_flag(&self.has_pending_activity);
 
-        // PORT NOTE: reshaped for borrowck — capture raw ptrs before taking
-        // `&mut self` for `Script::init`.
-        let shell = &raw mut self.root_shell;
-        let ast = &raw const self.args.script_ast;
-        let io = self.root_io.clone();
+        let shell = self.root_shell.as_ptr();
+        let ast = &raw const self.args.get().script_ast;
+        let io = self.root_io.get().clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
@@ -1299,28 +1348,30 @@ impl Interpreter {
     /// teardown of `root_io`/`root_shell` for the JS event-loop path; called
     /// from `finish()` (success) and `run_from_js()` (early error). Guards on
     /// `cleanup_state` so a later `finalize()` doesn't double-free.
-    fn deref_root_shell_and_io_if_needed(&mut self, free_buffered_io: bool) {
-        if self.cleanup_state == CleanupState::RuntimeCleaned {
+    fn deref_root_shell_and_io_if_needed(&self, free_buffered_io: bool) {
+        if self.cleanup_state.get() == CleanupState::RuntimeCleaned {
             return;
         }
 
         if free_buffered_io {
             // Can safely be called multiple times.
-            if let Bufio::Owned(o) = &mut self.root_shell._buffered_stderr {
-                o.clear_and_free();
-            }
-            if let Bufio::Owned(o) = &mut self.root_shell._buffered_stdout {
-                o.clear_and_free();
-            }
+            self.root_shell.with_mut(|rs| {
+                if let Bufio::Owned(o) = &mut rs._buffered_stderr {
+                    o.clear_and_free();
+                }
+                if let Bufio::Owned(o) = &mut rs._buffered_stdout {
+                    o.clear_and_free();
+                }
+            });
         }
 
         // Has this already been finalized?
-        if self.this_jsvalue != crate::jsc::JSValue::ZERO {
+        if self.this_jsvalue.get() != crate::jsc::JSValue::ZERO {
             // Cannot be safely called multiple times.
             // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
             // default drops the refs (Zig: `root_io.deref()`).
-            self.root_io = IO::default();
-            self.root_shell.deinit_embedded(false);
+            self.root_io.set(IO::default());
+            self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
         }
 
         // PORT NOTE: free the parse arena eagerly. Zig's `args.__arena` is a
@@ -1342,11 +1393,13 @@ impl Interpreter {
         // destroyed; nothing dereferences it after this point (the only
         // remaining reader is `memory_cost()`, which queries
         // `__arena.allocated_bytes()` and never touches the AST).
-        self.args.script_ast = ast::Script { stmts: &[] };
-        self.args.__arena.reset();
+        self.args.with_mut(|a| {
+            a.script_ast = ast::Script { stmts: &[] };
+            a.__arena.reset();
+        });
 
-        self.this_jsvalue = crate::jsc::JSValue::ZERO;
-        self.cleanup_state = CleanupState::RuntimeCleaned;
+        self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
+        self.cleanup_state.set(CleanupState::RuntimeCleaned);
     }
 
     /// Spec: interpreter.zig `deinitFromFinalizer`. GC finalizer body — runs
@@ -1357,19 +1410,19 @@ impl Interpreter {
     /// `m_ctx`; called exactly once from the GC thread's finalizer.
     pub unsafe fn deinit_from_finalizer(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live `heap::alloc` payload.
-        let mut this = unsafe { bun_core::heap::take(this) };
+        let this = unsafe { bun_core::heap::take(this) };
         log!(
             "Interpreter(0x{:x}) deinitFromFinalizer (cleanup_state={})",
             &raw const *this as usize,
-            <&'static str>::from(this.cleanup_state),
+            <&'static str>::from(this.cleanup_state.get()),
         );
 
-        match this.cleanup_state {
+        match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
                 // The interpreter never finished normally (e.g. early error or
                 // never started), so we need to clean up IO and shell env here.
-                this.root_io = IO::default();
-                this.root_shell.deinit_embedded(true);
+                this.root_io.set(IO::default());
+                this.root_shell.with_mut(|rs| rs.deinit_embedded(true));
             }
             CleanupState::RuntimeCleaned => {
                 // `finish()` already cleaned up via
@@ -1377,7 +1430,7 @@ impl Interpreter {
             }
         }
 
-        this.keep_alive.disable();
+        this.keep_alive.with_mut(|k| k.disable());
         // `args: Box<ShellArgs>` and `vm_args_utf8: Vec<ZigStringSlice>` drop
         // with the box; `ZigStringSlice` has a `Drop` impl that derefs its
         // WTF backing (Zig: per-item `str.deinit()` + list deinit).
@@ -1385,25 +1438,25 @@ impl Interpreter {
 
     /// Spec: interpreter.zig `setQuiet` — JS `interp.setQuiet()`.
     pub fn set_quiet(
-        &mut self,
+        &self,
         _: &crate::jsc::JSGlobalObject,
         _: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
         log!("Interpreter(0x{:x}) setQuiet()", std::ptr::from_ref(self) as usize);
-        self.flags.set_quiet(true);
+        self.update_flags(|f| f.set_quiet(true));
         Ok(crate::jsc::JSValue::UNDEFINED)
     }
 
     /// Spec: interpreter.zig `setCwd` — JS `interp.setCwd(path)`.
     pub fn set_cwd(
-        &mut self,
+        &self,
         global_this: &crate::jsc::JSGlobalObject,
         callframe: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
         let value = callframe.argument(0);
         let str = crate::jsc::bun_string_jsc::from_js(value, global_this)?;
         let slice = str.to_utf8();
-        let result = self.root_shell.change_cwd(slice.slice());
+        let result = self.root_shell.with_mut(|rs| rs.change_cwd(slice.slice()));
         drop(slice);
         str.deref();
         if let Err(e) = result {
@@ -1415,7 +1468,7 @@ impl Interpreter {
 
     /// Spec: interpreter.zig `setEnv` — JS `interp.setEnv({ FOO: "bar" })`.
     pub fn set_env(
-        &mut self,
+        &self,
         global_this: &crate::jsc::JSGlobalObject,
         callframe: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
@@ -1433,8 +1486,10 @@ impl Interpreter {
             JSPropertyIteratorOptions::new(false, true),
         )?;
 
-        self.root_shell.export_env.clear_retaining_capacity();
-        self.root_shell.export_env.ensure_total_capacity(object_iter.len);
+        self.root_shell.with_mut(|rs| {
+            rs.export_env.clear_retaining_capacity();
+            rs.export_env.ensure_total_capacity(object_iter.len);
+        });
 
         // If the env object does not include a $PATH, it must disable path
         // lookup for argv[0].
@@ -1452,7 +1507,7 @@ impl Interpreter {
             // here without leaking. Phase B revisits the ownership contract.
             let keyref = EnvStr::init_ref_counted(&keyslice);
             let valueref = EnvStr::init_ref_counted(&slice);
-            self.root_shell.export_env.insert(keyref, valueref);
+            self.root_shell.with_mut(|rs| rs.export_env.insert(keyref, valueref));
             keyref.deref();
             valueref.deref();
         }
@@ -1462,7 +1517,7 @@ impl Interpreter {
 
     /// Spec: interpreter.zig `isRunning`.
     pub fn is_running(
-        &mut self,
+        &self,
         _: &crate::jsc::JSGlobalObject,
         _: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
@@ -1471,7 +1526,7 @@ impl Interpreter {
 
     /// Spec: interpreter.zig `getStarted`.
     pub fn get_started(
-        &mut self,
+        &self,
         _: &crate::jsc::JSGlobalObject,
         _: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
@@ -1479,13 +1534,13 @@ impl Interpreter {
     }
 
     /// Spec: interpreter.zig `getBufferedStdout`.
-    pub fn get_buffered_stdout(&mut self, global_this: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue {
-        io_to_js_value(global_this, self.root_shell.buffered_stdout())
+    pub fn get_buffered_stdout(&self, global_this: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue {
+        io_to_js_value(global_this, self.root_shell.with_mut(|rs| rs.buffered_stdout()))
     }
 
     /// Spec: interpreter.zig `getBufferedStderr`.
-    pub fn get_buffered_stderr(&mut self, global_this: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue {
-        io_to_js_value(global_this, self.root_shell.buffered_stderr())
+    pub fn get_buffered_stderr(&self, global_this: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue {
+        io_to_js_value(global_this, self.root_shell.with_mut(|rs| rs.buffered_stderr()))
     }
 
     /// Spec: interpreter.zig `finalize`. GC finalizer hook — called from the
@@ -1524,19 +1579,21 @@ impl Interpreter {
     /// `argv` as UTF-8 slices so `$@`/`$N` expansion (Expansion.zig) can index
     /// without re-converting on every reference.
     pub fn get_vm_args_utf8(
-        &mut self,
+        &self,
         argv: &[bun_str::WTFStringImpl],
         idx: u8,
     ) -> &[u8] {
-        if self.vm_args_utf8.len() != argv.len() {
-            self.vm_args_utf8.reserve(argv.len());
-            for arg in argv {
-                // SAFETY: each `WTFStringImpl` in `argv` is a live
-                // `*WTF::StringImpl` borrowed from `worker.argv`.
-                self.vm_args_utf8.push(unsafe { (**arg).to_utf8() });
+        self.vm_args_utf8.with_mut(|v| {
+            if v.len() != argv.len() {
+                v.reserve(argv.len());
+                for arg in argv {
+                    // SAFETY: each `WTFStringImpl` in `argv` is a live
+                    // `*WTF::StringImpl` borrowed from `worker.argv`.
+                    v.push(unsafe { (**arg).to_utf8() });
+                }
             }
-        }
-        self.vm_args_utf8[idx as usize].slice()
+        });
+        self.vm_args_utf8.get()[idx as usize].slice()
     }
 
     /// Spec: Expansion.zig `expandVarArgv`. Appends the value of `$N` to
@@ -2586,20 +2643,20 @@ pub enum OutputTaskState {
 /// register it as the IOWriter callback target.
 pub trait OutputTaskVTable: Sized {
     fn write_err(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield>;
-    fn on_write_err(interp: &mut Interpreter, cmd: NodeId);
+    fn on_write_err(interp: &Interpreter, cmd: NodeId);
     fn write_out(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield>;
-    fn on_write_out(interp: &mut Interpreter, cmd: NodeId);
-    fn on_done(interp: &mut Interpreter, cmd: NodeId) -> Yield;
+    fn on_write_out(interp: &Interpreter, cmd: NodeId);
+    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield;
 }
 
 /// A task that can write to stdout and/or stderr. Spec: interpreter.zig
@@ -2631,7 +2688,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     /// → `start`), leaks it to the raw `*mut Self` the IOWriter callback chain
     /// needs, and drives the first state transition. The box is reclaimed by
     /// [`Self::deinit`] (via `heap::take`) when the task reaches `Done`.
-    pub fn start(me: Box<Self>, interp: &mut Interpreter, errbuf: Option<&[u8]>) -> Yield {
+    pub fn start(me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
         // Leak so `P::write_*` can stash `this` as the IOWriter's `ChildPtr`;
         // address is stable for the task's lifetime. Re-derive `&mut` per
         // step (the `P::*` callbacks re-enter via raw `this`, not a reborrow
@@ -2663,7 +2720,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     }
 
     /// Spec: interpreter.zig `OutputTask.next`.
-    pub unsafe fn next(this: *mut Self, interp: &mut Interpreter) -> Yield {
+    pub unsafe fn next(this: *mut Self, interp: &Interpreter) -> Yield {
         // SAFETY: caller contract — see `start`.
         unsafe {
             let me = &mut *this;
@@ -2691,7 +2748,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     /// Spec: interpreter.zig `OutputTask.onIOWriterChunk`.
     pub unsafe fn on_io_writer_chunk(
         this: *mut Self,
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         _written: usize,
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
@@ -2701,7 +2758,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     }
 
     /// Spec: interpreter.zig `OutputTask.deinit` — fires `on_done` then frees.
-    unsafe fn deinit(this: *mut Self, interp: &mut Interpreter) -> Yield {
+    unsafe fn deinit(this: *mut Self, interp: &Interpreter) -> Yield {
         // SAFETY: `this` was heap-allocated in `new`; reclaim and drop.
         let me = unsafe { bun_core::heap::take(this) };
         debug_assert!(me.state == OutputTaskState::Done);
@@ -2737,7 +2794,7 @@ pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// borrow once; no impl re-enters or frees `self` here (that happens in
     /// `run_from_main_thread`).
     fn run_from_thread_pool(this: &mut Self);
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter);
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter);
 }
 
 pub type WorkPoolTask = bun_threading::work_pool::Task;
@@ -2875,7 +2932,7 @@ impl ShellTask {
             (*this)
                 .keep_alive
                 .unref((*this).event_loop.as_event_loop_ctx());
-            let interp = &mut *(*this).interp;
+            let interp = &*(*this).interp;
             C::run_from_main_thread(ctx, interp);
         }
     }
@@ -2959,10 +3016,13 @@ pub fn create_shell_interpreter(
 
     let parsed_shell_script = ParsedShellScript::from_js(parsed_shell_script_js)
         .ok_or_else(|| global.throw(format_args!("shell: expected a ParsedShellScript")))?;
-    // SAFETY: from_js returned a live wrapper-owned heap pointer.
-    let parsed_shell_script = unsafe { &mut *parsed_shell_script };
+    // SAFETY: from_js returned a live wrapper-owned heap pointer. R-2: deref as
+    // shared (`&*const`) — `ParsedShellScript`'s methods/fields are `&self` +
+    // interior-mutable, so no `&mut` is required (and forming one here would
+    // alias if JS re-enters another host fn on the same wrapper).
+    let parsed_shell_script: &ParsedShellScript = unsafe { &*parsed_shell_script };
 
-    if parsed_shell_script.args.is_none() {
+    if parsed_shell_script.args.get().is_none() {
         return Err(global.throw(format_args!(
             "shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.",
         )));
@@ -3006,15 +3066,15 @@ pub fn create_shell_interpreter(
     // ownership of the raw pointer and `interpreter` outlives this call.
     // Single-threaded.
     let js_value = unsafe {
-        (*interpreter).flags.set_quiet(quiet);
-        (*interpreter).global_this = std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut();
-        (*interpreter).estimated_size_for_gc = (*interpreter).compute_estimated_size_for_gc();
+        let it = &*interpreter;
+        it.update_flags(|f| f.set_quiet(quiet));
+        it.global_this.set(std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut());
+        it.estimated_size_for_gc.set(it.compute_estimated_size_for_gc());
         let js_value =
             Bun__createShellInterpreter(global, interpreter, parsed_shell_script_js, resolve, reject);
-        (*interpreter).this_jsvalue = js_value;
-        (*interpreter)
-            .keep_alive
-            .ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr()));
+        it.this_jsvalue.set(js_value);
+        it.keep_alive
+            .with_mut(|k| k.ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr())));
         js_value
     };
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);

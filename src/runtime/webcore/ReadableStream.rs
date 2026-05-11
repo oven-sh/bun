@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -178,12 +179,12 @@ impl ReadableStream {
             Source::File(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
-                if let webcore::file_reader::Lazy::Blob(store) = &blobby.lazy {
+                if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
                     // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
                     // provided after the raw-pointer copy in `initWithStore`.
                     let blob = Blob::init_with_store(store.clone(), global_this);
                     // it should be lazy, file shouldn't have opened yet.
-                    debug_assert!(!blobby.started);
+                    debug_assert!(!blobby.started.get());
                     self.done(global_this);
                     return Some(webcore::blob::Any::Blob(blob));
                 }
@@ -345,9 +346,9 @@ impl ReadableStream {
                     context: FileReader {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
                         // returns a non-null *mut EventLoop. Both outlive this call.
-                        event_loop: jsc::EventLoopHandle::init(
+                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
-                        ),
+                        )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
                             Some(blob.size.get() as usize)
@@ -356,7 +357,7 @@ impl ReadableStream {
                         },
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`
                         // after the raw `.lazy = .{ .blob = store }` assignment.
-                        lazy: webcore::file_reader::Lazy::Blob(store.clone()),
+                        lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -406,12 +407,12 @@ impl ReadableStream {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                        event_loop: jsc::EventLoopHandle::init(
+                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
-                        ),
+                        )),
                         start_offset: Some(offset),
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`.
-                        lazy: webcore::file_reader::Lazy::Blob(store.clone()),
+                        lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -435,9 +436,9 @@ impl ReadableStream {
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                event_loop: jsc::EventLoopHandle::init(
+                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     global_this.bun_vm().as_mut().event_loop().cast(),
-                ),
+                )),
                 ..Default::default()
             },
             ..Default::default()
@@ -565,6 +566,11 @@ pub trait SourceContext: Sized {
     fn on_start(&mut self) -> streams::Start;
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
     fn on_cancel(&mut self);
+    /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
+    /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
+    /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
+    /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
+    /// here would deallocate the storage backing the live `&mut self` borrow (UAF).
     fn deinit_fn(&mut self);
 
     /// `setRefUnrefFn` — default no-op (Zig: `?fn`, null ⇒ ref/unref are no-ops).
@@ -619,8 +625,10 @@ pub struct NewSource<C: SourceContext> {
     // TODO(port): lifetime — TSV class UNKNOWN
     pub close_ctx: Option<NonNull<c_void>>,
     pub close_jsvalue: bun_jsc::strong::Optional,
-    pub cancel_handler: Option<fn(Option<*mut c_void>)>,
-    pub cancel_ctx: Option<*mut c_void>,
+    /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
+    /// (through `ByteStream::parent_const`), so interior-mutable.
+    pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
+    pub cancel_ctx: Cell<Option<*mut c_void>>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
@@ -628,7 +636,9 @@ pub struct NewSource<C: SourceContext> {
     // SAFETY: this is the self-wrapper JSValue (points at the JSCell that owns this m_ctx).
     // Kept alive by the wrapper itself; zeroed in finalize() before sweep.
     pub this_jsvalue: JSValue,
-    pub is_closed: bool,
+    /// R-2: written by `&self` context methods (`ByteStream::to_any_blob`,
+    /// `ByteBlobLoader::to_any_blob`) via `parent_const()`, so interior-mutable.
+    pub is_closed: Cell<bool>,
 }
 
 impl<C: SourceContext + Default> Default for NewSource<C> {
@@ -641,11 +651,11 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             close_handler: None,
             close_ctx: None,
             close_jsvalue: bun_jsc::strong::Optional::empty(),
-            cancel_handler: None,
-            cancel_ctx: None,
+            cancel_handler: Cell::new(None),
+            cancel_ctx: Cell::new(None),
             global_this: None,
             this_jsvalue: JSValue::ZERO,
-            is_closed: false,
+            is_closed: Cell::new(false),
         }
     }
 }
@@ -796,7 +806,7 @@ impl<C: SourceContext> NewSource<C> {
         self.cancelled = true;
         self.context.on_cancel();
         if let Some(handler) = self.cancel_handler.take() {
-            handler(self.cancel_ctx);
+            handler(self.cancel_ctx.get());
         }
     }
 
@@ -833,21 +843,40 @@ impl<C: SourceContext> NewSource<C> {
         self.ref_count += 1;
     }
 
-    pub fn decrement_count(&mut self) -> u32 {
-        if cfg!(debug_assertions) {
-            if self.ref_count == 0 {
+    /// Release one reference. If the count hits zero, runs context teardown and
+    /// **frees the allocation** (`bun.destroy(this)`).
+    ///
+    /// Takes a raw pointer (not `&mut self`) because the zero-refcount path
+    /// deallocates `*this`; holding a live `&mut Self` across that drop would be
+    /// a dangling-reference UAF (Stacked Borrows: protected tag on freed memory).
+    ///
+    /// SAFETY: `this` must point at a live `NewSource<C>` produced by
+    /// [`Self::new`] (i.e. `Box::into_raw`). Caller must not dereference `this`
+    /// — nor any interior pointer such as `&mut context` — after this returns.
+    pub unsafe fn decrement_count(this: *mut Self) -> u32 {
+        // SAFETY: caller contract — `this` is live for the duration of this block.
+        let remaining = unsafe {
+            let r = &mut (*this).ref_count;
+            #[cfg(debug_assertions)]
+            if *r == 0 {
                 panic!("Attempted to decrement ref count below zero");
             }
-        }
-
-        self.ref_count -= 1;
-        if self.ref_count == 0 {
-            self.close_jsvalue.deinit();
-            self.context.deinit_fn();
+            *r -= 1;
+            *r
+        };
+        if remaining == 0 {
+            // SAFETY: still live; run side-effect teardown while fields are valid.
+            unsafe {
+                (*this).close_jsvalue.deinit();
+                (*this).context.deinit_fn();
+            }
+            // SAFETY: `this` originated from `Box::into_raw` in `Self::new`. No
+            // `&mut` borrow of `*this` is live at this point — reclaim and drop,
+            // which runs `Drop` on `context` and all other fields, then frees.
+            drop(unsafe { bun_core::heap::take(this) });
             return 0;
         }
-
-        self.ref_count
+        remaining
     }
 
     pub fn get_error(&mut self) -> Option<syscall::Error> {
@@ -901,14 +930,10 @@ impl<C: SourceContext> NewSource<C> {
         self.context.memory_cost_fn() + core::mem::size_of::<Self>()
     }
 
-    /// `bun.TrivialDeinit(@This())` — drops the heap allocation. Called from
-    /// context `deinit` (e.g. `ByteStream::finalize` → `parent().deinit()`).
-    /// SAFETY: `self` must have been produced by [`Self::new`] (i.e.
-    /// `heap::alloc(Box::new(..))`) and must not be used after this call.
-    pub unsafe fn deinit(&mut self) {
-        // SAFETY: see fn-level doc — caller guarantees Box provenance.
-        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
-    }
+    // `bun.TrivialDeinit(@This())` is folded into [`Self::decrement_count`]'s
+    // zero-refcount path. A `&mut self` deinit here would free the storage
+    // backing the live `self` borrow (dangling UAF), so the drop is performed
+    // there via raw `*mut Self` instead.
 }
 
 // ─── codegen-facing inherent methods ─────────────────────────────────────────
@@ -950,7 +975,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn get_is_closed_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.is_closed)
+        JSValue::from(self.is_closed.get())
     }
 
     fn process_result(
@@ -1098,10 +1123,12 @@ impl<C: SourceContext> NewSource<C> {
     pub fn finalize(self: Box<Self>) {
         // Refcounted: `decrement_count` releases the JS wrapper's +1; allocation
         // may outlive this call if other refs remain, so hand ownership back to
-        // the raw refcount.
-        let this = bun_core::heap::release(self);
-        this.this_jsvalue = JSValue::ZERO;
-        let _ = this.decrement_count();
+        // the raw refcount via a raw pointer (the call may free `*this`).
+        let this = Box::into_raw(self);
+        // SAFETY: `this` is live — just unwrapped from `Box`.
+        unsafe { (*this).this_jsvalue = JSValue::ZERO };
+        // SAFETY: `this` came from `Box::into_raw`; not accessed after.
+        let _ = unsafe { Self::decrement_count(this) };
     }
 
     pub fn drain_from_js(

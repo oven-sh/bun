@@ -23,7 +23,7 @@ use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsClass, JsResult, LogJsc,
+    self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsClass, JsResult, LogJsc,
     StringJsc,
 };
 use bun_jsc::js_object::ObjectInitializer;
@@ -95,15 +95,20 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 // `codegen_cached_accessors!` proc-macro wires the extern.
 bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `JsCell` for the two fields that `reload`/`match`
+// mutate. The codegen shim still emits `this: &mut FileSystemRouter` until
+// Phase 1 lands — `&mut T` reborrows to `&T` so the impls compile against
+// either.
 #[bun_jsc::JsClass]
 pub struct FileSystemRouter {
     pub origin: Option<*mut RefString>,
     pub base_dir: Option<*mut RefString>,
     // PORT NOTE: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
-    pub router: Router::Router<'static>,
+    pub router: JsCell<Router::Router<'static>>,
     // PERF(port): was arena bulk-free — Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). Phase B: confirm bumpalo vs ArenaAllocator.
-    pub arena: Box<ArenaAllocator>,
+    pub arena: JsCell<Box<ArenaAllocator>>,
     // PORT NOTE: dropped `std.mem.Allocator param` field — it was always `arena.arena()`.
     pub asset_prefix: Option<*mut RefString>,
 }
@@ -327,7 +332,7 @@ impl FileSystemRouter {
             unsafe { (*p).ref_() };
             p
         };
-        let mut fs_router = Box::new(FileSystemRouter {
+        let fs_router = Box::new(FileSystemRouter {
             origin: if !origin_str.slice().is_empty() {
                 Some(claim(vm.ref_counted_string::<true>(origin_str.slice(), None)))
             } else {
@@ -339,21 +344,21 @@ impl FileSystemRouter {
             } else {
                 None
             },
-            router,
-            arena,
+            router: JsCell::new(router),
+            arena: JsCell::new(arena),
         });
 
         // PORT NOTE: `base_dir.?.ref()` — Zig borrowed the RefString bytes into
         // `router.config.dir` and bumped the refcount. RouteConfig::dir is now an owned
         // `Box<[u8]>`, so copy the bytes; the `claim` above already took our +1.
         // SAFETY: `base_dir` was just set to Some above.
-        fs_router.router.config.dir =
-            Box::from(unsafe { (*fs_router.base_dir.unwrap()).leak() });
+        let base_dir_bytes = unsafe { (*fs_router.base_dir.unwrap()).leak() };
+        fs_router.router.with_mut(|r| r.config.dir = Box::from(base_dir_bytes));
 
         Ok(fs_router)
     }
 
-    pub fn bust_dir_cache_recursive(&mut self, global_this: &JSGlobalObject, input_path: &[u8]) {
+    pub fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
         // `&mut` per use site so the recursive call (which does the same) doesn't pop our
         // SB tag mid-loop.
@@ -420,8 +425,8 @@ impl FileSystemRouter {
         let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
     }
 
-    pub fn bust_dir_cache(&mut self, global_this: &JSGlobalObject) {
-        let dir = strings::paths::without_trailing_slash_windows_path(&self.router.config.dir);
+    pub fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
+        let dir = strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
         // PORT NOTE: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
         // recursive walk re-derives the path from the resolver per-iteration so a one-time
         // copy is sufficient.
@@ -431,7 +436,7 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(method)]
     pub fn reload(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -456,12 +461,19 @@ impl FileSystemRouter {
         // our `vm` borrow is fresh under Stacked Borrows.
         let vm = global_this.bun_vm().as_mut();
 
-        let root_dir_info = match vm.transpiler.resolver.read_dir_info(&this.router.config.dir) {
+        // R-2: snapshot the config fields up front so the `JsCell::get()` borrow is
+        // released before `JsCell::set()` below installs the new router.
+        let (cfg_dir, cfg_extensions, cfg_asset_prefix_path) = {
+            let cfg = &this.router.get().config;
+            (cfg.dir.clone(), cfg.extensions.clone(), cfg.asset_prefix_path.clone())
+        };
+
+        let root_dir_info = match vm.transpiler.resolver.read_dir_info(&cfg_dir) {
             Ok(Some(info)) => info,
             Ok(None) => {
                 return Err(global_this.throw(format_args!(
                     "Unable to find directory: {}",
-                    bstr::BStr::new(&*this.router.config.dir)
+                    bstr::BStr::new(&*cfg_dir)
                 )));
             }
             Err(_) => {
@@ -473,9 +485,9 @@ impl FileSystemRouter {
         let mut router = Router::Router::init(
             Fs::FileSystem::instance(),
             RouteConfig {
-                dir: this.router.config.dir.clone(),
-                extensions: this.router.config.extensions.clone(),
-                asset_prefix_path: this.router.config.asset_prefix_path.clone(),
+                dir: cfg_dir,
+                extensions: cfg_extensions,
+                asset_prefix_path: cfg_asset_prefix_path,
                 ..Default::default()
             },
         )
@@ -499,8 +511,8 @@ impl FileSystemRouter {
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
         // PORT NOTE: order matters — old router borrows slices from old arena, so it must drop
         // first (matches Zig teardown order).
-        this.router = router;
-        this.arena = arena;
+        this.router.set(router);
+        this.arena.set(arena);
         // `js.routesSetCached` — wired via `codegen_cached_accessors!` above.
         routes_set_cached(this_value, global_this, JSValue::ZERO);
         Ok(this_value)
@@ -508,7 +520,7 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(method)]
     pub fn r#match(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -588,11 +600,14 @@ impl FileSystemRouter {
         };
         let mut params = route_param::List::default();
         // `defer params.deinit(allocator)` → Drop
-        let Some(route) = this.router.routes.match_page_with_allocator(
-            b"",
-            &url_path,
-            &mut params,
-        ) else {
+        // SAFETY (R-2): short-lived `&mut Router` for the route lookup;
+        // `match_page_with_allocator` is pure (no JS re-entry), and the returned
+        // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
+        // exclusive borrow ends at the `;`.
+        let Some(route) = unsafe { this.router.get_mut() }
+            .routes
+            .match_page_with_allocator(b"", &url_path, &mut params)
+        else {
             return Ok(JSValue::NULL);
         };
 
@@ -632,8 +647,9 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_routes(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let paths = this.router.get_entry_points();
-        let names = this.router.get_names();
+        let router = this.router.get();
+        let paths = router.get_entry_points();
+        let names = router.get_names();
         let mut name_strings: Vec<ZigString> = vec![ZigString::default(); names.len() * 2];
         // `defer free(name_strings)` → Drop
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
@@ -695,8 +711,9 @@ pub struct MatchedRoute {
     // do) would assert unique access to these fields under Stacked Borrows and invalidate
     // the stored pointers — UB on next deref.
     pub route_holder: UnsafeCell<RouterMatch<'static>>,
-    pub query_string_map: Option<QueryStringMap>,
-    pub param_map: Option<QueryStringMap>,
+    // R-2: lazily populated by `get_query`/`get_params` (now `&self`).
+    pub query_string_map: JsCell<Option<QueryStringMap>>,
+    pub param_map: JsCell<Option<QueryStringMap>>,
     pub params_list_holder: UnsafeCell<route_param::List<'static>>,
     /// Owns the bytes that `route_holder.pathname`/`query_string` and the param values in
     /// `params_list_holder` borrow. Replaces the Zig leak-then-`mi_free(pathname.ptr)`
@@ -773,8 +790,8 @@ impl MatchedRoute {
             asset_prefix,
             origin,
             base_dir: Some(base_dir),
-            query_string_map: None,
-            param_map: None,
+            query_string_map: JsCell::new(None),
+            param_map: JsCell::new(None),
             params_list_holder: UnsafeCell::new(params_list),
             pathname_backing,
             needs_deinit: true,
@@ -803,8 +820,8 @@ impl MatchedRoute {
     fn deinit(this: *mut MatchedRoute) {
         // SAFETY: called from finalize on mutator thread.
         let this_ref = unsafe { &mut *this };
-        this_ref.query_string_map = None;
-        this_ref.param_map = None;
+        this_ref.query_string_map.set(None);
+        this_ref.param_map.set(None);
         if this_ref.needs_deinit {
             // PORT NOTE: Zig did `if mi_is_in_heap_region(pathname.ptr) { mi_free(pathname.ptr) }`
             // to free the leaked `path` from `match`. We own that allocation as
@@ -964,16 +981,13 @@ impl MatchedRoute {
         Ok(zs_to_js(writer.as_bytes(), global_this))
     }
 
-    // PORT NOTE: `host_fn(getter)` macro emits a shim that passes `&Self`, but this needs
-    // `&mut Self` to lazily build `param_map`. The real shim is owned by the `.classes.ts`
-    // codegen (which gets the m_ctx as `*mut`), so the placeholder shim is omitted here.
-    pub fn get_params(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_params(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if this.params().is_empty() {
             return Ok(JSValue::create_empty_object(global_this, 0));
         }
 
-        if this.param_map.is_none() {
-            // PORT NOTE: reshaped for borrowck — capture borrowed scalars before mutating `this`.
+        if this.param_map.get().is_none() {
             let route = this.route();
             let scanner = CombinedScanner::init(
                 b"",
@@ -981,14 +995,17 @@ impl MatchedRoute {
                 route.name,
                 this.params(),
             );
-            this.param_map = QueryStringMap::init_with_scanner(scanner)?;
+            this.param_map.set(QueryStringMap::init_with_scanner(scanner)?);
         }
 
-        Self::create_query_object(global_this, this.param_map.as_mut().unwrap())
+        // R-2: `create_query_object` writes only into a fresh plain JSObject (no
+        // user setters), so this `with_mut` borrow cannot be re-entered.
+        this.param_map
+            .with_mut(|m| Self::create_query_object(global_this, m.as_mut().unwrap()))
     }
 
-    // PORT NOTE: see `get_params` — `host_fn(getter)` shim omitted (needs `&mut Self`).
-    pub fn get_query(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_query(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let route = this.route();
         if route.query_string.is_empty() && this.params().is_empty() {
             return Ok(JSValue::create_empty_object(global_this, 0));
@@ -996,7 +1013,7 @@ impl MatchedRoute {
             return Self::get_params(this, global_this);
         }
 
-        if this.query_string_map.is_none() {
+        if this.query_string_map.get().is_none() {
             let route = this.route();
             if !this.params().is_empty() {
                 let scanner = CombinedScanner::init(
@@ -1005,18 +1022,20 @@ impl MatchedRoute {
                     route.name,
                     this.params(),
                 );
-                this.query_string_map = QueryStringMap::init_with_scanner(scanner)?;
+                this.query_string_map
+                    .set(QueryStringMap::init_with_scanner(scanner)?);
             } else {
-                this.query_string_map = QueryStringMap::init(route.query_string)?;
+                this.query_string_map
+                    .set(QueryStringMap::init(route.query_string)?);
             }
         }
 
         // If it's still null, the query string has no names.
-        if let Some(map) = &mut this.query_string_map {
-            return Self::create_query_object(global_this, map);
-        }
-
-        Ok(JSValue::create_empty_object(global_this, 0))
+        // R-2: see `get_params` re `with_mut` re-entry.
+        this.query_string_map.with_mut(|m| match m {
+            Some(map) => Self::create_query_object(global_this, map),
+            None => Ok(JSValue::create_empty_object(global_this, 0)),
+        })
     }
 }
 

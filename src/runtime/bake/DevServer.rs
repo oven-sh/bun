@@ -1428,19 +1428,23 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
 }
 
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
-    fn on_websocket_upgrade(
-        &mut self,
+    unsafe fn on_websocket_upgrade(
+        this: *mut Self,
         res: *mut bun_uws_sys::NewAppResponse<SSL>,
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
         debug_assert_eq!(id, 0);
+        // SAFETY: DevServer always registers `*mut Self` with `id == 0`
+        // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
+        // callback's duration.
+        let this = unsafe { &mut *this };
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
         let res = unsafe { &mut *res };
-        let dw = bun_core::heap::into_raw(HmrSocket::new(self, res));
-        let _ = self.active_websocket_connections.insert(dw, ());
+        let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
+        let _ = this.active_websocket_connections.insert(dw, ());
         let _ = res.upgrade(
             dw,
             req.header(b"sec-websocket-key").unwrap_or(b""),
@@ -2598,7 +2602,7 @@ impl DevServer {
         let html = route_bundle.data.html();
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
         // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-        debug_assert!(unsafe { (*html.html_bundle).dev_server_id } == Some(route_bundle_index));
+        debug_assert!(unsafe { (*html.html_bundle).dev_server_id.get() } == Some(route_bundle_index));
         debug_assert!(html.cached_response.is_none());
         let script_injection_offset = html.script_injection_offset.unwrap().0 as usize;
         let bundled_html = html.bundled_html_text.as_ref().unwrap();
@@ -4862,7 +4866,10 @@ impl DevServer {
             route_bundle::UnresolvedIndex::Html(html) => {
                 // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
                 // allocation; single-threaded (uws JS-thread callback).
-                unsafe { ::core::ptr::addr_of_mut!((*html).dev_server_id) }
+                // R-2: `dev_server_id` is `Cell<Option<Index>>`; `Cell::as_ptr`
+                // yields the inner `*mut Option<Index>` so the `*index_location`
+                // read/write below stays raw and matches the framework arm's type.
+                unsafe { (*html).dev_server_id.as_ptr() }
             }
         };
         // SAFETY: index_location points into self/html which outlive this fn
@@ -4889,7 +4896,9 @@ impl DevServer {
                 }
                 route_bundle::UnresolvedIndex::Html(html) => 'brk: {
                     // SAFETY: caller guarantees `html` is live; single-threaded.
-                    let html_ref = unsafe { &mut *html };
+                    // R-2: shared deref — only `bundle.path` is read; mutation of
+                    // `dev_server_id` goes through the `Cell` `index_location` above.
+                    let html_ref = unsafe { &*html };
                     let incremental_graph_index = self
                         .client_graph
                         .insert_stale_extra(&html_ref.bundle.path, false, true)?;

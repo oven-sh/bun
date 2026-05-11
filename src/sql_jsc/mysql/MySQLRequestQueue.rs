@@ -78,7 +78,7 @@ impl MySQLRequestQueue {
             && connection.is_able_to_write()
     }
 
-    pub fn mark_current_request_as_finished(&mut self, item: &mut JSMySQLQuery) {
+    pub fn mark_current_request_as_finished(&mut self, item: &JSMySQLQuery) {
         self.waiting_to_prepare = false;
         if item.is_being_prepared() {
             debug!("markCurrentRequestAsFinished markAsPrepared");
@@ -115,10 +115,12 @@ impl MySQLRequestQueue {
     ///   `(*this)` access overlaps the lifetime of that `&mut`.
     pub unsafe fn advance(connection: *mut MySQLConnection) {
         // SAFETY: caller contract — `connection` has full-allocation
-        // provenance; `addr_of_mut!` projects the embedded queue without
-        // creating an intermediate `&mut` (so `connection`'s tag stays live).
+        // provenance. R-2: the inner protocol struct is wrapped in
+        // `JsCell` (`UnsafeCell`); `as_ptr()` yields a `*mut` with write
+        // provenance for the inner bytes, and `addr_of_mut!` projects the
+        // embedded queue without an intermediate `&mut`.
         let this: *mut Self =
-            unsafe { core::ptr::addr_of_mut!((*connection).connection.queue) };
+            unsafe { core::ptr::addr_of_mut!((*(*connection).connection.as_ptr()).queue) };
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.
@@ -133,8 +135,9 @@ impl MySQLRequestQueue {
                 let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(offset) };
                 // SAFETY: queue holds a ref on every request; pointer is live.
                 // `JSMySQLQuery` is a separate heap allocation — never aliases
-                // `*this` or `*connection`.
-                let req = unsafe { &mut *request };
+                // `*this` or `*connection`. R-2: shared deref — every method
+                // body is `&self` (interior mutability).
+                let req = unsafe { &*request };
 
                 if req.is_completed() {
                     if offset > 0 {
@@ -176,10 +179,10 @@ impl MySQLRequestQueue {
                 // from the same `connection` raw via `addr_of_mut!`, the
                 // reborrow is a child tag that is popped when the `&mut` ends
                 // — the next `(*this)` access below remains valid.
-                if let Err(err) = req.run(unsafe { &mut *connection }) {
+                if let Err(err) = req.run(unsafe { &*connection }) {
                     debug!("run failed");
-                    // SAFETY: same as above — fresh `&mut *connection`
-                    // reborrow, no `(*this)` access overlaps its lifetime.
+                    // SAFETY: same as above — shared `&*connection` reborrow
+                    // (R-2: `on_error` takes `&self`).
                     unsafe { (*connection).on_error(Some(req), err) };
                     if offset == 0 {
                         unsafe { (*this).requests.discard(1) };
@@ -233,8 +236,9 @@ impl MySQLRequestQueue {
         while unsafe { (*this).requests.readable_length() } > 0 {
             let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(0) };
             // SAFETY: queue holds a ref on every request; pointer is live.
-            // Separate heap allocation — never aliases `*this`.
-            let req = unsafe { &mut *request };
+            // Separate heap allocation — never aliases `*this`. R-2: shared
+            // deref — every method body is `&self` (interior mutability).
+            let req = unsafe { &*request };
             // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
             // so we do the cleanup her
             if req.is_completed() {
@@ -265,7 +269,8 @@ impl MySQLRequestQueue {
     pub fn add(&mut self, request: *mut JSMySQLQuery) {
         debug!("add");
         // SAFETY: caller passes a live JSMySQLQuery; we ref() it before storing.
-        let req = unsafe { &mut *request };
+        // R-2: shared deref — every method body is `&self` (interior mutability).
+        let req = unsafe { &*request };
         if req.is_being_prepared() {
             self.is_ready_for_query = false;
             self.waiting_to_prepare = true;
@@ -304,7 +309,8 @@ impl MySQLRequestQueue {
 
         while let Some(request) = requests.read_item() {
             // SAFETY: queue held a ref on every request; pointer is live until deref().
-            let req = unsafe { &mut *request };
+            // R-2: shared deref — every method body is `&self`.
+            let req = unsafe { &*request };
             // Zig: defer request.deref() — moved to end of loop body; no early
             // exits between here and there.
             if !req.is_completed() {
@@ -327,7 +333,8 @@ impl Drop for MySQLRequestQueue {
         // self.requests. read_item() peeks+discards in one &mut call.
         while let Some(request) = self.requests.read_item() {
             // SAFETY: queue held a ref on every request; pointer is live until deref().
-            let req = unsafe { &mut *request };
+            // R-2: shared deref — every method body is `&self`.
+            let req = unsafe { &*request };
             // We cannot touch JS here
             req.mark_as_failed();
             // SAFETY: queue held one ref; pointer is live until this deref.

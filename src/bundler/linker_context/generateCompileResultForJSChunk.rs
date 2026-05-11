@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use core::mem::offset_of;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 
 use bun_threading::thread_pool as ThreadPoolLib;
 use bun_js_printer::{self as js_printer, PrintResult};
@@ -51,18 +51,26 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     }
 
     // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
-    // contract is documented on `pending_part_range_prologue`. No other live
-    // `&`/`&mut` to these allocations exists in this frame at this point.
-    let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-    let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
-
-    chunk_mut.compile_results_for_chunk[part_range.i as usize] =
+    // contract is documented on `pending_part_range_prologue`. The `&mut`
+    // borrows below are scoped to the impl call so they do not overlap the
+    // raw slot write that follows. (Peer tasks still hold their own `&mut`
+    // views into the same `LinkerContext`/`Chunk` for read-only printer use —
+    // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
+    let result = {
+        let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_js_chunk_impl(
             &mut **worker,
             c_mut,
             chunk_mut,
             part_range.part_range,
-        );
+        )
+    };
+
+    // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
+    // The slot write is routed through raw `addr_of_mut!` + `UnsafeCell` so it
+    // never materializes `&mut Chunk` / `&mut [CompileResult]`.
+    unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
 }
 
 fn generate_compile_result_for_js_chunk_impl(
@@ -150,15 +158,15 @@ fn generate_compile_result_for_js_chunk_impl(
         _ => 0,
     };
     if code_len > 0 && !part_range.source_index.is_runtime() {
-        if let Some(bytes_ptr) = chunk
+        // CONCURRENCY: the map's key set is frozen before parallel codegen; we
+        // only need a shared `&AtomicUsize` to RMW the counter. Using `get`
+        // (not `get_ptr_mut`) avoids materializing an aliased `&mut` to a slot
+        // that other worker threads may be updating for the same source.
+        if let Some(bytes) = chunk
             .files_with_parts_in_chunk
-            .get_ptr_mut(&part_range.source_index.get())
+            .get(&part_range.source_index.get())
         {
-            // SAFETY: multiple threads update this counter; treat &mut usize as &AtomicUsize
-            // (same layout, monotonic add only).
-            let atomic: &AtomicUsize =
-                unsafe { &*std::ptr::from_mut::<usize>(bytes_ptr).cast_const().cast::<AtomicUsize>() };
-            let _ = atomic.fetch_add(code_len, Ordering::Relaxed);
+            let _ = bytes.fetch_add(code_len, Ordering::Relaxed);
         }
     }
 

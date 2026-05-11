@@ -81,7 +81,11 @@ pub fn generate_chunk_json(
     let chunk_values = chunk.files_with_parts_in_chunk.values();
     for (file_source_index, bytes_in_output) in chunk_keys.iter().zip(chunk_values.iter()) {
         let file_source_index = *file_source_index;
-        let bytes_in_output = *bytes_in_output;
+        // Counters are `AtomicUsize` because they're populated by the parallel
+        // codegen workers; metafile emission runs strictly after the
+        // `wait_for_all` join in `generate_chunks_in_parallel`, so a relaxed
+        // load observes the final value.
+        let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
         if file_source_index as usize >= sources.len() {
             continue;
         }

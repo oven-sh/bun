@@ -28,7 +28,7 @@ pub enum CondExprState {
 
 impl CondExpr {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::CondExpr,
         parent: NodeId,
@@ -43,11 +43,11 @@ impl CondExpr {
         }))
     }
 
-    pub fn start(_interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         // Spec: CondExpr.zig `next()` — expand each arg via Expansion, then
         // evaluate the operator.
         loop {
@@ -90,7 +90,7 @@ impl CondExpr {
     /// Spec: CondExpr.zig `commandImplStart`. Evaluates the operator against
     /// the expanded `args` and returns the resulting exit code.
     fn command_impl_start(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         op: ast::CondExprOp,
     ) -> Yield {
@@ -183,7 +183,7 @@ impl CondExpr {
 
     /// Spec: CondExpr.zig `onIOWriterChunk` (lines 267-279).
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         _written: usize,
         err: Option<bun_sys::SystemError>,
@@ -207,7 +207,7 @@ impl CondExpr {
     /// Spec: CondExpr.zig `onStatTaskComplete`. Main-thread re-entry for the
     /// off-thread `stat`/`lstat` posted by a unary file-test operator.
     pub fn on_stat_task_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         stat: &bun_sys::Result<bun_sys::Stat>,
         path: &[u8],
@@ -240,7 +240,7 @@ impl CondExpr {
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -266,7 +266,7 @@ impl CondExpr {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         log!("CondExpr {} deinit", this);
         let me = interp.as_condexpr_mut(this);
         me.args.clear();

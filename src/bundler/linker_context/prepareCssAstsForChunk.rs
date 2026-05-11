@@ -8,7 +8,7 @@ use crate::{BundleV2, Chunk, LinkerContext};
 
 use bun_collections::VecExt;
 use crate::bun_css::{
-    BundlerStyleSheet, ImportConditions, ImportInfo, LocalsResultsMap, PrinterOptions, Targets,
+    BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets,
 };
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
@@ -87,7 +87,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 
 fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-    // across `&mut *c.log` below (split borrow).
+    // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };
     let asts = c.graph.ast.items_css();
 
@@ -187,7 +187,20 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         while j != 1 {
                             j -= 1;
 
-                            let ast_import = BundlerStyleSheet {
+                            // PORT NOTE: Zig has no destructors, so when `ast_import` falls
+                            // out of scope the bitwise-duplicated `ImportConditions` inside
+                            // it (see `ptr::read` below) is simply abandoned. In Rust,
+                            // dropping `ast_import` would run `Drop` on that aliased
+                            // `ImportConditions` — freeing Global-backed buffers
+                            // (`MediaList.media_queries: Vec`, `SupportsCondition::{Box,Vec}`,
+                            // `LayerName.v: SmallList`) that are still owned by
+                            // `entry.conditions[j]`, i.e. a double-free / UAF. Wrap in
+                            // `ManuallyDrop` to mirror Zig's leak-on-scope-exit; the only
+                            // *fresh* allocation this leaks is the 1-element `rules.v` Vec
+                            // buffer — same trade-off documented at the top of
+                            // findImportedFilesInCSSOrder.rs for the `entry.conditions`
+                            // ecosystem.
+                            let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
                                 options: ParserOptions::default(None),
                                 license_comments: Default::default(),
                                 sources: Default::default(),
@@ -200,7 +213,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         loc: Location::dummy(),
                                         ..Default::default()
                                     };
-                                    // SAFETY: Zig `entry.conditions.at(j).*` — shallow struct copy.
+                                    // SAFETY: Zig `entry.conditions.at(j).*` — shallow struct
+                                    // copy. The duplicate is never dropped (`ManuallyDrop`
+                                    // above), so the aliased heap stays singly-owned by
+                                    // `entry.conditions[j]`.
                                     *import_rule.conditions_mut() =
                                         unsafe { core::ptr::read(entry.conditions.at(j)) };
                                     rules.v.push(BundlerCssRule::Import(import_rule));
@@ -208,7 +224,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 },
                                 composes: Default::default(),
                                 ..BundlerStyleSheet::empty()
-                            };
+                            });
 
                             let printer_options = PrinterOptions {
                                 targets: Targets::for_bundler_target(c.options.target),
@@ -235,13 +251,9 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         )
                                     },
                                 }),
-                                // `LocalsResultsMap` = `ArrayHashMap<bun_ast::Ref, *const [u8]>`;
-                                // `c.mangled_props` is `ArrayHashMap<bun_ast::Ref, Box<[u8]>>`. Both `Ref`s
-                                // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
-                                // pointers — same layout, used read-only by the printer.
-                                Some(unsafe {
-                                    &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
-                                }),
+                                // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
+                                // alias as `bun_js_printer::MangledProps`; no cast needed.
+                                Some(&c.mangled_props),
                                 // `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
                                 // is `bun_ast::symbol::Map`. Both are
                                 // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
@@ -252,7 +264,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             ) {
                                 Ok(v) => v,
                                 Err(e) => {
-                                    c.log.add_error_fmt(
+                                    // SAFETY: split-borrow — `parse_graph`/`asts` hold
+                                    // borrows derived from `c`; raw-deref the `*mut Log`
+                                    // backref. See `LinkerContext::log_mut`.
+                                    unsafe { &mut *c.log }.add_error_fmt(
                                         None,
                                         Loc::EMPTY,
                                         format_args!("Error generating CSS for import: {}", e),

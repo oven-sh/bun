@@ -162,21 +162,20 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();
                         chunk.compile_results_for_chunk =
-                            vec![CompileResult::default(); js.parts_in_chunk_in_order.len()].into_boxed_slice();
+                            crate::chunk::CompileResultSlots::new(js.parts_in_chunk_in_order.len());
                         has_js_chunk = true;
                     }
                     crate::chunk::Content::Css(css) => {
                         has_css_chunk = true;
                         total_count += css.imports_in_chunk_in_order.len() as usize;
                         chunk.compile_results_for_chunk =
-                            vec![CompileResult::default(); css.imports_in_chunk_in_order.len() as usize].into_boxed_slice();
+                            crate::chunk::CompileResultSlots::new(css.imports_in_chunk_in_order.len() as usize);
                     }
                     crate::chunk::Content::Html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
                         total_count += 1;
-                        chunk.compile_results_for_chunk =
-                            vec![CompileResult::default(); 1].into_boxed_slice();
+                        chunk.compile_results_for_chunk = crate::chunk::CompileResultSlots::new(1);
                     }
                 }
             }
@@ -411,7 +410,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
 
-            c.log.add_error(None, bun_ast::Loc::EMPTY, msg);
+            c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
 
             // PORT NOTE: Zig `inline for` over a homogeneous tuple → const array + plain for.
             for (name, template) in [
@@ -428,7 +427,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     name,
                     bstr::BStr::new(template),
                 )?;
-                c.log.add_msg(bun_ast::Msg {
+                c.log_mut().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {
                         text: Cow::Owned(text),
@@ -544,7 +543,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             || (has_html_chunk && (has_js_chunk || has_css_chunk)));
 
     if !c.resolver().opts.compile && more_than_one_output && !c.resolver().opts.supports_multiple_outputs {
-        c.log.add_error(
+        c.log_mut().add_error(
             None,
             bun_ast::Loc::EMPTY,
             b"cannot write multiple output files without an output directory",
@@ -558,8 +557,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     };
     let mut static_route_visitor = StaticRouteVisitor {
         // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this
-        // long-lived shared borrow doesn't conflict with `c.log.add_error_fmt(&mut)`
-        // inside the chunk loop below. `c` outlives `static_route_visitor`.
+        // long-lived shared borrow doesn't conflict with `&mut *c.log` inside the
+        // chunk loop below. `c` outlives `static_route_visitor`.
         c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
@@ -892,7 +891,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         } else {
                             // an error
                             // logger OOM-only (Zig: catch unreachable)
-                            let _ = c.log.add_error_fmt(
+                            // SAFETY: split-borrow — `static_route_visitor.c` holds a
+                            // detached `&LinkerContext`; raw-deref the `*mut Log`
+                            // backref instead of `c.log_mut()` so no `&mut c` is
+                            // materialized. See `LinkerContext::log_mut`.
+                            let _ = unsafe { &mut *c.log }.add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(

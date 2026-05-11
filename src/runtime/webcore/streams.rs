@@ -923,11 +923,28 @@ impl StreamResult {
 // Signal
 // ──────────────────────────────────────────────────────────────────────────
 
+// `#[repr(C)]` is load-bearing: C++ (`*Sink__assignToStream` in JSSink.cpp)
+// receives `&mut signal.ptr` cast to `void**` and writes the controller cell's
+// encoded `JSValue` bits through it. Callers project to `.ptr` directly via
+// `addr_of_mut!`, so field *order* is not strictly required, but we pin the
+// layout anyway so the FFI contract is auditable and the const-asserts below
+// hold by construction rather than by repr(Rust) accident.
+#[repr(C)]
 #[derive(Default)]
 pub struct Signal {
     pub ptr: Option<NonNull<c_void>>,
     pub vtable: SignalVTable,
 }
+
+// Layout guarantees the FFI cast `*mut Option<NonNull<c_void>>` → `*mut *mut
+// c_void` relies on (Rust guarantees the niche optimisation for
+// `Option<NonNull<T>>`, but make it a hard compile error if that ever changes
+// or someone reorders/retypes the field):
+const _: () = {
+    assert!(core::mem::offset_of!(Signal, ptr) == 0);
+    assert!(core::mem::size_of::<Option<NonNull<c_void>>>() == core::mem::size_of::<*mut c_void>());
+    assert!(core::mem::align_of::<Option<NonNull<c_void>>>() == core::mem::align_of::<*mut c_void>());
+};
 
 impl Signal {
     pub fn clear(&mut self) {

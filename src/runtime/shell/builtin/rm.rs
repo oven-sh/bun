@@ -102,12 +102,12 @@ enum RmParseFlag {
 }
 
 impl Rm {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
     /// Spec: rm.zig `next`.
-    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
             enum Tag { Idle, ParseOpts(u32, bool), Exec, Done(ExitCode), Err(ExitCode), WaitErr }
@@ -294,7 +294,7 @@ impl Rm {
                         let cwd = Builtin::cwd(interp, cmd);
                         let evtloop = Builtin::event_loop(interp, cmd);
                         let opts = Self::state_mut(interp, cmd).opts;
-                        let interp_ptr: *mut Interpreter = interp;
+                        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                         let (args_start, argc) = {
                             let me = Self::state_mut(interp, cmd);
                             let RmState::Exec(e) = &mut me.state else { unreachable!() };
@@ -328,7 +328,7 @@ impl Rm {
     }
 
     fn write_err_literal(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         idx: u32,
         buf: &[u8],
@@ -347,7 +347,7 @@ impl Rm {
 
     /// Spec: rm.zig `writeFailingError`.
     fn write_failing_error(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
         exit_code: ExitCode,
@@ -365,7 +365,7 @@ impl Rm {
 
     /// Spec: rm.zig `onIOWriterChunk`.
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -400,7 +400,7 @@ impl Rm {
 
     /// Spec: rm.zig `onShellRmTaskDone`.
     pub fn on_shell_rm_task_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         task: *mut ShellRmTask,
     ) {
@@ -466,7 +466,7 @@ impl Rm {
     /// Spec: rm.zig `writeVerbose`. Flushes a `DirTask`'s buffered list of
     /// deleted paths to stdout, then frees the DirTask (non-root) and releases
     /// the pending-main-callback count taken in `DirTask::post_run`.
-    fn write_verbose(interp: &mut Interpreter, cmd: NodeId, verbose: *mut DirTask) -> Yield {
+    fn write_verbose(interp: &Interpreter, cmd: NodeId, verbose: *mut DirTask) -> Yield {
         // SAFETY: `verbose` is a live DirTask posted via queue_for_write; main
         // thread, exclusive. Take the buffer up-front so the cleanup guard can
         // own the raw pointers without overlapping a borrow.
@@ -572,7 +572,7 @@ impl Rm {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Rm {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Rm {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Rm(r) => &mut **r,
             _ => unreachable!(),
@@ -777,7 +777,7 @@ impl ShellRmTask {
         unsafe { ShellTask::on_finish::<ShellRmTask>(this) };
     }
 
-    pub fn run_from_main_thread(this: *mut ShellRmTask, interp: &mut Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Rm::on_shell_rm_task_done(interp, cmd, this);
@@ -866,9 +866,16 @@ impl ShellRmTask {
         if !self.opts.verbose {
             return Ok(());
         }
-        // SAFETY: the calling worker thread has exclusive access to
-        // `dir_task`'s non-atomic fields; `deleted_entries` is disjoint from
-        // every other live borrow (`&self`, `path`).
+        // SAFETY: a DirTask's non-atomic fields are single-owner-at-a-time.
+        // Ownership starts on the worker that runs `remove_entry*` and is
+        // handed to the last child via `need_to_wait`: the parent
+        // release-stores `true` (SeqCst, `remove_entry_dir`) after its final
+        // append here, and the child acquire-loads it (SeqCst, `post_run`)
+        // before re-entering via `delete_after_waiting_for_children`. That
+        // release/acquire pair makes prior `deleted_entries` writes visible to
+        // the new owner, so this `&mut` is exclusive and race-free. The
+        // reborrow is also disjoint from every other live borrow (`&self`,
+        // `path`).
         let entries = unsafe { &mut (*dir_task).deleted_entries };
         if entries.is_empty() {
             // `output_count` is a `BackRef` into the boxed `Rm` ExecState.
@@ -1385,8 +1392,21 @@ impl DirTask {
                     // finished, while the parent was still in `remove_entry_dir`.
                     let p = &*me.parent_task;
                     let tasks_left = p.subtask_count.fetch_sub(1, Ordering::SeqCst);
+                    // PORT NOTE: rm.zig uses `.monotonic` here, but that is a
+                    // formal data race on the parent's non-atomic
+                    // `deleted_entries`: the parent thread may have appended
+                    // verbose paths for plain-file children *after* scheduling
+                    // this subtask and *before* its `need_to_wait.store(true,
+                    // SeqCst)` (the only release that covers those writes). A
+                    // Relaxed load reading `true` does not synchronize-with
+                    // that store, so the `Vec<u8>` writes would not
+                    // happen-before our `delete_after_waiting_for_children` →
+                    // `verbose_deleted(parent)` access below. Use SeqCst
+                    // (Acquire suffices) so observing `true` establishes the
+                    // ownership hand-off and makes the parent's
+                    // `deleted_entries` writes visible.
                     let parent_still_in_remove_entry_dir =
-                        !p.need_to_wait.load(Ordering::Relaxed);
+                        !p.need_to_wait.load(Ordering::SeqCst);
                     if !parent_still_in_remove_entry_dir && tasks_left == 2 {
                         Self::delete_after_waiting_for_children(me.parent_task);
                     }
@@ -1495,7 +1515,7 @@ impl DirTask {
         // `interp` set at create.
         let (interp, cmd) = unsafe {
             let tm = (*this).task_manager;
-            (&mut *(*tm).task.interp, (*tm).cmd)
+            (&*(*tm).task.interp, (*tm).cmd)
         };
         Rm::write_verbose(interp, cmd, this).run(interp);
     }
@@ -1644,7 +1664,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
             "ShellRmTask scheduled via ShellTask::schedule; use ShellRmTask::schedule"
         );
     }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         Self::run_from_main_thread(this, interp)
     }
 }

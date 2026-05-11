@@ -1,6 +1,8 @@
+use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 
 use bun_io::KeepAlive;
+use bun_jsc::JsCell;
 use bun_ptr::BackRef;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -107,11 +109,12 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     // SAFETY: socket.user() was set to `*mut UDPSocket` in `udp_socket()` via the `user` arg to
     // `uws::udp::Socket::create`. uws guarantees the user pointer is non-null here.
-    let this: &mut UDPSocket = unsafe { bun_ptr::callback_ctx::<UDPSocket>((*socket).user()) };
-    this.closed = true;
-    this.poll_ref.disable();
-    this.this_value.downgrade();
-    this.socket = None;
+    // R-2: deref as shared (`&*const`) — all mutated fields are `Cell`/`JsCell`.
+    let this: &UDPSocket = unsafe { &*(*socket).user().cast::<UDPSocket>() };
+    this.closed.set(true);
+    this.poll_ref.with_mut(|p| p.disable());
+    this.this_value.with_mut(|r| r.downgrade());
+    this.socket.set(None);
 }
 
 extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
@@ -122,7 +125,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
     // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
     // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
     // SAFETY: see on_close.
-    let this: &mut UDPSocket = unsafe { bun_ptr::callback_ctx::<UDPSocket>((*socket).user()) };
+    let this: &UDPSocket = unsafe { &*(*socket).user().cast::<UDPSocket>() };
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     let err_value = sys_err.to_js(global_this);
@@ -131,8 +134,8 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     // SAFETY: see on_close.
-    let this: &mut UDPSocket = unsafe { bun_ptr::callback_ctx::<UDPSocket>((*socket).user()) };
-    let Some(this_value) = this.this_value.try_get() else { return };
+    let this: &UDPSocket = unsafe { &*(*socket).user().cast::<UDPSocket>() };
+    let Some(this_value) = this.this_value.get().try_get() else { return };
     let Some(callback) = js::on_drain_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
         return;
@@ -150,18 +153,14 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
 
 extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketBuffer, packets: c_int) {
     // SAFETY: see on_close.
-    let udp_socket: &mut UDPSocket = unsafe { bun_ptr::callback_ctx::<UDPSocket>((*socket).user()) };
-    let Some(this_value) = udp_socket.this_value.try_get() else { return };
+    let udp_socket: &UDPSocket = unsafe { &*(*socket).user().cast::<UDPSocket>() };
+    let Some(this_value) = udp_socket.this_value.get().try_get() else { return };
     let Some(callback) = js::on_data_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
         return;
     }
 
-    // Copy the BackRef out (it is `Copy`) so the `&JSGlobalObject` borrow is
-    // tied to a local, not `*udp_socket` — `call_error_handler` below needs
-    // `&mut *udp_socket` while `global_this` is still live.
-    let global_this_ref = udp_socket.global_this;
-    let global_this = global_this_ref.get();
+    let global_this = udp_socket.global_this.get();
     // SAFETY: buf valid for the duration of this callback per uws contract.
     let buf = unsafe { &mut *buf };
 
@@ -239,7 +238,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         let flags = JSValue::create_empty_object(global_this, 1);
         flags.put(global_this, b"truncated", JSValue::from(truncated));
 
-        let payload_js = match udp_socket.config.binary_type.to_js(slice, global_this) {
+        let payload_js = match udp_socket.config.get().binary_type.to_js(slice, global_this) {
             Ok(v) => v,
             Err(_) => {
                 loop_.exit();
@@ -445,23 +444,28 @@ pub mod js {
     );
 }
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
+// shim (`generated_classes.rs`) still passes `this: &mut UDPSocket` until the
+// `sharedThis: true` regen lands — `&mut T` auto-derefs to `&T` so the impls
+// below compile against either.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct UDPSocket {
-    pub config: UDPSocketConfig,
+    pub config: JsCell<UDPSocketConfig>,
 
-    pub socket: Option<*mut uws::udp::Socket>,
+    pub socket: Cell<Option<*mut uws::udp::Socket>>,
     pub loop_: *mut uws::Loop,
 
     // Read-only back-reference to the owning JS global; the VM/global strictly
     // outlives every socket it creates (see Zig spec: `globalThis: *JSGlobalObject`).
     pub global_this: BackRef<JSGlobalObject>,
-    pub this_value: JsRef,
+    pub this_value: JsCell<JsRef>,
 
     pub jsc_ref: JscRef,
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsCell<KeepAlive>,
     /// if marked as closed the socket pointer may be stale
-    pub closed: bool,
-    connect_info: Option<ConnectInfo>,
+    pub closed: Cell<bool>,
+    connect_info: Cell<Option<ConnectInfo>>,
     pub vm: *mut VirtualMachine,
 }
 
@@ -475,19 +479,20 @@ impl UDPSocket {
 
         let vm = global_this.bun_vm_ptr();
         let this_ptr = Self::new(Self {
-            socket: None,
-            config: UDPSocketConfig::default(),
+            socket: Cell::new(None),
+            config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(global_this),
             loop_: uws::Loop::get(),
             vm,
-            this_value: JsRef::empty(),
+            this_value: JsCell::new(JsRef::empty()),
             jsc_ref: JscRef::init(),
-            poll_ref: KeepAlive::init(),
-            closed: false,
-            connect_info: None,
+            poll_ref: JsCell::new(KeepAlive::init()),
+            closed: Cell::new(false),
+            connect_info: Cell::new(None),
         });
-        // SAFETY: just allocated above; we are the sole owner.
-        let this = unsafe { &mut *this_ptr };
+        // SAFETY: just allocated above; we are the sole owner. R-2: shared
+        // borrow — every mutated field is `Cell`/`JsCell`.
+        let this = unsafe { &*this_ptr };
 
         // errdefer { closed = true; close socket; downgrade this_value }
         // Release the strong reference so the JS wrapper can be garbage
@@ -496,21 +501,20 @@ impl UDPSocket {
         // pinned forever by the Strong handle and leak. This is idempotent, so
         // it is safe even if onClose() already downgraded via socket.close().
         //
-        // Capture the raw pointer (Copy) and re-derive `&mut` inside the closure
-        // so borrowck does not see `this` as held across the guard's lifetime.
+        // Capture the raw pointer (Copy) and re-derive inside the closure so
+        // borrowck does not see `this` as held across the guard's lifetime.
         let guard = scopeguard::guard(this_ptr, |ptr| {
             // SAFETY: `ptr` came from `heap::alloc` above and ownership has been
             // transferred to the JS wrapper; the guard only fires on the early-return
-            // error paths below, on the same stack frame, so the allocation is live
-            // and we hold the only mutable reference.
-            let this = unsafe { &mut *ptr };
-            this.closed = true;
+            // error paths below, on the same stack frame, so the allocation is live.
+            // R-2: shared borrow — mutation through `Cell`/`JsCell`.
+            let this = unsafe { &*ptr };
+            this.closed.set(true);
             // Hoist before `(*socket).close()`: that call SYNCHRONOUSLY re-enters
-            // `on_close` (udp.c `s->on_close(s)`), which re-derives `&mut UDPSocket`
-            // from the uws user pointer and — under Stacked Borrows — invalidates
-            // this outer `&mut`. `downgrade()` is idempotent (on_close repeats it),
-            // so ordering is unobservable. `this` MUST NOT be touched after close().
-            this.this_value.downgrade();
+            // `on_close` (udp.c `s->on_close(s)`), which re-derives `&UDPSocket`
+            // from the uws user pointer. `downgrade()` is idempotent (on_close
+            // repeats it), so ordering is unobservable.
+            this.this_value.with_mut(|r| r.downgrade());
             if let Some(socket) = this.socket.take() {
                 // SAFETY: socket created by uws::udp::Socket::create; valid until close().
                 unsafe { (*socket).close() };
@@ -530,13 +534,14 @@ impl UDPSocket {
         // ownership transfers to the C++ wrapper's `m_ctx`.
         let this_value = unsafe { Self::to_js_ptr(this_ptr, global_this) };
         this_value.ensure_still_alive();
-        this.this_value.set_strong(this_value, global_this);
+        this.this_value.with_mut(|r| r.set_strong(this_value, global_this));
 
-        this.config = UDPSocketConfig::from_js(global_this, options, this_value)?;
+        this.config.set(UDPSocketConfig::from_js(global_this, options, this_value)?);
 
         let mut err: c_int = 0;
 
-        let hostname_z = this.config.hostname.to_owned_slice_z();
+        let config = this.config.get();
+        let hostname_z = config.hostname.to_owned_slice_z();
 
         let created = uws::udp::Socket::create(
             this.loop_,
@@ -545,16 +550,16 @@ impl UDPSocket {
             on_close,
             on_recv_error,
             hostname_z.as_ptr(),
-            this.config.port,
-            this.config.flags,
+            config.port,
+            config.flags,
             Some(&mut err),
             this_ptr.cast::<c_void>(),
         );
         drop(hostname_z);
-        this.socket = if created.is_null() { None } else { Some(created) };
+        this.socket.set(if created.is_null() { None } else { Some(created) });
 
-        if this.socket.is_none() {
-            this.closed = true;
+        if this.socket.get().is_none() {
+            this.closed.set(true);
             if err != 0 {
                 let code: &'static str = SystemErrno::init(err as i64).map(Into::into).unwrap_or("UNKNOWN");
                 let sys_err = SystemError {
@@ -562,7 +567,7 @@ impl UDPSocket {
                     code: BunString::static_(code),
                     message: BunString::create_format(format_args!(
                         "bind {} {}",
-                        code, this.config.hostname
+                        code, config.hostname
                     )),
                     path: BunString::empty(),
                     syscall: BunString::empty(),
@@ -571,7 +576,7 @@ impl UDPSocket {
                     dest: BunString::empty(),
                 };
                 let error_value = sys_err.to_error_instance(global_this);
-                error_value.put(global_this, b"address", this.config.hostname.to_js(global_this)?);
+                error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
 
                 return Err(global_this.throw_value(error_value));
             }
@@ -579,10 +584,10 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Failed to bind socket")));
         }
 
-        if let Some(connect) = &this.config.connect {
+        if let Some(connect) = &this.config.get().connect {
             let address_z = connect.address.to_owned_slice_z();
             // SAFETY: socket is Some (checked above).
-            let ret = unsafe { (*this.socket.unwrap()).connect(address_z.as_ptr(), connect.port as u32) };
+            let ret = unsafe { (*this.socket.get().unwrap()).connect(address_z.as_ptr(), connect.port as u32) };
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
                     return Err(global_this.throw_value(sys_err.to_js(global_this)));
@@ -599,19 +604,28 @@ impl UDPSocket {
                     ));
                 }
             }
-            this.connect_info = Some(ConnectInfo { port: connect.port });
+            this.connect_info.set(Some(ConnectInfo { port: connect.port }));
         }
 
         // Disarm errdefer.
         scopeguard::ScopeGuard::into_inner(guard);
 
-        this.poll_ref.ref_(vm_ctx());
+        this.poll_ref.with_mut(|p| p.ref_(vm_ctx()));
         Ok(bun_jsc::JSPromise::resolved_promise_value(global_this, this_value))
     }
 
-    pub fn call_error_handler(&mut self, this_value_: JSValue, err: JSValue) {
+    /// `self`'s address as `*mut Self` for the uws user-data slot. Callbacks
+    /// deref it as `&*const` (shared) — see `on_close`/`on_data` above — so no
+    /// write provenance is required; the `*mut` spelling is purely to match
+    /// the C signature.
+    #[inline]
+    pub fn as_ctx_ptr(&self) -> *mut Self {
+        (self as *const Self).cast_mut()
+    }
+
+    pub fn call_error_handler(&self, this_value_: JSValue, err: JSValue) {
         let this_value = if this_value_.is_empty() {
-            match self.this_value.try_get() {
+            match self.this_value.get().try_get() {
                 Some(v) => v,
                 None => return,
             }
@@ -641,11 +655,11 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_broadcast(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.closed {
+        if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
@@ -658,7 +672,7 @@ impl UDPSocket {
         }
 
         let enabled = arguments[0].to_boolean();
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
@@ -676,11 +690,11 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_multicast_loopback(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.closed {
+        if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
@@ -699,7 +713,7 @@ impl UDPSocket {
         // `closed=false && socket=None` here (panic seen in
         // test-dgram-multicast-loopback.js). Throw EBADF to match the
         // `closed` branch above instead of panicking.
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
@@ -716,12 +730,12 @@ impl UDPSocket {
     }
 
     fn set_membership(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         drop: bool,
     ) -> JsResult<JSValue> {
-        if this.closed {
+        if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
@@ -743,7 +757,7 @@ impl UDPSocket {
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
 
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
@@ -771,7 +785,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn add_membership(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -780,7 +794,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn drop_membership(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -788,12 +802,12 @@ impl UDPSocket {
     }
 
     fn set_source_specific_membership(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         drop: bool,
     ) -> JsResult<JSValue> {
-        if this.closed {
+        if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
@@ -832,7 +846,7 @@ impl UDPSocket {
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
 
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
@@ -860,7 +874,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn add_source_specific_membership(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -869,7 +883,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn drop_source_specific_membership(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -878,11 +892,11 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_multicast_interface(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.closed {
+        if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
@@ -908,7 +922,7 @@ impl UDPSocket {
             return Ok(JSValue::FALSE);
         }
 
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
@@ -924,7 +938,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_ttl(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -933,7 +947,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_multicast_ttl(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -941,13 +955,13 @@ impl UDPSocket {
     }
 
     fn set_any_ttl(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<JSValue> {
         // PERF(port): was comptime monomorphization — profile in Phase B.
-        if this.closed {
+        if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
                     .to_js(global_this),
@@ -960,7 +974,7 @@ impl UDPSocket {
         }
 
         let ttl = arguments[0].coerce_to_i32(global_this)?;
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
         // SAFETY: socket valid (checked above).
@@ -975,7 +989,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn send_many(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -993,7 +1007,7 @@ impl UDPSocket {
         // user JS; phase 2 borrows byte slices only once no more user JS
         // sits between capture and `socket.send`.
         struct Ctx<'a> {
-            this: &'a mut UDPSocket,
+            this: &'a UDPSocket,
             global_this: &'a JSGlobalObject,
             callframe: &'a CallFrame,
             result: JsResult<JSValue>,
@@ -1017,12 +1031,12 @@ impl UDPSocket {
     }
 
     fn send_many_impl(
-        this: &mut Self,
+        this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         payload_roots: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        if this.closed {
+        if this.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
         let arguments = callframe.arguments_old::<1>();
@@ -1042,7 +1056,7 @@ impl UDPSocket {
         // `slice_idx` is computed and which branch writes into `payloads`/`lens`/
         // `addr_ptrs`, producing out-of-bounds writes (unconnected -> connected) or
         // uninitialized slots (connected -> disconnected) in the arena buffers.
-        let connected = this.connect_info.is_some();
+        let connected = this.connect_info.get().is_some();
 
         let array_len = arg.get_length(global_this)? as usize;
         if !connected && array_len % 3 != 0 {
@@ -1161,7 +1175,7 @@ impl UDPSocket {
             lens[slice_idx] = slice.len();
         }
 
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
         // SAFETY: socket valid (checked above).
@@ -1173,13 +1187,13 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn send(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        if this.closed {
+    pub fn send(this: &Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if this.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
         let arguments = callframe.arguments_old::<3>();
         let dst: Option<Destination> = 'brk: {
-            if this.connect_info.is_some() {
+            if this.connect_info.get().is_some() {
                 if arguments.len == 1 {
                     break 'brk None;
                 }
@@ -1246,7 +1260,7 @@ impl UDPSocket {
             }
         };
 
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
         // SAFETY: socket valid (checked above).
@@ -1259,7 +1273,7 @@ impl UDPSocket {
     }
 
     fn parse_addr(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         port_val: JSValue,
         address_val: JSValue,
@@ -1380,10 +1394,10 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ref_(this: &mut Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn ref_(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_this;
-        if !this.closed {
-            this.poll_ref.ref_(vm_ctx());
+        if !this.closed.get() {
+            this.poll_ref.with_mut(|p| p.ref_(vm_ctx()));
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1391,31 +1405,30 @@ impl UDPSocket {
 
     /// Codegen calls `UDPSocket::r#ref` (raw-ident lowering of JS `ref`).
     #[inline]
-    pub fn r#ref(this: &mut Self, global_this: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub fn r#ref(this: &Self, global_this: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         Self::ref_(this, global_this, frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn unref(this: &mut Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn unref(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_this;
-        this.poll_ref.unref(vm_ctx());
+        this.poll_ref.with_mut(|p| p.unref(vm_ctx()));
 
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(this: &mut Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        if !this.closed {
+    pub fn close(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        if !this.closed.get() {
             let Some(socket) = this.socket.take() else {
                 return Ok(JSValue::UNDEFINED);
             };
             // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
-            // `s->on_close(s)`), which re-derives `&mut UDPSocket` from the uws
-            // user pointer. Under Stacked Borrows that sibling re-derive
-            // invalidates this outer `&mut Self`, so any use of `this` after the
-            // call is UB. Hoist the (idempotent) downgrade — `on_close` repeats
-            // it — and never touch `this` past this point. Spec: udp_socket.zig:915-920.
-            this.this_value.downgrade();
+            // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
+            // user pointer. R-2: with `&self` + `Cell`/`JsCell` the sibling
+            // shared borrow is sound; the (idempotent) downgrade is hoisted
+            // because `on_close` repeats it. Spec: udp_socket.zig:915-920.
+            this.this_value.with_mut(|r| r.downgrade());
             // SAFETY: socket created by uws::udp::Socket::create; valid until close().
             unsafe { (*socket).close() };
         }
@@ -1424,7 +1437,7 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn reload(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn reload(this: &Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<1>();
 
         if args.len < 1 {
@@ -1432,12 +1445,12 @@ impl UDPSocket {
         }
 
         let options = args.ptr[0];
-        let Some(this_value) = this.this_value.try_get() else {
+        let Some(this_value) = this.this_value.get().try_get() else {
             return Ok(JSValue::UNDEFINED);
         };
         let config = UDPSocketConfig::from_js(global_this, options, this_value)?;
 
-        let previous_config = core::mem::replace(&mut this.config, config);
+        let previous_config = this.config.replace(config);
         drop(previous_config);
 
         Ok(JSValue::UNDEFINED)
@@ -1445,25 +1458,25 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_closed(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.closed)
+        JSValue::from(this.closed.get())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_hostname(this: &Self, _: &JSGlobalObject) -> JsResult<JSValue> {
-        this.config.hostname.to_js(this.global_this.get())
+        this.config.get().hostname.to_js(this.global_this.get())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_port(this: &Self, _: &JSGlobalObject) -> JSValue {
-        if this.closed {
+        if this.closed.get() {
             return JSValue::UNDEFINED;
         }
         // SAFETY: !closed implies socket is Some and valid.
-        JSValue::js_number(unsafe { (*this.socket.unwrap()).bound_port() } as f64)
+        JSValue::js_number(unsafe { (*this.socket.get().unwrap()).bound_port() } as f64)
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
-        let mut sockaddr: SocketAddress = match SocketAddress::init(address_bytes, port) {
+        let sockaddr: SocketAddress = match SocketAddress::init(address_bytes, port) {
             Ok(sa) => sa,
             Err(_) => return JSValue::UNDEFINED,
         };
@@ -1472,32 +1485,32 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        if this.closed {
+        if this.closed.get() {
             return JSValue::UNDEFINED;
         }
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
         // SAFETY: !closed implies socket is Some and valid.
-        unsafe { (*this.socket.unwrap()).bound_ip(buf.as_mut_ptr(), &mut length) };
+        unsafe { (*this.socket.get().unwrap()).bound_ip(buf.as_mut_ptr(), &mut length) };
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         // SAFETY: !closed implies socket is Some and valid.
-        let port = unsafe { (*this.socket.unwrap()).bound_port() };
+        let port = unsafe { (*this.socket.get().unwrap()).bound_port() };
         Self::create_sock_addr(global_this, address_bytes, u16::try_from(port).expect("int cast"))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_remote_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        if this.closed {
+        if this.closed.get() {
             return JSValue::UNDEFINED;
         }
-        let Some(connect_info) = this.connect_info else {
+        let Some(connect_info) = this.connect_info.get() else {
             return JSValue::UNDEFINED;
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
         // SAFETY: !closed implies socket is Some and valid.
-        unsafe { (*this.socket.unwrap()).remote_ip(buf.as_mut_ptr(), &mut length) };
+        unsafe { (*this.socket.get().unwrap()).remote_ip(buf.as_mut_ptr(), &mut length) };
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         Self::create_sock_addr(global_this, address_bytes, connect_info.port)
@@ -1505,7 +1518,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_binary_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(match this.config.binary_type {
+        Ok(match this.config.get().binary_type {
             BinaryType::Buffer => global_this.common_strings().buffer(),
             BinaryType::Uint8Array => global_this.common_strings().uint8array(),
             BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),
@@ -1513,9 +1526,9 @@ impl UDPSocket {
         })
     }
 
-    pub fn finalize(mut self: Box<Self>) {
+    pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
-        self.this_value.finalize();
+        self.this_value.with_mut(|r| r.finalize());
         // `deinit` frees the allocation itself (`heap::take`); hand ownership
         // back so its existing raw-ptr teardown path stays intact.
         Self::deinit(Box::into_raw(self));
@@ -1523,9 +1536,9 @@ impl UDPSocket {
 
     fn deinit(this: *mut Self) {
         // SAFETY: called from finalize with valid Box-allocated payload.
-        let this_ref = unsafe { &mut *this };
-        debug_assert!(this_ref.closed || VirtualMachine::get().is_shutting_down());
-        this_ref.poll_ref.disable();
+        let this_ref = unsafe { &*this };
+        debug_assert!(this_ref.closed.get() || VirtualMachine::get().is_shutting_down());
+        this_ref.poll_ref.with_mut(|p| p.disable());
         // config drop handled by heap::take below.
         // this_value.deinit() handled by JsRef Drop.
         // SAFETY: allocated via heap::alloc in `new`; this is the matching free.
@@ -1541,14 +1554,15 @@ impl UDPSocket {
         let Some(this_ptr) = call_frame.this().as_::<UDPSocket>() else {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'")));
         };
-        // SAFETY: from_js_direct yielded a live payload pointer.
-        let this = unsafe { &mut *this_ptr };
+        // SAFETY: from_js_direct yielded a live payload pointer. R-2: shared
+        // borrow — mutation through `Cell`.
+        let this = unsafe { &*this_ptr };
 
-        if this.connect_info.is_some() {
+        if this.connect_info.get().is_some() {
             return Err(global_this.throw(format_args!("Socket is already connected")));
         }
 
-        if this.closed {
+        if this.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
 
@@ -1572,14 +1586,14 @@ impl UDPSocket {
             u16::try_from(connect_port).expect("int cast")
         };
 
-        let Some(socket) = this.socket else {
+        let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
         // SAFETY: socket valid (checked above).
         if unsafe { (*socket).connect(connect_host.as_ptr(), port as u32) } == -1 {
             return Err(global_this.throw(format_args!("Failed to connect socket")));
         }
-        this.connect_info = Some(ConnectInfo { port });
+        this.connect_info.set(Some(ConnectInfo { port }));
 
         js::address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
         js::remote_address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
@@ -1592,22 +1606,23 @@ impl UDPSocket {
         let Some(this_ptr) = call_frame.this().as_::<UDPSocket>() else {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'")));
         };
-        // SAFETY: from_js_direct yielded a live payload pointer.
-        let this = unsafe { &mut *this_ptr };
+        // SAFETY: from_js_direct yielded a live payload pointer. R-2: shared
+        // borrow — mutation through `Cell`.
+        let this = unsafe { &*this_ptr };
 
-        if this.connect_info.is_none() {
+        if this.connect_info.get().is_none() {
             return Err(global_object.throw(format_args!("Socket is not connected")));
         }
 
-        if this.closed {
+        if this.closed.get() {
             return Err(global_object.throw(format_args!("Socket is closed")));
         }
 
         // SAFETY: !closed implies socket is Some and valid.
-        if unsafe { (*this.socket.unwrap()).disconnect() } == -1 {
+        if unsafe { (*this.socket.get().unwrap()).disconnect() } == -1 {
             return Err(global_object.throw(format_args!("Failed to disconnect socket")));
         }
-        this.connect_info = None;
+        this.connect_info.set(None);
 
         Ok(JSValue::UNDEFINED)
     }

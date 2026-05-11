@@ -32,7 +32,7 @@ impl Default for ScriptState {
 
 impl Script {
     pub fn init(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: *const ast::Script,
         parent: NodeId,
@@ -44,7 +44,7 @@ impl Script {
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&mut Interpreter` reborrow.
+            // borrowck across the `&Interpreter` reborrow.
             node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Script) },
             io,
             state: ScriptState::default(),
@@ -53,14 +53,14 @@ impl Script {
         id
     }
 
-    pub fn start(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, this: NodeId) -> Yield {
         if Self::stmt_count(interp, this) == 0 {
             return Self::finish(interp, this, 0);
         }
         Yield::Next(this)
     }
 
-    pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
+    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (idx, shell) = {
             let me = interp.as_script_mut(this);
             let len = Self::stmt_count_of(me);
@@ -80,13 +80,13 @@ impl Script {
         Stmt::start(interp, stmt)
     }
 
-    fn finish(interp: &mut Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+    fn finish(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
         let parent = interp.as_script(this).base.parent;
         interp.child_done(parent, this, exit_code)
     }
 
     pub fn child_done(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -103,7 +103,7 @@ impl Script {
         Self::next(interp, this)
     }
 
-    pub fn deinit(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Script {} deinit", this);
         let parent = interp.as_script(this).base.parent;
         let parent_kind = if parent == NodeId::INTERPRETER {
@@ -128,7 +128,7 @@ impl Script {
         // free_node is done by the caller (Interpreter::deinit_node).
     }
 
-    pub fn deinit_from_interpreter(interp: &mut Interpreter, this: NodeId) {
+    pub fn deinit_from_interpreter(interp: &Interpreter, this: NodeId) {
         log!("Script {} deinitFromInterpreter", this);
         let me = interp.as_script_mut(this);
         // io.deinit() — IO Drop handles it.

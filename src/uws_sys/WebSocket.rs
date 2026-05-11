@@ -551,8 +551,17 @@ pub trait WebSocketHandler: Sized + 'static {
 /// `comptime ServerType` parameter to `WebSocketBehavior.Wrap`.
 pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     // TODO(port): `*NewApp(is_ssl).Response` — exact Rust type pending App.rs port.
-    fn on_websocket_upgrade(
-        &mut self,
+    /// # Safety
+    /// `this` is the raw user-data pointer passed to `uws_ws()` at registration
+    /// time, cast to `*mut Self`. **Its actual pointee type is discriminated by
+    /// `id`** — `Bun.serve` registers `*mut UserRoute` for `id == 1` and
+    /// `*mut Self` for `id == 0` (see `runtime/server/mod.rs`). Implementers
+    /// MUST dispatch on `id` *before* dereferencing `this`; the trampoline
+    /// deliberately forwards the raw pointer (no `&mut Self` is ever
+    /// materialized) so that the wrong-typed reference is never created when
+    /// `id != 0`.
+    unsafe fn on_websocket_upgrade(
+        this: *mut Self,
         res: *mut uws::NewAppResponse<SSL>,
         req: &mut Request,
         context: &mut WebSocketUpgradeContext,
@@ -655,12 +664,18 @@ where
         context: *mut WebSocketUpgradeContext,
         id: usize,
     ) {
-        // SAFETY: `ptr` is the *Server passed to uws_ws() at registration time;
-        // uWS passes non-null req/context valid for the duration of the upgrade
-        // callback.
+        // SAFETY: `ptr` is the user-data passed to `uws_ws()` at registration
+        // time; uWS passes non-null req/context valid for the duration of the
+        // upgrade callback. We forward `ptr` as a *raw* `*mut Server` without
+        // creating a `&mut Server` — the actual pointee type is discriminated
+        // by `id` inside the implementer (see trait docs), and materializing a
+        // typed reference here would be UB when `id` selects a different type.
+        if ptr.is_null() {
+            return;
+        }
         unsafe {
-            let Some(server) = thunk::user_mut::<Server>(ptr) else { return };
-            server.on_websocket_upgrade(
+            Server::on_websocket_upgrade(
+                ptr.cast::<Server>(),
                 res.cast::<uws::NewAppResponse<SSL>>(),
                 thunk::handle_mut(req),
                 thunk::handle_mut(context),

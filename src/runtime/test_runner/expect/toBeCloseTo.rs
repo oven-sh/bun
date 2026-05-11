@@ -7,10 +7,11 @@ use super::get_signature;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_close_to(
-        this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        let this = self;
         // TODO(port): `defer this.postMatch(globalThis)` — Phase B reshape (inner fn or explicit
         // post_match before each return). scopeguard would capture &mut self and conflict with
         // later borrows, and per PORTING.md scopeguard maps `errdefer {side-effects}`, not `defer`.
@@ -67,7 +68,7 @@ impl Expect {
         let actual_diff = (received - expected).abs();
         let mut pass = actual_diff < expected_diff;
 
-        let not = this.flags.not();
+        let not = this.flags.get().not();
         if not {
             pass = !pass;
         }

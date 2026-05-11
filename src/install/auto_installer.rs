@@ -12,9 +12,11 @@
 //!
 //! `resolution::Resolution` is still the install-side `ResolutionType<u64>`
 //! (a `#[repr(C)]` struct whose `Value` union mirrors
-//! `hooks::ResolutionValue<u64>`); the static asserts below pin layout
-//! equality so the by-value reinterpretation in [`resolution_to_hooks`] /
-//! [`resolution_from_hooks`] is sound.
+//! `hooks::ResolutionValue<u64>`). [`resolution_to_hooks`] /
+//! [`resolution_from_hooks`] bridge them by explicit field copy — the `tag`
+//! fields have different validity domains (open `u8` newtype vs closed
+//! `#[repr(u8)] enum`), so a whole-struct transmute would be unsound; only
+//! the invariant-free `value` union is reinterpreted.
 
 use core::mem::{align_of, size_of};
 
@@ -34,22 +36,92 @@ use crate::{DependencyID, Features, PackageID, PackageManager, PreinstallState};
 // `resolution::ResolutionType<u64>` and `hooks::Resolution` are distinct
 // `#[repr(C)]` structs with identical field order
 // (`tag: u8, _padding: [u8;7], value: 40 B`). Pin that contract.
+//
+// NB: size/align equality is necessary but NOT sufficient for a whole-struct
+// transmute — the two `tag` fields have different validity domains (open `u8`
+// newtype vs closed `#[repr(u8)] enum`). The bridge below therefore copies
+// fields explicitly and only reinterprets the `value` union, which carries no
+// validity invariant beyond size/align.
 
 const _: () = assert!(size_of::<resolution::Value<u64>>() == size_of::<hooks::ResolutionValue<u64>>());
 const _: () = assert!(align_of::<resolution::Value<u64>>() == align_of::<hooks::ResolutionValue<u64>>());
 const _: () = assert!(size_of::<resolution::Resolution>() == size_of::<hooks::Resolution>());
 const _: () = assert!(align_of::<resolution::Resolution>() == align_of::<hooks::Resolution>());
 
+// Pin discriminant equality so the two Tag definitions cannot silently diverge.
+const _: () = {
+    assert!(resolution::Tag::Uninitialized.0 == hooks::ResolutionTag::Uninitialized as u8);
+    assert!(resolution::Tag::Root.0 == hooks::ResolutionTag::Root as u8);
+    assert!(resolution::Tag::Npm.0 == hooks::ResolutionTag::Npm as u8);
+    assert!(resolution::Tag::Folder.0 == hooks::ResolutionTag::Folder as u8);
+    assert!(resolution::Tag::LocalTarball.0 == hooks::ResolutionTag::LocalTarball as u8);
+    assert!(resolution::Tag::Github.0 == hooks::ResolutionTag::Github as u8);
+    assert!(resolution::Tag::Git.0 == hooks::ResolutionTag::Git as u8);
+    assert!(resolution::Tag::Symlink.0 == hooks::ResolutionTag::Symlink as u8);
+    assert!(resolution::Tag::Workspace.0 == hooks::ResolutionTag::Workspace as u8);
+    assert!(resolution::Tag::RemoteTarball.0 == hooks::ResolutionTag::RemoteTarball as u8);
+    assert!(resolution::Tag::SingleFileModule.0 == hooks::ResolutionTag::SingleFileModule as u8);
+};
+
 #[inline]
-fn resolution_to_hooks(r: resolution::Resolution) -> hooks::Resolution {
-    // SAFETY: layout-identical per `const _` asserts above; both `#[repr(C)]`.
-    unsafe { core::mem::transmute::<resolution::Resolution, hooks::Resolution>(r) }
+fn tag_to_hooks(t: resolution::Tag) -> hooks::ResolutionTag {
+    // `resolution::Tag` is a `#[repr(transparent)]` u8 newtype (Zig
+    // `enum(u8) { ..., _ }` — non-exhaustive; lockfile bytes may carry any
+    // value). `hooks::ResolutionTag` is a closed `#[repr(u8)] enum`. A blind
+    // transmute would produce an invalid enum discriminant (UB) for any byte
+    // outside the named set, so map explicitly and saturate unknowns to
+    // `Uninitialized` (debug-asserted).
+    match t {
+        resolution::Tag::Uninitialized => hooks::ResolutionTag::Uninitialized,
+        resolution::Tag::Root => hooks::ResolutionTag::Root,
+        resolution::Tag::Npm => hooks::ResolutionTag::Npm,
+        resolution::Tag::Folder => hooks::ResolutionTag::Folder,
+        resolution::Tag::LocalTarball => hooks::ResolutionTag::LocalTarball,
+        resolution::Tag::Github => hooks::ResolutionTag::Github,
+        resolution::Tag::Git => hooks::ResolutionTag::Git,
+        resolution::Tag::Symlink => hooks::ResolutionTag::Symlink,
+        resolution::Tag::Workspace => hooks::ResolutionTag::Workspace,
+        resolution::Tag::RemoteTarball => hooks::ResolutionTag::RemoteTarball,
+        resolution::Tag::SingleFileModule => hooks::ResolutionTag::SingleFileModule,
+        unknown => {
+            debug_assert!(false, "unknown resolution::Tag({}) crossing hooks boundary", unknown.0);
+            hooks::ResolutionTag::Uninitialized
+        }
+    }
 }
 
 #[inline]
-fn resolution_from_hooks(r: &hooks::Resolution) -> &resolution::Resolution {
-    // SAFETY: layout-identical per `const _` asserts above.
-    unsafe { &*std::ptr::from_ref::<hooks::Resolution>(r).cast::<resolution::Resolution>() }
+fn resolution_to_hooks(r: resolution::Resolution) -> hooks::Resolution {
+    hooks::Resolution {
+        tag: tag_to_hooks(r.tag),
+        _padding: r._padding,
+        // SAFETY: `resolution::Value<u64>` and `hooks::ResolutionValue<u64>` are
+        // distinct `#[repr(C)]` unions whose member set is identical at the
+        // SAME nominal payload types (`()`, `SemverString`, `Repository`,
+        // `VersionedURLType<u64>` — the latter two re-exported from
+        // `bun_install_types`). A `repr(C)` union has no validity invariant
+        // beyond size/align (pinned by the `const _` asserts above), so this
+        // by-value reinterpretation is sound regardless of the active variant.
+        value: unsafe {
+            core::mem::transmute::<resolution::Value<u64>, hooks::ResolutionValue<u64>>(r.value)
+        },
+    }
+}
+
+#[inline]
+fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
+    resolution::Resolution {
+        // Every `hooks::ResolutionTag` discriminant is a valid `Tag(u8)` (the
+        // closed enum is a strict subset of the open newtype), so this
+        // direction needs no checked match.
+        tag: resolution::Tag(r.tag as u8),
+        _padding: r._padding,
+        // SAFETY: see `resolution_to_hooks` — same union-pair argument applies
+        // in reverse.
+        value: unsafe {
+            core::mem::transmute::<hooks::ResolutionValue<u64>, resolution::Value<u64>>(r.value)
+        },
+    }
 }
 
 // `dependency::Tag` is a re-export of `hooks::DependencyVersionTag`
@@ -267,7 +339,7 @@ impl hooks::AutoInstaller for PackageManager {
         // (asserted above).
         let path_buf: &mut bun_paths::PathBuffer =
             unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
-        let r = *resolution_from_hooks(resolution);
+        let r = resolution_from_hooks(resolution);
         let out = directories::path_for_resolution(self, package_id, r, path_buf)?;
         Ok(&*out)
     }
@@ -287,9 +359,9 @@ impl hooks::AutoInstaller for PackageManager {
     ) -> Result<(), bun_core::Error> {
         let r = resolution_from_hooks(resolution);
         // Zig: resolver.zig:2123 — only the npm arm reaches this enqueue.
-        // SAFETY: caller passes a `Resolution` whose tag was already checked
-        // == Npm by the resolver (`resolution.tag == .npm`); the projection
-        // overlay preserves the tag/union pairing.
+        // Caller passes a `Resolution` whose tag was already checked == Npm by
+        // the resolver (`resolution.tag == .npm`); the field-copy bridge
+        // preserves the tag/union pairing.
         let npm = *r.npm();
         let url = self.lockfile.str(&npm.url).to_vec();
         enqueue::enqueue_package_for_download(

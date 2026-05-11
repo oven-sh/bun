@@ -21,7 +21,7 @@ enum State {
 enum WaitKind { Stdout, Stderr }
 
 impl Pwd {
-    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         if !Builtin::of(interp, cmd).args_slice().is_empty() {
             let msg: &[u8] = b"pwd: too many arguments\n";
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
@@ -53,7 +53,7 @@ impl Pwd {
     }
 
     pub fn on_io_writer_chunk(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,
@@ -71,7 +71,7 @@ impl Pwd {
     }
 
     #[inline]
-    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Pwd {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Pwd {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Pwd(p) => p,
             _ => unreachable!(),

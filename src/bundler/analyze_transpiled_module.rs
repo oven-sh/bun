@@ -136,12 +136,13 @@ bun_core::named_error_set!(ModuleInfoError);
 /// All slice fields are **self-referential** views into `owner`
 /// (`Owner::AllocatedSlice`) or into the parent `ModuleInfo`'s `Vec` storage
 /// (`Owner::ModuleInfo`). They are stored as [`bun_ptr::RawSlice`] (raw fat
-/// pointers) because Rust references cannot express the self-borrow, and the
-/// non-`u8` element types were `align(1)` slices in Zig (i.e. not naturally
-/// aligned).
+/// pointers) because Rust references cannot express the self-borrow.
 ///
-/// TODO(port): element reads of `strings_lens` / `requested_modules_*` /
-/// `buffer` must use `read_unaligned` — the backing bytes are 1-byte aligned.
+/// Alignment: the on-disk format pads every multi-byte field to a 4-byte
+/// offset, and [`Self::create`] allocates the backing buffer with 4-byte
+/// alignment ([`MODULE_INFO_ALIGN`]), so every `RawSlice<T>` here is properly
+/// aligned for `T` and `.slice()` is sound. (Zig used `[]align(1) const T`
+/// because its allocator didn't guarantee the base; we do instead.)
 pub struct ModuleInfoDeserialized {
     pub strings_buf: bun_ptr::RawSlice<u8>,
     pub strings_lens: bun_ptr::RawSlice<u32>,
@@ -157,7 +158,8 @@ pub enum Owner {
     /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields.
     ModuleInfo(*mut ModuleInfo),
     AllocatedSlice {
-        /// `Box::<[u8]>::into_raw` — freed in `deinit`.
+        /// [`MODULE_INFO_ALIGN`]-aligned heap slice from [`dupe_aligned`];
+        /// freed in `deinit` via [`free_aligned_dup`].
         slice: *mut [u8],
     },
 }
@@ -170,10 +172,10 @@ impl ModuleInfoDeserialized {
     // `&self`, and no `&mut` alias to that storage is ever handed out — so
     // materialising `&[T]` for `'_ self` (via `RawSlice::slice`) is sound.
     //
-    // Alignment caveat: when `owner == AllocatedSlice`, the non-`u8` element
-    // types were `align(1)` in the Zig serialization. Supported targets
-    // (x86_64 / aarch64) tolerate the unaligned loads slice indexing emits;
-    // see the TODO(port) on the struct for the strict-alignment follow-up.
+    // Alignment: every constructor guarantees each view is aligned for its
+    // element type — `create` allocates a `MODULE_INFO_ALIGN`-aligned buffer
+    // and `bytes_as_slice` rejects misaligned sub-slices; `into_deserialized`
+    // borrows from typed `Vec<T>` storage which is naturally aligned.
 
     #[inline]
     pub fn strings_buf(&self) -> &[u8] {
@@ -220,7 +222,7 @@ impl ModuleInfoDeserialized {
                     drop(bun_core::heap::take(this));
                 }
                 Owner::AllocatedSlice { slice } => {
-                    drop(bun_core::heap::take(slice));
+                    free_aligned_dup(slice);
                     drop(bun_core::heap::take(this));
                 }
             }
@@ -249,11 +251,12 @@ impl ModuleInfoDeserialized {
     }
 
     pub fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
-        let duped: Box<[u8]> = Box::from(source);
-        // Stabilize the address so the raw slice fields can borrow into it.
-        let duped_raw: *mut [u8] = bun_core::heap::into_raw(duped);
+        // Copy into a `MODULE_INFO_ALIGN`-aligned buffer so the typed
+        // sub-slices below (whose offsets the format pads to 4 bytes) are
+        // properly aligned for `&[T]` materialisation.
+        let duped_raw: *mut [u8] = dupe_aligned(source);
         // On error, reclaim the allocation.
-        let guard = scopeguard::guard(duped_raw, |p| unsafe { drop(bun_core::heap::take(p)) });
+        let guard = scopeguard::guard(duped_raw, |p| unsafe { free_aligned_dup(p) });
 
         // SAFETY: `duped_raw` is a valid, exclusively-owned allocation.
         let mut rem: &[u8] = unsafe { &*duped_raw };
@@ -262,24 +265,24 @@ impl ModuleInfoDeserialized {
         let record_kinds = bytes_as_slice::<RecordKind>(Self::eat(
             &mut rem,
             record_kinds_len as usize * size_of::<RecordKind>(),
-        )?);
+        )?)?;
         let _ = Self::eat(&mut rem, ((4 - (record_kinds_len % 4)) % 4) as usize)?; // alignment padding
 
         let buffer_len = u32::from_le_bytes(*Self::eat_c::<4>(&mut rem)?);
         let buffer = bytes_as_slice::<StringID>(Self::eat(
             &mut rem,
             buffer_len as usize * size_of::<StringID>(),
-        )?);
+        )?)?;
 
         let requested_modules_len = u32::from_le_bytes(*Self::eat_c::<4>(&mut rem)?);
         let requested_modules_keys = bytes_as_slice::<StringID>(Self::eat(
             &mut rem,
             requested_modules_len as usize * size_of::<StringID>(),
-        )?);
+        )?)?;
         let requested_modules_values = bytes_as_slice::<FetchParameters>(Self::eat(
             &mut rem,
             requested_modules_len as usize * size_of::<FetchParameters>(),
-        )?);
+        )?)?;
 
         let flags = Flags::from_bits_retain(Self::eat_c::<1>(&mut rem)?[0]);
         let _ = Self::eat(&mut rem, 3)?; // alignment padding
@@ -288,7 +291,7 @@ impl ModuleInfoDeserialized {
         let strings_lens = bytes_as_slice::<u32>(Self::eat(
             &mut rem,
             strings_len as usize * size_of::<u32>(),
-        )?);
+        )?)?;
         let strings_buf: *const [u8] = rem;
 
         // Disarm the errdefer: ownership moves into the result.
@@ -350,12 +353,76 @@ impl ModuleInfoDeserialized {
     }
 }
 
-/// Reinterpret a byte slice as `*const [T]` without alignment requirements
-/// (Zig: `std.mem.bytesAsSlice` producing `[]align(1) const T`).
+/// Maximum element alignment appearing in the serialized format
+/// (`u32` / `StringID` / `FetchParameters`). The writer pads every multi-byte
+/// field to this boundary, and [`dupe_aligned`] allocates the backing buffer
+/// at this alignment, so every typed sub-slice is properly aligned.
+const MODULE_INFO_ALIGN: usize = core::mem::align_of::<u32>();
+
+// Compile-time guard: if a wider element type is ever added to the format,
+// bump `MODULE_INFO_ALIGN` accordingly.
+const _: () = {
+    assert!(core::mem::align_of::<StringID>() <= MODULE_INFO_ALIGN);
+    assert!(core::mem::align_of::<FetchParameters>() <= MODULE_INFO_ALIGN);
+    assert!(core::mem::align_of::<RecordKind>() <= MODULE_INFO_ALIGN);
+};
+
+/// Allocate a [`MODULE_INFO_ALIGN`]-aligned copy of `source`.
+/// Paired with [`free_aligned_dup`].
+fn dupe_aligned(source: &[u8]) -> *mut [u8] {
+    if source.is_empty() {
+        // Non-null, well-aligned, len-0 — valid input for `&*` and for
+        // `free_aligned_dup` (which no-ops on len 0).
+        return core::ptr::slice_from_raw_parts_mut(MODULE_INFO_ALIGN as *mut u8, 0);
+    }
+    let layout = std::alloc::Layout::from_size_align(source.len(), MODULE_INFO_ALIGN)
+        .expect("module-info buffer too large");
+    // SAFETY: layout has non-zero size (checked above).
+    let ptr = unsafe { std::alloc::alloc(layout) };
+    if ptr.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    // SAFETY: `ptr` is a fresh `source.len()`-byte allocation; `source` is a
+    // valid readable slice; the regions cannot overlap.
+    unsafe { core::ptr::copy_nonoverlapping(source.as_ptr(), ptr, source.len()) };
+    core::ptr::slice_from_raw_parts_mut(ptr, source.len())
+}
+
+/// # Safety
+/// `slice` must have been returned by [`dupe_aligned`] and not yet freed.
+unsafe fn free_aligned_dup(slice: *mut [u8]) {
+    let len = slice.len();
+    if len == 0 {
+        return;
+    }
+    // SAFETY: caller contract — `slice` came from `dupe_aligned`, which
+    // allocated with this exact layout.
+    unsafe {
+        std::alloc::dealloc(
+            slice as *mut u8,
+            std::alloc::Layout::from_size_align_unchecked(len, MODULE_INFO_ALIGN),
+        );
+    }
+}
+
+/// Reinterpret a byte sub-slice of the [`MODULE_INFO_ALIGN`]-aligned backing
+/// buffer as `*const [T]`. Returns `BadModuleInfo` if `bytes` is not aligned
+/// for `T` (i.e. the format's internal padding was violated) so that the
+/// resulting fat pointer is always safe to materialise as `&[T]`.
+///
+/// (Zig used `std.mem.bytesAsSlice` → `[]align(1) const T`; Rust has no
+/// under-aligned reference type, so we guarantee alignment instead.)
 #[inline]
-fn bytes_as_slice<T>(bytes: &[u8]) -> *const [T] {
+fn bytes_as_slice<T>(bytes: &[u8]) -> Result<*const [T], ModuleInfoError> {
     debug_assert!(bytes.len() % size_of::<T>() == 0);
-    core::ptr::slice_from_raw_parts(bytes.as_ptr().cast::<T>(), bytes.len() / size_of::<T>())
+    let ptr = bytes.as_ptr();
+    if ptr.align_offset(core::mem::align_of::<T>()) != 0 {
+        return Err(ModuleInfoError::BadModuleInfo);
+    }
+    Ok(core::ptr::slice_from_raw_parts(
+        ptr.cast::<T>(),
+        bytes.len() / size_of::<T>(),
+    ))
 }
 
 /// Reinterpret `&[T]` as bytes (Zig: `std.mem.sliceAsBytes`). `T` must be POD.

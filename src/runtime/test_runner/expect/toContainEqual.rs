@@ -32,14 +32,14 @@ extern "C" fn deep_equals_iterator(
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_contain_equal(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // defer this.postMatch(globalThis);
     // PORT NOTE: wrap `this` in a scopeguard so post_match runs on every exit path; `this`
     // remains usable below via DerefMut on the guard (matches toBeWithin/toBeNumber pattern).
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
@@ -54,7 +54,7 @@ pub fn to_contain_equal(
     expected.ensure_still_alive();
     let value: JSValue = this.get_value(global, this_value, "toContainEqual", "<green>expected<r>")?;
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
 
     let value_type = value.js_type();

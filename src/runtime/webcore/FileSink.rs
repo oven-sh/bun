@@ -1441,8 +1441,10 @@ impl FileSink {
         // assigning `readable_stream`. `JsCell::as_ptr` yields the stable
         // address of the inner `Signal` (`#[repr(transparent)]` over
         // `UnsafeCell`).
-        // SAFETY: `signal.ptr` is a plain field at offset 0 of `Signal`; we
-        // hand its address to FFI which writes the JSValue back.
+        // SAFETY: project to `signal.ptr` without forming a reference;
+        // `Option<NonNull<c_void>>` is ABI-identical to `*mut c_void` (see
+        // const-asserts on `Signal` in streams.rs), so FFI may write the
+        // JSValue bits back through this `void**`.
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
         let promise_result =

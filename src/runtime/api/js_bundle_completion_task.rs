@@ -544,7 +544,8 @@ impl JSBundleCompletionTask {
             this.plugins = None;
             // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which
             // bumped its own refcount before scheduling and stays alive until this returns.
-            unsafe { html_bundle::Route::on_complete(&mut *html_build_task, this) };
+            // R-2: deref as shared — `on_complete` takes `&self`.
+            unsafe { html_bundle::Route::on_complete(&*html_build_task, this) };
             return Ok(());
         }
 

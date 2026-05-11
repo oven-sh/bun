@@ -111,14 +111,19 @@ impl<'a> Sink<'a> {
     // re-evaluate `ptr` field type (likely `NonNull<c_void>` for the vtable-erased
     // pattern) or provide `Sink::pending()` constructing with a dangling NonNull.
     pub fn pending() -> Sink<'static> {
-        // SAFETY: sentinel address never dereferenced; vtable was `undefined` in Zig and is
-        // never read before being overwritten (status == Closed gates all dispatch).
-        // NOTE: `zeroed()` would be UB here — VTable fields are non-nullable fn pointers.
+        // SAFETY: sentinel address never dereferenced; status == Closed gates all dispatch
+        // so neither `ptr` nor `vtable` is used before being overwritten by init_with_type.
+        //
+        // The Zig original used `vtable: undefined`. In Rust, both `zeroed()` and
+        // `MaybeUninit::uninit().assume_init()` are immediate UB for a struct of
+        // non-nullable `fn` pointers (niche-bearing). Instead we install a *valid*
+        // sentinel vtable whose entries unconditionally panic — this keeps the value
+        // well-formed at all times and turns any accidental dispatch (the bug Zig's
+        // `undefined` would have hidden) into a loud, deterministic crash.
         unsafe {
             Sink {
                 ptr: &mut *(0xaaaa_aaaa_usize as *mut ()),
-                #[allow(invalid_value)]
-                vtable: core::mem::MaybeUninit::uninit().assume_init(),
+                vtable: VTable::PENDING,
                 status: Status::Closed,
                 used: false,
             }
@@ -307,6 +312,36 @@ pub struct VTable {
 }
 
 impl VTable {
+    /// Sentinel vtable used for `Sink::pending()` (Zig: `vtable: undefined`).
+    ///
+    /// VTable's fields are bare `fn(...)` pointers — a niche-bearing non-nullable type — so
+    /// producing one via `MaybeUninit::uninit().assume_init()` or `mem::zeroed()` is
+    /// library-documented immediate UB regardless of whether the value is later read.
+    /// Instead we materialize a fully valid value whose every slot is a trap that panics on
+    /// call. `status == Closed` gates all dispatch, so these are unreachable in correct code;
+    /// if that invariant is ever violated we get a deterministic panic instead of a wild jump.
+    pub const PENDING: VTable = {
+        #[cold]
+        fn trap_write(_: *mut (), _: streams::Result) -> streams::result::Writable {
+            unreachable!("Sink vtable called while pending (status == Closed)")
+        }
+        #[cold]
+        fn trap_end(_: *mut (), _: Option<SysError>) -> sys::Result<()> {
+            unreachable!("Sink vtable called while pending (status == Closed)")
+        }
+        #[cold]
+        fn trap_connect(_: *mut (), _: Signal) -> sys::Result<()> {
+            unreachable!("Sink vtable called while pending (status == Closed)")
+        }
+        VTable {
+            connect: trap_connect,
+            write: trap_write,
+            write_latin1: trap_write,
+            write_utf16: trap_write,
+            end: trap_end,
+        }
+    };
+
     pub fn wrap<Wrapped: SinkHandler>() -> VTable {
         fn on_write<W: SinkHandler>(this: *mut (), data: streams::Result) -> streams::result::Writable {
             // SAFETY: `this` was erased from `&mut W` in init_with_type.

@@ -82,9 +82,25 @@ impl Default for SystemError {
 impl SystemError {
     /// Zig: `SystemError.getErrno` — `@enumFromInt(this.errno * -1)`.
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
+    ///
+    /// `self.errno` is a `#[repr(C)]` `c_int` that crosses FFI
+    /// (BunObject.cpp `SystemError__*`) and may be populated from JS-land,
+    /// so it is NOT trusted to be a declared `E` discriminant. Zig
+    /// `@enumFromInt` is unchecked, but in Rust transmuting an out-of-range
+    /// value into a `#[repr(u16)]` enum is immediate UB — validate via the
+    /// checked constructor and fall back to `SUCCESS` for unmapped values
+    /// (matches `bun_sys::Error::get_errno`).
     #[inline]
     pub fn get_errno(&self) -> E {
-        E::from_raw((self.errno * -1) as u16)
+        let n = self.errno.wrapping_neg();
+        #[cfg(windows)]
+        {
+            u16::try_from(n).ok().and_then(E::try_from_raw).unwrap_or(E::SUCCESS)
+        }
+        #[cfg(not(windows))]
+        {
+            SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::SUCCESS)
+        }
     }
     /// Zig: `SystemError.deref`.
     pub fn deref(&self) {

@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void, CStr};
 use core::{mem, ptr};
 
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, WorkPoolTask};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask};
 use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
 use crate::node::node_zlib_binding::{CompressionContext, CompressionStream, CompressionStreamImpl, CountedKeepAlive, Error};
@@ -27,6 +27,10 @@ unsafe fn unset_task_callback(_: *mut WorkPoolTask) {
     unreachable!("WorkPoolTask scheduled before CompressionStream set its callback");
 }
 
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
+// `host_fn_this` shim still passes `&mut NativeZstd` until Phase 1 lands —
+// `&mut T` auto-reborrows to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::CellRefCounted)]
 pub struct NativeZstd {
@@ -37,17 +41,18 @@ pub struct NativeZstd {
     // Stored `*const` (not `*mut`): provenance comes from a `&JSGlobalObject` host-fn arg and
     // is only ever re-borrowed as `&JSGlobalObject` (see node_zlib_binding.rs). Casting that
     // shared borrow to `*mut` would be UB if a `&mut` were later materialized from it.
+    // Read-only after construction — stays bare.
     pub global_this: *const JSGlobalObject,
-    pub stream: Context,
+    pub stream: JsCell<Context>,
     // LIFETIMES.tsv: BORROW_PARAM → Option<*mut u32> (points into JS Uint32Array backing store)
-    pub write_result: Option<*mut u32>,
-    pub poll_ref: CountedKeepAlive,
-    pub this_value: StrongOptional, // jsc.Strong.Optional
-    pub write_in_progress: bool,
-    pub pending_close: bool,
-    pub pending_reset: bool,
-    pub closed: bool,
-    pub task: WorkPoolTask,
+    pub write_result: Cell<Option<*mut u32>>,
+    pub poll_ref: JsCell<CountedKeepAlive>,
+    pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+    pub write_in_progress: Cell<bool>,
+    pub pending_close: Cell<bool>,
+    pub pending_reset: Cell<bool>,
+    pub closed: Cell<bool>,
+    pub task: JsCell<WorkPoolTask>,
 }
 
 // `pub const ref/deref = RefCount.ref/deref;` — wired via `CompressionStreamImpl::{ref_,deref}`
@@ -85,30 +90,30 @@ impl NativeZstd {
             }));
         }
 
-        let mut ptr = Box::new(Self {
+        let mut stream = Context::default();
+        stream.mode = NodeMode::from_int(mode_int as u8);
+        Ok(Box::new(Self {
             ref_count: Cell::new(1), // RefCount.init()
             // SAFETY: JSC_BORROW — the JSGlobalObject outlives this payload (the C++ wrapper
             // is owned by that global's heap). Stored as `*const` and only re-borrowed shared.
             global_this: std::ptr::from_ref::<JSGlobalObject>(global),
-            stream: Context::default(),
-            write_result: None,
-            poll_ref: CountedKeepAlive::default(),
-            this_value: StrongOptional::empty(),
-            write_in_progress: false,
-            pending_close: false,
-            pending_reset: false,
-            closed: false,
+            stream: JsCell::new(stream),
+            write_result: Cell::new(None),
+            poll_ref: JsCell::new(CountedKeepAlive::default()),
+            this_value: JsCell::new(StrongOptional::empty()),
+            write_in_progress: Cell::new(false),
+            pending_close: Cell::new(false),
+            pending_reset: Cell::new(false),
+            closed: Cell::new(false),
             // WorkPoolTask { callback: undefined } — callback is overwritten by
             // CompressionStream::write before scheduling; placeholder here.
-            task: WorkPoolTask { node: Default::default(), callback: unset_task_callback },
-        });
-        ptr.stream.mode = NodeMode::from_int(mode_int as u8);
-        Ok(ptr)
+            task: JsCell::new(WorkPoolTask { node: Default::default(), callback: unset_task_callback }),
+        }))
     }
 
     pub fn estimated_size(&self) -> usize {
         core::mem::size_of::<Self>()
-            + match self.stream.mode {
+            + match self.stream.get().mode {
                 NodeMode::ZSTD_COMPRESS => 5272, // estimate of bun.c.ZSTD_sizeof_CCtx(self.stream.state)
                 NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of bun.c.ZSTD_sizeof_DCtx(self.stream.state)
                 _ => 0,
@@ -116,11 +121,7 @@ impl NativeZstd {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn init(
-        this: &mut Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_as_array::<4>();
         let this_value = frame.this();
         if frame.arguments_count() != 4 {
@@ -140,7 +141,7 @@ impl NativeZstd {
         if write_state.typed_array_type != jsc::JSType::Uint32Array {
             return Err(global.throw_invalid_argument_type_value("writeState", "Uint32Array", write_state_value));
         }
-        this.write_result = Some(write_state.as_u32().as_mut_ptr());
+        self.write_result.set(Some(write_state.as_u32().as_mut_ptr()));
 
         let write_js_callback = validators::validate_function(global, "processCallback", process_callback_value)?;
         // js.writeCallbackSetCached — codegen'd cached-property setter on the C++ wrapper.
@@ -156,9 +157,9 @@ impl NativeZstd {
             )?);
         }
 
-        let err = this.stream.init(pledged_src_size);
+        let err = self.stream.with_mut(|s| s.init(pledged_src_size));
         if err.is_error() {
-            CompressionStream::<Self>::emit_error(this, global, this_value, err);
+            CompressionStream::<Self>::emit_error(self, global, this_value, err);
             return Ok(JSValue::FALSE);
         }
 
@@ -172,9 +173,9 @@ impl NativeZstd {
             if x == u32::MAX {
                 continue;
             }
-            let err_ = this.stream.set_params(c_uint::try_from(i).expect("int cast"), x);
+            let err_ = self.stream.with_mut(|s| s.set_params(c_uint::try_from(i).expect("int cast"), x));
             if err_.is_error() {
-                this.stream.close();
+                self.stream.with_mut(|s| s.close());
                 // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
                 let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
                 return Err(global
@@ -190,11 +191,7 @@ impl NativeZstd {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn params(
-        _this: &mut Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn params(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         // intentionally left empty
         Ok(JSValue::UNDEFINED)
     }
@@ -205,10 +202,10 @@ impl NativeZstd {
 // `bun.destroy(this)` is the Box free, handled by IntrusiveRc dropping the Box.
 impl Drop for NativeZstd {
     fn drop(&mut self) {
-        match self.stream.mode {
-            NodeMode::ZSTD_COMPRESS | NodeMode::ZSTD_DECOMPRESS => self.stream.close(),
+        self.stream.with_mut(|s| match s.mode {
+            NodeMode::ZSTD_COMPRESS | NodeMode::ZSTD_DECOMPRESS => s.close(),
             _ => {}
-        }
+        });
     }
 }
 
@@ -466,19 +463,21 @@ impl CompressionStreamImpl for NativeZstd {
     type Stream = Context;
 
     #[inline] fn global_this(&self) -> *mut JSGlobalObject { self.global_this.cast_mut() }
-    #[inline] fn stream_mut(&mut self) -> &mut Self::Stream { &mut self.stream }
-    #[inline] fn write_result_ptr(&mut self) -> Option<*mut u32> { self.write_result }
-    #[inline] fn poll_ref_mut(&mut self) -> &mut CountedKeepAlive { &mut self.poll_ref }
-    #[inline] fn this_value_mut(&mut self) -> &mut StrongOptional { &mut self.this_value }
-    #[inline] fn task_mut(&mut self) -> &mut WorkPoolTask { &mut self.task }
-    #[inline] fn write_in_progress_mut(&mut self) -> &mut bool { &mut self.write_in_progress }
-    #[inline] fn pending_close_mut(&mut self) -> &mut bool { &mut self.pending_close }
-    #[inline] fn pending_reset_mut(&mut self) -> &mut bool { &mut self.pending_reset }
-    #[inline] fn closed_mut(&mut self) -> &mut bool { &mut self.closed }
+    #[inline] fn stream(&self) -> &JsCell<Self::Stream> { &self.stream }
+    #[inline] fn write_result_ptr(&self) -> Option<*mut u32> { self.write_result.get() }
+    #[inline] fn poll_ref(&self) -> &JsCell<CountedKeepAlive> { &self.poll_ref }
+    #[inline] fn this_value(&self) -> &JsCell<StrongOptional> { &self.this_value }
+    #[inline] fn task(&self) -> &JsCell<WorkPoolTask> { &self.task }
+    #[inline] fn write_in_progress(&self) -> &Cell<bool> { &self.write_in_progress }
+    #[inline] fn pending_close(&self) -> &Cell<bool> { &self.pending_close }
+    #[inline] fn pending_reset(&self) -> &Cell<bool> { &self.pending_reset }
+    #[inline] fn closed(&self) -> &Cell<bool> { &self.closed }
 
     #[inline]
     unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self {
-        // Intrusive parent recovery.        // SAFETY: caller guarantees `task` points at the `task` field of a live `NativeZstd`.
+        // Intrusive parent recovery. `task` field is `JsCell<WorkPoolTask>`
+        // (`#[repr(transparent)]`), so `offset_of!(Self, task)` is the value's offset.
+        // SAFETY: caller guarantees `task` points at the `task` field of a live `NativeZstd`.
         unsafe { bun_core::from_field_ptr!(NativeZstd, task, task) }
     }
 

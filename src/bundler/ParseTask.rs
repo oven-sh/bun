@@ -682,7 +682,9 @@ fn css_symbols_to_parser_symbols(
             namespace_alias: None,
             link: std::cell::Cell::new(link),
             use_count_estimate: s.use_count_estimate,
-            chunk_index: s.chunk_index,
+            chunk_index: core::sync::atomic::AtomicU32::new(
+                s.chunk_index.load(core::sync::atomic::Ordering::Relaxed),
+            ),
             nested_scope_slot: s.nested_scope_slot,
             did_keep_name: s.did_keep_name,
             must_start_with_capital_letter_for_jsx: s.must_start_with_capital_letter_for_jsx,

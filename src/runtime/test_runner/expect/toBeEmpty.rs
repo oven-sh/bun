@@ -7,21 +7,21 @@ use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_empty(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // PORT NOTE: Zig `defer this.postMatch(globalThis)` — the guard owns the &mut Expect and
     // runs post_match on drop; the body re-borrows `this` through the guard's DerefMut so
     // post_match runs at every exit without a raw-pointer alias.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeEmpty", "")?;
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
     let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.

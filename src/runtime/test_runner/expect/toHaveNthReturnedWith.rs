@@ -7,7 +7,7 @@ use super::{Expect, get_signature};
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_nth_returned_with(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -15,7 +15,7 @@ pub fn to_have_nth_returned_with(
     let this_value = frame.this();
     // defer this.postMatch(globalThis) — guard derefs to &mut Expect; post_match runs on every exit.
     // PORT NOTE: reshaped for borrowck — `this` is wrapped in a scopeguard and accessed via Deref.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
     let value: JSValue = this.get_value(global, this_value, "toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>")?;
 
     let [nth_arg, expected] = frame.arguments_as_array::<2>();
@@ -74,7 +74,7 @@ pub fn to_have_nth_returned_with(
         }
     }
 
-    if pass != this.flags.not() {
+    if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -86,7 +86,7 @@ pub fn to_have_nth_returned_with(
     // TODO(port): get_signature should be a const fn returning &'static str (was `comptime getSignature(...)`)
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
-    if this.flags.not() {
+    if this.flags.get().not() {
         return this.throw(
             global,
             get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true),

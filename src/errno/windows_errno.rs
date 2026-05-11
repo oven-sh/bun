@@ -247,7 +247,13 @@ pub enum E {
 impl E {
     #[inline]
     pub const fn from_raw(n: u16) -> Self {
-        // SAFETY: caller-guaranteed valid discriminant (matches Zig @enumFromInt UB semantics).
+        // `E` is sparse (dense 0..=137 plus isolated UV_* tags ~3000–4095), so
+        // `n < MAX` is NOT a sufficient validity check. `strum::FromRepr`
+        // generates a `const fn from_repr` matching every declared variant.
+        debug_assert!(Self::from_repr(n).is_some(), "invalid E discriminant");
+        // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
+        // of `E` (Zig `@enumFromInt` precondition). Debug-asserted above; for
+        // untrusted input use `try_from_raw` instead.
         unsafe { core::mem::transmute::<u16, E>(n) }
     }
 

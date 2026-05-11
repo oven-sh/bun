@@ -69,9 +69,9 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `chunk` is this task's exclusively-owned HTML chunk for the
     // duration of the compile step; the result slot was pre-allocated.
     let result = unsafe { generate_compile_result_for_html_chunk_impl(&*c, chunk, chunks) };
-    unsafe {
-        (*chunk).compile_results_for_chunk[i] = result;
-    }
+    // SAFETY: HTML chunks have exactly one part-range (i == 0); see
+    // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
+    unsafe { Chunk::write_compile_result_slot(chunk, i, result) };
 }
 
 #[derive(Default)]
@@ -404,11 +404,10 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
     // TODO(port): Zig used `dev.arena()` vs `worker.arena` to control output ownership.
     // In Rust with global mimalloc this distinction collapses; verify DevServer ownership in Phase B.
 
-    // SAFETY: `c.log` is `&mut Log` behind `&LinkerContext`; read its pointer
-    // bits directly (`&mut T` and `*mut T` share layout) so we don't reborrow
-    // through `&` and lose mutability. The HTMLLoader.log field is currently
-    // dead_code, so no write actually occurs through this pointer today.
-    let log: *mut Log = unsafe { *core::ptr::addr_of!(c.log).cast::<*mut Log>() };
+    // `c.log` is now `*mut Log` (raw backref); copy directly. The HTMLLoader.log
+    // field is currently dead_code, so no write actually occurs through this
+    // pointer today.
+    let log: *mut Log = c.log;
     let minify_whitespace = c.options.minify_whitespace;
     let compile_to_standalone_html = c.options.compile_to_standalone_html;
     let has_dev_server = c.dev_server.is_some();

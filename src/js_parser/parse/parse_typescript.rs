@@ -694,15 +694,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let Some(item) = item else { continue };
                 items.push(*item);
             }
-            break 'scope_order_clone items.into_bump_slice_mut();
+            break 'scope_order_clone items.into_bump_slice();
         };
         // Zig: putNoClobber — debug-assert no prior entry.
-        // Stored as `NonNull<[ScopeOrder]>` so the visit pass can hold the
-        // unique `&'a mut` in `scope_order_to_visit` without aliasing the map
-        // (see P.rs field comment).
+        // Stored as `&'a [ScopeOrder]`; the visit pass only reads these, so
+        // `scope_order_to_visit` may alias the same arena slice freely.
         let prev = p
             .scopes_in_order_for_enum
-            .insert(loc, core::ptr::NonNull::from(scope_order_clone));
+            .insert(loc, scope_order_clone);
         debug_assert!(prev.is_none());
 
         Ok(p.s(

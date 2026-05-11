@@ -17,13 +17,13 @@ static JS_TYPE_OF_MAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_type_of(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // PORT NOTE: `defer this.postMatch(globalThis)` — reshaped for borrowck: scopeguard owns the
     // `&mut Expect` borrow and DerefMut's it for the body so post_match runs on every exit path.
-    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let _arguments = frame.arguments_old::<1>();
@@ -53,7 +53,7 @@ pub fn to_be_type_of(
         )));
     };
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     let mut pass = false;
     let mut what_is_the_type: &'static [u8] = b"";
 

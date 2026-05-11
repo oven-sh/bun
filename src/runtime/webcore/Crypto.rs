@@ -195,7 +195,7 @@ fn throw_invalid_params(global: &JSGlobalObject, args: core::fmt::Arguments<'_>)
 impl Crypto {
     #[bun_jsc::host_fn(method)]
     pub fn timing_safe_equal(
-        _this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -207,7 +207,7 @@ impl Crypto {
     // `ERR(..).throw()` (a `bun.JSError`). Mirroring as JsResult<JSValue> here; verify
     // DOMJIT shim expectations in Phase B.
     pub fn timing_safe_equal_without_type_checks(
-        _this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         array_a: &JSUint8Array,
         array_b: &JSUint8Array,
@@ -239,7 +239,7 @@ impl Crypto {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_random_values(
-        _this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -267,7 +267,7 @@ impl Crypto {
 
     // DOMJIT fast path.
     pub fn get_random_values_without_type_checks(
-        _this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         array: &JSUint8Array,
     ) -> JSValue {
@@ -281,7 +281,7 @@ impl Crypto {
 
     #[bun_jsc::host_fn(method)]
     pub fn random_uuid(
-        _this: &mut Self,
+        &self,
         global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -296,7 +296,7 @@ impl Crypto {
 
     // DOMJIT fast path.
     pub fn random_uuid_without_type_checks(
-        _this: &mut Self,
+        &self,
         global: &JSGlobalObject,
     ) -> JSValue {
         let (str, bytes) = BunString::create_uninitialized_latin1(36);

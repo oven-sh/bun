@@ -7,7 +7,7 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_throw_error_matching_snapshot(
-    this: &mut Expect,
+    this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -22,7 +22,7 @@ pub fn to_throw_error_matching_snapshot(
 
     this.increment_expect_call_counter();
 
-    let not = this.flags.not();
+    let not = this.flags.get().not();
     if not {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
         return this.throw_fmt(

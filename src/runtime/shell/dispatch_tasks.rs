@@ -45,7 +45,7 @@ impl ShellAsyncSubprocessDone {
         // SAFETY: caller contract; `interp` outlives every spawned subprocess.
         let (owned, interp) = unsafe {
             let owned = bun_core::heap::take(this);
-            let interp = &mut *owned.interp;
+            let interp = &*owned.interp;
             (owned, interp)
         };
         crate::shell::states::cmd::Cmd::on_subprocess_done(interp, owned.cmd, owned.exit_code);
@@ -106,7 +106,7 @@ pub struct CondExprStatInner {
 }
 
 impl ShellCondExprStatTask {
-    pub fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+    pub fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
         let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::states::cond_expr::CondExpr::on_stat_task_done(
@@ -144,7 +144,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
             Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
         }
     }
-    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
         let mut me = unsafe { bun_core::heap::take(this) };
         crate::shell::states::expansion::Expansion::on_glob_walk_done(
@@ -159,12 +159,12 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
 impl ShellGlobTask {
     /// Spec: Expansion.zig `ShellGlobTask.createOnMainThread` + `schedule`.
     pub fn create_and_schedule(
-        interp: &mut Interpreter,
+        interp: &Interpreter,
         expansion: NodeId,
         walker: bun_glob::BunGlobWalkerZ,
     ) {
         let mut task = ShellTask::new(interp.event_loop);
-        task.interp = core::ptr::from_mut(interp);
+        task.interp = interp.as_ctx_ptr();
         let this = bun_core::heap::alloc(ShellGlobTask {
             task,
             expansion,

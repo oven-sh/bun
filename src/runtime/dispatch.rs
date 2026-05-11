@@ -181,7 +181,7 @@ pub fn run_task(
             unsafe {
                 let st = &raw mut (*t).task.task;
                 (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
-                let interp = &mut *(*st).interp;
+                let interp = &*(*st).interp;
                 <$ty>::run_from_main_thread(t, interp);
             }
         }};
@@ -233,7 +233,7 @@ pub fn run_task(
             // (interp, NodeId).
             let t = cast!(crate::shell::dispatch_tasks::ShellAsyncTask);
             // SAFETY: `interp` set at enqueue; outlives task.
-            let interp = unsafe { &mut *t.interp };
+            let interp = unsafe { &*t.interp };
             ShellAsync::run_from_main_thread(interp, t.node);
         }
         task_tag::ShellAsyncSubprocessDone => {
@@ -462,16 +462,31 @@ pub fn run_task(
         task_tag::StatFS => cast!(fs_async::Statfs).run_from_js_thread()?,
 
         // ── compression streams ──────────────────────────────────────────
+        // R-2: `run_from_js_thread` takes `*mut T` (full allocation
+        // provenance) so its trailing `T::deref()` may free the box.
         task_tag::NativeZlib => {
-            node_zlib_binding::CompressionStream::<NativeZlib>::run_from_js_thread(cast!(NativeZlib));
+            // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
+            unsafe {
+                node_zlib_binding::CompressionStream::<NativeZlib>::run_from_js_thread(
+                    cast_ptr!(NativeZlib),
+                )
+            };
         }
         task_tag::NativeBrotli => {
-            node_zlib_binding::CompressionStream::<NativeBrotli>::run_from_js_thread(
-                cast!(NativeBrotli),
-            );
+            // SAFETY: see NativeZlib above.
+            unsafe {
+                node_zlib_binding::CompressionStream::<NativeBrotli>::run_from_js_thread(
+                    cast_ptr!(NativeBrotli),
+                )
+            };
         }
         task_tag::NativeZstd => {
-            node_zlib_binding::CompressionStream::<NativeZstd>::run_from_js_thread(cast!(NativeZstd));
+            // SAFETY: see NativeZlib above.
+            unsafe {
+                node_zlib_binding::CompressionStream::<NativeZstd>::run_from_js_thread(
+                    cast_ptr!(NativeZstd),
+                )
+            };
         }
 
         // ── process / signals ────────────────────────────────────────────
@@ -684,7 +699,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             crate::shell::io_writer::on_poll(h, size_or_offset as isize, hup);
         }
         poll_tag::DNS_RESOLVER => {
-            let resolver = owner_as!(DNSResolver);
+            // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
+            // `Channel::process` re-enters the resolver via c-ares callbacks.
+            // SAFETY: tag set with this pointee type at `FilePoll::init`.
+            let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
             // SAFETY: `poll` outlives this call (caller contract).
             resolver.on_dns_poll(unsafe { &mut *poll });
         }
@@ -937,9 +955,13 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             unsafe { (*container).on_timeout() };
         }
         EventLoopTimerTag::DNSResolver => {
+            // R-2: `event_loop_timer` is `JsCell<EventLoopTimer>` (repr(transparent),
+            // so `t` addresses the field directly); deref the container as shared
+            // (`&*const`) since `check_timeouts` takes `&self` and re-enters via
+            // `ares_process_fd`.
             let container = owner!(DNSResolver, event_loop_timer);
             // SAFETY: per fn contract.
-            unsafe { (*container).check_timeouts(&*now, &*vm) };
+            unsafe { (&*container.cast_const()).check_timeouts(&*now, &*vm) };
         }
         EventLoopTimerTag::WindowsNamedPipe => {
             #[cfg(windows)]

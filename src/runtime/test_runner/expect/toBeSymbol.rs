@@ -7,7 +7,7 @@ use super::Expect;
 impl Expect {
     #[bun_jsc::host_fn(method)]
     pub fn to_be_symbol(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -21,7 +21,7 @@ impl Expect {
 
             self.increment_expect_call_counter();
 
-            let not = self.flags.not();
+            let not = self.flags.get().not();
             let pass = value.is_symbol() != not;
 
             if pass {

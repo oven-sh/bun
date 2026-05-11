@@ -16,6 +16,7 @@ use bun_sys::{self as sys, windows};
 use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::UvHandle as _;
 use bun_sys::ReturnCodeExt as _;
+use bun_threading::Mutex;
 
 use super::path_watcher::EventType;
 // Zig: `const onPathUpdateFn = jsc.Node.fs.Watcher.onPathUpdate;` (win_watcher.zig:306) —
@@ -36,9 +37,19 @@ bun_output::declare_scope!(fs_watch, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORTING.md §Global mutable state: JS-main-thread-only singleton ptr → RacyCell.
+// PORTING.md §Global mutable state: singleton ptr → RacyCell, guarded by
+// `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
+// (each Worker is its own OS thread + VM), so the unguarded read+write the
+// Zig original gets away with is a data race in Rust. Mirror the posix
+// `path_watcher.rs` pattern: every `DEFAULT_MANAGER` access holds the mutex.
+//
+// NOTE: the manager binds to one VM's `uv_loop`, so even with the mutex this
+// remains a per-VM resource — `watch()` debug-asserts the caller's `vm`
+// matches the stored one. Promoting this to per-VM storage (e.g. `RareData`)
+// is the longer-term fix; the mutex closes the UB window meanwhile.
 static DEFAULT_MANAGER: bun_core::RacyCell<Option<*mut PathWatcherManager>> =
     bun_core::RacyCell::new(None);
+static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
@@ -96,10 +107,14 @@ impl PathWatcherManager {
     /// PathWatcher) and self-frees via `heap::take`.
     unsafe fn deinit(this: *mut PathWatcherManager) {
         // enable to create a new manager
-        // SAFETY: single-threaded (JS main thread); see `watch()`.
-        unsafe {
-            if DEFAULT_MANAGER.read() == Some(this) {
-                DEFAULT_MANAGER.write(None);
+        {
+            let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
+            // SAFETY: DEFAULT_MANAGER is only read/written while holding
+            // DEFAULT_MANAGER_MUTEX (see static decl).
+            unsafe {
+                if DEFAULT_MANAGER.read() == Some(this) {
+                    DEFAULT_MANAGER.write(None);
+                }
             }
         }
 
@@ -477,19 +492,36 @@ pub fn watch(
     #[cfg(not(windows))]
     compile_error!("win_watcher should only be used on Windows");
 
-    // SAFETY: single-threaded — only ever called from the JS main thread.
-    let manager = unsafe {
-        match DEFAULT_MANAGER.read() {
-            Some(m) => m,
-            None => {
-                let m = PathWatcherManager::init(vm);
-                DEFAULT_MANAGER.write(Some(m));
-                m
+    let manager = {
+        let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
+        // SAFETY: DEFAULT_MANAGER is only read/written while holding
+        // DEFAULT_MANAGER_MUTEX (see static decl). `fs.watch()` is reachable
+        // from Worker threads, so an unguarded read+write here would be a data
+        // race — the prior "JS main thread only" claim was false.
+        unsafe {
+            match DEFAULT_MANAGER.read() {
+                Some(m) => {
+                    // The manager is bound to one VM's uv_loop; reusing it from a
+                    // different VM (Worker) would drive libuv cross-thread. Catch
+                    // that in debug until this becomes per-VM storage.
+                    debug_assert!(
+                        core::ptr::eq((*m).vm, vm),
+                        "win_watcher PathWatcherManager reused across VMs (Worker fs.watch)",
+                    );
+                    m
+                }
+                None => {
+                    let m = PathWatcherManager::init(vm);
+                    DEFAULT_MANAGER.write(Some(m));
+                    m
+                }
             }
         }
     };
 
-    // SAFETY: `manager` is a live heap-allocated pointer stored in DEFAULT_MANAGER (JS main thread only).
+    // SAFETY: `manager` is a live heap-allocated pointer published under
+    // DEFAULT_MANAGER_MUTEX; per the debug_assert above all callers share the
+    // same VM thread, so this `&mut` is unaliased for the call.
     let watcher = match PathWatcher::init(unsafe { &mut *manager }, path, recursive) {
         sys::Result::Err(err) => return sys::Result::Err(err),
         sys::Result::Ok(w) => w,

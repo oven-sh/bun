@@ -700,9 +700,13 @@ const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 
 /// Implemented by the type that owns a `*mut Channel` and receives socket-
 /// state callbacks. Zig: `Container.onDNSSocketState` + `this.channel = ch`.
+///
+/// R-2: methods take `&self`. The c-ares `sock_state_cb` re-enters the
+/// container while a `&self` borrow may already be live in `on_dns_poll`;
+/// the implementor routes mutation through interior mutability.
 pub trait ChannelContainer: Sized {
-    fn on_dns_socket_state(&mut self, socket: ares_socket_t, readable: bool, writable: bool);
-    fn set_channel(&mut self, channel: *mut Channel);
+    fn on_dns_socket_state(&self, socket: ares_socket_t, readable: bool, writable: bool);
+    fn set_channel(&self, channel: *mut Channel);
 }
 
 /// Trait for `Channel::resolve`: ties a lookup-name string to its NSType and
@@ -738,7 +742,7 @@ fn copy_nul_terminated(buf: &mut [u8], src: &[u8]) -> *const c_char {
 }
 
 impl Channel {
-    pub fn init<C: ChannelContainer>(this: &mut C, options: ChannelOptions) -> Option<Error> {
+    pub fn init<C: ChannelContainer>(this: &C, options: ChannelOptions) -> Option<Error> {
         let mut channel: *mut Channel = ptr::null_mut();
 
         library_init();
@@ -749,8 +753,9 @@ impl Channel {
             readable: c_int,
             writable: c_int,
         ) {
-            // SAFETY: ctx is the &mut C registered below.
-            let container = unsafe { bun_core::callback_ctx::<C>(ctx) };
+            // SAFETY: `ctx` is the `&C` registered below; `on_dns_socket_state`
+            // takes `&self` (R-2) so the shared borrow is sufficient.
+            let container = unsafe { &*ctx.cast_const().cast::<C>() };
             container.on_dns_socket_state(socket, readable != 0, writable != 0);
         }
 
@@ -764,7 +769,10 @@ impl Channel {
         // default stand means setServers() works as the documented workaround.
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = Some(on_sock_state::<C>);
-        opts.sock_state_cb_data = std::ptr::from_mut::<C>(this).cast::<c_void>();
+        // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
+        // callback derefs as shared (`&*const`) and the implementor mutates via
+        // interior mutability.
+        opts.sock_state_cb_data = (this as *const C).cast_mut().cast::<c_void>();
         opts.timeout = options.timeout.unwrap_or(-1);
         opts.tries = options.tries.unwrap_or(4);
 

@@ -562,8 +562,20 @@ impl<const SSL: bool> HTTPContext<SSL> {
             && !(socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0)
             && socket.is_established()
         {
-            if let Some(pending_ptr) = self.pending_sockets.get() {
-                Self::set_socket_ext(socket, ActiveSocket::<SSL>::init(pending_ptr.cast_const()));
+            // Captured before `claim()` so the `&mut self.pending_sockets`
+            // borrow held by the `HiveSlot` doesn't conflict with a whole-`self`
+            // borrow inside the initializer.
+            let owner: *mut Self = self;
+            if let Some(slot) = self.pending_sockets.claim() {
+                // The slot's stable address is registered as the socket's
+                // user-data *before* the `PooledSocket` is written; nothing
+                // dereferences it until after `slot.write()` below. If the
+                // `Box::from`/`Arc::clone` in the initializer panic, `slot`'s
+                // `Drop` releases the hive bit without running
+                // `PooledSocket::drop` (which would otherwise drop garbage in
+                // `ssl_config: Option<Arc>` / `target_hostname: Box<[u8]>`).
+                let pending_addr = slot.addr();
+                Self::set_socket_ext(socket, ActiveSocket::<SSL>::init(pending_addr.as_ptr().cast_const()));
                 socket.flush();
                 socket.timeout(0);
                 socket.set_timeout_minutes(5);
@@ -572,44 +584,27 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let mut hostname_buf = [0u8; MAX_KEEPALIVE_HOSTNAME];
                 hostname_buf[..hostname.len()].copy_from_slice(hostname);
 
-                // PORT NOTE: `HiveArray::get` returns an *uninitialized* slot
-                // (`MaybeUninit<T>`). Zig wrote each field without running any
-                // destructor on the previous value; doing field-by-field
-                // assignment in Rust would `Drop` uninitialized garbage in
-                // `ssl_config` (`Option<Arc<_>>`) and `target_hostname`
-                // (`Box<[u8]>`). Use `ptr::write` to initialize the whole
-                // struct in place. On reuse, callers (`existing_socket`,
-                // `add_memory_back_to_pool`) reset those fields to None/empty
-                // before `put()`, so nothing is leaked by skipping their drop
-                // here.
-                // SAFETY: pending_ptr is a fresh HiveArray slot reserved above;
-                // valid for writes of `size_of::<PooledSocket<SSL>>()` bytes.
-                unsafe {
-                    core::ptr::write(
-                        pending_ptr,
-                        PooledSocket {
-                            http_socket: socket,
-                            hostname_buf,
-                            hostname_len: hostname.len() as u8, // @truncate
-                            port,
-                            did_have_handshaking_error_while_reject_unauthorized_is_false,
-                            // Clone a strong ref for the keepalive pool; the caller retains
-                            // its own ref via HTTPClient.tls_props.
-                            ssl_config: ssl_config.cloned(),
-                            owner: std::ptr::from_mut(self),
-                            // Pool owns the tunnel ref transferred by the caller.
-                            proxy_tunnel: tunnel,
-                            target_hostname: if had_tunnel && !target_hostname.is_empty() {
-                                Box::<[u8]>::from(target_hostname)
-                            } else {
-                                Box::default()
-                            },
-                            target_port,
-                            proxy_auth_hash,
-                            h2_session,
-                        },
-                    );
-                }
+                slot.write(PooledSocket {
+                    http_socket: socket,
+                    hostname_buf,
+                    hostname_len: hostname.len() as u8, // @truncate
+                    port,
+                    did_have_handshaking_error_while_reject_unauthorized_is_false,
+                    // Clone a strong ref for the keepalive pool; the caller retains
+                    // its own ref via HTTPClient.tls_props.
+                    ssl_config: ssl_config.cloned(),
+                    owner,
+                    // Pool owns the tunnel ref transferred by the caller.
+                    proxy_tunnel: tunnel,
+                    target_hostname: if had_tunnel && !target_hostname.is_empty() {
+                        Box::<[u8]>::from(target_hostname)
+                    } else {
+                        Box::default()
+                    },
+                    target_port,
+                    proxy_auth_hash,
+                    h2_session,
+                });
 
                 bun_core::scoped_log!(
                     HTTPContext,

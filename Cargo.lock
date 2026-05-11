@@ -2070,9 +2070,7 @@ dependencies = [
 name = "bun_shim_impl"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_windows_sys",
- "strum",
 ]
 
 [[package]]
@@ -2572,18 +2570,6 @@ dependencies = [
 [[package]]
 name = "bun_windows_sys"
 version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "parking_lot",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
 
 [[package]]
 name = "bun_wyhash"

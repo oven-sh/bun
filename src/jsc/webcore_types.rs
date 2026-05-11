@@ -993,10 +993,22 @@ pub mod store {
             // SAFETY: place-project to the atomic field without materializing a
             // `&Store`; `AtomicU32` is interior-mutable so the read is sound
             // even with concurrent refs.
-            let old = unsafe { (*this.as_ptr()).ref_count.fetch_sub(1, Ordering::Relaxed) };
+            //
+            // `Release` on the decrement + `Acquire` fence on the 1→0
+            // transition is the `std::sync::Arc` pattern: it ensures all prior
+            // accesses to `*this` from any thread (each ending in a `Release`
+            // decrement) happen-before this thread observes the final count and
+            // runs `Drop`. Without it, `StoreRef: Send + Sync` lets thread A's
+            // writes to `Store` fields race with thread B's `drop` (UAF/torn
+            // read on `self.data`).
+            let old = unsafe { (*this.as_ptr()).ref_count.fetch_sub(1, Ordering::Release) };
             debug_assert!(old >= 1);
             if old == 1 {
-                // SAFETY: refcount hit zero; we are the sole remaining owner.
+                core::sync::atomic::fence(Ordering::Acquire);
+                // SAFETY: refcount hit zero; the Acquire fence above
+                // synchronizes-with every prior `Release` decrement, so we are
+                // the sole remaining owner and all other threads' uses of this
+                // `Store` are visible and complete.
                 drop(unsafe { bun_core::heap::take(this.as_ptr()) });
             }
         }

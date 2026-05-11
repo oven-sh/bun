@@ -177,14 +177,25 @@ fn scopePathLen(scope: *const Npm.Registry.Scope) usize {
 
 fn resolveAuth(pm: *const PackageManager, scope: *const Npm.Registry.Scope, url_str: string) AuthForRequest {
     if (pm.matchAuthForUrl(url_str)) |match| {
-        // Prefer the nerf-dart match when it's strictly more specific than
-        // the scope's path, OR when the scope has no pre-resolved
-        // credentials (the scope-population loop in `loadNpmrc` only
-        // attaches on exact path equality, so a parent-path nerf-dart
-        // that covers the scope URL never lands on the scope itself).
-        // This matches npm's request-time lookup.
+        // Prefer the nerf-dart match when:
+        //   - the request's host differs from the scope's host (the
+        //     scope's credentials belong to a different host and
+        //     must never leak cross-host — common when metadata and
+        //     tarballs are served from different domains, e.g. a
+        //     separate CDN for tarball downloads), or
+        //   - the nerf-dart path is strictly more specific than the
+        //     scope's own path (npm's longest-prefix rule), or
+        //   - the scope has no pre-resolved credentials (a parent-
+        //     path nerf-dart covering the scope URL never lands on
+        //     the scope itself via the legacy per-scope loop).
+        const req_url = URL.parse(url_str);
+        const req_host = strings.withoutTrailingSlash(req_url.host);
+        const scope_host = strings.withoutTrailingSlash(scope.url.host);
+        // Hostnames are case-insensitive per DNS.
+        const same_host = req_host.len == scope_host.len and
+            (req_host.len == 0 or strings.eqlCaseInsensitiveASCIIICheckLength(req_host, scope_host));
         const has_scope_creds = scope.token.len > 0 or scope.auth.len > 0;
-        if (match.path_len > scopePathLen(scope) or !has_scope_creds) {
+        if (!same_host or match.path_len > scopePathLen(scope) or !has_scope_creds) {
             return .{ .token = match.token, .auth = match.auth };
         }
     }

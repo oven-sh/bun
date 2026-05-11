@@ -92,6 +92,27 @@ beforeAll(() => {
         return Response.json(manifest);
       }
 
+      // Cross-host variant: the manifest is served from the registry
+      // but the tarball URL points at the separate CDN server. Used
+      // by the cross-host test below.
+      if (path === `${METADATA_PATH}-cdn/${PKG_NAME}`) {
+        const manifest = {
+          name: PKG_NAME,
+          "dist-tags": { latest: PKG_VERSION },
+          versions: {
+            [PKG_VERSION]: {
+              name: PKG_NAME,
+              version: PKG_VERSION,
+              dist: {
+                tarball: `http://${cdnServer.hostname}:${cdnServer.port}/${PKG_NAME}-${PKG_VERSION}.tgz`,
+                shasum: Bun.SHA1.hash(TARBALL, "hex"),
+              },
+            },
+          },
+        };
+        return Response.json(manifest);
+      }
+
       // Tarball: project-level endpoint. We record what auth header the
       // client sent so the assertions below can verify that the token
       // keyed to this path actually travelled on the request.
@@ -115,8 +136,39 @@ beforeAll(() => {
   });
 });
 
+// Secondary "CDN" server — separate host from the main registry,
+// used by the cross-host test to verify that a scope's credentials
+// aren't leaked to a different host when that host has its own
+// nerf-dart configured. Both servers bind to `localhost` but differ
+// by port, which is part of the URL host — so the request host
+// (`localhost:CDN_PORT`) differs from the scope's host
+// (`localhost:REGISTRY_PORT`).
+const CDN_TOKEN = "CDN-BEARER-ONLY-TOKEN";
+const cdnHits: TarballHit[] = [];
+let cdnServer: ReturnType<typeof Bun.serve>;
+
+beforeAll(() => {
+  cdnServer = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      const path = decodeURIComponent(url.pathname);
+      if (path === `/${PKG_NAME}-${PKG_VERSION}.tgz`) {
+        const authHeader = req.headers.get("authorization");
+        cdnHits.push({ url: req.url, authorization: authHeader });
+        if (authHeader !== `Bearer ${CDN_TOKEN}`) {
+          return new Response("cdn: not found", { status: 404 });
+        }
+        return new Response(TARBALL, { headers: { "content-type": "application/octet-stream" } });
+      }
+      return new Response("unexpected cdn path: " + path, { status: 500 });
+    },
+  });
+});
+
 afterAll(() => {
   server?.stop(true);
+  cdnServer?.stop(true);
 });
 
 test("auth token applies to tarball URL when token path diverges from registry URL path", async () => {
@@ -396,6 +448,51 @@ test("later auth mode clears earlier one on the same dart", async () => {
     exitCode: 0,
     hasError: false,
     tarballAuthHeaders: [`Basic ${BASIC_AUTH_B64}`],
+  });
+});
+
+test("scope's credentials don't leak to a different host with its own nerf-dart", async () => {
+  // When the metadata registry and the tarball CDN are on different
+  // hosts, the scope's pre-resolved token belongs to the *registry*
+  // host and must not be sent to the CDN. If the user has a separate
+  // nerf-dart configured for the CDN, that's what should travel on
+  // the tarball request. Pre-fix, the length compare
+  // (match.path_len > scopePathLen(scope)) was performed across
+  // hosts — a 0-char path on the CDN lost to a 20-char path on the
+  // registry, so the registry's token was silently sent to the CDN.
+  cdnHits.length = 0;
+  using cacheDir = tempDir("issue-30513-cross-host-cache", {});
+  using dir = tempDir("issue-30513-cross-host", {
+    "package.json": JSON.stringify({
+      name: "issue-30513-cross-host-consumer",
+      version: "0.0.0",
+      dependencies: { [PKG_NAME]: PKG_VERSION },
+    }),
+    ".npmrc": [
+      `@altpay:registry=http://localhost:${server.port}${METADATA_PATH}-cdn/`,
+      `//localhost:${server.port}${METADATA_PATH}-cdn/:_authToken=REGISTRY-TOKEN-MUST-NOT-LEAK`,
+      `//localhost:${cdnServer.port}/:_authToken=${CDN_TOKEN}`,
+      `always-auth=true`,
+    ].join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(cacheDir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect({
+    exitCode,
+    hasError: stderr.includes("error:"),
+    cdnAuthHeaders: cdnHits.map(h => h.authorization),
+  }).toEqual({
+    exitCode: 0,
+    hasError: false,
+    cdnAuthHeaders: [`Bearer ${CDN_TOKEN}`],
   });
 });
 

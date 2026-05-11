@@ -1509,7 +1509,11 @@ impl ValkeyClient {
     }
 
     pub fn deref(&mut self) {
-        self.parent().deref();
+        // SAFETY: only called in balanced `ref_()`/`deref()` pairs
+        // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
+        // outer `&mut self` protector is never invalidated by deallocation.
+        let parent = std::ptr::from_ref(self.parent()).cast_mut();
+        unsafe { JSValkeyClient::deref(parent) };
     }
 
     #[inline]

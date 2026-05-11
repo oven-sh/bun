@@ -268,7 +268,10 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
             break :brk bun.handleOom(Blob.Store.initS3WithReferencedCredentials(path, null, default_credentials, bun.default_allocator));
         }
     };
-    errdefer store.deinit();
+    errdefer {
+        store.data.s3.pathlike = .{ .string = bun.PathString.empty };
+        store.deinit();
+    }
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
@@ -312,7 +315,10 @@ pub fn constructS3FileWithS3Credentials(
     var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject);
     defer aws_options.deinit();
     const store = bun.handleOom(Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator));
-    errdefer store.deinit();
+    errdefer {
+        store.data.s3.pathlike = .{ .string = bun.PathString.empty };
+        store.deinit();
+    }
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;

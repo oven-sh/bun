@@ -31,4 +31,22 @@ describe("S3 presign error after store construction does not double-free path", 
     expect(() => client.presign("some/path", { expiresIn: -1 })).toThrow("expiresIn");
     Bun.gc(true);
   });
+
+  test("options.type getter throws after store is created", () => {
+    const client = new Bun.S3Client({
+      accessKeyId: "x",
+      secretAccessKey: "y",
+      bucket: "b",
+      endpoint: "http://localhost",
+    });
+    let n = 0;
+    const opts = {
+      get type() {
+        if (n++ === 0) return undefined;
+        throw new Error("boom");
+      },
+    };
+    expect(() => client.presign("\u{1F600}/k", opts)).toThrow("boom");
+    Bun.gc(true);
+  });
 });

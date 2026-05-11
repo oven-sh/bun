@@ -2339,6 +2339,13 @@ impl ExpectArrayContaining {
 ///
 /// Reference: `AsymmetricMatcher` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 /// (but only created for *custom* matchers, as built-ins have their own classes)
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The only
+// field, `flags`, is set once at construction (`create()`) and never written
+// thereafter, so it stays a bare `Flags` (no `Cell` needed). Both host-fns
+// call into user JS (`execute_impl` → `execute_custom_matcher`, `custom_print`
+// → `matcher_fn.call`) which can re-enter on the same `m_ctx`; holding a
+// `noalias` `&mut Self` across that call is Stacked-Borrows UB even with no
+// field writes. The codegen shim emits `&*__this` for `&self` receivers.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectCustomAsymmetricMatcher {
     pub flags: Flags,
@@ -2442,10 +2449,10 @@ impl ExpectCustomAsymmetricMatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn asymmetric_match(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn asymmetric_match(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let received_value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        let matched = Self::execute_impl(this, callframe.this(), global_this, received_value)?;
+        let matched = Self::execute_impl(self, callframe.this(), global_this, received_value)?;
         Ok(JSValue::from(matched))
     }
 
@@ -2511,7 +2518,7 @@ impl ExpectCustomAsymmetricMatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn to_asymmetric_matcher(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn to_asymmetric_matcher(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         // PERF(port): was stack-fallback allocator — profile in Phase B
         let mut mutable_string = bun_str::MutableString::init_2048()?;
 
@@ -2520,7 +2527,7 @@ impl ExpectCustomAsymmetricMatcher {
         // through `maybe_clear` as `Error::UNEXPECTED` while remaining set on
         // the VM; only allocation failures map to OOM. Propagate accordingly
         // instead of clobbering with a fresh OutOfMemory throw.
-        let printed = this
+        let printed = self
             .custom_print(callframe.this(), global_this, mutable_string.writer(), false)
             .map_err(|e| {
                 if e == bun_core::Error::OUT_OF_MEMORY {

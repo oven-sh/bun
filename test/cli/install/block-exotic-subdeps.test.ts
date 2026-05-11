@@ -5,7 +5,7 @@ import { join } from "node:path";
 /**
  * Tests for `install.blockExoticSubdeps` — a supply-chain hardening flag
  * modeled on pnpm's option of the same name. When enabled, bun install
- * rejects any *transitive* dependency that resolves to a non-registry
+ * rejects any *transitive* dependency that is specified with a non-registry
  * source (file, folder, git, github, tarball URL, workspace, symlink).
  * The root package's own direct deps are NOT restricted.
  *
@@ -415,5 +415,52 @@ blockExoticSubdeps = true
     // the block must NOT fire regardless of what parent-pkg wrote.
     expect(stderr).not.toContain("blockExoticSubdeps");
     expect(exitCode).toBe(0);
+  });
+
+  test("blocks exotic specifiers that have attacker-controlled leading whitespace", async () => {
+    // Security regression: `Dependency.parse` trims leading whitespace
+    // before classifying the specifier and then stores the *original
+    // untrimmed* string as `.literal`. The resolver therefore treats
+    // `" file:./inner"` (leading space) as a folder and installs it, but
+    // re-inferring from the untrimmed literal lands in `Tag.infer`'s
+    // fall-through `.dist_tag` arm (no switch case for ' '/ \t/ \n/ \r,
+    // and the tarball/github/SCP shorthand checks all reject a leading
+    // space). Without trimming before infer() here, a single whitespace
+    // byte in an attacker's registry package.json would defeat the whole
+    // flag for git:/http:/file: specifiers.
+    using dir = tempDir("block-exotic-whitespace-bypass", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { "parent-pkg": "file:./parent-pkg" },
+      }),
+      "bunfig.toml": `[install]
+blockExoticSubdeps = true
+`,
+      // `" file:../inner"` — one leading space, otherwise a folder spec.
+      // We can't use JSON.stringify directly on the outer package.json
+      // value because JSON preserves whitespace inside strings natively,
+      // which is exactly what a malicious publisher would exploit.
+      "parent-pkg/package.json": JSON.stringify({
+        name: "parent-pkg",
+        version: "1.0.0",
+        dependencies: { inner: " file:../inner" },
+      }),
+      "inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: envForDir(String(dir)),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("blockExoticSubdeps");
+    expect(stderr).toContain("inner");
+    expect(exitCode).not.toBe(0);
   });
 });

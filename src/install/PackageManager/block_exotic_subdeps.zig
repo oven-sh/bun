@@ -10,16 +10,23 @@
 //! are allowed to use exotic specifiers — only *nested* dependencies are
 //! restricted.
 //!
-//! We key off the **literal specifier** written in each nested `package.json`.
-//! Neither the parsed specifier tag nor the final resolution tag survives
-//! `install.linkWorkspacePackages` cleanly: the parser rewrites a registry
-//! semver like `^2.0.0` to `Dependency.Version.Tag.workspace` when the name
-//! matches a local workspace (Package.zig:1090-1107), and the resolver
-//! likewise points `resolutions[dep_id]` at the workspace package. Both
-//! erase the distinction between "parent asked for a registry version" and
-//! "parent asked for `workspace:`". The `literal` string never changes, so
-//! re-inferring the tag from it reproduces the specifier the remote package
-//! actually published — which is what this policy needs to judge.
+//! The check is layered:
+//!   1. The child package's **Resolution.Tag** decides the easy cases. Tags
+//!      like `.git` / `.github` / `.local_tarball` / `.remote_tarball` /
+//!      `.symlink` / `.single_file_module` are never reachable via
+//!      `linkWorkspacePackages` redirection or any other implicit path —
+//!      they can only be there because some nested `package.json` literally
+//!      named a non-registry source. Always exotic.
+//!   2. `.workspace` and `.folder` are ambiguous because
+//!      `linkWorkspacePackages` (default true) rewrites a transitive
+//!      registry semver like `^2.0.0` to a local workspace package when the
+//!      names match. For these, we fall back to re-inferring the tag from
+//!      the **literal specifier** the parent's `package.json` actually
+//!      wrote (after mirroring the resolver's `trimLeft(" \t\n\r")` — see
+//!      `Dependency.parse` in dependency.zig; without trimming, an
+//!      attacker-controlled leading-whitespace byte like
+//!      `" git+https://evil/repo"` could smuggle an exotic spec past the
+//!      check because `infer()`'s switch has no case for whitespace).
 //!
 //! When the root user has an `overrides`/`resolutions` entry for a given
 //! dependency name, the override's literal takes priority: overrides are the
@@ -28,7 +35,7 @@
 //! root-user-defined so it's not attacker-controlled.
 
 /// Walks the fully-resolved lockfile and emits an error for every transitive
-/// dependency whose literal specifier is a non-registry source. Returns the
+/// dependency that is specified with a non-registry source. Returns the
 /// number of violations reported (so the caller can decide whether to exit).
 pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
     if (!manager.options.enable.block_exotic_subdeps) return 0;
@@ -72,19 +79,19 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             // If the root user has an `overrides` / `resolutions` entry for
             // this name, the effective specifier is whatever the root chose,
             // not whatever the transitive parent wrote. Overrides are the
-            // standard remediation for this flag (enable → see violation →
-            // override the offender to a registry version) so we must honor
-            // them instead of the now-stale transitive literal. Same
-            // rationale as `.catalog` — root-user-defined indirection isn't
+            // standard remediation for this flag so we must honor them
+            // instead of the now-stale transitive literal. Same rationale as
+            // `.catalog` — root-user-defined indirection isn't
             // attacker-controlled.
             const dep = dependencies[dep_id];
             const overridden = manager.lockfile.overrides.get(dep.name_hash);
-            const literal = if (overridden) |ovr|
+            const literal_raw = if (overridden) |ovr|
                 ovr.literal.slice(string_buf)
             else
                 dep.version.literal.slice(string_buf);
-            const literal_tag = Dependency.Version.Tag.infer(literal);
-            if (!isExoticSpecifier(literal_tag)) continue;
+
+            const dep_res_tag = pkg_resolutions[dep_pkg_id].tag;
+            const verdict = classify(dep_res_tag, literal_raw) orelse continue;
 
             const key = (@as(u64, parent_id) << 32) | @as(u64, dep_pkg_id);
             const gop = try seen.getOrPut(manager.allocator, key);
@@ -100,14 +107,16 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
 
             const parent_name = pkg_names[parent_id].slice(string_buf);
             const dep_name = dep.name.slice(string_buf);
+            // Show the raw (untrimmed) literal so the user can see exactly
+            // what was published, including any sneaky leading whitespace.
             Output.prettyErrorln(
                 "  <b>{s}<r><d>@{f}<r> depends on <b>{s}<r><d>@{s}<r> via <yellow>{s}<r> source",
                 .{
                     parent_name,
                     parent_res.fmt(string_buf, .auto),
                     dep_name,
-                    literal,
-                    @tagName(literal_tag),
+                    literal_raw,
+                    verdict.label,
                 },
             );
             count += 1;
@@ -125,22 +134,65 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
     return count;
 }
 
-/// A specifier tag is "exotic" when it names a non-registry source. Registry
-/// specifiers (`npm:`/plain semver/dist-tag) are allowed; `catalog:`
-/// references are also allowed because catalog entries are defined by the
-/// user in the workspace-root `package.json`, not by the transitive package —
-/// they can only point at something the root user already opted into, so
-/// they're not an attacker-controlled vector.
-inline fn isExoticSpecifier(tag: Dependency.Version.Tag) bool {
-    return switch (tag) {
-        // uninitialized + npm + dist_tag — the NPM-registry-family specifiers.
-        .uninitialized, .npm, .dist_tag => false,
-        // catalog:name — the catalog is defined by the root user, not the
-        // transitive package, so it can't smuggle in an arbitrary source.
-        .catalog => false,
-        // folder, symlink, workspace, git, github, tarball — genuinely exotic.
-        .folder, .symlink, .workspace, .git, .github, .tarball => true,
-    };
+const Verdict = struct { label: []const u8 };
+
+/// Returns the exotic-source label if the (resolution, literal) pair is
+/// exotic per this policy, or `null` if it's allowed.
+inline fn classify(res_tag: Resolution.Tag, literal_raw: []const u8) ?Verdict {
+    switch (res_tag) {
+        // Uninitialized / root / npm resolutions are never exotic.
+        .uninitialized, .root, .npm => return null,
+
+        // These resolution tags can only be reached if some nested
+        // package.json literally named a non-registry source —
+        // `linkWorkspacePackages` can't produce them. The Resolution.Tag
+        // itself is authoritative; we don't need the literal.
+        .git => return .{ .label = "git" },
+        .github => return .{ .label = "github" },
+        .local_tarball => return .{ .label = "local_tarball" },
+        .remote_tarball => return .{ .label = "remote_tarball" },
+        .symlink => return .{ .label = "symlink" },
+        .single_file_module => return .{ .label = "single_file_module" },
+
+        // `linkWorkspacePackages` only rewrites a transitive `.npm` /
+        // `.dist_tag` specifier to `.workspace`, never to `.folder` (see
+        // `Package.zig`'s `parseDependency`). So a `.folder` resolution on
+        // a transitive edge is always the parent's explicit request.
+        .folder => return .{ .label = "folder" },
+
+        // Any other non-named resolution tag (the enum is non-exhaustive)
+        // — treat as exotic; better to false-positive than to miss.
+        _ => return .{ .label = "unknown" },
+
+        // Ambiguous: `.workspace` can come from `linkWorkspacePackages`
+        // redirecting a transitive plain-semver dep to a local workspace
+        // package. Consult the parent's literal specifier to tell the two
+        // cases apart.
+        .workspace => {
+            // Mirror the resolver's leading-whitespace trim
+            // (`Dependency.parse` does `trimLeft(" \t\n\r")` before calling
+            // `infer()` on the specifier). If we re-infer on the raw string
+            // instead, a published spec like `" workspace:*"` falls through
+            // `infer()`'s switch to `.dist_tag` → looks non-exotic.
+            const literal = std.mem.trimLeft(u8, literal_raw, " \t\n\r");
+            const literal_tag = Dependency.Version.Tag.infer(literal);
+            return switch (literal_tag) {
+                // Parent wrote plain npm semver; `linkWorkspacePackages`
+                // redirected it. Not the parent's doing, not exotic.
+                .uninitialized, .npm, .dist_tag => null,
+                // `catalog:` references are defined by the root user, not
+                // the transitive package, so they can't smuggle in an
+                // arbitrary source.
+                .catalog => null,
+                .folder => .{ .label = "folder" },
+                .symlink => .{ .label = "symlink" },
+                .workspace => .{ .label = "workspace" },
+                .git => .{ .label = "git" },
+                .github => .{ .label = "github" },
+                .tarball => .{ .label = "tarball" },
+            };
+        },
+    }
 }
 
 const std = @import("std");
@@ -153,4 +205,5 @@ const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageManager = install.PackageManager;
+const Resolution = install.Resolution;
 const invalid_package_id = install.invalid_package_id;
